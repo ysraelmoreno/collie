@@ -16,6 +16,15 @@ while let a = it.next() {
     }
 }
 
+// an Orq install's data becomes ours before anything reads it; only for the real root (never a test's or a custom one)
+if root.standardizedFileURL.path == Paths.defaultRoot.standardizedFileURL.path {
+    let old = root.deletingLastPathComponent().appendingPathComponent(LegacyOrq.dataRootName)
+    let r = LegacyOrq.migrateDataRoot(old: old, new: root) {
+        LegacyOrq.daemonAnswers(old.appendingPathComponent("run").appendingPathComponent(LegacyOrq.socketName))
+    }
+    FileHandle.standardError.write(Data("collied: legacy Orq data: \(r)\n".utf8))
+}
+
 // an import staged by `admin.data.import` replaces the data before anything reads it (default-workspace included)
 DataBackup.applyPending(Paths(root: root))
 

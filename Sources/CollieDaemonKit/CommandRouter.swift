@@ -445,7 +445,7 @@ actor CommandRouter {
             if !ws.floors.contains(where: { $0.id == fid }) {   // floor gone: back to the ground, never into a missing dir
                 t.floorId = nil
                 if !FileManager.default.fileExists(atPath: t.cwd) {
-                    let ground = t.cwd.range(of: "/.collie/floors/").map { String(t.cwd[..<$0.lowerBound]) }
+                    let ground = LegacyOrq.ground(ofFloorPath: t.cwd)
                     t.cwd = ground.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil } ?? NSHomeDirectory()
                 }
             }

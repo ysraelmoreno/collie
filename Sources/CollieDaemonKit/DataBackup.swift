@@ -3,7 +3,7 @@ import Darwin
 import CollieCore
 import CollieProtocol
 
-/// `.colliebackup`: a zip (`ditto -c -k --norsrc`, entries at its root) of the user's Collie data — `manifest.json`
+/// `.colliebackup` (an Orq `.orqbackup` is the same format; the extension is never checked here): a zip (`ditto -c -k --norsrc`, entries at its root) of the user's Collie data — `manifest.json`
 /// (`{format: 1, createdAt, collieVersion, parts, workspace}`) and the parts `design/` (figcraft server data, registries,
 /// systems, exports), `artifacts/` (with `.removed/`), `memory/`, `workspaces/` (without `*/terminals`, the scrollback
 /// spills), `work/` and `partituras/` (with `.removed/`). Machine-specific data stays out (`run/`, `hooks/`, `cache/`, `usage/`, `screens/`, `admin.token`);
@@ -18,6 +18,18 @@ public enum DataBackup {
 
     struct Manifest: Codable {
         var format: Int; var createdAt: Date; var collieVersion: String; var parts: [String]; var workspace: String?
+        init(format: Int, createdAt: Date, collieVersion: String, parts: [String], workspace: String?) {
+            self.format = format; self.createdAt = createdAt; self.collieVersion = collieVersion; self.parts = parts; self.workspace = workspace
+        }
+        private enum CodingKeys: String, CodingKey { case format, createdAt, collieVersion, parts, workspace }
+        private enum Legacy: String, CodingKey { case orqVersion }
+        init(from d: Decoder) throws {   // an Orq backup says `orqVersion`
+            let c = try d.container(keyedBy: CodingKeys.self)
+            format = try c.decode(Int.self, forKey: .format); createdAt = try c.decode(Date.self, forKey: .createdAt)
+            collieVersion = try c.decodeIfPresent(String.self, forKey: .collieVersion)
+                ?? d.container(keyedBy: Legacy.self).decode(String.self, forKey: .orqVersion)
+            parts = try c.decode([String].self, forKey: .parts); workspace = try c.decodeIfPresent(String.self, forKey: .workspace)
+        }
     }
 
     /// What a backup holds, for the app's confirmation.
@@ -263,7 +275,7 @@ public enum DataBackup {
 
     private static func bad(_ why: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "not a valid Collie backup: \(why)") }
 
-    private static func manifest(_ f: URL) -> Manifest? {
+    static func manifest(_ f: URL) -> Manifest? {
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
         return (try? Data(contentsOf: f)).flatMap { try? dec.decode(Manifest.self, from: $0) }
     }

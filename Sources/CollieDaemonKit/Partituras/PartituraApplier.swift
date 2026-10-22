@@ -84,11 +84,13 @@ extension CommandRouter {
                 throw invalid("\(cwd) não está num repositório git: um andar precisa de um")
             }
             // what FloorManager.create would refuse, refused here in Portuguese
-            if FileManager.default.fileExists(atPath: root.appendingPathComponent(".collie/floors/\(name)").path) {
+            if FileManager.default.fileExists(atPath: root.appendingPathComponent("\(LegacyOrq.repoDirName(repoRoot: root))/floors/\(name)").path) {
                 throw invalid("o andar \(name) já existe")
             }
-            if try await GitRunner.run(["show-ref", "--verify", "--quiet", "refs/heads/collie/\(name)"], in: root).status == 0 {
-                throw invalid("a branch collie/\(name) já existe")
+            for b in ["collie/\(name)", LegacyOrq.branchPrefix + name] {   // an Orq floor's branch too
+                if try await GitRunner.run(["show-ref", "--verify", "--quiet", "refs/heads/\(b)"], in: root).status == 0 {
+                    throw invalid("a branch \(b) já existe")
+                }
             }
             repo = root
         }
@@ -244,7 +246,7 @@ extension CommandRouter {
             }
             // only an empty floor goes: anything uncommitted, ignored files included (build output, .env), keeps it; but
             // Collie's own memory files
-            let st = try await GitRunner.run(["status", "--porcelain", "--ignored=matching", "--", ".", ":(exclude).collie/memory"],
+            let st = try await GitRunner.run(["status", "--porcelain", "--ignored=matching", "--", ".", ":(exclude)\(LegacyOrq.repoDirName(repoRoot: URL(fileURLWithPath: f.path)))/memory"],
                                              in: URL(fileURLWithPath: f.path))
             guard st.status == 0, st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 warnings.append("andar \(f.name) mantido: tem alterações"); return warnings

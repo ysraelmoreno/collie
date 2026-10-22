@@ -50,12 +50,13 @@ enum FloorManager {
     static func create(name: String, repoRoot: URL, createdBy: UUID?) async throws(ProtocolError) -> Floor {
         try validate(name: name)
         let base = try await currentBranch(repoRoot)
-        let path = repoRoot.appendingPathComponent(".collie/floors/\(name)")
+        let dir = LegacyOrq.repoDirName(repoRoot: repoRoot)
+        let path = repoRoot.appendingPathComponent("\(dir)/floors/\(name)")
         let branch = "collie/\(name)"
         if FileManager.default.fileExists(atPath: path.path) { throw fail("floor '\(name)' already exists") }
         let ref = try await GitRunner.run(["show-ref", "--verify", "--quiet", "refs/heads/\(branch)"], in: repoRoot)
         if ref.status == 0 { throw fail("branch \(branch) already exists") }
-        try GitRunner.exclude(".collie/floors/", commonDir: try await commonDir(repoRoot))
+        try GitRunner.exclude("\(dir)/floors/", commonDir: try await commonDir(repoRoot))
         try await git(["worktree", "add", "-b", branch, path.path, base], in: repoRoot)
         return Floor(id: UUID(), name: name, repoRoot: repoRoot.path, path: path.path, branch: branch,
                      baseBranch: base, createdBy: createdBy)
@@ -68,7 +69,7 @@ enum FloorManager {
         try await commitMemory(in: floor)
         if !(try await git(["status", "--porcelain"], in: floor)).isEmpty { throw fail("floor has uncommitted changes") }
         // the ground's own memory files never block a land (they're never auto-committed; a clashing merge refuses itself)
-        if !(try await git(["status", "--porcelain", "--", ".", ":(exclude).collie/memory"], in: ground)).isEmpty {
+        if !(try await git(["status", "--porcelain", "--", ".", ":(exclude)\(LegacyOrq.repoDirName(repoRoot: ground))/memory"], in: ground)).isEmpty {
             throw fail("ground has uncommitted changes")
         }
         let cur = try await currentBranch(ground)
@@ -115,10 +116,11 @@ enum FloorManager {
         return LandResult(mode: mode, commit: commit, prURL: nil)
     }
 
-    /// The floor's memory travels with its land: commits `.collie/memory` (only it) when it has changes.
+    /// The floor's memory travels with its land: commits `.collie/memory` (or a legacy `.orq/memory`; only it) when it has changes.
     private static func commitMemory(in floor: URL) async throws(ProtocolError) {
-        if (try await git(["status", "--porcelain", "--", ".collie/memory"], in: floor)).isEmpty { return }
-        try await git(["add", "--", ".collie/memory"], in: floor)
+        let mem = LegacyOrq.repoDirName(repoRoot: floor) + "/memory"
+        if (try await git(["status", "--porcelain", "--", mem], in: floor)).isEmpty { return }
+        try await git(["add", "--", mem], in: floor)
         func configured(_ key: String) async throws(ProtocolError) -> Bool {
             let r = try await GitRunner.run(["config", key], in: floor)
             return r.status == 0 && !r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -126,7 +128,7 @@ enum FloorManager {
         let hasName = try await configured("user.name"), hasEmail = try await configured("user.email")
         let identity = hasName && hasEmail ? [] : ["-c", "user.name=Collie", "-c", "user.email=collie@localhost"]
         // the pathspec keeps anything else the user staged out of this commit
-        try await git(identity + ["commit", "-m", "collie: memory", "--", ".collie/memory"], in: floor)
+        try await git(identity + ["commit", "-m", "collie: memory", "--", mem], in: floor)
     }
 
     static func delete(_ f: Floor, force: Bool) async throws(ProtocolError) {

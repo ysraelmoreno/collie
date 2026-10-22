@@ -53,7 +53,7 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     /// nil when it can't open (`indexError` says why; retried at most every `reopenDelay`) — the store still works.
     func index() -> MemoryIndex? {
         if let commonDir, !excluded {
-            do { try GitRunner.exclude(".collie/cache/", commonDir: commonDir); excluded = true } catch { memoryLog(error.message) }
+            do { try GitRunner.exclude(dbFile.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent + "/cache/", commonDir: commonDir); excluded = true } catch { memoryLog(error.message) }
         }
         if idx == nil, lastOpenAttempt.map({ Date().timeIntervalSince($0) >= Self.reopenDelay }) ?? true {
             lastOpenAttempt = Date()
@@ -113,8 +113,9 @@ actor MemoryService {
         let lines = g.stdout.split(separator: "\n").map(String.init)
         guard lines.count == 2 else { return global }
         let top = URL(fileURLWithPath: lines[0])
-        let r = byRoot[top.path] ?? RepoMemory(root: top, storeDir: top.appendingPathComponent(".collie/memory"),
-                                               dbFile: top.appendingPathComponent(".collie/cache/memory.sqlite"),
+        let dir = LegacyOrq.repoDirName(repoRoot: top)
+        let r = byRoot[top.path] ?? RepoMemory(root: top, storeDir: top.appendingPathComponent("\(dir)/memory"),
+                                               dbFile: top.appendingPathComponent("\(dir)/cache/memory.sqlite"),
                                                commonDir: URL(fileURLWithPath: lines[1]))
         byRoot[top.path] = r
         byCwd[cwd] = r

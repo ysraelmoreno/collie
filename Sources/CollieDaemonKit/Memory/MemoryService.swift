@@ -113,10 +113,12 @@ actor MemoryService {
         let lines = g.stdout.split(separator: "\n").map(String.init)
         guard lines.count == 2 else { return global }
         let top = URL(fileURLWithPath: lines[0])
-        let dir = LegacyOrq.repoDirName(repoRoot: top)
+        // the folder is the ground's (a floor's commonDir is `<ground>/.git`), so a floor of an Orq repo keeps `.orq`
+        let common = URL(fileURLWithPath: lines[1])
+        let dir = LegacyOrq.repoDirName(repoRoot: common.lastPathComponent == ".git" ? common.deletingLastPathComponent() : top)
         let r = byRoot[top.path] ?? RepoMemory(root: top, storeDir: top.appendingPathComponent("\(dir)/memory"),
                                                dbFile: top.appendingPathComponent("\(dir)/cache/memory.sqlite"),
-                                               commonDir: URL(fileURLWithPath: lines[1]))
+                                               commonDir: common)
         byRoot[top.path] = r
         byCwd[cwd] = r
         return r

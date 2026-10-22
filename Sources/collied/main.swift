@@ -23,10 +23,19 @@ if root.standardizedFileURL.path == Paths.defaultRoot.standardizedFileURL.path {
         LegacyOrq.daemonAnswers(old.appendingPathComponent("run").appendingPathComponent(LegacyOrq.socketName))
     }
     FileHandle.standardError.write(Data("collied: legacy Orq data: \(r)\n".utf8))
+    switch r {   // continuing would create our root and block the move for good: exit, launchd starts us again
+    case .oldDaemonAlive, .failed: exit(1)
+    default: break
+    }
+}
+// Orq's root is a link to ours: an old Orq.app reopened would run orqd on the same data
+if LegacyOrq.daemonAnswers(Paths(root: root).runDir.appendingPathComponent(LegacyOrq.socketName)) {
+    FileHandle.standardError.write(Data("collied: an Orq daemon (orqd) is running on \(root.path); quit Orq and remove Orq.app\n".utf8)); exit(1)
 }
 
 // an import staged by `admin.data.import` replaces the data before anything reads it (default-workspace included)
 DataBackup.applyPending(Paths(root: root))
+LegacyOrq.renameLegacyPartituras(in: root)   // a moved Orq root, an imported .orqbackup
 
 // stable default so a restarted daemon reloads its state
 if workspace == nil {

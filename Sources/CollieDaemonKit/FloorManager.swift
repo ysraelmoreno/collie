@@ -66,10 +66,10 @@ enum FloorManager {
         let fl = f
         let ground = URL(fileURLWithPath: fl.repoRoot), floor = URL(fileURLWithPath: fl.path)
         let msg = message ?? "Land floor \(fl.name)"
-        try await commitMemory(in: floor)
+        try await commitMemory(in: floor, ground: ground)
         if !(try await git(["status", "--porcelain"], in: floor)).isEmpty { throw fail("floor has uncommitted changes") }
         // the ground's own memory files never block a land (they're never auto-committed; a clashing merge refuses itself)
-        if !(try await git(["status", "--porcelain", "--", ".", ":(exclude)\(LegacyOrq.repoDirName(repoRoot: ground))/memory"], in: ground)).isEmpty {
+        if !(try await git(["status", "--porcelain", "--", "."] + LegacyOrq.memoryExcludes, in: ground)).isEmpty {
             throw fail("ground has uncommitted changes")
         }
         let cur = try await currentBranch(ground)
@@ -117,8 +117,8 @@ enum FloorManager {
     }
 
     /// The floor's memory travels with its land: commits `.collie/memory` (or a legacy `.orq/memory`; only it) when it has changes.
-    private static func commitMemory(in floor: URL) async throws(ProtocolError) {
-        let mem = LegacyOrq.repoDirName(repoRoot: floor) + "/memory"
+    private static func commitMemory(in floor: URL, ground: URL) async throws(ProtocolError) {
+        let mem = LegacyOrq.repoDirName(repoRoot: ground) + "/memory"
         if (try await git(["status", "--porcelain", "--", mem], in: floor)).isEmpty { return }
         try await git(["add", "--", mem], in: floor)
         func configured(_ key: String) async throws(ProtocolError) -> Bool {

@@ -246,7 +246,7 @@ extension CommandRouter {
             }
             // only an empty floor goes: anything uncommitted, ignored files included (build output, .env), keeps it; but
             // Collie's own memory files
-            let st = try await GitRunner.run(["status", "--porcelain", "--ignored=matching", "--", ".", ":(exclude)\(LegacyOrq.repoDirName(repoRoot: URL(fileURLWithPath: f.path)))/memory"],
+            let st = try await GitRunner.run(["status", "--porcelain", "--ignored=matching", "--", "."] + LegacyOrq.memoryExcludes,
                                              in: URL(fileURLWithPath: f.path))
             guard st.status == 0, st.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 warnings.append("andar \(f.name) mantido: tem alterações"); return warnings

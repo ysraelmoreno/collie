@@ -260,6 +260,25 @@ private func launch(_ root: URL) throws -> Process {
         #expect(spills().isEmpty, "spill left: \(spills())")
     }
 
+    /// R6: an orqd answering on the (symlinked) root keeps collied from starting; nothing written.
+    @Test func colliedRefusesWhileOrqdAnswers() async throws {
+        let root = tmpRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let run = root.appendingPathComponent("run")
+        try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        let fd = makeSocket(); defer { close(fd) }
+        #expect(try withAddr(run.appendingPathComponent("orqd.sock").path, { bind(fd, $0, $1) }) == 0 && listen(fd, 4) == 0)
+        let p = Process(); p.executableURL = colliedURL; p.arguments = ["--root", root.path]
+        p.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"]) { $1 }
+        let err = Pipe(); p.standardError = err
+        try p.run()
+        let done = await waitFor(5) { !p.isRunning }
+        if !done { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+        #expect(done && p.terminationStatus != 0)
+        #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).contains("orqd"))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("admin.token").path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("default-workspace").path))
+    }
+
     /// C1: collied without a sibling `collie` refuses to start.
     @Test func colliedFailsFastWithoutCollie() async throws {
         let dir = tmpRoot(); defer { try? FileManager.default.removeItem(at: dir) }

@@ -65,10 +65,58 @@ private func isLink(_ u: URL) -> Bool {
         let old = t.appendingPathComponent("Orq"), new = t.appendingPathComponent("Collie")
         put(old, "partituras/x.orqpartitura", "x")
         put(old, "partituras/.removed/y-1.orqpartitura", "y")
+        put(old, "partituras/z.orqpartitura", "old z"); put(old, "partituras/z.colliepartitura", "new z")
         #expect(LegacyOrq.migrateDataRoot(old: old, new: new) { false } == .moved)
+        LegacyOrq.renameLegacyPartituras(in: new)
+        LegacyOrq.renameLegacyPartituras(in: new)   // idempotent
         #expect(read(new, "partituras/x.colliepartitura") == "x")
+        #expect(read(new, "partituras/z.colliepartitura") == "new z" && read(new, "partituras/z.orqpartitura") == "old z")   // never clobbered
         #expect(read(new, "partituras/.removed/y-1.colliepartitura") == "y")
         #expect(read(new, "partituras/x.orqpartitura") == nil)
+    }
+
+    @Test func linkElsewhereIsLeft() throws {
+        let t = tempDir(); defer { try? FileManager.default.removeItem(at: t) }
+        let old = t.appendingPathComponent("Orq"), new = t.appendingPathComponent("Collie"), ext = t.appendingPathComponent("Ext")
+        put(ext, "a.txt")
+        #expect(symlink(ext.path, old.path) == 0)
+        #expect(LegacyOrq.migrateDataRoot(old: old, new: new) { false } == .nothingToMove)
+        #expect(isLink(old) && read(ext, "a.txt") == "x" && !FileManager.default.fileExists(atPath: new.path))
+    }
+
+    @Test func importedOrqBackupPartiturasAreRenamed() async throws {
+        let t = tempDir(); defer { try? FileManager.default.removeItem(at: t) }
+        let src = t.appendingPathComponent("src"), root = t.appendingPathComponent("root"), zip = t.appendingPathComponent("x.orqbackup")
+        put(src, "manifest.json", #"{"format":1,"createdAt":"2026-01-01T00:00:00Z","orqVersion":"v1","parts":["partituras"]}"#)
+        put(src, "partituras/p.orqpartitura", "p")
+        put(src, "partituras/.removed/q-1.orqpartitura", "q")
+        let z = Process(); z.executableURL = URL(fileURLWithPath: "/usr/bin/ditto"); z.arguments = ["-c", "-k", "--norsrc", src.path, zip.path]
+        try z.run(); z.waitUntilExit()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        _ = try await DataBackup.stage(root: root, from: zip, dryRun: false)
+        #expect(DataBackup.applyPending(Paths(root: root)))
+        LegacyOrq.renameLegacyPartituras(in: root)   // what collied does right after applyPending
+        #expect(read(root, "partituras/p.colliepartitura") == "p")
+        #expect(read(root, "partituras/.removed/q-1.colliepartitura") == "q")
+    }
+
+    @Test func legacyRepoFloorKeepsOrqMemory() async throws {
+        let repo = try await makeRepo()
+        put(repo, ".orq/memory/g.md", "ground")   // the ground's memory: never committed
+        let mem = MemoryService(globalDir: tempDir())
+        for name in ["a", "b"] {
+            var f = try await FloorManager.create(name: name, repoRoot: repo, createdBy: nil)
+            #expect(f.path.hasSuffix("/.orq/floors/\(name)"))
+            let floor = URL(fileURLWithPath: f.path)
+            let got = await mem.repo(for: f.path).store.dir.path
+            #expect(got.hasSuffix("/.orq/floors/\(name)/.orq/memory"), "\(got)")   // the floor of an Orq repo keeps .orq
+            put(floor, ".orq/memory/\(name).md", name)
+            _ = try await FloorManager.land(&f, mode: .merge, message: nil)   // the second land is not blocked by .orq/memory
+            #expect(read(repo, ".orq/memory/\(name).md") == name)
+            #expect(LegacyOrq.repoDirName(repoRoot: repo) == ".orq")
+            #expect(!FileManager.default.fileExists(atPath: repo.appendingPathComponent(".collie").path))
+        }
+        #expect(read(repo, ".orq/memory/g.md") == "ground")
     }
 
     @Test func repoDirKeepsLegacy() throws {

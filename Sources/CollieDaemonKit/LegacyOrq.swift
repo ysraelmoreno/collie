@@ -14,16 +14,30 @@ public enum LegacyOrq {
     public enum MigrationOutcome: Equatable, Sendable { case moved, nothingToMove, bothExist, oldDaemonAlive, failed(String) }
 
     /// Moves the Orq data root `old` to `new` (one `rename`, never over an existing `new`) and leaves `old` as a symlink
-    /// to it; renames the `*.orqpartitura` files there (and in `.removed/`). Refused while an Orq daemon answers.
-    /// A symlink that cannot be made is only logged: the data is already in `new`.
+    /// to it. Refused while an Orq daemon answers. A symlink that cannot be made is only logged: the data is already in `new`.
+    /// The partituras are renamed by `renameLegacyPartituras`, on every start.
     public static func migrateDataRoot(old: URL, new: URL, oldDaemonAlive: () -> Bool) -> MigrationOutcome {
         var st = stat()
-        guard lstat(old.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR else { return .nothingToMove }   // gone, or our symlink
+        guard lstat(old.path, &st) == 0 else { return .nothingToMove }
+        if st.st_mode & S_IFMT == S_IFLNK {   // ours (→ new), or data the user moved elsewhere: say where
+            let to = (try? FileManager.default.destinationOfSymbolicLink(atPath: old.path)) ?? "?"
+            if URL(fileURLWithPath: to, relativeTo: old.deletingLastPathComponent()).standardizedFileURL.path != new.standardizedFileURL.path {
+                log("\(old.path) is a link to \(to), left as it is")
+            }
+            return .nothingToMove
+        }
+        guard st.st_mode & S_IFMT == S_IFDIR else { return .nothingToMove }
         if lstat(new.path, &st) == 0 { return .bothExist }
         if oldDaemonAlive() { return .oldDaemonAlive }
         guard renamex_np(old.path, new.path, UInt32(RENAME_EXCL)) == 0 else { return .failed("rename: \(String(cString: strerror(errno)))") }
         if symlink(new.path, old.path) != 0 { log("cannot link \(old.path) to \(new.path): \(String(cString: strerror(errno)))") }
-        let p = new.appendingPathComponent("partituras")
+        return .moved
+    }
+
+    /// `*.orqpartitura` in `<root>/partituras/` and its `.removed/` renamed to `.colliepartitura` (a moved Orq root, an
+    /// imported `.orqbackup`). Idempotent: run on every start. A clash leaves the old file where it is (never written over).
+    public static func renameLegacyPartituras(in root: URL) {
+        let p = root.appendingPathComponent("partituras")
         for dir in [p, p.appendingPathComponent(".removed")] {
             for n in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where n.hasSuffix(".\(partituraExt)") {
                 let to = String(n.dropLast(partituraExt.count)) + "colliepartitura"
@@ -33,7 +47,6 @@ public enum LegacyOrq {
                 }
             }
         }
-        return .moved
     }
 
     /// True only when a daemon accepts a connection on `socket`.
@@ -42,12 +55,16 @@ public enum LegacyOrq {
         return (try? withAddr(socket.path, { connect(fd, $0, $1) })) == 0
     }
 
-    /// The repo's Collie folder: `.orq` for a repo that has it and no `.collie` yet, else `.collie`.
+    /// The repo's Collie folder: `.orq` for a repo that has it and no `.collie` yet, else `.collie`. Asked of the ground
+    /// (the main worktree): its floors use the same folder.
     static func repoDirName(repoRoot: URL) -> String {
         let fm = FileManager.default
         return fm.fileExists(atPath: repoRoot.appendingPathComponent(repoDir).path)
             && !fm.fileExists(atPath: repoRoot.appendingPathComponent(".collie").path) ? repoDir : ".collie"
     }
+
+    /// Pathspecs that keep both memory folders out of a status (the ground's own memory never blocks a land or a rollback).
+    static let memoryExcludes = [":(exclude).collie/memory", ":(exclude)\(repoDir)/memory"]
 
     /// The ground of a floor path (`<ground>/.collie/floors/…` or `<ground>/.orq/floors/…`), nil when it is not one.
     static func ground(ofFloorPath p: String) -> String? {

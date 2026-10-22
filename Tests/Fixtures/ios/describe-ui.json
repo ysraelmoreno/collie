@@ -1,0 +1,1133 @@
+[
+ {
+  "content_required": false,
+  "traits": [],
+  "pid": 7305,
+  "AXUniqueId": null,
+  "children": [
+   {
+    "role": "AXGroup",
+    "AXLabel": null,
+    "AXValue": null,
+    "enabled": true,
+    "help": null,
+    "pid": 7305,
+    "frame": {
+     "height": 844,
+     "y": 0,
+     "width": 390,
+     "x": 0
+    },
+    "children": [
+     {
+      "help": null,
+      "AXFrame": "{{0, 0}, {390, 844}}",
+      "title": null,
+      "pid": 7305,
+      "AXValue": null,
+      "custom_actions": [],
+      "type": "Group",
+      "traits": [],
+      "content_required": false,
+      "AXUniqueId": null,
+      "role_description": "group",
+      "AXLabel": null,
+      "children": [
+       {
+        "AXUniqueId": "Home screen icons",
+        "pid": 7305,
+        "frame": {
+         "height": 844,
+         "y": 0,
+         "width": 390,
+         "x": 0
+        },
+        "AXValue": null,
+        "type": "Group",
+        "role": "AXGroup",
+        "AXFrame": "{{0, 0}, {390, 844}}",
+        "content_required": false,
+        "traits": [],
+        "children": [
+         {
+          "pid": 7305,
+          "type": "Group",
+          "subrole": null,
+          "role": "AXGroup",
+          "AXLabel": null,
+          "enabled": true,
+          "AXValue": null,
+          "children": [
+           {
+            "AXValue": null,
+            "title": null,
+            "subrole": null,
+            "custom_actions": [],
+            "role_description": "group",
+            "traits": [],
+            "children": [
+             {
+              "role_description": "button",
+              "type": "Button",
+              "enabled": true,
+              "custom_actions": [],
+              "children": [
+               {
+                "role": "AXButton",
+                "AXUniqueId": "Mapas",
+                "custom_actions": [
+                 "Modo de edição",
+                 "Hoje",
+                 "Biblioteca de Apps"
+                ],
+                "role_description": "button",
+                "help": null,
+                "traits": [],
+                "AXFrame": "{{22, 65}, {166, 188.66666666666666}}",
+                "frame": {
+                 "x": 22,
+                 "y": 65,
+                 "height": 188.66666666666666,
+                 "width": 166
+                },
+                "children": [
+                 {
+                  "role_description": "group",
+                  "pid": 7305,
+                  "title": null,
+                  "type": "Group",
+                  "subrole": null,
+                  "AXFrame": "{{24, 67}, {162, 176}}",
+                  "enabled": true,
+                  "content_required": false,
+                  "frame": {
+                   "x": 24,
+                   "y": 67,
+                   "height": 176,
+                   "width": 162
+                  },
+                  "AXValue": null,
+                  "help": null,
+                  "AXLabel": null,
+                  "traits": [],
+                  "custom_actions": [
+                   "Modo de edição",
+                   "Hoje",
+                   "Biblioteca de Apps"
+                  ],
+                  "children": [
+                   {
+                    "subrole": null,
+                    "AXFrame": "{{24, 67}, {162, 162}}",
+                    "AXUniqueId": null,
+                    "help": null,
+                    "AXLabel": null,
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "title": null,
+                    "traits": [],
+                    "type": "Group",
+                    "role": "AXGroup",
+                    "children": [
+                     {
+                      "help": null,
+                      "AXFrame": "{{24, 67}, {162, 162}}",
+                      "subrole": null,
+                      "pid": 7305,
+                      "children": [
+                       {
+                        "role": "AXGroup",
+                        "role_description": "group",
+                        "pid": 7305,
+                        "AXUniqueId": null,
+                        "AXValue": null,
+                        "enabled": true,
+                        "title": null,
+                        "frame": {
+                         "x": 24,
+                         "y": 67,
+                         "height": 162,
+                         "width": 162
+                        },
+                        "AXFrame": "{{24, 67}, {162, 162}}",
+                        "help": null,
+                        "traits": [],
+                        "content_required": false,
+                        "type": "Group",
+                        "custom_actions": [
+                         "Modo de edição",
+                         "Hoje",
+                         "Biblioteca de Apps"
+                        ],
+                        "subrole": null,
+                        "children": [
+                         {
+                          "type": "ScrollArea",
+                          "children": [
+                           {
+                            "AXValue": "0%",
+                            "AXLabel": "Barra de rolagem horizontal, 1 página",
+                            "subrole": null,
+                            "content_required": false,
+                            "custom_actions": [
+                             "Modo de edição",
+                             "Hoje",
+                             "Biblioteca de Apps"
+                            ],
+                            "role_description": "slider",
+                            "AXFrame": "{{24, 196}, {162, 30}}",
+                            "type": "Slider",
+                            "title": null,
+                            "children": [],
+                            "traits": [],
+                            "enabled": true,
+                            "help": null,
+                            "pid": 7305,
+                            "AXUniqueId": null,
+                            "role": "AXSlider",
+                            "frame": {
+                             "x": 24,
+                             "y": 196,
+                             "height": 30,
+                             "width": 162
+                            }
+                           },
+                           {
+                            "enabled": true,
+                            "subrole": null,
+                            "type": "Slider",
+                            "title": null,
+                            "AXFrame": "{{24, 196}, {162, 30}}",
+                            "AXUniqueId": null,
+                            "children": [],
+                            "role_description": "slider",
+                            "traits": [],
+                            "AXValue": "0%",
+                            "frame": {
+                             "x": 24,
+                             "y": 196,
+                             "height": 30,
+                             "width": 162
+                            },
+                            "help": null,
+                            "custom_actions": [
+                             "Modo de edição",
+                             "Hoje",
+                             "Biblioteca de Apps"
+                            ],
+                            "role": "AXSlider",
+                            "content_required": false,
+                            "AXLabel": "Barra de rolagem horizontal, 1 página",
+                            "pid": 7305
+                           }
+                          ],
+                          "AXLabel": null,
+                          "custom_actions": [
+                           "Modo de edição",
+                           "Hoje",
+                           "Biblioteca de Apps"
+                          ],
+                          "help": null,
+                          "AXValue": null,
+                          "role_description": "Grupo",
+                          "enabled": true,
+                          "role": "AXScrollArea",
+                          "subrole": null,
+                          "pid": 7305,
+                          "frame": {
+                           "x": 24,
+                           "y": 67,
+                           "height": 162,
+                           "width": 162
+                          },
+                          "traits": [],
+                          "title": null,
+                          "AXFrame": "{{24, 67}, {162, 162}}",
+                          "AXUniqueId": null,
+                          "content_required": false
+                         }
+                        ],
+                        "AXLabel": null
+                       }
+                      ],
+                      "custom_actions": [
+                       "Modo de edição",
+                       "Hoje",
+                       "Biblioteca de Apps"
+                      ],
+                      "content_required": false,
+                      "enabled": true,
+                      "AXValue": null,
+                      "AXUniqueId": null,
+                      "AXLabel": null,
+                      "frame": {
+                       "x": 24,
+                       "y": 67,
+                       "height": 162,
+                       "width": 162
+                      },
+                      "type": "Group",
+                      "role_description": "group",
+                      "role": "AXGroup",
+                      "traits": [],
+                      "title": null
+                     }
+                    ],
+                    "frame": {
+                     "x": 24,
+                     "y": 67,
+                     "height": 162,
+                     "width": 162
+                    },
+                    "pid": 7305,
+                    "enabled": true,
+                    "role_description": "group",
+                    "AXValue": null,
+                    "content_required": false
+                   },
+                   {
+                    "enabled": true,
+                    "children": [],
+                    "AXValue": null,
+                    "AXFrame": "{{77.666666666666629, 232}, {54, 19.666666666666657}}",
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "type": "Group",
+                    "role": "AXGroup",
+                    "help": null,
+                    "subrole": null,
+                    "frame": {
+                     "x": 77.66666666666663,
+                     "y": 232,
+                     "height": 19.666666666666657,
+                     "width": 54
+                    },
+                    "content_required": false,
+                    "title": null,
+                    "pid": 7305,
+                    "AXUniqueId": "label-view",
+                    "traits": [],
+                    "role_description": "group",
+                    "AXLabel": null
+                   }
+                  ],
+                  "AXUniqueId": null,
+                  "role": "AXGroup"
+                 }
+                ],
+                "AXLabel": "Mapas",
+                "type": "Button",
+                "AXValue": "Widget",
+                "title": null,
+                "subrole": null,
+                "content_required": false,
+                "pid": 7305,
+                "enabled": true
+               },
+               {
+                "type": "Button",
+                "pid": 7305,
+                "role_description": "button",
+                "AXFrame": "{{202, 65}, {166, 188.66666666666666}}",
+                "traits": [],
+                "custom_actions": [
+                 "Modo de edição",
+                 "Hoje",
+                 "Biblioteca de Apps"
+                ],
+                "subrole": null,
+                "title": null,
+                "role": "AXButton",
+                "AXValue": "Widget, Conjunto",
+                "enabled": true,
+                "frame": {
+                 "x": 202,
+                 "y": 65,
+                 "height": 188.66666666666666,
+                 "width": 166
+                },
+                "AXUniqueId": "Calendário",
+                "content_required": false,
+                "children": [
+                 {
+                  "AXFrame": "{{204, 67}, {162, 176}}",
+                  "role": "AXGroup",
+                  "help": null,
+                  "content_required": false,
+                  "pid": 7305,
+                  "traits": [],
+                  "children": [
+                   {
+                    "AXUniqueId": null,
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "role": "AXGroup",
+                    "type": "Group",
+                    "AXValue": null,
+                    "traits": [],
+                    "AXFrame": "{{204, 67}, {162, 162}}",
+                    "help": null,
+                    "content_required": false,
+                    "AXLabel": null,
+                    "children": [
+                     {
+                      "frame": {
+                       "x": 204,
+                       "y": 67,
+                       "height": 162,
+                       "width": 162
+                      },
+                      "role": "AXGroup",
+                      "AXUniqueId": null,
+                      "custom_actions": [
+                       "Widget Seguinte",
+                       "Widget Anterior",
+                       "Modo de edição",
+                       "Hoje",
+                       "Biblioteca de Apps"
+                      ],
+                      "AXValue": null,
+                      "subrole": null,
+                      "traits": [],
+                      "role_description": "group",
+                      "pid": 7305,
+                      "AXLabel": null,
+                      "help": null,
+                      "enabled": true,
+                      "content_required": false,
+                      "type": "Group",
+                      "AXFrame": "{{204, 67}, {162, 162}}",
+                      "children": [
+                       {
+                        "AXValue": null,
+                        "pid": 7305,
+                        "traits": [],
+                        "AXLabel": null,
+                        "title": null,
+                        "type": "Group",
+                        "role": "AXGroup",
+                        "custom_actions": [
+                         "Widget Seguinte",
+                         "Widget Anterior",
+                         "Modo de edição",
+                         "Hoje",
+                         "Biblioteca de Apps"
+                        ],
+                        "children": [
+                         {
+                          "custom_actions": [
+                           "Widget Seguinte",
+                           "Widget Anterior",
+                           "Modo de edição",
+                           "Hoje",
+                           "Biblioteca de Apps"
+                          ],
+                          "content_required": false,
+                          "subrole": null,
+                          "traits": [],
+                          "role": "AXScrollArea",
+                          "children": [
+                           {
+                            "role": "AXSlider",
+                            "AXLabel": "Barra de rolagem horizontal, 1 página",
+                            "AXFrame": "{{204, 196}, {162, 30}}",
+                            "subrole": null,
+                            "pid": 7305,
+                            "traits": [],
+                            "AXUniqueId": null,
+                            "title": null,
+                            "content_required": false,
+                            "frame": {
+                             "width": 162,
+                             "y": 196,
+                             "height": 30,
+                             "x": 204
+                            },
+                            "enabled": true,
+                            "type": "Slider",
+                            "custom_actions": [
+                             "Widget Seguinte",
+                             "Widget Anterior",
+                             "Modo de edição",
+                             "Hoje",
+                             "Biblioteca de Apps"
+                            ],
+                            "role_description": "slider",
+                            "help": null,
+                            "children": [],
+                            "AXValue": "0%"
+                           },
+                           {
+                            "AXLabel": "Barra de rolagem horizontal, 1 página",
+                            "subrole": null,
+                            "pid": 7305,
+                            "help": null,
+                            "content_required": false,
+                            "AXValue": "0%",
+                            "custom_actions": [
+                             "Widget Seguinte",
+                             "Widget Anterior",
+                             "Modo de edição",
+                             "Hoje",
+                             "Biblioteca de Apps"
+                            ],
+                            "title": null,
+                            "frame": {
+                             "height": 30,
+                             "y": 196,
+                             "width": 162,
+                             "x": 204
+                            },
+                            "role": "AXSlider",
+                            "type": "Slider",
+                            "enabled": true,
+                            "traits": [],
+                            "children": [],
+                            "role_description": "slider",
+                            "AXFrame": "{{204, 196}, {162, 30}}",
+                            "AXUniqueId": null
+                           }
+                          ],
+                          "title": null,
+                          "AXLabel": null,
+                          "AXFrame": "{{204, 67}, {162, 162}}",
+                          "help": null,
+                          "frame": {
+                           "y": 67,
+                           "height": 162,
+                           "width": 162,
+                           "x": 204
+                          },
+                          "AXUniqueId": null,
+                          "enabled": true,
+                          "pid": 7305,
+                          "AXValue": null,
+                          "type": "ScrollArea",
+                          "role_description": "Grupo"
+                         }
+                        ],
+                        "subrole": null,
+                        "content_required": false,
+                        "enabled": true,
+                        "frame": {
+                         "x": 204,
+                         "y": 67,
+                         "width": 162,
+                         "height": 162
+                        },
+                        "AXUniqueId": "widget-stack:<Calendário,News,Fotos>",
+                        "role_description": "group",
+                        "AXFrame": "{{204, 67}, {162, 162}}",
+                        "help": null
+                       }
+                      ],
+                      "title": null
+                     }
+                    ],
+                    "subrole": null,
+                    "pid": 7305,
+                    "title": null,
+                    "frame": {
+                     "width": 162,
+                     "y": 67,
+                     "height": 162,
+                     "x": 204
+                    },
+                    "role_description": "group",
+                    "enabled": true
+                   },
+                   {
+                    "frame": {
+                     "x": 245.66666666666663,
+                     "y": 232,
+                     "width": 78.33333333333331,
+                     "height": 19.666666666666657
+                    },
+                    "role": "AXGroup",
+                    "content_required": false,
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "AXUniqueId": "label-view",
+                    "AXLabel": null,
+                    "traits": [],
+                    "title": null,
+                    "children": [],
+                    "AXValue": null,
+                    "help": null,
+                    "role_description": "group",
+                    "pid": 7305,
+                    "subrole": null,
+                    "type": "Group",
+                    "enabled": true,
+                    "AXFrame": "{{245.66666666666663, 232}, {78.333333333333314, 19.666666666666657}}"
+                   }
+                  ],
+                  "role_description": "group",
+                  "title": null,
+                  "subrole": null,
+                  "custom_actions": [
+                   "Modo de edição",
+                   "Hoje",
+                   "Biblioteca de Apps"
+                  ],
+                  "AXUniqueId": null,
+                  "AXValue": null,
+                  "AXLabel": null,
+                  "enabled": true,
+                  "frame": {
+                   "width": 162,
+                   "x": 204,
+                   "height": 176,
+                   "y": 67
+                  },
+                  "type": "Group"
+                 }
+                ],
+                "AXLabel": "Calendário",
+                "help": null
+               },
+               {
+                "enabled": true,
+                "AXValue": "segunda-feira, 19 de outubro",
+                "custom_actions": [
+                 "Modo de edição",
+                 "Hoje",
+                 "Biblioteca de Apps"
+                ],
+                "AXUniqueId": "Calendário",
+                "content_required": false,
+                "children": [
+                 {
+                  "AXFrame": "{{28, 263}, {64, 78}}",
+                  "AXLabel": null,
+                  "children": [
+                   {
+                    "children": [],
+                    "AXUniqueId": "label-view",
+                    "frame": {
+                     "width": 78.33333333333333,
+                     "height": 19.666666666666686,
+                     "x": 20.666666666666686,
+                     "y": 330
+                    },
+                    "role_description": "group",
+                    "type": "Group",
+                    "subrole": null,
+                    "AXLabel": null,
+                    "AXValue": null,
+                    "AXFrame": "{{20.666666666666686, 330}, {78.333333333333329, 19.666666666666686}}",
+                    "content_required": false,
+                    "traits": [],
+                    "pid": 7305,
+                    "title": null,
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "enabled": true,
+                    "role": "AXGroup",
+                    "help": null
+                   }
+                  ],
+                  "AXUniqueId": null,
+                  "AXValue": null,
+                  "role": "AXGroup",
+                  "subrole": null,
+                  "content_required": false,
+                  "type": "Group",
+                  "role_description": "group",
+                  "title": null,
+                  "custom_actions": [
+                   "Modo de edição",
+                   "Hoje",
+                   "Biblioteca de Apps"
+                  ],
+                  "pid": 7305,
+                  "help": null,
+                  "enabled": true,
+                  "traits": [],
+                  "frame": {
+                   "width": 64,
+                   "x": 28,
+                   "height": 78,
+                   "y": 263
+                  }
+                 }
+                ],
+                "AXFrame": "{{18.666666666666686, 261}, {82.333333333333329, 90.666666666666686}}",
+                "traits": [],
+                "help": "Toque duas vezes para abrir",
+                "title": null,
+                "type": "Button",
+                "role": "AXButton",
+                "pid": 7305,
+                "frame": {
+                 "width": 82.33333333333333,
+                 "height": 90.66666666666669,
+                 "x": 18.666666666666686,
+                 "y": 261
+                },
+                "role_description": "button",
+                "AXLabel": "Calendário",
+                "subrole": null
+               },
+               {
+                "subrole": null,
+                "title": null,
+                "traits": [],
+                "content_required": false,
+                "AXLabel": "Fotos",
+                "frame": {
+                 "width": 68,
+                 "x": 116,
+                 "height": 90.66666666666669,
+                 "y": 261
+                },
+                "help": "Toque duas vezes para abrir",
+                "AXUniqueId": "Fotos",
+                "children": [
+                 {
+                  "AXFrame": "{{118, 263}, {64, 78}}",
+                  "subrole": null,
+                  "help": null,
+                  "AXUniqueId": null,
+                  "role_description": "group",
+                  "custom_actions": [
+                   "Modo de edição",
+                   "Hoje",
+                   "Biblioteca de Apps"
+                  ],
+                  "enabled": true,
+                  "pid": 7305,
+                  "children": [
+                   {
+                    "pid": 7305,
+                    "traits": [],
+                    "frame": {
+                     "width": 48.33333333333334,
+                     "height": 19.666666666666686,
+                     "x": 125.66666666666663,
+                     "y": 330
+                    },
+                    "type": "Group",
+                    "AXUniqueId": "label-view",
+                    "subrole": null,
+                    "content_required": false,
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "AXValue": null,
+                    "title": null,
+                    "role_description": "group",
+                    "children": [],
+                    "AXLabel": null,
+                    "enabled": true,
+                    "help": null,
+                    "role": "AXGroup",
+                    "AXFrame": "{{125.66666666666663, 330}, {48.333333333333343, 19.666666666666686}}"
+                   }
+                  ],
+                  "frame": {
+                   "width": 64,
+                   "x": 118,
+                   "height": 78,
+                   "y": 263
+                  },
+                  "type": "Group",
+                  "AXLabel": null,
+                  "AXValue": null,
+                  "title": null,
+                  "traits": [],
+                  "content_required": false,
+                  "role": "AXGroup"
+                 }
+                ],
+                "AXFrame": "{{116, 261}, {68, 90.666666666666686}}",
+                "pid": 7305,
+                "enabled": true,
+                "custom_actions": [
+                 "Modo de edição",
+                 "Hoje",
+                 "Biblioteca de Apps"
+                ],
+                "type": "Button",
+                "AXValue": "",
+                "role": "AXButton",
+                "role_description": "button"
+               },
+               {
+                "AXUniqueId": "Lembretes",
+                "subrole": null,
+                "AXLabel": "Lembretes",
+                "traits": [],
+                "frame": {
+                 "width": 81.33333333333331,
+                 "x": 199,
+                 "height": 90.66666666666669,
+                 "y": 261
+                },
+                "children": [
+                 {
+                  "children": [
+                   {
+                    "AXUniqueId": "label-view",
+                    "children": [],
+                    "role": "AXGroup",
+                    "traits": [],
+                    "content_required": false,
+                    "frame": {
+                     "width": 77.33333333333331,
+                     "height": 19.666666666666686,
+                     "x": 201,
+                     "y": 330
+                    },
+                    "subrole": null,
+                    "title": null,
+                    "enabled": true,
+                    "AXValue": null,
+                    "pid": 7305,
+                    "type": "Group",
+                    "help": null,
+                    "AXFrame": "{{201, 330}, {77.333333333333314, 19.666666666666686}}",
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "role_description": "group",
+                    "AXLabel": null
+                   }
+                  ],
+                  "traits": [],
+                  "subrole": null,
+                  "pid": 7305,
+                  "type": "Group",
+                  "enabled": true,
+                  "content_required": false,
+                  "help": null,
+                  "AXLabel": null,
+                  "custom_actions": [
+                   "Modo de edição",
+                   "Hoje",
+                   "Biblioteca de Apps"
+                  ],
+                  "frame": {
+                   "width": 64,
+                   "height": 78,
+                   "x": 208,
+                   "y": 263
+                  },
+                  "AXValue": null,
+                  "title": null,
+                  "AXFrame": "{{208, 263}, {64, 78}}",
+                  "role_description": "group",
+                  "role": "AXGroup",
+                  "AXUniqueId": null
+                 }
+                ],
+                "AXFrame": "{{199, 261}, {81.333333333333314, 90.666666666666686}}",
+                "title": null,
+                "type": "Button",
+                "pid": 7305,
+                "role_description": "button",
+                "role": "AXButton",
+                "custom_actions": [
+                 "Modo de edição",
+                 "Hoje",
+                 "Biblioteca de Apps"
+                ],
+                "help": "Toque duas vezes para abrir",
+                "enabled": true,
+                "AXValue": "",
+                "content_required": false
+               },
+               {
+                "children": [
+                 {
+                  "subrole": null,
+                  "AXValue": null,
+                  "children": [
+                   {
+                    "frame": {
+                     "width": 48,
+                     "x": 305.66666666666674,
+                     "height": 19.666666666666686,
+                     "y": 330
+                    },
+                    "AXValue": null,
+                    "help": null,
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "content_required": false,
+                    "pid": 7305,
+                    "AXLabel": null,
+                    "subrole": null,
+                    "traits": [],
+                    "role": "AXGroup",
+                    "enabled": true,
+                    "title": null,
+                    "AXUniqueId": "label-view",
+                    "type": "Group",
+                    "children": [],
+                    "role_description": "group",
+                    "AXFrame": "{{305.66666666666674, 330}, {48, 19.666666666666686}}"
+                   }
+                  ],
+                  "enabled": true,
+                  "role": "AXGroup",
+                  "pid": 7305,
+                  "content_required": false,
+                  "custom_actions": [
+                   "Modo de edição",
+                   "Hoje",
+                   "Biblioteca de Apps"
+                  ],
+                  "AXUniqueId": null,
+                  "title": null,
+                  "role_description": "group",
+                  "AXLabel": null,
+                  "frame": {
+                   "width": 64,
+                   "height": 78,
+                   "x": 298,
+                   "y": 263
+                  },
+                  "AXFrame": "{{298, 263}, {64, 78}}",
+                  "help": null,
+                  "type": "Group",
+                  "traits": []
+                 }
+                ],
+                "custom_actions": [
+                 "Modo de edição",
+                 "Hoje",
+                 "Biblioteca de Apps"
+                ],
+                "role_description": "button",
+                "AXValue": "",
+                "pid": 7305,
+                "help": "Toque duas vezes para abrir",
+                "frame": {
+                 "width": 68,
+                 "x": 296,
+                 "height": 90.66666666666669,
+                 "y": 261
+                },
+                "enabled": true,
+                "type": "Button",
+                "AXUniqueId": "News",
+                "role": "AXButton",
+                "subrole": null,
+                "content_required": false,
+                "traits": [],
+                "AXFrame": "{{296, 261}, {68, 90.666666666666686}}",
+                "title": null,
+                "AXLabel": "News"
+               },
+               {
+                "role_description": "button",
+                "custom_actions": [
+                 "Modo de edição",
+                 "Hoje",
+                 "Biblioteca de Apps"
+                ],
+                "pid": 7305,
+                "traits": [],
+                "help": "Toque duas vezes para abrir",
+                "enabled": true,
+                "AXUniqueId": "Mapas",
+                "AXFrame": "{{26, 359}, {68, 90.666666666666686}}",
+                "AXLabel": "Mapas",
+                "subrole": null,
+                "AXValue": "",
+                "frame": {
+                 "width": 68,
+                 "height": 90.66666666666669,
+                 "x": 26,
+                 "y": 359
+                },
+                "type": "Button",
+                "content_required": false,
+                "children": [
+                 {
+                  "AXFrame": "{{28, 361}, {64, 78}}",
+                  "role_description": "group",
+                  "subrole": null,
+                  "frame": {
+                   "width": 64,
+                   "height": 78,
+                   "x": 28,
+                   "y": 361
+                  },
+                  "role": "AXGroup",
+                  "AXUniqueId": null,
+                  "custom_actions": [
+                   "Modo de edição",
+                   "Hoje",
+                   "Biblioteca de Apps"
+                  ],
+                  "AXLabel": null,
+                  "enabled": true,
+                  "content_required": false,
+                  "pid": 7305,
+                  "children": [
+                   {
+                    "AXFrame": "{{32.666666666666686, 428}, {54, 19.666666666666686}}",
+                    "traits": [],
+                    "AXLabel": null,
+                    "AXValue": null,
+                    "enabled": true,
+                    "content_required": false,
+                    "custom_actions": [
+                     "Modo de edição",
+                     "Hoje",
+                     "Biblioteca de Apps"
+                    ],
+                    "subrole": null,
+                    "frame": {
+                     "width": 54,
+                     "height": 19.666666666666686,
+                     "x": 32.666666666666686,
+                     "y": 428
+                    },
+                    "title": null,
+                    "children": [],
+                    "role_description": "group",
+                    "role": "AXGroup",
+                    "help": null,
+                    "AXUniqueId": "label-view",
+                    "pid": 7305,
+                    "type": "Group"
+                   }
+                  ],
+                  "title": null,
+                  "AXValue": null,
+                  "traits": [],
+                  "type": "Group",
+                  "help": null
+                 }
+                ],
+                "role": "AXButton",
+                "title": null
+               }
+              ],
+              "title": null,
+              "frame": {
+               "width": 0,
+               "height": 0,
+               "x": 0,
+               "y": 0
+              },
+              "AXFrame": "{{0, 0}, {0, 0}}",
+              "AXLabel": null,
+              "role": "AXButton",
+              "help": null,
+              "AXUniqueId": null,
+              "content_required": false,
+              "pid": 7305,
+              "AXValue": null,
+              "subrole": null,
+              "traits": []
+             }
+            ],
+            "type": "Group",
+            "frame": {
+             "x": 0,
+             "width": 390,
+             "y": 0,
+             "height": 844
+            },
+            "AXUniqueId": null,
+            "pid": 7305,
+            "AXFrame": "{{0, 0}, {390, 844}}",
+            "AXLabel": null,
+            "role": "AXGroup",
+            "content_required": false,
+            "help": null,
+            "enabled": true
+           }
+          ],
+          "traits": [],
+          "role_description": "group",
+          "title": null,
+          "custom_actions": [],
+          "AXFrame": "{{0, 0}, {390, 844}}",
+          "content_required": false,
+          "help": null,
+          "AXUniqueId": null,
+          "frame": {
+           "x": 0,
+           "width": 390,
+           "y": 0,
+           "height": 844
+          }
+         }
+        ],
+        "role_description": "group",
+        "enabled": true,
+        "custom_actions": [],
+        "AXLabel": null,
+        "subrole": null,
+        "help": null,
+        "title": null
+       }
+      ],
+      "frame": {
+       "x": 0,
+       "width": 390,
+       "y": 0,
+       "height": 844
+      },
+      "enabled": true,
+      "role": "AXGroup",
+      "subrole": null
+     }
+    ],
+    "AXUniqueId": null,
+    "content_required": false,
+    "traits": [],
+    "subrole": null,
+    "type": "Group",
+    "custom_actions": [],
+    "role_description": "group",
+    "AXFrame": "{{0, 0}, {390, 844}}",
+    "title": null
+   }
+  ],
+  "enabled": true,
+  "role": "AXApplication",
+  "custom_actions": [],
+  "frame": {
+   "x": 0,
+   "width": 390,
+   "y": 0,
+   "height": 844
+  },
+  "type": "Application",
+  "title": null,
+  "subrole": null,
+  "AXFrame": "{{0, 0}, {390, 844}}",
+  "help": null,
+  "AXLabel": " ",
+  "role_description": "application",
+  "AXValue": null
+ }
+]

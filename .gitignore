@@ -1,0 +1,24 @@
+# SwiftPM / Xcode
+.build/
+.swiftpm/
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Third-party binaries and sources fetched by scripts/ (see README)
+vendor/
+
+# Local tooling and agent workspaces
+.superpowers/
+.worktrees/
+.claude/
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets
+.env
+.env.*

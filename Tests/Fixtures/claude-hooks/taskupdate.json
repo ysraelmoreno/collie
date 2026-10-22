@@ -1,0 +1,1 @@
+{"session_id":"s-1","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/proj","hook_event_name":"PostToolUse","tool_name":"TaskUpdate","tool_use_id":"toolu_04","tool_input":{"taskId":"7","status":"in_progress"},"tool_response":{"success":true,"taskId":"7"}}

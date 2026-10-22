@@ -1,0 +1,4 @@
+{"session_id":"s-1","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/proj","hook_event_name":"PostToolUse","tool_name":"TodoWrite","tool_use_id":"toolu_01","tool_input":{"todos":[
+{"content":"Write parser","status":"in_progress","activeForm":"Writing parser"},
+{"content":"Write tests","status":"pending","activeForm":"Writing tests"},
+{"content":"Update docs","status":"pending","activeForm":"Updating docs"}]},"tool_response":{"oldTodos":[],"newTodos":[]}}

@@ -1,0 +1,1 @@
+{"session_id":"s-1","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/proj","hook_event_name":"PostToolUse","tool_name":"TaskCreate","tool_use_id":"toolu_03","tool_input":{"subject":"Add retry logic","description":"Retry the upload three times","activeForm":"Adding retry logic"},"tool_response":{"task":{"id":"7","subject":"Add retry logic"}}}

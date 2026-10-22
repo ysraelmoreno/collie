@@ -1,0 +1,125 @@
+import Testing
+@testable import OrqProtocol
+
+@Suite struct CommandsTests {
+    @Test func pluginCommandGroupWord() throws {
+        let r = try ArgvParser.parse(["artifact", "add", "--path", "a.html"])
+        #expect(r.command == "artifact.add" && r.args["path"] == .string("a.html"))
+    }
+
+    @Test func parsesAskWithRestPrompt() throws {
+        let r = try ArgvParser.parse(["ask", "Reviewer", "revise", "o", "PR", "--raw"])
+        #expect(r.command == "ask")
+        #expect(r.args["target"] == .string("Reviewer"))
+        #expect(r.args["prompt"] == .string("revise o PR"))
+        #expect(r.args["raw"] == .bool(true))
+    }
+
+    @Test func parsesCheckIntFlag() throws {
+        let r = try ArgvParser.parse(["check", "Bob", "--lines", "50"])
+        #expect(r.args["lines"] == .number(50))
+    }
+
+    @Test(arguments: ["abc", "1.5", "nan", "inf", "1e999"])
+    func rejectsNonIntegerInt(_ v: String) {
+        let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(["check", "Bob", "--lines", v]) }
+        #expect(e?.code == .invalidArgs)
+        #expect(e?.message.contains("lines") == true)
+    }
+
+    @Test func parsesDoubleDashTerminator() throws {
+        let a = try ArgvParser.parse(["ask", "Bob", "--", "explain", "--foo", "please"])
+        #expect(a.args["target"] == .string("Bob"))
+        #expect(a.args["prompt"] == .string("explain --foo please"))
+        let b = try ArgvParser.parse(["ask", "Bob", "--raw", "--", "hi", "--x"])
+        #expect(b.args["raw"] == .bool(true))
+        #expect(b.args["prompt"] == .string("hi --x"))
+    }
+
+    @Test func parsesAdminSubcommand() throws {
+        let r = try ArgvParser.parse(["admin", "spawn", "A", "--preset", "shell"])
+        #expect(r.command == "admin.spawn")
+        #expect(r.args["name"] == .string("A"))
+        #expect(r.args["preset"] == .string("shell"))
+        let f = try ArgvParser.parse(["floor", "status", "feat", "review"])
+        #expect(f.command == "floor.status" && f.args["name"] == .string("feat") && f.args["status"] == .string("review"))
+        let m = try ArgvParser.parse(["memory", "save", "--kind", "decision", "--subject", "db", "--title", "Postgres", "for", "jsonb"])
+        #expect(m.command == "memory.save" && m.args["body"] == .string("for jsonb") && m.args["title"] == .string("Postgres"))
+    }
+
+    @Test func parsesPluginAndPanelSubcommands() throws {
+        let n = try ArgvParser.parse(["browser", "navigate", "https://x.dev", "--panel", "web"])
+        #expect(n.command == "browser.navigate" && n.args == ["url": .string("https://x.dev"), "panel": .string("web")])
+        let f = try ArgvParser.parse(["browser", "fill", "e3", "hello", "world"])
+        #expect(f.args == ["ref": .string("e3"), "text": .string("hello world")])
+        let o = try ArgvParser.parse(["panel", "open", "browser", "--placement", "canvas"])
+        #expect(o.command == "panel.open" && o.args["plugin"] == .string("browser") && o.args["placement"] == .string("canvas"))
+        #expect(try ArgvParser.parse(["events", "--since", "4"]).args == ["since": .number(4)])
+    }
+
+    @Test func rejectsBadDottedSubcommands() {
+        for argv in [["panel"], ["panel", "bogus"], ["browser", "bogus"], ["browser"], ["panel", "close"]] {
+            let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(argv) }
+            #expect(e?.code == .invalidArgs, "\(argv)")
+        }
+    }
+
+    @Test func rejectsUnknownCommand() {
+        let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(["bogus"]) }
+        #expect(e?.code == .invalidArgs)
+        #expect(e?.message.contains("bogus") == true)
+    }
+
+    @Test func rejectsMissingRequired() {
+        let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(["ask"]) }
+        #expect(e?.code == .invalidArgs)
+        #expect(e?.message.contains("target") == true)
+    }
+
+    @Test func threeWordPluginCommandsParse() throws {
+        let p = try ArgvParser.parse(["design", "system", "create", "Brand", "--from", "Base", "--reason", "why"])
+        #expect(p.command == "design.system.create" && p.args == ["name": .string("Brand"), "from": .string("Base"), "reason": .string("why")])
+        #expect(try ArgvParser.parse(["design", "system", "list"]).command == "design.system.list")
+        let w = try ArgvParser.parse(["work", "task", "defer", "Write docs", "waits", "for", "API"])
+        #expect(w.command == "work.task.defer" && w.args == ["task": .string("Write docs"), "reason": .string("waits for API")])
+        #expect(try ArgvParser.parse(["work", "clear-history"]).command == "work.clear-history")
+        #expect(throws: ProtocolError.self) { try ArgvParser.parse(["design", "system"]) }
+    }
+
+    @Test func mcpSchemaOmitsInternalCommands() {
+        let tools = MCPSchema.tools()
+        let names = tools.compactMap { t -> String? in
+            if case .object(let o) = t, case .string(let n)? = o["name"] { return n } else { return nil }
+        }
+        #expect(names == ["list", "ask", "check", "floor_list", "floor_status", "panel_list", "events",
+                         "memory_save", "memory_search", "memory_list", "memory_get", "memory_context",
+                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get",
+                         "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
+                         "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help",
+                         "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
+                         "artifact_list", "artifact_get", "artifact_add", "artifact_import"])
+        guard case .object(let ask) = tools[1], case .object(let schema)? = ask["inputSchema"],
+              case .array(let req)? = schema["required"] else { Issue.record("bad schema"); return }
+        #expect(req.contains(.string("target")) && req.contains(.string("prompt")))
+    }
+
+    @Test func mcpSchemaListsMaestroToolsOnlyForMaestro() throws {
+        func names(_ m: Bool) -> [String] {
+            MCPSchema.tools(maestro: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }
+        }
+        #expect(names(true) == ["list", "ask", "check", "recruit", "dismiss", "connect", "disconnect", "notify",
+                                "floor_create", "floor_list", "floor_status", "floor_land", "floor_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
+                                "memory_save", "memory_search", "memory_list", "memory_get", "memory_context",
+                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get", "work_rerail",
+                         "partitura_list", "partitura_get", "partitura_save", "partitura_apply",
+                         "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
+                         "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help",
+                         "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
+                         "artifact_list", "artifact_get", "artifact_add", "artifact_import"])
+        #expect(try ArgvParser.parse(["recruit", "w", "--preset", "shell", "echo", "hi"]).args
+                == ["name": .string("w"), "preset": .string("shell"), "prompt": .string("echo hi")])
+        // flags anywhere before `--` are flags, not prompt words; after `--` everything is prompt
+        #expect(try ArgvParser.parse(["recruit", "w", "echo", "hi", "--preset", "shell", "--", "--x"]).args
+                == ["name": .string("w"), "preset": .string("shell"), "prompt": .string("echo hi --x")])
+    }
+}

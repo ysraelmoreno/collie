@@ -1,0 +1,23 @@
+figcraft (embedded in Orq)
+
+Orq bundles figcraft-server, figcraft-cli and the figcraft web UI (Contents/Resources/figcraft/),
+built from figcraft v0.7.0 (https://github.com/storytold/figcraft, commit
+47438dd4a2e8b49a7e6bb3dfd480262dadc37f12), dual-licensed under the MIT License or the Apache
+License, Version 2.0, at your option.
+
+Changes made by Orq (patches/figcraft/ in the Orq source):
+- 0001-orq-branding.patch: the About window and help link point to the upstream repository and
+  its licence; third-party product names and links removed.
+- 0002-headless-read-poll.patch: headless MCP reads poll the live session first.
+- Built with FIGCRAFT_DEFAULT_SERVER empty: no public collaboration server is built in.
+
+The upstream NOTICE, LICENSE-APACHE and LICENSE-MIT are in Contents/Resources/figcraft/licenses/.
+
+Fonts: the binaries and web UI embed fonts from craft-fonts
+(https://github.com/storytold/craft-fonts, commit 43913056ce82a3fdad0ef69f6b88d1dc922a8104;
+the web UI embeds only Inter), licensed under the SIL Open Font License 1.1. Each family's
+licence text is in Contents/Resources/figcraft/licenses/OFL-<family>.txt.
+
+Rust crate dependencies keep their own licenses (MIT, Apache-2.0, BSD, ISC, Zlib, OFL,
+CDLA-Permissive-2.0 and similar permissive licenses); see each crate's metadata in figcraft's
+Cargo.lock.

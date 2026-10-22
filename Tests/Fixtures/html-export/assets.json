@@ -1,0 +1,20 @@
+{
+    "assets": [
+        {
+            "exports": [
+                "SVG 1x"
+            ],
+            "id": 18,
+            "kind": "icon",
+            "name": "Icon Star"
+        },
+        {
+            "exports": [
+                "PNG 1x"
+            ],
+            "id": 19,
+            "kind": "image",
+            "name": "Photo"
+        }
+    ]
+}

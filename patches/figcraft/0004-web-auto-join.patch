@@ -1,0 +1,89 @@
+diff --git a/apps/figcraft-web/src/query.rs b/apps/figcraft-web/src/query.rs
+index befeb36..e7244c5 100644
+--- a/apps/figcraft-web/src/query.rs
++++ b/apps/figcraft-web/src/query.rs
+@@ -13,3 +13,13 @@ pub fn join_link(fragment: &str) -> Option<&str> {
+     let start = if fragment.starts_with("join=") { 0 } else { fragment.find("&join=")? + 1 };
+     fragment.get(start + "join=".len()..).filter(|link| !link.is_empty() && link.len() <= MAX)
+ }
++
++/// `#orq=1&join=<link>`: the page is Orq's Design panel, whose host put the link there itself, so the
++/// session is joined without the confirmation dialog. Only entries before `join=` count (the link
++/// takes the rest of the fragment, and an `orq=1` inside it is the link's own).
++pub fn orq_auto(fragment: &str) -> bool {
++    let fragment = fragment.strip_prefix('#').unwrap_or(fragment);
++    // the same `join=` entry `join_link` reads: a leading one leaves nothing before it
++    let Some(end) = fragment.find("&join=").filter(|_| !fragment.starts_with("join=")) else { return false };
++    fragment[..end].split('&').any(|entry| entry == "orq=1")
++}
+diff --git a/apps/figcraft-web/src/query_tests.rs b/apps/figcraft-web/src/query_tests.rs
+index 261ebae..fcfb3ac 100644
+--- a/apps/figcraft-web/src/query_tests.rs
++++ b/apps/figcraft-web/src/query_tests.rs
+@@ -1,6 +1,6 @@
+ //! `#join=` in the page's URL.
+ 
+-use crate::query::join_link;
++use crate::query::{join_link, orq_auto};
+ 
+ #[test]
+ fn join_takes_the_rest_of_the_fragment() {
+@@ -27,3 +27,18 @@ fn an_overlong_link_is_ignored() {
+     assert_eq!(join_link(&long), None);
+     assert_eq!(join_link(&format!("#join={}", "é".repeat(4000))), None, "length counts bytes");
+ }
++
++#[test]
++fn orq_auto_reads_only_entries_before_join() {
++    let link = "figcraft://join?host=h&file=f&token=t";
++    assert!(orq_auto(&format!("#orq=1&join={link}")));
++    assert!(orq_auto("orq=1&join=x"), "no leading #");
++    assert_eq!(join_link(&format!("#orq=1&join={link}")), Some(link), "the link is unchanged");
++    assert!(!orq_auto(&format!("#join={link}")));
++    assert!(!orq_auto("#join=figcraft://join?orq=1&x=1"), "inside the link it doesn't count");
++    assert!(!orq_auto("#join=x&orq=1"), "after join it is part of the link");
++    assert!(!orq_auto("#join=a&orq=1&join=b"), "a leading join takes it all, like join_link");
++    assert!(!orq_auto("#orq=10&join=x"));
++    assert!(!orq_auto("#xorq=1&join=x"));
++    assert!(!orq_auto("#orq=1"), "nothing to join");
++}
+diff --git a/apps/figcraft-web/src/web.rs b/apps/figcraft-web/src/web.rs
+index 2921362..b60c1c6 100644
+--- a/apps/figcraft-web/src/web.rs
++++ b/apps/figcraft-web/src/web.rs
+@@ -41,11 +41,16 @@ pub fn start() {
+                     let ctx = cc.egui_ctx.clone();
+                     session.live.install(Box::new(figcraft_collab_net::NetLink::new(std::sync::Arc::new(move || ctx.request_repaint()))));
+                     let mut fig = FigApp::new(session, Box::new(WebServices { reduce_motion, ctx: cc.egui_ctx.clone() }));
+-                    // `#join=<link>`: join that session, as opening an invite link does on the desktop.
++                    // `#join=<link>`: join that session, as opening an invite link does on the desktop
++                    // (`#orq=1&join=<link>`, Orq's Design panel: joined without the dialog).
+                     let hash = web_sys::window().and_then(|w| w.location().hash().ok()).unwrap_or_default();
+                     if let Some(link) = crate::query::join_link(&hash) {
+                         let link = js_sys::decode_uri_component(link).ok().and_then(|s| s.as_string()).unwrap_or_else(|| link.to_string());
+-                        figcraft_ui_egui::live::open_invite(&mut fig, &link);
++                        if crate::query::orq_auto(&hash) {
++                            figcraft_ui_egui::live::join_invite(&mut fig, &link);
++                        } else {
++                            figcraft_ui_egui::live::open_invite(&mut fig, &link);
++                        }
+                     }
+                     Ok(Box::new(WebShell { fig }))
+                 }),
+diff --git a/crates/ui-egui/src/live.rs b/crates/ui-egui/src/live.rs
+index 513060a..8d41d36 100644
+--- a/crates/ui-egui/src/live.rs
++++ b/crates/ui-egui/src/live.rs
+@@ -1057,6 +1057,12 @@ pub fn open_invite(app: &mut FigApp, link: &str) {
+     open_join(app, link.trim());
+ }
+ 
++/// Join the session `link` names right away, as the Join dialog's button does: only for a link the
++/// page's own host put there (Orq's Design panel), never one the system hands the app.
++pub fn join_invite(app: &mut FigApp, link: &str) {
++    app.run("collab.join", json!({"code": link.trim()}));
++}
++
+ /// Escape closes the Join or Publish dialog (before the canvas's shortcuts see it: it doesn't
+ /// deselect).
+ pub fn dialog_keys(app: &mut FigApp, ctx: &egui::Context) {

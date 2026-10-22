@@ -1,0 +1,13 @@
+diff --git a/crates/mcp/src/headless.rs b/crates/mcp/src/headless.rs
+index fcdb21a..fe3cc17 100644
+--- a/crates/mcp/src/headless.rs
++++ b/crates/mcp/src/headless.rs
+@@ -236,6 +236,8 @@ impl Headless {
+ 
+ impl Backend for Headless {
+     fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
++        // Orq: reads (node.get, document.inspect, ui.render, ...) see the live session's latest state too.
++        self.session.live_poll();
+         match method {
+             "engine.execute" => {
+                 let cmd = p.get("command").and_then(Value::as_str).ok_or("`command` required")?.to_string();

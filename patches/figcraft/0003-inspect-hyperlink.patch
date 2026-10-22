@@ -1,0 +1,14 @@
+diff --git a/crates/engine/src/inspect.rs b/crates/engine/src/inspect.rs
+index 88bc015..1edb836 100644
+--- a/crates/engine/src/inspect.rs
++++ b/crates/engine/src/inspect.rs
+@@ -168,6 +168,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
+     match &n.kind {
+         NodeKind::Text(t) => {
+             o.insert("characters".into(), json!(t.characters));
++            if let Some(url) = &t.style.link {
++                o.insert("hyperlink".into(), json!(url));
++            }
+             o.insert("fontFamily".into(), json!(t.style.font_family));
+             o.insert("fontStyle".into(), json!(t.style.font_style));
+             o.insert("fontSize".into(), json!(t.style.font_size));

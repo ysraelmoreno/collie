@@ -1,0 +1,615 @@
+{
+  "blocked" : [
+    "https://fonts.googleapis.com/css2?family=Archivo",
+    "https://example.com/remote.png"
+  ],
+  "height" : 1130,
+  "root" : {
+    "children" : [
+      {
+        "children" : [
+          {
+            "children" : [
+              {
+                "alt" : "Ateliê",
+                "children" : [
+
+                ],
+                "cls" : "logo",
+                "h" : 32,
+                "style" : {
+                  "display" : "block"
+                },
+                "svg" : {
+                  "file" : "svg-1.svg"
+                },
+                "tag" : "img",
+                "w" : 32,
+                "x" : 48,
+                "y" : 16
+              },
+              {
+                "children" : [
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 17,
+                    "href" : "#recursos",
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "fontSize" : "15px"
+                    },
+                    "tag" : "a",
+                    "text" : "Recursos",
+                    "w" : 63.359375,
+                    "x" : 1182.21875,
+                    "y" : 23.5
+                  },
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 17,
+                    "href" : "#planos",
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "fontSize" : "15px"
+                    },
+                    "tag" : "a",
+                    "text" : "Planos",
+                    "w" : 45.875,
+                    "x" : 1269.578125,
+                    "y" : 23.5
+                  },
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 17,
+                    "href" : "#contato",
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "fontSize" : "15px"
+                    },
+                    "tag" : "a",
+                    "text" : "Contato",
+                    "w" : 52.546875,
+                    "x" : 1339.453125,
+                    "y" : 23.5
+                  }
+                ],
+                "h" : 17,
+                "style" : {
+                  "columnGap" : "24px",
+                  "display" : "flex"
+                },
+                "tag" : "nav",
+                "w" : 209.78125,
+                "x" : 1182.21875,
+                "y" : 23.5
+              }
+            ],
+            "h" : 65,
+            "style" : {
+              "alignItems" : "center",
+              "borderBottomColor" : "rgb(227, 230, 238)",
+              "borderBottomWidth" : "1px",
+              "display" : "flex",
+              "justifyContent" : "space-between",
+              "paddingBottom" : "16px",
+              "paddingLeft" : "48px",
+              "paddingRight" : "48px",
+              "paddingTop" : "16px"
+            },
+            "tag" : "header",
+            "w" : 1440,
+            "x" : 0,
+            "y" : 0
+          },
+          {
+            "children" : [
+              {
+                "children" : [
+
+                ],
+                "h" : 56,
+                "style" : {
+                  "color" : "rgb(31, 36, 48)",
+                  "display" : "block",
+                  "fontFamily" : "Archivo, Helvetica, sans-serif",
+                  "fontSize" : "48px",
+                  "fontWeight" : "700",
+                  "lineHeight" : "56px"
+                },
+                "tag" : "h1",
+                "text" : "Construa telas com seus agentes",
+                "w" : 762.9375,
+                "x" : 48,
+                "y" : 137
+              },
+              {
+                "children" : [
+
+                ],
+                "h" : 42,
+                "runs" : [
+                  {
+                    "end" : 46,
+                    "fontWeight" : "700",
+                    "start" : 29
+                  },
+                  {
+                    "color" : "rgb(59, 91, 219)",
+                    "decoration" : "underline",
+                    "end" : 77,
+                    "href" : "https://example.com",
+                    "start" : 64
+                  }
+                ],
+                "style" : {
+                  "color" : "rgb(31, 36, 48)",
+                  "display" : "block",
+                  "fontFamily" : "Archivo, Helvetica, sans-serif",
+                  "fontSize" : "18px"
+                },
+                "tag" : "p",
+                "text" : "Descreva a ideia e receba um rascunho editável em minutos. Veja como funciona.",
+                "w" : 640,
+                "x" : 48,
+                "y" : 213
+              },
+              {
+                "children" : [
+
+                ],
+                "cls" : "cta",
+                "h" : 42,
+                "style" : {
+                  "alignItems" : "flex-start",
+                  "backgroundColor" : "rgb(59, 91, 219)",
+                  "borderBottomLeftRadius" : "8px",
+                  "borderBottomRightRadius" : "8px",
+                  "borderTopLeftRadius" : "8px",
+                  "borderTopRightRadius" : "8px",
+                  "color" : "rgb(255, 255, 255)",
+                  "display" : "block",
+                  "fontFamily" : "system-ui",
+                  "fontWeight" : "600",
+                  "paddingBottom" : "12px",
+                  "paddingLeft" : "24px",
+                  "paddingRight" : "24px",
+                  "paddingTop" : "12px",
+                  "textAlign" : "center"
+                },
+                "tag" : "button",
+                "text" : "Começar agora",
+                "w" : 163.796875,
+                "x" : 48,
+                "y" : 275
+              },
+              {
+                "alt" : "Prévia da tela",
+                "children" : [
+
+                ],
+                "h" : 200,
+                "image" : {
+                  "file" : "img-1.png",
+                  "fit" : "cover",
+                  "h" : 40,
+                  "w" : 64
+                },
+                "style" : {
+                  "display" : "block",
+                  "objectFit" : "cover"
+                },
+                "tag" : "img",
+                "w" : 320,
+                "x" : 48,
+                "y" : 337
+              },
+              {
+                "alt" : "Imagem remota",
+                "children" : [
+
+                ],
+                "h" : 80,
+                "style" : {
+                  "display" : "block"
+                },
+                "tag" : "img",
+                "w" : 120,
+                "x" : 48,
+                "y" : 557
+              }
+            ],
+            "cls" : "hero",
+            "h" : 644,
+            "id" : "inicio",
+            "style" : {
+              "alignItems" : "flex-start",
+              "backgroundColor" : "rgb(244, 246, 251)",
+              "display" : "flex",
+              "flexDirection" : "column",
+              "paddingBottom" : "72px",
+              "paddingLeft" : "48px",
+              "paddingRight" : "48px",
+              "paddingTop" : "72px",
+              "rowGap" : "20px"
+            },
+            "tag" : "section",
+            "w" : 1440,
+            "x" : 0,
+            "y" : 65
+          },
+          {
+            "children" : [
+              {
+                "children" : [
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 23,
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "fontSize" : "20px",
+                      "fontWeight" : "700"
+                    },
+                    "tag" : "h3",
+                    "text" : "Rápido",
+                    "w" : 382,
+                    "x" : 73,
+                    "y" : 782
+                  },
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 18,
+                    "style" : {
+                      "color" : "rgb(89, 96, 122)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif"
+                    },
+                    "tag" : "p",
+                    "text" : "Do texto à tela em um passo.",
+                    "w" : 382,
+                    "x" : 73,
+                    "y" : 813
+                  }
+                ],
+                "cls" : "card",
+                "h" : 99,
+                "style" : {
+                  "backgroundColor" : "rgb(255, 255, 255)",
+                  "borderBottomColor" : "rgb(227, 230, 238)",
+                  "borderBottomLeftRadius" : "12px",
+                  "borderBottomRightRadius" : "12px",
+                  "borderBottomWidth" : "1px",
+                  "borderLeftColor" : "rgb(227, 230, 238)",
+                  "borderLeftWidth" : "1px",
+                  "borderRightColor" : "rgb(227, 230, 238)",
+                  "borderRightWidth" : "1px",
+                  "borderTopColor" : "rgb(227, 230, 238)",
+                  "borderTopLeftRadius" : "12px",
+                  "borderTopRightRadius" : "12px",
+                  "borderTopStyle" : "solid",
+                  "borderTopWidth" : "1px",
+                  "boxShadow" : "rgba(31, 36, 48, 0.08) 0px 4px 12px 0px",
+                  "display" : "block",
+                  "paddingBottom" : "24px",
+                  "paddingLeft" : "24px",
+                  "paddingRight" : "24px",
+                  "paddingTop" : "24px"
+                },
+                "tag" : "article",
+                "w" : 432,
+                "x" : 48,
+                "y" : 757
+              },
+              {
+                "children" : [
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 23,
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "fontSize" : "20px",
+                      "fontWeight" : "700"
+                    },
+                    "tag" : "h3",
+                    "text" : "Editável",
+                    "w" : 382,
+                    "x" : 529,
+                    "y" : 782
+                  },
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 18,
+                    "style" : {
+                      "color" : "rgb(89, 96, 122)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif"
+                    },
+                    "tag" : "p",
+                    "text" : "Cada camada vira um quadro que você ajusta.",
+                    "w" : 382,
+                    "x" : 529,
+                    "y" : 813
+                  }
+                ],
+                "cls" : "card",
+                "h" : 99,
+                "style" : {
+                  "backgroundColor" : "rgb(255, 255, 255)",
+                  "borderBottomColor" : "rgb(227, 230, 238)",
+                  "borderBottomLeftRadius" : "12px",
+                  "borderBottomRightRadius" : "12px",
+                  "borderBottomWidth" : "1px",
+                  "borderLeftColor" : "rgb(227, 230, 238)",
+                  "borderLeftWidth" : "1px",
+                  "borderRightColor" : "rgb(227, 230, 238)",
+                  "borderRightWidth" : "1px",
+                  "borderTopColor" : "rgb(227, 230, 238)",
+                  "borderTopLeftRadius" : "12px",
+                  "borderTopRightRadius" : "12px",
+                  "borderTopStyle" : "solid",
+                  "borderTopWidth" : "1px",
+                  "boxShadow" : "rgba(31, 36, 48, 0.08) 0px 4px 12px 0px",
+                  "display" : "block",
+                  "paddingBottom" : "24px",
+                  "paddingLeft" : "24px",
+                  "paddingRight" : "24px",
+                  "paddingTop" : "24px"
+                },
+                "tag" : "article",
+                "w" : 432,
+                "x" : 504,
+                "y" : 757
+              },
+              {
+                "children" : [
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 23,
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "fontSize" : "20px",
+                      "fontWeight" : "700"
+                    },
+                    "tag" : "h3",
+                    "text" : "Local",
+                    "w" : 382,
+                    "x" : 985,
+                    "y" : 782
+                  },
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 18,
+                    "style" : {
+                      "color" : "rgb(89, 96, 122)",
+                      "display" : "block",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif"
+                    },
+                    "tag" : "p",
+                    "text" : "Nada sai da sua máquina.",
+                    "w" : 382,
+                    "x" : 985,
+                    "y" : 813
+                  }
+                ],
+                "cls" : "card",
+                "h" : 99,
+                "style" : {
+                  "backgroundColor" : "rgb(255, 255, 255)",
+                  "borderBottomColor" : "rgb(227, 230, 238)",
+                  "borderBottomLeftRadius" : "12px",
+                  "borderBottomRightRadius" : "12px",
+                  "borderBottomWidth" : "1px",
+                  "borderLeftColor" : "rgb(227, 230, 238)",
+                  "borderLeftWidth" : "1px",
+                  "borderRightColor" : "rgb(227, 230, 238)",
+                  "borderRightWidth" : "1px",
+                  "borderTopColor" : "rgb(227, 230, 238)",
+                  "borderTopLeftRadius" : "12px",
+                  "borderTopRightRadius" : "12px",
+                  "borderTopStyle" : "solid",
+                  "borderTopWidth" : "1px",
+                  "boxShadow" : "rgba(31, 36, 48, 0.08) 0px 4px 12px 0px",
+                  "display" : "block",
+                  "paddingBottom" : "24px",
+                  "paddingLeft" : "24px",
+                  "paddingRight" : "24px",
+                  "paddingTop" : "24px"
+                },
+                "tag" : "article",
+                "w" : 432,
+                "x" : 960,
+                "y" : 757
+              }
+            ],
+            "cls" : "cards",
+            "h" : 195,
+            "id" : "planos",
+            "style" : {
+              "columnGap" : "24px",
+              "display" : "grid",
+              "gridTemplateColumns" : "432px 432px 432px",
+              "paddingBottom" : "48px",
+              "paddingLeft" : "48px",
+              "paddingRight" : "48px",
+              "paddingTop" : "48px"
+            },
+            "tag" : "section",
+            "w" : 1440,
+            "x" : 0,
+            "y" : 709
+          },
+          {
+            "children" : [
+              {
+                "children" : [
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 18,
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "list-item",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "textAlign" : "left"
+                    },
+                    "tag" : "li",
+                    "text" : "Auto layout a partir de flex",
+                    "w" : 1304,
+                    "x" : 88,
+                    "y" : 920
+                  },
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 18,
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "list-item",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "textAlign" : "left"
+                    },
+                    "tag" : "li",
+                    "text" : "Textos com estilos por trecho",
+                    "w" : 1304,
+                    "x" : 88,
+                    "y" : 938
+                  },
+                  {
+                    "children" : [
+
+                    ],
+                    "h" : 18,
+                    "style" : {
+                      "color" : "rgb(31, 36, 48)",
+                      "display" : "list-item",
+                      "fontFamily" : "Archivo, Helvetica, sans-serif",
+                      "textAlign" : "left"
+                    },
+                    "tag" : "li",
+                    "text" : "Imagens e vetores preservados",
+                    "w" : 1304,
+                    "x" : 88,
+                    "y" : 956
+                  }
+                ],
+                "h" : 54,
+                "style" : {
+                  "display" : "block",
+                  "paddingLeft" : "40px"
+                },
+                "tag" : "ul",
+                "w" : 1344,
+                "x" : 48,
+                "y" : 920
+              }
+            ],
+            "cls" : "recursos",
+            "h" : 118,
+            "id" : "recursos",
+            "style" : {
+              "display" : "block",
+              "paddingBottom" : "48px",
+              "paddingLeft" : "48px",
+              "paddingRight" : "48px"
+            },
+            "tag" : "section",
+            "w" : 1440,
+            "x" : 0,
+            "y" : 920
+          },
+          {
+            "children" : [
+              {
+                "children" : [
+
+                ],
+                "cls" : "nota",
+                "h" : 16,
+                "style" : {
+                  "color" : "rgb(213, 217, 228)",
+                  "display" : "block",
+                  "fontFamily" : "Archivo, Helvetica, sans-serif",
+                  "fontSize" : "14px"
+                },
+                "tag" : "p",
+                "text" : "carregado por script",
+                "w" : 1344,
+                "x" : 48,
+                "y" : 1076
+              }
+            ],
+            "h" : 92,
+            "id" : "contato",
+            "style" : {
+              "backgroundColor" : "rgb(31, 36, 48)",
+              "color" : "rgb(213, 217, 228)",
+              "display" : "block",
+              "fontSize" : "14px",
+              "paddingBottom" : "24px",
+              "paddingLeft" : "48px",
+              "paddingRight" : "48px",
+              "paddingTop" : "24px"
+            },
+            "tag" : "footer",
+            "w" : 1440,
+            "x" : 0,
+            "y" : 1038
+          }
+        ],
+        "h" : 1130,
+        "style" : {
+          "backgroundColor" : "rgb(255, 255, 255)",
+          "color" : "rgb(31, 36, 48)",
+          "display" : "block",
+          "fontFamily" : "Archivo, Helvetica, sans-serif"
+        },
+        "tag" : "body",
+        "w" : 1440,
+        "x" : 0,
+        "y" : 0
+      }
+    ],
+    "h" : 1130,
+    "style" : {
+      "display" : "block"
+    },
+    "tag" : "html",
+    "w" : 1440,
+    "x" : 0,
+    "y" : 0
+  },
+  "title" : "Ateliê de telas",
+  "truncated" : false,
+  "width" : 1440
+}

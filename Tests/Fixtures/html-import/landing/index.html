@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Ateliê de telas</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <img class="logo" src="logo.svg" alt="Ateliê" width="32" height="32">
+  <nav>
+    <a href="#recursos">Recursos</a>
+    <a href="#planos">Planos</a>
+    <a href="#contato">Contato</a>
+  </nav>
+</header>
+<section class="hero" id="inicio">
+  <h1>Construa telas com seus agentes</h1>
+  <p>Descreva a ideia e receba um <strong>rascunho editável</strong> em minutos. Veja <a href="https://example.com">como funciona</a>.</p>
+  <button class="cta">Começar agora</button>
+  <img src="hero.png" alt="Prévia da tela" width="320" height="200" style="object-fit: cover">
+  <img src="https://example.com/remote.png" alt="Imagem remota" width="120" height="80">
+</section>
+<section class="cards" id="planos">
+  <article class="card"><h3>Rápido</h3><p>Do texto à tela em um passo.</p></article>
+  <article class="card"><h3>Editável</h3><p>Cada camada vira um quadro que você ajusta.</p></article>
+  <article class="card"><h3>Local</h3><p>Nada sai da sua máquina.</p></article>
+</section>
+<section class="recursos" id="recursos">
+  <ul>
+    <li>Auto layout a partir de flex</li>
+    <li>Textos com estilos por trecho</li>
+    <li>Imagens e vetores preservados</li>
+  </ul>
+</section>
+<footer id="contato"><p class="nota">carregado sem script</p></footer>
+<script>document.querySelector("footer .nota").textContent = "carregado por script";</script>
+</body>
+</html>

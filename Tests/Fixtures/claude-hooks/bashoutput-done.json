@@ -1,0 +1,1 @@
+{"session_id":"s-1","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/proj","hook_event_name":"PostToolUse","tool_name":"TaskOutput","tool_use_id":"toolu_08","tool_input":{"task_id":"bash_1"},"tool_response":{"retrieval_status":"success","task":{"task_id":"bash_1","status":"completed","output":"build ok"}}}

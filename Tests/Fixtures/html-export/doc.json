@@ -1,0 +1,398 @@
+[
+ {
+  "command": "variable.createCollection",
+  "params": {
+   "name": "Tokens",
+   "modes": [
+    "Light",
+    "Dark"
+   ]
+  }
+ },
+ {
+  "command": "variable.create",
+  "params": {
+   "collection": "Tokens",
+   "name": "color/bg",
+   "type": "color",
+   "values": {
+    "Light": "#FAFAF7",
+    "Dark": "#111317"
+   }
+  }
+ },
+ {
+  "command": "variable.create",
+  "params": {
+   "collection": "Tokens",
+   "name": "color/text",
+   "type": "color",
+   "values": {
+    "Light": "#16181D",
+    "Dark": "#ECEDEF"
+   }
+  }
+ },
+ {
+  "command": "variable.create",
+  "params": {
+   "collection": "Tokens",
+   "name": "space/m",
+   "type": "number",
+   "values": {
+    "Light": 16,
+    "Dark": 16
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "frame",
+   "name": "Landing",
+   "width": 800,
+   "height": 400,
+   "props": {
+    "layout": "vertical",
+    "padding": 24,
+    "width": 800,
+    "sizingV": "hug"
+   }
+  }
+ },
+ {
+  "command": "variable.bind",
+  "params": {
+   "ids": [
+    {
+     "$step": 4
+    }
+   ],
+   "field": "gap",
+   "variable": "space/m"
+  }
+ },
+ {
+  "command": "variable.bind",
+  "params": {
+   "ids": [
+    {
+     "$step": 4
+    }
+   ],
+   "field": "fill",
+   "variable": "color/bg"
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "frame",
+   "name": "Hero",
+   "parent": {
+    "$step": 4
+   },
+   "props": {
+    "layout": "vertical",
+    "sizingH": "fill",
+    "sizingV": "hug"
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Title",
+   "parent": {
+    "$step": 7
+   },
+   "text": "Hello",
+   "props": {
+    "sizingH": "fill",
+    "fontSize": 48
+   }
+  }
+ },
+ {
+  "command": "variable.bind",
+  "params": {
+   "ids": [
+    {
+     "$step": 8
+    }
+   ],
+   "field": "fill",
+   "variable": "color/text"
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Subtitle",
+   "parent": {
+    "$step": 7
+   },
+   "text": "Sub",
+   "props": {
+    "fontSize": 20
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Body",
+   "parent": {
+    "$step": 7
+   },
+   "text": "Body text one",
+   "props": {
+    "fontSize": 16
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Body",
+   "parent": {
+    "$step": 7
+   },
+   "text": "Body text two",
+   "props": {
+    "fontSize": 16
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Items",
+   "parent": {
+    "$step": 4
+   },
+   "text": "One\nTwo",
+   "props": {
+    "listStyle": "bulleted",
+    "fontSize": 16
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "frame",
+   "name": "List",
+   "parent": {
+    "$step": 4
+   },
+   "props": {
+    "layout": "vertical",
+    "sizingV": "hug"
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Bullet",
+   "parent": {
+    "$step": 14
+   },
+   "text": "\u2022 Alpha"
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Bullet",
+   "parent": {
+    "$step": 14
+   },
+   "text": "\u2022 Beta"
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Link",
+   "parent": {
+    "$step": 4
+   },
+   "text": "Site"
+  }
+ },
+ {
+  "command": "text.link",
+  "params": {
+   "url": "https://example.com",
+   "ids": [
+    {
+     "$step": 17
+    }
+   ]
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Bad link",
+   "parent": {
+    "$step": 4
+   },
+   "text": "x"
+  }
+ },
+ {
+  "command": "text.link",
+  "params": {
+   "url": "javascript:alert(1)",
+   "ids": [
+    {
+     "$step": 19
+    }
+   ]
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "frame",
+   "name": "Features",
+   "parent": {
+    "$step": 4
+   },
+   "props": {
+    "layout": "grid",
+    "gridColumns": 3,
+    "columnTracks": [
+     "1fr",
+     "1fr",
+     200
+    ],
+    "sizingH": "fill",
+    "sizingV": "hug"
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "rectangle",
+   "name": "Card",
+   "parent": {
+    "$step": 21
+   },
+   "width": 50,
+   "height": 50
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "rectangle",
+   "name": "Card",
+   "parent": {
+    "$step": 21
+   },
+   "width": 50,
+   "height": 50
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "rectangle",
+   "name": "Card",
+   "parent": {
+    "$step": 21
+   },
+   "width": 50,
+   "height": 50
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "star",
+   "name": "Icon Star",
+   "parent": {
+    "$step": 4
+   },
+   "width": 24,
+   "height": 24
+  }
+ },
+ {
+  "command": "image.place",
+  "params": {
+   "path": "@PIXEL@",
+   "parent": {
+    "$step": 4
+   },
+   "width": 64,
+   "height": 64
+  }
+ },
+ {
+  "command": "node.set",
+  "params": {
+   "ids": [
+    {
+     "$step": 26
+    }
+   ],
+   "props": {
+    "name": "Photo"
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Hidden",
+   "parent": {
+    "$step": 4
+   },
+   "text": "secret",
+   "props": {
+    "visible": false
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "frame",
+   "name": "Footer",
+   "parent": {
+    "$step": 4
+   },
+   "props": {
+    "layout": "vertical",
+    "sizingV": "hug"
+   }
+  }
+ },
+ {
+  "command": "node.create",
+  "params": {
+   "type": "text",
+   "name": "Copy",
+   "parent": {
+    "$step": 29
+   },
+   "text": "\u00a9"
+  }
+ }
+]

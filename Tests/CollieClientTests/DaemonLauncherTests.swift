@@ -163,9 +163,66 @@ import CollieCore
         #expect(!FileManager.default.fileExists(atPath: old.path))
     }
 
+    /// Fake launchctl for the old agent: `bootout` answers `bootoutStatus`; `print` says loaded `loadedPrints` times, then not found.
+    func legacyRunner(bootout: Int32, loadedPrints: Int, log: Calls) -> DaemonLauncher.Launchctl {
+        let left = Mutex(loadedPrints)
+        return { args in
+            log.log.withLock { $0.append(args) }
+            switch args[0] {
+            case "bootout": return (bootout, "")
+            case "print":
+                let loaded = left.withLock { n -> Bool in if n > 0 { n -= 1; return true }; return false }
+                return loaded ? (0, "state = running") : (113, "")
+            default: return (0, "")
+            }
+        }
+    }
+
+    @Test func failingLegacyBootoutKeepsPlistAndThrows() throws {
+        let agents = tmp(), logs = tmp(), log = Calls()
+        let old = agents.appendingPathComponent("dev.orq.daemon.plist")
+        try Data("x".utf8).write(to: old)
+        #expect(throws: DaemonLauncher.LaunchError.legacyStillRunning) {
+            try DaemonLauncher.ensureRunning(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"), agentsDir: agents, logDir: logs,
+                                             launchctl: self.legacyRunner(bootout: 5, loadedPrints: 0, log: log))
+        }
+        #expect(FileManager.default.fileExists(atPath: old.path))
+        #expect(!log.log.withLock { $0.contains { $0[0] == "bootstrap" } })
+    }
+
+    @Test func slowLegacyTeardownIsAwaited() throws {
+        let agents = tmp(), log = Calls()
+        let old = agents.appendingPathComponent("dev.orq.daemon.plist")
+        try Data("x".utf8).write(to: old)
+        #expect(try DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: legacyRunner(bootout: 0, loadedPrints: 2, log: log), pollInterval: 0.01))
+        let prints = log.log.withLock { $0.filter { $0[0] == "print" }.count }
+        #expect(prints == 3)
+        #expect(!FileManager.default.fileExists(atPath: old.path))
+    }
+
+    @Test func legacyStuckPastTheWaitThrows() throws {
+        let agents = tmp(), log = Calls()
+        let old = agents.appendingPathComponent("dev.orq.daemon.plist")
+        try Data("x".utf8).write(to: old)
+        #expect(throws: DaemonLauncher.LaunchError.legacyStillRunning) {
+            try DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: self.legacyRunner(bootout: 0, loadedPrints: 99, log: log), polls: 3, pollInterval: 0.01)
+        }
+        #expect(FileManager.default.fileExists(atPath: old.path))
+    }
+
+    @Test func customLabelNeverRetiresLegacy() throws {
+        let agents = tmp(), logs = tmp(), calls = Calls(print: Self.notLoaded)
+        let old = agents.appendingPathComponent("dev.orq.daemon.plist")
+        try Data("x".utf8).write(to: old)
+        try DaemonLauncher.ensureRunning(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"), label: "dev.collie.test",
+                                         agentsDir: agents, logDir: logs, launchctl: calls.runner)
+        #expect(!calls.log.withLock { $0.contains { $0.last?.hasSuffix("dev.orq.daemon") == true } })
+        #expect(FileManager.default.fileExists(atPath: old.path))
+    }
+
     @Test func noLegacyAgentNoLegacyCalls() throws {
         let agents = tmp(), calls = Calls()
-        #expect(!DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: calls.runner))
+        #expect(try !DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: calls.runner))
         #expect(calls.log.withLock { $0.isEmpty })
     }
 }

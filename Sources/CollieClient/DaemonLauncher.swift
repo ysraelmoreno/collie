@@ -43,14 +43,27 @@ public enum DaemonLauncher {
         if label.isEmpty || label.contains("/") || label.contains("..") { throw LaunchError.invalidLabel(label) }
     }
 
-    /// Boots out the Orq agent and removes its plist (app-generated config, not user data), so `orqd` lets go of the
-    /// data folder before `collied` starts. True when there was an old agent.
+    /// Boots out the Orq agent, waits until `orqd` is gone and only then removes its plist (app-generated config, not
+    /// user data), so `orqd` lets go of the data folder before `collied` starts. True when there was an old agent.
+    /// Throws `.legacyStillRunning` (plist kept, retried next start) if bootout fails or the old daemon outlives the wait.
     @discardableResult
-    public static func retireLegacy(agentsDir: URL = defaultAgentsDir, launchctl: Launchctl = realLaunchctl) -> Bool {
+    public static func retireLegacy(agentsDir: URL = defaultAgentsDir, launchctl: Launchctl = realLaunchctl,
+                                    polls: Int = 20, pollInterval: TimeInterval = 0.25) throws -> Bool {
         let file = agentsDir.appendingPathComponent("\(legacyLabel).plist")
         guard FileManager.default.fileExists(atPath: file.path) else { return false }
-        _ = try? launchctl(["bootout", "gui/\(getuid())/\(legacyLabel)"])   // not loaded is fine
-        try? FileManager.default.removeItem(at: file)
+        let target = "gui/\(getuid())/\(legacyLabel)"
+        let out = try launchctl(["bootout", target])
+        // 3 / 113: not loaded (no such process / service), already what we want.
+        if ![0, 3, 113].contains(out.status) { throw LaunchError.legacyStillRunning }
+        if out.status == 0 {
+            var gone = false
+            for _ in 0..<polls {
+                if try launchctl(["print", target]).status != 0 { gone = true; break }
+                Thread.sleep(forTimeInterval: pollInterval)
+            }
+            if !gone { throw LaunchError.legacyStillRunning }
+        }
+        do { try FileManager.default.removeItem(at: file) } catch { throw LaunchError.legacyStillRunning }   // it would come back at login
         return true
     }
 
@@ -63,7 +76,7 @@ public enum DaemonLauncher {
         let fm = FileManager.default
         try fm.createDirectory(at: logDir, withIntermediateDirectories: true)
         try fm.createDirectory(at: agentsDir, withIntermediateDirectories: true)
-        retireLegacy(agentsDir: agentsDir, launchctl: launchctl)
+        if label == defaultLabel { try retireLegacy(agentsDir: agentsDir, launchctl: launchctl) }   // a dev/test label leaves the real Orq agent alone
         let file = agentsDir.appendingPathComponent("\(label).plist")
         let data = plist(colliedPath: colliedPath, root: root, label: label, logDir: logDir)
         let domain = "gui/\(getuid())"
@@ -110,5 +123,15 @@ public enum DaemonLauncher {
         return daemonBuild != bundledBuild
     }
 
-    public enum LaunchError: Error, Equatable { case bootstrapFailed(Int32), restartFailed(Int32), invalidLabel(String) }
+    public enum LaunchError: Error, Equatable, CustomStringConvertible {
+        case bootstrapFailed(Int32), restartFailed(Int32), invalidLabel(String), legacyStillRunning
+        public var description: String {
+            switch self {
+            case .bootstrapFailed(let c): return "bootstrapFailed(\(c))"
+            case .restartFailed(let c): return "restartFailed(\(c))"
+            case .invalidLabel(let l): return "invalidLabel(\(l))"
+            case .legacyStillRunning: return "O Orq antigo ainda está rodando; feche o Orq.app e tente de novo"
+            }
+        }
+    }
 }

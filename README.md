@@ -2,6 +2,8 @@
 
 Daemon (`orqd`), CLI (`orq`) e app de canvas (SwiftUI/AppKit) para orquestrar terminais. Swift 6.2, macOS 15.
 
+![Orq: canvas com um Maestro, um simulador iOS e o painel Design](docs/screenshot.png)
+
 ## Build
 
 ```sh

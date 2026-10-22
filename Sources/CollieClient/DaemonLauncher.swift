@@ -3,6 +3,7 @@ import Foundation
 /// Manages `collied` as a user LaunchAgent so the daemon outlives the app.
 public enum DaemonLauncher {
     public static let defaultLabel = "dev.collie.daemon"
+    static let legacyLabel = "dev.orq.daemon"
     /// Runs launchctl; returns (exit status, stdout).
     public typealias Launchctl = @Sendable ([String]) throws -> (status: Int32, output: String)
 
@@ -42,6 +43,17 @@ public enum DaemonLauncher {
         if label.isEmpty || label.contains("/") || label.contains("..") { throw LaunchError.invalidLabel(label) }
     }
 
+    /// Boots out the Orq agent and removes its plist (app-generated config, not user data), so `orqd` lets go of the
+    /// data folder before `collied` starts. True when there was an old agent.
+    @discardableResult
+    public static func retireLegacy(agentsDir: URL = defaultAgentsDir, launchctl: Launchctl = realLaunchctl) -> Bool {
+        let file = agentsDir.appendingPathComponent("\(legacyLabel).plist")
+        guard FileManager.default.fileExists(atPath: file.path) else { return false }
+        _ = try? launchctl(["bootout", "gui/\(getuid())/\(legacyLabel)"])   // not loaded is fine
+        try? FileManager.default.removeItem(at: file)
+        return true
+    }
+
     /// Blocking (spawns launchctl, touches disk): call off the main thread.
     public static func ensureRunning(
         colliedPath: String, root: URL, label: String = defaultLabel,
@@ -51,6 +63,7 @@ public enum DaemonLauncher {
         let fm = FileManager.default
         try fm.createDirectory(at: logDir, withIntermediateDirectories: true)
         try fm.createDirectory(at: agentsDir, withIntermediateDirectories: true)
+        retireLegacy(agentsDir: agentsDir, launchctl: launchctl)
         let file = agentsDir.appendingPathComponent("\(label).plist")
         let data = plist(colliedPath: colliedPath, root: root, label: label, logDir: logDir)
         let domain = "gui/\(getuid())"

@@ -40,17 +40,33 @@ enum Config {
 @main struct CollieApp: App {
     @State private var client = DaemonClient(paths: Paths(root: Config.root))
     @State private var canvas = CanvasState()
-    @State private var consented = UserDefaults.standard.bool(forKey: Config.consentKey)
+    @State private var consented: Bool
     @State private var error: String?
     @State private var paletteOpen = false
     @State private var partiturasOpen = false
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
 
-    init() { PluginViews.register("browser", BrowserPanel.self); PluginViews.register("memory", MemoryPanel.self)
+    init() { Self.migrateDefaults(from: Self.legacyDefaultsDomain, into: .standard)
+             _consented = State(initialValue: UserDefaults.standard.bool(forKey: Config.consentKey))   // after the migration
+             PluginViews.register("browser", BrowserPanel.self); PluginViews.register("memory", MemoryPanel.self)
              PluginViews.register("device", DevicePanel.self); PluginViews.register("design", DesignPanel.self)
              PluginViews.register("designsystems", DesignSystemsPanel.self)
              PluginViews.register("artifacts", ArtifactsPanel.self); PluginViews.register("work", WorkPanel.self)   // before any panel view is made
              Self.applyTheme() }
+
+    static let legacyDefaultsDomain = "dev.orq.app"
+    static let migratedKey = "collie.migratedFromOrq"
+
+    /// Copies the Orq app's preferences once (a key already set here wins); returns how many keys it copied.
+    @discardableResult
+    static func migrateDefaults(from legacyDomain: String, into d: UserDefaults) -> Int {
+        guard !d.bool(forKey: migratedKey) else { return 0 }
+        let old = UserDefaults(suiteName: legacyDomain)?.persistentDomain(forName: legacyDomain) ?? [:]
+        var n = 0
+        for (k, v) in old where d.object(forKey: k) == nil { d.set(v, forKey: k); n += 1 }
+        d.set(true, forKey: migratedKey)
+        return n
+    }
 
     var body: some Scene {
         Window("Collie", id: "main") {
@@ -340,6 +356,7 @@ struct PanelMeter: View {
 /// applied by collied at its next start, so the app restarts the service once the user has agreed to it.
 @MainActor enum DataBackupMenu {
     private static let type = UTType(filenameExtension: "colliebackup") ?? .data   // ponytail: not declared in Info.plist; filters by extension
+    private static let legacyType = UTType(filenameExtension: "orqbackup") ?? .data   // Orq backups still open
     private static let timeout: Double = 900
 
     static func export(_ client: DaemonClient) {
@@ -362,7 +379,7 @@ struct PanelMeter: View {
 
     static func `import`(_ client: DaemonClient) {
         let p = NSOpenPanel()
-        p.allowedContentTypes = [type]; p.allowsMultipleSelection = false; p.canChooseDirectories = false
+        p.allowedContentTypes = [type, legacyType]; p.allowsMultipleSelection = false; p.canChooseDirectories = false
         guard p.runModal() == .OK, let url = p.url else { return }
         Task {
             do {

@@ -7,6 +7,7 @@ import CollieCore
 import ColliePlugins
 import CollieTheme
 
+private let legacyPartituraType = UTType(filenameExtension: "orqpartitura") ?? .json   // Orq files still open
 private let partituraType = UTType(filenameExtension: "colliepartitura") ?? .json   // ponytail: not declared in Info.plist; filters by extension
 
 /// List (factory marked "de fábrica"), the selected one's full preview, and Aplicar (name, floor, folder); Importar…,
@@ -153,7 +154,7 @@ struct PartiturasSheet: View {
 
     private func pickImport() {
         let p = NSOpenPanel()
-        p.allowedContentTypes = [partituraType]; p.allowsMultipleSelection = false; p.canChooseDirectories = false
+        p.allowedContentTypes = [partituraType, legacyPartituraType]; p.allowsMultipleSelection = false; p.canChooseDirectories = false
         guard p.runModal() == .OK, let url = p.url else { return }
         rendered = nil
         Task { _ = await model.importFile(url) }

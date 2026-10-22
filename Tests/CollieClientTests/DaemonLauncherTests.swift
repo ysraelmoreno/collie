@@ -143,6 +143,31 @@ import CollieCore
         try DaemonLauncher.stop(label: "dev.collie.daemon.t", launchctl: c.runner)
         #expect(c.verbs.last == "bootout")
     }
+
+    @Test func retiresLegacyAgentBeforeInstall() throws {
+        let agents = tmp(), logs = tmp()
+        let old = agents.appendingPathComponent("dev.orq.daemon.plist")
+        try Data("x".utf8).write(to: old)
+        let calls = Calls(print: Self.notLoaded)
+        let oldGoneAtBootstrap = Mutex(false)
+        let base = calls.runner
+        let spy: DaemonLauncher.Launchctl = { args in
+            if args[0] == "bootstrap" { oldGoneAtBootstrap.withLock { $0 = !FileManager.default.fileExists(atPath: old.path) } }
+            return try base(args)
+        }
+        try DaemonLauncher.ensureRunning(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"), agentsDir: agents, logDir: logs, launchctl: spy)
+        let log = calls.log.withLock { $0 }
+        #expect(log.first?[0] == "bootout" && log.first?[1].hasSuffix("/dev.orq.daemon") == true)
+        #expect(log.last?[0] == "bootstrap" && log.last?[2].hasSuffix("dev.collie.daemon.plist") == true)
+        #expect(oldGoneAtBootstrap.withLock { $0 })
+        #expect(!FileManager.default.fileExists(atPath: old.path))
+    }
+
+    @Test func noLegacyAgentNoLegacyCalls() throws {
+        let agents = tmp(), calls = Calls()
+        #expect(!DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: calls.runner))
+        #expect(calls.log.withLock { $0.isEmpty })
+    }
 }
 
 @Suite struct StaleDaemonTests {

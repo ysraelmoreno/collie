@@ -346,3 +346,11 @@ import CollieProtocol
         #expect(115 < (PluginRegistry.command("browser.wait")?.1.timeoutSeconds ?? 0))
     }
 }
+
+@Suite struct BrowserNormalizeTests {
+    @Test func normalizesLegacyArtifactURL() {
+        #expect(BrowserPanel.normalize("orq-artifact://app/x/index.html") == "collie-artifact://app/x/index.html")
+        #expect(BrowserPanel.normalize("orq-design://app/index.html") == "collie-design://app/index.html")
+        #expect(BrowserPanel.normalize("https://a.dev") == "https://a.dev")
+    }
+}

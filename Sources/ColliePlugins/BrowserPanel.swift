@@ -61,7 +61,7 @@ import os
         urlObservation = web.observe(\.url) { [weak self] web, _ in
             MainActor.assumeIsolated { self?.urlChanged(web.url) }
         }
-        if case .string(let s)? = panel.state["url"], let url = try? Self.url(s) { appLoad = url; web.load(URLRequest(url: url)) }
+        if case .string(let s)? = panel.state["url"], let url = try? Self.url(Self.normalize(s)) { appLoad = url; web.load(URLRequest(url: url)) }
     }
 
     public func close() {
@@ -148,6 +148,13 @@ import os
     }
 
     /// http(s), about: and `collie-artifact://app/…` only (no file: or other custom schemes); a bare host gets https://.
+    /// Saved panel state from Orq holds `orq-artifact://` / `orq-design://` URLs: rewrite to the Collie schemes.
+    nonisolated static let legacyScheme = ["orq-artifact://": "collie-artifact://", "orq-design://": "collie-design://"]
+    nonisolated static func normalize(_ url: String) -> String {
+        for (old, new) in legacyScheme where url.lowercased().hasPrefix(old) { return new + url.dropFirst(old.count) }
+        return url
+    }
+
     static func url(_ raw: String) throws(ProtocolError) -> URL {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !s.contains("://"), !s.lowercased().hasPrefix("about:") { s = "https://" + s }

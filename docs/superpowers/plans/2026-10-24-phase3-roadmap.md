@@ -15,3 +15,4 @@
 | Plano | Entrega | Depende de | Status |
 |---|---|---|---|
 | 3E — Preset Cursor | `cursor-agent` como preset (como o Codex): lançar, recrutar, `ask` com resposta por ociosidade se não houver hook; começa por spike dos hooks do CLI sem tocar configuração global; painel de uso provavelmente sem dados; registro de trabalho só por comando explícito. | 3A | `2026-10-24-plan-3e-cursor-preset.md` (escrito) |
+| 4R — Collie | Orq vira Collie (app, daemon, CLI/MCP, módulos, dados, variáveis) com migração dos dados existentes, marca nova e vocabulário de pastoreio (Pastor, guia, cercado, pasto, rebanho). | 3R | `2026-10-22-plan-4r-collie-rename.md` (branch `plan-4r`, aguardando merge) |

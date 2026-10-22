@@ -1,8 +1,10 @@
 # Collie
 
+Antes chamado Orq.
+
 Daemon (`collied`), CLI (`collie`) e app de canvas (SwiftUI/AppKit) para orquestrar terminais. Swift 6.2, macOS 15.
 
-![Collie: canvas com um Maestro, um simulador iOS e o painel Design](docs/screenshot.png)
+![Collie: canvas com um Pastor, um simulador iOS e o painel Design](docs/screenshot.png)
 
 ## Build
 
@@ -22,16 +24,50 @@ detecta isso.
 reiniciado: o app detecta isso e mostra um aviso com **Reiniciar serviço** (encerra os terminais abertos; nunca
 reinicia sozinho). Manualmente: `launchctl kickstart -k gui/$(id -u)/dev.collie.daemon`.
 
+## Vindo do Orq
+
+O Collie é o antigo Orq. Ao abrir o `Collie.app` pela primeira vez, ele leva o que já existe:
+
+- **Dados:** `~/Library/Application Support/Orq` passa a `~/Library/Application Support/Collie` (um único `rename`; nada é
+  copiado nem apagado) e `Orq` vira um **symlink** para a pasta nova, porque caminhos absolutos guardados nos dados ainda
+  apontam para ele. Mantenha o symlink. Se já existir uma pasta `Collie`, nada é movido e as duas ficam como estão.
+- **Serviço:** o app encerra o LaunchAgent `dev.orq.daemon` (e remove o plist dele) e instala o `dev.collie.daemon`. Só
+  quando o `Collie.app` roda com o rótulo padrão.
+- **Preferências** (tema, estrutura, fonte do terminal, consentimentos) e **URLs salvas** do Navegador passam do domínio
+  `dev.orq.app` para o do Collie.
+- **Rebanhos:** as antigas partituras (`partituras/*.orqpartitura`) viram rebanhos `herds/*.collieherd`. Se o nome novo já
+  existe, o arquivo antigo fica onde está (os dois ficam) e o `collied` registra isso no log a cada início. Um `expect` (digest)
+  copiado de uma prévia da época do Orq é recusado uma vez: gere uma prévia nova.
+- **Arquivos antigos ainda abrem:** `.orqbackup` (Importar dados), `.orqpartitura` e `.colliepartitura` (Importar rebanho).
+
+**O que fica como estava:** repositórios com `.orq/` continuam usando `.orq/` (memória, cache); os repositórios novos usam
+`.collie/`. Cercados antigos em `.orq/floors` ou `.collie/floors` seguem funcionando e se integram (`land`) normalmente; os
+novos ficam em `.collie/paddocks`. As branches `orq/<nome>` continuam com esse nome; as novas são `collie/<nome>`.
+Variáveis `ORQ_*` não valem mais: use `COLLIE_*`.
+
+**O que você faz:**
+
+1. **Feche o `Orq.app`** (e qualquer `orqd`) antes de abrir o Collie. Enquanto um `orqd` responde, o `collied` se recusa a
+   iniciar.
+2. **Abra o `Collie.app`.** O upgrade reinicia o serviço: **os terminais abertos são fechados.**
+3. Depois de conferir, apague `/Applications/Orq.app` e não o abra mais (dois serviços sobre os mesmos dados).
+
+**Se algo falhar**
+- O app mostra "O Orq antigo ainda está rodando; feche o Orq.app e tente de novo": o agente antigo não parou. Feche o
+  Orq.app e abra o Collie de novo.
+- Se o `collied` não sobe e não move os dados (ele sai e o launchd tenta de novo), o motivo está em
+  `~/Library/Logs/Collie/`, na linha que começa com `collied: legacy Orq data:`.
+
 ## Aparência
 
 **Preferências** (⌘,):
 
 - **Tema:** Escuro, Claro ou Sistema (segue Ajustes do macOS > Aparência). Vale para todas as janelas, sem reiniciar.
-- **Estrutura:** Compacta (barra de andares em chips, janela pode ser estreita) ou Completa (barra lateral com andares e uso).
+- **Estrutura:** Compacta (barra de cercados em chips, janela pode ser estreita) ou Completa (barra lateral com cercados e uso).
   Trocar não recarrega painéis nem move nós.
 - **Fonte do terminal:** DM Mono, SF Mono ou Menlo, tamanho de 11 a 16. Os terminais abertos reajustam na hora.
 
-**⌘K** abre a paleta de comandos: Novo terminal, Abrir painel…, Novo andar…, Ir para o Térreo, Ir para o andar …,
+**⌘K** abre a paleta de comandos: Novo terminal, Abrir painel…, Novo cercado…, Ir para o Pasto, Ir para o cercado …,
 Ajustar à tela, Uso dos agentes e Preferências…. Digite para filtrar, ↑/↓ para escolher, ↩ para executar, Esc para fechar.
 
 **Fontes:** o app usa Space Grotesk (interface) e DM Mono (terminal e código). Baixe-as antes do bundle:
@@ -59,13 +95,13 @@ comandos `collie device …` via adb, rodados pelo daemon.
    scripts/bundle-app.sh            # copia para o Collie.app
    ```
 
-4. No app, **Abrir painel… → Dispositivo**, escolha o aparelho (botão **Atualizar** relê a lista). Ou um Maestro:
+4. No app, **Abrir painel… → Dispositivo**, escolha o aparelho (botão **Atualizar** relê a lista). Ou um Pastor:
    `collie panel open device --serial <serial>` (sem `--serial`: o único aparelho online).
 
 No painel: clique/arraste = toque, rolagem = scroll, teclado com o painel em foco (acentos inclusive); a barra tem
 **Voltar**, **Início** e **Recentes**. Sem aparelho, o painel mostra o estado e **Reconectar**.
 
-Comandos (um terminal precisa de um cordão até o painel do canvas; painel na doca vale para todos):
+Comandos (um terminal precisa de uma guia até o painel do canvas; painel na doca vale para todos):
 
 ```sh
 collie device list                     # aparelhos {serial,state,model,product,panels}
@@ -96,7 +132,7 @@ via `simctl`).
 1. Xcode 26+ com um runtime iOS instalado (`xcrun simctl list devices` deve listar simuladores).
 2. Instale o AXe: `brew install cameroncooke/axe/axe` (testado com o AXe 1.8.0).
 3. No app, **Abrir painel… → Dispositivo**: os simuladores aparecem como `iPhone 16e — iOS 26.3`, e os desligados com
-   `(desligado)`. Abrir o painel de um simulador desligado o liga (pode levar até ~2 min). Ou um Maestro:
+   `(desligado)`. Abrir o painel de um simulador desligado o liga (pode levar até ~2 min). Ou um Pastor:
    `collie panel open device --serial <UDID>`.
 
 No painel: clique = toque, arrastar = um swipe ao soltar, rolagem = swipe a partir do centro, teclado com o painel em
@@ -120,9 +156,9 @@ vivo; os agentes editam o mesmo arquivo pela CLI, na mesma sessão.
    `COLLIE_FIGCRAFT_DIR=$PWD/vendor/figcraft` para o daemon.
 3. No app, **Abrir painel… → Design**: escolha um arquivo ou digite um nome em **Novo arquivo…** e clique **Criar**.
    O painel abre o figcraft já dentro da sessão do arquivo, numa aba, sem o diálogo "Entrar" (o link vem só do daemon;
-   um link ruim mostra o erro do figcraft). Ou um Maestro: `collie panel open design --file <nome>` (cria se não existir).
+   um link ruim mostra o erro do figcraft). Ou um Pastor: `collie panel open design --file <nome>` (cria se não existir).
 
-Comandos dos agentes (`collie design …`, ligados ao painel por um cordão; `--panel <nome>` se houver mais de um): `files`,
+Comandos dos agentes (`collie design …`, ligados ao painel por uma guia; `--panel <nome>` se houver mais de um): `files`,
 `new <nome>`, `run <comando> --params '{…}'`, `batch --commands '[…]'` (um passo de desfazer, tudo ou nada), `inspect`,
 `screenshot`, `export --format html|css|react|figcraft`, `help [busca]`. `export --format figcraft` é recusado num arquivo
 que usa design systems (o `.figcraft` levaria os links das bibliotecas): exporte html, css ou react.
@@ -135,33 +171,33 @@ Limitações: os arquivos ficam no armazenamento do servidor local (não no git;
 ## Design systems
 
 Um **design system** é um arquivo de design (figcraft) com variáveis (tokens, com modos), estilos e componentes, publicado em
-versões. Um deles pode ser o **ativo** do workspace (o padrão de todos os andares) e cada andar pode ter o seu. Ao trocar o
+versões. Um deles pode ser o **ativo** do workspace (o padrão de todos os cercados) e cada cercado pode ter o seu. Ao trocar o
 ativo, os arquivos de design daquele escopo passam a usar a biblioteca do novo, e os agentes recebem os tokens por
 `collie design system tokens`.
 
 No app: **Abrir painel… → Design Systems**. Escreva o **motivo** (obrigatório em toda alteração) e use:
-**Novo design system…** (do zero ou a partir de outro), **Usar neste escopo** (Workspace ou um andar), **Desfazer troca**,
+**Novo design system…** (do zero ou a partir de outro), **Usar neste escopo** (Workspace ou um cercado), **Desfazer troca**,
 **Publicar versão** e, no **Histórico**, **Voltar para esta versão**. Depois de cada ação o painel mostra o resultado por
 arquivo e o que ficou **sem par** (`unmatched`). Se a publicação for recusada porque o sistema "voltou" e o arquivo ainda
 mostra o conteúdo mais novo, o painel mostra a mensagem e oferece **Publicar mesmo assim** (com confirmação).
 O painel atualiza ao abrir, depois de cada ação e quando o evento `designsystem.changed` chega (no máximo uma vez a cada 500 ms).
 
 Comandos (`collie design system …`): `list`, `history <nome>`, `create <nome> [--from <outro>] --reason`,
-`publish <nome> --reason [--force]`, `use <nome> [--floor <andar>] --reason` (ou `--none`), `undo [--floor <andar>] --reason`,
+`publish <nome> --reason [--force]`, `use <nome> [--paddock <cercado>] --reason` (ou `--none`), `undo [--paddock <cercado>] --reason`,
 `revert <nome> --to <versão> --reason`. Para os agentes trabalharem com o sistema ativo do arquivo do painel:
 `tokens`, `bind --variable <nome> --field <campo> --ids …`, `style --style <nome> --ids …`, `place --component <nome>`,
 `mode --mode <Light|Dark> [--collection <coleção>]` (padrão: `Tokens`, a coleção do sistema inicial).
 
 `undo` alterna entre os dois últimos sistemas do escopo (um segundo `undo` volta ao de antes); para um mais antigo, use o
-**Histórico** do painel (ou `use`). `create` não precisa de cordão (`--from` copia o arquivo, e a biblioteca da cópia leva o
+**Histórico** do painel (ou `use`). `create` não precisa de guia (`--from` copia o arquivo, e a biblioteca da cópia leva o
 nome novo). Se um `create` falhou no meio, repeti-lo adota o arquivo deixado; um arquivo adotado cuja biblioteca já saiu
 sem mudanças é recusado com "no changes to publish": edite-o e crie de novo.
 
-Quem pode trocar: no workspace, o usuário no app ou um Maestro no térreo (um Maestro num andar usa `--floor`); no andar, o
-usuário, o Maestro que o criou ou um Maestro que está num andar criado pelo usuário. `publish` e `revert` por um terminal
-exigem um cordão com o painel Design do sistema. Cada alteração vira uma decisão na Memória: as do workspace e de
-`publish`/`revert` na memória global, as de um andar no repositório do andar (a mais nova substitui a anterior, venha de quem
-vier). Excluir um andar com sistema próprio aplica o do workspace aos arquivos dele e registra a decisão.
+Quem pode trocar: no workspace, o usuário no app ou um Pastor no pasto (um Pastor num cercado usa `--paddock`); no cercado, o
+usuário, o Pastor que o criou ou um Pastor que está num cercado criado pelo usuário. `publish` e `revert` por um terminal
+exigem uma guia com o painel Design do sistema. Cada alteração vira uma decisão na Memória: as do workspace e de
+`publish`/`revert` na memória global, as de um cercado no repositório do cercado (a mais nova substitui a anterior, venha de quem
+vier). Excluir um cercado com sistema próprio aplica o do workspace aos arquivos dele e registra a decisão.
 
 Limitações: a troca casa por nome (variáveis por coleção+nome+tipo, estilos por nome+tipo, componentes e variantes por
 nome); o que não casa continua no design system anterior e aparece em `unmatched`. A UI web do figcraft não opera
@@ -202,7 +238,7 @@ guarda a página e começa a importação em segundo plano (status `importing`).
 imagens, fontes; até 2000 arquivos e 64 MiB, sem links) é arquivada em `<raiz>/artifacts/<id>/source/` e a página precisa
 estar dentro dela. O app abre a página num WKWebView invisível (JS da página ligado, largura 1440 por padrão), lê o DOM e
 os estilos calculados e o daemon transforma isso em comandos figcraft num único `batch` (um passo de desfazer): um
-arquivo de design novo (nome = título), com o design system do andar habilitado, e uma tela com frames (flex/grid viram
+arquivo de design novo (nome = título), com o design system do cercado habilitado, e uma tela com frames (flex/grid viram
 auto layout/grid), textos com estilos por trecho, imagens e SVGs. A tela é exportada de volta para o próprio artifact,
 que vira `current`; a página original continua como origem.
 
@@ -253,8 +289,8 @@ um).
   usuário já tem um servidor chamado `collie` na própria configuração não foi verificado (a ajuda do `claude` não diz):
   pode haver conflito. Se tiver um, renomeie o seu.
 - **Orientação:** no SessionStart do Claude, e de novo depois de compactação, o agente recebe um texto curto: que está no
-  Collie, o nome do terminal e do andar, os peers e só os painéis que ele alcança. O Maestro também aprende
-  `collie panel open|close|move` e `collie connect`.
+  Collie, o nome do terminal e do cercado, os peers e só os painéis que ele alcança. O Pastor também aprende
+  `collie panel open|close|move` e `collie leash`.
 - **Codex:** não tem hook de SessionStart, então não recebe orientação. O MCP `collie` no Codex é opcional e vem desligado:
   com `COLLIE_CODEX_MCP=1` no ambiente do daemon, vai por `-c mcp_servers.collie.*` com `env_vars` (só nomes). Essa chave vem
   da doc atual do Codex e não foi verificada contra um `codex` instalado (uma chave desconhecida poderia impedir o Codex
@@ -288,15 +324,15 @@ não verificadas contra payloads reais**; o parser é tolerante, mas confira com
 - Trabalho: ativo ou fechado (por `merge`, `agent:<terminal>` ou `app`); um ativo por terminal.
 
 **Trabalho implícito:** sem trabalho ativo, o primeiro hook com tarefas, título de tarefa ou job abre um trabalho
-chamado `"<nome do terminal> — AAAA-MM-DD"`, com o andar e a branch do terminal. `collie work task add` e `collie work note` também abrem um.
+chamado `"<nome do terminal> — AAAA-MM-DD"`, com o cercado e a branch do terminal. `collie work task add` e `collie work note` também abrem um.
 
 **Comandos** (`collie work …`): `start`, `done [--reason]`, `reopen`, `task add|done|defer|drop` (defer/drop pedem o motivo),
-`note`, `status [--all]`, `list [--closed]`, `get`. `clear-history` é só do app. Cordas: um terminal vê só o próprio
-trabalho; um Maestro vê também o dos terminais ligados por corda a ele (`--terminal`); o app vê tudo. Um terminal fora
+`note`, `status [--all]`, `list [--closed]`, `get`. `clear-history` é só do app. Guias: um terminal vê só o próprio
+trabalho; um Pastor vê também o dos terminais ligados por guia a ele (`--terminal`); o app vê tudo. Um terminal fora
 do alcance dá o mesmo "não encontrado" de um inexistente.
 
-**Fechamento por merge:** (1) ao `land` de um andar (não no modo `pr`, que ainda não foi integrado); (2) no Stop, quando
-há um commit desde que o trabalho abriu e a branch é ancestral do destino (a `baseBranch` do andar, ou a branch do chão).
+**Fechamento por merge:** (1) ao `land` de um cercado (não no modo `pr`, que ainda não foi integrado); (2) no Stop, quando
+há um commit desde que o trabalho abriu e a branch é ancestral do destino (a `baseBranch` do cercado, ou a branch do pasto).
 Um trabalho sem branch nunca fecha sozinho. Os commits novos entram no trabalho a cada Stop.
 
 **Codex e shell** não têm hooks: usam só os comandos explícitos `collie work …`.
@@ -315,8 +351,8 @@ máximo palavras de enchimento no fim (`agora`, `ai`, `então`, `por favor`, `pf
 pode ser uma instrução e vai ao agente sem alteração.
 
 **Roteamento do chat:** (1) `@nome` (sem diferenciar maiúsculas) manda o resto do texto para esse terminal; (2) sem `@`,
-com um trabalho selecionado: o Maestro do trabalho (o próprio terminal, se for Maestro; senão o primeiro Maestro ligado por
-corda, em ordem de nome); (3) sem Maestro, o terminal do trabalho; (4) sem `@` e sem trabalho: "Escolha um trabalho ou
+com um trabalho selecionado: o Pastor do trabalho (o próprio terminal, se for Pastor; senão o primeiro Pastor ligado por
+guia, em ordem de nome); (3) sem Pastor, o terminal do trabalho; (4) sem `@` e sem trabalho: "Escolha um trabalho ou
 comece com @nome.". A mensagem é entregue depois que o agente fica 2 s calado e a resposta volta ao chat (até 30 min).
 Chat e `work.chat.*` são só do app; terminais recebem "não autorizado".
 
@@ -331,12 +367,12 @@ Aprovar/Negar só escreve no terminal se **o mesmo pedido ainda está na tela** 
 Teclas: menu do Claude, aprovar = `1`, negar = Esc; `(y/n)`, `y`/`n` + Enter; "press enter", Enter (negar só dispensa).
 Se em 2 s o diálogo não reage (nenhuma saída), a aprovação volta a ficar pendente.
 O cartão mostra o texto capturado inteiro; Enter nunca aprova. Aprovação "saída demais para conferir" (`unknown`) **nunca
-escreve nada**: só "Entendi, vou olhar o terminal". Enquanto há aprovação pendente, o **chat e o `inject`** (recrutar,
-partituras, recolocar no trilho) **não digitam no terminal**. O `collie ask` simples continua podendo responder a um
-pedido, por desenho (R7: é como um Maestro responde ao prompt de outro agente).
+escreve nada**: só "Entendi, vou olhar o terminal". Enquanto há aprovação pendente, o **chat e o `inject`** (chamar,
+rebanhos, recolocar no trilho) **não digitam no terminal**. O `collie ask` simples continua podendo responder a um
+pedido, por desenho (R7: é como um Pastor responde ao prompt de outro agente).
 
-**Recolocar no trilho:** só a pedido (botão ou `collie work rerail [--terminal]`; Maestros só alcançam terminais ligados por
-corda). Injeta no agente um bloco só com o **estado vivo** (tarefas em andamento/abertas, jobs rodando, 5 decisões mais
+**Recolocar no trilho:** só a pedido (botão ou `collie work rerail [--terminal]`; Pastores só alcançam terminais ligados por
+guia). Injeta no agente um bloco só com o **estado vivo** (tarefas em andamento/abertas, jobs rodando, 5 decisões mais
 recentes; ≤ 2000 caracteres, controles e caracteres de formato removidos). Recusado com aprovação pendente ("está pedindo
 aprovação; recolocar no trilho depois de responder") e sem trabalho ativo.
 
@@ -364,7 +400,7 @@ Cada seção mostra até 40 itens ("… e mais N" no resto) e o resumo todo cabe
 
 **Como pedir**
 - CLI: `collie work summary [--id <trabalho>] [--terminal <nome>] [--natural]`. Sem `--id`, vale o trabalho ativo; `--terminal`
-  é para Maestros (terminais ligados por corda); o alcance é o mesmo do `collie work status`. `--natural` pede a reescrita do
+  é para Pastores (terminais ligados por guia); o alcance é o mesmo do `collie work status`. `--natural` pede a reescrita do
   modelo local; a resposta traz o markdown sempre, mais `natural` e, se não houve reescrita, o `reason`.
 - Chat do painel Trabalho: a frase exata `resumo` (também `resume` e `o que foi feito`, com as mesmas palavras de enchimento
   das perguntas de status; qualquer outra coisa vai ao agente). Sem trabalho selecionado: "Escolha um trabalho para ver o
@@ -400,7 +436,7 @@ fechamento pode ser guardado de novo.
 Menu **Arquivo → Exportar dados do Collie…** gera um `.zip` (0600) com `manifest.json` na raiz.
 
 - **Entra:** `design/` (inclui o servidor do Design), `artifacts/`, `memory/`, `workspaces/` (sem o spill de terminais
-  em `workspaces/*/terminals`), `work/`, `partituras/` e o workspace padrão (no manifesto).
+  em `workspaces/*/terminals`), `work/`, `herds/` e o workspace padrão (no manifesto).
 - **Fica de fora:** `run/`, `hooks/`, `cache/`, `usage/`, `admin.token`, `screens/` e o `.collie/memory` de cada repositório.
 - O arquivo guarda os links do Design: **trate como uma senha**.
 - A exportação pausa o Design por instantes (os painéis reconectam; o Design responde "backup em andamento" nesse intervalo).
@@ -408,40 +444,40 @@ Menu **Arquivo → Exportar dados do Collie…** gera um `.zip` (0600) com `mani
   artifacts) sem mexer em nada; pede confirmação de que o serviço vai reiniciar e os terminais abertos vão fechar. O
   import é aplicado no próximo start do serviço; os dados atuais vão para `<raiz>/.replaced-<ms>` (nada é apagado).
 
-## Partituras
+## Rebanhos
 
-Uma partitura é uma equipe pronta: terminais (com preset, papel/prompt inicial e posição), painéis, cordas e, se quiser, um andar.
+Um rebanho é uma equipe pronta: terminais (com preset, papel/prompt inicial e posição), painéis, guias e, se quiser, um cercado.
 
-- **De fábrica:** *Feature fullstack* (Maestro, backend, interface e revisor, com painéis Design e Navegador; pede andar) e
-  *Investigar bug* (Maestro, investigador e testes). Não podem ser substituídas nem removidas.
-- **Salvar:** menu do canvas ou ⌘K → "Salvar canvas como partitura…" / "Salvar seleção como partitura…". Só entra o estado
+- **De fábrica:** *Feature fullstack* (Pastor, backend, interface e revisor, com painéis Design e Navegador; pede cercado) e
+  *Investigar bug* (Pastor, investigador e testes). Não podem ser substituídos nem removidos.
+- **Salvar:** menu do canvas ou ⌘K → "Salvar canvas como rebanho…" / "Salvar seleção como rebanho…". Só entra o estado
   permitido: do Design o arquivo e o armazenamento, do Navegador o endereço http(s) (sem usuário e senha; com
   aviso se tem parâmetros `?…`) e o armazenamento. Painéis de
   dispositivo (e os demais plug-ins) são pulados, com aviso. Nunca vão para o arquivo: histórico de terminal, tokens, links
   do Design, variáveis de ambiente, caminhos absolutos e `cwd`.
-- **Aplicar (tudo ou nada):** ⌘K → "Aplicar partitura…", a seção PARTITURAS da barra lateral ou "Aplicar partitura aqui…" no
+- **Aplicar (tudo ou nada):** ⌘K → "Aplicar rebanho…", a seção REBANHOS da barra lateral ou "Aplicar rebanho aqui…" no
   canvas. A prévia lista tudo que será criado, com cada comando e cada prompt; **Aplicar** só libera depois de rolar até o fim.
   Se qualquer passo falha (ou um terminal fica parado numa pergunta, como confiar na pasta), o que foi criado é desfeito.
-  O desfazer remove só o que esta aplicação criou: terminais e painéis; o andar é removido apenas se não tem commits,
+  O desfazer remove só o que esta aplicação criou: terminais e painéis; o cercado é removido apenas se não tem commits,
   alterações não commitadas nem arquivos ignorados (build, `.env`) e nenhum terminal ficou nele — senão fica, com aviso.
   Arquivos de design criados também ficam, com aviso. Se o serviço cair durante a aplicação, o que já foi criado fica;
   remova à mão.
-- **Onde:** aplicada pelo app, a equipe nasce no andar que está na tela (a pasta padrão é a do andar); se a partitura pede
-  andar, um novo é criado e o app vai para ele. Um Maestro aplica sempre no seu próprio andar e na sua pasta.
-- **Arquivo `.colliepartitura`:** JSON com `format: 1`, até 256 KiB, 20 terminais e 20 painéis; campos desconhecidos são
-  ignorados. Tamanhos de 320×200 a 4000×4000 (painéis a partir de 200×200), posições até 100000. **Exportar…** e **Importar…** estão na folha de partituras. Um arquivo importado não é confiável: a tela de
+- **Onde:** aplicada pelo app, a equipe nasce no cercado que está na tela (a pasta padrão é a do cercado); se o rebanho pede
+  cercado, um novo é criado e o app vai para ele. Um Pastor aplica sempre no seu próprio cercado e na sua pasta.
+- **Arquivo `.collieherd`:** JSON com `format: 1`, até 256 KiB, 20 terminais e 20 painéis; campos desconhecidos são
+  ignorados. Tamanhos de 320×200 a 4000×4000 (painéis a partir de 200×200), posições até 100000. **Exportar…** e **Importar…** estão na folha de Rebanhos. Um arquivo importado não é confiável: a tela de
   confiança mostra cada comando (`preset: custom`) e cada prompt antes de guardar, e importar não cria nada até você aplicar.
-  Se já existe uma partitura salva com o mesmo id, a tela oferece **Substituir**. O aplicar envia o resumo (digest) da
-  prévia: se a partitura mudou desde então, o daemon recusa.
-- **Maestro:** `collie partitura list`; `collie partitura apply <id> --name <nome> [--floor true|false]` (tudo que cria fica
-  ligado por corda ao Maestro, com as regras de `floor create` e `panel open`); `collie partitura save <nome> --terminals a,b,c
+  Se já existe um rebanho salvo com o mesmo id, a tela oferece **Substituir**. O aplicar envia o resumo (digest) da
+  prévia: se o rebanho mudou desde então, o daemon recusa.
+- **Pastor:** `collie herd list`; `collie herd apply <id> --name <nome> [--paddock true|false]` (tudo que cria fica
+  ligado por guia ao Pastor, com as regras de `paddock create` e `panel open`); `collie herd save <nome> --terminals a,b,c
   [--panels …]`. Remover, importar e exportar são só do app.
-- **Backup:** as partituras salvas (`<raiz>/partituras/`) entram no backup dos dados (veja abaixo).
+- **Backup:** os rebanhos salvos (`<raiz>/herds/`) entram no backup dos dados (veja abaixo).
 
 ## Notas
 
-- **Andares (floors):** `floor.list` é visível a todo terminal gerenciado (nomes, caminhos e branches de todos os
-  andares). Criar é só para Maestros; integrar/excluir, só para o Maestro criador ou o usuário; land `pr`, só o usuário.
+- **Cercados (paddocks):** `paddock.list` é visível a todo terminal gerenciado (nomes, caminhos e branches de todos os
+  cercados). Criar é só para Pastores; integrar/excluir, só para o Pastor criador ou o usuário; land `pr`, só o usuário.
 - **Painel de uso:** os provedores ficam em `~/Library/Application Support/Collie/usage/providers/*.json` (semeados uma vez). O provedor Claude vem
   desativado: não há fonte local de uso que não envie um prompt. O provedor Codex não foi verificado contra a saída
   real do `codex`.

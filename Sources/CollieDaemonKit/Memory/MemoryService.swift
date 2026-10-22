@@ -171,7 +171,7 @@ actor MemoryService {
         hits.sort { $0.hit.score > $1.hit.score }
         guard let top = hits.first?.hit.score, top > 0 else { return "" }
         let seen = injected[terminal] ?? []
-        // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute paddock
+        // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor
         let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && !seen.contains($0.hit.record.id) }
         var lines = [Self.relevantHeader], used = Self.relevantHeader.utf8.count, chosen: [(hit: MemoryHit, store: RepoMemory)] = []
         for h in picked where chosen.count < max {

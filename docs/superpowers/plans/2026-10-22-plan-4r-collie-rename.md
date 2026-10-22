@@ -4,7 +4,7 @@
 
 **Goal:** renomear o projeto inteiro de Orq para Collie (app, CLI, daemon, módulos, ids, variáveis) e trocar a marca pela logo "Herd", sem perder nenhum dado de quem já usa o Orq.
 
-**Architecture:** um codemod mecânico troca todos os nomes de uma vez (Task 1). Depois, código de upgrade explícito devolve a compatibilidade com o que o Orq deixou em disco: pasta de dados, LaunchAgent, preferências, extensões de arquivo, URLs salvas e as pastas `.orq/` dentro dos repositórios do usuário (Tasks 2–3). Por fim, a marca (Task 4) e os docs (Task 5).
+**Architecture:** um codemod mecânico troca todos os nomes de uma vez (Task 1). Depois, código de upgrade explícito devolve a compatibilidade com o que o Orq deixou em disco: pasta de dados, LaunchAgent, preferências, extensões de arquivo, URLs salvas e as pastas `.orq/` dentro dos repositórios do usuário (Tasks 2–3). Depois, a marca (Task 4) e o vocabulário próprio do Collie, que troca os termos herdados do Maestri (Maestro, corda, andar, partitura) pela metáfora de pastoreio (Task 6). Por fim, os docs (Task 5, roda por último).
 
 **Tech Stack:** Swift 6.2, SwiftPM, Swift Testing, launchd, `iconutil`.
 
@@ -26,10 +26,29 @@
 | Tema `Color.orqText`, `.orqUI(…)`, `OrqColor`, `OrqButtonStyle`… | `Color.collieText`, `.collieUI(…)`, `CollieColor`, `CollieButtonStyle`… |
 | `TERM_PROGRAM=Orq`, `<meta name="generator" content="Orq">` | `Collie` |
 
+### Vocabulário (Task 6; decisão do usuário 2026-10-22: metáfora de pastoreio, dentro do 4R)
+
+Os termos abaixo são do Maestri e saem do produto inteiro: interface, CLI, MCP, protocolo, código, testes e README.
+
+| Maestri/Orq (UI pt) | Collie (UI pt) | Código/CLI/protocolo (en) |
+|---|---|---|
+| Maestro; status "regendo N" | Pastor (m.); "pastoreando N" | `shepherd` (`isShepherd`, `--shepherd`) |
+| corda, cordas (f.) | guia, guias (f.) | `leash`, `leashes` (`collie leash a b`, `leash.*`) |
+| andar, andares (m.) | cercado, cercados (m.) | `paddock` (`paddock.create|land|delete|status|list`, `Paddock`, `PaddockManager`) |
+| térreo | pasto | `pasture` (`isPasture`, `paddock.pasture`) |
+| partitura, partituras (f.); "de fábrica" | rebanho, rebanhos (m.); "de fábrica" | `herd` (`herd.save|list|get|apply|import|export|remove`, `Herd`, `HerdStore`, `HerdApplier`) |
+| recrutar, recrutou | chamar, chamou | `summon` |
+
+- Arquivos: `.colliepartitura` → **`.collieherd`**; pasta de dados `partituras/` → `herds/`; no repo, `.collie/floors/` → `.collie/paddocks/`. Branch continua `collie/<nome>`.
+- Ficam como estão (termos genéricos): canvas, painel, dock, Navegador, Design, Dispositivo, workspace, Memória, Trabalho, Artifacts.
+- Ficam como estão por serem legado lido do disco: tudo em `LegacyOrq` (`.orq/floors`, `orq/<nome>`, `.orqpartitura`) e as chaves antigas que os decoders aceitam (abaixo).
+- Texto em português: gênero muda em partitura → rebanho ("a partitura salva" → "o rebanho salvo"); revisar cada string à mão, nunca troca cega.
+- Dados do usuário (memória, nomes de terminais, prompts dentro de rebanhos salvos) **não** são reescritos, mesmo que contenham "Maestro".
+
 - **Nunca apagar dado do usuário.** O que sai do caminho vai para um nome novo ou fica no lugar.
 - Os docs históricos em `docs/superpowers/{plans,specs,spikes}` (exceto este plano) **não** são reescritos, porque registram o projeto quando ele se chamava Orq.
 - Reiniciar o daemon mata os terminais abertos. O upgrade acontece quando o usuário abre o `Collie.app` novo, e é ele quem decide quando.
-- Continuam valendo todas as restrições de projeto: cordas, token admin, clean-room, nada sai da máquina e o push é do usuário.
+- Continuam valendo todas as restrições de projeto: guias (ex-cordas) como única permissão, token admin, clean-room, nada sai da máquina e o push é do usuário.
 - Suíte completa: `perl -e 'alarm 900; exec @ARGV' swift test`. Nunca rodar duas suítes ao mesmo tempo.
 
 ## Review Focus
@@ -39,6 +58,8 @@
 3. **Caminhos absolutos para `…/Orq` guardados nos dados** (por exemplo, `--data` do figcraft-server e caminhos de workspace). Depois de mover a pasta, `…/Orq` vira um symlink para `…/Collie`, e esses caminhos continuam resolvendo.
 4. **Repositório do usuário com `.orq/memory` commitada.** A memória continua em `.orq/` nesse repositório; nada é movido nem commitado sozinho.
 5. **Canvas salvo com um painel de navegador em `orq-artifact://…`.** Ao reabrir, a URL vira `collie-artifact://…` e a página abre.
+6. **Estado salvo com as chaves antigas** (Task 6): workspace com `floors`/`maestro`, layout do canvas, registro de trabalho, backup, rebanho importado de um `.orqpartitura` antigo. Tudo decodifica sem perder campo e é regravado só com as chaves novas.
+7. **Codemod pegando palavras inocentes:** `record`, `according`, `background`, `foreground`, `floor()` matemático. Nenhuma delas pode mudar.
 
 ---
 
@@ -142,14 +163,40 @@
 - [ ] **Step 5:** A suíte completa fica verde, incluindo os testes com o motor real do Design. `scripts/bundle-app.sh` gera `build/Collie.app` com o ícone.
 - [ ] **Step 6:** Commit `feat(brand): Collie mark, app icon and figcraft patches`.
 
+### Task 6: Vocabulário de pastoreio (antes da Task 5)
+
+**Files:** `Sources/**`, `Tests/**`, `scripts/**`, `Resources/**` (menos binários); `git mv` dos arquivos com os termos no nome (`FloorManager.swift` → `PaddockManager.swift`, `FloorBar.swift` → `PaddockBar.swift`, `CordLayer.swift` → `LeashLayer.swift`, `Partituras/` → `Herds/`, `PartiturasSheet.swift` → `HerdsSheet.swift` e afins). Persistência com chaves antigas: `CollieCore/{Workspace,Partitura,Work,Panels,StreamFrames}.swift`, `CollieCanvas/Layout.swift`, `CollieDaemonKit/DataBackup.swift`, `LegacyOrq.swift`.
+
+**Interfaces:**
+- Consumes: `LegacyOrq` (Task 2), que ganha `partituraDir = "partituras"`, `collieFloorsDir = "floors"` e `colliePartituraExt = "colliepartitura"`.
+- Produces: os nomes da tabela "Vocabulário" em Global Constraints. Wire: comandos `paddock.*`, `herd.*`, `leash.*` (o que hoje é `connect`/`cords`), frame de stream `"paddock"`/`"paddockRemoved"`, campo `shepherd` no terminal. Sem aliases dos nomes antigos no protocolo nem no CLI (app, CLI e daemon saem juntos, como o `COLLIE_*` da Task 1).
+
+- [ ] **Step 1: Testes que falham** (`Tests/CollieCoreTests/LegacyKeysTests.swift` e `LegacyOrqTests`):
+  - `workspaceDecodesLegacyKeys`: JSON com `"floors":[…]` e um terminal com `"maestro":true` → decodifica `paddocks` e `isShepherd == true`; reencodar não contém `floors` nem `maestro`.
+  - `layoutDecodesLegacyCords`: layout salvo com `"cords"` (ou o nome atual do campo) → as guias voltam iguais.
+  - `herdDecodesLegacyPartitura`: um `.orqpartitura` do formato atual (fixture copiada de um teste de partitura existente) → decodifica como `Herd` com os mesmos papéis, guias e cercado; o preview mostra o mesmo digest que mostrava antes.
+  - `backupReadsLegacyDirs`: backup com `partituras/` → restaura em `herds/`.
+  - `migratesColliePartituraNames`: `new/partituras/x.colliepartitura` (deixado pela Task 2 numa máquina que já rodou o 4R parcial) → `new/herds/x.collieherd`; `.removed/` também.
+  - `repoDirFloorsLegacy`: `.collie/floors/f` existente continua sendo achado como cercado (ground detection aceita `.orq/floors`, `.collie/floors` e `.collie/paddocks`); cercado novo vai para `.collie/paddocks/`.
+- [ ] **Step 2:** Rodar os filtros e ver falharem.
+- [ ] **Step 3: Codemod com fronteira de identificador.** Script descartável, regras sensíveis a maiúsculas, cada uma só quando o termo não vem colado a letra minúscula antes nem depois (exceto plural/sufixo camelCase): regex base `(?<![a-z])(maestro|Maestro|MAESTRO)(?=[A-Z_\W]|s\b|$)` e equivalentes para `cord(s)`→`leash(es)`, `floor(s)`→`paddock(s)`, `ground`→`pasture`, `partitura(s)`→`herd(s)`, `recruit`→`summon`. Excluir: `floor(` matemático (`git grep -nE '(^|[^.A-Za-z])floor\('`), `LegacyOrq.swift`, `docs/superpowers/**`, `patches/**`, `vendor/**`. Conferir à mão o diff de `ground` (só o sentido "térreo") e de `cord` (nada de `record`).
+- [ ] **Step 4: Strings em português, à mão.** `git grep -niE '\b(maestro|corda|cordas|andar|andares|térreo|partitura|partituras|recrut|regendo)'` em `Sources/` e cada resultado vira o termo novo com concordância certa. Inclui: orientação do agente (`CollieOrientation`), textos do MCP (descrições de ferramentas), mensagens de erro, sheets, menus, barra de cercados, painel Trabalho, rebanhos de fábrica ("Feature fullstack": Pastor, backend, interface e revisor).
+- [ ] **Step 5: Decoders legados.** Cada tipo persistido aceita a chave antiga quando a nova falta (`decodeIfPresent(new) ?? decode(old)`) e só grava a nova. `migrateDataRoot` e uma passagem idempotente no `collied` renomeiam `partituras/` → `herds/` e `*.orqpartitura`/`*.colliepartitura` → `*.collieherd`. Painéis de abrir arquivo aceitam `.collieherd`, `.colliepartitura` e `.orqpartitura`.
+- [ ] **Step 6: Verificar.**
+  - Filtros verdes, depois a suíte completa verde (`perl -e 'alarm 900; exec @ARGV' swift test`).
+  - `git grep -niP '(?<![a-z])(maestro|cords?|floors?|partituras?|recruit)(?![a-z])|\b(corda|cordas|andar|andares|térreo|regendo|recrutar)\b' -- Sources Tests scripts Resources` só retorna linhas de `LegacyOrq.swift`, dos decoders legados e das fixtures legadas (listar no relatório).
+  - `git grep -niE 'record|according|background' -- Sources | wc -l` igual ao de antes da task.
+  - `scripts/bundle-app.sh`, abrir o app: barra mostra "Pasto"/cercados, nó mostra "Pastor" e "pastoreando N", sheet "Rebanhos".
+- [ ] **Step 7:** Commit `refactor: Collie herding vocabulary (shepherd, leash, paddock, herd)`.
+
 ### Task 5: Docs e checklist humana
 
 **Files:**
 - Modify: `README.md`, `docs/superpowers/plans/2026-10-24-phase3-roadmap.md` (linha 4R)
 - Create (scratchpad, git-ignored): `.superpowers/checklists/plan4r-collie.md`
 
-- [ ] **Step 1: README.** Título "Collie" e uma frase "antes chamado Orq". Comandos, variáveis e caminhos com os nomes novos. Uma seção "Vindo do Orq" com:
-  - o que migra sozinho: dados (com o symlink), LaunchAgent, preferências, partituras e URLs salvas;
+- [ ] **Step 1: README.** Título "Collie" e uma frase "antes chamado Orq". Todo o texto com o vocabulário da Task 6 (Pastor, guia, cercado, pasto, rebanho); sem "Maestro", "corda", "andar", "partitura". Comandos, variáveis e caminhos com os nomes novos. Uma seção "Vindo do Orq" com:
+  - o que migra sozinho: dados (com o symlink), LaunchAgent, preferências, partituras (viram rebanhos `.collieherd`) e URLs salvas;
   - o que fica: `.orq/` nos repositórios antigos e branches `orq/<nome>`;
   - o que o usuário faz: fechar o Orq, abrir o Collie e apagar `/Applications/Orq.app` quando quiser;
   - um aviso de que os terminais abertos fecham no upgrade.

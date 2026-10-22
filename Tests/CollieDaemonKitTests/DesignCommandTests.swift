@@ -802,7 +802,7 @@ extension DesignCommandTests {
 // MARK: real WebKit (vendor build)
 
 extension DesignCommandTests {
-    /// The Design panel joins its session without the confirmation dialog (`#orq=1&join=`, patch 0004): a second
+    /// The Design panel joins its session without the confirmation dialog (`#collie=1&join=`, patch 0004): a second
     /// client of the file sees one more peer, with no click.
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(3)))
     func designPanelJoinsWithoutClick() async throws {

@@ -12,6 +12,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN/CollieApp" "$APP/Contents/MacOS/Collie"
 cp "$BIN/collied" "$BIN/collie" "$APP/Contents/Helpers/"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 cp Resources/NOTICE-scrcpy "$APP/Contents/Resources/"
 # collied finds it at <Helpers>/../Resources/scrcpy-server; without it device panels show an error instead of video
 if [ -f vendor/scrcpy-server ]; then cp vendor/scrcpy-server "$APP/Contents/Resources/scrcpy-server"

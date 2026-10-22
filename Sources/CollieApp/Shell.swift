@@ -88,7 +88,7 @@ private struct CompactBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text("collie").font(.collieUI(15, .bold)).foregroundStyle(Color.collieText)
+            HStack(spacing: 6) { CollieMark(size: 18); Text("collie").font(.collieUI(15, .bold)).foregroundStyle(Color.collieText) }
             FloorChips(ctx: ctx)
             CommandField(ctx: ctx).frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
             UsageButton(ctx: ctx)
@@ -235,7 +235,7 @@ private struct WorkspaceSidebar: View {
         let client = ctx.client
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("collie").font(.collieUI(15, .bold)).foregroundStyle(Color.collieText)
+                HStack(spacing: 6) { CollieMark(size: 18); Text("collie").font(.collieUI(15, .bold)).foregroundStyle(Color.collieText) }
                 if let n = ctx.workspaceName { Text(n).font(.collieMono(12)).foregroundStyle(Color.collieMuted).lineLimit(1) }
             }
             CommandField(ctx: ctx)

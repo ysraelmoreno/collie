@@ -72,7 +72,7 @@ import CollieProtocol
     @Test func designURLEncodesLink() throws {
         let link = "figcraft://join?host=127.0.0.1:47900&file=ab=c&token=x#y%z"
         let u = designURL(editLink: link)
-        #expect(u.absoluteString.hasPrefix("collie-design://app/index.html?webgl#orq=1&join=")) // ponytail: renamed with the figcraft patches (plan 4R Task 4)
+        #expect(u.absoluteString.hasPrefix("collie-design://app/index.html?webgl#collie=1&join="))
         #expect(u.query == "webgl")
         #expect(designURL(editLink: link, webGPU: true).query == nil)
         let f = try #require(u.fragment(percentEncoded: true))
@@ -81,10 +81,10 @@ import CollieProtocol
         #expect(String(escaped).removingPercentEncoding == link)
     }
 
-    /// `orq=1` before `join=` (the link takes the rest of the fragment): the page joins without its dialog.
+    /// `collie=1` before `join=` (the link takes the rest of the fragment): the page joins without its dialog.
     @Test func designPanelURLRequestsAutoJoin() throws {
-        let f = try #require(designURL(editLink: "figcraft://join?host=h&orq=0").fragment(percentEncoded: true)) // ponytail: renamed with the figcraft patches (plan 4R Task 4)
-        #expect(f.hasPrefix("orq=1&join=figcraft%3A%2F%2Fjoin%3Fhost%3Dh%26orq%3D0")) // ponytail: renamed with the figcraft patches (plan 4R Task 4)
+        let f = try #require(designURL(editLink: "figcraft://join?host=h&collie=0").fragment(percentEncoded: true))
+        #expect(f.hasPrefix("collie=1&join=figcraft%3A%2F%2Fjoin%3Fhost%3Dh%26collie%3D0"))
     }
 
     @Test func panelRegistersAndRefusesCommands() async throws {

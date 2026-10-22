@@ -386,7 +386,7 @@ index 39001b5..b31dde2 100644
          icons::paint(ui.painter(), r.shrink(10.0), Icon::Logo, Color32::WHITE);
          ui.vertical(|ui| {
 -            ui.label(RichText::new("FigCraft").font(semibold(18.0)));
-+            ui.label(RichText::new("figcraft (embutido no Orq)").font(semibold(18.0)));
++            ui.label(RichText::new("figcraft (embutido no Collie)").font(semibold(18.0)));
              ui.label(RichText::new(trf("Version {version}", &[("version", &VERSION)])).color(t.text_secondary));
          });
      });

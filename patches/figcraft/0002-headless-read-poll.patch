@@ -6,7 +6,7 @@ index fcdb21a..fe3cc17 100644
  
  impl Backend for Headless {
      fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
-+        // Orq: reads (node.get, document.inspect, ui.render, ...) see the live session's latest state too.
++        // Collie: reads (node.get, document.inspect, ui.render, ...) see the live session's latest state too.
 +        self.session.live_poll();
          match method {
              "engine.execute" => {

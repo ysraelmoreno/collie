@@ -5,15 +5,15 @@ import CollieTheme
 import SwiftUI
 import WebKit
 
-/// The figcraft web UI for a panel's design file: `collie-design://app/index.html[?webgl]#orq=1&join=<edit link>` (`?webgl`
+/// The figcraft web UI for a panel's design file: `collie-design://app/index.html[?webgl]#collie=1&join=<edit link>` (`?webgl`
 /// forces WebGL2; without it figcraft-web tries WebGPU, see `GPUProbe`). The page joins the file's live session on the local figcraft-server
-/// (`ws://127.0.0.1:<port>`) without its confirmation dialog (`orq=1`, patch 0004; before `join=`, which takes
+/// (`ws://127.0.0.1:<port>`) without its confirmation dialog (`collie=1`, patch 0004; before `join=`, which takes
 /// the rest of the fragment). The link comes only from the daemon's `design.link`; it is a secret, so it is
 /// never logged or shown.
 @MainActor func designURL(editLink: String, webGPU: Bool = false) -> URL {
     // the page decodes the fragment (decodeURIComponent): encode all but the unreserved characters
     let link = editLink.addingPercentEncoding(withAllowedCharacters: DesignSchemeHandler.unreserved) ?? ""
-    return URL(string: "\(DesignSchemeHandler.scheme)://app/index.html\(webGPU ? "" : "?webgl")#orq=1&join=\(link)")! // ponytail: renamed with the figcraft patches (plan 4R Task 4)
+    return URL(string: "\(DesignSchemeHandler.scheme)://app/index.html\(webGPU ? "" : "?webgl")#collie=1&join=\(link)")!
 }
 
 /// Whether this WebKit has a usable WebGPU adapter: an offscreen web view on the `collie-design://` scheme (the panel's own

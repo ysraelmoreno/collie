@@ -1,6 +1,6 @@
 #!/bin/bash
 # Downloads the pinned scrcpy-server (Apache-2.0, see Resources/NOTICE-scrcpy) to vendor/scrcpy-server (git-ignored);
-# bundle-app.sh copies it into Orq.app. Fails if the download does not match the pinned SHA-256.
+# bundle-app.sh copies it into Collie.app. Fails if the download does not match the pinned SHA-256.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION=3.3.1

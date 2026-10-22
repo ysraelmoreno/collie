@@ -1,0 +1,143 @@
+import Foundation
+
+/// Manages `collied` as a user LaunchAgent so the daemon outlives the app.
+public enum DaemonLauncher {
+    public static let defaultLabel = "dev.collie.daemon"
+    static let legacyLabel = "dev.orq.daemon"
+    public static let legacyAppDomain = "dev.orq.app"
+    static let legacyConsentKey = "daemonConsent"   // Orq.app's own preference (Config.consentKey in 81e6c32)
+    /// Runs launchctl; returns (exit status, stdout).
+    public typealias Launchctl = @Sendable ([String]) throws -> (status: Int32, output: String)
+
+    public static var defaultAgentsDir: URL { home.appendingPathComponent("Library/LaunchAgents") }
+    public static var defaultLogDir: URL { home.appendingPathComponent("Library/Logs/Collie") }
+    static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
+
+    public static let realLaunchctl: Launchctl = { args in
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = args
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        let out = pipe.fileHandleForReading.readDataToEndOfFile()   // drain before wait: no pipe-full deadlock
+        p.waitUntilExit()
+        return (p.terminationStatus, String(decoding: out, as: UTF8.self))
+    }
+
+    public static func plist(colliedPath: String, root: URL, label: String = defaultLabel, logDir: URL = defaultLogDir) -> Data {
+        let log = logDir.appendingPathComponent("collied.log").path
+        let dict: [String: Any] = [
+            "Label": label,
+            "ProgramArguments": [colliedPath, "--root", root.path],
+            "KeepAlive": true,
+            "RunAtLoad": true,
+            "StandardOutPath": log,
+            "StandardErrorPath": log,
+            "ProcessType": "Interactive",
+        ]
+        // XML plist serialization sorts dictionary keys, so equal inputs give equal bytes.
+        return try! PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
+    }
+
+    static func validate(_ label: String) throws {
+        if label.isEmpty || label.contains("/") || label.contains("..") { throw LaunchError.invalidLabel(label) }
+    }
+
+    /// Boots out the Orq agent, waits until `orqd` is gone and only then removes its plist (app-generated config, not
+    /// user data), so `orqd` lets go of the data folder before `collied` starts. True when there was an old agent.
+    /// Throws `.legacyStillRunning` (plist kept, retried next start) if bootout fails or the old daemon outlives the wait.
+    /// Then turns off Orq.app's daemon consent, so a reopened Orq.app stops at its consent sheet instead of starting `orqd`
+    /// on the shared data (it would wipe the workspace). `legacyApp` is injectable; tests never pass the real domain.
+    @discardableResult
+    public static func retireLegacy(agentsDir: URL = defaultAgentsDir, launchctl: Launchctl = realLaunchctl,
+                                    legacyApp: UserDefaults? = UserDefaults(suiteName: legacyAppDomain), polls: Int = 20, pollInterval: TimeInterval = 0.25) throws -> Bool {
+        let file = agentsDir.appendingPathComponent("\(legacyLabel).plist")
+        guard FileManager.default.fileExists(atPath: file.path) else { return false }
+        let target = "gui/\(getuid())/\(legacyLabel)"
+        let out = try launchctl(["bootout", target])
+        // 3 / 113: not loaded (no such process / service), already what we want.
+        if ![0, 3, 113].contains(out.status) { throw LaunchError.legacyStillRunning }
+        if out.status == 0 {
+            var gone = false
+            for _ in 0..<polls {
+                if try launchctl(["print", target]).status != 0 { gone = true; break }
+                Thread.sleep(forTimeInterval: pollInterval)
+            }
+            if !gone { throw LaunchError.legacyStillRunning }
+        }
+        do { try FileManager.default.removeItem(at: file) } catch { throw LaunchError.legacyStillRunning }   // it would come back at login
+        legacyApp?.set(false, forKey: legacyConsentKey)
+        return true
+    }
+
+    /// Blocking (spawns launchctl, touches disk): call off the main thread.
+    public static func ensureRunning(
+        colliedPath: String, root: URL, label: String = defaultLabel,
+        agentsDir: URL = defaultAgentsDir, logDir: URL = defaultLogDir, launchctl: Launchctl = realLaunchctl,
+        legacyApp: UserDefaults? = UserDefaults(suiteName: legacyAppDomain)
+    ) throws {
+        try validate(label)
+        let fm = FileManager.default
+        try fm.createDirectory(at: logDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: agentsDir, withIntermediateDirectories: true)
+        if label == defaultLabel { try retireLegacy(agentsDir: agentsDir, launchctl: launchctl, legacyApp: legacyApp) }   // a dev/test label leaves the real Orq agent alone
+        let file = agentsDir.appendingPathComponent("\(label).plist")
+        let data = plist(colliedPath: colliedPath, root: root, label: label, logDir: logDir)
+        let domain = "gui/\(getuid())"
+        let target = "\(domain)/\(label)"
+        func bootstrap() throws {
+            // After bootout launchd may still be tearing the job down: bootstrap then fails with exit 5 (I/O error).
+            for attempt in 0..<4 {
+                let r = try launchctl(["bootstrap", domain, file.path])
+                if r.status == 0 { return }
+                guard r.status == 5, attempt < 3 else { throw LaunchError.bootstrapFailed(r.status) }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+        if (try? Data(contentsOf: file)) != data {
+            try data.write(to: file, options: .atomic)
+            try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+            _ = try? launchctl(["bootout", target])   // not loaded yet is fine
+            try bootstrap()
+            return
+        }
+        // `print` exits 0 for any loaded job, running or not: only the state line says which.
+        let p = try launchctl(["print", target])
+        if p.status != 0 { try bootstrap(); return }
+        if p.output.contains("state = running") { return }
+        if try launchctl(["kickstart", target]).status != 0 { try bootstrap() }
+    }
+
+    public static func stop(label: String = defaultLabel, launchctl: Launchctl = realLaunchctl) throws {
+        try validate(label)
+        _ = try launchctl(["bootout", "gui/\(getuid())/\(label)"])
+    }
+
+    /// Restarts the running job in place (`kickstart -k`): kills its terminals. Blocking: call off the main thread.
+    public static func restart(label: String = defaultLabel, launchctl: Launchctl = realLaunchctl) throws {
+        try validate(label)
+        let r = try launchctl(["kickstart", "-k", "gui/\(getuid())/\(label)"])
+        if r.status != 0 { throw LaunchError.restartFailed(r.status) }
+    }
+
+    /// The connected daemon runs another build than the bundled one (nil daemon build = a daemon from before build ids).
+    /// An unreadable bundled build cannot be compared: not stale.
+    public static func isStale(daemonBuild: String?, bundledBuild: String?) -> Bool {
+        guard let bundledBuild else { return false }
+        return daemonBuild != bundledBuild
+    }
+
+    public enum LaunchError: Error, Equatable, CustomStringConvertible {
+        case bootstrapFailed(Int32), restartFailed(Int32), invalidLabel(String), legacyStillRunning
+        public var description: String {
+            switch self {
+            case .bootstrapFailed(let c): return "bootstrapFailed(\(c))"
+            case .restartFailed(let c): return "restartFailed(\(c))"
+            case .invalidLabel(let l): return "invalidLabel(\(l))"
+            case .legacyStillRunning: return "O Orq antigo ainda está rodando; feche o Orq.app e tente de novo"
+            }
+        }
+    }
+}

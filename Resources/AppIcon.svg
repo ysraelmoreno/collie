@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="225.28" fill="#15171C"/>
+  <!-- Herd mark (200x200 viewBox, see CollieMark.swift) scaled so its visible extent is ~62% of the width, centred -->
+  <g transform="translate(77 49) scale(4.63)">
+    <path d="M145.25 145.25 A64 64 0 1 1 145.25 54.75" fill="none" stroke="#F4F2ED" stroke-width="18" stroke-linecap="round"/>
+    <circle cx="92" cy="82" r="11" fill="#F4F2ED"/>
+    <circle cx="120" cy="100" r="11" fill="#F4F2ED"/>
+    <circle cx="92" cy="118" r="11" fill="#F4F2ED"/>
+    <circle cx="145.3" cy="54.7" r="16" fill="#6E9BFF"/>
+  </g>
+</svg>

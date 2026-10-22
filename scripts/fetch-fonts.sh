@@ -1,6 +1,6 @@
 #!/bin/bash
 # Downloads Space Grotesk + DM Mono (SIL OFL 1.1, see Resources/NOTICE-fonts) from a pinned google/fonts commit to
-# vendor/fonts (git-ignored); bundle-app.sh copies them into Orq.app. Fails if any file does not match its pinned SHA-256.
+# vendor/fonts (git-ignored); bundle-app.sh copies them into Collie.app. Fails if any file does not match its pinned SHA-256.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 COMMIT=45e3d5269e4a17d823f6d84470bc084dc5ae46f6   # google/fonts main on 2026-10-21

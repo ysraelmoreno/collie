@@ -1,0 +1,423 @@
+diff --git a/apps/figcraft/build.rs b/apps/figcraft/build.rs
+index 64f9783..0c2fa0c 100644
+--- a/apps/figcraft/build.rs
++++ b/apps/figcraft/build.rs
+@@ -11,7 +11,7 @@ fn main() {
+         }
+         res.set("ProductName", "FigCraft");
+         res.set("FileDescription", "FigCraft");
+-        res.set("CompanyName", "ArtCraft");
++        res.set("CompanyName", "FigCraft contributors");
+         if let Err(e) = res.compile() {
+             println!("cargo::warning=winresource: {e}");
+         }
+diff --git a/crates/ui-egui/locales/cs.toml b/crates/ui-egui/locales/cs.toml
+index 7121548..d17da01 100644
+--- a/crates/ui-egui/locales/cs.toml
++++ b/crates/ui-egui/locales/cs.toml
+@@ -406,7 +406,6 @@ status = "draft — needs native review"
+ "Draw a frame" = "Nakreslit rámec"
+ "Drawing tools" = "Kreslicí nástroje"
+ "Drop shadow" = "Vržený stín"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Dvojí licence MIT OR Apache-2.0. Vytvořil tým ArtCraft a komunita."
+ "Duo" = "Dvojtónové"
+ "Duplicate" = "Duplikovat"
+ "Duplicate by dragging" = "Duplikovat tažením"
+@@ -636,7 +635,6 @@ status = "draft — needs native review"
+ "Instant" = "Okamžitě"
+ "Interaction" = "Interakce"
+ "Interactions" = "Interakce"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Návrh rozhraní a prototypování. Svobodný nástroj s otevřeným zdrojovým kódem, napsaný od základu v jazyce Rust nezávisle na kódu jiných produktů. Součást sady ArtCraft Crafting Apps."
+ "Intersect" = "Průnik"
+ "Intersects" = "Průniky"
+ "Invalid color" = "Neplatná barva"
+@@ -648,7 +646,6 @@ status = "draft — needs native review"
+ "Join code copied" = "Kód pro připojení zkopírován"
+ "Join code or invite link" = "Kód pro připojení nebo odkaz s pozvánkou"
+ "Join live session" = "Připojit se k živé relaci"
+-"Join us on Discord" = "Připojte se k nám na platformě Discord"
+ "Join with a code" = "Připojit se pomocí kódu"
+ "Joined" = "Připojeno"
+ "Joined {file}" = "Připojeno k souboru {file}"
+diff --git a/crates/ui-egui/locales/de.toml b/crates/ui-egui/locales/de.toml
+index 0362f89..617cfd3 100644
+--- a/crates/ui-egui/locales/de.toml
++++ b/crates/ui-egui/locales/de.toml
+@@ -400,7 +400,6 @@ status = "draft — needs native review"
+ "Drop to import" = "Zum Importieren ablegen"
+ "Drop to open" = "Zum Öffnen ablegen"
+ "Drop shadow" = "Schlagschatten"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Doppelt lizenziert unter MIT OR Apache-2.0. Entwickelt vom ArtCraft-Team und der Community."
+ "Duo" = "Duo"
+ "Duplicate" = "Duplizieren"
+ "Duplicate by dragging" = "Durch Ziehen duplizieren"
+@@ -621,7 +620,6 @@ status = "draft — needs native review"
+ "Instant" = "Sofort"
+ "Interaction" = "Interaktion"
+ "Interactions" = "Interaktionen"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Interface-Design und Prototyping. Ein kostenloses Open-Source-Designwerkzeug, als Clean-Room-Entwicklung von Grund auf in Rust geschrieben, Teil der ArtCraft Crafting Apps."
+ "Intersect" = "Schnittmenge"
+ "Intersects" = "Schnittmengen"
+ "Invalid color" = "Ungültige Farbe"
+@@ -632,7 +630,6 @@ status = "draft — needs native review"
+ "Join code copied" = "Beitrittscode kopiert"
+ "Join code or invite link" = "Beitrittscode oder Einladungslink"
+ "Join live session" = "Live-Sitzung beitreten"
+-"Join us on Discord" = "Besuchen Sie uns auf Discord"
+ "Join with a code" = "Mit einem Code beitreten"
+ "Joined" = "Beigetreten"
+ "Joined {file}" = "{file} beigetreten"
+diff --git a/crates/ui-egui/locales/en.toml b/crates/ui-egui/locales/en.toml
+index 59b25d9..d5d49e8 100644
+--- a/crates/ui-egui/locales/en.toml
++++ b/crates/ui-egui/locales/en.toml
+@@ -417,7 +417,7 @@ name = "English"
+ "Drop to import" = "Drop to import"
+ "Drop to open" = "Drop to open"
+ "Drop shadow" = "Drop shadow"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community."
++"Dual-licensed MIT OR Apache-2.0. Built from the upstream source, unmodified except for this window, the help link and live reads." = "Dual-licensed MIT OR Apache-2.0. Built from the upstream source, unmodified except for this window, the help link and live reads."
+ "Duo" = "Duo"
+ "Duplicate" = "Duplicate"
+ "Duplicate by dragging" = "Duplicate by dragging"
+@@ -649,7 +649,7 @@ name = "English"
+ "Instant" = "Instant"
+ "Interaction" = "Interaction"
+ "Interactions" = "Interactions"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps."
++"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust." = "Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust."
+ "Intersect" = "Intersect"
+ "Intersects" = "Intersects"
+ "Invalid color" = "Invalid color"
+@@ -661,7 +661,6 @@ name = "English"
+ "Join code copied" = "Join code copied"
+ "Join code or invite link" = "Join code or invite link"
+ "Join live session" = "Join live session"
+-"Join us on Discord" = "Join us on Discord"
+ "Join with a code" = "Join with a code"
+ "Joined" = "Joined"
+ "Joined {file}" = "Joined {file}"
+diff --git a/crates/ui-egui/locales/es.toml b/crates/ui-egui/locales/es.toml
+index 01c5813..034b37c 100644
+--- a/crates/ui-egui/locales/es.toml
++++ b/crates/ui-egui/locales/es.toml
+@@ -418,7 +418,6 @@ status = "draft — needs native review"
+ "Drop to import" = "Suelta para importar"
+ "Drop to open" = "Suelta para abrir"
+ "Drop shadow" = "Sombra paralela"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Con doble licencia MIT OR Apache-2.0. Hecho por el equipo y la comunidad de ArtCraft."
+ "Duo" = "Duo"
+ "Duplicate" = "Duplicar"
+ "Duplicate by dragging" = "Duplicar arrastrando"
+@@ -650,7 +649,6 @@ status = "draft — needs native review"
+ "Instant" = "Instantánea"
+ "Interaction" = "Interacción"
+ "Interactions" = "Interacciones"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Diseño de interfaces y prototipos. Una herramienta de diseño gratuita y de código abierto, de implementación independiente (clean-room), escrita desde cero en Rust, parte de las Crafting Apps de ArtCraft."
+ "Intersect" = "Intersecar"
+ "Intersects" = "Intersecciones"
+ "Invalid color" = "Color no válido"
+@@ -662,7 +660,6 @@ status = "draft — needs native review"
+ "Join code copied" = "Código para unirse copiado"
+ "Join code or invite link" = "Código para unirse o enlace de invitación"
+ "Join live session" = "Unirse a sesión en vivo"
+-"Join us on Discord" = "Únete a nosotros en Discord"
+ "Join with a code" = "Unirse con un código"
+ "Joined" = "Conectado"
+ "Joined {file}" = "Conectado a {file}"
+diff --git a/crates/ui-egui/locales/fr.toml b/crates/ui-egui/locales/fr.toml
+index 17a0d60..e549930 100644
+--- a/crates/ui-egui/locales/fr.toml
++++ b/crates/ui-egui/locales/fr.toml
+@@ -396,7 +396,6 @@ status = "draft — needs native review"
+ "Draw" = "Dessin"
+ "Drawing tools" = "Outils de dessin"
+ "Drop shadow" = "Ombre portée"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Double licence MIT OR Apache-2.0. Réalisé par l’équipe et la communauté ArtCraft."
+ "Duo" = "Duo"
+ "Duplicate" = "Dupliquer"
+ "Duplicate by dragging" = "Dupliquer en faisant glisser"
+@@ -617,7 +616,6 @@ status = "draft — needs native review"
+ "Instant" = "Instantané"
+ "Interaction" = "Interaction"
+ "Interactions" = "Interactions"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Design d’interfaces et prototypage. Un outil de design libre et gratuit, développé en salle blanche (clean-room) et écrit de zéro en Rust, membre des Crafting Apps d’ArtCraft."
+ "Intersect" = "Intersection"
+ "Intersects" = "Intersections"
+ "Invalid color" = "Couleur non valide"
+@@ -628,7 +626,6 @@ status = "draft — needs native review"
+ "Join code copied" = "Code d’accès copié"
+ "Join code or invite link" = "Code d’accès ou lien d’invitation"
+ "Join live session" = "Rejoindre la session en direct"
+-"Join us on Discord" = "Rejoignez-nous sur Discord"
+ "Join with a code" = "Rejoindre avec un code"
+ "Joined" = "Connecté"
+ "Joined {file}" = "Connecté à {file}"
+diff --git a/crates/ui-egui/locales/id.toml b/crates/ui-egui/locales/id.toml
+index a01944f..7507b2e 100644
+--- a/crates/ui-egui/locales/id.toml
++++ b/crates/ui-egui/locales/id.toml
+@@ -410,7 +410,6 @@ status = "draft — needs native review"
+ "Draw a frame" = "Gambar frame"
+ "Drawing tools" = "Alat gambar"
+ "Drop shadow" = "Bayangan luar"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Berlisensi ganda MIT OR Apache-2.0. Dibuat oleh tim ArtCraft dan komunitas."
+ "Duo" = "Duo"
+ "Duplicate" = "Duplikat"
+ "Duplicate by dragging" = "Duplikat dengan menyeret"
+@@ -640,7 +639,6 @@ status = "draft — needs native review"
+ "Instant" = "Instan"
+ "Interaction" = "Interaksi"
+ "Interactions" = "Interaksi"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Desain antarmuka dan prototyping. Alat desain clean-room gratis dan open-source yang ditulis dari nol dengan Rust, bagian dari ArtCraft Crafting Apps."
+ "Intersect" = "Irisan"
+ "Intersects" = "Beririsan"
+ "Invalid color" = "Warna tidak valid"
+@@ -652,7 +650,6 @@ status = "draft — needs native review"
+ "Join code copied" = "Kode gabung disalin"
+ "Join code or invite link" = "Kode gabung atau link undangan"
+ "Join live session" = "Gabung sesi langsung"
+-"Join us on Discord" = "Gabung dengan kami di Discord"
+ "Join with a code" = "Gabung dengan kode"
+ "Joined" = "Bergabung"
+ "Joined {file}" = "Bergabung ke {file}"
+diff --git a/crates/ui-egui/locales/ja.toml b/crates/ui-egui/locales/ja.toml
+index 965f8ea..0482268 100644
+--- a/crates/ui-egui/locales/ja.toml
++++ b/crates/ui-egui/locales/ja.toml
+@@ -413,7 +413,6 @@ status = "draft — needs native review"
+ "Draw a frame" = "フレームを描く"
+ "Drawing tools" = "描画ツール"
+ "Drop shadow" = "ドロップシャドウ"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "MIT または Apache-2.0 のデュアルライセンス。ArtCraft チームとコミュニティが制作。"
+ "Duo" = "デュオ"
+ "Duplicate" = "複製"
+ "Duplicate by dragging" = "ドラッグで複製"
+@@ -645,7 +644,6 @@ status = "draft — needs native review"
+ "Instant" = "即時"
+ "Interaction" = "インタラクション"
+ "Interactions" = "インタラクション"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "インターフェースデザインとプロトタイピング。Rust でゼロから書かれた、無料でオープンソースのクリーンルーム設計のデザインツール。ArtCraft Crafting Apps の一つ。"
+ "Intersect" = "交差"
+ "Intersects" = "交差"
+ "Invalid color" = "無効なカラー"
+@@ -657,7 +655,6 @@ status = "draft — needs native review"
+ "Join code copied" = "参加コードをコピー済み"
+ "Join code or invite link" = "参加コードまたは招待リンク"
+ "Join live session" = "ライブセッションに参加"
+-"Join us on Discord" = "Discord に参加する"
+ "Join with a code" = "コードで参加"
+ "Joined" = "参加済み"
+ "Joined {file}" = "{file} に参加済み"
+diff --git a/crates/ui-egui/locales/ko.toml b/crates/ui-egui/locales/ko.toml
+index 649fc26..62c5e65 100644
+--- a/crates/ui-egui/locales/ko.toml
++++ b/crates/ui-egui/locales/ko.toml
+@@ -396,7 +396,6 @@ status = "draft — needs native review"
+ "Draw" = "그리기"
+ "Drawing tools" = "그리기 도구"
+ "Drop shadow" = "드롭 섀도"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "MIT 또는 Apache-2.0 이중 라이선스. ArtCraft 팀과 커뮤니티가 만듦."
+ "Duo" = "2색"
+ "Duplicate" = "복제"
+ "Duplicate by dragging" = "드래그해 복제"
+@@ -617,7 +616,6 @@ status = "draft — needs native review"
+ "Instant" = "즉시"
+ "Interaction" = "인터랙션"
+ "Interactions" = "인터랙션"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "인터페이스 디자인과 프로토타이핑. Rust로 처음부터 작성한 무료 오픈 소스 클린룸 디자인 도구이며 ArtCraft Crafting Apps의 하나."
+ "Intersect" = "교차"
+ "Intersects" = "교차"
+ "Invalid color" = "잘못된 색상"
+@@ -628,7 +626,6 @@ status = "draft — needs native review"
+ "Join code copied" = "참여 코드 복사됨"
+ "Join code or invite link" = "참여 코드 또는 초대 링크"
+ "Join live session" = "라이브 세션 참여"
+-"Join us on Discord" = "Discord에서 함께하기"
+ "Join with a code" = "코드로 참여"
+ "Joined" = "참여함"
+ "Joined {file}" = "{file}에 참여함"
+diff --git a/crates/ui-egui/locales/pt-BR.toml b/crates/ui-egui/locales/pt-BR.toml
+index c31b694..11498c1 100644
+--- a/crates/ui-egui/locales/pt-BR.toml
++++ b/crates/ui-egui/locales/pt-BR.toml
+@@ -395,7 +395,6 @@ status = "draft — needs native review"
+ "Draw" = "Desenhar"
+ "Drawing tools" = "Ferramentas de desenho"
+ "Drop shadow" = "Sombra projetada"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Licença dupla MIT OR Apache-2.0. Feito pela equipe e pela comunidade ArtCraft."
+ "Duo" = "Duo"
+ "Duplicate" = "Duplicar"
+ "Duplicate by dragging" = "Duplicar arrastando"
+@@ -616,7 +615,6 @@ status = "draft — needs native review"
+ "Instant" = "Instantâneo"
+ "Interaction" = "Interação"
+ "Interactions" = "Interações"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Design de interfaces e prototipagem. Uma ferramenta de design gratuita e de código aberto, com implementação independente (clean-room), escrita do zero em Rust, parte dos Crafting Apps da ArtCraft."
+ "Intersect" = "Interseção"
+ "Intersects" = "Interseções"
+ "Invalid color" = "Cor inválida"
+@@ -627,7 +625,6 @@ status = "draft — needs native review"
+ "Join code copied" = "Código de acesso copiado"
+ "Join code or invite link" = "Código de acesso ou link de convite"
+ "Join live session" = "Entrar na sessão ao vivo"
+-"Join us on Discord" = "Junte-se a nós no Discord"
+ "Join with a code" = "Entrar com um código"
+ "Joined" = "Conectado"
+ "Joined {file}" = "Conectado a {file}"
+diff --git a/crates/ui-egui/locales/ru.toml b/crates/ui-egui/locales/ru.toml
+index 998eefd..d414919 100644
+--- a/crates/ui-egui/locales/ru.toml
++++ b/crates/ui-egui/locales/ru.toml
+@@ -407,7 +407,6 @@ name = "Русский"
+ "Draw a frame" = "Нарисовать Frame"
+ "Drawing tools" = "Инструменты рисования"
+ "Drop shadow" = "Внешняя тень"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Двойная лицензия MIT OR Apache-2.0. Создано командой и сообществом ArtCraft."
+ "Duo" = "Дуо"
+ "Duplicate" = "Дублировать"
+ "Duplicate by dragging" = "Дублировать перетаскиванием"
+@@ -637,7 +636,6 @@ name = "Русский"
+ "Instant" = "Мгновенно"
+ "Interaction" = "Взаимодействие"
+ "Interactions" = "Взаимодействия"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Дизайн интерфейсов и прототипирование. Бесплатный инструмент с открытым исходным кодом, независимо созданный с нуля на Rust, из семейства ArtCraft Crafting Apps."
+ "Intersect" = "Пересечение"
+ "Intersects" = "Пересечения"
+ "Invalid color" = "Недопустимый цвет"
+@@ -649,7 +647,6 @@ name = "Русский"
+ "Join code copied" = "Код подключения скопирован"
+ "Join code or invite link" = "Код подключения или ссылка приглашения"
+ "Join live session" = "Подключиться к совместной сессии"
+-"Join us on Discord" = "Присоединиться к нам в Discord"
+ "Join with a code" = "Подключиться по коду"
+ "Joined" = "Подключено"
+ "Joined {file}" = "Подключено к {file}"
+diff --git a/crates/ui-egui/locales/sv.toml b/crates/ui-egui/locales/sv.toml
+index eea2d31..468889f 100644
+--- a/crates/ui-egui/locales/sv.toml
++++ b/crates/ui-egui/locales/sv.toml
+@@ -415,7 +415,6 @@ name = "Svenska"
+ "Drop to import" = "Släpp för att importera"
+ "Drop to open" = "Släpp för att öppna"
+ "Drop shadow" = "Släppskugga"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "Dubbellicensierad under MIT OR Apache-2.0. Skapad av ArtCraft-teamet och gemenskapen."
+ "Duo" = "Duo"
+ "Duplicate" = "Duplicera"
+ "Duplicate by dragging" = "Duplicera genom att dra"
+@@ -647,7 +646,6 @@ name = "Svenska"
+ "Instant" = "Direkt"
+ "Interaction" = "Interaktion"
+ "Interactions" = "Interaktioner"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Gränssnittsdesign och prototyper. Ett fritt clean-room-designverktyg med öppen källkod, skrivet från grunden i Rust och en del av ArtCraft Crafting Apps."
+ "Intersect" = "Skärning"
+ "Intersects" = "Skär"
+ "Invalid color" = "Ogiltig färg"
+@@ -659,7 +657,6 @@ name = "Svenska"
+ "Join code copied" = "Anslutningskoden har kopierats"
+ "Join code or invite link" = "Anslutningskod eller inbjudningslänk"
+ "Join live session" = "Gå med i livesession"
+-"Join us on Discord" = "Gå med oss på Discord"
+ "Join with a code" = "Anslut med en kod"
+ "Joined" = "Ansluten"
+ "Joined {file}" = "Ansluten till {file}"
+diff --git a/crates/ui-egui/locales/tr.toml b/crates/ui-egui/locales/tr.toml
+index 1695864..c0a60ca 100644
+--- a/crates/ui-egui/locales/tr.toml
++++ b/crates/ui-egui/locales/tr.toml
+@@ -410,7 +410,6 @@ name = "Türkçe"
+ "Draw a frame" = "Çerçeve çiz"
+ "Drawing tools" = "Çizim araçları"
+ "Drop shadow" = "Gölge"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "MIT OR Apache-2.0 çift lisanslıdır. ArtCraft ekibi ve topluluğu tarafından yapılmıştır."
+ "Duo" = "İkili"
+ "Duplicate" = "Çoğalt"
+ "Duplicate by dragging" = "Sürükleyerek çoğalt"
+@@ -640,7 +639,6 @@ name = "Türkçe"
+ "Instant" = "Anında"
+ "Interaction" = "Etkileşim"
+ "Interactions" = "Etkileşimler"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "Arayüz tasarımı ve prototipleme. Rust ile sıfırdan yazılmış, ücretsiz, açık kaynaklı, temiz oda yöntemiyle geliştirilmiş bir tasarım aracı; ArtCraft Crafting Apps ailesinin bir parçası."
+ "Intersect" = "Kesiştir"
+ "Intersects" = "Kesişir"
+ "Invalid color" = "Geçersiz renk"
+@@ -652,7 +650,6 @@ name = "Türkçe"
+ "Join code copied" = "Katılma kodu kopyalandı"
+ "Join code or invite link" = "Katılma kodu veya davet bağlantısı"
+ "Join live session" = "Canlı oturuma katıl"
+-"Join us on Discord" = "Discord'da bize katılın"
+ "Join with a code" = "Kodla katıl"
+ "Joined" = "Katıldı"
+ "Joined {file}" = "Katıldınız: {file}"
+diff --git a/crates/ui-egui/locales/zh-Hans.toml b/crates/ui-egui/locales/zh-Hans.toml
+index 31be561..38e57ae 100644
+--- a/crates/ui-egui/locales/zh-Hans.toml
++++ b/crates/ui-egui/locales/zh-Hans.toml
+@@ -397,7 +397,6 @@ status = "draft — needs native review"
+ "Draw" = "绘制"
+ "Drawing tools" = "绘图工具"
+ "Drop shadow" = "投影"
+-"Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community." = "采用 MIT 或 Apache-2.0 双重许可。由 ArtCraft 团队和社区打造。"
+ "Duo" = "双色"
+ "Duplicate" = "创建副本"
+ "Duplicate by dragging" = "拖动创建副本"
+@@ -618,7 +617,6 @@ status = "draft — needs native review"
+ "Instant" = "即时"
+ "Interaction" = "交互"
+ "Interactions" = "交互"
+-"Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps." = "界面设计与原型制作。一款以 Rust 从零编写的免费、开源、净室设计工具，属于 ArtCraft Crafting Apps 系列。"
+ "Intersect" = "相交"
+ "Intersects" = "相交"
+ "Invalid color" = "无效颜色"
+@@ -629,7 +627,6 @@ status = "draft — needs native review"
+ "Join code copied" = "已复制加入代码"
+ "Join code or invite link" = "加入代码或邀请链接"
+ "Join live session" = "加入实时会话"
+-"Join us on Discord" = "加入我们的 Discord"
+ "Join with a code" = "用代码加入"
+ "Joined" = "已加入"
+ "Joined {file}" = "已加入 {file}"
+diff --git a/crates/ui-egui/src/dialogs.rs b/crates/ui-egui/src/dialogs.rs
+index 39001b5..b31dde2 100644
+--- a/crates/ui-egui/src/dialogs.rs
++++ b/crates/ui-egui/src/dialogs.rs
+@@ -125,20 +125,21 @@ fn about_body(ui: &mut egui::Ui, t: &Tokens) {
+         ui.painter().rect_filled(r, CornerRadius::same(10), ACCENT);
+         icons::paint(ui.painter(), r.shrink(10.0), Icon::Logo, Color32::WHITE);
+         ui.vertical(|ui| {
+-            ui.label(RichText::new("FigCraft").font(semibold(18.0)));
++            ui.label(RichText::new("figcraft (embutido no Collie)").font(semibold(18.0)));
+             ui.label(RichText::new(trf("Version {version}", &[("version", &VERSION)])).color(t.text_secondary));
+         });
+     });
+     ui.add_space(12.0);
+     ui.label(tr(
+-        "Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps.",
++        "Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust.",
+     ));
+     ui.add_space(8.0);
+-    ui.hyperlink_to("getartcraft.com/apps/figcraft", "https://getartcraft.com/apps/figcraft");
+-    ui.hyperlink_to(tr("Join us on Discord"), "https://discord.gg/artcraft");
++    ui.hyperlink_to("github.com/storytold/figcraft", "https://github.com/storytold/figcraft");
++    ui.hyperlink_to("LICENSE-APACHE", "https://github.com/storytold/figcraft/blob/v0.7.0/LICENSE-APACHE");
++    ui.hyperlink_to("LICENSE-MIT", "https://github.com/storytold/figcraft/blob/v0.7.0/LICENSE-MIT");
+     ui.add_space(8.0);
+     ui.label(
+-        RichText::new(tr("Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community.")).color(t.text_secondary).font(regular(11.0)),
++        RichText::new(tr("Dual-licensed MIT OR Apache-2.0. Built from the upstream source, unmodified except for this window, the help link and live reads.")).color(t.text_secondary).font(regular(11.0)),
+     );
+ }
+ 
+diff --git a/crates/ui-egui/src/lib.rs b/crates/ui-egui/src/lib.rs
+index 5d1be47..113ac25 100644
+--- a/crates/ui-egui/src/lib.rs
++++ b/crates/ui-egui/src/lib.rs
+@@ -961,7 +961,7 @@ impl FigApp {
+                     }
+                 }
+                 "preview.close" => self.ui.preview = None,
+-                "open.help" => self.services.open_url("https://getartcraft.com/apps/figcraft"),
++                "open.help" => self.services.open_url("https://github.com/storytold/figcraft"),
+                 "layers.collapseAll" => layers::collapse_all(self),
+                 "contextMenu" => self.ui.key_menu = true,
+                 "selectArea" => self.start_key_box(),

@@ -1,13 +1,13 @@
 #!/usr/bin/python3 -I
 """Fake `figcraft-cli mcp` for tests: minimal MCP over stdio, one JSON object per line.
-Logs every request as `<method> <tool> <command>` to $ORQ_FAKE_FIG_LOG (initialize logs `initialize <client name>`).
-ORQ_FAKE_FIG_SLEEP=<s> delays each tools/call answer. ORQ_FAKE_FIG_NOISE=1 sends garbage, a notification and an answer
+Logs every request as `<method> <tool> <command>` to $COLLIE_FAKE_FIG_LOG (initialize logs `initialize <client name>`).
+COLLIE_FAKE_FIG_SLEEP=<s> delays each tools/call answer. COLLIE_FAKE_FIG_NOISE=1 sends garbage, a notification and an answer
 with a foreign id before each answer. run_command ids: `bad.*` fails (isError, like the engine: "unknown command `bad.x`";
 `bad.leak` also echoes a share link and the server key), `big` answers 17 MiB, `die` exits, `rpcerr` answers a JSON-RPC
 error without a message, `slow` answers after 2 s, `file.save {path}` writes a stand-in file there. Each special id may also be prefixed with
-`node.` (`node.die`, `node.bad.x`): an id Orq lets callers run.
+`node.` (`node.die`, `node.bad.x`): an id Collie lets callers run.
 A `batch` with a `node.big` step answers 17 MiB (its log line ends with its label). Each `collab.join` also logs `join <host of its link>`.
-`library.publishToServer` answers the next version (1, 2, ...); with `server`, a copy's links and version 1. ORQ_FAKE_FIG_FLAGS=<dir>: while `<dir>/fail-<command id>`
+`library.publishToServer` answers the next version (1, 2, ...); with `server`, a copy's links and version 1. COLLIE_FAKE_FIG_FLAGS=<dir>: while `<dir>/fail-<command id>`
 exists that command fails (isError); with `<dir>/named-links`, each `variable.list` also logs
 `variables <file name>`, and while `<dir>/black-dark@<file name>` exists that file's first variable is black in
 its second mode; while `<dir>/white-bg` exists the first variable is white in its first mode; while `<dir>/slow-<command id>`
@@ -20,7 +20,7 @@ of the fixture tree; `edit.delete {ids}` with the fixture root makes its `get_no
 `node.slowreads` makes every later `get_node` sleep 30 s. `text.fonts` lists Inter; `{family: Inter}` its four styles."""
 import base64, json, os, struct, sys, time, zlib
 
-LOG = os.environ.get("ORQ_FAKE_FIG_LOG")
+LOG = os.environ.get("COLLIE_FAKE_FIG_LOG")
 
 
 def log(*parts):
@@ -122,7 +122,7 @@ def tool(name, args):
             return text("cannot reach %s (ws://127.0.0.1:47900/?key=fakeKey_123-abc)" % LINK, error=True)
         if cmd.startswith("bad."):
             return text("unknown command `%s`" % orig, error=True)
-        flags = os.environ.get("ORQ_FAKE_FIG_FLAGS")
+        flags = os.environ.get("COLLIE_FAKE_FIG_FLAGS")
         named = flags and os.path.exists(os.path.join(flags, "named-links"))
         if named and cmd == "collab.publish":
             FILE[0] = args.get("params", {}).get("name", "")
@@ -186,7 +186,7 @@ def tool(name, args):
         return text(COMMANDS.get(cmd, {"ok": True, "command": cmd, "params": args.get("params", {})}))
     if name == "batch":
         cmds = args.get("commands", [])
-        flags = os.environ.get("ORQ_FAKE_FIG_FLAGS")
+        flags = os.environ.get("COLLIE_FAKE_FIG_FLAGS")
         for c in cmds:
             if flags and os.path.exists(os.path.join(flags, "fail-batch-%s" % c.get("command"))):
                 return text("command `%s` failed (fake) at %s" % (c["command"], LINK), error=True)
@@ -252,10 +252,10 @@ for line in sys.stdin:
         if p.get("arguments", {}).get("command") == "rpcerr":
             send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32603}})
             continue
-        if os.environ.get("ORQ_FAKE_FIG_SLEEP"):
-            time.sleep(float(os.environ["ORQ_FAKE_FIG_SLEEP"]))
+        if os.environ.get("COLLIE_FAKE_FIG_SLEEP"):
+            time.sleep(float(os.environ["COLLIE_FAKE_FIG_SLEEP"]))
         result = tool(p.get("name"), p.get("arguments", {}))
-        if os.environ.get("ORQ_FAKE_FIG_NOISE"):
+        if os.environ.get("COLLIE_FAKE_FIG_NOISE"):
             sys.stdout.write("not json at all\n")
             send({"jsonrpc": "2.0", "method": "notifications/message", "params": {"level": "info", "data": "hi"}})
             send({"jsonrpc": "2.0", "id": 987654, "result": text({"wrong": True})})

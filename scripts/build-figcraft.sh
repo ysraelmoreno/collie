@@ -53,7 +53,7 @@ fi
 [ "$(git -C "$FONTS" rev-parse HEAD)" = "$CRAFT_FONTS_COMMIT" ] || { echo "error: $FONTS is not $CRAFT_FONTS_COMMIT" >&2; exit 1; }
 
 # Patches: re-applied on a clean tree only when the set changes (untouched files keep cargo's cache).
-STAMP="$SRC/.orq-patches"
+STAMP="$SRC/.orq-patches"  # ponytail: renamed with the figcraft patches (plan 4R Task 4)
 PATCHES_SUM="$(cat patches/figcraft/*.patch | shasum -a 256 | cut -d' ' -f1)"
 if [ "$(cat "$STAMP" 2>/dev/null)" != "$PATCHES_SUM" ]; then
   git -C "$SRC" checkout -q -- . && git -C "$SRC" clean -fdq -e target -e dist

@@ -30,6 +30,15 @@ import CollieCore
     static let notLoaded: (Int32, String) = (113, "Could not find service")
     static let loadedIdle: (Int32, String) = (0, "state = not running")
 
+    /// Throwaway stand-in for the `dev.orq.app` domain (tests never touch the real one).
+    func legacySuite() -> UserDefaults {
+        let name = "collie-test-\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: name)!
+        d.removePersistentDomain(forName: name)
+        d.set(true, forKey: DaemonLauncher.legacyConsentKey)
+        return d
+    }
+
     func tmp() -> URL {
         let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-launcher-\(UUID().uuidString)")
         try! FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
@@ -155,7 +164,9 @@ import CollieCore
             if args[0] == "bootstrap" { oldGoneAtBootstrap.withLock { $0 = !FileManager.default.fileExists(atPath: old.path) } }
             return try base(args)
         }
-        try DaemonLauncher.ensureRunning(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"), agentsDir: agents, logDir: logs, launchctl: spy)
+        let legacy = legacySuite()
+        try DaemonLauncher.ensureRunning(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"), agentsDir: agents, logDir: logs, launchctl: spy, legacyApp: legacy)
+        #expect(legacy.bool(forKey: DaemonLauncher.legacyConsentKey) == false)   // a reopened Orq.app stops at its consent sheet
         let log = calls.log.withLock { $0 }
         #expect(log.first?[0] == "bootout" && log.first?[1].hasSuffix("/dev.orq.daemon") == true)
         #expect(log.last?[0] == "bootstrap" && log.last?[2].hasSuffix("dev.collie.daemon.plist") == true)
@@ -184,7 +195,7 @@ import CollieCore
         try Data("x".utf8).write(to: old)
         #expect(throws: DaemonLauncher.LaunchError.legacyStillRunning) {
             try DaemonLauncher.ensureRunning(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"), agentsDir: agents, logDir: logs,
-                                             launchctl: self.legacyRunner(bootout: 5, loadedPrints: 0, log: log))
+                                             launchctl: self.legacyRunner(bootout: 5, loadedPrints: 0, log: log), legacyApp: legacySuite())
         }
         #expect(FileManager.default.fileExists(atPath: old.path))
         #expect(!log.log.withLock { $0.contains { $0[0] == "bootstrap" } })
@@ -194,7 +205,7 @@ import CollieCore
         let agents = tmp(), log = Calls()
         let old = agents.appendingPathComponent("dev.orq.daemon.plist")
         try Data("x".utf8).write(to: old)
-        #expect(try DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: legacyRunner(bootout: 0, loadedPrints: 2, log: log), pollInterval: 0.01))
+        #expect(try DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: legacyRunner(bootout: 0, loadedPrints: 2, log: log), legacyApp: legacySuite(), pollInterval: 0.01))
         let prints = log.log.withLock { $0.filter { $0[0] == "print" }.count }
         #expect(prints == 3)
         #expect(!FileManager.default.fileExists(atPath: old.path))
@@ -205,7 +216,7 @@ import CollieCore
         let old = agents.appendingPathComponent("dev.orq.daemon.plist")
         try Data("x".utf8).write(to: old)
         #expect(throws: DaemonLauncher.LaunchError.legacyStillRunning) {
-            try DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: self.legacyRunner(bootout: 0, loadedPrints: 99, log: log), polls: 3, pollInterval: 0.01)
+            try DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: self.legacyRunner(bootout: 0, loadedPrints: 99, log: log), legacyApp: legacySuite(), polls: 3, pollInterval: 0.01)
         }
         #expect(FileManager.default.fileExists(atPath: old.path))
     }
@@ -214,15 +225,17 @@ import CollieCore
         let agents = tmp(), logs = tmp(), calls = Calls(print: Self.notLoaded)
         let old = agents.appendingPathComponent("dev.orq.daemon.plist")
         try Data("x".utf8).write(to: old)
+        let legacy = legacySuite()
         try DaemonLauncher.ensureRunning(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"), label: "dev.collie.test",
-                                         agentsDir: agents, logDir: logs, launchctl: calls.runner)
+                                         agentsDir: agents, logDir: logs, launchctl: calls.runner, legacyApp: legacy)
+        #expect(legacy.bool(forKey: DaemonLauncher.legacyConsentKey) == true)
         #expect(!calls.log.withLock { $0.contains { $0.last?.hasSuffix("dev.orq.daemon") == true } })
         #expect(FileManager.default.fileExists(atPath: old.path))
     }
 
     @Test func noLegacyAgentNoLegacyCalls() throws {
         let agents = tmp(), calls = Calls()
-        #expect(try !DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: calls.runner))
+        #expect(try !DaemonLauncher.retireLegacy(agentsDir: agents, launchctl: calls.runner, legacyApp: legacySuite()))
         #expect(calls.log.withLock { $0.isEmpty })
     }
 }

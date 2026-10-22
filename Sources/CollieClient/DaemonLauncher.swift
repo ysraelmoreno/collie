@@ -4,6 +4,8 @@ import Foundation
 public enum DaemonLauncher {
     public static let defaultLabel = "dev.collie.daemon"
     static let legacyLabel = "dev.orq.daemon"
+    public static let legacyAppDomain = "dev.orq.app"
+    static let legacyConsentKey = "daemonConsent"   // Orq.app's own preference (Config.consentKey in 81e6c32)
     /// Runs launchctl; returns (exit status, stdout).
     public typealias Launchctl = @Sendable ([String]) throws -> (status: Int32, output: String)
 
@@ -46,9 +48,11 @@ public enum DaemonLauncher {
     /// Boots out the Orq agent, waits until `orqd` is gone and only then removes its plist (app-generated config, not
     /// user data), so `orqd` lets go of the data folder before `collied` starts. True when there was an old agent.
     /// Throws `.legacyStillRunning` (plist kept, retried next start) if bootout fails or the old daemon outlives the wait.
+    /// Then turns off Orq.app's daemon consent, so a reopened Orq.app stops at its consent sheet instead of starting `orqd`
+    /// on the shared data (it would wipe the workspace). `legacyApp` is injectable; tests never pass the real domain.
     @discardableResult
     public static func retireLegacy(agentsDir: URL = defaultAgentsDir, launchctl: Launchctl = realLaunchctl,
-                                    polls: Int = 20, pollInterval: TimeInterval = 0.25) throws -> Bool {
+                                    legacyApp: UserDefaults? = UserDefaults(suiteName: legacyAppDomain), polls: Int = 20, pollInterval: TimeInterval = 0.25) throws -> Bool {
         let file = agentsDir.appendingPathComponent("\(legacyLabel).plist")
         guard FileManager.default.fileExists(atPath: file.path) else { return false }
         let target = "gui/\(getuid())/\(legacyLabel)"
@@ -64,19 +68,21 @@ public enum DaemonLauncher {
             if !gone { throw LaunchError.legacyStillRunning }
         }
         do { try FileManager.default.removeItem(at: file) } catch { throw LaunchError.legacyStillRunning }   // it would come back at login
+        legacyApp?.set(false, forKey: legacyConsentKey)
         return true
     }
 
     /// Blocking (spawns launchctl, touches disk): call off the main thread.
     public static func ensureRunning(
         colliedPath: String, root: URL, label: String = defaultLabel,
-        agentsDir: URL = defaultAgentsDir, logDir: URL = defaultLogDir, launchctl: Launchctl = realLaunchctl
+        agentsDir: URL = defaultAgentsDir, logDir: URL = defaultLogDir, launchctl: Launchctl = realLaunchctl,
+        legacyApp: UserDefaults? = UserDefaults(suiteName: legacyAppDomain)
     ) throws {
         try validate(label)
         let fm = FileManager.default
         try fm.createDirectory(at: logDir, withIntermediateDirectories: true)
         try fm.createDirectory(at: agentsDir, withIntermediateDirectories: true)
-        if label == defaultLabel { try retireLegacy(agentsDir: agentsDir, launchctl: launchctl) }   // a dev/test label leaves the real Orq agent alone
+        if label == defaultLabel { try retireLegacy(agentsDir: agentsDir, launchctl: launchctl, legacyApp: legacyApp) }   // a dev/test label leaves the real Orq agent alone
         let file = agentsDir.appendingPathComponent("\(label).plist")
         let data = plist(colliedPath: colliedPath, root: root, label: label, logDir: logDir)
         let domain = "gui/\(getuid())"

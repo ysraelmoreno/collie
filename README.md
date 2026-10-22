@@ -42,8 +42,16 @@ O Collie é o antigo Orq. Ao abrir o `Collie.app` pela primeira vez, ele leva o 
 
 **O que fica como estava:** repositórios com `.orq/` continuam usando `.orq/` (memória, cache); os repositórios novos usam
 `.collie/`. Cercados antigos em `.orq/floors` ou `.collie/floors` seguem funcionando e se integram (`land`) normalmente; os
-novos ficam em `.collie/paddocks`. As branches `orq/<nome>` continuam com esse nome; as novas são `collie/<nome>`.
+novos ficam em `.collie/paddocks` (e, nos repositórios que ainda usam `.orq/`, em `.orq/paddocks/`). As branches `orq/<nome>` continuam com esse nome; as novas são `collie/<nome>`.
 Variáveis `ORQ_*` não valem mais: use `COLLIE_*`.
+Cookies e logins dos painéis do Navegador ficam nos dados antigos do WebKit (`~/Library/WebKit/dev.orq.app`): será preciso
+entrar de novo nos sites; nada é apagado. Páginas que agentes escreveram com links absolutos `orq-artifact://` mantêm esses
+links (conteúdo seu não é reescrito); as URLs salvas dos painéis são convertidas.
+
+> **Atenção: depois do upgrade, não abra o `Orq.app` de novo.** O app antigo ainda sabe subir o `orqd` sobre os mesmos
+> dados: se você aceitar a tela de consentimento dele, o cão velho solta os terminais do Collie e pode apagar o pasto
+> (terminais, coleiras, cercados e painéis). Ao aposentar o agente antigo, o Collie já desliga o consentimento do Orq.app,
+> então ele para nessa tela: feche-o e apague-o.
 
 **O que você faz:**
 

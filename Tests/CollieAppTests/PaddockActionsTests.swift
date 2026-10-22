@@ -4,10 +4,10 @@ import CollieClient
 import CollieCore
 @testable import CollieApp
 
-@MainActor private func actions() -> FloorActions {
-    FloorActions(client: DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-floors-\(UUID())"))))
+@MainActor private func actions() -> PaddockActions {
+    PaddockActions(client: DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-paddocks-\(UUID())"))))
 }
-private let floor = Floor(id: UUID(), name: "api", repoRoot: "/r", path: "/r/.collie/floors/api", branch: "collie/api", baseBranch: "main")
+private let paddock = Paddock(id: UUID(), name: "api", repoRoot: "/r", path: "/r/.collie/paddocks/api", branch: "collie/api", baseBranch: "main")
 
 @MainActor private func until(_ cond: () -> Bool) async {
     for _ in 0..<200 where !cond() { try? await Task.sleep(for: .milliseconds(5)) }
@@ -28,17 +28,17 @@ private let floor = Floor(id: UUID(), name: "api", repoRoot: "/r", path: "/r/.co
     #expect(!a.busy)
 }
 
-/// The dialog's floor is gone (deleted elsewhere): nothing is sent.
-@MainActor @Test func deleteSkipsMissingFloor() {
+/// The dialog's paddock is gone (deleted elsewhere): nothing is sent.
+@MainActor @Test func deleteSkipsMissingPaddock() {
     let a = actions()
-    a.deleting = floor
+    a.deleting = paddock
     a.delete(force: false)
     #expect(!a.busy)
 }
 
-@MainActor @Test func floorPaletteCommands() {
+@MainActor @Test func paddockPaletteCommands() {
     let a = actions()
-    #expect(a.commands(for: floor).map(\.title) == ["Status do andar api…", "Land api…", "Excluir andar api…"])
+    #expect(a.commands(for: paddock).map(\.title) == ["Status do cercado api…", "Land api…", "Excluir cercado api…"])
     a.run { try await Task.sleep(for: .seconds(1)) }
-    #expect(a.commands(for: floor).map(\.title) == ["Status do andar api…"])   // Land / Excluir wait for the running one
+    #expect(a.commands(for: paddock).map(\.title) == ["Status do cercado api…"])   // Land / Excluir wait for the running one
 }

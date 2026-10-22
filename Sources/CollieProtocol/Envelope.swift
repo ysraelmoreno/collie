@@ -1,6 +1,6 @@
 public enum ErrorCode: String, Codable, Sendable {
     case unauthorized, notFound, notConnected, notRunning, ambiguous, invalidArgs,
-         timeout, deadlock, notMaestro, unsupportedVersion, daemonUnavailable, unavailable, `internal`
+         timeout, deadlock, notShepherd, unsupportedVersion, daemonUnavailable, unavailable, `internal`
 }
 
 public struct ProtocolError: Error, Codable, Sendable, Equatable {

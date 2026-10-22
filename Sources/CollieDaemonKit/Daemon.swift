@@ -47,8 +47,8 @@ public struct DaemonConfig: Sendable {
     public var shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
     /// false: agents get only Collie's keys, no `$SHELL -ilc` capture (process tests: never the developer's rc files).
     public var captureUserEnv = true
-    /// How long `partitura.apply` waits for each new terminal to be ready (tests shorten it).
-    public var partituraReady: Duration = .seconds(60)
+    /// How long `herd.apply` waits for each new terminal to be ready (tests shorten it).
+    public var herdReady: Duration = .seconds(60)
     /// Captures the user's interactive environment for agent launches (unit tests replace it).
     var envRunner: UserEnvironment.Runner = UserEnvironment.live
     /// The on-device model for summary rewrites (tests pass a fake).
@@ -83,9 +83,9 @@ public final class Daemon: Sendable {
         let loaded = (try? Data(contentsOf: wsDir.appendingPathComponent("workspace.json")))
             .flatMap { try? JSONDecoder().decode(Workspace.self, from: $0) }
         var ws = loaded ?? Workspace(id: config.workspaceId, name: "default")
-        // repair: a canvas panel left on a floor that no longer exists (before floor.delete grounded them) goes to ground
-        let floorIds = Set(ws.floors.map(\.id))
-        for i in ws.panels.indices where ws.panels[i].floorId.map({ !floorIds.contains($0) }) == true { ws.panels[i].floorId = nil }
+        // repair: a canvas panel left on a paddock that no longer exists (before paddock.delete moved them) goes to pasture
+        let paddockIds = Set(ws.paddocks.map(\.id))
+        for i in ws.panels.indices where ws.panels[i].paddockId.map({ !paddockIds.contains($0) }) == true { ws.panels[i].paddockId = nil }
         let asks = AskCoordinator(idleQuietSeconds: config.idleQuietSeconds, heldMaxSeconds: config.heldMaxSeconds)
         // a replay (base64 of the whole memory tail) must always fit the stream send queue on its own
         precondition(config.memoryCapBytes / 3 * 4 + 64 * 1024 < UnixSocketServer.Connection.sendCap,

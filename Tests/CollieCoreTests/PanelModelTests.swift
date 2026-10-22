@@ -5,11 +5,11 @@ import CollieProtocol
 
 @Suite struct PanelModelTests {
     func panel(_ n: String, _ pl: PanelPlacement) -> Panel { Panel(id: UUID(), name: n, pluginId: "browser", placement: pl) }
-    func term(_ n: String) -> TerminalRecord { TerminalRecord(id: UUID(), name: n, preset: .shell, command: nil, cwd: "/", isMaestro: false) }
+    func term(_ n: String) -> TerminalRecord { TerminalRecord(id: UUID(), name: n, preset: .shell, command: nil, cwd: "/", isShepherd: false) }
 
     @Test func decodesV2WorkspaceWithoutPanels() throws {
         let id = UUID()
-        let json = #"{"schemaVersion":2,"id":"\#(id)","name":"w","terminals":[],"connections":[],"floors":[]}"#
+        let json = #"{"schemaVersion":2,"id":"\#(id)","name":"w","terminals":[],"connections":[],"paddocks":[]}"#
         let w = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
         #expect(w.panels == [])
         #expect(String(decoding: try JSONEncoder().encode(w), as: UTF8.self).contains("\"schemaVersion\":3"))
@@ -30,7 +30,7 @@ import CollieProtocol
         #expect(try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(w)) == w)
     }
 
-    @Test func canvasPanelReachableOnlyWithCord() {
+    @Test func canvasPanelReachableOnlyWithLeash() {
         let a = term("A"), b = term("B"), c = panel("web", .canvas)
         var w = Workspace(id: UUID(), name: "w", terminals: [a, b], panels: [c])
         #expect(ConnectionGraph.reachablePanels(from: a.id, in: w).isEmpty)

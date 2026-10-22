@@ -7,13 +7,30 @@ import CollieProtocol
 /// page export (no `node`) was read from (records from before it: nil, the daemon's client's current page).
 struct Artifact: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable { case export, agent }
-    var id: UUID; var kind: Kind; var title: String; var fileId: String?; var node: String?; var floorId: UUID?
+    var id: UUID; var kind: Kind; var title: String; var fileId: String?; var node: String?; var paddockId: UUID?
     var by: String; var at: Date; var version: Int; var folder: String; var stamp: String?; var warnings: [String]
     var page: String? = nil
     /// The page the artifact came from, relative to `<root>/artifacts` (agents' records from before it: `<id>/source.html`).
     var source: String? = nil
     /// Why the last import of the page into a design failed.
     var importError: String? = nil
+}
+
+extension Artifact {
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, title, fileId, node, paddockId, by, at, version, folder, stamp, warnings, page, source, importError
+    }
+    private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id); kind = try c.decode(Kind.self, forKey: .kind); title = try c.decode(String.self, forKey: .title)
+        fileId = try c.decodeIfPresent(String.self, forKey: .fileId); node = try c.decodeIfPresent(String.self, forKey: .node)
+        paddockId = try c.decodeIfPresent(UUID.self, forKey: .paddockId) ?? d.container(keyedBy: Legacy.self).decodeIfPresent(UUID.self, forKey: .floorId)
+        by = try c.decode(String.self, forKey: .by); at = try c.decode(Date.self, forKey: .at); version = try c.decode(Int.self, forKey: .version)
+        folder = try c.decode(String.self, forKey: .folder); stamp = try c.decodeIfPresent(String.self, forKey: .stamp)
+        warnings = try c.decode([String].self, forKey: .warnings); page = try c.decodeIfPresent(String.self, forKey: .page)
+        source = try c.decodeIfPresent(String.self, forKey: .source); importError = try c.decodeIfPresent(String.self, forKey: .importError)
+    }
 }
 
 /// `<root>/artifacts/artifacts.json` (0600) and a folder per artifact: an export's versions in `<id>/v<N>/`, an
@@ -62,7 +79,7 @@ actor ArtifactStore {
 
     /// The next version of `(fileId, node ?? page)`'s export (a new artifact for a key not seen) and its new empty folder.
     /// A record from before pages (no node, no page) is adopted by the first page export, which then records its page.
-    func newVersion(fileId: String, node: String?, page: String?, title: String, floorId: UUID?, by: String) async throws -> (Artifact, URL) {
+    func newVersion(fileId: String, node: String?, page: String?, title: String, paddockId: UUID?, by: String) async throws -> (Artifact, URL) {
         // one being removed (its record still listed while its folder moves) is not continued: a new artifact
         let all = try await registry().filter { $0.kind == .export && $0.fileId == fileId && $0.node == node && !removed.contains($0.id) }
         let known = node != nil ? all.first : all.first { $0.page == page } ?? (page != nil ? all.first { $0.page == nil && (adopting[$0.id] ?? page) == page } : nil)
@@ -72,7 +89,7 @@ actor ArtifactStore {
         if known == nil { pending[key] = id }
         let n = max(known?.version ?? 0, reserved[id] ?? 0) + 1
         reserved[id] = n
-        let a = Artifact(id: id, kind: .export, title: title, fileId: fileId, node: node, floorId: floorId, by: by, at: Date(),
+        let a = Artifact(id: id, kind: .export, title: title, fileId: fileId, node: node, paddockId: paddockId, by: by, at: Date(),
                          version: n, folder: "\(Self.name(id))/v\(n)", stamp: nil, warnings: [], page: page)
         let folder = dir.appendingPathComponent(a.folder)
         try await onIO {
@@ -110,9 +127,9 @@ actor ArtifactStore {
     func wasRemoved(_ id: UUID) -> Bool { removed.contains(id) }
 
     /// `page` (an HTML document) kept as a new agent artifact.
-    func addAgent(page: Data, title: String, floorId: UUID?, by: String) async throws -> Artifact {
+    func addAgent(page: Data, title: String, paddockId: UUID?, by: String) async throws -> Artifact {
         let id = UUID()
-        var a = Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, floorId: floorId, by: by, at: Date(),
+        var a = Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
                          version: 1, folder: Self.name(id), stamp: nil, warnings: [])
         a.source = "\(a.folder)/source.html"
         let folder = dir.appendingPathComponent(a.folder)
@@ -131,7 +148,7 @@ actor ArtifactStore {
     /// The folder `root` kept as a new agent artifact (`<id>/source/`), `page` (inside it) its page. Only regular files of
     /// the allowed kinds are copied (never a link; hidden names skipped), up to `maxFiles` and `maxBytes`: past them
     /// (or `page` outside `root`, or not copied) nothing is created. Read and written on the io queue.
-    func addAgent(root: URL, page: URL, title: String, floorId: UUID?, by: String) async throws -> Artifact {
+    func addAgent(root: URL, page: URL, title: String, paddockId: UUID?, by: String) async throws -> Artifact {
         let id = UUID()
         // links in the paths themselves resolved (the page's own name is not: a linked page is not copied)
         let rootURL = root.standardizedFileURL.resolvingSymlinksInPath()
@@ -139,7 +156,7 @@ actor ArtifactStore {
         let base = rootURL.path, pagePath = pageURL.path
         guard pagePath.hasPrefix(base + "/") else { throw Self.invalid("the page must be a regular file inside --root") }
         let pageRel = String(pagePath.dropFirst(base.count + 1))
-        var a = Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, floorId: floorId, by: by, at: Date(),
+        var a = Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
                          version: 1, folder: Self.name(id), stamp: nil, warnings: [])
         a.source = "\(a.folder)/source/\(pageRel)"
         let folder = dir.appendingPathComponent(a.folder), dst = folder.appendingPathComponent("source")

@@ -12,7 +12,7 @@ struct PreferencesView: View {
         (.dark, "Escuro", "fundo índigo, menta", .dark), (.light, "Claro", "papel, cobalto", .light),
         (.system, "Sistema", "segue o macOS", nil)]
     private let structures: [(WindowStructure, String, String)] = [
-        (.compact, "Compacta", "canvas + cabeçalho flutuante"), (.full, "Completa", "barra lateral, andares e status")]
+        (.compact, "Compacta", "canvas + cabeçalho flutuante"), (.full, "Completa", "barra lateral, cercados e status")]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,7 +36,7 @@ struct PreferencesView: View {
                                 }
                             }
                         }
-                        Text("Muda só a moldura. Terminais, cordas e painéis ficam onde estão.")
+                        Text("Muda só a moldura. Terminais, guias e painéis ficam onde estão.")
                             .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                     }
                     section("Terminal") {

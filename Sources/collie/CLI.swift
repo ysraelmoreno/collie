@@ -22,9 +22,9 @@ enum Client {
     /// Sends one command. Throws `ProtocolError`; a daemon-side error is returned as the thrown error too.
     static func call(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         var token = env["COLLIE_TOKEN"], terminalId = env["COLLIE_TERMINAL_ID"]
-        // floor.* / memory.* / work.* outside a terminal (no COLLIE_TOKEN) is the user: admin token
+        // paddock.* / memory.* / work.* outside a terminal (no COLLIE_TOKEN) is the user: admin token
         if command.hasPrefix("admin.") || command.hasPrefix("ui.")
-            || ((command.hasPrefix("floor.") || command.hasPrefix("memory.") || command.hasPrefix("work.")) && token == nil) {
+            || ((command.hasPrefix("paddock.") || command.hasPrefix("memory.") || command.hasPrefix("work.")) && token == nil) {
             let file = env["COLLIE_ADMIN_TOKEN_FILE"].map { URL(fileURLWithPath: $0) } ?? Paths().adminTokenFile
             guard let t = try? String(contentsOf: file, encoding: .utf8) else {
                 throw ProtocolError(code: .unauthorized, message: "cannot read admin token at \(file.path)")
@@ -85,7 +85,7 @@ enum CLI {
             return rows.map { row -> String in
                 guard case .object(let o) = row else { return "" }
                 var line = "\(str(o["name"]))\t\(str(o["preset"]))\t\(o["running"] == .bool(true) ? "running" : "stopped")"
-                if o["isMaestro"] == .bool(true) { line += "\tmaestro" }
+                if o["isShepherd"] == .bool(true) { line += "\tshepherd" }
                 return line + "\n"
             }.joined()
         case (_, .object(let o)) where o["output"] != nil:

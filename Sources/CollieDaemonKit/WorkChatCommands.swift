@@ -3,7 +3,7 @@ import CollieCore
 import CollieProtocol
 
 /// `work.chat.*` (the app alone): status questions answered from the registry (no tokens), anything else typed into one
-/// agent — `@name`, else the work's Maestro — whose reply comes back later as a chat message. Each message written is a
+/// agent — `@name`, else the work's Shepherd — whose reply comes back later as a chat message. Each message written is a
 /// `work.chat` plugin event to the Work panels; each work store change a `work.changed`.
 extension CommandRouter {
     static let chatReplyTimeout: Duration = .seconds(1800)
@@ -54,7 +54,7 @@ extension CommandRouter {
 
         var names: [UUID: String] = [:]
         for t in ws.terminals { names[t.id] = t.name }
-        for f in ws.floors { names[f.id] = f.name }
+        for f in ws.paddocks { names[f.id] = f.name }
 
         // "?": a free question to the on-device assistant (before status phrases and @name); its answer is never typed anywhere
         if text.hasPrefix("?") {
@@ -101,9 +101,9 @@ extension CommandRouter {
             guard let own = ws.terminals.first(where: { $0.id == w.terminalId }) else {
                 return try await reply("O terminal deste trabalho não existe mais.")
             }
-            let maestro = own.isMaestro ? own : ConnectionGraph.reachable(from: own.id, in: ws)
-                .filter(\.isMaestro).min { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            (target, prompt) = (maestro ?? own, text)
+            let shepherd = own.isShepherd ? own : ConnectionGraph.reachable(from: own.id, in: ws)
+                .filter(\.isShepherd).min { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            (target, prompt) = (shepherd ?? own, text)
         } else {
             return try await reply("Escolha um trabalho ou comece com @nome.")
         }
@@ -185,10 +185,10 @@ extension CommandRouter {
     }
 
     /// `work.rerail`: types `RerailText.block` into `t` through `inject` (same FIFO and readiness gate as `ask`, never
-    /// into a pending approval), then "Recoloquei ‹t› no trilho." and the block in the chat. `wait: false` (a Maestro on
+    /// into a pending approval), then "Recoloquei ‹t› no trilho." and the block in the chat. `wait: false` (a Shepherd on
     /// itself, mid-turn): queued without waiting, so its own tool call can't hold the turn the inject waits for.
     /// Refused at once when `t` shows an approval prompt, or does not take a paste as one prompt (a shell, a program
-    /// without bracketed paste: each line would run). A Maestro's own rerail is queued once at a time.
+    /// without bracketed paste: each line would run). A Shepherd's own rerail is queued once at a time.
     func rerail(_ t: TerminalRecord, _ w: Work, now: Date, wait: Bool) async throws -> JSONValue {
         let block = RerailText.block(w, now: now), id = t.id, name = t.name
         let atApproval = ProtocolError(code: .unavailable, message: "\(name) está pedindo aprovação; recolocar no trilho depois de responder")
@@ -260,9 +260,9 @@ extension CommandRouter {
             if let why { workLog("summary \(id.uuidString.lowercased()): \(why)") }
         }
         guard !w.tasks.isEmpty || !w.notes.isEmpty || !w.commits.isEmpty else { return decided("empty", "empty work, not saved") }
-        let floor = ws.floors.first { $0.id == w.floorId }
-        // the terminal's cwd (v1 memory resolves its git root); a removed terminal leaves its cwd, else its floor's worktree
-        guard let cwd = ws.terminals.first(where: { $0.id == w.terminalId })?.cwd ?? removedCwd ?? floor?.path else {
+        let paddock = ws.paddocks.first { $0.id == w.paddockId }
+        // the terminal's cwd (v1 memory resolves its git root); a removed terminal leaves its cwd, else its paddock's worktree
+        guard let cwd = ws.terminals.first(where: { $0.id == w.terminalId })?.cwd ?? removedCwd ?? paddock?.path else {
             return decided("no-repo", "terminal has no directory, not saved")
         }
         let repo = await memory.repo(for: cwd)
@@ -270,9 +270,9 @@ extension CommandRouter {
         let alive = await registry.process(w.terminalId)?.isRunning == true
         let body = WorkSummary.make(w, terminalAlive: alive, now: Date(), escape: false).markdown()
         do {
-            _ = try await saveMemory(.decision, scope: floor != nil ? .floor : .project,
+            _ = try await saveMemory(.decision, scope: paddock != nil ? .paddock : .project,
                                      subject: "trabalho \(w.id.uuidString.prefix(8).lowercased())", title: "Resumo: \(RerailText.clean(w.title))",
-                                     body: body, path: nil, repo: repo, floor: floor?.name, origin: "Collie (resumo)")
+                                     body: body, path: nil, repo: repo, paddock: paddock?.name, origin: "Collie (resumo)")
             decided("saved")
         } catch {
             decided("failed", (error as? ProtocolError)?.message ?? "\(error)")

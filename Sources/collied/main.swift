@@ -35,7 +35,7 @@ if LegacyOrq.daemonAnswers(Paths(root: root).runDir.appendingPathComponent(Legac
 
 // an import staged by `admin.data.import` replaces the data before anything reads it (default-workspace included)
 DataBackup.applyPending(Paths(root: root))
-LegacyOrq.renameLegacyPartituras(in: root)   // a moved Orq root, an imported .orqbackup
+LegacyOrq.renameLegacyHerds(in: root)   // a moved Orq root, an imported .orqbackup, a Collie from before the herding vocabulary
 
 // stable default so a restarted daemon reloads its state
 if workspace == nil {

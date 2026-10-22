@@ -255,7 +255,7 @@ import CollieProtocol
         #expect(!left.contains("old-0.png") && !left.contains("old-5.png") && left.contains("old-6.png"))
     }
 
-    /// Off screen (other floor, culled, hidden dock tab) the panel has no slot size: the page still has a viewport.
+    /// Off screen (other paddock, culled, hidden dock tab) the panel has no slot size: the page still has a viewport.
     @Test func screenshotWithoutResizeOrSlot() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("collie-shot-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

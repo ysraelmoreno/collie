@@ -25,8 +25,8 @@ public enum NodeStatus: Equatable, Sendable {
     }
 }
 
-/// Cord stroke: agent↔agent solid, agent↔panel dashed [2, 6]; 2 pt, 3 pt when selected.
-public struct CordStyle: Equatable, Sendable {
+/// Leash stroke: agent↔agent solid, agent↔panel dashed [2, 6]; 2 pt, 3 pt when selected.
+public struct LeashStyle: Equatable, Sendable {
     public var width: CGFloat, dash: [CGFloat], toPanel: Bool
     public init(width: CGFloat, dash: [CGFloat], toPanel: Bool) { self.width = width; self.dash = dash; self.toPanel = toPanel }
     public init(toPanel: Bool, selected: Bool) { self.init(width: selected ? 3 : 2, dash: toPanel ? [2, 6] : [], toPanel: toPanel) }

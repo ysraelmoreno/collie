@@ -81,11 +81,11 @@ import CollieCore
         #expect(all.filter { $0.status == .active }.count == 1)
     }
 
-    @Test func duplicatesRespectScopeFloorAndPath() {
-        func r(_ scope: MemoryScope, _ floor: String? = nil, kind: MemoryKind = .decision, path: String? = nil) -> MemoryRecord {
-            MemoryRecord(kind: kind, scope: scope, floor: floor, subject: UUID().uuidString, title: "t", body: "same body here", path: path, createdAt: ago(1))
+    @Test func duplicatesRespectScopePaddockAndPath() {
+        func r(_ scope: MemoryScope, _ paddock: String? = nil, kind: MemoryKind = .decision, path: String? = nil) -> MemoryRecord {
+            MemoryRecord(kind: kind, scope: scope, paddock: paddock, subject: UUID().uuidString, title: "t", body: "same body here", path: path, createdAt: ago(1))
         }
-        #expect(MemoryCleanup.plan(records: [r(.floor, "a"), r(.floor, "b"), r(.project), r(.global)], stats: [:], now: now).isEmpty)
+        #expect(MemoryCleanup.plan(records: [r(.paddock, "a"), r(.paddock, "b"), r(.project), r(.global)], stats: [:], now: now).isEmpty)
         #expect(MemoryCleanup.plan(records: [r(.project, kind: .map, path: "a"), r(.project, kind: .map, path: "b")], stats: [:], now: now).isEmpty)
         #expect(MemoryCleanup.plan(records: [r(.project, kind: .map, path: "a"), r(.project, kind: .map, path: "a")], stats: [:], now: now).count == 1)
     }

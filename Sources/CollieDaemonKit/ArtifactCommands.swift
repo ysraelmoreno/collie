@@ -35,7 +35,7 @@ extension CommandRouter {
             let a: Artifact
             if let root = str(r, "root").flatMap({ $0.isEmpty ? nil : $0 }) {
                 a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title,
-                                                 floorId: caller?.floorId, by: Self.origin(caller))
+                                                 paddockId: caller?.paddockId, by: Self.origin(caller))
             } else {
             // opened without following a link (nor blocking on a fifo), then checked and read through that descriptor
             let cap = 8 << 20
@@ -54,7 +54,7 @@ extension CommandRouter {
                 guard d.count <= cap else { return .failure(invalid("'\(src.path)' is over 8 MiB")) }
                 return .success(d)
             }
-            a = try await artifacts.addAgent(page: try read.get(), title: title, floorId: caller?.floorId, by: Self.origin(caller))
+            a = try await artifacts.addAgent(page: try read.get(), title: title, paddockId: caller?.paddockId, by: Self.origin(caller))
             }
             let id = JSONValue.string(a.id.uuidString.lowercased())
             for p in ws.panels where p.pluginId == "artifacts" {
@@ -135,14 +135,14 @@ extension CommandRouter {
     }
 
     /// `snapshot` of file `f` (of `node`, else its page) as a complete HTML document: the next version of its export
-    /// artifact. Its tokens: the file's variables, then those of the design system active on its floor (unless it is
+    /// artifact. Its tokens: the file's variables, then those of the design system active on its paddock (unless it is
     /// that system's own file; unreadable, or not within what is left of `deadline`: left out, with a warning).
     /// `artifact.exported` goes to every Artifacts panel.
     /// `importing`: the agent artifact whose import this is (it becomes that export's version 1) and its warnings.
     func exportHTML(_ f: DesignService.File, node: String?, snapshot s: ExportSnapshot, by: String,
                     deadline: ContinuousClock.Instant, importing: (id: UUID, warnings: [String])? = nil) async throws -> JSONValue {
         var variables = [s.variables], extra: [String] = []
-        if let id = activeSystem(floor: f.floorId) {
+        if let id = activeSystem(paddock: f.paddockId) {
             do {
                 if let ds = try await systems.list().first(where: { $0.id == id }), ds.fileId.uuidString.lowercased() != f.id {
                     variables.append(try await design.variables(ofFile: ds.fileId.uuidString.lowercased(), deadline: deadline))
@@ -155,7 +155,7 @@ extension CommandRouter {
         let (made, folder) = if let importing, let node {
             try await artifacts.convertToExport(importing.id, fileId: f.id, node: node, page: s.page)
         } else {
-            try await artifacts.newVersion(fileId: f.id, node: node, page: s.page, title: title, floorId: f.floorId, by: by)
+            try await artifacts.newVersion(fileId: f.id, node: node, page: s.page, title: title, paddockId: f.paddockId, by: by)
         }
         var a = made
         let page = folder.appendingPathComponent("index.html"), files = b.files, thumb = s.thumbnail, html = b.html

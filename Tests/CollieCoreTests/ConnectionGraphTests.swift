@@ -3,8 +3,8 @@ import Foundation
 import CollieProtocol
 @testable import CollieCore
 
-private func term(_ n: String, maestro: Bool = false) -> TerminalRecord {
-    TerminalRecord(id: UUID(), name: n, preset: .shell, command: nil, cwd: "/", isMaestro: maestro)
+private func term(_ n: String, shepherd: Bool = false) -> TerminalRecord {
+    TerminalRecord(id: UUID(), name: n, preset: .shell, command: nil, cwd: "/", isShepherd: shepherd)
 }
 private func ws(_ t: [TerminalRecord], _ c: [(Int, Int)] = []) -> Workspace {
     Workspace(id: UUID(), name: "w", terminals: t, connections: c.map { Connection(a: t[$0.0].id, b: t[$0.1].id) })
@@ -29,8 +29,8 @@ private func code(_ f: () throws -> TerminalRecord) -> ProtocolError? {
     let t = [term("A"), term("B"), term("B")]
     #expect(code { try ConnectionGraph.resolve(name: "B", from: t[0].id, in: ws(t, [(0, 1), (0, 2)])) }?.code == .ambiguous)
 }
-@Test func maestroReachesOnlyCorded() {
-    let t = [term("A", maestro: true), term("B"), term("C")]
+@Test func shepherdReachesOnlyLeashed() {
+    let t = [term("A", shepherd: true), term("B"), term("C")]
     let w = ws(t, [(0, 1)])
     #expect(ConnectionGraph.reachable(from: t[0].id, in: w).map(\.name) == ["B"])
     #expect(code { try ConnectionGraph.resolve(name: "C", from: t[0].id, in: w) }?.code == .notConnected)

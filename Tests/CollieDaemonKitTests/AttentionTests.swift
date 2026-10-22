@@ -36,7 +36,7 @@ import CollieTerminal
                                scrollback: sb)
         defer { p.terminate() }
         #expect(await waitFor(20) { sb.text(since: 0).text.contains("(y/n)") })   // read before track
-        let rec = TerminalRecord(id: UUID(), name: "A", preset: .custom, command: nil, cwd: "/tmp", isMaestro: false)
+        let rec = TerminalRecord(id: UUID(), name: "A", preset: .custom, command: nil, cwd: "/tmp", isShepherd: false)
         await hub.track(rec, process: p, scrollback: sb)
         #expect(await waitFor(20) { await hub.currentBadges[rec.id] == .attention })
     }
@@ -112,7 +112,7 @@ import CollieTerminal
             try await Task.sleep(for: .seconds(3.5))   // > workingWindow (2 s) + several ticks
             #expect(await d.badge(bid) == .attention)
             let tokA = try await tokenOf(d, a.id)
-            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect",
+            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash",
                                               args: ["a": .string("A"), "b": .string("B")])).ok)
             let asking = Task { try await send(p, Request(id: "q", terminalId: a.id, token: tokA, command: "ask",
                                                           args: ["target": .string("B"), "prompt": .string("hi"), "timeout": .number(5)])) }
@@ -132,7 +132,7 @@ import CollieTerminal
             let bid = try #require(UUID(uuidString: b.id))
             let tokA = try await tokenOf(d, a.id)
             #expect(await waitFor(10) { await d.badge(bid) == .attention })
-            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect",
+            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash",
                                               args: ["a": .string("A"), "b": .string("B")])).ok)
             let asking = Task { try await send(p, Request(id: "q", terminalId: a.id, token: tokA, command: "ask",
                                                           args: ["target": .string("B"), "prompt": .string("hi"), "timeout": .number(15)])) }

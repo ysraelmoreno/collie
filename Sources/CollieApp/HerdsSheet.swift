@@ -7,38 +7,39 @@ import CollieCore
 import ColliePlugins
 import CollieTheme
 
-private let legacyPartituraType = UTType(filenameExtension: "orqpartitura") ?? .json   // Orq files still open
-private let partituraType = UTType(filenameExtension: "colliepartitura") ?? .json   // ponytail: not declared in Info.plist; filters by extension
+// Orq's and Collie's earlier files still open
+private let legacyHerdTypes = ["orqpartitura", "colliepartitura"].map { UTType(filenameExtension: $0) ?? .json }
+private let herdType = UTType(filenameExtension: "collieherd") ?? .json   // ponytail: not declared in Info.plist; filters by extension
 
-/// List (factory marked "de fábrica"), the selected one's full preview, and Aplicar (name, floor, folder); Importar…,
+/// List (factory marked "de fábrica"), the selected one's full preview, and Aplicar (name, paddock, folder); Importar…,
 /// Exportar…, Remover. An imported file first shows the trust screen; nothing is saved until "Importar".
-struct PartiturasSheet: View {
-    @ObservedObject var model: PartiturasModel
+struct HerdsSheet: View {
+    @ObservedObject var model: HerdsModel
     let client: DaemonClient
     let canvas: CanvasState
-    /// Canvas point the partitura's corner lands on.
+    /// Canvas point the herd's corner lands on.
     let anchor: CGPoint
     var initial: String?
     @Environment(\.dismiss) private var dismiss
     @State private var selected: String?
     @State private var name = ""
-    @State private var floor = false
+    @State private var paddock = false
     @State private var cwd = ""
     @State private var error: String?
     /// The preview (token) scrolled to its end: confirming is possible only once all it creates has been on screen.
     @State private var rendered: UUID?
 
-    static let cwdKey = "partitura.cwd"
+    static let cwdKey = "herd.cwd"
 
     var body: some View {
         VStack(spacing: 0) {
-            PanelHeader("Partituras", subtitle: "times prontos: terminais, painéis, cordas e andar") {
+            PanelHeader("Rebanhos", subtitle: "times prontos: terminais, painéis, guias e cercado") {
                 if model.preview?.imported != true {
                     Button("Importar…", action: pickImport).buttonStyle(CollieButtonStyle(.secondary))
                 }
             }
             if let pv = model.preview, pv.imported { trust(pv) } else { main }
-            PanelFooter(model.error ?? error ?? "\(model.items.count) partituras", trailing: model.busy ? "aguarde…" : nil)
+            PanelFooter(model.error ?? error ?? "\(model.items.count) rebanhos", trailing: model.busy ? "aguarde…" : nil)
         }
         .frame(width: 820, height: 600).background(Color.collieSurface)
         .task {
@@ -48,10 +49,10 @@ struct PartiturasSheet: View {
         .onAppear { cwd = Self.defaultCwd(client: client, canvas: canvas) }
     }
 
-    /// The selected terminal's folder, else the floor's worktree, else the last one used, else home.
+    /// The selected terminal's folder, else the paddock's worktree, else the last one used, else home.
     static func defaultCwd(client: DaemonClient, canvas: CanvasState) -> String {
         if let t = client.terminals.first(where: { canvas.selection.contains($0.id) }) { return t.cwd }
-        if let f = client.floors.first(where: { $0.id == client.currentFloor }) { return f.path }
+        if let f = client.paddocks.first(where: { $0.id == client.currentPaddock }) { return f.path }
         let d = UserDefaults.standard
         return d.string(forKey: cwdKey) ?? d.string(forKey: "new.cwd") ?? NSHomeDirectory()
     }
@@ -60,8 +61,8 @@ struct PartiturasSheet: View {
         selected = id; rendered = nil
         await model.select(id)
         if let pv = model.preview, pv.id == id {
-            floor = pv.partitura.wantsFloor
-            if name.isEmpty { name = pv.partitura.name }
+            paddock = pv.herd.wantsPaddock
+            if name.isEmpty { name = pv.herd.name }
         }
     }
 
@@ -72,23 +73,23 @@ struct PartiturasSheet: View {
             ScrollView {
                 VStack(spacing: 8) {
                     ForEach(model.items) { it in
-                        ChoiceCard(it.name, subtitle: "\(it.terminals) terminais · \(it.panels) painéis\(it.wantsFloor ? " · cria andar" : "")",
+                        ChoiceCard(it.name, subtitle: "\(it.terminals) terminais · \(it.panels) painéis\(it.wantsPaddock ? " · cria cercado" : "")",
                                    selected: selected == it.id, action: { Task { await pick(it.id) } }) {
                             if it.builtIn { HStack { CollieTag("de fábrica", tone: .secondary); Spacer() } }
                         }
                     }
-                    if model.items.isEmpty { Text("Nenhuma partitura").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
+                    if model.items.isEmpty { Text("Nenhum rebanho").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
                 }.padding(14)
             }
             .frame(width: 260)
             .overlay(alignment: .trailing) { Rectangle().fill(Color.collieBorder).frame(width: 1) }
             VStack(alignment: .leading, spacing: 12) {
                 if let pv = model.preview, pv.id == selected {
-                    PartituraPreviewScroll(preview: pv) { rendered = pv.token }
+                    HerdPreviewScroll(preview: pv) { rendered = pv.token }
                     form(pv)
                 } else {
                     Spacer()
-                    Text(selected == nil ? "Escolha uma partitura" : "carregando…").font(.collieUI(13)).foregroundStyle(Color.collieMuted)
+                    Text(selected == nil ? "Escolha um rebanho" : "carregando…").font(.collieUI(13)).foregroundStyle(Color.collieMuted)
                     Spacer()
                 }
             }
@@ -96,13 +97,13 @@ struct PartiturasSheet: View {
         }
     }
 
-    private func form(_ pv: PartituraPreview) -> some View {
+    private func form(_ pv: HerdPreview) -> some View {
         let item = model.items.first { $0.id == pv.id }
         let ready = rendered == pv.token && !name.trimmingCharacters(in: .whitespaces).isEmpty && !cwd.isEmpty && !model.busy
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 TextField("Nome (obrigatório)", text: $name).collieField()
-                Toggle("Criar andar", isOn: $floor).toggleStyle(.checkbox).font(.collieUI(13)).foregroundStyle(Color.collieText)
+                Toggle("Criar cercado", isOn: $paddock).toggleStyle(.checkbox).font(.collieUI(13)).foregroundStyle(Color.collieText)
             }
             HStack(spacing: 8) {
                 TextField("Pasta", text: $cwd).collieField(mono: true)
@@ -113,7 +114,7 @@ struct PartiturasSheet: View {
                 Button("Exportar…") { export(pv.id) }
                 if item?.builtIn == false {
                     Button("Remover") { Task { await model.remove(id: pv.id); selected = nil } }
-                        .help("Sai da lista; fica guardada em partituras/.removed")
+                        .help("Sai da lista; fica guardado em herds/.removed")
                 }
                 Spacer()
                 if rendered != pv.token { Text("role até o fim da prévia").font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
@@ -126,12 +127,12 @@ struct PartiturasSheet: View {
         .buttonStyle(CollieButtonStyle(.secondary))
     }
 
-    private func apply(_ pv: PartituraPreview) {
+    private func apply(_ pv: HerdPreview) {
         error = nil
         let n = name.trimmingCharacters(in: .whitespaces), dir = cwd
-        let on = client.floors.first { $0.id == client.currentFloor }?.name
+        let on = client.paddocks.first { $0.id == client.currentPaddock }?.name
         Task {
-            if let e = await model.apply(id: pv.id, name: n, floor: floor, cwd: dir, onFloor: on, at: anchor) { error = e; return }
+            if let e = await model.apply(id: pv.id, name: n, paddock: paddock, cwd: dir, onPaddock: on, at: anchor) { error = e; return }
             UserDefaults.standard.set(dir, forKey: Self.cwdKey)
             dismiss()
         }
@@ -146,15 +147,15 @@ struct PartiturasSheet: View {
 
     private func export(_ id: String) {
         let p = NSSavePanel()
-        p.allowedContentTypes = [partituraType]
-        p.nameFieldStringValue = "\(id).colliepartitura"
+        p.allowedContentTypes = [herdType]
+        p.nameFieldStringValue = "\(id).collieherd"
         guard p.runModal() == .OK, let url = p.url else { return }
         Task { await model.export(id: id, to: url) }
     }
 
     private func pickImport() {
         let p = NSOpenPanel()
-        p.allowedContentTypes = [partituraType, legacyPartituraType]; p.allowsMultipleSelection = false; p.canChooseDirectories = false
+        p.allowedContentTypes = [herdType] + legacyHerdTypes; p.allowsMultipleSelection = false; p.canChooseDirectories = false
         guard p.runModal() == .OK, let url = p.url else { return }
         rendered = nil
         Task { _ = await model.importFile(url) }
@@ -165,21 +166,21 @@ struct PartiturasSheet: View {
     private func confirm(replace: Bool) {
         Task {
             await model.confirmImport(replace: replace)
-            if let pv = model.preview, !pv.imported { selected = pv.id; floor = pv.partitura.wantsFloor; name = pv.partitura.name }
+            if let pv = model.preview, !pv.imported { selected = pv.id; paddock = pv.herd.wantsPaddock; name = pv.herd.name }
         }
     }
 
-    private func trust(_ pv: PartituraPreview) -> some View {
+    private func trust(_ pv: HerdPreview) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Arquivo importado: confira cada comando e cada prompt. Importar só guarda a partitura; nada é criado até você aplicar.")
+            Text("Arquivo importado: confira cada comando e cada prompt. Importar só guarda o rebanho; nada é criado até você aplicar.")
                 .font(.collieUI(13, .medium)).foregroundStyle(Color.collieAttention).fixedSize(horizontal: false, vertical: true)
                 .padding(12).frame(maxWidth: .infinity, alignment: .leading).collieCard(highlight: .collieAttention)
             HStack(spacing: 8) {
-                Text(verbatim: pv.partitura.name).font(.collieUI(16, .semibold)).foregroundStyle(Color.collieText)
+                Text(verbatim: pv.herd.name).font(.collieUI(16, .semibold)).foregroundStyle(Color.collieText)
                 CollieTag(pv.id, tone: .neutral)
             }
-            Text("Esta partitura vai criar:").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
-            PartituraPreviewScroll(preview: pv) { rendered = pv.token }
+            Text("Este rebanho vai criar:").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+            HerdPreviewScroll(preview: pv) { rendered = pv.token }
             HStack {
                 Spacer()
                 if rendered != pv.token { Text("role até o fim da prévia").font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
@@ -198,13 +199,13 @@ struct PartiturasSheet: View {
 }
 
 /// The preview in a scroll view with visible indicators; `atEnd` runs once its end has come on screen (lazy row).
-struct PartituraPreviewScroll: View {
-    let preview: PartituraPreview
+struct HerdPreviewScroll: View {
+    let preview: HerdPreview
     let atEnd: () -> Void
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                PartituraPreviewList(preview: preview).padding(.trailing, 6)
+                HerdPreviewList(preview: preview).padding(.trailing, 6)
                 Color.clear.frame(height: 1).onAppear(perform: atEnd)
             }
         }
@@ -213,13 +214,13 @@ struct PartituraPreviewScroll: View {
     }
 }
 
-/// Everything a partitura creates: first, set apart, each command that will run and each prompt that will be sent,
-/// verbatim; then terminals (preset, Maestro), panels with their full state, cords, the floor.
-struct PartituraPreviewList: View {
-    let preview: PartituraPreview
+/// Everything a herd creates: first, set apart, each command that will run and each prompt that will be sent,
+/// verbatim; then terminals (preset, Shepherd), panels with their full state, leashes, the paddock.
+struct HerdPreviewList: View {
+    let preview: HerdPreview
 
     var body: some View {
-        let p = preview.partitura
+        let p = preview.herd
         VStack(alignment: .leading, spacing: 14) {
             if !p.summary.isEmpty { Text(verbatim: p.summary).font(.collieUI(13)).foregroundStyle(Color.collieTextSecondary).fixedSize(horizontal: false, vertical: true) }
             if !preview.commands.isEmpty {
@@ -233,7 +234,7 @@ struct PartituraPreviewList: View {
                     HStack(spacing: 6) {
                         Text(t.key).font(.collieMono(12, .medium)).foregroundStyle(Color.collieText)
                         CollieTag(t.preset.rawValue, tone: t.preset == .custom ? .attention : .neutral)
-                        if t.isMaestro { CollieTag("Maestro", tone: .accent) }
+                        if t.isShepherd { CollieTag("Pastor", tone: .accent) }
                         if t.role != nil { CollieTag("com prompt", tone: .neutral) }
                     }
                 }
@@ -254,12 +255,12 @@ struct PartituraPreviewList: View {
                     }
                 }
             }
-            group("Cordas (\(p.cords.count))") {
-                ForEach(Array(p.cords.enumerated()), id: \.offset) { _, c in
+            group("Guias (\(p.leashes.count))") {
+                ForEach(Array(p.leashes.enumerated()), id: \.offset) { _, c in
                     Text(c.joined(separator: " — ")).font(.collieMono(12)).foregroundStyle(Color.collieTextSecondary)
                 }
             }
-            Text(p.wantsFloor ? "Andar: cria um andar novo (branch própria)" : "Andar: nenhum (no andar atual)")
+            Text(p.wantsPaddock ? "Cercado: cria um cercado novo (branch própria)" : "Cercado: nenhum (no cercado atual)")
                 .font(.collieUI(13)).foregroundStyle(Color.collieTextSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -289,31 +290,31 @@ struct PartituraPreviewList: View {
     }
 }
 
-/// Name, description, the nodes to keep (the selection, else everything on this floor's canvas), each terminal's
-/// optional initial prompt and "Pede andar"; shows the daemon's warnings.
-struct SavePartituraSheet: View {
-    @ObservedObject var model: PartiturasModel
+/// Name, description, the nodes to keep (the selection, else everything on this paddock's canvas), each terminal's
+/// optional initial prompt and "Pede cercado"; shows the daemon's warnings.
+struct SaveHerdSheet: View {
+    @ObservedObject var model: HerdsModel
     let client: DaemonClient
     let canvas: CanvasState
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var summary = ""
-    @State private var wantsFloor = false
+    @State private var wantsPaddock = false
     @State private var picked: Set<UUID> = []
     @State private var roles: [UUID: String] = [:]
     @State private var warnings: [String]?
 
-    private var terminals: [TerminalRecord] { visibleTerminals(client.terminals, floor: client.currentFloor) }
-    private var panels: [Panel] { visiblePanels(client.panels, floor: client.currentFloor).filter { $0.placement == .canvas } }
+    private var terminals: [TerminalRecord] { visibleTerminals(client.terminals, paddock: client.currentPaddock) }
+    private var panels: [Panel] { visiblePanels(client.panels, paddock: client.currentPaddock).filter { $0.placement == .canvas } }
 
     var body: some View {
         VStack(spacing: 0) {
-            PanelHeader("Salvar como partitura", subtitle: "sem histórico, tokens, variáveis nem caminhos")
+            PanelHeader("Salvar como rebanho", subtitle: "sem histórico, tokens, variáveis nem caminhos")
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     TextField("Nome", text: $name).collieField()
                     TextField("Descrição", text: $summary).collieField()
-                    Toggle("Pede andar", isOn: $wantsFloor).toggleStyle(.checkbox).font(.collieUI(13)).foregroundStyle(Color.collieText)
+                    Toggle("Pede cercado", isOn: $wantsPaddock).toggleStyle(.checkbox).font(.collieUI(13)).foregroundStyle(Color.collieText)
                     Text("TERMINAIS").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted)
                     ForEach(terminals) { t in
                         HStack(spacing: 8) {
@@ -367,7 +368,7 @@ struct SavePartituraSheet: View {
         let t = terminals.map(\.id).filter(picked.contains), p = panels.map(\.id).filter(picked.contains)
         Task {
             let w = await model.save(name: name.trimmingCharacters(in: .whitespaces), summary: summary, terminals: t, panels: p,
-                                     frames: canvas.frames, roles: roles, wantsFloor: wantsFloor)
+                                     frames: canvas.frames, roles: roles, wantsPaddock: wantsPaddock)
             guard let w else { return }
             if w.isEmpty { dismiss() } else { warnings = w }
         }

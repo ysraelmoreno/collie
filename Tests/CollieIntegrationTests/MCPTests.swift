@@ -61,7 +61,7 @@ private func lines(_ s: String) -> [[String: Any]] {
         #expect(((by(1)?["result"] as? [String: Any])?["protocolVersion"] as? String) == "2025-06-18")
         let tools = (by(2)?["result"] as? [String: Any])?["tools"] as? [[String: Any]]
         // no daemon: panel.list fails, so only the core and panel-free tools (no plug-in reached)
-        #expect(tools?.compactMap { $0["name"] as? String }.sorted() == ["ask", "check", "floor_list", "floor_status", "list", "panel_list", "events",
+        #expect(tools?.compactMap { $0["name"] as? String }.sorted() == ["ask", "check", "paddock_list", "paddock_status", "list", "panel_list", "events",
                          "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "device_list",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop",
                          "work_note", "work_status", "work_summary", "work_list", "work_get",
@@ -75,11 +75,11 @@ private func lines(_ s: String) -> [[String: Any]] {
         #expect(((by(3)?["error"] as? [String: Any])?["code"] as? Int) == -32601)
         #expect(m.contains { ($0["error"] as? [String: Any])?["code"] as? Int == -32700 && $0["id"] is NSNull })
     }
-    @Test func mcpListsMaestroToolsWithMaestroEnv() async throws {
+    @Test func mcpListsShepherdToolsWithShepherdEnv() async throws {
         let input = #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"# + "\n"
-        let r = try await runCollie(["mcp"], env: ["COLLIE_SOCKET": "/nonexistent/x.sock", "COLLIE_MAESTRO": "1"], stdin: input)
+        let r = try await runCollie(["mcp"], env: ["COLLIE_SOCKET": "/nonexistent/x.sock", "COLLIE_SHEPHERD": "1"], stdin: input)
         let tools = (lines(r.out).first?["result"] as? [String: Any])?["tools"] as? [[String: Any]]
-        #expect(tools?.compactMap { $0["name"] as? String }.contains("recruit") == true)
+        #expect(tools?.compactMap { $0["name"] as? String }.contains("summon") == true)
     }
     @Test func toolsFollowReach() async throws {
         let d = try FakeDaemon([])
@@ -87,17 +87,17 @@ private func lines(_ s: String) -> [[String: Any]] {
         let none = toolNames(lines(try await runCollie(["mcp"], env: d.env, stdin: list).out).first)
         #expect(none.isSuperset(of: ["ask", "memory_save", "panel_list", "design_files", "design_system_list", "artifact_add", "device_list"]))
         #expect(!none.contains("design_run") && !none.contains("design_system_publish") && !none.contains("device_tap")
-                && !none.contains { $0.hasPrefix("browser_") } && !none.contains("recruit"))
+                && !none.contains { $0.hasPrefix("browser_") } && !none.contains("summon"))
         d.plugins = ["design"]
         let r = lines(try await runCollie(["mcp"], env: d.env, stdin: list).out).first
         let some = toolNames(r)
         #expect(some.contains("design_run") && some.contains("design_system_list") && !some.contains { $0.hasPrefix("browser_") })
         let run = ((r?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.first { $0["name"] as? String == "design_run" }
-        #expect((run?["description"] as? String)?.hasPrefix("Collie Design panel corded to you: ") == true)
+        #expect((run?["description"] as? String)?.hasPrefix("Collie Design panel leashed to you: ") == true)
         let files = ((r?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.first { $0["name"] as? String == "design_files" }
         #expect((files?["description"] as? String)?.hasPrefix("Collie Design") == false)
-        var maestroEnv = d.env; maestroEnv["COLLIE_MAESTRO"] = "1"
-        #expect(toolNames(lines(try await runCollie(["mcp"], env: maestroEnv, stdin: list).out).first).contains("recruit"))
+        var shepherdEnv = d.env; shepherdEnv["COLLIE_SHEPHERD"] = "1"
+        #expect(toolNames(lines(try await runCollie(["mcp"], env: shepherdEnv, stdin: list).out).first).contains("summon"))
     }
     @Test func listChangedOnReachChange() async throws {
         let d = try FakeDaemon([])
@@ -137,11 +137,11 @@ private func lines(_ s: String) -> [[String: Any]] {
         }
     }
 
-    @Test func mcpCallFloorList() async throws {
+    @Test func mcpCallPaddockList() async throws {
         try await withRig { rig in
-            let input = #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"floor_list","arguments":{}}}"# + "\n"
-                + #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"floor.list","arguments":{}}}"# + "\n"
-                + #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"floor_status","arguments":{"name":"x","status":"review"}}}"# + "\n"
+            let input = #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"paddock_list","arguments":{}}}"# + "\n"
+                + #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"paddock.list","arguments":{}}}"# + "\n"
+                + #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"paddock_status","arguments":{"name":"x","status":"review"}}}"# + "\n"
             let r = try await runCollie(["mcp"], env: rig.env, stdin: input)
             let m = lines(r.out)
             func text(_ id: Int) -> (String, Bool)? {
@@ -162,7 +162,7 @@ private func lines(_ s: String) -> [[String: Any]] {
                 "name": .string("F"), "preset": .string("custom"), "cwd": .string("/tmp"),
                 "command": .string("head -c 1300000 /dev/zero | tr '\\0' x; sleep 30")]), to: rig.socket, timeoutSeconds: 5)
             #expect(r.ok)
-            let c = try await UnixSocketClient.send(Request(id: "c", token: admin, command: "admin.connect", args: ["a": .string("A"), "b": .string("F")]), to: rig.socket, timeoutSeconds: 5)
+            let c = try await UnixSocketClient.send(Request(id: "c", token: admin, command: "admin.leash", args: ["a": .string("A"), "b": .string("F")]), to: rig.socket, timeoutSeconds: 5)
             #expect(c.ok)
             let input = #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"check","arguments":{"target":"F"}}}"# + "\n"
             var text = ""

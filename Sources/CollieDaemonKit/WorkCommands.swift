@@ -27,12 +27,12 @@ extension CommandRouter {
         }
     }
 
-    /// The terminal's active work, else a new one titled "<name> — <day>" on its floor's branch.
+    /// The terminal's active work, else a new one titled "<name> — <day>" on its paddock's branch.
     func implicitWork(_ me: TerminalRecord, now: Date) async throws -> Work {
         if let w = try await work.active(terminal: me.id) { return w }
-        let floor = ws.floors.first { $0.id == me.floorId }
+        let paddock = ws.paddocks.first { $0.id == me.paddockId }
         let day = Date.ISO8601FormatStyle(timeZone: .current).year().month().day().dateSeparator(.dash)
-        do { return try await work.start(title: "\(me.name) — \(now.formatted(day))", terminal: me.id, floorId: floor?.id, branch: floor?.branch) }
+        do { return try await work.start(title: "\(me.name) — \(now.formatted(day))", terminal: me.id, paddockId: paddock?.id, branch: paddock?.branch) }
         catch { if let w = try await work.active(terminal: me.id) { return w }; throw error }   // a concurrent call opened it first
     }
 
@@ -150,7 +150,7 @@ extension CommandRouter {
 }
 
 /// `collie work …` (all but `work.hook`): the app (admin token) acts on any terminal's work; a terminal on its own, and a
-/// Maestro also on those of the terminals it reaches by cord (`--terminal`). An unreached terminal or work answers
+/// Shepherd also on those of the terminals it reaches by leash (`--terminal`). An unreached terminal or work answers
 /// exactly like a missing one, so existence never leaks.
 extension CommandRouter {
     static let maxWorkText = 2000
@@ -160,7 +160,7 @@ extension CommandRouter {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         func missing(_ m: String) -> ProtocolError { ProtocolError(code: .notFound, message: m) }
         let seen: Set<UUID>? = caller.map { me in
-            Set([me.id] + (me.isMaestro ? ConnectionGraph.reachable(from: me.id, in: ws).map(\.id) : []))
+            Set([me.id] + (me.isShepherd ? ConnectionGraph.reachable(from: me.id, in: ws).map(\.id) : []))
         }
         func visible(_ w: Work) -> Bool { seen?.contains(w.terminalId) ?? true }
         func target() throws(ProtocolError) -> TerminalRecord {
@@ -197,8 +197,8 @@ extension CommandRouter {
             let t = try target()
             let branch = str(r, "branch").flatMap { $0.isEmpty ? nil : $0 }
             if let b = branch, !(await Self.validBranch(b, in: URL(fileURLWithPath: t.cwd))) { throw invalid("invalid branch '\(b)'") }   // git arg
-            let floor = ws.floors.first { $0.id == t.floorId }
-            let w = try await work.start(title: try text("title"), terminal: t.id, floorId: floor?.id, branch: branch ?? floor?.branch)
+            let paddock = ws.paddocks.first { $0.id == t.paddockId }
+            let w = try await work.start(title: try text("title"), terminal: t.id, paddockId: paddock?.id, branch: branch ?? paddock?.branch)
             return .object(["id": .string(w.id.uuidString.lowercased())])
 
         case "work.done":   // --id: any work the caller sees, also one whose terminal was removed
@@ -288,8 +288,8 @@ extension CommandRouter {
         case "work.get":
             return try isoJSON(try await byId(try need(r, "id")))
 
-        case "work.rerail":   // the app (any terminal) or a Maestro (itself or one it reaches); never automatic
-            guard caller?.isMaestro ?? true else { throw ProtocolError(code: .unauthorized, message: "'work.rerail' is for the app and Maestros") }
+        case "work.rerail":   // the app (any terminal) or a Shepherd (itself or one it reaches); never automatic
+            guard caller?.isShepherd ?? true else { throw ProtocolError(code: .unauthorized, message: "'work.rerail' is for the app and Shepherds") }
             let t = try target()
             guard let w = try await work.active(terminal: t.id) else { throw invalid("no active work") }
             return try await rerail(t, w, now: now, wait: t.id != caller?.id)
@@ -343,26 +343,26 @@ extension CommandRouter {
         } catch { workFailed("remove close", error) }
     }
 
-    /// After a land: the active works of the floor (by branch only for works without a floor) are closed by the merge.
+    /// After a land: the active works of the paddock (by branch only for works without a paddock) are closed by the merge.
     /// Never fails the land.
-    func closeMerged(_ f: Floor) async {
+    func closeMerged(_ f: Paddock) async {
         do {
-            for w in try await work.list(includeClosed: false) where w.floorId.map({ $0 == f.id }) ?? (w.branch == f.branch) {
+            for w in try await work.list(includeClosed: false) where w.paddockId.map({ $0 == f.id }) ?? (w.branch == f.branch) {
                 try await work.update(w.id) { if $0.closedAt == nil { $0.closedAt = Date(); $0.closedBy = "merge" } }
             }
             workStoreBroken = false
         } catch { workFailed("land close", error) }
     }
 
-    /// On `Stop`: the active work takes its branch's new commits (those not in its destination: the floor's base branch,
-    /// else the ground's current branch; at most 20 a time) and, once the newest of them is in the destination, it closes
+    /// On `Stop`: the active work takes its branch's new commits (those not in its destination: the paddock's base branch,
+    /// else the pasture's current branch; at most 20 a time) and, once the newest of them is in the destination, it closes
     /// by merge. A work without a branch never closes by itself.
     func workTurnEnded(_ tid: UUID) async {
         guard let me = ws.terminals.first(where: { $0.id == tid }) else { return }
         do {
             guard let w = try await work.active(terminal: tid) else { workStoreBroken = false; return }
             workStoreBroken = false
-            let base = ws.floors.first { $0.id == w.floorId }?.baseBranch
+            let base = ws.paddocks.first { $0.id == w.paddockId }?.baseBranch
             let (commits, merged) = await Self.gitTurn(w, dir: URL(fileURLWithPath: me.cwd), base: base)
             guard !commits.isEmpty || merged else { return }
             try await work.update(w.id) { x in

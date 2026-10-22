@@ -29,11 +29,11 @@ public struct DesignEventRow: Decodable, Identifiable, Equatable, Sendable {
 /// State and daemon calls of the Design Systems panel. Every write needs a `reason`.
 @MainActor public final class DesignSystemsModel: ObservableObject {
     @Published public private(set) var systems: [DesignSystemRow] = []
-    @Published public private(set) var floors: [String] = []
+    @Published public private(set) var paddocks: [String] = []
     @Published public var selected: String? {
         didSet { if selected != oldValue { offerForce = false; history = [] } }
     }
-    /// "workspace" or "floor:<name>".
+    /// "workspace" or "paddock:<name>".
     @Published public var scope = "workspace"
     @Published public var reason = ""
     @Published public var newName = ""
@@ -52,9 +52,9 @@ public struct DesignEventRow: Decodable, Identifiable, Equatable, Sendable {
         coalescer = RefreshCoalescer(window: window) { [weak self] in await self?.load(clearError: false, background: true) }
     }
 
-    public var scopes: [String] { ["workspace"] + floors.map { "floor:\($0)" } }
+    public var scopes: [String] { ["workspace"] + paddocks.map { "paddock:\($0)" } }
     public var canWrite: Bool { !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private var floorArg: [String: JSONValue] { scope.hasPrefix("floor:") ? ["floor": .string(String(scope.dropFirst(6)))] : [:] }
+    private var paddockArg: [String: JSONValue] { scope.hasPrefix("paddock:") ? ["paddock": .string(String(scope.dropFirst(8)))] : [:] }
 
     private func decode<T: Decodable>(_ v: JSONValue?) -> T? {
         guard let v, let data = try? JSONEncoder().encode(v) else { return nil }
@@ -73,7 +73,7 @@ public struct DesignEventRow: Decodable, Identifiable, Equatable, Sendable {
     public func load(clearError: Bool = true, background: Bool = false) async {
         if clearError { error = nil }
         struct F: Decodable { var name: String }
-        if let f: [F] = decode(await send("floor.list", background: background)) { floors = f.map(\.name) }
+        if let f: [F] = decode(await send("paddock.list", background: background)) { paddocks = f.map(\.name) }
         if let s: [DesignSystemRow] = decode(await send("design.system.list", background: background)) { systems = s }
         if selected == nil || !systems.contains(where: { $0.name == selected }) { selected = systems.first?.name }
         if !scopes.contains(scope) { scope = "workspace" }
@@ -103,9 +103,9 @@ public struct DesignEventRow: Decodable, Identifiable, Equatable, Sendable {
         await load(clearError: false)
         return true
     }
-    public func use() async { guard let selected else { return }; await write("design.system.use", floorArg.merging(["name": .string(selected)]) { a, _ in a }) }
-    public func clear() async { await write("design.system.use", floorArg.merging(["none": .bool(true)]) { a, _ in a }) }
-    public func undo() async { await write("design.system.undo", floorArg) }
+    public func use() async { guard let selected else { return }; await write("design.system.use", paddockArg.merging(["name": .string(selected)]) { a, _ in a }) }
+    public func clear() async { await write("design.system.use", paddockArg.merging(["none": .bool(true)]) { a, _ in a }) }
+    public func undo() async { await write("design.system.undo", paddockArg) }
     public func create() async {
         let n = newName.trimmingCharacters(in: .whitespaces)
         guard !n.isEmpty else { return }
@@ -183,7 +183,7 @@ struct DesignSystemsView: View {
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
                     HStack(spacing: 6) {
-                        Picker("Escopo", selection: $model.scope) { ForEach(model.scopes, id: \.self) { Text($0 == "workspace" ? "Workspace" : "Andar \($0.dropFirst(6))").tag($0) } }
+                        Picker("Escopo", selection: $model.scope) { ForEach(model.scopes, id: \.self) { Text($0 == "workspace" ? "Workspace" : "Cercado \($0.dropFirst(8))").tag($0) } }
                             .labelsHidden().fixedSize()
                         Button("Usar neste escopo") { Task { await model.use() } }.disabled(!model.canWrite || model.selected == nil)
                             .buttonStyle(CollieButtonStyle(.primary))
@@ -224,7 +224,7 @@ struct DesignSystemsView: View {
                     }
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
-            PanelFooter(model.systems.count == 1 ? "1 design system" : "\(model.systems.count) design systems", trailing: model.scope == "workspace" ? "workspace" : "andar \(model.scope.dropFirst(6))")
+            PanelFooter(model.systems.count == 1 ? "1 design system" : "\(model.systems.count) design systems", trailing: model.scope == "workspace" ? "workspace" : "cercado \(model.scope.dropFirst(8))")
         }
         .background(Color.collieSidebar)
         .task { await model.load() }

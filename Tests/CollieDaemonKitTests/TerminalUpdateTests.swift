@@ -35,26 +35,26 @@ private func flags(_ r: Response) -> (needed: Bool?, restarted: Bool?) {
 }
 
 @Suite(.serialized) struct TerminalUpdateTests {
-    @Test func promoteToMaestroTakesEffectImmediately() async throws {
+    @Test func promoteToShepherdTakesEffectImmediately() async throws {
         try await withDaemon { d, p in
             let a = try await term(d, p, "a")
             _ = try await spawn(d, p, "b")
-            #expect(try await call(p, a, "recruit", ["name": "w", "preset": "shell"]).error?.code == .notMaestro)
-            let r = try await update(d, p, "a", ["maestro": .bool(true)])
+            #expect(try await call(p, a, "summon", ["name": "w", "preset": "shell"]).error?.code == .notShepherd)
+            let r = try await update(d, p, "a", ["shepherd": .bool(true)])
             #expect(r.ok && flags(r).needed == true && flags(r).restarted == false, "\(r)")
-            #expect(try await call(p, a, "recruit", ["name": "w", "preset": "shell"]).ok)   // old token, live check
+            #expect(try await call(p, a, "summon", ["name": "w", "preset": "shell"]).ok)   // old token, live check
         }
     }
 
-    @Test func demoteRemovesMaestroPowers() async throws {
+    @Test func demoteRemovesShepherdPowers() async throws {
         try await withDaemon { d, p in
             let m = try await send(p, Request(id: "x", token: d.adminToken, command: "admin.spawn", args: [
-                "name": .string("m"), "preset": .string("shell"), "cwd": .string("/tmp"), "maestro": .bool(true)]))
+                "name": .string("m"), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(true)]))
             guard case .object(let o)? = m.result, case .string(let id)? = o["id"] else { Issue.record("\(m)"); return }
             let t = Term(id: id, token: try await tokenOf(d, id))
-            #expect(try await call(p, t, "recruit", ["name": "w", "preset": "shell"]).ok)
-            #expect(try await update(d, p, "m", ["maestro": .string("false")]).ok)
-            #expect(try await call(p, t, "recruit", ["name": "w2", "preset": "shell"]).error?.code == .notMaestro)
+            #expect(try await call(p, t, "summon", ["name": "w", "preset": "shell"]).ok)
+            #expect(try await update(d, p, "m", ["shepherd": .string("false")]).ok)
+            #expect(try await call(p, t, "summon", ["name": "w2", "preset": "shell"]).error?.code == .notShepherd)
         }
     }
 
@@ -75,7 +75,7 @@ private func flags(_ r: Response) -> (needed: Bool?, restarted: Bool?) {
         try await withDaemon { d, p in
             let x = try await term(d, p, "x")
             let a = try await term(d, p, "a", preset: "custom", command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_HOOK=1 exec sh '\(fixture)'")
-            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect", args: ["a": .string("x"), "b": .string("a")])).ok)
+            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash", args: ["a": .string("x"), "b": .string("a")])).ok)
             let hook = Task {
                 var seen = 0
                 while !Task.isCancelled {
@@ -104,23 +104,23 @@ private func flags(_ r: Response) -> (needed: Bool?, restarted: Bool?) {
     @Test func updateFromManagedTerminalIsRefused() async throws {
         try await withDaemon { d, p in
             _ = try await spawn(d, p, "b")
-            let cmd = "COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin update b --maestro true; echo RC=$?; exec sleep 300"
+            let cmd = "COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin update b --shepherd true; echo RC=$?; exec sleep 300"
             let a = try await spawn(d, p, "a", preset: "custom", command: cmd)
             let id = try #require(UUID(uuidString: a.id))
             #expect(await waitFor(10) { await d.scrollbackText(id).contains("RC=") })
             let text = await d.scrollbackText(id)
             #expect(text.contains("admin commands are not allowed from managed terminals") && text.contains("RC=1"), "\(text)")
-            #expect(try await snapshot(d, p).terminals.first { $0.name == "b" }?.isMaestro == false)
+            #expect(try await snapshot(d, p).terminals.first { $0.name == "b" }?.isShepherd == false)
         }
     }
 
-    @Test func floorTerminalRefusesCwd() async throws {
+    @Test func paddockTerminalRefusesCwd() async throws {
         let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))"))
         defer { try? FileManager.default.removeItem(at: paths.root) }
         let wsId = UUID()
-        let fl = Floor(id: UUID(), name: "Feat", repoRoot: "/tmp", path: "/tmp", branch: "collie/feat", baseBranch: "main")
+        let fl = Paddock(id: UUID(), name: "Feat", repoRoot: "/tmp", path: "/tmp", branch: "collie/feat", baseBranch: "main")
         let ws = Workspace(id: wsId, name: "default", terminals: [
-            TerminalRecord(id: UUID(), name: "F", preset: .shell, command: nil, cwd: "/tmp", isMaestro: false, floorId: fl.id)], floors: [fl])
+            TerminalRecord(id: UUID(), name: "F", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false, paddockId: fl.id)], paddocks: [fl])
         let file = paths.workspaceDir(wsId).appendingPathComponent("workspace.json")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(ws).write(to: file)
@@ -128,18 +128,18 @@ private func flags(_ r: Response) -> (needed: Bool?, restarted: Bool?) {
         try await d.start()
         do {
             let r = try await update(d, paths, "F", ["cwd": .string("/")])
-            #expect(r.error?.code == .invalidArgs && r.error?.message == "cwd of a floor terminal follows its floor", "\(r)")
+            #expect(r.error?.code == .invalidArgs && r.error?.message == "cwd of a paddock terminal follows its paddock", "\(r)")
         } catch { await d.stop(); throw error }
         await d.stop()
     }
 
-    @Test func maestroFlagIsStrict() async throws {
+    @Test func shepherdFlagIsStrict() async throws {
         try await withDaemon { d, p in
             _ = try await spawn(d, p, "a")
             for bad in ["yes", "TRUE", "1"] {
-                #expect(try await update(d, p, "a", ["maestro": .string(bad)]).error?.code == .invalidArgs, "\(bad)")
+                #expect(try await update(d, p, "a", ["shepherd": .string(bad)]).error?.code == .invalidArgs, "\(bad)")
             }
-            #expect(try await update(d, p, "a", ["maestro": .string("true")]).ok)
+            #expect(try await update(d, p, "a", ["shepherd": .string("true")]).ok)
         }
     }
 
@@ -166,7 +166,7 @@ private func flags(_ r: Response) -> (needed: Bool?, restarted: Bool?) {
     @Test func restartFlagRelaunchesInPlace() async throws {
         try await withDaemon { d, p in
             let a = try await term(d, p, "a"); _ = try await spawn(d, p, "b")
-            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect", args: ["a": .string("a"), "b": .string("b")])).ok)
+            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash", args: ["a": .string("a"), "b": .string("b")])).ok)
             let uid = try #require(UUID(uuidString: a.id))
             let oldPid = try #require(await d.process(uid)).pid
             let r = try await update(d, p, "a", ["preset": .string("custom"), "command": .string("echo hi; sleep 30"), "restart": .bool(true)])

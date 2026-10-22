@@ -240,7 +240,7 @@ private let dialog = "stty raw -echo; " + dialogText + "k=$(dd bs=1 count=1 2>/d
         }
     }
 
-    /// A guarded inject (recruit, rerail) issued while the approval's window still holds unscanned output — the next
+    /// A guarded inject (summon, rerail) issued while the approval's window still holds unscanned output — the next
     /// dialog is drawn there — waits for the scan instead of typing, then is refused: nothing reaches the dialog.
     @Test func injectWaitsForTheWindowScan() async throws {
         try await withDaemon { d, p in

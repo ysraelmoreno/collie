@@ -10,8 +10,8 @@ import CollieProtocol
     @Test func versionsReservedThenCommitted() async throws {
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let s = ArtifactStore(root: root)
-        async let x = s.newVersion(fileId: "f", node: "2", page: nil, title: "T", floorId: nil, by: "M")
-        async let y = s.newVersion(fileId: "f", node: "2", page: nil, title: "T", floorId: nil, by: "M")
+        async let x = s.newVersion(fileId: "f", node: "2", page: nil, title: "T", paddockId: nil, by: "M")
+        async let y = s.newVersion(fileId: "f", node: "2", page: nil, title: "T", paddockId: nil, by: "M")
         let (a, b) = try await (x, y)
         #expect(a.0.id == b.0.id && Set([a.0.version, b.0.version]) == [1, 2])
         #expect(FileManager.default.fileExists(atPath: a.1.path) && a.1.lastPathComponent == "v\(a.0.version)")
@@ -20,11 +20,11 @@ import CollieProtocol
         try await s.commit(hi); try await s.commit(lo)   // a late commit of an older version keeps the newer record
         #expect(try await s.get(hi.id).version == 2)
         // another (file, node): another artifact
-        #expect(try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", floorId: nil, by: "M").0.id != hi.id)
+        #expect(try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", paddockId: nil, by: "M").0.id != hi.id)
         // reloaded from disk; an orphan folder is passed over
         let again = ArtifactStore(root: root)
         #expect(try await again.list().map { [$0.id.uuidString, "\($0.version)", $0.folder] } == [[hi.id.uuidString, "2", hi.folder]])
-        let (n, dir) = try await again.newVersion(fileId: "f", node: "2", page: nil, title: "T", floorId: nil, by: "M")
+        let (n, dir) = try await again.newVersion(fileId: "f", node: "2", page: nil, title: "T", paddockId: nil, by: "M")
         #expect(n.version == 3 && n.folder == "\(hi.id.uuidString.lowercased())/v3" && dir.lastPathComponent == "v3")
         let reg = root.appendingPathComponent("artifacts/artifacts.json").path
         #expect(try FileManager.default.attributesOfItem(atPath: reg)[.posixPermissions] as? Int == 0o600)
@@ -33,11 +33,11 @@ import CollieProtocol
     @Test func pagesAreSeparateArtifacts() async throws {
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let s = ArtifactStore(root: root)
-        let (a, _) = try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", floorId: nil, by: "M"); try await s.commit(a)
-        let (b, _) = try await s.newVersion(fileId: "f", node: nil, page: "B", title: "T", floorId: nil, by: "M"); try await s.commit(b)
+        let (a, _) = try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", paddockId: nil, by: "M"); try await s.commit(a)
+        let (b, _) = try await s.newVersion(fileId: "f", node: nil, page: "B", title: "T", paddockId: nil, by: "M"); try await s.commit(b)
         #expect(a.id != b.id)
-        let (a2, _) = try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", floorId: nil, by: "M")
-        let (b2, _) = try await s.newVersion(fileId: "f", node: nil, page: "B", title: "T", floorId: nil, by: "M")
+        let (a2, _) = try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", paddockId: nil, by: "M")
+        let (b2, _) = try await s.newVersion(fileId: "f", node: nil, page: "B", title: "T", paddockId: nil, by: "M")
         #expect(a2.id == a.id && a2.version == 2 && b2.id == b.id && b2.version == 2)
         #expect(a2.page == "A" && b2.page == "B")
     }
@@ -45,27 +45,27 @@ import CollieProtocol
     @Test func legacyPageRecordAdopted() async throws {
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let s = ArtifactStore(root: root)
-        let (old, _) = try await s.newVersion(fileId: "f", node: nil, page: nil, title: "T", floorId: nil, by: "M"); try await s.commit(old)
-        let (a, _) = try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", floorId: nil, by: "M")
+        let (old, _) = try await s.newVersion(fileId: "f", node: nil, page: nil, title: "T", paddockId: nil, by: "M"); try await s.commit(old)
+        let (a, _) = try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", paddockId: nil, by: "M")
         #expect(a.id == old.id && a.page == "A" && a.version == 2); try await s.commit(a)
         #expect(try await s.get(old.id).page == "A")
-        let (b, _) = try await s.newVersion(fileId: "f", node: nil, page: "B", title: "T", floorId: nil, by: "M")
+        let (b, _) = try await s.newVersion(fileId: "f", node: nil, page: "B", title: "T", paddockId: nil, by: "M")
         #expect(b.id != old.id)
     }
 
     @Test func overlappingPagesDoNotShareALegacyRecord() async throws {
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let s = ArtifactStore(root: root)
-        let (old, _) = try await s.newVersion(fileId: "f", node: nil, page: nil, title: "T", floorId: nil, by: "M"); try await s.commit(old)
-        let (a, _) = try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", floorId: nil, by: "M")
-        let (b, _) = try await s.newVersion(fileId: "f", node: nil, page: "B", title: "T", floorId: nil, by: "M")
+        let (old, _) = try await s.newVersion(fileId: "f", node: nil, page: nil, title: "T", paddockId: nil, by: "M"); try await s.commit(old)
+        let (a, _) = try await s.newVersion(fileId: "f", node: nil, page: "A", title: "T", paddockId: nil, by: "M")
+        let (b, _) = try await s.newVersion(fileId: "f", node: nil, page: "B", title: "T", paddockId: nil, by: "M")
         #expect(a.id == old.id && b.id != old.id)
         try await s.commit(a); try await s.commit(b)
         #expect(try await s.list().count == 2)
     }
 
     @Test func recordsWithoutPageStillDecode() throws {
-        var a = Artifact(id: UUID(), kind: .export, title: "T", fileId: "f", node: nil, floorId: nil, by: "M", at: Date(timeIntervalSince1970: 0),
+        var a = Artifact(id: UUID(), kind: .export, title: "T", fileId: "f", node: nil, paddockId: nil, by: "M", at: Date(timeIntervalSince1970: 0),
                          version: 1, folder: "x/v1", stamp: nil, warnings: [])
         let old = try JSONEncoder().encode(a)
         #expect(!String(decoding: old, as: UTF8.self).contains("page"))
@@ -78,14 +78,14 @@ import CollieProtocol
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let src = Data("<p>hi</p>".utf8)
         let s = ArtifactStore(root: root)
-        let a = try await s.addAgent(page: src, title: "Page", floorId: nil, by: "W")
+        let a = try await s.addAgent(page: src, title: "Page", paddockId: nil, by: "W")
         #expect(a.kind == .agent && a.version == 1 && a.fileId == nil)
         let copy = root.appendingPathComponent("artifacts/\(a.folder)/source.html").path
         #expect(FileManager.default.contents(atPath: copy) == Data("<p>hi</p>".utf8))
         #expect(try FileManager.default.attributesOfItem(atPath: copy)[.posixPermissions] as? Int == 0o444)
         // concurrent changes: none lost
-        async let x = s.addAgent(page: src, title: "X", floorId: nil, by: "W")
-        async let y = s.addAgent(page: src, title: "Y", floorId: nil, by: "W")
+        async let x = s.addAgent(page: src, title: "X", paddockId: nil, by: "W")
+        async let y = s.addAgent(page: src, title: "Y", paddockId: nil, by: "W")
         let (ax, ay) = try await (x, y)
         #expect(Set(try await s.list().map(\.id)) == [a.id, ax.id, ay.id])
         #expect(Set(try await ArtifactStore(root: root).list().map(\.id)) == [a.id, ax.id, ay.id])
@@ -101,14 +101,14 @@ import CollieProtocol
     @Test func removeWinsOverExportInFlight() async throws {
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let s = ArtifactStore(root: root)
-        let (v1, _) = try await s.newVersion(fileId: "f", node: "2", page: nil, title: "T", floorId: nil, by: "M")
+        let (v1, _) = try await s.newVersion(fileId: "f", node: "2", page: nil, title: "T", paddockId: nil, by: "M")
         try await s.commit(v1)
-        let (v2, _) = try await s.newVersion(fileId: "f", node: "2", page: nil, title: "T", floorId: nil, by: "M")
+        let (v2, _) = try await s.newVersion(fileId: "f", node: "2", page: nil, title: "T", paddockId: nil, by: "M")
         try await s.remove(v1.id)
         #expect(try await s.commit(v2) == false)   // finished after the remove: not brought back, and the caller told
         #expect(try await s.list().isEmpty)
         // a later export of the same pair is a new artifact
-        let (n, _) = try await s.newVersion(fileId: "f", node: "2", page: nil, title: "T", floorId: nil, by: "M")
+        let (n, _) = try await s.newVersion(fileId: "f", node: "2", page: nil, title: "T", paddockId: nil, by: "M")
         try await s.commit(n)
         let ids = try await s.list().map(\.id)
         #expect(n.id != v1.id && n.version == 1 && ids == [n.id])
@@ -136,7 +136,7 @@ import CollieProtocol
         let root = tmp(), src = tmp(); defer { unlock(root); try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: src) }
         try tree(src)
         let s = ArtifactStore(root: root)
-        let a = try await s.addAgent(root: src, page: src.appendingPathComponent("index.html"), title: "T", floorId: nil, by: "W")
+        let a = try await s.addAgent(root: src, page: src.appendingPathComponent("index.html"), title: "T", paddockId: nil, by: "W")
         let id = a.id.uuidString.lowercased()
         #expect(a.source == "\(id)/source/index.html" && a.kind == .agent)
         let base = root.appendingPathComponent("artifacts/\(id)/source")
@@ -161,7 +161,7 @@ import CollieProtocol
         try FileManager.default.createDirectory(at: root.appendingPathComponent("artifacts"), withIntermediateDirectories: true)
         let s = ArtifactStore(root: root)
         for page in [other.appendingPathComponent("o.html"), src.appendingPathComponent("index.html")] {
-            await #expect(throws: ProtocolError.self) { _ = try await s.addAgent(root: src, page: page, title: "T", floorId: nil, by: "W") }
+            await #expect(throws: ProtocolError.self) { _ = try await s.addAgent(root: src, page: page, title: "T", paddockId: nil, by: "W") }
         }
         let kids = (try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("artifacts").path)) ?? []
         #expect(kids.isEmpty)
@@ -174,7 +174,7 @@ import CollieProtocol
         try Data("<p/>".utf8).write(to: src.appendingPathComponent("index.html"))
         for i in 0..<3 { try Data(count: 22 << 20).write(to: src.appendingPathComponent("big\(i).css")) }
         let s = ArtifactStore(root: root)
-        await #expect(throws: ProtocolError.self) { _ = try await s.addAgent(root: src, page: src.appendingPathComponent("index.html"), title: "T", floorId: nil, by: "W") }
+        await #expect(throws: ProtocolError.self) { _ = try await s.addAgent(root: src, page: src.appendingPathComponent("index.html"), title: "T", paddockId: nil, by: "W") }
         #expect(((try? FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("artifacts").path)) ?? []).isEmpty)
     }
 
@@ -182,7 +182,7 @@ import CollieProtocol
         let root = tmp(), src = tmp(), link = tmp(); defer { unlock(root); for u in [root, src, link] { try? FileManager.default.removeItem(at: u) } }
         try tree(src)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: src)
-        let a = try await ArtifactStore(root: root).addAgent(root: link, page: link.appendingPathComponent("index.html"), title: "T", floorId: nil, by: "W")
+        let a = try await ArtifactStore(root: root).addAgent(root: link, page: link.appendingPathComponent("index.html"), title: "T", paddockId: nil, by: "W")
         #expect(a.source?.hasSuffix("/source/index.html") == true)
     }
 
@@ -199,7 +199,7 @@ import CollieProtocol
     @Test func convertToExportKeepsSourceUntilCommit() async throws {
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let s = ArtifactStore(root: root)
-        let a = try await s.addAgent(page: Data("<p/>".utf8), title: "T", floorId: nil, by: "W")
+        let a = try await s.addAgent(page: Data("<p/>".utf8), title: "T", paddockId: nil, by: "W")
         let (e, dir) = try await s.convertToExport(a.id, fileId: "f", node: "2", page: "1")
         #expect(e.source == "\(a.id.uuidString.lowercased())/source.html" && a.source != nil)
         await #expect(throws: ProtocolError.self) { _ = try await s.convertToExport(a.id, fileId: "f", node: "3", page: nil) }   // one at a time
@@ -247,13 +247,13 @@ private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: String]
     try await UnixSocketClient.send(Request(id: "m", terminalId: t.id, token: t.token, command: cmd, args: args.mapValues { .string($0) }, cwd: cwd),
                                     to: p.socket, timeoutSeconds: 120)
 }
-/// Maestro `M`, corded to canvas panel `design-1` on file `Site`, inside a daemon on the fake engine.
+/// Shepherd `M`, leashed to canvas panel `design-1` on file `Site`, inside a daemon on the fake engine.
 private func withPanel(_ fx: Fake, timeoutCap: Duration? = nil, before: (Daemon, Paths) async throws -> Void = { _, _ in },
                        _ body: (Daemon, Paths, Term) async throws -> Void) async throws {
     try await withDaemon(configure: { $0.figcraftDir = fx.dir; $0.designTimeoutCap = timeoutCap }) { d, p in
         try await before(d, p)
         let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
-            args: ["name": "M", "preset": "shell", "cwd": "/tmp", "maestro": true]), to: p.socket, timeoutSeconds: 60)
+            args: ["name": "M", "preset": "shell", "cwd": "/tmp", "shepherd": true]), to: p.socket, timeoutSeconds: 60)
         guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
         let m = Term(id: id, token: try await tokenOf(d, id))
         #expect(try await call(p, m, "panel.open", ["plugin": "design", "file": "Site", "placement": "canvas"]).ok)
@@ -412,7 +412,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactExportTests {
         let fx = try Fake(); defer { fx.cleanup() }
         try await withPanel(fx) { d, p, m in
             var u: [UUID] = []   // through the store: artifact.add would start importing them
-            for _ in 0..<3 { u.append(try await d.router.artifacts.addAgent(page: Data("<p>x</p>".utf8), title: "a", floorId: nil, by: "M").id) }
+            for _ in 0..<3 { u.append(try await d.router.artifacts.addAgent(page: Data("<p>x</p>".utf8), title: "a", paddockId: nil, by: "M").id) }
             let ids = u.map { $0.uuidString.lowercased() }
             try await d.router.artifacts.setImportError(u[0], "x"); try await d.router.artifacts.setImportError(u[1], "y")
             func status() async throws -> [String: JSONValue] {
@@ -486,7 +486,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactExportTests {
             #expect(out(try await html(p, m)) != nil)
             #expect(out(try await call(p, m, "design.export", ["format": "html", "node": "3"])) != nil)
             // an export of a file no longer registered: missing, no engine call
-            let (gone, _) = try await d.router.artifacts.newVersion(fileId: "gone", node: nil, page: nil, title: "Gone", floorId: nil, by: "app")
+            let (gone, _) = try await d.router.artifacts.newVersion(fileId: "gone", node: nil, page: nil, title: "Gone", paddockId: nil, by: "app")
             try await d.router.artifacts.commit(gone)
             #expect(try await call(p, m, "design.run", ["command": "node.slowreads"]).ok)
             let n = fx.calls.count

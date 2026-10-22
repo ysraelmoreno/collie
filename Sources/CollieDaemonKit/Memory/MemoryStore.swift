@@ -36,7 +36,7 @@ struct MemoryStore {
         var new = new
         let olds = all().records.filter {
             $0.status == .active && $0.id != new.id && $0.kind == new.kind && $0.scope == new.scope
-                && $0.floor == new.floor && MemoryRecord.normalize($0.subject) == MemoryRecord.normalize(new.subject)
+                && $0.paddock == new.paddock && MemoryRecord.normalize($0.subject) == MemoryRecord.normalize(new.subject)
         }
         new.subject = MemoryRecord.normalize(new.subject)
         if let o = olds.first { new.supersedes = o.id }

@@ -42,9 +42,9 @@ private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: Stri
     try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args.mapValues { .string($0) }),
                                     to: p.socket, timeoutSeconds: 60)
 }
-private func term(_ d: Daemon, _ p: Paths, _ name: String, maestro: Bool = false) async throws -> Term {
+private func term(_ d: Daemon, _ p: Paths, _ name: String, shepherd: Bool = false) async throws -> Term {
     let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
-        args: ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "maestro": .bool(maestro)]),
+        args: ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(shepherd)]),
         to: p.socket, timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -56,9 +56,9 @@ private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: String]
 private func field(_ r: Response, _ k: String) -> JSONValue? {
     if case .object(let o)? = r.result { return o[k] } else { return nil }
 }
-/// Maestro `M` with an open canvas device panel `device-1` (corded to it).
-private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canvas") async throws -> Term {
-    let m = try await term(d, p, "M", maestro: true)
+/// Shepherd `M` with an open canvas device panel `device-1` (leashed to it).
+private func shepherdWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canvas") async throws -> Term {
+    let m = try await term(d, p, "M", shepherd: true)
     let r = try await call(p, m, "panel.open", ["plugin": "device", "placement": placement])
     #expect(r.ok, "\(r)")
     return m
@@ -68,7 +68,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
     @Test func listShowsUnauthorized() async throws {
         let fx = try Fx(devices: ["emulator-5554 device product:p model:Pixel_7", "R58 unauthorized"]); defer { fx.cleanup() }
         try await withDevice { d, p in
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             #expect(try await call(p, m, "panel.open", ["plugin": "device", "serial": "emulator-5554", "placement": "dock.right"]).ok)
             let r = try await call(p, m, "device.list")
             guard case .array(let rows)? = r.result, rows.count == 2, case .object(let a) = rows[0], case .object(let b) = rows[1] else {
@@ -118,13 +118,13 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
         }
     }
 
-    @Test func canvasDeviceNeedsCord() async throws {
+    @Test func canvasDeviceNeedsLeash() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
-            _ = try await maestroWithPanel(d, p)
+            _ = try await shepherdWithPanel(d, p)
             let w = try await term(d, p, "w")
             #expect(try await call(p, w, "device.tap", ["x": "1", "y": "1", "panel": "device-1"]).error?.code == .notConnected)
-            #expect(try await admin(d, p, "admin.connect", ["a": "w", "b": "device-1"]).ok)
+            #expect(try await admin(d, p, "admin.leash", ["a": "w", "b": "device-1"]).ok)
             let r = try await call(p, w, "device.tap", ["x": "1", "y": "1", "panel": "device-1"])
             #expect(r.ok, "\(r)")
         }
@@ -133,7 +133,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
     @Test func dockDeviceReachableByAll() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
-            _ = try await maestroWithPanel(d, p, placement: "dock.right")
+            _ = try await shepherdWithPanel(d, p, placement: "dock.right")
             let w = try await term(d, p, "w")
             let r = try await call(p, w, "device.tap", ["x": "3", "y": "4"])
             #expect(r.ok, "\(r)")
@@ -144,7 +144,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
     @Test func screenshotWritesPngWithSize() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let r = try await call(p, m, "device.screenshot")
             guard case .string(let path)? = field(r, "path") else { Issue.record("\(r)"); return }
             #expect(field(r, "width") == .number(4) && field(r, "height") == .number(8))
@@ -156,7 +156,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
     @Test func uiReturnsTreeAndTapByRef() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             #expect(try await call(p, m, "device.tap", ["ref": "e1"]).error?.code == .notFound)   // no ui yet
             let r = try await call(p, m, "device.ui")
             guard case .string(let tree)? = field(r, "tree") else { Issue.record("\(r)"); return }
@@ -173,7 +173,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
     @Test func swipeKeyTextLogcat() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             #expect(try await call(p, m, "device.swipe", ["x1": "1", "y1": "2", "x2": "3", "y2": "4"]).ok)
             #expect(try await call(p, m, "device.swipe", ["x1": "1", "y1": "2", "x2": "3", "y2": "4", "ms": "500"]).ok)
             #expect(try await call(p, m, "device.swipe", ["x1": "1", "y1": "2", "x2": "3", "y2": "4", "ms": "20000"]).error?.code == .invalidArgs)
@@ -199,7 +199,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
     @Test func textRejectsNonASCII() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             #expect(try await call(p, m, "device.text", ["text": "olá"]).error?.code == .invalidArgs)
             #expect(!fx.lines.contains { $0.contains("input text") })
         }
@@ -210,7 +210,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
         try "x".write(to: fx.dir.appendingPathComponent("app.apk"), atomically: true, encoding: .utf8)
         try "x".write(to: fx.dir.appendingPathComponent("app.txt"), atomically: true, encoding: .utf8)
         try await withDevice { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let r = try await call(p, m, "device.install", ["path": "app.apk"], cwd: fx.dir.path)
             #expect(r.ok, "\(r)")
             #expect(fx.lines.contains { $0.hasPrefix("-s emulator-5554 install -r ") && $0.hasSuffix("/app.apk") })
@@ -222,7 +222,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
     @Test func launchEmitsAppLaunched() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             #expect(try await call(p, m, "device.launch", ["package": "com.example"]).ok)
             #expect(try await call(p, m, "device.launch", ["package": "com.example", "activity": ".Main"]).ok)
             #expect(try await call(p, m, "device.launch", ["package": "x; reboot"]).error?.code == .invalidArgs)
@@ -238,7 +238,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
     @Test func closingPanelDeletesScreenshots() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let r = try await call(p, m, "device.screenshot")
             guard case .string(let path)? = field(r, "path") else { Issue.record("\(r)"); return }
             #expect(FileManager.default.fileExists(atPath: path))
@@ -251,7 +251,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, placement: String = "canv
         let fx = try Fx(); defer { fx.cleanup() }
         setenv("COLLIE_FAKE_ADB_SLEEP", "5", 1); defer { unsetenv("COLLIE_FAKE_ADB_SLEEP") }
         try await withDevice { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             async let shot = call(p, m, "device.screenshot")
             #expect(await waitFor(20) { fx.lines.contains { $0.hasSuffix("exec-out screencap -p") } })   // the fake is now sleeping inside screencap
             #expect(try await call(p, m, "panel.close", ["name": "device-1"]).ok)

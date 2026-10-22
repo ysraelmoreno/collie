@@ -105,20 +105,20 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var terminals: [TerminalRecord]
     public var connections: [Connection]
     public var badges: [String: StatusBadge]
-    public var floors: [Floor]
+    public var paddocks: [Paddock]
     public var panels: [Panel]
     /// `BuildID` of the daemon's executable (nil from a daemon that predates it).
     public var build: String?
-    public init(terminals: [TerminalRecord], connections: [Connection], badges: [String: StatusBadge], floors: [Floor] = [], panels: [Panel] = [], build: String? = nil) {
-        self.terminals = terminals; self.connections = connections; self.badges = badges; self.floors = floors; self.panels = panels; self.build = build
+    public init(terminals: [TerminalRecord], connections: [Connection], badges: [String: StatusBadge], paddocks: [Paddock] = [], panels: [Panel] = [], build: String? = nil) {
+        self.terminals = terminals; self.connections = connections; self.badges = badges; self.paddocks = paddocks; self.panels = panels; self.build = build
     }
-    private enum K: String, CodingKey { case terminals, connections, badges, floors, panels, build }
+    private enum K: String, CodingKey { case terminals, connections, badges, paddocks, panels, build }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         terminals = try c.decode([TerminalRecord].self, forKey: .terminals)
         connections = try c.decode([Connection].self, forKey: .connections)
         badges = try c.decode([String: StatusBadge].self, forKey: .badges)
-        floors = try c.decodeIfPresent([Floor].self, forKey: .floors) ?? []
+        paddocks = try c.decodeIfPresent([Paddock].self, forKey: .paddocks) ?? []
         panels = try c.decodeIfPresent([Panel].self, forKey: .panels) ?? []
         build = try c.decodeIfPresent(String.self, forKey: .build)
     }
@@ -128,15 +128,15 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
     case spawned(TerminalRecord), exited(UUID, Int32), removed(UUID),
          connected(Connection), disconnected(Connection),
          attention(UUID, reason: String), status(UUID, StatusBadge),
-         floor(Floor), floorRemoved(UUID), notify(UUID, message: String),   // floor/panel = upsert
+         paddock(Paddock), paddockRemoved(UUID), notify(UUID, message: String),   // paddock/panel = upsert
          panel(Panel), panelRemoved(UUID), pluginEvent(panel: UUID, name: String, payload: JSONValue),
          terminal(TerminalRecord),   // upsert (edited in place)
-         /// A partitura was applied: `by` the applying terminal (nil = the app), `anchor` the Maestro whose frame the
-         /// layout is relative to (nil: none), `frames` by terminal/panel id, `floor` the floor it created (nil: none).
+         /// A herd was applied: `by` the applying terminal (nil = the app), `anchor` the Shepherd whose frame the
+         /// layout is relative to (nil: none), `frames` by terminal/panel id, `paddock` the paddock it created (nil: none).
          /// The app places the nodes.
-         partituraApplied(by: UUID?, anchor: UUID?, frames: [String: PartituraFrame], floor: UUID?)
+         herdApplied(by: UUID?, anchor: UUID?, frames: [String: HerdFrame], paddock: UUID?)
 
-    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, floor }
+    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -149,17 +149,17 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case "disconnected": self = .disconnected(try c.decode(Connection.self, forKey: .c))
         case "attention": self = .attention(try id(), reason: try c.decode(String.self, forKey: .reason))
         case "status": self = .status(try id(), try c.decode(StatusBadge.self, forKey: .badge))
-        case "floor": self = .floor(try c.decode(Floor.self, forKey: .f))
-        case "floorRemoved": self = .floorRemoved(try id())
+        case "paddock": self = .paddock(try c.decode(Paddock.self, forKey: .f))
+        case "paddockRemoved": self = .paddockRemoved(try id())
         case "notify": self = .notify(try id(), message: try c.decode(String.self, forKey: .message))
         case "terminal": self = .terminal(try c.decode(TerminalRecord.self, forKey: .r))
         case "panel": self = .panel(try c.decode(Panel.self, forKey: .p))
         case "panelRemoved": self = .panelRemoved(try id())
         case "pluginEvent": self = .pluginEvent(panel: try id(), name: try c.decode(String.self, forKey: .name), payload: try c.decode(JSONValue.self, forKey: .payload))
-        case "partituraApplied":
-            self = .partituraApplied(by: try c.decodeIfPresent(UUID.self, forKey: .by), anchor: try c.decodeIfPresent(UUID.self, forKey: .anchor),
-                                     frames: try c.decode([String: PartituraFrame].self, forKey: .frames),
-                                     floor: try c.decodeIfPresent(UUID.self, forKey: .floor))
+        case "herdApplied":
+            self = .herdApplied(by: try c.decodeIfPresent(UUID.self, forKey: .by), anchor: try c.decodeIfPresent(UUID.self, forKey: .anchor),
+                                     frames: try c.decode([String: HerdFrame].self, forKey: .frames),
+                                     paddock: try c.decodeIfPresent(UUID.self, forKey: .paddock))
         case let t: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "unknown event '\(t)'")
         }
     }
@@ -174,17 +174,17 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .disconnected(let x): try c.encode("disconnected", forKey: .t); try c.encode(x, forKey: .c)
         case .attention(let id, let r): try c.encode("attention", forKey: .t); try c.encode(id, forKey: .id); try c.encode(r, forKey: .reason)
         case .status(let id, let b): try c.encode("status", forKey: .t); try c.encode(id, forKey: .id); try c.encode(b, forKey: .badge)
-        case .floor(let f): try c.encode("floor", forKey: .t); try c.encode(f, forKey: .f)
-        case .floorRemoved(let id): try c.encode("floorRemoved", forKey: .t); try c.encode(id, forKey: .id)
+        case .paddock(let f): try c.encode("paddock", forKey: .t); try c.encode(f, forKey: .f)
+        case .paddockRemoved(let id): try c.encode("paddockRemoved", forKey: .t); try c.encode(id, forKey: .id)
         case .notify(let id, let m): try c.encode("notify", forKey: .t); try c.encode(id, forKey: .id); try c.encode(m, forKey: .message)
         case .terminal(let r): try c.encode("terminal", forKey: .t); try c.encode(r, forKey: .r)
         case .panel(let x): try c.encode("panel", forKey: .t); try c.encode(x, forKey: .p)
         case .panelRemoved(let id): try c.encode("panelRemoved", forKey: .t); try c.encode(id, forKey: .id)
         case .pluginEvent(let id, let n, let pl):
             try c.encode("pluginEvent", forKey: .t); try c.encode(id, forKey: .id); try c.encode(n, forKey: .name); try c.encode(pl, forKey: .payload)
-        case .partituraApplied(let by, let anchor, let frames, let floor):
-            try c.encode("partituraApplied", forKey: .t); try c.encodeIfPresent(by, forKey: .by)
-            try c.encodeIfPresent(anchor, forKey: .anchor); try c.encode(frames, forKey: .frames); try c.encodeIfPresent(floor, forKey: .floor)
+        case .herdApplied(let by, let anchor, let frames, let paddock):
+            try c.encode("herdApplied", forKey: .t); try c.encodeIfPresent(by, forKey: .by)
+            try c.encodeIfPresent(anchor, forKey: .anchor); try c.encode(frames, forKey: .frames); try c.encodeIfPresent(paddock, forKey: .paddock)
         }
     }
 }

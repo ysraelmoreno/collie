@@ -70,7 +70,7 @@ func withRig(_ body: (Rig) async throws -> Void) async throws {
         return (id, try String(contentsOf: tokFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))
     }
     let (a, at) = try await spawn("A"), (b, bt) = try await spawn("B")
-    let c = try await UnixSocketClient.send(Request(id: "c", token: admin, command: "admin.connect", args: ["a": .string("A"), "b": .string("B")]), to: sock, timeoutSeconds: 5)
+    let c = try await UnixSocketClient.send(Request(id: "c", token: admin, command: "admin.leash", args: ["a": .string("A"), "b": .string("B")]), to: sock, timeoutSeconds: 5)
     #expect(c.ok)
     try await body(Rig(root: root, socket: sock, adminTokenFile: tf, aId: a, aToken: at, bId: b, bToken: bt))
 }

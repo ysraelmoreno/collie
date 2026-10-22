@@ -32,7 +32,7 @@ public struct PanelHostContext: Sendable {
     func receive(event: String, payload: JSONValue)
     /// Release everything (panel removed, or the app quits).
     func close()
-    /// `panel` disappeared (closed by the user or a Maestro; also seen after a relaunch if it was closed meanwhile),
+    /// `panel` disappeared (closed by the user or a Shepherd; also seen after a relaunch if it was closed meanwhile),
     /// whether or not a view was ever created for it: delete its isolated data here. Not called on app quit.
     static func panelRemoved(_ panel: Panel, host: PanelHostContext)
     /// Once per daemon session, after the snapshot: `livePanels` are this plug-in's panels. Sweep orphaned data here.

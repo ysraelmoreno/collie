@@ -6,7 +6,7 @@ import CollieCore
 @Suite struct AgentLaunchTests {
     let collie = URL(fileURLWithPath: "/opt/o rq/collie")
     func tmp() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("al-\(UUID().uuidString)") }
-    func rec(_ p: Preset, _ c: String? = nil) -> TerminalRecord { TerminalRecord(id: UUID(), name: "A", preset: p, command: c, cwd: "/tmp", isMaestro: false) }
+    func rec(_ p: Preset, _ c: String? = nil) -> TerminalRecord { TerminalRecord(id: UUID(), name: "A", preset: p, command: c, cwd: "/tmp", isShepherd: false) }
 
     @Test func claudeSpecUsesSettingsFlag() throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
@@ -78,7 +78,7 @@ import CollieCore
                                            codexMCP: true)
         #expect(s.arguments[1] == #"codex -c 'notify=["/opt/o rq/collie","hook","codex-notify"]'"#
                 + #" -c 'mcp_servers.collie.command="/opt/o rq/collie"' -c 'mcp_servers.collie.args=["mcp"]'"#
-                + #" -c 'mcp_servers.collie.env_vars=["COLLIE_SOCKET","COLLIE_TERMINAL_ID","COLLIE_TOKEN","COLLIE_TERMINAL_NAME","COLLIE_WORKSPACE_ID","COLLIE_MAESTRO"]'"#)
+                + #" -c 'mcp_servers.collie.env_vars=["COLLIE_SOCKET","COLLIE_TERMINAL_ID","COLLIE_TOKEN","COLLIE_TERMINAL_NAME","COLLIE_WORKSPACE_ID","COLLIE_SHEPHERD"]'"#)
         #expect(!s.arguments[1].contains("sekret-token"))
     }
     @Test func noGlobalSettingsTouched() throws {

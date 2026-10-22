@@ -21,10 +21,10 @@ private func pidfile(_ p: Paths, _ id: String) -> String { p.runDir.appendingPat
         }
     }
 
-    @Test func restartRelaunchesStoppedRecordKeepingCords() async throws {
+    @Test func restartRelaunchesStoppedRecordKeepingLeashes() async throws {
         try await withDaemon { d, p in
             let a = try await spawn(d, p, "A"), b = try await spawn(d, p, "B", preset: "custom", command: "exec sleep 300")
-            #expect(try await admin(d, p, "admin.connect", ["a": .string("A"), "b": .string("B")]).ok)
+            #expect(try await admin(d, p, "admin.leash", ["a": .string("A"), "b": .string("B")]).ok)
             let live = try await admin(d, p, "admin.restart", ["name": .string("B")])
             #expect(live.error?.code == .invalidArgs, "\(live)")
             #expect(try await admin(d, p, "admin.restart", ["name": .string("nope")]).error?.code == .notFound)
@@ -53,12 +53,12 @@ private func pidfile(_ p: Paths, _ id: String) -> String { p.runDir.appendingPat
             let ev = try await StreamClient.open(Request(id: "e", token: d.adminToken, command: "ui.events"), path: p.socket)
             defer { ev.close() }
             let ab: [String: JSONValue] = ["a": .string("A"), "b": .string("b")]
-            #expect(try await admin(d, p, "admin.connect", ab).ok)
+            #expect(try await admin(d, p, "admin.leash", ab).ok)
             #expect(try await rows().count == 1)
-            #expect(try await admin(d, p, "admin.disconnect", ab).ok)
+            #expect(try await admin(d, p, "admin.unleash", ab).ok)
             #expect(try await rows().isEmpty)
-            #expect(try await admin(d, p, "admin.disconnect", ab).ok)
-            #expect(try await admin(d, p, "admin.disconnect", ["a": .string("A"), "b": .string("zz")]).error?.code == .notFound)
+            #expect(try await admin(d, p, "admin.unleash", ab).ok)
+            #expect(try await admin(d, p, "admin.unleash", ["a": .string("A"), "b": .string("zz")]).error?.code == .notFound)
             // sentinel: once C's .spawned arrives, every earlier event has been seen
             let c = try await spawn(d, p, "C")
             var disconnected = 0

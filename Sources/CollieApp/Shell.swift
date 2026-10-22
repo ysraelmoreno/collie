@@ -9,7 +9,7 @@ import CollieTheme
 @MainActor struct ShellContext {
     let client: DaemonClient
     let canvas: CanvasState
-    let floors: FloorActions
+    let paddocks: PaddockActions
     let usage: UsageFeed
     var workspaceName: String?
     var usageOpen: Binding<Bool>
@@ -17,13 +17,13 @@ import CollieTheme
     var openPanel: () -> Void
     var fit: () -> Void
     var openPalette: () -> Void
-    let partituras: PartiturasModel
-    /// The Partituras sheet, with that partitura selected (nil: the first).
-    var openPartituras: (String?) -> Void
+    let herds: HerdsModel
+    /// The Herds sheet, with that herd selected (nil: the first).
+    var openHerds: (String?) -> Void
 }
 
 /// The window frame around `content` (docks + canvas). Compacta adds nothing here (its bar floats over the canvas,
-/// see `CanvasChrome`); Completa adds the sidebar, the floor header and the status bar in optional slots around
+/// see `CanvasChrome`); Completa adds the sidebar, the paddock header and the status bar in optional slots around
 /// `content`, which keeps one position in the hierarchy: switching structure never remakes the canvas or the panels.
 struct Shell<Content: View>: View {
     let structure: WindowStructure
@@ -35,7 +35,7 @@ struct Shell<Content: View>: View {
         HStack(spacing: 0) {
             if full { WorkspaceSidebar(ctx: ctx) }
             VStack(spacing: 0) {
-                if full { FloorHeader(ctx: ctx) }
+                if full { PaddockHeader(ctx: ctx) }
                 content
                 if full { StatusBar(ctx: ctx) }
             }
@@ -89,7 +89,7 @@ private struct CompactBar: View {
     var body: some View {
         HStack(spacing: 10) {
             HStack(spacing: 6) { CollieMark(size: 18); Text("collie").font(.collieUI(15, .bold)).foregroundStyle(Color.collieText) }
-            FloorChips(ctx: ctx)
+            PaddockChips(ctx: ctx)
             CommandField(ctx: ctx).frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
             UsageButton(ctx: ctx)
         }
@@ -97,53 +97,53 @@ private struct CompactBar: View {
     }
 }
 
-/// Térreo, up to 4 floor chips (the current one always among them) and "+N" with the rest and "Novo andar…".
-private struct FloorChips: View {
+/// Pasto, up to 4 paddock chips (the current one always among them) and "+N" with the rest and "Novo cercado…".
+private struct PaddockChips: View {
     let ctx: ShellContext
 
     var body: some View {
-        let client = ctx.client, floors = client.floors
-        let split = chipSplit(floors.map(\.id), current: client.currentFloor, max: 4)
+        let client = ctx.client, paddocks = client.paddocks
+        let split = chipSplit(paddocks.map(\.id), current: client.currentPaddock, max: 4)
         HStack(spacing: 4) {
-            FloorChip(title: "Térreo", status: nil, selected: client.currentFloor == nil) { ctx.floors.select(nil) }
+            PaddockChip(title: "Pasto", status: nil, selected: client.currentPaddock == nil) { ctx.paddocks.select(nil) }
             ForEach(split.shown, id: \.self) { id in
-                if let f = floors.first(where: { $0.id == id }) {
-                    FloorChip(title: f.name, status: f.status, selected: client.currentFloor == id) { ctx.floors.select(id) }
-                        .contextMenu { FloorMenu(floor: f, actions: ctx.floors) }
+                if let f = paddocks.first(where: { $0.id == id }) {
+                    PaddockChip(title: f.name, status: f.status, selected: client.currentPaddock == id) { ctx.paddocks.select(id) }
+                        .contextMenu { PaddockMenu(paddock: f, actions: ctx.paddocks) }
                 }
             }
-            if let f = floors.first(where: { $0.id == client.currentFloor }) {
-                Menu { FloorMenu(floor: f, actions: ctx.floors) } label: { Image(systemName: "ellipsis") }
+            if let f = paddocks.first(where: { $0.id == client.currentPaddock }) {
+                Menu { PaddockMenu(paddock: f, actions: ctx.paddocks) } label: { Image(systemName: "ellipsis") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Ações do andar").accessibilityLabel("Ações do andar")
+                    .help("Ações do cercado").accessibilityLabel("Ações do cercado")
             }
-            if ctx.floors.busy { ProgressView().controlSize(.small) }
+            if ctx.paddocks.busy { ProgressView().controlSize(.small) }
             Menu {
-                ForEach(floors.filter { split.overflow.contains($0.id) }) { f in
-                    Button("\(f.name) · \(f.status.label)") { ctx.floors.select(f.id) }
+                ForEach(paddocks.filter { split.overflow.contains($0.id) }) { f in
+                    Button("\(f.name) · \(f.status.label)") { ctx.paddocks.select(f.id) }
                 }
                 if !split.overflow.isEmpty { Divider() }
-                NewFloorButton(actions: ctx.floors)
+                NewPaddockButton(actions: ctx.paddocks)
             } label: {
                 Text(split.overflow.isEmpty ? "+" : "+\(split.overflow.count)").font(.collieMono(12, .medium))
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .help(split.overflow.isEmpty ? "Novo andar…" : "Mais andares")
-            .accessibilityLabel(split.overflow.isEmpty ? "Novo andar…" : "Mais \(split.overflow.count) andares")
+            .help(split.overflow.isEmpty ? "Novo cercado…" : "Mais cercados")
+            .accessibilityLabel(split.overflow.isEmpty ? "Novo cercado…" : "Mais \(split.overflow.count) cercados")
         }
     }
 }
 
-private struct FloorChip: View {
+private struct PaddockChip: View {
     let title: String
-    let status: FloorStatus?
+    let status: PaddockStatus?
     let selected: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let status { FloorStatusDot(status: status) }
+                if let status { PaddockStatusDot(status: status) }
                 Text(title).lineLimit(1)
             }
             .font(.collieUI(13, .medium)).foregroundStyle(selected ? Color.collieText : .collieMuted)
@@ -166,7 +166,7 @@ private struct CommandField: View {
         Button(action: ctx.openPalette) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                Text("Recrutar, abrir painel, ir para andar…").lineLimit(1).truncationMode(.tail)
+                Text("Chamar, abrir painel, ir para cercado…").lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 4)
                 Text("⌘K").font(.collieMono(11))
             }
@@ -239,20 +239,20 @@ private struct WorkspaceSidebar: View {
                 if let n = ctx.workspaceName { Text(n).font(.collieMono(12)).foregroundStyle(Color.collieMuted).lineLimit(1) }
             }
             CommandField(ctx: ctx)
-            section("ANDARES")
+            section("CERCADOS")
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
-                    row(nil, selected: client.currentFloor == nil)
-                    ForEach(client.floors) { f in
-                        row(f, selected: client.currentFloor == f.id).contextMenu { FloorMenu(floor: f, actions: ctx.floors) }
+                    row(nil, selected: client.currentPaddock == nil)
+                    ForEach(client.paddocks) { f in
+                        row(f, selected: client.currentPaddock == f.id).contextMenu { PaddockMenu(paddock: f, actions: ctx.paddocks) }
                     }
                     HStack {
-                        NewFloorButton(actions: ctx.floors).buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
-                        if ctx.floors.busy { ProgressView().controlSize(.small) }
+                        NewPaddockButton(actions: ctx.paddocks).buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+                        if ctx.paddocks.busy { ProgressView().controlSize(.small) }
                     }
                 }
             }
-            PartiturasSection(ctx: ctx)
+            HerdsSection(ctx: ctx)
             section("USO")
             usage
         }
@@ -266,12 +266,12 @@ private struct WorkspaceSidebar: View {
         Text(title).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
     }
 
-    private func row(_ f: Floor?, selected: Bool) -> some View {
-        Button { ctx.floors.select(f?.id) } label: {
+    private func row(_ f: Paddock?, selected: Bool) -> some View {
+        Button { ctx.paddocks.select(f?.id) } label: {
             HStack(spacing: 8) {
-                FloorStatusDot(status: f?.status)
+                PaddockStatusDot(status: f?.status)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(f?.name ?? "Térreo").font(.collieUI(13, .medium)).foregroundStyle(Color.collieText).lineLimit(1)
+                    Text(f?.name ?? "Pasto").font(.collieUI(13, .medium)).foregroundStyle(Color.collieText).lineLimit(1)
                     if let f { Text(f.branch).font(.collieMono(11)).foregroundStyle(Color.collieMuted).lineLimit(1).truncationMode(.middle) }
                 }
                 Spacer(minLength: 0)
@@ -282,7 +282,7 @@ private struct WorkspaceSidebar: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .help(f.map { "\($0.name) · \($0.status.label)" } ?? "Térreo")
+        .help(f.map { "\($0.name) · \($0.status.label)" } ?? "Pasto")
         .accessibilityValue(f?.status.label ?? "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -315,17 +315,17 @@ private struct WorkspaceSidebar: View {
     }
 }
 
-/// PARTITURAS: the list (a click opens the sheet with that one) and "Aplicar…".
-private struct PartiturasSection: View {
+/// HERDS: the list (a click opens the sheet with that one) and "Aplicar…".
+private struct HerdsSection: View {
     let ctx: ShellContext
-    @ObservedObject var model: PartiturasModel
-    init(ctx: ShellContext) { self.ctx = ctx; model = ctx.partituras }
+    @ObservedObject var model: HerdsModel
+    init(ctx: ShellContext) { self.ctx = ctx; model = ctx.herds }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("PARTITURAS").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
+            Text("REBANHOS").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
             ForEach(model.items.prefix(6)) { it in
-                Button { ctx.openPartituras(it.id) } label: {
+                Button { ctx.openHerds(it.id) } label: {
                     HStack(spacing: 6) {
                         Text(it.name).font(.collieUI(13)).foregroundStyle(Color.collieText).lineLimit(1)
                         Spacer(minLength: 0)
@@ -335,28 +335,28 @@ private struct PartiturasSection: View {
                 }
                 .buttonStyle(.plain).help(it.summary)
             }
-            Button("Aplicar…") { ctx.openPartituras(nil) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+            Button("Aplicar…") { ctx.openHerds(nil) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
         }
         .task(id: ctx.client.state == .connected) { if ctx.client.state == .connected { await model.refresh() } }
     }
 }
 
-private struct FloorHeader: View {
+private struct PaddockHeader: View {
     let ctx: ShellContext
 
     var body: some View {
-        let floor = ctx.client.floors.first { $0.id == ctx.client.currentFloor }
+        let paddock = ctx.client.paddocks.first { $0.id == ctx.client.currentPaddock }
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(floor?.name ?? "Térreo").font(.collieUI(22, .semibold)).foregroundStyle(Color.collieText)
-                if let floor { Text("\(floor.branch) ← \(floor.baseBranch)").font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
+                Text(paddock?.name ?? "Pasto").font(.collieUI(22, .semibold)).foregroundStyle(Color.collieText)
+                if let paddock { Text("\(paddock.branch) ← \(paddock.baseBranch)").font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
             }
             Spacer()
-            if let floor {
-                if ctx.floors.busy { ProgressView().controlSize(.small) }
-                Menu { FloorMenu(floor: floor, actions: ctx.floors) } label: { Image(systemName: "ellipsis.circle") }
+            if let paddock {
+                if ctx.paddocks.busy { ProgressView().controlSize(.small) }
+                Menu { PaddockMenu(paddock: paddock, actions: ctx.paddocks) } label: { Image(systemName: "ellipsis.circle") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Menu do andar").accessibilityLabel("Menu do andar")
+                    .help("Menu do cercado").accessibilityLabel("Menu do cercado")
             }
             Button("Novo terminal", action: ctx.newTerminal).buttonStyle(CollieButtonStyle(.secondary))
             Button(action: ctx.openPanel) { Image(systemName: "plus.rectangle") }

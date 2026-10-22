@@ -32,7 +32,7 @@ private func additional(_ json: String?, _ event: String) -> String? {
     @Test func claudeSettingsHaveSessionAndPromptHooks() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let rec = TerminalRecord(id: UUID(), name: "A", preset: .claude, command: nil, cwd: "/tmp", isMaestro: false)
+        let rec = TerminalRecord(id: UUID(), name: "A", preset: .claude, command: nil, cwd: "/tmp", isShepherd: false)
         _ = try AgentLaunch.launchSpec(for: rec, env: [:], hooksDir: dir, collie: URL(fileURLWithPath: "/opt/o rq/collie"), shell: "/bin/zsh")
         let o = try JSONSerialization.jsonObject(with: Data(contentsOf: AgentLaunch.settingsFile(rec.id, in: dir))) as! [String: Any]
         let hooks = o["hooks"] as! [String: Any]

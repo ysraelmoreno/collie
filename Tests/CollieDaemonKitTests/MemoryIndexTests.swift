@@ -93,12 +93,12 @@ import CollieCore
         let e = try env(); defer { try? FileManager.default.removeItem(at: e.root) }
         let old = rec(.decision, "cache", title: "use redis", at: 1_700_000_000)
         let new = rec(.decision, "Cache", title: "use memcached", at: 1_700_000_900)
-        let otherFloor = MemoryRecord(kind: .decision, scope: .floor, floor: "f1", subject: "cache", title: "floor one", createdAt: Date(timeIntervalSince1970: 1_700_000_000))
-        try e.store.write(old); try e.store.write(new); try e.store.write(otherFloor)
+        let otherPaddock = MemoryRecord(kind: .decision, scope: .paddock, paddock: "f1", subject: "cache", title: "paddock one", createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        try e.store.write(old); try e.store.write(new); try e.store.write(otherPaddock)
         _ = try e.index.refresh()
         let recs = Dictionary(uniqueKeysWithValues: e.store.all().records.map { ($0.id, $0) })
         #expect(recs[old.id]?.status == .superseded && recs[old.id]?.supersededBy == new.id)
-        #expect(recs[new.id]?.status == .active && recs[otherFloor.id]?.status == .active)
+        #expect(recs[new.id]?.status == .active && recs[otherPaddock.id]?.status == .active)
         #expect(e.index.search("redis", limit: 5).isEmpty)
         #expect(e.index.search("redis", limit: 5, includeInactive: true).first?.record.status == .superseded)
         // Rewritten file is not re-reported as changed.

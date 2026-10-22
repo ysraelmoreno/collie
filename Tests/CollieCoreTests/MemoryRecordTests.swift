@@ -5,7 +5,7 @@ import CollieProtocol
 
 @Suite struct MemoryRecordTests {
     func full() -> MemoryRecord {
-        MemoryRecord(id: UUID(), kind: .map, scope: .floor, floor: "auth", subject: "Auth: Flow  #1", title: "Title: with \"quotes\" # hash",
+        MemoryRecord(id: UUID(), kind: .map, scope: .paddock, paddock: "auth", subject: "Auth: Flow  #1", title: "Title: with \"quotes\" # hash",
                      body: "line one\n---\nafter rule\n\nend", path: "Sources/A.swift", status: .superseded, reviewed: true, pinned: true,
                      supersedes: UUID(), supersededBy: UUID(), origin: "claude-1 (claude)",
                      createdAt: Date(timeIntervalSince1970: 1_700_000_000.123), updatedAt: Date(timeIntervalSince1970: 1_700_000_100.5))

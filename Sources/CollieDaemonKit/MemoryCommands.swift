@@ -3,13 +3,13 @@ import CollieCore
 import CollieProtocol
 
 /// `memory.*`: the admin token (same managed-terminal ancestry check as `admin.*`) or a terminal token.
-/// Memory isn't cord-gated: a terminal reads/writes the memory of its cwd's repo (plus the global one);
+/// Memory isn't leash-gated: a terminal reads/writes the memory of its cwd's repo (plus the global one);
 /// review/restore/pin/cleanup/purge/repos are admin-only. The admin picks the store with `repo` (default: its cwd).
 extension CommandRouter {
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
-        let floorName = caller?.floorId.flatMap { id in ws.floors.first { $0.id == id }?.name }
+        let paddockName = caller?.paddockId.flatMap { id in ws.paddocks.first { $0.id == id }?.name }
         let repo: RepoMemory
         if let me = caller {
             repo = await memory.repo(for: me.cwd)
@@ -45,11 +45,11 @@ extension CommandRouter {
         switch r.command {
         case "memory.save":
             guard let kind = MemoryKind(rawValue: try need(r, "kind")) else { throw invalid("kind must be decision|map|pitfall") }
-            guard let scope = MemoryScope(rawValue: str(r, "scope") ?? "project") else { throw invalid("scope must be project|floor|global") }
+            guard let scope = MemoryScope(rawValue: str(r, "scope") ?? "project") else { throw invalid("scope must be project|paddock|global") }
             let origin = caller.map { "\($0.name) (\($0.preset.rawValue))" } ?? "app"
             let (saved, target, old) = try await saveMemory(kind, scope: scope, subject: try need(r, "subject"), title: try need(r, "title"),
                                                             body: str(r, "body") ?? "", path: str(r, "path"), repo: repo,
-                                                            floor: floorName, origin: origin)
+                                                            paddock: paddockName, origin: origin)
             return try memJSON(saved, target, ["superseded": old.map { .string($0.id.uuidString) } ?? .null])
 
         case "memory.search":
@@ -57,13 +57,13 @@ extension CommandRouter {
             let limit = Int(try num(r, "limit", max: 50) ?? 10), all = flag(r, "all")
             var hits: [(hit: MemoryHit, store: RepoMemory)] = []
             for s in stores {
-                // over-fetch: floor memories of other floors are filtered out below
+                // over-fetch: paddock memories of other paddocks are filtered out below
                 // the picked repo's index must work; a broken global one only drops its hits
                 let required = s === repo
                 let found = try await s.run { m in
                     (required ? try m.requireIndex() : m.index())?.search(query, limit: limit * 2 + 10, includeInactive: all) ?? []
                 }
-                hits += found.filter { caller == nil || MemoryService.visible($0.record, floor: floorName) }.map { ($0, s) }
+                hits += found.filter { caller == nil || MemoryService.visible($0.record, paddock: paddockName) }.map { ($0, s) }
             }
             hits.sort { $0.hit.score > $1.hit.score }
             hits = Array(hits.prefix(limit))
@@ -94,7 +94,7 @@ extension CommandRouter {
                     for r in recs where r.kind == .map { if let d = idx?.stats(r.id)?.missingSince { missing[r.id] = d } }
                     return (recs, all.problems, missing)
                 }
-                for rec in recs where caller == nil || MemoryService.visible(rec, floor: floorName) {
+                for rec in recs where caller == nil || MemoryService.visible(rec, paddock: paddockName) {
                     rows.append(try memJSON(rec, s, missing[rec.id].map { ["missingSince": .string(isoString($0))] } ?? [:]))
                 }
                 problems += probs.map { .object(["file": .string(s.store.dir.appendingPathComponent($0.file).path), "error": .string($0.error)]) }
@@ -108,7 +108,7 @@ extension CommandRouter {
                     guard let rec = m.store.all().records.first(where: { $0.id == id }) else { return nil }
                     return (rec, m.index()?.stats(id))
                 }
-                guard let (rec, st) = found, caller == nil || MemoryService.visible(rec, floor: floorName) else { continue }
+                guard let (rec, st) = found, caller == nil || MemoryService.visible(rec, paddock: paddockName) else { continue }
                 var extra: [String: JSONValue] = ["reads": .number(Double(st?.reads ?? 0))]
                 if let d = st?.lastReadAt { extra["lastReadAt"] = .string(isoString(d)) }
                 if let d = st?.missingSince { extra["missingSince"] = .string(isoString(d)) }
@@ -119,21 +119,21 @@ extension CommandRouter {
 
         case "memory.context":
             let cwd = caller?.cwd ?? repo.root?.path ?? memory.global.path
-            return .object(["output": .string(await memory.contextText(cwd: cwd, floor: floorName).text)])
+            return .object(["output": .string(await memory.contextText(cwd: cwd, paddock: paddockName).text)])
 
         case "memory.hookContext", "memory.hookRelevant":
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
             let text: String
             if r.command == "memory.hookContext" {
-                let mem = await memory.context(for: me.id, cwd: me.cwd, floor: floorName)
+                let mem = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName)
                 let orientation = CollieOrientation.text(
-                    terminal: me.name, isMaestro: me.isMaestro, floor: floorName,
+                    terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
                     peers: ConnectionGraph.reachable(from: me.id, in: ws).map(\.name),
                     panels: ConnectionGraph.reachablePanels(from: me.id, in: ws).map { ($0.name, $0.pluginId) })
                 // ponytail: the bare header (no memories) counts as empty
                 text = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
             } else {
-                text = await memory.relevant(for: me.id, cwd: me.cwd, floor: floorName, prompt: HookPayload.boundedPrompt(try need(r, "prompt")))
+                text = await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, prompt: HookPayload.boundedPrompt(try need(r, "prompt")))
             }
             return .object(["output": .string(text)])
 
@@ -212,15 +212,15 @@ extension CommandRouter {
 
         case "memory.repos":
             var seen: [RepoMemory] = []
-            for cwd in ws.terminals.map(\.cwd) + ws.floors.flatMap({ [$0.repoRoot, $0.path] }) {
+            for cwd in ws.terminals.map(\.cwd) + ws.paddocks.flatMap({ [$0.repoRoot, $0.path] }) {
                 let m = await memory.repo(for: cwd)
                 if m !== memory.global, !seen.contains(where: { $0 === m }) { seen.append(m) }
             }
             seen.append(memory.global)
             return .array(seen.map { m in
                 var o: [String: JSONValue] = ["path": .string(m.path), "scope": .string(m.scope.rawValue)]
-                if let f = ws.floors.first(where: { $0.path == m.root?.path }) {
-                    o["floor"] = .string(f.name)
+                if let f = ws.paddocks.first(where: { $0.path == m.root?.path }) {
+                    o["paddock"] = .string(f.name)
                 }
                 return .object(o)
             })
@@ -230,10 +230,10 @@ extension CommandRouter {
         }
     }
 
-    /// `memory.save`'s validation and store choice: `repo` is the caller's (its cwd's), `floor` its floor's name.
+    /// `memory.save`'s validation and store choice: `repo` is the caller's (its cwd's), `paddock` its paddock's name.
     /// Returns the saved record, the store it went to and the record it replaced (same subject).
     func saveMemory(_ kind: MemoryKind, scope: MemoryScope, subject rawSubject: String, title rawTitle: String, body: String,
-                    path rawPath: String?, repo: RepoMemory, floor floorName: String?,
+                    path rawPath: String?, repo: RepoMemory, paddock paddockName: String?,
                     origin: String) async throws -> (MemoryRecord, RepoMemory, MemoryRecord?) {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let subject = MemoryRecord.normalize(rawSubject)
@@ -242,18 +242,18 @@ extension CommandRouter {
         guard subject.count <= 300, title.count <= 300, body.utf8.count <= 64 * 1024 else {
             throw invalid("subject/title are limited to 300 characters and body to 64 KiB")
         }
-        var target = repo, effective = scope, floor: String?
+        var target = repo, effective = scope, paddock: String?
         switch scope {
-        case .floor:
-            guard let floorName, repo.root != nil else { throw invalid("scope 'floor' needs a terminal on a floor") }
-            floor = floorName
+        case .paddock:
+            guard let paddockName, repo.root != nil else { throw invalid("scope 'paddock' needs a terminal on a paddock") }
+            paddock = paddockName
         case .global: target = memory.global
         case .project: if repo.root == nil { effective = .global }   // outside git: the global store
         }
         var path = rawPath
         if let p = path, let root = target.root?.path, p.hasPrefix(root + "/") { path = String(p.dropFirst(root.count + 1)) }
         if let p = path, !isRepoRelative(p) { throw invalid("path must be relative to the repo root (no '..')") }
-        let rec = MemoryRecord(kind: kind, scope: effective, floor: floor, subject: subject, title: title, body: body,
+        let rec = MemoryRecord(kind: kind, scope: effective, paddock: paddock, subject: subject, title: title, body: body,
                                path: path, origin: origin)
         let (saved, old) = try await target.run { m in try m.store.save(rec) }
         return (saved, target, old)
@@ -266,7 +266,7 @@ extension CommandRouter {
         var repo = memory.global
         if let cwd { repo = await memory.repo(for: cwd) }
         return try await saveMemory(.decision, scope: .project, subject: subject, title: title, body: body, path: nil,
-                                    repo: repo, floor: nil, origin: by).0
+                                    repo: repo, paddock: nil, origin: by).0
     }
 
     /// A record for agents/the app: ISO dates plus where it lives (`file`) and extras.

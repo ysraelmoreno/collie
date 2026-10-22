@@ -73,7 +73,7 @@ enum MemoryCleanup {
         r.status = .active; r.supersededBy = nil
         try store.write(r)   // restored first: a crash in between leaves two actives, never a dangling supersededBy
         for var o in all where o.status == .active && o.id != id && o.kind == r.kind && o.scope == r.scope
-            && o.floor == r.floor && MemoryRecord.normalize(o.subject) == MemoryRecord.normalize(r.subject) {
+            && o.paddock == r.paddock && MemoryRecord.normalize(o.subject) == MemoryRecord.normalize(r.subject) {
             o.status = .superseded; o.supersededBy = id
             try store.write(o)
         }
@@ -82,7 +82,7 @@ enum MemoryCleanup {
     }
 
     private static func isDuplicate(_ a: MemoryRecord, _ b: MemoryRecord) -> Bool {
-        guard a.kind == b.kind, a.scope == b.scope, a.floor == b.floor, a.kind != .map || a.path == b.path else { return false }
+        guard a.kind == b.kind, a.scope == b.scope, a.paddock == b.paddock, a.kind != .map || a.path == b.path else { return false }
         let ab = MemoryRecord.normalize(a.body)
         if !ab.isEmpty, ab == MemoryRecord.normalize(b.body) { return true }
         let wa = words(a), wb = words(b)

@@ -43,10 +43,10 @@ enum Config {
     @State private var consented: Bool
     @State private var error: String?
     @State private var paletteOpen = false
-    @State private var partiturasOpen = false
+    @State private var herdsOpen = false
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
 
-    init() { Self.migrateDefaults(from: Self.legacyDefaultsDomain, into: .standard)
+    init() { Self.migrateDefaults(from: Self.legacyDefaultsDomain, into: .standard); Self.renameDefaults(in: .standard)
              _consented = State(initialValue: UserDefaults.standard.bool(forKey: Config.consentKey))   // after the migration
              PluginViews.register("browser", BrowserPanel.self); PluginViews.register("memory", MemoryPanel.self)
              PluginViews.register("device", DevicePanel.self); PluginViews.register("design", DesignPanel.self)
@@ -68,9 +68,19 @@ enum Config {
         return n
     }
 
+    /// Preference keys from before the herding vocabulary → their names now.
+    static let renamedKeys = ["floor.current": PaddockActions.currentKey, "floor.repo": PaddockActions.repoKey,
+                              "partitura.cwd": HerdsSheet.cwdKey, "new.maestro": "new.shepherd"]
+    /// Each old key's value under its new name, unless that one is set (the old key stays). Runs on every start.
+    static func renameDefaults(in d: UserDefaults) {
+        for (old, new) in renamedKeys where d.object(forKey: new) == nil {
+            if let v = d.object(forKey: old) { d.set(v, forKey: new) }
+        }
+    }
+
     var body: some Scene {
         Window("Collie", id: "main") {
-            ContentView(client: client, canvas: canvas, error: $error, paletteOpen: $paletteOpen, partiturasOpen: $partiturasOpen)
+            ContentView(client: client, canvas: canvas, error: $error, paletteOpen: $paletteOpen, herdsOpen: $herdsOpen)
                 .sheet(isPresented: .constant(!consented)) { consentSheet }
                 .task(id: consented) { if consented { startService() } }
                 .onAppear(perform: Self.applyTheme)
@@ -88,7 +98,7 @@ enum Config {
                 Divider()
             }
             CommandMenu("Canvas") {
-                Button("Partituras…") { if !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) { partiturasOpen = true } }
+                Button("Rebanhos…") { if !NSApp.windows.contains(where: { $0.isSheet && $0.isVisible }) { herdsOpen = true } }
             }
             CommandGroup(after: .appTermination) {
                 Button("Parar serviço") { stopService() }
@@ -144,10 +154,10 @@ struct ContentView: View {
     let canvas: CanvasState
     @Binding var error: String?
     @Binding var paletteOpen: Bool
-    @Binding var partiturasOpen: Bool
+    @Binding var herdsOpen: Bool
     @AppStorage(AppearanceKeys.structure) private var structureRaw = WindowStructure.compact.rawValue
     @Environment(\.openSettings) private var openSettings
-    @State private var floors: FloorActions
+    @State private var paddocks: PaddockActions
     @State private var usage = UsageFeed()
     @State private var workspaceName: String?
     @State private var paletteRun: PaletteCommand?   // run once the palette sheet is gone
@@ -155,12 +165,12 @@ struct ContentView: View {
     /// `nil` position = from the window chrome or the palette (placed automatically); otherwise a canvas point from a right-click.
     enum SheetKind: Identifiable {
         case newTerminal(CGPoint?), edit(UUID), openPanel(CGPoint?)
-        /// Apply: the canvas point (nil: the visible area's corner) and the partitura selected first.
-        case partituras(CGPoint?, String?), savePartitura
+        /// Apply: the canvas point (nil: the visible area's corner) and the herd selected first.
+        case herds(CGPoint?, String?), saveHerd
         var id: String {
             switch self {
-            case .partituras(let p, let s): "partituras \(String(describing: p)) \(s ?? "")"
-            case .savePartitura: "save partitura"
+            case .herds(let p, let s): "herds \(String(describing: p)) \(s ?? "")"
+            case .saveHerd: "save herd"
             case .newTerminal(let p): "new \(String(describing: p))"
             case .edit(let i): "edit \(i)"
             case .openPanel(let p): "panel \(String(describing: p))"
@@ -169,7 +179,7 @@ struct ContentView: View {
     }
     @State private var sheet: SheetKind?
     @State private var store: PanelViewStore
-    @StateObject private var partituras: PartiturasModel
+    @StateObject private var herds: HerdsModel
     @State private var usageOpen = false
     @State private var bundledBuild: String?
     @State private var staleDismissed = false
@@ -178,11 +188,11 @@ struct ContentView: View {
     }
     private let notifier = Notifier.shared
 
-    init(client: DaemonClient, canvas: CanvasState, error: Binding<String?>, paletteOpen: Binding<Bool>, partiturasOpen: Binding<Bool>) {
-        self.client = client; self.canvas = canvas; _error = error; _paletteOpen = paletteOpen; _partiturasOpen = partiturasOpen
-        _partituras = StateObject(wrappedValue: PartiturasModel(call: { cmd, args throws(ProtocolError) in try await client.adminCall(cmd, args) },
+    init(client: DaemonClient, canvas: CanvasState, error: Binding<String?>, paletteOpen: Binding<Bool>, herdsOpen: Binding<Bool>) {
+        self.client = client; self.canvas = canvas; _error = error; _paletteOpen = paletteOpen; _herdsOpen = herdsOpen
+        _herds = StateObject(wrappedValue: HerdsModel(call: { cmd, args throws(ProtocolError) in try await client.adminCall(cmd, args) },
                                                                 nodeName: { client.nodeName($0) }))
-        _floors = State(initialValue: FloorActions(client: client))
+        _paddocks = State(initialValue: PaddockActions(client: client))
         _store = State(initialValue: PanelViewStore(panels: { client.panels }, context: { panel in
             PanelHostContext(panel: panel, root: Config.root, workspaceId: client.workspaceId,
                              call: { cmd, args throws(ProtocolError) in try await client.adminCall(cmd, args) },
@@ -211,10 +221,10 @@ struct ContentView: View {
     private var structure: WindowStructure { WindowStructure(rawValue: structureRaw) ?? .compact }
 
     private var shell: ShellContext {
-        ShellContext(client: client, canvas: canvas, floors: floors, usage: usage, workspaceName: workspaceName,
+        ShellContext(client: client, canvas: canvas, paddocks: paddocks, usage: usage, workspaceName: workspaceName,
                      usageOpen: $usageOpen, newTerminal: { sheet = .newTerminal(nil) }, openPanel: { sheet = .openPanel(nil) },
                      fit: { canvas.fitAll(viewport: viewport) }, openPalette: { paletteOpen = true },
-                     partituras: partituras, openPartituras: { sheet = .partituras(nil, $0) })
+                     herds: herds, openHerds: { sheet = .herds(nil, $0) })
     }
 
     /// Each command runs the same closure as its button.
@@ -222,12 +232,12 @@ struct ContentView: View {
         let s = shell
         return [PaletteCommand(id: "terminal", title: "Novo terminal", run: s.newTerminal),
                 PaletteCommand(id: "panel", title: "Abrir painel…", run: s.openPanel),
-                PaletteCommand(id: "partitura.apply", title: "Aplicar partitura…", run: { s.openPartituras(nil) }),
-                PaletteCommand(id: "partitura.save", title: "Salvar canvas como partitura…", run: { sheet = .savePartitura }),
-                PaletteCommand(id: "floor.new", title: "Novo andar…", run: floors.newFloor),
-                PaletteCommand(id: "floor.ground", title: "Ir para o Térreo", run: { floors.select(nil) })]
-            + client.floors.map { f in PaletteCommand(id: "floor.\(f.id)", title: "Ir para o andar \(f.name)", run: { floors.select(f.id) }) }
-            + (client.floors.first { $0.id == client.currentFloor }.map(floors.commands) ?? [])
+                PaletteCommand(id: "herd.apply", title: "Aplicar rebanho…", run: { s.openHerds(nil) }),
+                PaletteCommand(id: "herd.save", title: "Salvar canvas como rebanho…", run: { sheet = .saveHerd }),
+                PaletteCommand(id: "paddock.new", title: "Novo cercado…", run: paddocks.newPaddock),
+                PaletteCommand(id: "paddock.pasture", title: "Ir para o Pasto", run: { paddocks.select(nil) })]
+            + client.paddocks.map { f in PaletteCommand(id: "paddock.\(f.id)", title: "Ir para o cercado \(f.name)", run: { paddocks.select(f.id) }) }
+            + (client.paddocks.first { $0.id == client.currentPaddock }.map(paddocks.commands) ?? [])
             + [PaletteCommand(id: "fit", title: "Ajustar à tela", run: s.fit),
                PaletteCommand(id: "usage", title: "Uso dos agentes", run: { usageOpen = true }),
                PaletteCommand(id: "settings", title: "Preferências…", run: { openSettings() })]
@@ -248,12 +258,12 @@ struct ContentView: View {
                 CanvasView(client: client, canvas: canvas, root: Config.root, store: store,
                            onNewTerminal: { sheet = .newTerminal($0) }, onOpenPanel: { sheet = .openPanel($0) },
                            onEdit: { sheet = .edit($0) },
-                           onApplyPartitura: { sheet = .partituras($0, nil) }, onSavePartitura: { sheet = .savePartitura })
+                           onApplyHerd: { sheet = .herds($0, nil) }, onSaveHerd: { sheet = .saveHerd })
                 .onGeometryChange(for: CGSize.self, of: \.size) { viewport = $0 }
                 .overlay(alignment: .top) { CanvasChrome(structure: structure, ctx: shell) { banners } }
             }
         }
-        .floorDialogs(floors)
+        .paddockDialogs(paddocks)
         .sheet(isPresented: $paletteOpen, onDismiss: { paletteRun?.run(); paletteRun = nil }) {
             CommandPalette(commands: paletteCommands) { paletteRun = $0; paletteOpen = false }
         }
@@ -263,10 +273,10 @@ struct ContentView: View {
             workspaceName = try? await WorkspaceStore(paths: Paths(root: Config.root)).load(id).name
         }
         .task { bundledBuild = await Task.detached { BuildID.of(URL(fileURLWithPath: Config.collied)) }.value }
-        .onChange(of: client.floors) { _, fs in   // the current floor was deleted (here or by a Maestro)
-            if client.state == .connected, let c = client.currentFloor, !fs.contains(where: { $0.id == c }) {
-                client.currentFloor = nil
-                UserDefaults.standard.set("", forKey: FloorActions.currentKey)
+        .onChange(of: client.paddocks) { _, fs in   // the current paddock was deleted (here or by a Shepherd)
+            if client.state == .connected, let c = client.currentPaddock, !fs.contains(where: { $0.id == c }) {
+                client.currentPaddock = nil
+                UserDefaults.standard.set("", forKey: PaddockActions.currentKey)
             }
         }
         .onChange(of: client.state) { _, s in
@@ -279,12 +289,12 @@ struct ContentView: View {
                 if let t = client.terminals.first(where: { $0.id == id }) { TerminalSheet(client: client, canvas: canvas, mode: .edit(t)) }
                 else { Color.clear.onAppear { sheet = nil } }   // the terminal is gone: nothing to edit
             case .openPanel(let p): OpenPanelSheet(client: client, canvas: canvas, at: p)
-            case .partituras(let p, let s):
-                PartiturasSheet(model: partituras, client: client, canvas: canvas, anchor: p ?? canvas.toCanvas(CGPoint(x: 40, y: 40)), initial: s)
-            case .savePartitura: SavePartituraSheet(model: partituras, client: client, canvas: canvas)
+            case .herds(let p, let s):
+                HerdsSheet(model: herds, client: client, canvas: canvas, anchor: p ?? canvas.toCanvas(CGPoint(x: 40, y: 40)), initial: s)
+            case .saveHerd: SaveHerdSheet(model: herds, client: client, canvas: canvas)
             }
         }
-        .onChange(of: partiturasOpen) { _, open in if open { partiturasOpen = false; sheet = .partituras(nil, nil) } }
+        .onChange(of: herdsOpen) { _, open in if open { herdsOpen = false; sheet = .herds(nil, nil) } }
         .onChange(of: client.panels) { _, ps in store.sync(ps) }   // views of closed panels are released
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.closeAll() }
         .onAppear {
@@ -299,24 +309,24 @@ struct ContentView: View {
             client.onAttention = { [notifier, client] id, why in
                 notifier.notify(id, name: client.terminals.first { $0.id == id }?.name ?? "Terminal", reason: why)
             }
-            client.onPartituraApplied = { [canvas, partituras, floors] by, anchor, frames, floor in
+            client.onHerdApplied = { [canvas, herds, paddocks] by, anchor, frames, paddock in
                 let rel = Dictionary(frames.compactMap { k, f in UUID(uuidString: k).map { ($0, CGRect(x: f.x, y: f.y, width: f.w, height: f.h)) } },
                                      uniquingKeysWith: { a, _ in a })
                 let corner = canvas.toCanvas(CGPoint(x: 40, y: 40))
-                // a Maestro's: to the right of the Maestro (it stays put); the app's: at the clicked point
+                // a Shepherd's: to the right of the Shepherd (it stays put); the app's: at the clicked point
                 let placed = if let by, let m = canvas.frames[anchor ?? by] { placeFrames(rel, rightOf: m, skipping: anchor) }
-                             else { placeFrames(rel.filter { $0.key != anchor }, anchor: by == nil ? partituras.takeAnchor() ?? corner : corner) }
+                             else { placeFrames(rel.filter { $0.key != anchor }, anchor: by == nil ? herds.takeAnchor() ?? corner : corner) }
                 for (id, r) in placed { canvas.setFrame(r, for: id) }   // the model only; views follow (layout.json too)
-                if by == nil, let floor { floors.select(floor) }   // the app's apply made a floor: show it
+                if by == nil, let paddock { paddocks.select(paddock) }   // the app's apply made a paddock: show it
             }
             client.onNotify = { [notifier, client] id, message in
-                notifier.notify(id, title: client.terminals.first { $0.id == id }?.name ?? "Maestro", body: message)
+                notifier.notify(id, title: client.terminals.first { $0.id == id }?.name ?? "Pastor", body: message)
             }
-            if let s = UserDefaults.standard.string(forKey: FloorActions.currentKey), let id = UUID(uuidString: s) { client.currentFloor = id }
-            notifier.onFocus = { [canvas, client, floors] id in
-                // a node on another floor: switch to its floor first
-                if let t = client.terminals.first(where: { $0.id == id }), t.floorId != client.currentFloor {
-                    floors.select(t.floorId)
+            if let s = UserDefaults.standard.string(forKey: PaddockActions.currentKey), let id = UUID(uuidString: s) { client.currentPaddock = id }
+            notifier.onFocus = { [canvas, client, paddocks] id in
+                // a node on another paddock: switch to its paddock first
+                if let t = client.terminals.first(where: { $0.id == id }), t.paddockId != client.currentPaddock {
+                    paddocks.select(t.paddockId)
                 }
                 guard let f = canvas.frames[id] else { return }
                 canvas.offset = CGPoint(x: f.midX - viewport.width / canvas.zoom / 2, y: f.midY - viewport.height / canvas.zoom / 2)

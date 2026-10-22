@@ -32,10 +32,14 @@ final class MemoryIndex {
             sqlite3_result_double(ctx, pow(0.5, age / MemoryIndex.halfLife))
         }, nil, nil, nil)
         guard fn == SQLITE_OK else { throw fail("create function") }
+        // v1: docs rows say `paddock` (an index from before the herding vocabulary said `floor`): rebuilt from the files
+        var version = 0
+        try query("PRAGMA user_version", []) { version = Int(sqlite3_column_int64($0, 0)) }
+        if version < 1 { try exec("DROP TABLE IF EXISTS docs; DROP TABLE IF EXISTS fts; PRAGMA user_version = 1;") }
         try exec("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, file TEXT NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL,
-              kind TEXT NOT NULL, scope TEXT NOT NULL, floor TEXT, subject TEXT NOT NULL, status TEXT NOT NULL,
+              kind TEXT NOT NULL, scope TEXT NOT NULL, paddock TEXT, subject TEXT NOT NULL, status TEXT NOT NULL,
               pinned INTEGER NOT NULL, updatedAt REAL NOT NULL, path TEXT, json TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS docs_file ON docs(file);
             CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, subject, body, path, tokenize='unicode61 remove_diacritics 2');
@@ -75,17 +79,17 @@ final class MemoryIndex {
         return problems
     }
 
-    /// 2+ active with the same kind+subject+scope/floor: newest `updatedAt` stays, the rest are written as superseded.
+    /// 2+ active with the same kind+subject+scope/paddock: newest `updatedAt` stays, the rest are written as superseded.
     private func resolveConflicts() throws {
         var keys: [[String]] = []
         try query("""
-            SELECT kind, subject, scope, coalesce(floor, '') FROM docs WHERE status = 'active'
+            SELECT kind, subject, scope, coalesce(paddock, '') FROM docs WHERE status = 'active'
             GROUP BY 1, 2, 3, 4 HAVING count(*) > 1
             """, []) { keys.append([text($0, 0), text($0, 1), text($0, 2), text($0, 3)]) }
         for k in keys {
             var recs: [MemoryRecord] = []
             try query("""
-                SELECT json FROM docs WHERE status = 'active' AND kind = ? AND subject = ? AND scope = ? AND coalesce(floor, '') = ?
+                SELECT json FROM docs WHERE status = 'active' AND kind = ? AND subject = ? AND scope = ? AND coalesce(paddock, '') = ?
                 ORDER BY updatedAt DESC, id
                 """, k) { if let r = decode(text($0, 0)) { recs.append(r) } }
             guard let keep = recs.first else { continue }
@@ -121,9 +125,9 @@ final class MemoryIndex {
         try query("DELETE FROM docs WHERE id = ? OR file = ?", [key(r.id), file]) { _ in }
         let json = String(decoding: try JSONEncoder().encode(r), as: UTF8.self)
         try query("""
-            INSERT INTO docs(id, file, mtime, size, kind, scope, floor, subject, status, pinned, updatedAt, path, json)
+            INSERT INTO docs(id, file, mtime, size, kind, scope, paddock, subject, status, pinned, updatedAt, path, json)
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, [key(r.id), file, mtime, size, r.kind.rawValue, r.scope.rawValue, r.floor, r.subject, r.status.rawValue,
+            """, [key(r.id), file, mtime, size, r.kind.rawValue, r.scope.rawValue, r.paddock, r.subject, r.status.rawValue,
                   r.pinned, r.updatedAt.timeIntervalSince1970, r.path, json]) { _ in }
         try query("INSERT INTO fts(rowid, title, subject, body, path) VALUES(?, ?, ?, ?, ?)",
                   [Int(sqlite3_last_insert_rowid(db)), r.title, r.subject, r.body, r.path ?? ""]) { _ in }

@@ -6,7 +6,7 @@ import Foundation
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let paths = Paths(root: root)
-    let a = TerminalRecord(id: UUID(), name: "A", preset: .claude, command: nil, cwd: "/x", isMaestro: true)
+    let a = TerminalRecord(id: UUID(), name: "A", preset: .claude, command: nil, cwd: "/x", isShepherd: true)
     let w = Workspace(id: UUID(), name: "w", terminals: [a], connections: [Connection(a: a.id, b: UUID())])
     let store = WorkspaceStore(paths: paths)
     try await store.save(w)
@@ -15,10 +15,10 @@ import Foundation
 }
 
 @Test func workspaceFieldsRoundTrip() throws {
-    let old = #"{"schemaVersion":3,"id":"\#(UUID())","name":"w","terminals":[],"connections":[],"floors":[{"id":"\#(UUID())","name":"f","repoRoot":"/r","path":"/r/.collie/floors/f","branch":"collie/f","baseBranch":"main","status":"working"}],"panels":[]}"#
+    let old = #"{"schemaVersion":3,"id":"\#(UUID())","name":"w","terminals":[],"connections":[],"paddocks":[{"id":"\#(UUID())","name":"f","repoRoot":"/r","path":"/r/.collie/paddocks/f","branch":"collie/f","baseBranch":"main","status":"working"}],"panels":[]}"#
     let w = try JSONDecoder().decode(Workspace.self, from: Data(old.utf8))
-    #expect(w.designSystem == nil && w.floors.first?.designSystem == nil)
+    #expect(w.designSystem == nil && w.paddocks.first?.designSystem == nil)
     var w2 = w
-    w2.designSystem = UUID(); w2.floors[0].designSystem = UUID()
+    w2.designSystem = UUID(); w2.paddocks[0].designSystem = UUID()
     #expect(try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(w2)) == w2)
 }

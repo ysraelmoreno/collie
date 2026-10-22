@@ -4,14 +4,14 @@ import CollieClient
 import CollieCore
 import CollieTheme
 
-/// Cords between connected nodes: one cubic Bézier per connection, edge centre to edge centre. A cord is only
+/// Leashes between connected nodes: one cubic Bézier per connection, edge centre to edge centre. A leash is only
 /// hit-testable near its curve, so the canvas and nodes underneath keep their mouse events. Click selects, ⌫ disconnects.
 /// The permission itself lives in the daemon (`admin.connect`); this is only the view of it.
-@MainActor final class CordLayer: NSView {
+@MainActor final class LeashLayer: NSView {
     private let client: DaemonClient
     private let canvas: CanvasState
     private(set) var selected: Connection?
-    /// A cord being dragged out of a node handle (view coordinates).
+    /// A leash being dragged out of a node handle (view coordinates).
     var pending: (from: CGPoint, to: CGPoint)? { didSet { needsDisplay = true } }
 
     override var isFlipped: Bool { true }
@@ -25,7 +25,7 @@ import CollieTheme
 
     /// Reads connections, frames, offset and zoom (call from an observation-tracked `sync`).
     func update() {
-        _ = client.connections; _ = client.terminals; _ = client.panels; _ = client.currentFloor; _ = canvas.frames; _ = canvas.offset; _ = canvas.zoom
+        _ = client.connections; _ = client.terminals; _ = client.panels; _ = client.currentPaddock; _ = canvas.frames; _ = canvas.offset; _ = canvas.zoom
         if let s = selected, !client.connections.contains(s) { selected = nil }
         needsDisplay = true
     }
@@ -52,11 +52,11 @@ import CollieTheme
         return (p0, CGPoint(x: p0.x + k.x, y: p0.y + k.y), CGPoint(x: p1.x - k.x, y: p1.y - k.y), p1)
     }
 
-    /// Both ends (terminals or canvas panels) on the current floor.
+    /// Both ends (terminals or canvas panels) on the current paddock.
     private func shown(_ c: Connection) -> Bool {
-        let f = client.currentFloor
-        let ids = Set(visibleTerminals(client.terminals, floor: f).map(\.id))
-            .union(visiblePanels(client.panels, floor: f).filter { $0.placement == .canvas }.map(\.id))
+        let f = client.currentPaddock
+        let ids = Set(visibleTerminals(client.terminals, paddock: f).map(\.id))
+            .union(visiblePanels(client.panels, paddock: f).filter { $0.placement == .canvas }.map(\.id))
         return ids.contains(c.a) && ids.contains(c.b)
     }
 
@@ -71,17 +71,17 @@ import CollieTheme
         return CGPoint(x: m(q.p0.x, q.c0.x, q.c1.x, q.p1.x), y: m(q.p0.y, q.c0.y, q.c1.y, q.p1.y))
     }
 
-    private func cord(at p: CGPoint) -> Connection? {
+    private func leash(at p: CGPoint) -> Connection? {
         client.connections.first { c in
             guard let q = curve(c) else { return false }
             return (0...40).contains { Self.point(q, CGFloat($0) / 40).distance(to: p) < 8 }   // ponytail: sampled, not exact
         }
     }
 
-    override func hitTest(_ p: NSPoint) -> NSView? { cord(at: convert(p, from: superview)) != nil ? self : nil }
+    override func hitTest(_ p: NSPoint) -> NSView? { leash(at: convert(p, from: superview)) != nil ? self : nil }
 
     override func mouseDown(with e: NSEvent) {
-        selected = cord(at: convert(e.locationInWindow, from: nil))
+        selected = leash(at: convert(e.locationInWindow, from: nil))
         window?.makeFirstResponder(self)
         needsDisplay = true
     }
@@ -92,7 +92,7 @@ import CollieTheme
         guard e.keyCode == 51 || e.keyCode == 117, let s = selected,   // ⌫ / forward delete
               let a = client.nodeName(s.a), let b = client.nodeName(s.b) else { return super.keyDown(with: e) }
         selected = nil
-        Task { do { try await client.disconnect(a, b) } catch { Log.canvas.error("disconnect \(a)-\(b): \(error)") } }
+        Task { do { try await client.unleash(a, b) } catch { Log.canvas.error("unleash \(a)-\(b): \(error)") } }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -100,7 +100,7 @@ import CollieTheme
             guard let q = curve(c) else { continue }
             let path = NSBezierPath()
             path.move(to: q.p0); path.curve(to: q.p1, controlPoint1: q.c0, controlPoint2: q.c1)
-            let style = CordStyle(toPanel: client.panels.contains { $0.id == c.a || $0.id == c.b }, selected: c == selected)
+            let style = LeashStyle(toPanel: client.panels.contains { $0.id == c.a || $0.id == c.b }, selected: c == selected)
             (style.toPanel ? CollieColor.secondary : CollieColor.accent).setStroke()
             path.lineWidth = style.width
             path.lineCapStyle = .round

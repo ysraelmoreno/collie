@@ -23,9 +23,9 @@ import CollieTheme
     private let model = NodeModel()
     private var title: TitleHost<NodeTitleBar>!
     private let corner = DragHandle()
-    private let cord = CordHandle()
-    /// Cord drag from this node's handle: window-space point, and whether the mouse was released.
-    var onCordDrag: ((UUID, CGPoint, Bool) -> Void)?
+    private let leash = LeashHandle()
+    /// Leash drag from this node's handle: window-space point, and whether the mouse was released.
+    var onLeashDrag: ((UUID, CGPoint, Bool) -> Void)?
     private(set) var term: NodeTerminal?
     private var label: NSTextField?
     private var stream: TerminalStream?
@@ -55,8 +55,8 @@ import CollieTheme
         corner.onDrag = { [weak self] d in self?.resize(d) }
         addSubview(title)
         addSubview(corner)
-        cord.onDrag = { [weak self] p, done in if let self { self.onCordDrag?(self.id, p, done) } }
-        addSubview(cord)
+        leash.onDrag = { [weak self] p, done in if let self { self.onLeashDrag?(self.id, p, done) } }
+        addSubview(leash)
         node.onStreamChange = { [weak self] s in self?.attach(s) }
         attach(node.stream)
         // Preferences write the font to the standard defaults; any other write is ignored (no reflow).
@@ -217,7 +217,7 @@ import CollieTheme
         title.frame = CGRect(x: 0, y: 0, width: bounds.width, height: Self.titleHeight)
         term?.frame = bodyFrame
         label?.frame = bodyFrame.insetBy(dx: 4, dy: max(bodyFrame.height / 2 - 10 / canvas.zoom, 0))
-        cord.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
+        leash.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = Self.cornerFrame(bounds)
     }
 
@@ -371,8 +371,8 @@ final class TitleHost<V: View>: NSHostingView<V> {
     override func mouseDragged(with event: NSEvent) { onDrag?(CGSize(width: event.deltaX, height: event.deltaY)) }
 }
 
-/// The small ring in the title bar: dragging from it to another node connects them with a cord.
-final class CordHandle: NSView {
+/// The small ring in the title bar: dragging from it to another node connects them with a leash.
+final class LeashHandle: NSView {
     var onDrag: ((CGPoint, Bool) -> Void)?
     override func draw(_ dirtyRect: NSRect) {
         CollieColor.muted.setStroke()
@@ -413,9 +413,9 @@ struct NodeTitleBar: View {
         HStack(spacing: 8) {
             Circle().fill(color(status)).frame(width: 8, height: 8)
             Text(t?.name ?? "").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
-            if t?.isMaestro == true {
-                CollieTag("Maestro", tone: .accent)
-                Text("regendo \(client.connections.filter { $0.a == id || $0.b == id }.count)").foregroundStyle(Color.collieMuted)
+            if t?.isShepherd == true {
+                CollieTag("Pastor", tone: .accent)
+                Text("pastoreando \(client.connections.filter { $0.a == id || $0.b == id }.count)").foregroundStyle(Color.collieMuted)
             }
             Text(t?.preset.rawValue ?? "").foregroundStyle(Color.collieMuted).lineLimit(1)
             if case .disconnected = client.state { Text("desconectado").foregroundStyle(Color.collieDanger) }

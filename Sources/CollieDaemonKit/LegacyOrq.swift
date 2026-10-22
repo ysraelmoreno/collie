@@ -15,7 +15,7 @@ public enum LegacyOrq {
 
     /// Moves the Orq data root `old` to `new` (one `rename`, never over an existing `new`) and leaves `old` as a symlink
     /// to it. Refused while an Orq daemon answers. A symlink that cannot be made is only logged: the data is already in `new`.
-    /// The partituras are renamed by `renameLegacyPartituras`, on every start.
+    /// The herds are renamed by `renameLegacyHerds`, on every start.
     public static func migrateDataRoot(old: URL, new: URL, oldDaemonAlive: () -> Bool) -> MigrationOutcome {
         var st = stat()
         guard lstat(old.path, &st) == 0 else { return .nothingToMove }
@@ -34,19 +34,34 @@ public enum LegacyOrq {
         return .moved
     }
 
-    /// `*.orqpartitura` in `<root>/partituras/` and its `.removed/` renamed to `.colliepartitura` (a moved Orq root, an
-    /// imported `.orqbackup`). Idempotent: run on every start. A clash leaves the old file where it is (never written over).
-    public static func renameLegacyPartituras(in root: URL) {
-        let p = root.appendingPathComponent("partituras")
-        for dir in [p, p.appendingPathComponent(".removed")] {
-            for n in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where n.hasSuffix(".\(partituraExt)") {
-                let to = String(n.dropLast(partituraExt.count)) + "colliepartitura"
-                // a clash leaves the old file where it is (never written over)
-                if renamex_np(dir.appendingPathComponent(n).path, dir.appendingPathComponent(to).path, UInt32(RENAME_EXCL)) != 0 {
-                    log("cannot rename \(dir.path)/\(n): \(String(cString: strerror(errno)))")
+    /// Orq's and Collie's first names for saved herds (`<root>/partituras/*.orqpartitura|*.colliepartitura`).
+    public static let partituraDir = "partituras"
+    public static let colliePartituraExt = "colliepartitura"
+    /// A Collie repo's paddocks before they were paddocks (`.collie/floors/<name>`); `.orq/floors/` likewise.
+    public static let collieFloorsDir = "floors"
+
+    /// Saved herds under their old names (a moved Orq root, an imported `.orqbackup`, a Collie that still said
+    /// partitura): `partituras/` and its `.removed/` go into `herds/` (and `herds/.removed/`), `*.orqpartitura` and
+    /// `*.colliepartitura` there become `*.collieherd`. Contents are never touched. Idempotent: run on every start.
+    /// A clash leaves the old file where it is (never written over); an emptied `partituras/` is removed.
+    public static func renameLegacyHerds(in root: URL) {
+        let fm = FileManager.default
+        let old = root.appendingPathComponent(partituraDir), new = root.appendingPathComponent("herds")
+        for sub in ["", ".removed"] {
+            let to = sub.isEmpty ? new : new.appendingPathComponent(sub)
+            for from in [sub.isEmpty ? old : old.appendingPathComponent(sub), to] {
+                for n in (try? fm.contentsOfDirectory(atPath: from.path)) ?? [] {
+                    guard let ext = [partituraExt, colliePartituraExt, "collieherd"].first(where: { n.hasSuffix(".\($0)") }) else { continue }
+                    let target = String(n.dropLast(ext.count)) + "collieherd"
+                    if from == to, target == n { continue }
+                    try? fm.createDirectory(at: to, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                    if renamex_np(from.appendingPathComponent(n).path, to.appendingPathComponent(target).path, UInt32(RENAME_EXCL)) != 0 {
+                        log("cannot rename \(from.path)/\(n): \(String(cString: strerror(errno)))")
+                    }
                 }
             }
         }
+        rmdir(old.appendingPathComponent(".removed").path); rmdir(old.path)   // only when empty
     }
 
     /// True only when a daemon accepts a connection on `socket`.
@@ -55,21 +70,24 @@ public enum LegacyOrq {
         return (try? withAddr(socket.path, { connect(fd, $0, $1) })) == 0
     }
 
-    /// The repo's Collie folder: `.orq` for a repo that has it and no `.collie` yet, else `.collie`. Asked of the ground
-    /// (the main worktree): its floors use the same folder.
+    /// The repo's Collie folder: `.orq` for a repo that has it and no `.collie` yet, else `.collie`. Asked of the pasture
+    /// (the main worktree): its paddocks use the same folder.
     static func repoDirName(repoRoot: URL) -> String {
         let fm = FileManager.default
         return fm.fileExists(atPath: repoRoot.appendingPathComponent(repoDir).path)
             && !fm.fileExists(atPath: repoRoot.appendingPathComponent(".collie").path) ? repoDir : ".collie"
     }
 
-    /// Pathspecs that keep both memory folders out of a status (the ground's own memory never blocks a land or a rollback).
+    /// Pathspecs that keep both memory folders out of a status (the pasture's own memory never blocks a land or a rollback).
     static let memoryExcludes = [":(exclude).collie/memory", ":(exclude)\(repoDir)/memory"]
 
-    /// The ground of a floor path (`<ground>/.collie/floors/…` or `<ground>/.orq/floors/…`), nil when it is not one.
-    static func ground(ofFloorPath p: String) -> String? {
+    /// The pasture of a paddock path (`<pasture>/.collie/paddocks/…`, or `floors/` under `.collie` or `.orq`), nil when it
+    /// is not one.
+    static func pasture(ofPaddockPath p: String) -> String? {
         for d in [".collie", repoDir] {
-            if let r = p.range(of: "/\(d)/floors/") { return String(p[..<r.lowerBound]) }
+            for sub in ["paddocks", collieFloorsDir] {
+                if let r = p.range(of: "/\(d)/\(sub)/") { return String(p[..<r.lowerBound]) }
+            }
         }
         return nil
     }

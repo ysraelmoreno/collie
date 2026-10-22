@@ -100,8 +100,8 @@ import CollieProtocol
 // MARK: daemon
 
 private struct Term { var id: String; var token: String; var uuid: UUID { UUID(uuidString: id)! } }
-private func spawn(_ d: Daemon, _ p: Paths, _ name: String, maestro: Bool = false) async throws -> Term {
-    let args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "maestro": .bool(maestro)]
+private func spawn(_ d: Daemon, _ p: Paths, _ name: String, shepherd: Bool = false) async throws -> Term {
+    let args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(shepherd)]
     let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn", args: args), timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -111,21 +111,21 @@ private func cmd(_ d: Daemon, _ p: Paths, _ t: Term?, _ c: String, _ a: [String:
 }
 
 extension WorkSummaryTests {
-    @Test func summaryCommandFollowsCords() async throws {
+    @Test func summaryCommandFollowsLeashes() async throws {
         try await withDaemon { d, p in
-            let a = try await spawn(d, p, "A"), b = try await spawn(d, p, "B"), m = try await spawn(d, p, "M", maestro: true)
-            #expect(try await cmd(d, p, nil, "admin.connect", ["a": .string("M"), "b": .string("A")]).ok)
+            let a = try await spawn(d, p, "A"), b = try await spawn(d, p, "B"), m = try await spawn(d, p, "M", shepherd: true)
+            #expect(try await cmd(d, p, nil, "admin.leash", ["a": .string("M"), "b": .string("A")]).ok)
             let s = try await cmd(d, p, a, "work.start", ["title": .string("Feature A")])
             guard case .object(let o)? = s.result, case .string(let id)? = o["id"] else { Issue.record("\(s)"); return }
             #expect(try await cmd(d, p, a, "work.task.add", ["title": .string("Write tests")]).ok)
-            // B has no cord: A looks exactly like a terminal that does not exist
+            // B has no leash: A looks exactly like a terminal that does not exist
             let hidden = try await cmd(d, p, b, "work.summary", ["terminal": .string("A")])
             let missing = try await cmd(d, p, b, "work.summary", ["terminal": .string("Nobody")])
             #expect(hidden.error?.code == .notFound && hidden.error?.message == "Terminal 'A' not found")
             #expect(missing.error?.message == "Terminal 'Nobody' not found")
             #expect(try await cmd(d, p, b, "work.summary", ["id": .string(id)]).error?.code == .notFound)
             #expect(try await cmd(d, p, b, "work.summary").error?.code == .notFound)   // B has no active work
-            // the caller itself, the Maestro through the cord, and the app
+            // the caller itself, the Shepherd through the leash, and the app
             for (who, args) in [(a, [:]), (m, ["terminal": JSONValue.string("A")]), (m, ["id": .string(id)]), (nil, ["id": .string(id)])] as [(Term?, [String: JSONValue])] {
                 guard case .object(let r)? = try await cmd(d, p, who, "work.summary", args).result, case .string(let md)? = r["markdown"],
                       case .object(let sum)? = r["summary"] else { Issue.record("summary \(args)"); return }

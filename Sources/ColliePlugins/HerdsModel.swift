@@ -3,38 +3,38 @@ import Foundation
 import CollieCore
 import CollieProtocol
 
-/// One `partitura.list` entry.
-public struct PartituraListItem: Decodable, Identifiable, Equatable, Sendable {
-    public let id: String, name: String, summary: String, wantsFloor: Bool, builtIn: Bool, terminals: Int, panels: Int
+/// One `herd.list` entry.
+public struct HerdListItem: Decodable, Identifiable, Equatable, Sendable {
+    public let id: String, name: String, summary: String, wantsPaddock: Bool, builtIn: Bool, terminals: Int, panels: Int
 }
 
-/// Everything a partitura creates, shown before anything is applied or imported. `imported`: from a file (untrusted).
-public struct PartituraPreview: Equatable, Sendable {
-    public let partitura: Partitura
+/// Everything a herd creates, shown before anything is applied or imported. `imported`: from a file (untrusted).
+public struct HerdPreview: Equatable, Sendable {
+    public let herd: Herd
     public let imported: Bool
     /// New on every fetch: the sheet confirms only once this very preview has been drawn.
     public let token = UUID()
-    public var id: String { partitura.id }
-    /// What `partitura.apply` checks (`expect`): the daemon refuses a partitura changed since this preview.
-    public var digest: String { PartituraFormat.digest(partitura) }
+    public var id: String { herd.id }
+    /// What `herd.apply` checks (`expect`): the daemon refuses a herd changed since this preview.
+    public var digest: String { HerdFormat.digest(herd) }
     /// `preset: custom` terminals' commands, verbatim, by key.
-    public var commands: [(key: String, command: String)] { partitura.terminals.compactMap { t in t.command.map { (t.key, $0) } } }
+    public var commands: [(key: String, command: String)] { herd.terminals.compactMap { t in t.command.map { (t.key, $0) } } }
     /// Initial prompts, verbatim, by key.
-    public var prompts: [(key: String, role: String)] { partitura.terminals.compactMap { t in t.role.map { (t.key, $0) } } }
-    public static func == (a: Self, b: Self) -> Bool { a.partitura == b.partitura && a.imported == b.imported && a.token == b.token }
+    public var prompts: [(key: String, role: String)] { herd.terminals.compactMap { t in t.role.map { (t.key, $0) } } }
+    public static func == (a: Self, b: Self) -> Bool { a.herd == b.herd && a.imported == b.imported && a.token == b.token }
 }
 
-/// List, preview, apply, save, import and export of partituras for the app (admin `call`).
-@MainActor public final class PartiturasModel: ObservableObject {
-    @Published public private(set) var items: [PartituraListItem] = []
-    @Published public private(set) var preview: PartituraPreview?
+/// List, preview, apply, save, import and export of herds for the app (admin `call`).
+@MainActor public final class HerdsModel: ObservableObject {
+    @Published public private(set) var items: [HerdListItem] = []
+    @Published public private(set) var preview: HerdPreview?
     @Published public private(set) var error: String?
     @Published public private(set) var busy = false
 
     private let call: PanelHostContext.Call
-    /// A node's current name (the daemon's `partitura.save` takes names).
+    /// A node's current name (the daemon's `herd.save` takes names).
     private let nodeName: @MainActor (UUID) -> String?
-    /// The canvas point of the app's application in flight; `partitura.applied` (by the app) consumes it.
+    /// The canvas point of the app's application in flight; `herd.applied` (by the app) consumes it.
     private var anchor: CGPoint?
     /// The checked file waiting for "Importar".
     private var pendingImport: String?
@@ -48,40 +48,40 @@ public struct PartituraPreview: Equatable, Sendable {
     }
 
     public func refresh() async {
-        guard let v = await send("partitura.list") else { return }
-        do { items = try JSONDecoder().decode([PartituraListItem].self, from: JSONEncoder().encode(v)) }
+        guard let v = await send("herd.list") else { return }
+        do { items = try JSONDecoder().decode([HerdListItem].self, from: JSONEncoder().encode(v)) }
         catch { self.error = "lista inválida" }
     }
 
     public func select(_ id: String) async {
         error = nil
-        guard let v = await send("partitura.get", ["id": .string(id)]) else { preview = nil; return }
-        do { preview = PartituraPreview(partitura: try JSONDecoder().decode(Partitura.self, from: JSONEncoder().encode(v)), imported: false) }
-        catch { preview = nil; self.error = "partitura inválida" }
+        guard let v = await send("herd.get", ["id": .string(id)]) else { preview = nil; return }
+        do { preview = HerdPreview(herd: try JSONDecoder().decode(Herd.self, from: JSONEncoder().encode(v)), imported: false) }
+        catch { preview = nil; self.error = "rebanho inválido" }
     }
 
-    /// `partitura.apply` on `onFloor` (the floor on screen; nil: Térreo); nil on success, else the error (the sheet stays
+    /// `herd.apply` on `onPaddock` (the paddock on screen; nil: the pasture); nil on success, else the error (the sheet stays
     /// open and shows it).
-    public func apply(id: String, name: String, floor: Bool?, cwd: String, onFloor: String?, at anchor: CGPoint) async -> String? {
+    public func apply(id: String, name: String, paddock: Bool?, cwd: String, onPaddock: String?, at anchor: CGPoint) async -> String? {
         // always apply exactly what was previewed: without a matching preview there is nothing to `expect`
-        guard let pv = preview, pv.id == id else { let m = "prévia da partitura não carregada; abra a partitura de novo"; error = m; return m }
+        guard let pv = preview, pv.id == id else { let m = "prévia do rebanho não carregada; abra o rebanho de novo"; error = m; return m }
         busy = true; error = nil
         defer { busy = false }
         self.anchor = anchor
         var args: [String: JSONValue] = ["id": .string(id), "name": .string(name), "cwd": .string(cwd), "expect": .string(pv.digest)]
-        if let floor { args["floor"] = .bool(floor) }
-        if let onFloor { args["onFloor"] = .string(onFloor) }
-        do { _ = try await call("partitura.apply", args); return nil }
+        if let paddock { args["paddock"] = .bool(paddock) }
+        if let onPaddock { args["onPaddock"] = .string(onPaddock) }
+        do { _ = try await call("herd.apply", args); return nil }
         catch { self.anchor = nil; self.error = error.message; return error.message }
     }
 
     /// The click point of the app's last application (once).
     public func takeAnchor() -> CGPoint? { defer { anchor = nil }; return anchor }
 
-    /// `partitura.save` of these nodes; frames are sent relative to their top-left corner, roles without blanks.
+    /// `herd.save` of these nodes; frames are sent relative to their top-left corner, roles without blanks.
     /// The daemon's warnings, or nil when it failed (`error`).
     public func save(name: String, summary: String = "", terminals: [UUID], panels: [UUID], frames: [UUID: CGRect],
-                     roles: [UUID: String], wantsFloor: Bool) async -> [String]? {
+                     roles: [UUID: String], wantsPaddock: Bool) async -> [String]? {
         busy = true; error = nil
         defer { busy = false }
         let picked = terminals + panels
@@ -100,46 +100,46 @@ public struct PartituraPreview: Equatable, Sendable {
             "panels": .array(panels.compactMap { nodeName($0).map { .string($0) } }), "frames": .object(f), "roles": .object(r),
             "summary": .string(summary),
         ]
-        if wantsFloor { args["wantsFloor"] = .bool(true) }
+        if wantsPaddock { args["wantsPaddock"] = .bool(true) }
         do {
-            let v = try await call("partitura.save", args)
+            let v = try await call("herd.save", args)
             await refresh()
             guard case .object(let o) = v, case .array(let w)? = o["warnings"] else { return [] }
             return w.compactMap { if case .string(let s) = $0 { s } else { nil } }
         } catch { self.error = error.message; return nil }
     }
 
-    /// Reads and checks a `.colliepartitura` locally (size first, nothing sent): its preview, marked imported, or nil (`error`).
+    /// Reads and checks a `.collieherd` locally (size first, nothing sent): its preview, marked imported, or nil (`error`).
     /// Nothing is saved until `confirmImport`.
-    public func importFile(_ url: URL) async -> PartituraPreview? {
+    public func importFile(_ url: URL) async -> HerdPreview? {
         error = nil; pendingImport = nil
         let read = await Task.detached { () -> Result<Data, ProtocolError> in
             func fail(_ m: String) -> Result<Data, ProtocolError> { .failure(ProtocolError(code: .invalidArgs, message: m)) }
             guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { return fail("tamanho do arquivo desconhecido") }
-            guard size <= PartituraFormat.maxBytes else { return fail("arquivo grande demais (máximo 256 KiB)") }
+            guard size <= HerdFormat.maxBytes else { return fail("arquivo grande demais (máximo 256 KiB)") }
             // at most maxBytes + 1 even if it grew since the check: decode refuses the extra byte
             guard let h = try? FileHandle(forReadingFrom: url) else { return fail("não foi possível ler o arquivo") }
             defer { try? h.close() }
-            guard let d = try? h.read(upToCount: PartituraFormat.maxBytes + 1) else { return fail("não foi possível ler o arquivo") }
+            guard let d = try? h.read(upToCount: HerdFormat.maxBytes + 1) else { return fail("não foi possível ler o arquivo") }
             return .success(d)
         }.value
         do throws(ProtocolError) {
             let data = try read.get()
-            let p = try PartituraFormat.decode(data)
+            let p = try HerdFormat.decode(data)
             pendingImport = String(decoding: data, as: UTF8.self)
-            preview = PartituraPreview(partitura: p, imported: true)
+            preview = HerdPreview(herd: p, imported: true)
             return preview
         } catch { self.error = error.message; return nil }
     }
 
-    /// `partitura.import` of the file checked by `importFile` (`replace`: over a saved one of the same id); then it is selected.
+    /// `herd.import` of the file checked by `importFile` (`replace`: over a saved one of the same id); then it is selected.
     public func confirmImport(replace: Bool = false) async {
         guard let json = pendingImport else { return }
         busy = true; error = nil
         defer { busy = false }
         var args: [String: JSONValue] = ["json": .string(json)]
         if replace { args["replace"] = .bool(true) }
-        guard case .object(let o)? = await send("partitura.import", args), case .string(let id)? = o["id"] else { return }
+        guard case .object(let o)? = await send("herd.import", args), case .string(let id)? = o["id"] else { return }
         pendingImport = nil
         await refresh()
         await select(id)
@@ -148,18 +148,18 @@ public struct PartituraPreview: Equatable, Sendable {
     /// Drops the imported preview without saving.
     public func cancelImport() { pendingImport = nil; if preview?.imported == true { preview = nil } }
 
-    /// `partitura.export` written to `url` (off main).
+    /// `herd.export` written to `url` (off main).
     public func export(id: String, to url: URL) async {
-        guard case .object(let o)? = await send("partitura.export", ["id": .string(id)]), case .string(let json)? = o["json"] else { return }
+        guard case .object(let o)? = await send("herd.export", ["id": .string(id)]), case .string(let json)? = o["json"] else { return }
         let err = await Task.detached { () -> String? in
             do { try Data(json.utf8).write(to: url, options: .atomic); return nil } catch { return "não foi possível gravar: \(error.localizedDescription)" }
         }.value
         if let err { error = err }
     }
 
-    /// `partitura.remove`: set aside in partituras/.removed.
+    /// `herd.remove`: set aside in herds/.removed.
     public func remove(id: String) async {
-        guard await send("partitura.remove", ["id": .string(id)]) != nil else { return }
+        guard await send("herd.remove", ["id": .string(id)]) != nil else { return }
         if preview?.id == id { preview = nil }
         await refresh()
     }

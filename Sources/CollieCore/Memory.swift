@@ -2,14 +2,14 @@ import Foundation
 import CollieProtocol
 
 public enum MemoryKind: String, Codable, Sendable { case decision, map, pitfall }
-public enum MemoryScope: String, Codable, Sendable { case project, floor, global }
+public enum MemoryScope: String, Codable, Sendable { case project, paddock, global }
 public enum MemoryStatus: String, Codable, Sendable { case active, superseded, archived, discarded }
 
 public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var kind: MemoryKind
     public var scope: MemoryScope
-    public var floor: String?          // floor name when scope == .floor
+    public var paddock: String?          // paddock name when scope == .paddock
     public var subject: String         // supersession-chain key (normalized: lowercase, collapsed spaces)
     public var title: String
     public var body: String
@@ -22,11 +22,11 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var origin: String          // "<terminal> (<preset>)" or "app"
     public var createdAt: Date
     public var updatedAt: Date
-    public init(id: UUID = UUID(), kind: MemoryKind, scope: MemoryScope = .project, floor: String? = nil, subject: String,
+    public init(id: UUID = UUID(), kind: MemoryKind, scope: MemoryScope = .project, paddock: String? = nil, subject: String,
                 title: String, body: String = "", path: String? = nil, status: MemoryStatus = .active,
                 reviewed: Bool = false, pinned: Bool = false, supersedes: UUID? = nil, supersededBy: UUID? = nil,
                 origin: String = "app", createdAt: Date = Date(), updatedAt: Date? = nil) {
-        self.id = id; self.kind = kind; self.scope = scope; self.floor = floor
+        self.id = id; self.kind = kind; self.scope = scope; self.paddock = paddock
         self.subject = MemoryRecord.normalize(subject); self.title = title; self.body = body; self.path = path
         self.status = status; self.reviewed = reviewed; self.pinned = pinned
         self.supersedes = supersedes; self.supersededBy = supersededBy; self.origin = origin
@@ -44,7 +44,7 @@ public enum MemoryFile {
     // Fixed key order: git diffs stay minimal.
     public static func render(_ r: MemoryRecord) -> String {
         var l = ["id: \(r.id.uuidString.lowercased())", "kind: \(r.kind.rawValue)", "scope: \(r.scope.rawValue)"]
-        if let f = r.floor { l.append("floor: \(str(f))") }
+        if let f = r.paddock { l.append("paddock: \(str(f))") }
         l.append("subject: \(str(r.subject))"); l.append("title: \(str(r.title))")
         if let p = r.path { l.append("path: \(str(p))") }
         l.append("status: \(r.status.rawValue)"); l.append("reviewed: \(r.reviewed)"); l.append("pinned: \(r.pinned)")
@@ -71,6 +71,9 @@ public enum MemoryFile {
             guard let c = line.firstIndex(of: ":") else { throw bad("bad line '\(line)'") }
             kv[String(line[..<c])] = line[line.index(after: c)...].trimmingCharacters(in: .whitespaces)
         }
+        // a file written before the herding vocabulary: `scope: floor` and `floor: <name>` (read, never rewritten here)
+        if kv["scope"] == "floor" { kv["scope"] = MemoryScope.paddock.rawValue }
+        if kv["paddock"] == nil, let f = kv["floor"] { kv["paddock"] = f }
         func req(_ k: String) throws(ProtocolError) -> String {
             guard let v = kv[k] else { throw bad("missing '\(k)'") }
             return v
@@ -101,14 +104,14 @@ public enum MemoryFile {
         if body.hasPrefix("\n") { body.removeFirst() }
         if body.hasSuffix("\n") { body.removeLast() }
         let created = try date("created")
-        var floor: String?, path: String?, supersedes: UUID?, supersededBy: UUID?
-        if let v = kv["floor"] { floor = try unstr(v, "floor") }
+        var paddock: String?, path: String?, supersedes: UUID?, supersededBy: UUID?
+        if let v = kv["paddock"] { paddock = try unstr(v, "paddock") }
         if let v = kv["path"] { path = try unstr(v, "path") }
         if let v = kv["supersedes"] { supersedes = try uuid(v, "supersedes") }
         if let v = kv["superseded_by"] { supersededBy = try uuid(v, "superseded_by") }
         return MemoryRecord(
             id: try uuid(try req("id"), "id"), kind: try enm("kind"), scope: try enm("scope", MemoryScope.project),
-            floor: floor, subject: try field("subject"), title: try field("title"),
+            paddock: paddock, subject: try field("subject"), title: try field("title"),
             body: body, path: path, status: try enm("status", MemoryStatus.active),
             reviewed: try flag("reviewed"), pinned: try flag("pinned"),
             supersedes: supersedes,

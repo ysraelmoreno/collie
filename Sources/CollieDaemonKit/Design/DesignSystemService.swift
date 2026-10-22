@@ -308,22 +308,22 @@ actor DesignSystemService {
         return n
     }
 
-    /// An activation (`activated`) or an undo (`undone`; `reverted` with a scope in older histories) of `ds` in `scope` (`floorId`: a floor's), in its history.
-    func logActivation(_ ds: DesignSystem, kind: String, scope: String, floorId: UUID?, by: String, reason: String,
+    /// An activation (`activated`) or an undo (`undone`; `reverted` with a scope in older histories) of `ds` in `scope` (`paddockId`: a paddock's), in its history.
+    func logActivation(_ ds: DesignSystem, kind: String, scope: String, paddockId: UUID?, by: String, reason: String,
                        files: [FileOutcome]) async throws {
         try await append(DesignSystemEvent(at: Date(), kind: kind, version: ds.version, scope: scope, by: by, reason: reason,
-                                           snapshot: nil, files: files, floorId: floorId), to: ds.id)
+                                           snapshot: nil, files: files, paddockId: paddockId), to: ds.id)
     }
 
-    /// The system most recently made active in the workspace (`floorId` nil) or on floor `floorId`, other than
+    /// The system most recently made active in the workspace (`paddockId` nil) or on paddock `paddockId`, other than
     /// `current`: what an undo goes back to.
-    func previous(floorId: UUID?, current: UUID?) async throws -> DesignSystem? {
+    func previous(paddockId: UUID?, current: UUID?) async throws -> DesignSystem? {
         let all = try await registry().filter { $0.id != current }, store = store
         let hits = try await UnixSocketClient.offPool {
             all.flatMap { ds in
                 store.history(ds.id).filter { e in
                     // a scope's events only (a version revert has no scope)
-                    ["activated", "undone", "reverted"].contains(e.kind) && (floorId.map { e.floorId == $0 } ?? (e.scope == "workspace"))
+                    ["activated", "undone", "reverted"].contains(e.kind) && (paddockId.map { e.paddockId == $0 } ?? (e.scope == "workspace"))
                 }.map { ($0.at, ds.id) }
             }.max { $0.0 < $1.0 }?.1
         }

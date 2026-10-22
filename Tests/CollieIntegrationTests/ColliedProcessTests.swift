@@ -89,7 +89,7 @@ private func launch(_ root: URL) throws -> Process {
             return (id, try String(contentsOf: tok, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         func connect(_ admin: String) async throws -> Response {
-            try await UnixSocketClient.send(Request(id: "c", token: admin, command: "admin.connect", args: ["a": .string("A"), "b": .string("B")]), to: sock, timeoutSeconds: 5)
+            try await UnixSocketClient.send(Request(id: "c", token: admin, command: "admin.leash", args: ["a": .string("A"), "b": .string("B")]), to: sock, timeoutSeconds: 5)
         }
 
         var admin = try await start()

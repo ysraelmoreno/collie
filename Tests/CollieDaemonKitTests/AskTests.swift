@@ -23,7 +23,7 @@ private func term(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "she
 }
 
 private func connect(_ d: Daemon, _ p: Paths, _ a: String, _ b: String) async throws {
-    let r = try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect", args: ["a": .string(a), "b": .string(b)]))
+    let r = try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash", args: ["a": .string(a), "b": .string(b)]))
     #expect(r.ok)
 }
 
@@ -498,14 +498,14 @@ private func withHookDaemon(_ body: (Daemon, Paths) async throws -> Void) async 
     @Test func scrollbackMemoryStaysBounded() async throws {
         try await withHookDaemon { d, p in
             let ms = try await send(p, Request(id: "m", token: d.adminToken, command: "admin.spawn", args: [
-                "name": .string("M"), "preset": .string("shell"), "cwd": .string("/tmp"), "maestro": .bool(true)]))
+                "name": .string("M"), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(true)]))
             guard case .object(let mo)? = ms.result, case .string(let mid)? = mo["id"] else { Issue.record("spawn \(ms)"); return }
             let m = Term(id: mid, token: try await tokenOf(d, mid))
             var agents: [Term] = [], watchers: [Task<Void, Never>] = []
             defer { watchers.forEach { $0.cancel() } }
             for i in 0..<5 {
                 let t = try await term(d, p, "a\(i)", preset: "custom", command: fakeAgent(hook: true))
-                try await connect(d, p, "M", "a\(i)")   // a Maestro reaches only corded terminals
+                try await connect(d, p, "M", "a\(i)")   // a Shepherd reaches only leashed terminals
                 agents.append(t); watchers.append(hookWatcher(d, p, t))
             }
             await withTaskGroup(of: Void.self) { g in

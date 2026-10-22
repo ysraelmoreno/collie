@@ -14,7 +14,7 @@ final class PanelBody: NSView, PanelContentSizing {
     func setContentSize(_ size: CGSize) { onContentSize?(size) }
 }
 
-/// A canvas panel: title bar (name, plug-in, menu), the plug-in's live view, a cord handle and a resize corner.
+/// A canvas panel: title bar (name, plug-in, menu), the plug-in's live view, a leash handle and a resize corner.
 /// Culling detaches the plug-in view (`unmount`); the instance itself stays in the `PanelViewStore`.
 @MainActor final class PanelNodeView: NSView {
     static let titleHeight: CGFloat = 32   // same chrome as TerminalNodeView
@@ -27,10 +27,10 @@ final class PanelBody: NSView, PanelContentSizing {
     private let body = PanelBody()
     private var title: TitleHost<PanelTitleBar>!
     private let corner = DragHandle()
-    private let cord = CordHandle()
+    private let leash = LeashHandle()
     private var label: NSTextField?
     private var mounted: NSView?
-    var onCordDrag: ((UUID, CGPoint, Bool) -> Void)?
+    var onLeashDrag: ((UUID, CGPoint, Bool) -> Void)?
 
     override var isFlipped: Bool { true }
 
@@ -47,7 +47,7 @@ final class PanelBody: NSView, PanelContentSizing {
         title.onMouseUp = { [weak self] in self?.bringToFront() }
         corner.onMouseUp = { [weak self] in self?.bringToFront() }
         corner.onDrag = { [weak self] d in self?.resize(d) }
-        cord.onDrag = { [weak self] p, done in if let self { self.onCordDrag?(self.id, p, done) } }
+        leash.onDrag = { [weak self] p, done in if let self { self.onLeashDrag?(self.id, p, done) } }
         body.onContentSize = { [canvas, id] s in
             guard var f = canvas.frames[id] else { return }
             f.size = CGSize(width: max(Self.minSize.width, s.width), height: max(Self.minSize.height, s.height + Self.titleHeight))
@@ -55,7 +55,7 @@ final class PanelBody: NSView, PanelContentSizing {
         }
         addSubview(body)
         addSubview(title)
-        addSubview(cord)
+        addSubview(leash)
         addSubview(corner)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -106,7 +106,7 @@ final class PanelBody: NSView, PanelContentSizing {
         title.frame = CGRect(x: 0, y: 0, width: bounds.width, height: Self.titleHeight)
         body.frame = CGRect(x: 0, y: Self.titleHeight, width: bounds.width, height: max(bounds.height - Self.titleHeight, 0))
         label?.frame = body.bounds.insetBy(dx: 4, dy: max(body.bounds.height / 2 - 10, 0))
-        cord.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
+        leash.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = TerminalNodeView.cornerFrame(bounds)
     }
 

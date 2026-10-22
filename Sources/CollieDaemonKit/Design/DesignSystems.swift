@@ -19,12 +19,25 @@ struct DesignSystemEvent: Codable, Sendable, Equatable {
     var at: Date
     var kind: String   // created|published|reverted|activated
     var version: Int?
-    var scope: String?   // "workspace" | "floor:<name>"
+    var scope: String?   // "workspace" | "paddock:<name>"
     var by: String   // terminal name | "app"
     var reason: String
     var snapshot: String?   // a .figcraft file name in the system's folder
     var files: [FileOutcome]
-    var floorId: UUID? = nil   // a floor scope's floor (its undo timeline follows the floor, not its name)
+    var paddockId: UUID? = nil   // a paddock scope's paddock (its undo timeline follows the paddock, not its name)
+}
+
+extension DesignSystemEvent {
+    private enum CodingKeys: String, CodingKey { case at, kind, version, scope, by, reason, snapshot, files, paddockId }
+    private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary (`scope` stays as written)
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        at = try c.decode(Date.self, forKey: .at); kind = try c.decode(String.self, forKey: .kind)
+        version = try c.decodeIfPresent(Int.self, forKey: .version); scope = try c.decodeIfPresent(String.self, forKey: .scope)
+        by = try c.decode(String.self, forKey: .by); reason = try c.decode(String.self, forKey: .reason)
+        snapshot = try c.decodeIfPresent(String.self, forKey: .snapshot); files = try c.decode([FileOutcome].self, forKey: .files)
+        paddockId = try c.decodeIfPresent(UUID.self, forKey: .paddockId) ?? d.container(keyedBy: Legacy.self).decodeIfPresent(UUID.self, forKey: .floorId)
+    }
 }
 
 /// `<dir>/systems.json` (0600) and per system `<dir>/systems/<id>/` (0700): `history.json` (0600, last 200 events) and

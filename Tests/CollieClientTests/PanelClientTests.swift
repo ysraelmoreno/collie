@@ -7,7 +7,7 @@ import CollieProtocol
 
 @MainActor @Suite(.serialized) struct PanelClientTests {
     let dock = Panel(id: UUID(), name: "d", pluginId: "browser", placement: .dockRight)
-    let canvas = Panel(id: UUID(), name: "c", pluginId: "browser", placement: .canvas, floorId: nil)
+    let canvas = Panel(id: UUID(), name: "c", pluginId: "browser", placement: .canvas, paddockId: nil)
 
     @Test func appliesPanelEvents() {
         let c = DaemonClient()
@@ -31,16 +31,16 @@ import CollieProtocol
             #expect(DaemonClient.adminTimeout(c) == 125, "\(c)")
         }
         #expect(DaemonClient.adminTimeout("design.new") == 65 && DaemonClient.adminTimeout("design.files") == 15)
-        #expect(DaemonClient.adminTimeout("not.a.command") == 30 && DaemonClient.adminTimeout("floor.list") == 30)
+        #expect(DaemonClient.adminTimeout("not.a.command") == 30 && DaemonClient.adminTimeout("paddock.list") == 30)
     }
 
-    @Test func visiblePanelsFiltersCanvasByFloor() {
+    @Test func visiblePanelsFiltersCanvasByPaddock() {
         let f = UUID()
-        var onFloor = canvas; onFloor.floorId = f
-        let all = [dock, canvas, onFloor]
-        #expect(visiblePanels(all, floor: nil) == [dock, canvas])
-        #expect(visiblePanels(all, floor: f) == [dock, onFloor])
-        #expect(visiblePanels(all, floor: UUID()) == [dock])   // docks always
+        var onPaddock = canvas; onPaddock.paddockId = f
+        let all = [dock, canvas, onPaddock]
+        #expect(visiblePanels(all, paddock: nil) == [dock, canvas])
+        #expect(visiblePanels(all, paddock: f) == [dock, onPaddock])
+        #expect(visiblePanels(all, paddock: UUID()) == [dock])   // docks always
     }
 
     @Test func layoutKeepsPanelFrames() throws {

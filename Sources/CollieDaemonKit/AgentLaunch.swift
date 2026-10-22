@@ -18,7 +18,7 @@ public enum AgentLaunch {
         try? FileManager.default.removeItem(at: mcpFile(id, in: hooksDir))
     }
     /// Env names the `collie mcp` child needs from the agent (names only: values never reach argv or files).
-    static let mcpEnv = ["COLLIE_SOCKET", "COLLIE_TERMINAL_ID", "COLLIE_TOKEN", "COLLIE_TERMINAL_NAME", "COLLIE_WORKSPACE_ID", "COLLIE_MAESTRO"]
+    static let mcpEnv = ["COLLIE_SOCKET", "COLLIE_TERMINAL_ID", "COLLIE_TOKEN", "COLLIE_TERMINAL_NAME", "COLLIE_WORKSPACE_ID", "COLLIE_SHEPHERD"]
     /// JSON (and TOML-compatible) literal of a string or string array.
     static func literal(_ v: Any) -> String {
         String(decoding: (try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed, .withoutEscapingSlashes])) ?? Data(), as: UTF8.self)

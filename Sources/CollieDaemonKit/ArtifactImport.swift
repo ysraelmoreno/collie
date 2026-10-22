@@ -24,7 +24,7 @@ extension CommandRouter {
     }
 
     /// The import, within one `artifact.import` deadline: the app's DOM snapshot of the page; a new design file (named
-    /// after the title, on the artifact's floor, the floor's design system enabled); the mapper's steps run as one
+    /// after the title, on the artifact's paddock, the paddock's design system enabled); the mapper's steps run as one
     /// batch (one undo step) on the daemon's own client of it; its colors bound to the system's (`bindColors`); that screen exported into the artifact itself. Any
     /// failure (scrubbed, the design file made so far kept) becomes the artifact's `importError`, an `artifact.imported`
     /// `{id, error}` event and is thrown.
@@ -41,11 +41,11 @@ extension CommandRouter {
             var (snap, payloads) = try await Self.readImport(artifacts.dir.appendingPathComponent("\(a.folder)/.import"))
             snap.blocked = snap.blocked.map { String($0.prefix { $0 != "?" && $0 != "#" }) }   // queries may carry tokens
 
-            let floor = a.floorId.flatMap { id in ws.floors.contains { $0.id == id } ? id : nil }
+            let paddock = a.paddockId.flatMap { id in ws.paddocks.contains { $0.id == id } ? id : nil }
             var f: DesignService.File
             while true {
                 let name = Self.importName(a.title, taken: Set(try await design.list().map(\.name)))
-                do { f = try await design.create(name, floor: floor, deadline: deadline); break }
+                do { f = try await design.create(name, paddock: paddock, deadline: deadline); break }
                 catch let e as ProtocolError where e.message.hasSuffix("already exists") {   // taken meanwhile: the next one
                     _ = try DesignService.left(deadline)
                     try await Task.sleep(for: .milliseconds(100))

@@ -18,7 +18,7 @@ import CollieCore
         try await d.start()
         let c = DaemonClient(paths: d.paths); c.start(); defer { c.stop() }
         #expect(await poll(5) { c.state == .connected })
-        let id = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", maestro: false)
+        let id = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", shepherd: false)
 
         let n = NodeController(id: id, client: c)
         n.setVisible(true)
@@ -44,7 +44,7 @@ import CollieCore
         try await d.start()
         let c = DaemonClient(paths: d.paths); c.start(); defer { c.stop() }
         #expect(await poll(5) { c.state == .connected })
-        let id = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", maestro: false)
+        let id = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", shepherd: false)
 
         let n = NodeController(id: id, client: c)
         n.setVisible(true)
@@ -62,8 +62,8 @@ import CollieCore
         try await d.start()
         let c = DaemonClient(paths: d.paths); c.start(); defer { c.stop() }
         #expect(await poll(5) { c.state == .connected })
-        let a = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", maestro: false)
-        let b = try await c.spawn(name: "B", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", maestro: false)
+        let a = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", shepherd: false)
+        let b = try await c.spawn(name: "B", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", shepherd: false)
         #expect(await poll(2) { c.terminals.count == 2 })
 
         var nodes: [UUID: NodeController] = [:]

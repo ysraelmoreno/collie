@@ -14,7 +14,7 @@ import CollieProtocol
     @Test func startCloseReopen() async throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let s = WorkStore(dir: dir), t = UUID()
-        let w = try await s.start(title: "A", terminal: t, floorId: nil, branch: "collie/a")
+        let w = try await s.start(title: "A", terminal: t, paddockId: nil, branch: "collie/a")
         #expect(try await s.active(terminal: t)?.id == w.id)
         try await s.update(w.id) { $0.tasks.append(WorkTask(id: "1", title: "x", state: .inProgress)) }
         try await s.close(w.id, by: "app")
@@ -33,19 +33,19 @@ import CollieProtocol
     @Test func oneActivePerTerminal() async throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let s = WorkStore(dir: dir), t = UUID()
-        let w = try await s.start(title: "A", terminal: t, floorId: nil, branch: nil)
-        await #expect(throws: ProtocolError.self) { try await s.start(title: "B", terminal: t, floorId: nil, branch: nil) }
-        do { _ = try await s.start(title: "B", terminal: t, floorId: nil, branch: nil) }
+        let w = try await s.start(title: "A", terminal: t, paddockId: nil, branch: nil)
+        await #expect(throws: ProtocolError.self) { try await s.start(title: "B", terminal: t, paddockId: nil, branch: nil) }
+        do { _ = try await s.start(title: "B", terminal: t, paddockId: nil, branch: nil) }
         catch let e as ProtocolError { #expect(e.code == .invalidArgs && e.message == "work already open: A") }
-        _ = try await s.start(title: "C", terminal: UUID(), floorId: nil, branch: nil)   // another terminal is free
+        _ = try await s.start(title: "C", terminal: UUID(), paddockId: nil, branch: nil)   // another terminal is free
         try await s.close(w.id, by: "app")
-        _ = try await s.start(title: "D", terminal: t, floorId: nil, branch: nil)
+        _ = try await s.start(title: "D", terminal: t, paddockId: nil, branch: nil)
     }
 
     @Test func persistsAcrossReload() async throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let s = WorkStore(dir: dir)
-        let w = try await s.start(title: "A", terminal: UUID(), floorId: UUID(), branch: "b")
+        let w = try await s.start(title: "A", terminal: UUID(), paddockId: UUID(), branch: "b")
         try await s.update(w.id) {
             $0.tasks.append(WorkTask(id: "1", title: "t")); $0.notes.append(WorkNote(text: "n", decision: true))
             $0.jobs.append(WorkJob(id: "j", kind: .shell, label: "l", pid: 42)); $0.commits.append("abc subject")
@@ -59,7 +59,7 @@ import CollieProtocol
     @Test func limitsHold() async throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let s = WorkStore(dir: dir)
-        let w = try await s.start(title: "A", terminal: UUID(), floorId: nil, branch: nil)
+        let w = try await s.start(title: "A", terminal: UUID(), paddockId: nil, branch: nil)
         let base = Date(timeIntervalSince1970: 1_000_000)
         try await s.update(w.id) {
             // 300 done, 300 open; the oldest 100 done go first
@@ -86,7 +86,7 @@ import CollieProtocol
         // closed works: 250 -> 200 in work.json, 50 in the archive
         let dir2 = tmp(); defer { try? FileManager.default.removeItem(at: dir2) }
         let s2 = WorkStore(dir: dir2)
-        for i in 0..<250 { let c = try await s2.start(title: "W\(i)", terminal: UUID(), floorId: nil, branch: nil); try await s2.close(c.id, by: "app") }
+        for i in 0..<250 { let c = try await s2.start(title: "W\(i)", terminal: UUID(), paddockId: nil, branch: nil); try await s2.close(c.id, by: "app") }
         let keep = try await s2.list(includeClosed: true)
         #expect(keep.count == 200 && keep.first?.title == "W50")
         #expect(archived(dir2).filter { $0["kind"] as? String == "work" }.count == 50)
@@ -94,7 +94,7 @@ import CollieProtocol
         let ap = dir2.appendingPathComponent("work-archive.jsonl").path
         #expect(try FileManager.default.attributesOfItem(atPath: ap)[.posixPermissions] as? Int == 0o600)
         // clearHistory empties the archive too; active works stay
-        let live = try await s2.start(title: "live", terminal: UUID(), floorId: nil, branch: nil)
+        let live = try await s2.start(title: "live", terminal: UUID(), paddockId: nil, branch: nil)
         try await s2.clearHistory()
         #expect(archived(dir2).isEmpty)
         #expect(try await s2.list(includeClosed: true).map(\.id) == [live.id])
@@ -103,8 +103,8 @@ import CollieProtocol
     @Test func clearHistory() async throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let s = WorkStore(dir: dir)
-        let a = try await s.start(title: "A", terminal: UUID(), floorId: nil, branch: nil)
-        let b = try await s.start(title: "B", terminal: UUID(), floorId: nil, branch: nil)
+        let a = try await s.start(title: "A", terminal: UUID(), paddockId: nil, branch: nil)
+        let b = try await s.start(title: "B", terminal: UUID(), paddockId: nil, branch: nil)
         try await s.close(a.id, by: "app")
         try await s.clearHistory()
         #expect(try await s.get(a.id) == nil)
@@ -114,14 +114,14 @@ import CollieProtocol
 
     @Test func unreadableStoreIsNeverOverwritten() async throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
-        let w = try await WorkStore(dir: dir).start(title: "A", terminal: UUID(), floorId: nil, branch: nil)
+        let w = try await WorkStore(dir: dir).start(title: "A", terminal: UUID(), paddockId: nil, branch: nil)
         let f = dir.appendingPathComponent("work.json")
         guard getuid() != 0 else { return }
         let before = try Data(contentsOf: f)
         chmod(f.path, 0o000); defer { chmod(f.path, 0o600) }
         let s = WorkStore(dir: dir)
         await #expect(throws: ProtocolError.self) { try await s.list(includeClosed: true) }
-        await #expect(throws: ProtocolError.self) { try await s.start(title: "B", terminal: UUID(), floorId: nil, branch: nil) }
+        await #expect(throws: ProtocolError.self) { try await s.start(title: "B", terminal: UUID(), paddockId: nil, branch: nil) }
         chmod(f.path, 0o600)
         #expect(try Data(contentsOf: f) == before)
         #expect(try await WorkStore(dir: dir).get(w.id) != nil)
@@ -130,7 +130,7 @@ import CollieProtocol
     @Test func concurrentUpdatesAreAllKept() async throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let s = WorkStore(dir: dir)
-        let w = try await s.start(title: "A", terminal: UUID(), floorId: nil, branch: nil)
+        let w = try await s.start(title: "A", terminal: UUID(), paddockId: nil, branch: nil)
         try await withThrowingTaskGroup(of: Void.self) { g in
             for i in 0..<50 { g.addTask { try await s.update(w.id) { $0.tasks.append(WorkTask(id: "t\(i)", title: "t")) } } }
             try await g.waitForAll()

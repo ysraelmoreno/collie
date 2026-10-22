@@ -12,7 +12,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var terminals: [TerminalRecord] = []
     public private(set) var connections: [Connection] = []
     public private(set) var badges: [UUID: StatusBadge] = [:]
-    public private(set) var floors: [Floor] = []
+    public private(set) var paddocks: [Paddock] = []
     public private(set) var panels: [Panel] = []
     /// `BuildID` of the connected daemon (nil: not connected yet, or a daemon that predates it).
     public private(set) var daemonBuild: String?
@@ -20,16 +20,16 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var hostStatus: HostConnection.Status = .idle
     /// The default workspace's id (for plugin storage), read once connected.
     public private(set) var workspaceId: UUID?
-    /// The floor the canvas shows (nil = ground). View state; the app persists it.
-    public var currentFloor: UUID?
+    /// The paddock the canvas shows (nil = pasture). View state; the app persists it.
+    public var currentPaddock: UUID?
 
     /// Called (main actor) when a terminal starts waiting for the user: id and reason.
     @ObservationIgnored public var onAttention: ((UUID, String) -> Void)?
-    /// Called (main actor) when a Maestro runs `collie notify`: terminal id and message.
+    /// Called (main actor) when a Shepherd runs `collie notify`: terminal id and message.
     @ObservationIgnored public var onNotify: ((UUID, String) -> Void)?
-    /// Called (main actor) on `partitura.applied`: applying terminal (nil = the app), anchor Maestro, frames by node id,
-    /// the floor it created.
-    @ObservationIgnored public var onPartituraApplied: ((UUID?, UUID?, [String: PartituraFrame], UUID?) -> Void)?
+    /// Called (main actor) on `herd.applied`: applying terminal (nil = the app), anchor Shepherd, frames by node id,
+    /// the paddock it created.
+    @ObservationIgnored public var onHerdApplied: ((UUID?, UUID?, [String: HerdFrame], UUID?) -> Void)?
 
     /// Runs a plugin command for a panel (set by the app; the host forwards the daemon's calls here).
     public typealias PanelHandler = @MainActor @Sendable (_ panel: UUID, _ command: String, _ args: [String: JSONValue], _ timeoutSeconds: Double) async throws(ProtocolError) -> JSONValue
@@ -123,12 +123,12 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             let snap = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(result))
             terminals = snap.terminals
             connections = snap.connections
-            floors = snap.floors
+            paddocks = snap.paddocks
             panels = snap.panels
             daemonBuild = snap.build
             workspaceId = (try? String(contentsOf: paths.root.appendingPathComponent("default-workspace"), encoding: .utf8))
                 .flatMap { UUID(uuidString: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
-            if let c = currentFloor, !floors.contains(where: { $0.id == c }) { currentFloor = nil }   // deleted while away
+            if let c = currentPaddock, !paddocks.contains(where: { $0.id == c }) { currentPaddock = nil }   // deleted while away
             badges = Dictionary(uniqueKeysWithValues: snap.badges.compactMap { k, v in UUID(uuidString: k).map { ($0, v) } })
             state = .connected
             onConnected()
@@ -171,9 +171,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .disconnected(let c): connections.removeAll { same($0, c) }
         case .status(let id, let b): badges[id] = b
         case .attention(let id, let why): onAttention?(id, why)   // the badge itself arrives as .status
-        case .floor(let f):
-            if let i = floors.firstIndex(where: { $0.id == f.id }) { floors[i] = f } else { floors.append(f) }
-        case .floorRemoved(let id): floors.removeAll { $0.id == id }
+        case .paddock(let f):
+            if let i = paddocks.firstIndex(where: { $0.id == f.id }) { paddocks[i] = f } else { paddocks.append(f) }
+        case .paddockRemoved(let id): paddocks.removeAll { $0.id == id }
         case .notify(let id, let message): onNotify?(id, message)
         case .panel(let p):
             if let i = panels.firstIndex(where: { $0.id == p.id }) { panels[i] = p } else { panels.append(p) }
@@ -181,35 +181,35 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             panels.removeAll { $0.id == id }
             connections.removeAll { $0.a == id || $0.b == id }
         case .pluginEvent(let panel, let name, let payload): pluginEventHandler?(panel, name, payload)
-        case .partituraApplied(let by, let anchor, let frames, let floor): onPartituraApplied?(by, anchor, frames, floor)
+        case .herdApplied(let by, let anchor, let frames, let paddock): onHerdApplied?(by, anchor, frames, paddock)
         }
     }
     private func same(_ x: Connection, _ y: Connection) -> Bool { Set([x.a, x.b]) == Set([y.a, y.b]) }
 
     // MARK: commands
 
-    public func spawn(name: String, preset: Preset, command: String?, cwd: String, maestro: Bool, floor: String? = nil) async throws -> UUID {
+    public func spawn(name: String, preset: Preset, command: String?, cwd: String, shepherd: Bool, paddock: String? = nil) async throws -> UUID {
         var args: [String: JSONValue] = ["name": .string(name), "preset": .string(preset.rawValue),
-                                         "cwd": .string(cwd), "maestro": .bool(maestro)]
+                                         "cwd": .string(cwd), "shepherd": .bool(shepherd)]
         if let command { args["command"] = .string(command) }
-        if let floor { args["floor"] = .string(floor) }
+        if let paddock { args["paddock"] = .string(paddock) }
         guard case .object(let o)? = try await admin("admin.spawn", args),
               case .string(let s)? = o["id"], let id = UUID(uuidString: s) else {
             throw ProtocolError(code: .internal, message: "malformed spawn reply")
         }
         return id
     }
-    public func connect(_ a: String, _ b: String) async throws { _ = try await admin("admin.connect", ["a": .string(a), "b": .string(b)]) }
-    public func disconnect(_ a: String, _ b: String) async throws { _ = try await admin("admin.disconnect", ["a": .string(a), "b": .string(b)]) }
+    public func leash(_ a: String, _ b: String) async throws { _ = try await admin("admin.leash", ["a": .string(a), "b": .string(b)]) }
+    public func unleash(_ a: String, _ b: String) async throws { _ = try await admin("admin.unleash", ["a": .string(a), "b": .string(b)]) }
     public func kill(_ name: String) async throws { _ = try await admin("admin.kill", ["target": .string(name)]) }
     public func restart(_ name: String) async throws { _ = try await admin("admin.restart", ["name": .string(name)]) }
     /// Edits a terminal; `restartNeeded`: launch settings changed under a running process.
     @discardableResult
-    public func update(_ name: String, newName: String? = nil, maestro: Bool? = nil, preset: Preset? = nil,
+    public func update(_ name: String, newName: String? = nil, shepherd: Bool? = nil, preset: Preset? = nil,
                        command: String? = nil, cwd: String? = nil, restart: Bool = false) async throws -> (restartNeeded: Bool, restarted: Bool) {
         var args: [String: JSONValue] = ["name": .string(name), "restart": .bool(restart)]
         if let newName { args["newName"] = .string(newName) }
-        if let maestro { args["maestro"] = .bool(maestro) }
+        if let shepherd { args["shepherd"] = .bool(shepherd) }
         if let preset { args["preset"] = .string(preset.rawValue) }
         if let command { args["command"] = .string(command) }
         if let cwd { args["cwd"] = .string(cwd) }
@@ -220,23 +220,23 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         return (n, d)
     }
 
-    public func createFloor(name: String, repo: String) async throws {
-        _ = try await admin("floor.create", ["name": .string(name), "repo": .string(repo)], timeout: 300)
+    public func createPaddock(name: String, repo: String) async throws {
+        _ = try await admin("paddock.create", ["name": .string(name), "repo": .string(repo)], timeout: 300)
     }
-    public func setFloorStatus(_ name: String, _ status: FloorStatus) async throws {
-        _ = try await admin("floor.status", ["name": .string(name), "status": .string(status.rawValue)])
+    public func setPaddockStatus(_ name: String, _ status: PaddockStatus) async throws {
+        _ = try await admin("paddock.status", ["name": .string(name), "status": .string(status.rawValue)])
     }
     /// Can take minutes (git merge/rebase, push for `pr`).
     public func land(_ name: String, mode: LandMode, message: String? = nil) async throws -> LandResult {
         var args: [String: JSONValue] = ["name": .string(name), "mode": .string(mode.rawValue)]
         if let message { args["message"] = .string(message) }
-        guard let r = try await admin("floor.land", args, timeout: 900) else { throw ProtocolError(code: .internal, message: "malformed land reply") }
+        guard let r = try await admin("paddock.land", args, timeout: 900) else { throw ProtocolError(code: .internal, message: "malformed land reply") }
         return try JSONDecoder().decode(LandResult.self, from: JSONEncoder().encode(r))
     }
-    public func deleteFloor(_ name: String, force: Bool) async throws {
+    public func deletePaddock(_ name: String, force: Bool) async throws {
         var args: [String: JSONValue] = ["name": .string(name)]
         if force { args["force"] = .bool(true) }
-        _ = try await admin("floor.delete", args, timeout: 300)
+        _ = try await admin("paddock.delete", args, timeout: 300)
     }
     public func usage() async throws -> [UsageReport] {
         guard let r = try await admin("ui.usage", [:], timeout: 130) else { return [] }
@@ -244,11 +244,11 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         return try d.decode([UsageReport].self, from: JSONEncoder().encode(r))
     }
 
-    /// Name of a terminal or panel (cords can end at either).
+    /// Name of a terminal or panel (leashes can end at either).
     public func nodeName(_ id: UUID) -> String? { terminals.first { $0.id == id }?.name ?? panels.first { $0.id == id }?.name }
-    private var currentFloorName: String? { floors.first { $0.id == currentFloor }?.name }
+    private var currentPaddockName: String? { paddocks.first { $0.id == currentPaddock }?.name }
 
-    /// A canvas panel opens on the floor being shown; a shut-down iOS Simulator boots first (up to ~2 min).
+    /// A canvas panel opens on the paddock being shown; a shut-down iOS Simulator boots first (up to ~2 min).
     /// Returns the new panel's id.
     @discardableResult
     public func openPanel(plugin: String, name: String?, placement: PanelPlacement, url: String?, storage: StorageScope,
@@ -256,7 +256,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         var args: [String: JSONValue] = ["plugin": .string(plugin), "placement": .string(placement.rawValue), "storage": .string(storage.rawValue)]
         if let name, !name.isEmpty { args["name"] = .string(name) }
         if let url, !url.isEmpty { args["url"] = .string(url) }
-        if placement == .canvas, let f = currentFloorName { args["floor"] = .string(f) }
+        if placement == .canvas, let f = currentPaddockName { args["paddock"] = .string(f) }
         if let serial, !serial.isEmpty { args["serial"] = .string(serial) }
         if let file, !file.isEmpty { args["file"] = .string(file) }
         // a design file's first open can start the design engine
@@ -287,7 +287,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public func closePanel(_ name: String) async throws { _ = try await admin("panel.close", ["name": .string(name)]) }
     public func movePanel(_ name: String, to placement: PanelPlacement) async throws {
         var args: [String: JSONValue] = ["name": .string(name), "placement": .string(placement.rawValue)]
-        if placement == .canvas, let f = currentFloorName { args["floor"] = .string(f) }
+        if placement == .canvas, let f = currentPaddockName { args["paddock"] = .string(f) }
         _ = try await admin("panel.move", args)
     }
 
@@ -335,23 +335,23 @@ public struct LandResult: Codable, Sendable, Equatable {
     public var prURL: String?
 }
 
-/// Terminals shown on a floor (nil = ground).
-public func visibleTerminals(_ terminals: [TerminalRecord], floor: UUID?) -> [TerminalRecord] {
-    terminals.filter { $0.floorId == floor }
+/// Terminals shown on a paddock (nil = pasture).
+public func visibleTerminals(_ terminals: [TerminalRecord], paddock: UUID?) -> [TerminalRecord] {
+    terminals.filter { $0.paddockId == paddock }
 }
 
-/// Canvas panels of this floor (nil = ground), plus every docked panel (docks show on every floor).
-public func visiblePanels(_ panels: [Panel], floor: UUID?) -> [Panel] {
-    panels.filter { $0.placement != .canvas || $0.floorId == floor }
+/// Canvas panels of this paddock (nil = pasture), plus every docked panel (docks show on every paddock).
+public func visiblePanels(_ panels: [Panel], paddock: UUID?) -> [Panel] {
+    panels.filter { $0.placement != .canvas || $0.paddockId == paddock }
 }
 
 /// What the edit form changed against `original`; unchanged fields are nil (not sent). Text is trimmed.
 /// `command` only counts for the custom preset (the daemon needs it there and ignores it elsewhere).
-public func editArgs(original: TerminalRecord, name: String, maestro: Bool, preset: Preset, command: String, cwd: String)
-    -> (newName: String?, maestro: Bool?, preset: Preset?, command: String?, cwd: String?) {
+public func editArgs(original: TerminalRecord, name: String, shepherd: Bool, preset: Preset, command: String, cwd: String)
+    -> (newName: String?, shepherd: Bool?, preset: Preset?, command: String?, cwd: String?) {
     let n = name.trimmingCharacters(in: .whitespaces), c = command.trimmingCharacters(in: .whitespaces)
     let d = cwd.trimmingCharacters(in: .whitespaces)
-    return (n != original.name ? n : nil, maestro != original.isMaestro ? maestro : nil,
+    return (n != original.name ? n : nil, shepherd != original.isShepherd ? shepherd : nil,
             preset != original.preset ? preset : nil,
             preset == .custom && c != (original.command ?? "") ? c : nil,
             !d.isEmpty && d != original.cwd ? d : nil)

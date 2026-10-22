@@ -209,7 +209,7 @@ extension DeviceCommandTests { @Suite struct SimSessionTests {
             c.close()
             let closed = ContinuousClock.now
             #expect(await waitFor(3) { fx.streams.allSatisfy(dead) })
-            // waitFor floors at 20 s, so tell the injected 300 ms grace from the 5 s production default explicitly
+            // waitFor paddocks at 20 s, so tell the injected 300 ms grace from the 5 s production default explicitly
             #expect(ContinuousClock.now - closed < .seconds(4))
         }
     }

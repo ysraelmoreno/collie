@@ -9,9 +9,9 @@ private struct Term { var id: String; var name: String; var token: String }
 private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
     try await send(p, Request(id: "x", token: d.adminToken, command: cmd, args: args), timeoutSeconds: 60)
 }
-private func term(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL, floor: String? = nil) async throws -> Term {
+private func term(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL, paddock: String? = nil) async throws -> Term {
     var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "cwd": .string(cwd.path)]
-    if let floor { args["floor"] = .string(floor) }
+    if let paddock { args["paddock"] = .string(paddock) }
     let r = try await admin(d, p, "admin.spawn", args)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, name: name, token: try await tokenOf(d, id))
@@ -57,19 +57,19 @@ private func decisions(_ d: Daemon, _ n: Int = 1) async -> [String] {
     @Test func mergeCloseSavesToo() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in
-            #expect(try await admin(d, p, "floor.create", ["name": .string("feat"), "repo": .string(repo.path)]).ok)
-            let floor = repo.appendingPathComponent(".collie/floors/feat")
-            let t = try await term(d, p, "F", cwd: floor, floor: "feat")
-            try await work(d, p, "work.start", t, ["title": "Floor job"])
+            #expect(try await admin(d, p, "paddock.create", ["name": .string("feat"), "repo": .string(repo.path)]).ok)
+            let paddock = repo.appendingPathComponent(".collie/paddocks/feat")
+            let t = try await term(d, p, "F", cwd: paddock, paddock: "feat")
+            try await work(d, p, "work.start", t, ["title": "Paddock job"])
             try await work(d, p, "work.task.add", t, ["title": "Do it"])
-            try "x\n".write(to: floor.appendingPathComponent("g.txt"), atomically: true, encoding: .utf8)
-            _ = try await GitRunner.run(["add", "."], in: floor)
-            _ = try await GitRunner.run(["commit", "-m", "g"], in: floor)
-            let land = try await admin(d, p, "floor.land", ["name": .string("feat")])
+            try "x\n".write(to: paddock.appendingPathComponent("g.txt"), atomically: true, encoding: .utf8)
+            _ = try await GitRunner.run(["add", "."], in: paddock)
+            _ = try await GitRunner.run(["commit", "-m", "g"], in: paddock)
+            let land = try await admin(d, p, "paddock.land", ["name": .string("feat")])
             #expect(land.ok, "\(land)")
-            let recs = try await saved(d, floor)
+            let recs = try await saved(d, paddock)
             let r = try #require(recs.first)
-            #expect(recs.count == 1 && r.scope == .floor && r.floor == "feat" && r.title == "Resumo: Floor job" && !r.reviewed)
+            #expect(recs.count == 1 && r.scope == .paddock && r.paddock == "feat" && r.title == "Resumo: Paddock job" && !r.reviewed)
             #expect(r.body.contains("Mergeado"))
         }
     }
@@ -138,15 +138,15 @@ private func decisions(_ d: Daemon, _ n: Int = 1) async -> [String] {
         }
     }
 
-    @Test func removedGroundTerminalStillSaves() async throws {
+    @Test func removedPastureTerminalStillSaves() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in
             let t = try await term(d, p, "T", cwd: repo)
-            try await work(d, p, "work.start", t, ["title": "Ground"])
+            try await work(d, p, "work.start", t, ["title": "Pasture"])
             try await work(d, p, "work.task.add", t, ["title": "Do it"])
             #expect(try await admin(d, p, "admin.kill", ["target": .string("T")]).ok)
             let recs = try await saved(d, repo)
-            #expect(recs.count == 1 && recs.first?.title == "Resumo: Ground" && recs.first?.scope == .project)
+            #expect(recs.count == 1 && recs.first?.title == "Resumo: Pasture" && recs.first?.scope == .project)
             #expect(await decisions(d) == ["saved"])
         }
     }

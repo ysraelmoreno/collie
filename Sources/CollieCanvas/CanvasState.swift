@@ -14,8 +14,8 @@ public final class CanvasState {
     public var zoom: CGFloat = 1
     public var frames: [UUID: CGRect] = [:]
     public var selection: Set<UUID> = []
-    /// Nodes currently on the canvas (this floor's terminals, canvas panels). nil = every frame counts.
-    /// Minimap and fit-all use only these: other floors and docked panels keep their frames but are not drawn.
+    /// Nodes currently on the canvas (this paddock's terminals, canvas panels). nil = every frame counts.
+    /// Minimap and fit-all use only these: other paddocks and docked panels keep their frames but are not drawn.
     public var shown: Set<UUID>?
     public var shownFrames: [CGRect] { frames.filter { shown?.contains($0.key) ?? true }.map(\.value) }
 

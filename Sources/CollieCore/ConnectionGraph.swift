@@ -2,7 +2,7 @@ import Foundation
 import CollieProtocol
 
 public enum ConnectionGraph {
-    // Every terminal, Maestro included, reaches only the peers it is corded to (undirected; spec §5).
+    // Every terminal, Shepherd included, reaches only the peers it is leashed to (undirected; spec §5).
     public static func reachable(from: UUID, in ws: Workspace) -> [TerminalRecord] {
         guard ws.terminals.contains(where: { $0.id == from }) else { return [] }
         let peers = Set(ws.connections.compactMap { $0.a == from ? $0.b : $0.b == from ? $0.a : nil })
@@ -22,7 +22,7 @@ public enum ConnectionGraph {
         }
     }
 
-    /// Canvas panels need a cord to `from` (terminal<->panel is a Connection); docked panels are reachable by every terminal.
+    /// Canvas panels need a leash to `from` (terminal<->panel is a Connection); docked panels are reachable by every terminal.
     public static func reachablePanels(from: UUID, in ws: Workspace) -> [Panel] {
         let peers = Set(ws.connections.compactMap { $0.a == from ? $0.b : $0.b == from ? $0.a : nil })
         return ws.panels.filter { $0.placement != .canvas || peers.contains($0.id) }

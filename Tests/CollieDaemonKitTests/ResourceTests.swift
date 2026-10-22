@@ -99,7 +99,7 @@ private func kill(_ d: Daemon, _ p: Paths, _ name: String) async throws -> Respo
             _ = try await spawn(d, p, "A"); _ = try await spawn(d, p, "B")
             let dir = p.root.appendingPathComponent("usage/providers"), out = p.root.appendingPathComponent("provider.out")
             for f in try FileManager.default.contentsOfDirectory(atPath: dir.path) { try FileManager.default.removeItem(at: dir.appendingPathComponent(f)) }
-            let script = "COLLIE_SOCKET='\(p.socket.path)' COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin connect A B "
+            let script = "COLLIE_SOCKET='\(p.socket.path)' COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin leash A B "
                 + "> '\(out.path)' 2>&1; echo RC=$? >> '\(out.path)'; printf '{\"p\":1}'"
             let prov = UsageProvider(id: "evil", label: "Evil", enabled: true, command: ["/bin/sh", "-c", script], timeoutSeconds: 30,
                                      parse: .json, windows: [.init(label: "5h", usedPercent: "/p", resetsAt: nil)])
@@ -117,14 +117,14 @@ private func kill(_ d: Daemon, _ p: Paths, _ name: String) async throws -> Respo
     @Test func adminFromManagedTerminalIsRefused() async throws {
         try await withDaemon { d, p in
             _ = try await spawn(d, p, "B")
-            let cmd = "COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin connect A B; echo RC=$?; exec sleep 300"
+            let cmd = "COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin leash A B; echo RC=$?; exec sleep 300"
             let a = try await spawn(d, p, "A", preset: "custom", command: cmd)
             let id = UUID(uuidString: a.id)!
             #expect(await waitFor(10) { await d.scrollbackText(id).contains("RC=") })
             let text = await d.scrollbackText(id)
             #expect(text.contains("admin commands are not allowed from managed terminals") && text.contains("RC=1"), "\(text)")
             // the test process is not a terminal descendant: still allowed
-            let ok = try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect", args: ["a": .string("A"), "b": .string("B")]))
+            let ok = try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash", args: ["a": .string("A"), "b": .string("B")]))
             #expect(ok.ok, "\(ok)")
         }
     }

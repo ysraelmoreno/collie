@@ -25,8 +25,8 @@ actor WorkStore {
     func list(includeClosed: Bool) async throws -> [Work] { try await load().filter { includeClosed || $0.closedAt == nil } }
     func get(_ id: UUID) async throws -> Work? { try await load().first { $0.id == id } }
 
-    func start(title: String, terminal: UUID, floorId: UUID?, branch: String?) async throws -> Work {
-        let w = Work(title: title, terminalId: terminal, floorId: floorId, branch: branch)
+    func start(title: String, terminal: UUID, paddockId: UUID?, branch: String?) async throws -> Work {
+        let w = Work(title: title, terminalId: terminal, paddockId: paddockId, branch: branch)
         try await mutate { list in
             if let a = list.first(where: { $0.terminalId == terminal && $0.closedAt == nil }) {
                 throw ProtocolError(code: .invalidArgs, message: "work already open: \(a.title)")

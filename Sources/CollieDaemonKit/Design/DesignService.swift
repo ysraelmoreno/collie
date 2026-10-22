@@ -27,9 +27,9 @@ actor DesignService {
     static let busy = ProtocolError(code: .unavailable, message: "design engine busy")
 
     /// `viewLink`: kept for design systems (other files add their library by it); as secret as the edit link.
-    /// `floorId`: the floor it was made on (nil, or a floor since deleted: ground), which picks its active design system.
+    /// `paddockId`: the paddock it was made on (nil, or a paddock since deleted: pasture), which picks its active design system.
     struct File: Codable, Sendable {
-        var id: String; var name: String; var editLink: String; var viewLink: String?; var createdAt: Date; var floorId: UUID?
+        var id: String; var name: String; var editLink: String; var viewLink: String?; var createdAt: Date; var paddockId: UUID?
     }
     /// The daemon's own client of a file (design systems: library publishing and snapshots, which agents never reach).
     static let systemCaller = "collie-ds"
@@ -83,19 +83,19 @@ actor DesignService {
 
     func list() throws -> [File] { try registry() }
 
-    /// `name`'s file id; a name not registered yet is created first, on `floor` (`panel.open design --file`): then
+    /// `name`'s file id; a name not registered yet is created first, on `paddock` (`panel.open design --file`): then
     /// `created`. A create of that name already in flight is waited for, then its file used.
-    func fileId(named name: String, floor: UUID? = nil, deadline: ContinuousClock.Instant? = nil) async throws -> (id: String, created: Bool) {
+    func fileId(named name: String, paddock: UUID? = nil, deadline: ContinuousClock.Instant? = nil) async throws -> (id: String, created: Bool) {
         while naming.contains(name.lowercased()) { try await Task.sleep(for: .milliseconds(100)) }   // ends with its deadline
         if let f = try registry().first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) { return (f.id, false) }
-        return (try await create(name, floor: floor, deadline: deadline).id, true)
+        return (try await create(name, paddock: paddock, deadline: deadline).id, true)
     }
 
     /// A new empty file on the server: a short-lived "collie-bridge" client publishes it and hands back its links.
     /// `copying` (a file id): instead, the daemon's own client of that file saves its live document, which a bridge
     /// opens, renames to `name` (its library takes the document's name) and publishes to the server's address and key:
     /// kept there as a new file, its library at version 1. `deadline`: the calling command's (default: `design.new`'s).
-    func create(_ name: String, floor: UUID? = nil, deadline: ContinuousClock.Instant? = nil, copying: String? = nil) async throws -> File {
+    func create(_ name: String, paddock: UUID? = nil, deadline: ContinuousClock.Instant? = nil, copying: String? = nil) async throws -> File {
         try await guarded {
             try Self.validate(name)
             let lower = name.lowercased()
@@ -142,7 +142,7 @@ actor DesignService {
             let view = if case .string(let v)? = pub["view"], !v.isEmpty { v } else { String?.none }
             secrets.insert(link)
             if let view { secrets.insert(view) }
-            let f = File(id: UUID().uuidString.lowercased(), name: name, editLink: link, viewLink: view, createdAt: Date(), floorId: floor)
+            let f = File(id: UUID().uuidString.lowercased(), name: name, editLink: link, viewLink: view, createdAt: Date(), paddockId: paddock)
             var all = try registry()
             all.append(f)
             try save(all)
@@ -971,5 +971,17 @@ actor DesignService {
         let d = deadline - .now
         guard d > .zero else { throw ProtocolError(code: .timeout, message: "design engine: timed out") }
         return d
+    }
+}
+
+extension DesignService.File {
+    private enum CodingKeys: String, CodingKey { case id, name, editLink, viewLink, createdAt, paddockId }
+    private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id); name = try c.decode(String.self, forKey: .name)
+        editLink = try c.decode(String.self, forKey: .editLink); viewLink = try c.decodeIfPresent(String.self, forKey: .viewLink)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        paddockId = try c.decodeIfPresent(UUID.self, forKey: .paddockId) ?? d.container(keyedBy: Legacy.self).decodeIfPresent(UUID.self, forKey: .floorId)
     }
 }

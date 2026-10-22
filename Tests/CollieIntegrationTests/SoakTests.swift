@@ -24,7 +24,7 @@ private func ms(_ d: Duration) -> Double { Double(d.components.seconds) * 1000 +
 
 @Suite(.tags(.soak), .enabled(if: ProcessInfo.processInfo.environment["COLLIE_SOAK"] == "1"))
 struct SoakTests {
-    /// 20 fake agents (real `collie hook` stop), 10 rounds x 20 concurrent asks from the Maestro terminal.
+    /// 20 fake agents (real `collie hook` stop), 10 rounds x 20 concurrent asks from the Shepherd terminal.
     /// Per-scrollback memoryBytes is not visible outside the daemon: see AskTests.scrollbackMemoryStaysBounded.
     @Test func soakTwentyAgents() async throws {
         let root = URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))")
@@ -39,20 +39,20 @@ struct SoakTests {
         #expect(await waitFor(5) { FileManager.default.fileExists(atPath: sock.path) && FileManager.default.fileExists(atPath: tf.path) })
         let admin = try String(contentsOf: tf, encoding: .utf8)
 
-        func spawn(_ name: String, command: String, maestro: Bool = false) async throws -> String {
+        func spawn(_ name: String, command: String, shepherd: Bool = false) async throws -> String {
             let r = try await UnixSocketClient.send(Request(id: "s", token: admin, command: "admin.spawn", args: [
                 "name": .string(name), "preset": .string("custom"), "cwd": .string("/tmp"), "command": .string(command),
-                "maestro": .bool(maestro)]), to: sock, timeoutSeconds: 10)
+                "shepherd": .bool(shepherd)]), to: sock, timeoutSeconds: 10)
             guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "spawn \(r)") }
             return id
         }
-        let tokFile = root.appendingPathComponent("maestro.tok")
-        let maestro = try await spawn("Maestro", command: "echo $COLLIE_TOKEN > '\(tokFile.path)'; exec sleep 100000", maestro: true)
+        let tokFile = root.appendingPathComponent("shepherd.tok")
+        let shepherd = try await spawn("Shepherd", command: "echo $COLLIE_TOKEN > '\(tokFile.path)'; exec sleep 100000", shepherd: true)
         for i in 0..<20 {
             _ = try await spawn("agent\(i)", command: "COLLIE_FAKE_HOOK=cli COLLIE_CLI_PATH='\(collieURL.path)' exec sh '\(soakFixture)'")
-            // a Maestro reaches only corded terminals
-            let c = try await UnixSocketClient.send(Request(id: "c", token: admin, command: "admin.connect", args: [
-                "a": .string("Maestro"), "b": .string("agent\(i)")]), to: sock, timeoutSeconds: 10)
+            // a Shepherd reaches only leashed terminals
+            let c = try await UnixSocketClient.send(Request(id: "c", token: admin, command: "admin.leash", args: [
+                "a": .string("Shepherd"), "b": .string("agent\(i)")]), to: sock, timeoutSeconds: 10)
             #expect(c.ok, "connect agent\(i): \(c)")
         }
         #expect(await waitFor(5) { (try? String(contentsOf: tokFile, encoding: .utf8))?.count ?? 0 > 60 })
@@ -64,7 +64,7 @@ struct SoakTests {
                 for i in 0..<20 {
                     g.addTask {
                         let prompt = "r\(round)t\(i)", t0 = ContinuousClock.now
-                        let r = try? await UnixSocketClient.send(Request(id: prompt, terminalId: maestro, token: token, command: "ask",
+                        let r = try? await UnixSocketClient.send(Request(id: prompt, terminalId: shepherd, token: token, command: "ask",
                             args: ["target": .string("agent\(i)"), "prompt": .string(prompt), "timeout": .number(30)]), to: sock, timeoutSeconds: 40)
                         var out = ""
                         if case .object(let o)? = r?.result, case .string(let s)? = o["output"] { out = s }

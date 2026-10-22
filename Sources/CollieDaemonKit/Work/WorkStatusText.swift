@@ -19,8 +19,8 @@ public enum WorkStatusText {
         case .whereAreWe:
             if works.isEmpty { return "Nenhum trabalho ativo." }
             for w in works {
-                let floor = w.floorId.flatMap { names[$0] } ?? "térreo"
-                lines.append("**\(w.title)** — \(name(w.terminalId)) (\(floor))")
+                let paddock = w.paddockId.flatMap { names[$0] } ?? "pasto"
+                lines.append("**\(w.title)** — \(name(w.terminalId)) (\(paddock))")
                 func n(_ s: TaskState) -> Int { w.tasks.filter { $0.state == s }.count }
                 lines.append("- \(n(.done)) feitas · \(n(.inProgress)) em andamento · \(n(.open)) abertas · \(n(.deferred)) para depois")
                 if let t = w.tasks.first(where: { $0.state == .inProgress }) { lines.append("- Em andamento: \(t.title)") }

@@ -5,9 +5,9 @@ import CollieCore
 
 @Suite struct MemoryStoreTests {
     func tmpDir() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("collie-mem-\(UUID().uuidString)") }
-    func rec(_ kind: MemoryKind = .decision, _ subject: String = "db", scope: MemoryScope = .project, floor: String? = nil,
+    func rec(_ kind: MemoryKind = .decision, _ subject: String = "db", scope: MemoryScope = .project, paddock: String? = nil,
              at t: TimeInterval = 1_700_000_000) -> MemoryRecord {
-        MemoryRecord(kind: kind, scope: scope, floor: floor, subject: subject, title: "t", createdAt: Date(timeIntervalSince1970: t))
+        MemoryRecord(kind: kind, scope: scope, paddock: paddock, subject: subject, title: "t", createdAt: Date(timeIntervalSince1970: t))
     }
 
     @Test func saveSupersedesSameSubject() throws {
@@ -27,8 +27,8 @@ import CollieCore
         _ = try s.save(rec(.decision, "db"))
         #expect(try s.save(rec(.pitfall, "db")).superseded == nil)
         #expect(try s.save(rec(.decision, "db", scope: .global)).superseded == nil)
-        #expect(try s.save(rec(.decision, "db", scope: .floor, floor: "a")).superseded == nil)
-        #expect(try s.save(rec(.decision, "db", scope: .floor, floor: "b")).superseded == nil)
+        #expect(try s.save(rec(.decision, "db", scope: .paddock, paddock: "a")).superseded == nil)
+        #expect(try s.save(rec(.decision, "db", scope: .paddock, paddock: "b")).superseded == nil)
         #expect(s.all().records.allSatisfy { $0.status == .active })
     }
 

@@ -58,9 +58,9 @@ private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: Stri
     try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args.mapValues { .string($0) }),
                                     to: p.socket, timeoutSeconds: 60)
 }
-private func term(_ d: Daemon, _ p: Paths, _ name: String, maestro: Bool = false) async throws -> Term {
+private func term(_ d: Daemon, _ p: Paths, _ name: String, shepherd: Bool = false) async throws -> Term {
     let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
-        args: ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "maestro": .bool(maestro)]),
+        args: ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(shepherd)]),
         to: p.socket, timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -72,9 +72,9 @@ private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: String]
 private func field(_ r: Response, _ k: String) -> JSONValue? {
     if case .object(let o)? = r.result { return o[k] } else { return nil }
 }
-/// Maestro `M` with an open canvas panel `device-1` on simulator `udid` (corded to it).
-private func maestroWithSim(_ d: Daemon, _ p: Paths, _ udid: String = booted) async throws -> Term {
-    let m = try await term(d, p, "M", maestro: true)
+/// Shepherd `M` with an open canvas panel `device-1` on simulator `udid` (leashed to it).
+private func shepherdWithSim(_ d: Daemon, _ p: Paths, _ udid: String = booted) async throws -> Term {
+    let m = try await term(d, p, "M", shepherd: true)
     let r = try await call(p, m, "panel.open", ["plugin": "device", "serial": udid])
     #expect(r.ok, "\(r)")
     return m
@@ -141,7 +141,7 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
     @Test func iosCommandsMapToTools() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim { d, p in
-            let m = try await maestroWithSim(d, p)
+            let m = try await shepherdWithSim(d, p)
             #expect(try await call(p, m, "device.tap", ["x": "10", "y": "20"]).ok)
             #expect(try await call(p, m, "device.swipe", ["x1": "1", "y1": "2", "x2": "3", "y2": "4", "ms": "500"]).ok)
             #expect(try await call(p, m, "device.key", ["key": "Enter"]).ok)
@@ -177,7 +177,7 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         try "recent line\n".write(to: fx.dir.appendingPathComponent("sim30.log"), atomically: true, encoding: .utf8)
         setenv("COLLIE_FAKE_SIM_LOG30", fx.dir.appendingPathComponent("sim30.log").path, 1); defer { unsetenv("COLLIE_FAKE_SIM_LOG30") }
         try await withSim(logCap: 64) { d, p in
-            let m = try await maestroWithSim(d, p)
+            let m = try await shepherdWithSim(d, p)
             let g = try await call(p, m, "device.logcat")
             #expect(field(g, "text") == .string("recent line") && field(g, "truncated") == .bool(false), "\(g)")
             #expect(fx.xcrun.contains("simctl spawn \(booted) log show --last 30s --style compact"))
@@ -189,7 +189,7 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
     @Test func iosTextPassesLiterally() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim { d, p in
-            let m = try await maestroWithSim(d, p)
+            let m = try await shepherdWithSim(d, p)
             #expect(try await call(p, m, "device.text", ["text": "a; $(x) 'b'"]).ok)
             #expect(try await call(p, m, "device.text", ["text": "olá"]).error?.code == .invalidArgs)
             let raw = (try String(contentsOf: fx.axeLog, encoding: .utf8)).split(separator: "\n").map { $0.split(separator: "\t").map(String.init) }
@@ -203,7 +203,7 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         try "x".write(to: fx.dir.appendingPathComponent("foo.apk"), atomically: true, encoding: .utf8)
         try FileManager.default.createDirectory(at: fx.dir.appendingPathComponent("Foo.app"), withIntermediateDirectories: true)
         try await withSim { d, p in
-            let m = try await maestroWithSim(d, p)
+            let m = try await shepherdWithSim(d, p)
             let k = try await call(p, m, "device.key", ["key": "Back"])
             #expect(k.error?.code == .invalidArgs && k.error?.message
                     == "Key 'Back' has no iOS equivalent (Enter, Escape, Backspace, Tab, Space, arrows, Home, Lock or a HID usage 0-255)")
@@ -221,7 +221,7 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
     @Test func launchEmitsAppLaunchedIOS() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim { d, p in
-            let m = try await maestroWithSim(d, p)
+            let m = try await shepherdWithSim(d, p)
             #expect(try await call(p, m, "device.launch", ["package": "com.example.app"]).ok)
             #expect(fx.xcrun.contains("simctl launch \(booted) com.example.app"))
             let ev = try await call(p, m, "events")
@@ -234,20 +234,20 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
     @Test func missingAXeIsUnavailable() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim(axe: "/nonexistent/axe") { d, p in
-            let m = try await maestroWithSim(d, p)
+            let m = try await shepherdWithSim(d, p)
             let r = try await call(p, m, "device.tap", ["x": "1", "y": "1"])
             #expect(r.error?.code == .unavailable)
             #expect(r.error?.message == "AXe not found. Install it with brew install cameroncooke/axe/axe or set COLLIE_AXE.")
         }
     }
 
-    @Test func canvasSimulatorNeedsCord() async throws {
+    @Test func canvasSimulatorNeedsLeash() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim { d, p in
-            _ = try await maestroWithSim(d, p)
+            _ = try await shepherdWithSim(d, p)
             let w = try await term(d, p, "w")
             #expect(try await call(p, w, "device.tap", ["x": "1", "y": "1", "panel": "device-1"]).error?.code == .notConnected)
-            #expect(try await admin(d, p, "admin.connect", ["a": "w", "b": "device-1"]).ok)
+            #expect(try await admin(d, p, "admin.leash", ["a": "w", "b": "device-1"]).ok)
             let r = try await call(p, w, "device.tap", ["x": "1", "y": "1", "panel": "device-1"])
             #expect(r.ok, "\(r)")
             #expect(fx.axe.contains("tap -x 1 -y 1 --udid \(booted)"))

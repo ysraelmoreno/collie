@@ -14,4 +14,13 @@ import Testing
         #expect(dst.string(forKey: "kept") == "mine")
         #expect(CollieApp.migrateDefaults(from: old, into: dst) == 0)
     }
+
+    @Test func renamesHerdingKeys() {
+        let n = "collie.test.keys.\(UUID().uuidString)", d = UserDefaults(suiteName: n)!
+        defer { d.removePersistentDomain(forName: n) }
+        d.set("/repo", forKey: "floor.repo"); d.set(true, forKey: "new.maestro"); d.set("/mine", forKey: "herd.cwd"); d.set("/old", forKey: "partitura.cwd")
+        CollieApp.renameDefaults(in: d)
+        #expect(d.string(forKey: "paddock.repo") == "/repo" && d.bool(forKey: "new.shepherd"))
+        #expect(d.string(forKey: "herd.cwd") == "/mine")   // a key already set wins
+    }
 }

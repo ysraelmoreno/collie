@@ -167,7 +167,7 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
 
     // MARK: actions
 
-    /// To the selected work's Maestro (or `@nome`); a status question is answered by the registry. Replies come as `work.chat`.
+    /// To the selected work's Shepherd (or `@nome`); a status question is answered by the registry. Replies come as `work.chat`.
     public func send(_ text: String) async {
         var args: [String: JSONValue] = ["text": .string(text)]
         if let selected { args["work"] = .string(selected.uuidString.lowercased()) }

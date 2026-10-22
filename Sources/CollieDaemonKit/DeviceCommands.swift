@@ -3,7 +3,7 @@ import CollieCore
 import CollieProtocol
 
 extension CommandRouter {
-    /// A `device.*` command, run by the daemon. Cords are the only permission: a canvas panel needs one, a docked one
+    /// A `device.*` command, run by the daemon. Leashes are the only permission: a canvas panel needs one, a docked one
     /// is open to all. `device.list` has no panel and answers any authenticated caller: Android devices, then simulators
     /// (adb or simctl failing hides only its own part; both failing and no AVD that is off: adb's error).
     func deviceCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {

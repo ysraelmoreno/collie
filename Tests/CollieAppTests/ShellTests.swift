@@ -35,9 +35,9 @@ private struct Host: View {
 /// Switching Compacta ↔ Completa must not remake the canvas (nor the docked panels around it).
 @MainActor @Test func structureSwitchKeepsContent() {
     let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-shell-\(UUID())")))
-    let ctx = ShellContext(client: client, canvas: CanvasState(), floors: FloorActions(client: client), usage: UsageFeed(),
+    let ctx = ShellContext(client: client, canvas: CanvasState(), paddocks: PaddockActions(client: client), usage: UsageFeed(),
                            usageOpen: .constant(false), newTerminal: {}, openPanel: {}, fit: {}, openPalette: {},
-                           partituras: PartiturasModel(call: { _, _ in .null }, nodeName: { _ in nil }), openPartituras: { _ in })
+                           herds: HerdsModel(call: { _, _ in .null }, nodeName: { _ in nil }), openHerds: { _ in })
     let box = Box(), counter = Counter()
     let host = NSHostingView(rootView: Host(box: box, ctx: ctx, counter: counter))
     host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
@@ -58,8 +58,8 @@ private struct Host: View {
 }
 
 @MainActor @Test func paletteFilter() {
-    let cs = ["Novo terminal", "Ir para o andar api", "Ir para o Térreo"].map { PaletteCommand(id: $0, title: $0, run: {}) }
-    #expect(CommandPalette.filter(cs, "and").map(\.title) == ["Ir para o andar api"])
-    #expect(CommandPalette.filter(cs, "terreo").map(\.title) == ["Ir para o Térreo"])   // diacritics and case ignored
+    let cs = ["Novo terminal", "Ir para o cercado api", "Ações do Pasto"].map { PaletteCommand(id: $0, title: $0, run: {}) }
+    #expect(CommandPalette.filter(cs, "cerc").map(\.title) == ["Ir para o cercado api"])
+    #expect(CommandPalette.filter(cs, "ACOES").map(\.title) == ["Ações do Pasto"])   // diacritics and case ignored
     #expect(CommandPalette.filter(cs, " ").count == 3)
 }

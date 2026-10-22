@@ -14,13 +14,13 @@ actor CommandRouter {
     let hub: StreamHub
     let usage: UsageService
     var ws: Workspace
-    /// Names (lowercased) mid-launch: the launch awaits let a concurrent spawn/recruit of the same name in.
+    /// Names (lowercased) mid-launch: the launch awaits let a concurrent spawn/summon of the same name in.
     var launching: Set<String> = []
-    /// Floor names (lowercased) with a create/land/delete in flight; git awaits let other callers in.
-    var floorBusy: Set<String> = []
-    /// Floors whose delete is in flight: a launch into one that finishes meanwhile is undone (`ensureFloor`).
-    var floorDeleting: Set<UUID> = []
-    /// A design system scope change (`design.system.use`/`undo`, a floor's delete) in flight: one at a time.
+    /// Paddock names (lowercased) with a create/land/delete in flight; git awaits let other callers in.
+    var paddockBusy: Set<String> = []
+    /// Paddocks whose delete is in flight: a launch into one that finishes meanwhile is undone (`ensurePaddock`).
+    var paddockDeleting: Set<UUID> = []
+    /// A design system scope change (`design.system.use`/`undo`, a paddock's delete) in flight: one at a time.
     var designScopeBusy = false
     /// Recent plugin events per panel (ring of `panelEventCap`) and the last sequence number handed out.
     var panelEvents: [UUID: [PanelEvent]] = [:]
@@ -40,8 +40,8 @@ actor CommandRouter {
     nonisolated let work: WorkStore
     /// The work chat of this workspace (`<root>/work/work-chat-<workspace>.jsonl`).
     nonisolated let chat: ChatLog
-    /// Saved partituras (`<root>/partituras`).
-    nonisolated let partituras: PartituraStore
+    /// Saved herds (`<root>/herds`).
+    nonisolated let herds: HerdStore
     /// The on-device model's rewrites of work summaries.
     nonisolated let assistant: WorkAssistant
     var jobSweeper: Task<Void, Never>?
@@ -55,14 +55,14 @@ actor CommandRouter {
     var summaryDecisions: [String] = []  // what keepSummary decided each time (empty|no-repo|saved|failed), for tests
     /// An `admin.data.export` in flight: one at a time.
     var exportBusy = false
-    /// Maestros whose rerail of themselves is queued: one at a time.
+    /// Shepherds whose rerail of themselves is queued: one at a time.
     var selfRerails: Set<UUID> = []
     /// The user's interactive-shell environment, for agent launches.
     nonisolated let userEnv: UserEnvironment
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
     var importingArtifacts: Set<UUID> = []
-    /// A `partitura.apply` in flight: one at a time, the next waits.
-    var applyingPartitura = false
+    /// A `herd.apply` in flight: one at a time, the next waits.
+    var applyingHerd = false
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
     init(config: DaemonConfig, auth: AuthRegistry, registry: TerminalRegistry, store: WorkspaceStore,
@@ -92,7 +92,7 @@ actor CommandRouter {
         let workDir = config.paths.root.appendingPathComponent("work")
         self.work = WorkStore(dir: workDir) { id in Task { await me.router?.workChanged(id) } }
         self.chat = ChatLog(dir: workDir, name: "work-chat-\(config.workspaceId.uuidString.lowercased())")
-        self.partituras = PartituraStore(dir: config.paths.root.appendingPathComponent("partituras"))
+        self.herds = HerdStore(dir: config.paths.root.appendingPathComponent("herds"))
         self.assistant = WorkAssistant(model: config.localModel)
         me.router = self
         let approvals = asks.approvalEvents
@@ -144,7 +144,7 @@ actor CommandRouter {
             let running = await registry.process(t.id)?.isRunning == true
             badges[t.id.uuidString] = running ? live[t.id] : .stopped
         }
-        let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, floors: ws.floors, panels: ws.panels, build: config.build)
+        let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, paddocks: ws.paddocks, panels: ws.panels, build: config.build)
         return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(snap))
     }
 
@@ -179,10 +179,10 @@ actor CommandRouter {
                 try await adminOnly(req, peer: peer)
                 return Response(id: req.id, ok: true, result: try await admin(req))
             }
-            if req.command.hasPrefix("floor.") {   // admin or terminal principal; rules per command
-                return Response(id: req.id, ok: true, result: try await floorCommand(req, peer: peer))
+            if req.command.hasPrefix("paddock.") {   // admin or terminal principal; rules per command
+                return Response(id: req.id, ok: true, result: try await paddockCommand(req, peer: peer))
             }
-            if req.command.hasPrefix("panel.") || req.command == "events" {   // same principal rules as floor.*
+            if req.command.hasPrefix("panel.") || req.command == "events" {   // same principal rules as paddock.*
                 return Response(id: req.id, ok: true, result: try await panelCommand(req, peer: peer))
             }
             if req.command.hasPrefix("memory.") {   // admin or terminal; admin-only ones checked in memoryCommand
@@ -195,8 +195,8 @@ actor CommandRouter {
             if req.command.hasPrefix("work."), req.command != "work.hook" {   // admin or terminal; reach rules in workCommand
                 return Response(id: req.id, ok: true, result: try await workCommand(req, peer: peer))
             }
-            if req.command.hasPrefix("partitura.") {   // admin or Maestro; app-only ones checked in partituraCommand
-                return Response(id: req.id, ok: true, result: try await partituraCommand(req, peer: peer))
+            if req.command.hasPrefix("herd.") {   // admin or Shepherd; app-only ones checked in herdCommand
+                return Response(id: req.id, ok: true, result: try await herdCommand(req, peer: peer))
             }
             if let (plugin, spec) = PluginRegistry.command(req.command) {   // admin or terminal; reach rules in resolvePanel
                 let result = plugin.id == "design" ? try await designCommand(req, peer: peer)
@@ -235,10 +235,10 @@ actor CommandRouter {
                 await workHook(req, from: tid)
                 return Response(id: req.id, ok: true, result: .object([:]))
             default:
-                guard Commands.spec(req.command)?.maestroOnly == true else {
+                guard Commands.spec(req.command)?.shepherdOnly == true else {
                     throw ProtocolError(code: .internal, message: "'\(req.command)' not implemented yet")
                 }
-                return Response(id: req.id, ok: true, result: try await maestro(req, from: tid))
+                return Response(id: req.id, ok: true, result: try await shepherd(req, from: tid))
             }
         } catch let e as ProtocolError {
             return Response(id: req.id, ok: false, error: e)
@@ -252,7 +252,7 @@ actor CommandRouter {
         for t in ConnectionGraph.reachable(from: id, in: ws) {
             let running = await registry.process(t.id)?.isRunning ?? false
             out.append(.object(["name": .string(t.name), "preset": .string(t.preset.rawValue),
-                                "running": .bool(running), "isMaestro": .bool(t.isMaestro)]))
+                                "running": .bool(running), "isShepherd": .bool(t.isShepherd)]))
         }
         return .array(out)
     }
@@ -322,8 +322,8 @@ actor CommandRouter {
             guard let preset = Preset(rawValue: try need("preset")) else {
                 throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
             }
-            var fl: Floor?
-            if let f = str(r, "floor") { fl = try findFloor(f) }
+            var fl: Paddock?
+            if let f = str(r, "paddock") { fl = try findPaddock(f) }
             // same name: a dead record is relaunched in place (keeps id + connections); a live one is refused
             let old = try lookup(name)
             if let old {
@@ -333,10 +333,10 @@ actor CommandRouter {
                 await discard(old.id)
             }
             let rec = TerminalRecord(id: old?.id ?? UUID(), name: name, preset: preset, command: str(r, "command"),
-                                     cwd: str(r, "cwd") ?? fl?.path ?? r.cwd ?? NSHomeDirectory(), isMaestro: flag(r, "maestro"),
-                                     floorId: fl?.id)
+                                     cwd: str(r, "cwd") ?? fl?.path ?? r.cwd ?? NSHomeDirectory(), isShepherd: flag(r, "shepherd"),
+                                     paddockId: fl?.id)
             let result = try await launch(rec)
-            try await ensureFloor(of: rec)
+            try await ensurePaddock(of: rec)
             return .object(result)
         case "admin.restart":
             let t = try find(try need("name"))
@@ -361,12 +361,12 @@ actor CommandRouter {
                 }
                 t.name = n
             }
-            switch r.args["maestro"] {
+            switch r.args["shepherd"] {
             case nil: break
-            case .bool(let b)?: t.isMaestro = b
-            case .string("true")?: t.isMaestro = true
-            case .string("false")?: t.isMaestro = false
-            default: throw ProtocolError(code: .invalidArgs, message: "maestro must be true or false")
+            case .bool(let b)?: t.isShepherd = b
+            case .string("true")?: t.isShepherd = true
+            case .string("false")?: t.isShepherd = false
+            default: throw ProtocolError(code: .invalidArgs, message: "shepherd must be true or false")
             }
             if let ps = str(r, "preset") {
                 guard let preset = Preset(rawValue: ps) else {
@@ -376,8 +376,8 @@ actor CommandRouter {
             }
             if let c = str(r, "command") { t.command = c.isEmpty ? nil : c }   // ponytail: empty clears
             if let c = str(r, "cwd") {
-                guard t.floorId == nil else {
-                    throw ProtocolError(code: .invalidArgs, message: "cwd of a floor terminal follows its floor")
+                guard t.paddockId == nil else {
+                    throw ProtocolError(code: .invalidArgs, message: "cwd of a paddock terminal follows its paddock")
                 }
                 t.cwd = c
             }
@@ -395,19 +395,19 @@ actor CommandRouter {
                 throw error
             }
             await hub.emit(.terminal(t))
-            let needed = running && (t.isMaestro != old.isMaestro || t.preset != old.preset || t.command != old.command || t.cwd != old.cwd)
+            let needed = running && (t.isShepherd != old.isShepherd || t.preset != old.preset || t.command != old.command || t.cwd != old.cwd)
             let again = flag(r, "restart")
             // restart fails pending asks (relaunch discards the old process); if relaunch throws, the saved edit stays applied
             if again { _ = try await relaunch(t) }
             return .object(["id": .string(id.uuidString), "name": .string(t.name),
                             "restartNeeded": .bool(needed && !again), "restarted": .bool(again)])
-        case "admin.disconnect":
-            if let (t, p) = try panelPair(r, terminal: find, panel: findPanel) { try await uncord(t, p); return .object([:]) }
-            try await uncord(try find(try need("a")), try find(try need("b")))
+        case "admin.unleash":
+            if let (t, p) = try panelPair(r, terminal: find, panel: findPanel) { try await unleash(t, p); return .object([:]) }
+            try await unleash(try find(try need("a")), try find(try need("b")))
             return .object([:])
-        case "admin.connect":
-            if let (t, p) = try panelPair(r, terminal: find, panel: findPanel) { try await cord(t, p); return .object([:]) }
-            try await cord(try find(try need("a")), try find(try need("b")))
+        case "admin.leash":
+            if let (t, p) = try panelPair(r, terminal: find, panel: findPanel) { try await leash(t, p); return .object([:]) }
+            try await leash(try find(try need("a")), try find(try need("b")))
             return .object([:])
         case "admin.kill":
             let name = try need("target")
@@ -437,27 +437,27 @@ actor CommandRouter {
         }
     }
 
-    /// Relaunches `t` in place (same id, so cords and asks keep pointing at it). The caller holds the name reservation.
+    /// Relaunches `t` in place (same id, so leashes and asks keep pointing at it). The caller holds the name reservation.
     func relaunch(_ t: TerminalRecord) async throws -> [String: JSONValue] {
         var t = t
-        if let fid = t.floorId {
-            if floorDeleting.contains(fid) { throw ProtocolError(code: .invalidArgs, message: "floor of '\(t.name)' is being deleted") }
-            if !ws.floors.contains(where: { $0.id == fid }) {   // floor gone: back to the ground, never into a missing dir
-                t.floorId = nil
+        if let fid = t.paddockId {
+            if paddockDeleting.contains(fid) { throw ProtocolError(code: .invalidArgs, message: "paddock of '\(t.name)' is being deleted") }
+            if !ws.paddocks.contains(where: { $0.id == fid }) {   // paddock gone: back to the pasture, never into a missing dir
+                t.paddockId = nil
                 if !FileManager.default.fileExists(atPath: t.cwd) {
-                    let ground = LegacyOrq.ground(ofFloorPath: t.cwd)
-                    t.cwd = ground.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil } ?? NSHomeDirectory()
+                    let pasture = LegacyOrq.pasture(ofPaddockPath: t.cwd)
+                    t.cwd = pasture.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil } ?? NSHomeDirectory()
                 }
             }
         }
         await discard(t.id)
         let result = try await launch(t)
-        try await ensureFloor(of: t)
+        try await ensurePaddock(of: t)
         return result
     }
 
-    /// Cords `a`–`b` (idempotent), persists, emits `.connected`.
-    func cord(_ a: TerminalRecord, _ b: TerminalRecord) async throws {
+    /// Leashes `a`–`b` (idempotent), persists, emits `.connected`.
+    func leash(_ a: TerminalRecord, _ b: TerminalRecord) async throws {
         guard a.id != b.id else { throw ProtocolError(code: .invalidArgs, message: "cannot connect '\(a.name)' to itself") }
         for t in [a, b] where !ws.terminals.contains(where: { $0.id == t.id }) {   // removed during a caller's awaits
             throw ProtocolError(code: .notFound, message: "Terminal '\(t.name)' not found")
@@ -465,7 +465,7 @@ actor CommandRouter {
         try await link(a.id, b.id)
     }
 
-    /// Idempotent cord between two ids; persists, emits `.connected`.
+    /// Idempotent leash between two ids; persists, emits `.connected`.
     func link(_ a: UUID, _ b: UUID) async throws {
         guard !ws.connections.contains(where: { Set([$0.a, $0.b]) == Set([a, b]) }) else { return }
         let c = Connection(a: a, b: b)
@@ -474,8 +474,8 @@ actor CommandRouter {
         await hub.emit(.connected(c))
     }
 
-    /// Removes the `a`–`b` cord if any, persists, emits `.disconnected`.
-    func uncord(_ a: TerminalRecord, _ b: TerminalRecord) async throws { try await unlink(a.id, b.id) }
+    /// Removes the `a`–`b` leash if any, persists, emits `.disconnected`.
+    func unleash(_ a: TerminalRecord, _ b: TerminalRecord) async throws { try await unlink(a.id, b.id) }
 
     func unlink(_ a: UUID, _ b: UUID) async throws {
         let gone = ws.connections.filter { Set([$0.a, $0.b]) == Set([a, b]) }
@@ -485,7 +485,7 @@ actor CommandRouter {
         for c in gone { await hub.emit(.disconnected(c)) }
     }
 
-    /// Kills `t` and forgets its record and cords; emits `.disconnected` per cord, then `.removed`.
+    /// Kills `t` and forgets its record and leashes; emits `.disconnected` per leash, then `.removed`.
     func remove(_ t: TerminalRecord) async throws {
         await discard(t.id)
         ws.terminals.removeAll { $0.id == t.id }
@@ -505,9 +505,9 @@ actor CommandRouter {
         if existed, !ws.terminals.contains(where: { $0.id == rec.id }) {
             throw ProtocolError(code: .notFound, message: "Terminal '\(rec.name)' not found")
         }
-        // its floor deleted meanwhile: ensureFloor would remove the record and its cords, so keep it
-        if existed, let fid = rec.floorId, floorDeleting.contains(fid) || !ws.floors.contains(where: { $0.id == fid }) {
-            throw ProtocolError(code: .invalidArgs, message: "floor of '\(rec.name)' is being deleted")
+        // its paddock deleted meanwhile: ensurePaddock would remove the record and its leashes, so keep it
+        if existed, let fid = rec.paddockId, paddockDeleting.contains(fid) || !ws.paddocks.contains(where: { $0.id == fid }) {
+            throw ProtocolError(code: .invalidArgs, message: "paddock of '\(rec.name)' is being deleted")
         }
         await memory.endSession(rec.id)   // a new process is a new session: memories may be injected again
         let token = await auth.issue(for: rec.id)
@@ -554,9 +554,9 @@ actor CommandRouter {
         ]
         for k in ["HOME", "USER", "LANG"] + UserEnvironment.inherited { if let v = env[k] { e[k] = v } }
         e["SHELL"] = config.shell
-        if rec.isMaestro { e["COLLIE_MAESTRO"] = "1" }   // only unlocks the MCP tool list; the daemon checks isMaestro
-        if let f = ws.floors.first(where: { $0.id == rec.floorId }) {
-            e["COLLIE_FLOOR_NAME"] = f.name; e["COLLIE_FLOOR_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.branch
+        if rec.isShepherd { e["COLLIE_SHEPHERD"] = "1" }   // only unlocks the MCP tool list; the daemon checks isShepherd
+        if let f = ws.paddocks.first(where: { $0.id == rec.paddockId }) {
+            e["COLLIE_PADDOCK_NAME"] = f.name; e["COLLIE_PADDOCK_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.branch
         }
         e = UserEnvironment.merge(user: user, collie: e, collieBin: config.collieExecutable.deletingLastPathComponent().path)
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,

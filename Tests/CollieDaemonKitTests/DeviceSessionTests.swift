@@ -279,7 +279,7 @@ extension DeviceCommandTests { @Suite struct DeviceSessionTests {
             let closed = ContinuousClock.now
             #expect(fx.servers.allSatisfy { !dead($0) })
             #expect(await waitFor(3) { fx.servers.allSatisfy(dead) })
-            // waitFor floors at 20 s, so tell the injected 300 ms grace from the 5 s production default explicitly
+            // waitFor paddocks at 20 s, so tell the injected 300 ms grace from the 5 s production default explicitly
             #expect(ContinuousClock.now - closed < .seconds(4))
             #expect(await waitFor(3) { fx.lines.contains("-s emulator-5554 forward --remove tcp:\(srv.port)") })
         }

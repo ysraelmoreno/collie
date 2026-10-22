@@ -34,8 +34,8 @@ private func populate(_ root: URL, _ tag: String, workspace: UUID = UUID()) {
     put(root, "workspaces/\(workspace.uuidString)/terminals/spill.log", "scrollback")
     put(root, "work/work.json", tag)
     put(root, "work/work-archive.jsonl", tag)
-    put(root, "partituras/\(tag).colliepartitura", tag)
-    put(root, "partituras/.removed/old-1.colliepartitura", tag)
+    put(root, "herds/\(tag).collieherd", tag)
+    put(root, "herds/.removed/old-1.collieherd", tag)
     put(root, "default-workspace", workspace.uuidString)
     for p in ["admin.token", "run/collied.sock.x", "hooks/x.claude.json", "cache/c", "usage/providers/p.json", "screens/s.png"] { put(root, p, "machine") }
 }
@@ -73,7 +73,7 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         let n = Set(try await names(out))
         for p in ["manifest.json", "design/files.json", "design/systems.json", "design/server/data.db", "artifacts/artifacts.json",
                   "artifacts/.removed/old/index.html", "memory/A.md", "workspaces/\(ws.uuidString)/workspace.json",
-                  "work/work.json", "work/work-archive.jsonl", "partituras/A.colliepartitura", "partituras/.removed/old-1.colliepartitura"] {
+                  "work/work.json", "work/work-archive.jsonl", "herds/A.collieherd", "herds/.removed/old-1.collieherd"] {
             #expect(n.contains(p), "\(p) missing: \(n.sorted())")
         }
         for bad in ["admin.token", "default-workspace", "run/", "hooks/", "cache/", "usage/", "screens/", "/terminals/", ".backup-"] {
@@ -85,7 +85,7 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         try await ditto(["-x", "-k", out.path, x.path], in: x)
         let m = try JSONSerialization.jsonObject(with: Data(contentsOf: x.appendingPathComponent("manifest.json"))) as? [String: Any]
         #expect(m?["format"] as? Int == 1 && m?["collieVersion"] as? String == "v-test" && m?["createdAt"] is String)
-        #expect(Set(m?["parts"] as? [String] ?? []) == ["design", "artifacts", "memory", "workspaces", "work", "partituras"])
+        #expect(Set(m?["parts"] as? [String] ?? []) == ["design", "artifacts", "memory", "workspaces", "work", "herds"])
         #expect(m?["workspace"] as? String == ws.uuidString)
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).allSatisfy { !$0.hasPrefix(".backup-") })
     }
@@ -105,8 +105,8 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         #expect(read(a, "memory/B.md") == "B" && !exists(a, "memory/A.md"))
         #expect(read(a, "design/server/data.db") == "B" && read(a, "work/work.json") == "B")
         #expect(read(a, "workspaces/\(wb.uuidString)/workspace.json") == "B")
-        #expect(read(a, "partituras/B.colliepartitura") == "B" && !exists(a, "partituras/A.colliepartitura"))
-        #expect(read(a, "partituras/.removed/old-1.colliepartitura") == "B")
+        #expect(read(a, "herds/B.collieherd") == "B" && !exists(a, "herds/A.collieherd"))
+        #expect(read(a, "herds/.removed/old-1.collieherd") == "B")
         #expect(read(a, "default-workspace") == wb.uuidString)
         #expect(read(a, "admin.token") == "machine" && read(a, "usage/providers/p.json") == "machine")
         #expect(!exists(a, ".import-pending"))
@@ -114,7 +114,7 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         #expect(read(a, "\(old)/memory/A.md") == "A" && read(a, "\(old)/design/files.json")?.contains("\"A\"") == true)
         #expect(read(a, "\(old)/workspaces/\(wa.uuidString)/workspace.json") == "A")
         #expect(read(a, "\(old)/default-workspace") == wa.uuidString)
-        #expect(read(a, "\(old)/partituras/A.colliepartitura") == "A")
+        #expect(read(a, "\(old)/herds/A.collieherd") == "A")
         #expect(!DataBackup.applyPending(Paths(root: a)))   // nothing pending any more
     }
 

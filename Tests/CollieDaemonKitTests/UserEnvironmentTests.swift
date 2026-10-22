@@ -215,7 +215,7 @@ import CollieProtocol
         return (try Daemon(config: c), paths)
     }
     func rec(_ p: Preset, _ c: String? = nil) -> TerminalRecord {
-        TerminalRecord(id: UUID(), name: "A", preset: p, command: c, cwd: "/tmp", isMaestro: false)
+        TerminalRecord(id: UUID(), name: "A", preset: p, command: c, cwd: "/tmp", isShepherd: false)
     }
     @Test func claudeLaunchUsesUserPath() async throws {
         let (d, p) = try daemon(["PATH=/nvm/bin:/usr/bin", "NVM_DIR=/nvm", "TERM=screen"])
@@ -278,13 +278,13 @@ import CollieProtocol
             #expect(await d.process(uid) == nil)
         }
     }
-    @Test func relaunchWhoseFloorVanishedDuringCaptureKeepsRecord() async throws {
+    @Test func relaunchWhosePaddockVanishedDuringCaptureKeepsRecord() async throws {
         try await withDaemon(configure: { $0.captureUserEnv = true; $0.envRunner = { _, _, _, _ in UserEnvironmentTests.output(["PATH=/a"]) } }) { d, p in
             let (id, r0) = try await spawn(d, p, "T", preset: "shell", command: "exit 0")
             try #require(r0.ok)
             let uid = try #require(UUID(uuidString: id))
             var rec = try #require(await d.router.ws.terminals.first { $0.id == uid })
-            rec.preset = .custom; rec.floorId = UUID()   // a floor that is gone
+            rec.preset = .custom; rec.paddockId = UUID()   // a paddock that is gone
             await #expect(throws: ProtocolError.self) { _ = try await d.router.launch(rec) }
             #expect(await d.router.ws.terminals.map(\.id) == [uid])
         }

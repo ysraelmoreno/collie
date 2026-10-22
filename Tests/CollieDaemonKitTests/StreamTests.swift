@@ -81,7 +81,7 @@ private func spawnWaiting(_ d: Daemon, _ p: Paths, _ name: String, command: Stri
             defer { ev.close() }
             let b = try await spawn(d, p, "B")
             let bid = try #require(UUID(uuidString: b.id))
-            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect",
+            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash",
                                               args: ["a": .string("A"), "b": .string("B")])).ok)
             #expect(try await send(p, Request(id: "k", token: d.adminToken, command: "admin.kill",
                                               args: ["target": .string("B")])).ok)
@@ -197,7 +197,7 @@ private func spawnWaiting(_ d: Daemon, _ p: Paths, _ name: String, command: Stri
             let bid = try #require(UUID(uuidString: b.id))
             let tokA = try await tokenOf(d, a.id)
             #expect(await waitFor(10) { await d.scrollbackText(bid).contains("T=") })
-            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect",
+            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash",
                                               args: ["a": .string("A"), "b": .string("B")])).ok)
             let asking = Task { try await send(p, Request(id: "q", terminalId: a.id, token: tokA, command: "ask",
                                                           args: ["target": .string("B"), "prompt": .string("go on? (y/n)"), "timeout": .number(4)])) }

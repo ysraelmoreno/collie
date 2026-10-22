@@ -17,8 +17,8 @@ struct CanvasView: NSViewRepresentable {
     var onNewTerminal: (CGPoint) -> Void = { _ in }
     var onOpenPanel: (CGPoint) -> Void = { _ in }
     var onEdit: (UUID) -> Void = { _ in }
-    var onApplyPartitura: (CGPoint) -> Void = { _ in }
-    var onSavePartitura: () -> Void = {}
+    var onApplyHerd: (CGPoint) -> Void = { _ in }
+    var onSaveHerd: () -> Void = {}
     func makeNSView(context: Context) -> CanvasViewport {
         let v = CanvasViewport(client: client, canvas: canvas, root: root, store: store)
         updateNSView(v, context: context)
@@ -26,7 +26,7 @@ struct CanvasView: NSViewRepresentable {
     }
     func updateNSView(_ v: CanvasViewport, context: Context) {
         v.onNewTerminal = onNewTerminal; v.onOpenPanel = onOpenPanel; v.onEdit = onEdit
-        v.onApplyPartitura = onApplyPartitura; v.onSavePartitura = onSavePartitura
+        v.onApplyHerd = onApplyHerd; v.onSaveHerd = onSaveHerd
     }
     static func dismantleNSView(_ v: CanvasViewport, coordinator: ()) { v.teardown() }
 }
@@ -46,10 +46,10 @@ struct CanvasView: NSViewRepresentable {
     var onNewTerminal: (CGPoint) -> Void = { _ in }
     var onOpenPanel: (CGPoint) -> Void = { _ in }
     var onEdit: (UUID) -> Void = { _ in }
-    var onApplyPartitura: (CGPoint) -> Void = { _ in }
-    var onSavePartitura: () -> Void = {}
+    var onApplyHerd: (CGPoint) -> Void = { _ in }
+    var onSaveHerd: () -> Void = {}
     private let minimap: Minimap
-    private let cords: CordLayer
+    private let leashes: LeashLayer
     private var spaceDown = false
     private var scrollMonitor: Any?
     private var lastVisible: Set<UUID> = []
@@ -67,10 +67,10 @@ struct CanvasView: NSViewRepresentable {
     init(client: DaemonClient, canvas: CanvasState, root: URL, store: PanelViewStore) {
         self.client = client; self.canvas = canvas; self.root = root; self.store = store
         minimap = Minimap(canvas: canvas)
-        cords = CordLayer(client: client, canvas: canvas)
+        leashes = LeashLayer(client: client, canvas: canvas)
         super.init(frame: .zero)
         wantsLayer = true   // background and grid are drawn in draw(_:), so the dynamic tokens follow the theme
-        addSubview(cords)   // below the nodes (they are inserted under the minimap, above this)
+        addSubview(leashes)   // below the nodes (they are inserted under the minimap, above this)
         addSubview(minimap)
         observe()
         // The terminal's scrollWheel is not overridable: route scrolls here unless the terminal under the cursor has focus.
@@ -112,7 +112,7 @@ struct CanvasView: NSViewRepresentable {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        cords.frame = CGRect(origin: .zero, size: newSize)
+        leashes.frame = CGRect(origin: .zero, size: newSize)
         minimap.frame = CGRect(x: newSize.width - 180 - 12, y: newSize.height - 120 - 12, width: 180, height: 120)
         sync()
     }
@@ -136,10 +136,10 @@ struct CanvasView: NSViewRepresentable {
         guard !tornDown else { return }
         guard layoutLoaded else { loadLayoutOnce(); return }
         let size = bounds.size
-        let ids = visibleTerminals(client.terminals, floor: client.currentFloor).map(\.id)   // this floor only
-        let panelIds = visiblePanels(client.panels, floor: client.currentFloor).filter { $0.placement == .canvas }.map(\.id)
+        let ids = visibleTerminals(client.terminals, paddock: client.currentPaddock).map(\.id)   // this paddock only
+        let panelIds = visiblePanels(client.panels, paddock: client.currentPaddock).filter { $0.placement == .canvas }.map(\.id)
         if client.state == .connected {
-            // frames of other floors (and of docked panels, kept for when they return to the canvas) stay
+            // frames of other paddocks (and of docked panels, kept for when they return to the canvas) stay
             let live = Set(client.terminals.map(\.id)).union(client.panels.map(\.id))
             for id in canvas.frames.keys where !live.contains(id) { canvas.frames[id] = nil }
         }
@@ -163,7 +163,7 @@ struct CanvasView: NSViewRepresentable {
             let v = views[id] ?? {
                 let v = TerminalNodeView(id: id, client: client, canvas: canvas, node: node)
                 addSubview(v, positioned: .below, relativeTo: minimap)
-                v.onCordDrag = { [weak self] id, p, done in self?.cordDrag(id, p, done) }
+                v.onLeashDrag = { [weak self] id, p, done in self?.leashDrag(id, p, done) }
                 v.onEdit = { [weak self] id in self?.onEdit(id) }
                 views[id] = v
                 return v
@@ -179,7 +179,7 @@ struct CanvasView: NSViewRepresentable {
             let v = panelViews[id] ?? {
                 let v = PanelNodeView(id: id, client: client, canvas: canvas, store: store)
                 addSubview(v, positioned: .below, relativeTo: minimap)
-                v.onCordDrag = { [weak self] id, p, done in self?.cordDrag(id, p, done) }
+                v.onLeashDrag = { [weak self] id, p, done in self?.leashDrag(id, p, done) }
                 panelViews[id] = v
                 return v
             }()
@@ -189,7 +189,7 @@ struct CanvasView: NSViewRepresentable {
         if (canvas.offset, zoom) != lastGrid { lastGrid = (canvas.offset, zoom); needsDisplay = true }
         minimap.viewport = size
         minimap.needsDisplay = true
-        cords.update()
+        leashes.update()
         scheduleSave()
     }
 
@@ -222,18 +222,18 @@ struct CanvasView: NSViewRepresentable {
         ctx.fill(dots)   // one call for the whole grid
     }
 
-    // MARK: cords
+    // MARK: leashes
 
     /// Dragging from node `id`'s handle: a dashed line follows the mouse; releasing over another node connects them.
-    private func cordDrag(_ id: UUID, _ windowPoint: CGPoint, _ done: Bool) {
+    private func leashDrag(_ id: UUID, _ windowPoint: CGPoint, _ done: Bool) {
         let p = convert(windowPoint, from: nil)
         guard let f = canvas.frames[id] else { return }
         let o = canvas.toScreen(f.origin)
-        cords.pending = done ? nil : (CGPoint(x: o.x + f.width * canvas.zoom, y: o.y + f.height * canvas.zoom / 2), p)
+        leashes.pending = done ? nil : (CGPoint(x: o.x + f.width * canvas.zoom, y: o.y + f.height * canvas.zoom / 2), p)
         let frames = views.mapValues(\.frame).merging(panelViews.mapValues(\.frame)) { a, _ in a }
         guard done, let other = frames.first(where: { $0.key != id && $0.value.contains(p) })?.key,
               let a = client.nodeName(id), let b = client.nodeName(other) else { return }
-        Task { do { try await client.connect(a, b) } catch { Log.canvas.error("connect \(a)-\(b): \(error)") } }
+        Task { do { try await client.leash(a, b) } catch { Log.canvas.error("leash \(a)-\(b): \(error)") } }
     }
 
     // MARK: layout.json
@@ -362,9 +362,9 @@ struct CanvasView: NSViewRepresentable {
         let m = NSMenu()
         m.addItem(ActionItem("Novo terminal aqui…") { [weak self] in self?.onNewTerminal(at) })
         m.addItem(ActionItem("Abrir painel aqui…") { [weak self] in self?.onOpenPanel(at) })
-        m.addItem(ActionItem("Aplicar partitura aqui…") { [weak self] in self?.onApplyPartitura(at) })
-        m.addItem(ActionItem(canvas.selection.isEmpty ? "Salvar canvas como partitura…" : "Salvar seleção como partitura…") { [weak self] in
-            self?.onSavePartitura()
+        m.addItem(ActionItem("Aplicar rebanho aqui…") { [weak self] in self?.onApplyHerd(at) })
+        m.addItem(ActionItem(canvas.selection.isEmpty ? "Salvar canvas como rebanho…" : "Salvar seleção como rebanho…") { [weak self] in
+            self?.onSaveHerd()
         })
         m.addItem(.separator())
         m.addItem(ActionItem("Ajustar à tela") { [weak self] in

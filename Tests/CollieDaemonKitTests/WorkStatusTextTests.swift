@@ -42,7 +42,7 @@ import CollieCore
         let w = Work(title: "Cache", terminalId: term, tasks: [t(.done, 1), t(.done, 2), t(.done, 3), t(.inProgress, 1), t(.open, 1), t(.open, 2), t(.deferred, 1)])
         let s = WorkStatusText.answer(.whereAreWe, works: [w], names: [term: "Claude 1"], badges: [:], now: now)
         #expect(s.contains("3 feitas · 1 em andamento · 2 abertas · 1 para depois"))
-        #expect(s.contains("tarefa inProgress1") && s.contains("**Cache**") && s.contains("térreo"))
+        #expect(s.contains("tarefa inProgress1") && s.contains("**Cache**") && s.contains("pasto"))
     }
 
     @Test func stuckListsGoneUnknownAttention() {

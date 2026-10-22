@@ -17,10 +17,10 @@ private actor Fake {
         calls.append((cmd, a))
         let outcome: JSONValue = .object(["file": .string("Home"), "ok": .bool(false), "detail": .string("1 sem par"), "unmatched": .array([.string("color/brand")])])
         switch cmd {
-        case "floor.list": return .array([.object(["name": .string("f1")])])
+        case "paddock.list": return .array([.object(["name": .string("f1")])])
         case "design.system.list":
             if listFails { throw ProtocolError(code: .internal, message: "boom") }
-            return .array([.object(["name": .string("Acme"), "version": .number(2), "active": .array([.string("workspace"), .string("floor:f1")])]),
+            return .array([.object(["name": .string("Acme"), "version": .number(2), "active": .array([.string("workspace"), .string("paddock:f1")])]),
                            .object(["name": .string("Beta"), "version": .number(1), "active": .array([]), "reverted": .number(1)])])
         case "design.system.history":
             if a["name"] == .string("Acme"), slowAcme { try? await Task.sleep(for: .milliseconds(150)) }
@@ -52,8 +52,8 @@ private actor Fake {
         let (m, _) = make()
         await m.load()
         #expect(m.systems.map(\.name) == ["Acme", "Beta"])
-        #expect(m.systems[0].active == ["workspace", "floor:f1"] && m.systems[0].version == 2)
-        #expect(m.scopes == ["workspace", "floor:f1"])
+        #expect(m.systems[0].active == ["workspace", "paddock:f1"] && m.systems[0].version == 2)
+        #expect(m.scopes == ["workspace", "paddock:f1"])
         #expect(m.systems[1].reverted == 1)
         #expect(m.selected == "Acme")
     }
@@ -68,16 +68,16 @@ private actor Fake {
         #expect(m.canWrite)
         await m.use()
         var a = await f.last("design.system.use")
-        #expect(a?["name"] == .string("Acme") && a?["reason"] == .string("marca nova") && a?["floor"] == nil)
-        m.scope = "floor:f1"
+        #expect(a?["name"] == .string("Acme") && a?["reason"] == .string("marca nova") && a?["paddock"] == nil)
+        m.scope = "paddock:f1"
         #expect(m.reason.isEmpty)   // cleared after a successful write
         m.reason = "de novo"
         await m.use()
         a = await f.last("design.system.use")
-        #expect(a?["floor"] == .string("f1"))
+        #expect(a?["paddock"] == .string("f1"))
         m.reason = "desfazer"
         await m.undo()
-        #expect((await f.last("design.system.undo"))?["floor"] == .string("f1"))
+        #expect((await f.last("design.system.undo"))?["paddock"] == .string("f1"))
         m.reason = "limpar"
         await m.clear()
         #expect((await f.last("design.system.use"))?["none"] == .bool(true))
@@ -102,7 +102,7 @@ private actor Fake {
         #expect(row("created", 1, nil).canRevert && row("published", 2, nil).canRevert && row("reverted", 3, nil).canRevert)
         #expect(!row("activated", 2, "workspace").canRevert && !row("undone", 2, "workspace").canRevert)
         // an undo logged before `undone` existed: `reverted` with a scope
-        #expect(!row("reverted", 2, "floor:f1").canRevert && row("reverted", 2, "floor:f1").isUndo)
+        #expect(!row("reverted", 2, "paddock:f1").canRevert && row("reverted", 2, "paddock:f1").isUndo)
         #expect(row("undone", 2, "workspace").label == "desfeito" && row("reverted", 3, nil).label == "revertido")
     }
 

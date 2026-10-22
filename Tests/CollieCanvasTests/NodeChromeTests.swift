@@ -11,9 +11,9 @@ import CollieCanvas
     #expect(NodeStatus(badge: .working, exitCode: 2).text == "encerrado (código 2)")   // the exit frame wins
 }
 
-@Test func cordStylePerKind() {
-    #expect(CordStyle(toPanel: false, selected: false) == CordStyle(width: 2, dash: [], toPanel: false))
-    #expect(CordStyle(toPanel: true, selected: false) == CordStyle(width: 2, dash: [2, 6], toPanel: true))
-    #expect(CordStyle(toPanel: true, selected: true).width == 3)
-    #expect(CordStyle(toPanel: false, selected: true).width == 3)
+@Test func leashStylePerKind() {
+    #expect(LeashStyle(toPanel: false, selected: false) == LeashStyle(width: 2, dash: [], toPanel: false))
+    #expect(LeashStyle(toPanel: true, selected: false) == LeashStyle(width: 2, dash: [2, 6], toPanel: true))
+    #expect(LeashStyle(toPanel: true, selected: true).width == 3)
+    #expect(LeashStyle(toPanel: false, selected: true).width == 3)
 }

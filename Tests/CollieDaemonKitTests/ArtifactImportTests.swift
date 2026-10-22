@@ -68,9 +68,9 @@ private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: String]
     try await UnixSocketClient.send(Request(id: "m", terminalId: t.id, token: t.token, command: cmd, args: args.mapValues { .string($0) }, cwd: cwd),
                                     to: p.socket, timeoutSeconds: 120)
 }
-private func term(_ d: Daemon, _ p: Paths, _ name: String, floor: String? = nil, maestro: Bool = false) async throws -> Term {
-    var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "maestro": .bool(maestro)]
-    if let floor { args["floor"] = .string(floor) } else { args["cwd"] = .string("/tmp") }
+private func term(_ d: Daemon, _ p: Paths, _ name: String, paddock: String? = nil, shepherd: Bool = false) async throws -> Term {
+    var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "shepherd": .bool(shepherd)]
+    if let paddock { args["paddock"] = .string(paddock) } else { args["cwd"] = .string("/tmp") }
     let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn", args: args), to: p.socket, timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -190,7 +190,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
     @Test func systemChangedReachesDesignSystemsPanels() async throws {
         let fig = try Fig(); defer { fig.cleanup() }
         try await withImport(fig) { d, p in
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             let po = try await call(p, m, "panel.open", ["plugin": "designsystems"])
             #expect(po.ok, "\(po)")
             await d.router.systemChanged(["name": .string("Brand"), "kind": .string("published")])
@@ -203,7 +203,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
     @Test func failedImportEmits() async throws {
         let fig = try Fig(); defer { fig.cleanup() }
         try await withImport(fig) { d, p in
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             let po = try await call(p, m, "panel.open", ["plugin": "artifacts"])
             #expect(po.ok, "\(po)")
             let id = try await addLanding(p, m)   // no app host: the background import fails
@@ -274,18 +274,18 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
         }
     }
 
-    @Test func importStaysOnAgentFloor() async throws {
+    @Test func importStaysOnAgentPaddock() async throws {
         let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
         let fig = try Fig(); defer { fig.cleanup() }
         try await withImport(fig) { d, p in
             let app = FakeApp(), h = try await app.start(d, p); defer { h.stop() }
-            #expect(try await admin(d, p, "floor.create", ["name": "f1", "repo": repo.path]).ok)
-            let w = try await term(d, p, "W", floor: "f1")
+            #expect(try await admin(d, p, "paddock.create", ["name": "f1", "repo": repo.path]).ok)
+            let w = try await term(d, p, "W", paddock: "f1")
             let id = try await addLanding(p, w)
             _ = try await until(p, w, id, "current")
-            let floor = await d.router.ws.floors.first { $0.name == "f1" }?.id
+            let paddock = await d.router.ws.paddocks.first { $0.name == "f1" }?.id
             let f = try await d.router.design.list().first { $0.name == "index.html" }
-            #expect(floor != nil && f?.floorId == floor, "\(String(describing: f))")
+            #expect(paddock != nil && f?.paddockId == paddock, "\(String(describing: f))")
         }
     }
 
@@ -304,7 +304,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
             }
             #expect(try await admin(d, p, "design.system.publish", ["name": "Brand", "reason": "white bg"]).ok)
             #expect(try await admin(d, p, "design.system.use", ["name": "Brand", "reason": "r"]).ok)
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             let id = try await addLanding(p, m)
             let r = try await until(p, m, id, "current")
             guard case .string(let file)? = r["file"], case .string(let node)? = r["node"] else { Issue.record("\(r)"); return }

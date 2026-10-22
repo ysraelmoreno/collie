@@ -20,9 +20,9 @@ public struct MemoryRow: Decodable, Identifiable, Equatable, Sendable {
     }
 }
 public struct MemoryRepo: Decodable, Identifiable, Equatable, Sendable {
-    public let path: String, scope: String, floor: String?
+    public let path: String, scope: String, paddock: String?
     public var id: String { path }
-    public var label: String { scope == "global" ? "global" : (floor ?? URL(fileURLWithPath: path).lastPathComponent) }
+    public var label: String { scope == "global" ? "global" : (paddock ?? URL(fileURLWithPath: path).lastPathComponent) }
 }
 public struct MemoryProblem: Decodable, Identifiable, Equatable, Sendable {
     public let file: String, error: String
@@ -77,7 +77,7 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
     /// Repos (first time) and every list the tabs show.
     public func load() async {
         error = nil
-        if let r: [MemoryRepo] = decode(await send("memory.repos")) { repos = r }   // refreshed each time: new floors appear
+        if let r: [MemoryRepo] = decode(await send("memory.repos")) { repos = r }   // refreshed each time: new paddocks appear
         if repo == nil || !repos.contains(where: { $0.path == repo }) { repo = repos.first?.path }
         guard repo != nil else { return }
         if let l = await list("active", unreviewed: true) { unreviewed = l.records; problems = l.problems }

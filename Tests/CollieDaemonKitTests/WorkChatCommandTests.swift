@@ -9,9 +9,9 @@ private let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent(
 
 private struct Term { var id: String; var token: String; var uuid: UUID { UUID(uuidString: id)! } }
 
-private func term(_ d: Daemon, _ p: Paths, _ name: String, maestro: Bool = false, command: String? = nil) async throws -> Term {
+private func term(_ d: Daemon, _ p: Paths, _ name: String, shepherd: Bool = false, command: String? = nil) async throws -> Term {
     var args: [String: JSONValue] = ["name": .string(name), "preset": .string(command == nil ? "shell" : "custom"), "cwd": .string("/tmp")]
-    if maestro { args["maestro"] = .bool(true) }
+    if shepherd { args["shepherd"] = .bool(true) }
     if let command { args["command"] = .string(command) }
     let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn", args: args))
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "spawn \(name): \(r)") }
@@ -135,8 +135,8 @@ extension CommandRouter {
 
     @Test func routingRules() async throws {
         try await withDaemon { d, p in
-            let dev = try await term(d, p, "Dev"), m = try await term(d, p, "M", maestro: true), w = try await term(d, p, "W")
-            #expect(try await admin(d, p, "admin.connect", ["a": "M", "b": "W"]).ok)
+            let dev = try await term(d, p, "Dev"), m = try await term(d, p, "M", shepherd: true), w = try await term(d, p, "W")
+            #expect(try await admin(d, p, "admin.leash", ["a": "M", "b": "W"]).ok)
             // nothing is written for the notices
             try await Task.sleep(for: .milliseconds(300))
             let before = await bytes(d, [dev, m, w])
@@ -153,7 +153,7 @@ extension CommandRouter {
             #expect(s.queued)
             #expect(await waitFor(10) { await d.scrollbackText(dev.uuid).contains("ROUTE_DEV_42") })
             #expect(try await history(d).first { $0.id.uuidString.lowercased() == s.id }?.terminal == "Dev")
-            // no @, a plain terminal's work → the Maestro corded to it
+            // no @, a plain terminal's work → the Shepherd leashed to it
             let wid = try await startWork(d, p, "W", "API")
             #expect(try await chat(d, p, "echo ROUTE_M_$((40+2))", work: wid).queued)
             #expect(await waitFor(10) { await d.scrollbackText(m.uuid).contains("ROUTE_M_42") })
@@ -219,21 +219,21 @@ extension CommandRouter {
             })
         }
     }
-    @Test func routingPicksTheWorksMaestro() async throws {
+    @Test func routingPicksTheWorksShepherd() async throws {
         try await withDaemon { d, p in
-            let solo = try await term(d, p, "Solo"), boss = try await term(d, p, "Boss", maestro: true)
-            let w = try await term(d, p, "W"), alfa = try await term(d, p, "alfa", maestro: true), zeta = try await term(d, p, "Zeta", maestro: true)
-            for m in ["Zeta", "alfa"] { #expect(try await admin(d, p, "admin.connect", ["a": m, "b": "W"]).ok) }
-            #expect(try await admin(d, p, "admin.connect", ["a": "Boss", "b": "Zeta"]).ok)
-            // a Maestro's own work → itself, even when corded to another Maestro
+            let solo = try await term(d, p, "Solo"), boss = try await term(d, p, "Boss", shepherd: true)
+            let w = try await term(d, p, "W"), alfa = try await term(d, p, "alfa", shepherd: true), zeta = try await term(d, p, "Zeta", shepherd: true)
+            for m in ["Zeta", "alfa"] { #expect(try await admin(d, p, "admin.leash", ["a": m, "b": "W"]).ok) }
+            #expect(try await admin(d, p, "admin.leash", ["a": "Boss", "b": "Zeta"]).ok)
+            // a Shepherd's own work → itself, even when leashed to another Shepherd
             let bw = try await startWork(d, p, "Boss", "B")
             #expect(try await chat(d, p, "echo TO_BOSS_$((40+2))", work: bw).queued)
             #expect(await waitFor(10) { await d.scrollbackText(boss.uuid).contains("TO_BOSS_42") })
-            // two Maestros corded: the first by name (alfa < Zeta, any case)
+            // two Shepherds leashed: the first by name (alfa < Zeta, any case)
             let ww = try await startWork(d, p, "W", "W")
             #expect(try await chat(d, p, "echo TO_ALFA_$((40+2))", work: ww).queued)
             #expect(await waitFor(10) { await d.scrollbackText(alfa.uuid).contains("TO_ALFA_42") })
-            // no Maestro corded → the work's own terminal
+            // no Shepherd leashed → the work's own terminal
             let sw = try await startWork(d, p, "Solo", "S")
             #expect(try await chat(d, p, "echo TO_SOLO_$((40+2))", work: sw).queued)
             #expect(await waitFor(10) { await d.scrollbackText(solo.uuid).contains("TO_SOLO_42") })
@@ -351,34 +351,34 @@ extension CommandRouter {
         #expect(b.contains("Abertas:") && b.contains("e mais"))
     }
 
-    @Test func rerailFollowsCords() async throws {
+    @Test func rerailFollowsLeashes() async throws {
         try await withDaemon { d, p in
-            let m = try await term(d, p, "M", maestro: true, command: pasting), loner = try await term(d, p, "Loner", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true, command: pasting), loner = try await term(d, p, "Loner", shepherd: true)
             let w = try await term(d, p, "W", command: pasting), plain = try await term(d, p, "Plain")
-            #expect(try await admin(d, p, "admin.connect", ["a": "M", "b": "W"]).ok)
-            #expect(try await admin(d, p, "admin.connect", ["a": "Plain", "b": "W"]).ok)
-            _ = try await startWork(d, p, "W", "CORD_WORK")
+            #expect(try await admin(d, p, "admin.leash", ["a": "M", "b": "W"]).ok)
+            #expect(try await admin(d, p, "admin.leash", ["a": "Plain", "b": "W"]).ok)
+            _ = try await startWork(d, p, "W", "LEASH_WORK")
             func rerail(_ t: Term, _ target: String?) async throws -> Response {
                 try await send(p, Request(id: "r", terminalId: t.id, token: t.token, command: "work.rerail",
                                           args: target.map { ["terminal": .string($0)] } ?? [:]))
             }
-            // a Maestro without a cord sees W as missing; a plain terminal may not rerail at all
+            // a Shepherd without a leash sees W as missing; a plain terminal may not rerail at all
             #expect(try await rerail(loner, "W").error?.code == .notFound)
             #expect(try await rerail(loner, "Nobody").error?.code == .notFound)
             #expect(try await rerail(plain, "W").error?.code == .unauthorized)
             #expect(try await rerail(plain, nil).error?.code == .unauthorized)
             try await Task.sleep(for: .milliseconds(300))
-            #expect(!(await d.scrollbackText(w.uuid)).contains("CORD_WORK"))
-            // the corded Maestro injects
+            #expect(!(await d.scrollbackText(w.uuid)).contains("LEASH_WORK"))
+            // the leashed Shepherd injects
             let r = try await rerail(m, "W")
             guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
             #expect(o["injected"] == .bool(true))
-            #expect(await waitFor(10) { await d.scrollbackText(w.uuid).contains("CORD_WORK") })
+            #expect(await waitFor(10) { await d.scrollbackText(w.uuid).contains("LEASH_WORK") })
             // the app: any terminal, --terminal required
             #expect(try await admin(d, p, "work.rerail").error?.code == .invalidArgs)
             #expect(try await admin(d, p, "work.rerail", ["terminal": "W"]).ok)
             #expect(try await history(d).contains { $0.role == .collie && $0.text.hasPrefix("Recoloquei W no trilho.") })
-            // a Maestro on itself: queued without waiting on its own turn
+            // a Shepherd on itself: queued without waiting on its own turn
             _ = try await startWork(d, p, "M", "SELF_WORK")
             let me = try await rerail(m, nil)
             guard case .object(let mo)? = me.result else { Issue.record("\(me)"); return }
@@ -441,10 +441,10 @@ extension CommandRouter {
         }
     }
 
-    /// A Maestro on itself: refused at once at an approval prompt; queued once however often it asks.
+    /// A Shepherd on itself: refused at once at an approval prompt; queued once however often it asks.
     @Test func selfRerailChecksAndDedupes() async throws {
         try await withDaemon { d, p in
-            let m = try await term(d, p, "M", maestro: true, command: "echo T=$COLLIE_TOKEN; printf '\\033[?2004h'; printf 'Go? (y/n) '; exec cat")
+            let m = try await term(d, p, "M", shepherd: true, command: "echo T=$COLLIE_TOKEN; printf '\\033[?2004h'; printf 'Go? (y/n) '; exec cat")
             #expect(await waitFor(10) { await d.router.asks.hasPendingApproval(m.uuid) })
             _ = try await startWork(d, p, "M", "SELF_WORK")
             func rerail() async throws -> Response {
@@ -455,7 +455,7 @@ extension CommandRouter {
             #expect(await d.router.asks.queued(m.uuid) == 0)
 
             // never quiet, so never ready: the first rerail stays queued
-            let n = try await term(d, p, "N", maestro: true,
+            let n = try await term(d, p, "N", shepherd: true,
                                    command: "echo T=$COLLIE_TOKEN; printf '\\033[?2004h'; (while :; do echo tick; sleep 0.1; done) & exec cat")
             _ = try await startWork(d, p, "N", "SELF_WORK_2")
             for _ in 0..<3 {

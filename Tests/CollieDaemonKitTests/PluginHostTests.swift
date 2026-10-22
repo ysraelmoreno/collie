@@ -82,7 +82,7 @@ private func hostCall(_ h: PluginHost, _ panel: Panel, url: String, timeout: Dur
         try await withDaemon { (d: Daemon, p: Paths) async throws in
             let a = try await newTerm(d, p, "A")
             #expect(try await adminCall(d, p, "panel.open", ["plugin": "browser", "name": "web", "placement": "canvas"]).ok)
-            #expect(try await adminCall(d, p, "admin.connect", ["a": "A", "b": "web"]).ok)
+            #expect(try await adminCall(d, p, "admin.leash", ["a": "A", "b": "web"]).ok)
             let fake = FakeHost(), host = fake.make(d, p)
             host.start(); defer { host.stop() }
             #expect(try await waitForHost(d, p, panel: "web"))
@@ -214,7 +214,7 @@ private func hostCall(_ h: PluginHost, _ panel: Panel, url: String, timeout: Dur
         }
     }
 
-    @Test func terminalWithoutCordCannotCallCanvasPanel() async throws {
+    @Test func terminalWithoutLeashCannotCallCanvasPanel() async throws {
         try await withDaemon { (d: Daemon, p: Paths) async throws in
             let a = try await newTerm(d, p, "A")
             #expect(try await adminCall(d, p, "panel.open", ["plugin": "browser", "name": "web", "placement": "canvas"]).ok)

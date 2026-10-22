@@ -20,7 +20,7 @@ public struct PluginSpec: Sendable {
 public enum PluginRegistry {
     public static let all: [PluginSpec] = [browser, memory, device, design, designsystems, artifacts, work]
 
-    /// Plugin ids a Maestro can open on the canvas (feeds `panel.open` help and the agent orientation).
+    /// Plugin ids a Shepherd can open on the canvas (feeds `panel.open` help and the agent orientation).
     public static var canvasPluginIds: [String] { all.filter { $0.placements.contains(.canvas) }.map(\.id) }
 
     public static func spec(_ id: String) -> PluginSpec? { all.first { $0.id == id } }
@@ -127,9 +127,9 @@ extension PluginRegistry {
         placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
         commands: [
             gcmd("files", "Design files [{name,panels}] (ignores --panel)", timeout: 10, panelFree: true),
-            gcmd("new", "Create an empty design file on the caller's floor, with the active design system's library (ignores --panel); returns {name}",
+            gcmd("new", "Create an empty design file on the caller's paddock, with the active design system's library (ignores --panel); returns {name}",
                  [ParamSpec("name", .string, positional: true, required: true, help: "File name (1-80 of A-Z a-z 0-9 space . _ -)"),
-                  ParamSpec("floor", .string, help: "Floor of the file (app only; default ground)")], timeout: 60, panelFree: true),
+                  ParamSpec("paddock", .string, help: "Paddock of the file (app only; default pasture)")], timeout: 60, panelFree: true),
             gcmd("run", "Run one figcraft command (ids and params: design.help); returns its result",
                  [ParamSpec("command", .string, positional: true, required: true, help: "Command id, e.g. node.create"),
                   ParamSpec("params", .string, help: "JSON object of parameters")], timeout: 60),
@@ -149,19 +149,19 @@ extension PluginRegistry {
             gcmd("system.create", "Create a design system: a design file of that name seeded with starter tokens, a text style and a component (or a copy of --from), published as version 1 (ignores --panel); returns {name,version}",
                  [ParamSpec("name", .string, positional: true, required: true, help: "Name (1-80 of A-Z a-z 0-9 space . _ -)"),
                   ParamSpec("from", .string, help: "Design system to copy"), reason], timeout: 120, panelFree: true),
-            gcmd("system.publish", "Publish the design system's file as its next version (needs a cord to a Design panel of it; ignores --panel); returns {name,version}",
+            gcmd("system.publish", "Publish the design system's file as its next version (needs a leash to a Design panel of it; ignores --panel); returns {name,version}",
                  [ParamSpec("name", .string, positional: true, required: true, help: "Design system"),
                   ParamSpec("force", .flag, help: "Publish even though the system was reverted and its file still shows newer content"),
                   reason], timeout: 120),
             gcmd("system.history", "The design system's events (created, published...), oldest first (ignores --panel)",
                  [ParamSpec("name", .string, positional: true, required: true, help: "Design system")], timeout: 10, panelFree: true),
-            gcmd("system.use", "Make a design system the active one of the workspace (or of --floor) and swap it into that scope's design files (workspace: the app or a Maestro on the ground; floor: its creator Maestro; ignores --panel); returns {scope,system,files}",
+            gcmd("system.use", "Make a design system the active one of the workspace (or of --paddock) and swap it into that scope's design files (workspace: the app or a Shepherd on the pasture; paddock: its creator Shepherd; ignores --panel); returns {scope,system,files}",
                  [ParamSpec("name", .string, positional: true, help: "Design system"),
-                  ParamSpec("floor", .string, help: "Floor (default: the workspace, which ground and floors without their own follow)"),
+                  ParamSpec("paddock", .string, help: "Paddock (default: the workspace, which pasture and paddocks without their own follow)"),
                   ParamSpec("none", .flag, help: "Clear the active design system instead (bindings stay)"), reason], timeout: 120, panelFree: true),
             gcmd("system.undo", "Make the scope's previous active design system active again and swap it back (ignores --panel); returns {scope,system,files}",
-                 [ParamSpec("floor", .string, help: "Floor (default: the workspace)"), reason], timeout: 120, panelFree: true),
-            gcmd("system.revert", "Publish an earlier version's snapshot as the design system's next version, taken by the files using it (needs a cord to a Design panel of it; ignores --panel); returns {name,version}",
+                 [ParamSpec("paddock", .string, help: "Paddock (default: the workspace)"), reason], timeout: 120, panelFree: true),
+            gcmd("system.revert", "Publish an earlier version's snapshot as the design system's next version, taken by the files using it (needs a leash to a Design panel of it; ignores --panel); returns {name,version}",
                  [ParamSpec("name", .string, positional: true, required: true, help: "Design system"),
                   ParamSpec("to", .int, required: true, help: "Version to go back to"), reason], timeout: 120),
             gcmd("system.tokens", "The active design system's published tokens: collections (with modes), variables, styles and components of the panel file's library",
@@ -187,7 +187,7 @@ extension PluginRegistry {
 extension PluginRegistry {
     private static func acmd(_ n: String, _ summary: String, _ params: [ParamSpec] = [], timeout: Double,
                              exposedToMCP: Bool = true) -> CommandSpec {
-        // every artifact.* ignores --panel and checks no cord
+        // every artifact.* ignores --panel and checks no leash
         CommandSpec(name: "artifact.\(n)", summary: summary, params: params, timeoutSeconds: timeout, exposedToMCP: exposedToMCP, panelFree: true)
     }
     private static let artifactId = ParamSpec("id", .string, positional: true, required: true, help: "Artifact id (as artifact.list shows it)")

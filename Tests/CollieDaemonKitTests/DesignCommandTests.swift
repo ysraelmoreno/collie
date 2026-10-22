@@ -50,9 +50,9 @@ private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: Stri
     try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args.mapValues { .string($0) }),
                                     to: p.socket, timeoutSeconds: 120)
 }
-private func term(_ d: Daemon, _ p: Paths, _ name: String, maestro: Bool = false) async throws -> Term {
+private func term(_ d: Daemon, _ p: Paths, _ name: String, shepherd: Bool = false) async throws -> Term {
     let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
-        args: ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "maestro": .bool(maestro)]),
+        args: ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(shepherd)]),
         to: p.socket, timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -68,9 +68,9 @@ private func text(_ r: Response) -> String {
     let e = JSONEncoder(); e.outputFormatting = .withoutEscapingSlashes
     return String(decoding: (try? e.encode(r)) ?? Data(), as: UTF8.self)
 }
-/// Maestro `M` with a design panel `design-1` on file `file` (canvas: corded to M).
-private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", placement: String = "canvas") async throws -> Term {
-    let m = try await term(d, p, "M", maestro: true)
+/// Shepherd `M` with a design panel `design-1` on file `file` (canvas: leashed to M).
+private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", placement: String = "canvas") async throws -> Term {
+    let m = try await term(d, p, "M", shepherd: true)
     let r = try await call(p, m, "panel.open", ["plugin": "design", "file": file, "placement": placement])
     #expect(r.ok, "\(r)")
     return m
@@ -83,7 +83,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
             let r = try await admin(d, p, "design.new", ["name": "Site"])
             #expect(r.ok && field(r, "name") == .string("Site"), "\(r)")
             #expect(fx.calls.contains("initialize collie-bridge"), "\(fx.calls)")
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             let o = try await call(p, m, "panel.open", ["plugin": "design", "file": "Site", "placement": "dock.right"])
             guard case .object(let st)? = field(o, "state"), case .string(let fid)? = st["file"] else { Issue.record("\(o)"); return }
             #expect(!fid.isEmpty)
@@ -119,9 +119,9 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func runAndBatchUseCallerClient() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let w = try await term(d, p, "W")
-            #expect(try await admin(d, p, "admin.connect", ["a": "W", "b": "design-1"]).ok)
+            #expect(try await admin(d, p, "admin.leash", ["a": "W", "b": "design-1"]).ok)
             let a = try await call(p, m, "design.run", ["command": "node.create", "params": #"{"type":"frame"}"#])
             #expect(a.ok && field(a, "command") == .string("node.create"), "\(a)")
             #expect(try await call(p, w, "design.run", ["command": "align.left"]).ok)
@@ -140,7 +140,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func badBatchLeavesDocumentUnchanged() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let before = try await call(p, m, "design.inspect")
             let r = try await call(p, m, "design.batch", ["commands": #"[{"command":"node.create"},{"command":"node.bad.x"},{"command":"node.create"}]"#])
             #expect(r.error?.code == .internal && r.error?.message.contains("step 2") == true
@@ -163,7 +163,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func oversizedBatchRefused() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let big = "[" + String(repeating: #"{"command":"node.create"},"#, count: 5 << 20 / 25) + #"{"command":"node.create"}]"#
             // over the request limit: refused before the daemon sees it
             do { #expect(try await call(p, m, "design.batch", ["commands": big]).error?.code == .invalidArgs) }
@@ -181,7 +181,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func readsSyncFirst() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let r = try await call(p, m, "design.inspect", ["node": "4294967312", "depth": "2"])
             #expect(field(r, "id") == .number(4294967312), "\(r)")
             let c = fx.calls
@@ -192,14 +192,14 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
         }
     }
 
-    @Test func canvasDesignNeedsCord() async throws {
+    @Test func canvasDesignNeedsLeash() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            _ = try await maestroWithPanel(d, p)
+            _ = try await shepherdWithPanel(d, p)
             let w = try await term(d, p, "w")
             #expect(try await call(p, w, "design.run", ["command": "align.left", "panel": "design-1"]).error?.code == .notConnected)
             #expect(try await call(p, w, "design.inspect").error?.code == .notFound)
-            #expect(try await admin(d, p, "admin.connect", ["a": "w", "b": "design-1"]).ok)
+            #expect(try await admin(d, p, "admin.leash", ["a": "w", "b": "design-1"]).ok)
             let r = try await call(p, w, "design.run", ["command": "align.left"])
             #expect(r.ok, "\(r)")
         }
@@ -208,7 +208,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func linkIsAdminOnly() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             #expect(Commands.spec("design.link")?.exposedToMCP == false)
             #expect(try await call(p, m, "design.link").error?.code == .unauthorized)
             let r = try await admin(d, p, "design.link", ["panel": "design-1"])
@@ -220,7 +220,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func agentsNeverSeeLink() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             var seen: [Response] = []
             for (cmd, args) in [("design.files", [:]), ("design.run", ["command": "align.left"]), ("design.run", ["command": "node.bad.leak"]),
                                 ("design.run", ["command": "collab.peers"]), ("design.run", ["command": "collab.share"]),
@@ -242,7 +242,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func onlyEditingCommandsRun() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             for cmd in ["library.publishToServer", "plugin.directory.install", "plugin.run", "file.open", "app.quit", "collab.leave",
                         "command.batch", "pref.publishServer", "edit.paste", "nodot"] {
                 let r = try await call(p, m, "design.run", ["command": cmd, "params": #"{"server":"ws://example.com/"}"#])
@@ -270,7 +270,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func agentCanLink() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let r = try await call(p, m, "design.run", ["command": "text.link", "params": #"{"url":"https://example.com","ids":[1]}"#])
             #expect(r.ok, "\(r)")
             #expect(fx.calls.contains { $0.contains("text.link") }, "\(fx.calls)")
@@ -280,7 +280,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func unsafeLinksRefusedEverywhere() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let before = fx.calls.count
             for bad in ["javascript:alert(1)", "data:text/html,x", "JAVASCRIPT:x", " javascript:x", "\\njavascript:x", ""] {
                 for (cmd, params) in [("text.link", #"{"url":"\#(bad)","ids":[1]}"#), ("text.style", #"{"hyperlink":"\#(bad)","ids":[1]}"#),
@@ -313,7 +313,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func stepReferencesRefusedInCheckedParams() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let before = fx.calls.count
             let probe = #"""
                 [{"command":"text.create","params":{"props":{"characters":"click"}}},
@@ -354,7 +354,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func previewParamsMustBeObject() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let before = fx.calls.count
             for params in [#""{\"hyperlink\":\"javascript:x\"}""#, "[]", "1"] {
                 let args = #"{"command":"text.style","params":\#(params)}"#
@@ -370,7 +370,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func linkRemovalAllowed() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             for (cmd, params) in [("text.style", #"{"hyperlink":null,"ids":[1]}"#), ("node.set", #"{"ids":[1],"props":{"hyperlink":null}}"#),
                                   ("variable.bind", #"{"ids":[1],"field":"hyperlink","variable":null}"#),   // unbinding
                                   ("node.set", #"{"ids":[1],"boundVariables":{"hyperlink":null}}"#)] {
@@ -383,7 +383,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func batchFileStaysInCwd() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let work = p.root.appendingPathComponent("work/sub"), outside = p.root.appendingPathComponent("outside.json")
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             try Data(#"[{"command":"node.create"}]"#.utf8).write(to: outside)
@@ -402,7 +402,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func helpListsCommands() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             let all = try await call(p, m, "design.help")
             guard case .array(let rows)? = all.result else { Issue.record("\(all)"); return }
             // collab.* hidden; Collie's own design.system.* follow, one line each
@@ -420,7 +420,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func screenshotAndExportWriteUnderRoot() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             guard case .object(let pl)? = try await call(p, m, "panel.list").result.flatMap({ if case .array(let a) = $0 { a.first } else { nil } }),
                   case .string(let pid)? = pl["id"], case .object(let st)? = pl["state"], case .string(let fid)? = st["file"] else {
                 Issue.record("no panel"); return
@@ -451,7 +451,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func idleClientCloses() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx, idle: .milliseconds(300)) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
             #expect(await waitFor(10) { await d.router.design.liveClients == 0 })
             #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)   // a new client
@@ -462,7 +462,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func maxEightClients() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             for i in 1...9 {
                 #expect(try await call(p, m, "panel.open", ["plugin": "design", "file": "F\(i)", "placement": "dock.right"]).ok)
             }
@@ -486,7 +486,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func clientRecreatedAfterServerRestart() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
             await d.router.figcraft.stop()
             let r = try await call(p, m, "design.run", ["command": "align.left"])
@@ -503,7 +503,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func storedLinkFollowsServerPort() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)   // stored link: the fake's host=127.0.0.1:47900
+            let m = try await shepherdWithPanel(d, p)   // stored link: the fake's host=127.0.0.1:47900
             #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
             let before = try await serverPort(d)
             await d.router.figcraft.stop()
@@ -521,7 +521,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func timedOutEditDropsItsClient() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx, timeoutCap: .milliseconds(1500)) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
             let r = try await call(p, m, "design.run", ["command": "node.slow"])   // answers after 2 s
             #expect(r.error?.code == .timeout && r.error?.message.contains("may still have been applied") == true, "\(r)")
@@ -534,7 +534,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func concurrentOpensOfANewNameShareTheFile() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             async let a = call(p, m, "panel.open", ["plugin": "design", "file": "New", "placement": "dock.right"])
             async let b = call(p, m, "panel.open", ["plugin": "design", "file": "New", "placement": "dock.left"])
             let (ra, rb) = try await (a, b)
@@ -547,9 +547,9 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test func panelCloseClosesClients() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p)
+            let m = try await shepherdWithPanel(d, p)
             let w = try await term(d, p, "W")
-            #expect(try await admin(d, p, "admin.connect", ["a": "W", "b": "design-1"]).ok)
+            #expect(try await admin(d, p, "admin.leash", ["a": "W", "b": "design-1"]).ok)
             #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
             #expect(try await call(p, w, "design.run", ["command": "align.left"]).ok)
             #expect(await d.router.design.liveClients == 2)
@@ -565,7 +565,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(3)))
     func realEngineRoundTrip() async throws {
         try await withDesign(nil) { d, p in
-            let m = try await maestroWithPanel(d, p, file: "Real")
+            let m = try await shepherdWithPanel(d, p, file: "Real")
             let b = try await call(p, m, "design.batch", ["label": "Hero", "commands": #"""
                 [{"command":"node.create","params":{"type":"frame","name":"Hero","width":320,"height":200}},
                  {"command":"node.create","params":{"type":"text","text":"Hello Collie","parent":{"$step":0}}},
@@ -622,7 +622,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
         let steps = raw.indices.filter { !dropped.contains($0) }.map { remap(raw[$0]) }
         let commands = String(decoding: try JSONSerialization.data(withJSONObject: steps), as: UTF8.self)
         try await withDesign(nil) { d, p in
-            let m = try await maestroWithPanel(d, p, file: "Landing")
+            let m = try await shepherdWithPanel(d, p, file: "Landing")
             let b = try await call(p, m, "design.batch", ["commands": commands])
             guard case .array(let res)? = b.result,
                   case .object(let rootStep) = res[4], case .number(let root) = rootStep["id"],
@@ -655,7 +655,7 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(3)))
     func realEngineJoinsAfterPortMoves() async throws {
         try await withDesign(nil) { d, p in
-            let m = try await maestroWithPanel(d, p, file: "Moved")
+            let m = try await shepherdWithPanel(d, p, file: "Moved")
             #expect(try await call(p, m, "design.run", ["command": "node.create", "params": #"{"type":"frame","name":"Kept"}"#]).ok)
             let before = try await serverPort(d)
             await d.router.figcraft.stop()
@@ -672,9 +672,9 @@ private func maestroWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", pl
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(3)))
     func twoCallersHaveSeparateUndo() async throws {
         try await withDesign(nil) { d, p in
-            let m = try await maestroWithPanel(d, p, file: "Undo")
+            let m = try await shepherdWithPanel(d, p, file: "Undo")
             let w = try await term(d, p, "W")
-            #expect(try await admin(d, p, "admin.connect", ["a": "W", "b": "design-1"]).ok)
+            #expect(try await admin(d, p, "admin.leash", ["a": "W", "b": "design-1"]).ok)
             func create(_ t: Term, _ name: String) async throws -> String {
                 let r = try await call(p, t, "design.batch", ["commands": #"[{"command":"node.create","params":{"type":"frame","name":"\#(name)"}}]"#])
                 guard case .array(let a)? = r.result, case .object(let o)? = a.first, case .number(let id)? = o["id"] else {
@@ -714,7 +714,7 @@ extension DesignCommandTests {
     @Test func instanceSnapshotsThroughDockedPanel() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await maestroWithPanel(d, p, placement: "dock.right")
+            let m = try await shepherdWithPanel(d, p, placement: "dock.right")
             let panel = try #require(await d.router.panel(named: "design-1"))
             let (file, snap) = try await d.router.design.htmlSnapshot(panel: panel, caller: (key: m.id, name: "M"), node: "2",
                                                                         deadline: .now + .seconds(20))
@@ -737,7 +737,7 @@ extension DesignCommandTests {
     @Test func artifactListNeverCostsATerminalItsClient() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             for i in 1...8 {
                 #expect(try await call(p, m, "panel.open", ["plugin": "design", "file": "F\(i)", "placement": "dock.right"]).ok)
             }
@@ -807,7 +807,7 @@ extension DesignCommandTests {
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(3)))
     func designPanelJoinsWithoutClick() async throws {
         try await withDesign(nil) { d, p in
-            _ = try await maestroWithPanel(d, p, file: "Auto")
+            _ = try await shepherdWithPanel(d, p, file: "Auto")
             guard case .string(let link)? = field(try await admin(d, p, "design.link", ["panel": "design-1"]), "editLink") else {
                 Issue.record("no link"); return
             }

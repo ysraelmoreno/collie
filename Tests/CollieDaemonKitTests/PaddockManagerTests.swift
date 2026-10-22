@@ -11,7 +11,7 @@ private func sh(_ args: [String], _ dir: URL) async throws -> String {
 }
 
 func makeRepo() async throws -> URL {
-    let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-floor-\(UUID().uuidString)")
+    let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-paddock-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
     let real = URL(fileURLWithPath: d.path).resolvingSymlinksInPath()
     _ = try await sh(["init", "-b", "main"], real)
@@ -29,45 +29,45 @@ func commit(_ file: String, _ text: String, in dir: URL) async throws {
     _ = try await sh(["commit", "-m", "edit \(file)"], dir)
 }
 
-@Suite struct FloorManagerTests {
-    @Test func floorNameIsValidated() async throws {
+@Suite struct PaddockManagerTests {
+    @Test func paddockNameIsValidated() async throws {
         let repo = try await makeRepo()
         for bad in ["../x", "a/b", "A", "a b", String(repeating: "a", count: 41), ""] {
-            await #expect(throws: ProtocolError.self) { try await FloorManager.create(name: bad, repoRoot: repo, createdBy: nil) }
+            await #expect(throws: ProtocolError.self) { try await PaddockManager.create(name: bad, repoRoot: repo, createdBy: nil) }
         }
         #expect(!FileManager.default.fileExists(atPath: repo.appendingPathComponent(".collie").path))
     }
 
     @Test func createMakesWorktreeAndExclude() async throws {
         let repo = try await makeRepo()
-        var f = try await FloorManager.create(name: "feat", repoRoot: repo, createdBy: nil)
-        _ = try await FloorManager.create(name: "other", repoRoot: repo, createdBy: nil)
+        var f = try await PaddockManager.create(name: "feat", repoRoot: repo, createdBy: nil)
+        _ = try await PaddockManager.create(name: "other", repoRoot: repo, createdBy: nil)
         #expect(FileManager.default.fileExists(atPath: f.path))
         #expect(f.branch == "collie/feat" && f.baseBranch == "main")
         _ = try await sh(["rev-parse", "--verify", "collie/feat"], repo)
         let ex = try String(contentsOf: repo.appendingPathComponent(".git/info/exclude"), encoding: .utf8)
-        #expect(ex.components(separatedBy: ".collie/floors/").count - 1 == 1)
+        #expect(ex.components(separatedBy: ".collie/paddocks/").count - 1 == 1)
         let st = try await sh(["status", "--porcelain"], repo)
         #expect(st.isEmpty)
-        await #expect(throws: ProtocolError.self) { try await FloorManager.create(name: "feat", repoRoot: repo, createdBy: nil) }
-        let rr = try await FloorManager.repoRoot(of: URL(fileURLWithPath: f.path))
+        await #expect(throws: ProtocolError.self) { try await PaddockManager.create(name: "feat", repoRoot: repo, createdBy: nil) }
+        let rr = try await PaddockManager.repoRoot(of: URL(fileURLWithPath: f.path))
         #expect(rr.resolvingSymlinksInPath().path == repo.path)
     }
 
     @Test(arguments: [LandMode.merge, .squash, .rebase])
     func landMergeSquashRebase(mode: LandMode) async throws {
         let repo = try await makeRepo()
-        var f = try await FloorManager.create(name: "feat", repoRoot: repo, createdBy: nil)
-        let floor = URL(fileURLWithPath: f.path)
-        try await commit("a.txt", "a\n", in: floor)
-        try await commit("b.txt", "b\n", in: floor)
+        var f = try await PaddockManager.create(name: "feat", repoRoot: repo, createdBy: nil)
+        let paddock = URL(fileURLWithPath: f.path)
+        try await commit("a.txt", "a\n", in: paddock)
+        try await commit("b.txt", "b\n", in: paddock)
         if mode == .rebase { try await commit("g.txt", "g\n", in: repo) }   // diverge the base
         let before = try await sh(["rev-parse", "HEAD"], repo)
-        let r = try await FloorManager.land(&f, mode: mode, message: nil)
+        let r = try await PaddockManager.land(&f, mode: mode, message: nil)
         let head = try await sh(["rev-parse", "HEAD"], repo)
         #expect(r.mode == mode && r.commit == head)
         #expect(f.status == .done && f.landedAt != nil)
-        if mode == .merge { #expect(try await sh(["log", "-1", "--format=%s"], repo) == "Land floor feat") }
+        if mode == .merge { #expect(try await sh(["log", "-1", "--format=%s"], repo) == "Land paddock feat") }
         #expect(FileManager.default.fileExists(atPath: repo.appendingPathComponent("b.txt").path))
         let parents = try await sh(["rev-list", "--parents", "-n", "1", "HEAD"], repo).split(separator: " ").count - 1
         switch mode {
@@ -79,39 +79,39 @@ func commit(_ file: String, _ text: String, in dir: URL) async throws {
             let m = try await sh(["rev-list", "--merges", "--count", "HEAD"], repo)
             #expect(parents == 1 && m == "0")
         }
-        try await FloorManager.delete(f, force: false)
+        try await PaddockManager.delete(f, force: false)
         #expect(!FileManager.default.fileExists(atPath: f.path))
     }
 
-    @Test func landRefusesDirtyGround() async throws {
+    @Test func landRefusesDirtyPasture() async throws {
         let repo = try await makeRepo()
-        var f = try await FloorManager.create(name: "feat", repoRoot: repo, createdBy: nil)
+        var f = try await PaddockManager.create(name: "feat", repoRoot: repo, createdBy: nil)
         try await commit("a.txt", "a\n", in: URL(fileURLWithPath: f.path))
         try "dirty\n".write(to: repo.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
         let before = try await sh(["rev-parse", "main"], repo)
-        await #expect(throws: ProtocolError.self) { try await FloorManager.land(&f, mode: .merge, message: nil) }
+        await #expect(throws: ProtocolError.self) { try await PaddockManager.land(&f, mode: .merge, message: nil) }
         let after = try await sh(["rev-parse", "main"], repo)
         #expect(after == before)
     }
 
-    @Test func landRefusesDirtyFloor() async throws {
+    @Test func landRefusesDirtyPaddock() async throws {
         let repo = try await makeRepo()
-        var f = try await FloorManager.create(name: "feat", repoRoot: repo, createdBy: nil)
+        var f = try await PaddockManager.create(name: "feat", repoRoot: repo, createdBy: nil)
         try "x\n".write(to: URL(fileURLWithPath: f.path).appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
-        do { _ = try await FloorManager.land(&f, mode: .merge, message: nil); Issue.record("expected error") }
+        do { _ = try await PaddockManager.land(&f, mode: .merge, message: nil); Issue.record("expected error") }
         catch { #expect(error.message.contains("uncommitted")) }
-        await #expect(throws: ProtocolError.self) { try await FloorManager.delete(f, force: false) }
-        try await FloorManager.delete(f, force: true)
+        await #expect(throws: ProtocolError.self) { try await PaddockManager.delete(f, force: false) }
+        try await PaddockManager.delete(f, force: true)
     }
 
     @Test(arguments: [LandMode.merge, .squash, .rebase])
     func landConflictAbortsCleanly(mode: LandMode) async throws {
         let repo = try await makeRepo()
-        var f = try await FloorManager.create(name: "feat", repoRoot: repo, createdBy: nil)
-        try await commit("f.txt", "floor\n", in: URL(fileURLWithPath: f.path))
-        try await commit("f.txt", "ground\n", in: repo)
+        var f = try await PaddockManager.create(name: "feat", repoRoot: repo, createdBy: nil)
+        try await commit("f.txt", "paddock\n", in: URL(fileURLWithPath: f.path))
+        try await commit("f.txt", "pasture\n", in: repo)
         let before = try await sh(["rev-parse", "HEAD"], repo)
-        do { _ = try await FloorManager.land(&f, mode: mode, message: nil); Issue.record("expected conflict") }
+        do { _ = try await PaddockManager.land(&f, mode: mode, message: nil); Issue.record("expected conflict") }
         catch { #expect(error.code == .invalidArgs && error.message.contains("f.txt")) }
         #expect(f.status == .working && f.landedAt == nil)
         let s1 = try await sh(["status", "--porcelain"], repo)
@@ -166,23 +166,23 @@ func commit(_ file: String, _ text: String, in dir: URL) async throws {
 
     @Test func deleteUnmergedFailsAtomicallyAndRetrySucceeds() async throws {
         let repo = try await makeRepo()
-        let f = try await FloorManager.create(name: "feat", repoRoot: repo, createdBy: nil)
+        let f = try await PaddockManager.create(name: "feat", repoRoot: repo, createdBy: nil)
         try await commit("a.txt", "a\n", in: URL(fileURLWithPath: f.path))
-        await #expect(throws: ProtocolError.self) { try await FloorManager.delete(f, force: false) }
+        await #expect(throws: ProtocolError.self) { try await PaddockManager.delete(f, force: false) }
         #expect(FileManager.default.fileExists(atPath: f.path))
         try FileManager.default.removeItem(atPath: f.path)   // manual removal; branch still unmerged
-        try await FloorManager.delete(f, force: true)
+        try await PaddockManager.delete(f, force: true)
         let b = try await GitRunner.run(["show-ref", "--verify", "--quiet", "refs/heads/collie/feat"], in: repo)
         #expect(b.status != 0)
     }
 
-    /// Final-review I4: a floor whose branch was deleted by hand can still be deleted.
+    /// Final-review I4: a paddock whose branch was deleted by hand can still be deleted.
     @Test func deleteWithBranchAlreadyGone() async throws {
         let repo = try await makeRepo()
-        let f = try await FloorManager.create(name: "feat", repoRoot: repo, createdBy: nil)
+        let f = try await PaddockManager.create(name: "feat", repoRoot: repo, createdBy: nil)
         _ = try await sh(["worktree", "remove", f.path], repo)
         _ = try await sh(["branch", "-D", f.branch], repo)
-        try await FloorManager.delete(f, force: false)
+        try await PaddockManager.delete(f, force: false)
     }
 
     /// Final-review I1: a repo-configured fsmonitor (agent-writable .git/config) is not run by the daemon's git.

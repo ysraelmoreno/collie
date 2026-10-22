@@ -41,8 +41,8 @@ import Testing
         #expect(r.command == "admin.spawn")
         #expect(r.args["name"] == .string("A"))
         #expect(r.args["preset"] == .string("shell"))
-        let f = try ArgvParser.parse(["floor", "status", "feat", "review"])
-        #expect(f.command == "floor.status" && f.args["name"] == .string("feat") && f.args["status"] == .string("review"))
+        let f = try ArgvParser.parse(["paddock", "status", "feat", "review"])
+        #expect(f.command == "paddock.status" && f.args["name"] == .string("feat") && f.args["status"] == .string("review"))
         let m = try ArgvParser.parse(["memory", "save", "--kind", "decision", "--subject", "db", "--title", "Postgres", "for", "jsonb"])
         #expect(m.command == "memory.save" && m.args["body"] == .string("for jsonb") && m.args["title"] == .string("Postgres"))
     }
@@ -91,7 +91,7 @@ import Testing
         let names = tools.compactMap { t -> String? in
             if case .object(let o) = t, case .string(let n)? = o["name"] { return n } else { return nil }
         }
-        #expect(names == ["list", "ask", "check", "floor_list", "floor_status", "panel_list", "events",
+        #expect(names == ["list", "ask", "check", "paddock_list", "paddock_status", "panel_list", "events",
                          "memory_save", "memory_search", "memory_list", "memory_get", "memory_context",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get",
                          "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
@@ -103,23 +103,23 @@ import Testing
         #expect(req.contains(.string("target")) && req.contains(.string("prompt")))
     }
 
-    @Test func mcpSchemaListsMaestroToolsOnlyForMaestro() throws {
+    @Test func mcpSchemaListsShepherdToolsOnlyForShepherd() throws {
         func names(_ m: Bool) -> [String] {
-            MCPSchema.tools(maestro: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }
+            MCPSchema.tools(shepherd: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }
         }
-        #expect(names(true) == ["list", "ask", "check", "recruit", "dismiss", "connect", "disconnect", "notify",
-                                "floor_create", "floor_list", "floor_status", "floor_land", "floor_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
+        #expect(names(true) == ["list", "ask", "check", "summon", "dismiss", "leash", "unleash", "notify",
+                                "paddock_create", "paddock_list", "paddock_status", "paddock_land", "paddock_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                                 "memory_save", "memory_search", "memory_list", "memory_get", "memory_context",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get", "work_rerail",
-                         "partitura_list", "partitura_get", "partitura_save", "partitura_apply",
+                         "herd_list", "herd_get", "herd_save", "herd_apply",
                          "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help",
                          "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
                          "artifact_list", "artifact_get", "artifact_add", "artifact_import"])
-        #expect(try ArgvParser.parse(["recruit", "w", "--preset", "shell", "echo", "hi"]).args
+        #expect(try ArgvParser.parse(["summon", "w", "--preset", "shell", "echo", "hi"]).args
                 == ["name": .string("w"), "preset": .string("shell"), "prompt": .string("echo hi")])
         // flags anywhere before `--` are flags, not prompt words; after `--` everything is prompt
-        #expect(try ArgvParser.parse(["recruit", "w", "echo", "hi", "--preset", "shell", "--", "--x"]).args
+        #expect(try ArgvParser.parse(["summon", "w", "echo", "hi", "--preset", "shell", "--", "--x"]).args
                 == ["name": .string("w"), "preset": .string("shell"), "prompt": .string("echo hi --x")])
     }
 }

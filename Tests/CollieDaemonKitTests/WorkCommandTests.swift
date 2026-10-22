@@ -173,7 +173,7 @@ private func hook(_ p: Paths, _ t: Term, _ name: String, _ payload: String) asyn
     @Test func hooksFileListsNewEvents() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wh-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let rec = TerminalRecord(id: UUID(), name: "A", preset: .claude, command: nil, cwd: "/tmp", isMaestro: false)
+        let rec = TerminalRecord(id: UUID(), name: "A", preset: .claude, command: nil, cwd: "/tmp", isShepherd: false)
         _ = try AgentLaunch.launchSpec(for: rec, env: [:], hooksDir: dir, collie: URL(fileURLWithPath: "/opt/collie"), shell: "/bin/zsh")
         let o = try JSONSerialization.jsonObject(with: Data(contentsOf: AgentLaunch.settingsFile(rec.id, in: dir))) as! [String: Any]
         let hooks = o["hooks"] as! [String: Any]
@@ -191,9 +191,9 @@ private func hook(_ p: Paths, _ t: Term, _ name: String, _ payload: String) asyn
 
 // MARK: collie work …
 
-private func spawnIn(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL, maestro: Bool = false, floor: String? = nil) async throws -> Term {
-    var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "cwd": .string(cwd.path), "maestro": .bool(maestro)]
-    if let floor { args["floor"] = .string(floor); args["cwd"] = nil }
+private func spawnIn(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL, shepherd: Bool = false, paddock: String? = nil) async throws -> Term {
+    var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "cwd": .string(cwd.path), "shepherd": .bool(shepherd)]
+    if let paddock { args["paddock"] = .string(paddock); args["cwd"] = nil }
     let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn", args: args), timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -220,15 +220,15 @@ private func turnEnd(_ p: Paths, _ t: Term) async throws {
 }
 
 extension WorkCommandTests {
-    @Test func commandsFollowCords() async throws {
+    @Test func commandsFollowLeashes() async throws {
         try await withDaemon { d, p in
             let tmp = URL(fileURLWithPath: "/tmp")
             let a = try await spawnIn(d, p, "A", cwd: tmp), b = try await spawnIn(d, p, "B", cwd: tmp)
-            let m = try await spawnIn(d, p, "M", cwd: tmp, maestro: true)
-            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect", args: ["a": .string("M"), "b": .string("A")])).ok)
+            let m = try await spawnIn(d, p, "M", cwd: tmp, shepherd: true)
+            #expect(try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash", args: ["a": .string("M"), "b": .string("A")])).ok)
             let s = try await work(d, p, a, "work.start", ["title": "Feature A"])
             guard case .object(let o)? = s.result, case .string(let id)? = o["id"] else { Issue.record("\(s)"); return }
-            // B has no cord: A looks exactly like a terminal that does not exist
+            // B has no leash: A looks exactly like a terminal that does not exist
             let hidden = try await work(d, p, b, "work.status", ["terminal": "A"])
             let missing = try await work(d, p, b, "work.status", ["terminal": "Nobody"])
             #expect(hidden.error?.code == .notFound && missing.error?.code == .notFound)
@@ -238,7 +238,7 @@ extension WorkCommandTests {
             #expect(try await work(d, p, b, "work.done", ["terminal": "A"]).error?.code == .notFound)
             guard case .array(let rows)? = try await work(d, p, b, "work.list", flags: ["closed"]).result else { Issue.record("list"); return }
             #expect(rows.isEmpty)
-            // the Maestro reaches A, not B
+            // the Shepherd reaches A, not B
             #expect(try await work(d, p, m, "work.task.add", ["title": "Write tests", "terminal": "A"]).ok)
             #expect(try await work(d, p, m, "work.get", ["id": id]).ok)
             #expect(try await work(d, p, m, "work.status", ["terminal": "B"]).error?.message == "Terminal 'B' not found")
@@ -282,17 +282,17 @@ extension WorkCommandTests {
         }
     }
 
-    @Test func landClosesFloorWork() async throws {
+    @Test func landClosesPaddockWork() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in
-            let m = try await spawnIn(d, p, "M", cwd: repo, maestro: true)
-            #expect(try await work(d, p, m, "floor.create", ["name": "feat"]).ok)
-            let dev = try await spawnIn(d, p, "dev", cwd: repo, floor: "feat")
+            let m = try await spawnIn(d, p, "M", cwd: repo, shepherd: true)
+            #expect(try await work(d, p, m, "paddock.create", ["name": "feat"]).ok)
+            let dev = try await spawnIn(d, p, "dev", cwd: repo, paddock: "feat")
             #expect(try await work(d, p, dev, "work.start", ["title": "Feat"]).ok)
             let w = try #require(try await d.router.work.active(terminal: dev.uuid))
             #expect(w.branch == "collie/feat")
-            try await commit("g.txt", "two\n", in: repo.appendingPathComponent(".collie/floors/feat"))
-            let l = try await work(d, p, m, "floor.land", ["name": "feat"])
+            try await commit("g.txt", "two\n", in: repo.appendingPathComponent(".collie/paddocks/feat"))
+            let l = try await work(d, p, m, "paddock.land", ["name": "feat"])
             #expect(l.ok, "\(l)")
             let after = try #require(try await d.router.work.get(w.id))
             #expect(after.closedBy == "merge" && after.closedAt != nil)
@@ -320,11 +320,11 @@ extension WorkCommandTests {
         }
     }
 
-    @Test func groundWorkNeverAutoCloses() async throws {
+    @Test func pastureWorkNeverAutoCloses() async throws {
         let repo = try await freshRepo()
         try await withDaemon { d, p in
             let t = try await spawnIn(d, p, "T", cwd: repo), s = try await spawnIn(d, p, "S", cwd: repo)
-            #expect(try await work(d, p, t, "work.start", ["title": "Ground"]).ok)
+            #expect(try await work(d, p, t, "work.start", ["title": "Pasture"]).ok)
             #expect(try await work(d, p, s, "work.start", ["title": "Side", "branch": "side"]).ok)
             let w = try #require(try await d.router.work.active(terminal: t.uuid))
             let side = try #require(try await d.router.work.active(terminal: s.uuid))
@@ -334,29 +334,29 @@ extension WorkCommandTests {
             try await gitIn(repo, "checkout", "-q", "main")
             try await turnEnd(p, s)
             #expect(await waitFor(10) { (try? await d.router.work.get(side.id)?.commits.count) == 1 })
-            try await gitIn(repo, "merge", "-q", "--no-ff", "--no-edit", "side")   // a side branch merged under the ground work
+            try await gitIn(repo, "merge", "-q", "--no-ff", "--no-edit", "side")   // a side branch merged under the pasture work
             try await turnEnd(p, t)
             try await turnEnd(p, s)
             #expect(await waitFor(10) { (try? await d.router.work.get(side.id)?.closedBy) == "merge" })
             try await Task.sleep(for: .milliseconds(300))
             let after = try #require(try await d.router.work.get(w.id))
-            #expect(after.closedAt == nil && after.commits.isEmpty, "\(after)")   // nothing on the ground is known to be its own
+            #expect(after.closedAt == nil && after.commits.isEmpty, "\(after)")   // nothing on the pasture is known to be its own
         }
     }
 
     @Test func commitsTracked() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in
-            let m = try await spawnIn(d, p, "M", cwd: repo, maestro: true)
-            #expect(try await work(d, p, m, "floor.create", ["name": "feat"]).ok)
-            let dev = try await spawnIn(d, p, "dev", cwd: repo, floor: "feat")
-            let floor = repo.appendingPathComponent(".collie/floors/feat")
+            let m = try await spawnIn(d, p, "M", cwd: repo, shepherd: true)
+            #expect(try await work(d, p, m, "paddock.create", ["name": "feat"]).ok)
+            let dev = try await spawnIn(d, p, "dev", cwd: repo, paddock: "feat")
+            let paddock = repo.appendingPathComponent(".collie/paddocks/feat")
             #expect(try await work(d, p, dev, "work.start", ["title": "C"]).ok)
             let w = try #require(try await d.router.work.active(terminal: dev.uuid))
-            try await commit("a.txt", "a\n", in: floor)
+            try await commit("a.txt", "a\n", in: paddock)
             try await turnEnd(p, dev)
             #expect(await waitFor(10) { (try? await d.router.work.get(w.id)?.commits.count) == 1 })
-            try await commit("b.txt", "b\n", in: floor)
+            try await commit("b.txt", "b\n", in: paddock)
             try await turnEnd(p, dev)
             try await turnEnd(p, dev)
             #expect(await waitFor(10) { (try? await d.router.work.get(w.id)?.commits.count) == 2 })
@@ -366,19 +366,19 @@ extension WorkCommandTests {
         }
     }
 
-    @Test func syncedFloorIsNotMerged() async throws {
+    @Test func syncedPaddockIsNotMerged() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in
-            let m = try await spawnIn(d, p, "M", cwd: repo, maestro: true)
-            #expect(try await work(d, p, m, "floor.create", ["name": "feat"]).ok)
-            let dev = try await spawnIn(d, p, "dev", cwd: repo, floor: "feat")
-            let floor = repo.appendingPathComponent(".collie/floors/feat")
+            let m = try await spawnIn(d, p, "M", cwd: repo, shepherd: true)
+            #expect(try await work(d, p, m, "paddock.create", ["name": "feat"]).ok)
+            let dev = try await spawnIn(d, p, "dev", cwd: repo, paddock: "feat")
+            let paddock = repo.appendingPathComponent(".collie/paddocks/feat")
             #expect(try await work(d, p, dev, "work.start", ["title": "Feat"]).ok)
             let w = try #require(try await d.router.work.active(terminal: dev.uuid))
             try await commit("other.txt", "someone else\n", in: repo)   // on main, after the work opened
-            try await gitIn(floor, "merge", "-q", "--ff-only", "main")   // the floor fast-forwarded to it
+            try await gitIn(paddock, "merge", "-q", "--ff-only", "main")   // the paddock fast-forwarded to it
             try await turnEnd(p, dev)
-            try await commit("mine.txt", "mine\n", in: floor)   // a later turn's own commit shows the first pass ran
+            try await commit("mine.txt", "mine\n", in: paddock)   // a later turn's own commit shows the first pass ran
             try await turnEnd(p, dev)
             #expect(await waitFor(10) { (try? await d.router.work.get(w.id)?.commits.count) == 1 })
             let now = try #require(try await d.router.work.get(w.id))

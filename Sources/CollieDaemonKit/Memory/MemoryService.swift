@@ -5,7 +5,7 @@ import CollieProtocol
 /// One memory store (a repo's `.collie/memory`, or the global one) with its derived index.
 /// All store/index/SQLite work runs on its serial `queue` (through `run`), never on the cooperative pool.
 final class RepoMemory: @unchecked Sendable {   // the mutable state below is touched only on `queue`
-    let root: URL?          // git toplevel (a floor's worktree for floor terminals); nil = global
+    let root: URL?          // git toplevel (a paddock's worktree for paddock terminals); nil = global
     let store: MemoryStore
     private let dbFile: URL
     private let commonDir: URL?
@@ -113,7 +113,7 @@ actor MemoryService {
         let lines = g.stdout.split(separator: "\n").map(String.init)
         guard lines.count == 2 else { return global }
         let top = URL(fileURLWithPath: lines[0])
-        // the folder is the ground's (a floor's commonDir is `<ground>/.git`), so a floor of an Orq repo keeps `.orq`
+        // the folder is the pasture's (a paddock's commonDir is `<pasture>/.git`), so a paddock of an Orq repo keeps `.orq`
         let common = URL(fileURLWithPath: lines[1])
         let dir = LegacyOrq.repoDirName(repoRoot: common.lastPathComponent == ".git" ? common.deletingLastPathComponent() : top)
         let r = byRoot[top.path] ?? RepoMemory(root: top, storeDir: top.appendingPathComponent("\(dir)/memory"),
@@ -124,7 +124,7 @@ actor MemoryService {
         return r
     }
 
-    /// Drops the stores of `path` and below (a deleted floor), closing their indexes.
+    /// Drops the stores of `path` and below (a deleted paddock), closing their indexes.
     func evict(under path: String) async {
         let gone = byRoot.filter { $0.key == path || $0.key.hasPrefix(path + "/") }
         for (k, _) in gone { byRoot[k] = nil }
@@ -141,37 +141,37 @@ actor MemoryService {
     }
 
     /// Session summary; these memories count as injected for `terminal` (a new session replaces the old set).
-    func context(for terminal: UUID, cwd: String, floor: String? = nil, limit: Int = 4096) async -> String {
-        let (text, ids) = await contextText(cwd: cwd, floor: floor, limit: limit)
+    func context(for terminal: UUID, cwd: String, paddock: String? = nil, limit: Int = 4096) async -> String {
+        let (text, ids) = await contextText(cwd: cwd, paddock: paddock, limit: limit)
         injected[terminal] = ids
         return text
     }
 
-    func contextText(cwd: String, floor: String?, limit: Int = 4096) async -> (text: String, ids: Set<UUID>) {
+    func contextText(cwd: String, paddock: String?, limit: Int = 4096) async -> (text: String, ids: Set<UUID>) {
         var recs: [MemoryRecord] = []
         for s in await readable(cwd) {
             recs += (try? await s.run { m in
                 _ = m.index()   // refresh first: resolves two actives a land (or a hand edit) left behind
                 // a map whose path is gone from disk stays out
-                return m.store.all().records.filter { $0.status == .active && Self.visible($0, floor: floor) && m.present($0) }
+                return m.store.all().records.filter { $0.status == .active && Self.visible($0, paddock: paddock) && m.present($0) }
             }) ?? []
         }
         return Self.renderContext(recs, limit: limit)
     }
 
     /// Memories relevant to `prompt` not yet injected in this session; "" when nothing is.
-    func relevant(for terminal: UUID, cwd: String, floor: String? = nil, prompt: String, limit: Int = 2048, max: Int = 5) async -> String {
+    func relevant(for terminal: UUID, cwd: String, paddock: String? = nil, prompt: String, limit: Int = 2048, max: Int = 5) async -> String {
         let q = Self.significantTerms(prompt).joined(separator: " ")
         guard !q.isEmpty, max > 0 else { return "" }
         var hits: [(hit: MemoryHit, store: RepoMemory)] = []
         for s in await readable(cwd) {
             let found = (try? await s.run { m in (m.index()?.search(q, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
-            hits += found.filter { Self.visible($0.record, floor: floor) }.map { ($0, s) }
+            hits += found.filter { Self.visible($0.record, paddock: paddock) }.map { ($0, s) }
         }
         hits.sort { $0.hit.score > $1.hit.score }
         guard let top = hits.first?.hit.score, top > 0 else { return "" }
         let seen = injected[terminal] ?? []
-        // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor
+        // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute paddock
         let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && !seen.contains($0.hit.record.id) }
         var lines = [Self.relevantHeader], used = Self.relevantHeader.utf8.count, chosen: [(hit: MemoryHit, store: RepoMemory)] = []
         for h in picked where chosen.count < max {
@@ -208,7 +208,7 @@ actor MemoryService {
         MemoryIndex.ftsTerms(prompt).filter { $0.count >= 3 && !stopwords.contains($0.lowercased()) }
     }
 
-    static func visible(_ r: MemoryRecord, floor: String?) -> Bool { r.scope != .floor || (floor != nil && r.floor == floor) }
+    static func visible(_ r: MemoryRecord, paddock: String?) -> Bool { r.scope != .paddock || (paddock != nil && r.paddock == paddock) }
 
     private static func oneLine(_ s: String, max: Int) -> String {
         let l = s.split(whereSeparator: \.isWhitespace).joined(separator: " ")

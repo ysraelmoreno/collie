@@ -51,18 +51,18 @@ public enum LayoutStore {
     }
 }
 
-/// A partitura's frames laid out with their union's top-left corner at `anchor` (canvas point). Sizes are clamped
-/// again to what a partitura may carry (the daemon validates them; a terminal's size becomes its PTY's).
+/// A herd's frames laid out with their union's top-left corner at `anchor` (canvas point). Sizes are clamped
+/// again to what a herd may carry (the daemon validates them; a terminal's size becomes its PTY's).
 public func placeFrames(_ rel: [UUID: CGRect], anchor: CGPoint) -> [UUID: CGRect] {
     let minX = rel.values.map(\.minX).min() ?? 0, minY = rel.values.map(\.minY).min() ?? 0
-    let r = PartituraFormat.panelSize
+    let r = HerdFormat.panelSize
     func c(_ v: CGFloat) -> CGFloat { v.isFinite ? min(max(v, r.lowerBound), r.upperBound) : r.lowerBound }
     return rel.mapValues { f in
         CGRect(x: f.minX - minX + anchor.x, y: f.minY - minY + anchor.y, width: c(f.width), height: c(f.height))
     }
 }
 
-/// A Maestro's application: everything but the Maestro itself (`skipping`), 80 pt right of its frame, top-aligned.
-public func placeFrames(_ rel: [UUID: CGRect], rightOf maestro: CGRect, skipping id: UUID?) -> [UUID: CGRect] {
-    placeFrames(rel.filter { $0.key != id }, anchor: CGPoint(x: maestro.maxX + 80, y: maestro.minY))
+/// A Shepherd's application: everything but the Shepherd itself (`skipping`), 80 pt right of its frame, top-aligned.
+public func placeFrames(_ rel: [UUID: CGRect], rightOf shepherd: CGRect, skipping id: UUID?) -> [UUID: CGRect] {
+    placeFrames(rel.filter { $0.key != id }, anchor: CGPoint(x: shepherd.maxX + 80, y: shepherd.minY))
 }

@@ -24,7 +24,7 @@ struct CommandPalette: View {
     var body: some View {
         let matches = Self.filter(commands, query)
         VStack(spacing: 0) {
-            TextField("Comando", text: $query, prompt: Text("Recrutar, abrir painel, ir para andar…"))
+            TextField("Comando", text: $query, prompt: Text("Chamar, abrir painel, ir para cercado…"))
                 .textFieldStyle(.plain).font(.collieUI(16)).foregroundStyle(Color.collieText)
                 .padding(16)
                 .focused($focused)

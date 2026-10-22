@@ -58,9 +58,9 @@ private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: Stri
     try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args.mapValues { .string($0) }),
                                     to: p.socket, timeoutSeconds: 150)
 }
-private func term(_ d: Daemon, _ p: Paths, _ name: String, maestro: Bool = false, cwd: String = "/tmp", floor: String? = nil) async throws -> Term {
-    var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "cwd": .string(cwd), "maestro": .bool(maestro)]
-    if let floor { args["floor"] = .string(floor) }
+private func term(_ d: Daemon, _ p: Paths, _ name: String, shepherd: Bool = false, cwd: String = "/tmp", paddock: String? = nil) async throws -> Term {
+    var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell"), "cwd": .string(cwd), "shepherd": .bool(shepherd)]
+    if let paddock { args["paddock"] = .string(paddock) }
     let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn", args: args),
         to: p.socket, timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
@@ -195,9 +195,9 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
 
     // MARK: design systems (real engine)
 
-    /// Maestro M with a canvas design panel `design-1` on the file of design system `name` (corded to M).
+    /// Shepherd M with a canvas design panel `design-1` on the file of design system `name` (leashed to M).
     private func panel(_ d: Daemon, _ p: Paths, _ name: String, cwd: String = "/tmp") async throws -> Term {
-        let m = try await term(d, p, "M", maestro: true, cwd: cwd)
+        let m = try await term(d, p, "M", shepherd: true, cwd: cwd)
         let r = try await call(p, m, "panel.open", ["plugin": "design", "file": name, "placement": "canvas"])
         #expect(r.ok, "\(r)")
         return m
@@ -300,7 +300,7 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
             #expect(try await admin(d, p, "design.system.publish", ["name": "Brand", "reason": "admin"]).result
                     == .object(["name": "Brand", "version": 2]))
             try await setBg(p, m, "#222222")
-            #expect(try await call(p, m, "design.system.publish", ["name": "Brand", "reason": "corded"]).ok)
+            #expect(try await call(p, m, "design.system.publish", ["name": "Brand", "reason": "leashed"]).ok)
         }
     }
 
@@ -358,7 +358,7 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
         let fx = try Fake(); defer { fx.cleanup() }
         let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
         try await withFake(fx) { d, p in
-            let m = try await term(d, p, "M", maestro: true, cwd: repo.path)
+            let m = try await term(d, p, "M", shepherd: true, cwd: repo.path)
             #expect(try await call(p, m, "design.system.create", ["name": "Brand", "reason": "base"]).result == .object(["name": "Brand", "version": 1]))
             #expect(try await call(p, m, "panel.open", ["plugin": "design", "file": "Brand", "placement": "canvas"]).ok)
             try fx.set("fail-file.save")
@@ -491,9 +491,9 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
             try await c.command("library.list", [:], timeout: .seconds(30))["libraries"]?.a.compactMap { $0["name"]?.s } ?? []
         }
     }
-    private func use(_ d: Daemon, _ p: Paths, _ name: String, floor: String? = nil, reason: String = "r") async throws -> Response {
+    private func use(_ d: Daemon, _ p: Paths, _ name: String, paddock: String? = nil, reason: String = "r") async throws -> Response {
         var a = ["name": name, "reason": reason]
-        if let floor { a["floor"] = floor }
+        if let paddock { a["paddock"] = paddock }
         return try await admin(d, p, "design.system.use", a)
     }
     private func active(_ d: Daemon, _ p: Paths) async throws -> [String: [String]] {
@@ -565,18 +565,18 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
     }
 
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(6)))
-    func floorInheritsWorkspaceUnlessOverridden() async throws {
+    func paddockInheritsWorkspaceUnlessOverridden() async throws {
         let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
         try await withEngine { d, p in
             try await system(d, p, "A")
             try await system(d, p, "C", bg: "#ABCDEF")
-            for f in ["f1", "f2"] { #expect(try await admin(d, p, "floor.create", ["name": f, "repo": repo.path]).ok) }
+            for f in ["f1", "f2"] { #expect(try await admin(d, p, "paddock.create", ["name": f, "repo": repo.path]).ok) }
             #expect(try await admin(d, p, "design.new", ["name": "G"]).ok)
-            #expect(try await admin(d, p, "design.new", ["name": "F1", "floor": "f1"]).ok)
-            #expect(try await admin(d, p, "design.new", ["name": "F2", "floor": "f2"]).ok)
+            #expect(try await admin(d, p, "design.new", ["name": "F1", "paddock": "f1"]).ok)
+            #expect(try await admin(d, p, "design.new", ["name": "F2", "paddock": "f2"]).ok)
             #expect(outcomes(try await use(d, p, "A")) == ["G": true, "F1": true, "F2": true])
-            let r = try await use(d, p, "C", floor: "f1", reason: "f1 tries C")
-            #expect(r.result?["scope"] == "floor:f1" && outcomes(r) == ["F1": true], "\(r)")
+            let r = try await use(d, p, "C", paddock: "f1", reason: "f1 tries C")
+            #expect(r.result?["scope"] == "paddock:f1" && outcomes(r) == ["F1": true], "\(r)")
             #expect(try await libraries(d, "F1") == ["C"])
             #expect(try await libraries(d, "F2") == ["A"])
             // the workspace changes again: f1 keeps its own
@@ -585,14 +585,14 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
             #expect(try await use(d, p, "A").ok)
             #expect(try await libraries(d, "F1") == ["C"])
             #expect(try await libraries(d, "G") == ["A"])
-            #expect(try await active(d, p) == ["A": ["workspace"], "C": ["floor:f1"]])
-            // the workspace's decision in the global store, the floor's in the floor's worktree repo
+            #expect(try await active(d, p) == ["A": ["workspace"], "C": ["paddock:f1"]])
+            // the workspace's decision in the global store, the paddock's in the paddock's worktree repo
             let recs = try await admin(d, p, "memory.list", ["kind": "decision"]).result?["records"]?.a ?? []
             #expect(recs.contains { $0["subject"] == "design system ativo" }, "\(recs)")
-            #expect(!recs.contains { $0["subject"] == "design system ativo (andar f1)" }, "\(recs)")
-            let f1 = try #require(try await admin(d, p, "floor.list").result?.a.first { $0["name"] == "f1" }?["path"]?.s)
-            let floorRecs = try await admin(d, p, "memory.list", ["kind": "decision", "repo": f1]).result?["records"]?.a ?? []
-            #expect(floorRecs.contains { $0["subject"] == "design system ativo (andar f1)" && $0["body"]?.s?.contains("f1 tries C") == true }, "\(floorRecs)")
+            #expect(!recs.contains { $0["subject"] == "design system ativo (cercado f1)" }, "\(recs)")
+            let f1 = try #require(try await admin(d, p, "paddock.list").result?.a.first { $0["name"] == "f1" }?["path"]?.s)
+            let paddockRecs = try await admin(d, p, "memory.list", ["kind": "decision", "repo": f1]).result?["records"]?.a ?? []
+            #expect(paddockRecs.contains { $0["subject"] == "design system ativo (cercado f1)" && $0["body"]?.s?.contains("f1 tries C") == true }, "\(paddockRecs)")
         }
     }
 
@@ -649,63 +649,63 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
     }
 
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(6)))
-    func floorNoneInheritsWorkspace() async throws {
+    func paddockNoneInheritsWorkspace() async throws {
         let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
         try await withEngine { d, p in
             try await system(d, p, "A")
             try await system(d, p, "C", bg: "#ABCDEF")
-            #expect(try await admin(d, p, "floor.create", ["name": "f1", "repo": repo.path]).ok)
-            #expect(try await admin(d, p, "design.new", ["name": "F1", "floor": "f1"]).ok)
+            #expect(try await admin(d, p, "paddock.create", ["name": "f1", "repo": repo.path]).ok)
+            #expect(try await admin(d, p, "design.new", ["name": "F1", "paddock": "f1"]).ok)
             #expect(try await use(d, p, "A").ok)
-            #expect(try await use(d, p, "C", floor: "f1").ok)
+            #expect(try await use(d, p, "C", paddock: "f1").ok)
             let rect = try await bound(d, "F1", "C")
-            let r = try await admin(d, p, "design.system.use", ["floor": "f1", "none": "true", "reason": "back to the brand"])
+            let r = try await admin(d, p, "design.system.use", ["paddock": "f1", "none": "true", "reason": "back to the brand"])
             #expect(r.result?["system"] == "A" && r.result?["inherits"] == .bool(true) && outcomes(r) == ["F1": true], "\(r)")
             #expect(try await libraries(d, "F1") == ["A"])
             #expect(try await fill(d, "F1", rect) == "#FAFAF7")
             #expect(try await active(d, p) == ["A": ["workspace"], "C": []])
             let h = try await admin(d, p, "design.system.history", ["name": "A"]).result?.a.last
-            #expect(h?["kind"] == "activated" && h?["scope"] == "floor:f1", "\(h ?? .null)")
+            #expect(h?["kind"] == "activated" && h?["scope"] == "paddock:f1", "\(h ?? .null)")
         }
     }
 
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(6)))
-    func undoFirstFloorOverrideInherits() async throws {
+    func undoFirstPaddockOverrideInherits() async throws {
         let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
         try await withEngine { d, p in
             try await system(d, p, "A")
             try await system(d, p, "C", bg: "#ABCDEF")
-            #expect(try await admin(d, p, "floor.create", ["name": "f1", "repo": repo.path]).ok)
-            #expect(try await admin(d, p, "design.new", ["name": "F1", "floor": "f1"]).ok)
+            #expect(try await admin(d, p, "paddock.create", ["name": "f1", "repo": repo.path]).ok)
+            #expect(try await admin(d, p, "design.new", ["name": "F1", "paddock": "f1"]).ok)
             #expect(try await use(d, p, "A").ok)
-            #expect(try await use(d, p, "C", floor: "f1").ok)
-            let u = try await admin(d, p, "design.system.undo", ["floor": "f1", "reason": "follow the workspace"])
+            #expect(try await use(d, p, "C", paddock: "f1").ok)
+            let u = try await admin(d, p, "design.system.undo", ["paddock": "f1", "reason": "follow the workspace"])
             #expect(u.result?["system"] == "A" && u.result?["inherits"] == .bool(true) && outcomes(u) == ["F1": true], "\(u)")
             #expect(try await libraries(d, "F1") == ["A"])
             #expect(try await active(d, p) == ["A": ["workspace"], "C": []])
-            // undo again: C, the floor's own, is back
-            #expect(try await admin(d, p, "design.system.undo", ["floor": "f1", "reason": "C after all"]).result?["system"] == "C")
+            // undo again: C, the paddock's own, is back
+            #expect(try await admin(d, p, "design.system.undo", ["paddock": "f1", "reason": "C after all"]).result?["system"] == "C")
             #expect(try await libraries(d, "F1") == ["C"])
-            #expect(try await active(d, p) == ["A": ["workspace"], "C": ["floor:f1"]])
+            #expect(try await active(d, p) == ["A": ["workspace"], "C": ["paddock:f1"]])
         }
     }
 
     @Test(.enabled(if: realBuilt), .timeLimit(.minutes(6)))
-    func floorDeleteAppliesWorkspaceSystem() async throws {
+    func paddockDeleteAppliesWorkspaceSystem() async throws {
         let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
         try await withEngine { d, p in
             try await system(d, p, "A")
             try await system(d, p, "C", bg: "#ABCDEF")
-            #expect(try await admin(d, p, "floor.create", ["name": "f1", "repo": repo.path]).ok)
-            #expect(try await admin(d, p, "design.new", ["name": "F1", "floor": "f1"]).ok)
+            #expect(try await admin(d, p, "paddock.create", ["name": "f1", "repo": repo.path]).ok)
+            #expect(try await admin(d, p, "design.new", ["name": "F1", "paddock": "f1"]).ok)
             #expect(try await use(d, p, "A").ok)
-            #expect(try await use(d, p, "C", floor: "f1").ok)
-            let del = try await admin(d, p, "floor.delete", ["name": "f1", "force": "true"])
+            #expect(try await use(d, p, "C", paddock: "f1").ok)
+            let del = try await admin(d, p, "paddock.delete", ["name": "f1", "force": "true"])
             #expect(del.result?["designSystem"]?["system"] == "A" && del.result?["designSystem"]?["memoryError"] == nil, "\(del)")
             #expect(try await libraries(d, "F1") == ["A"])
             let recs = (try await admin(d, p, "memory.list", ["kind": "decision"]).result?["records"]?.a ?? [])
                 .filter { $0["subject"] == "design system ativo" }
-            #expect(recs.count == 1 && recs.first?["body"]?.s?.contains("floor 'f1' was deleted") == true, "\(recs)")
+            #expect(recs.count == 1 && recs.first?["body"]?.s?.contains("paddock 'f1' was deleted") == true, "\(recs)")
             #expect(try await active(d, p) == ["A": ["workspace"], "C": []])
         }
     }
@@ -777,41 +777,41 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
         try await withFake(fx) { d, p in
             #expect(try await admin(d, p, "design.system.create", ["name": "A", "reason": "r"]).ok)
             let w = try await term(d, p, "W", cwd: repo.path)
-            let m1 = try await term(d, p, "M1", maestro: true, cwd: repo.path)
-            let m2 = try await term(d, p, "M2", maestro: true, cwd: repo.path)
-            #expect(try await call(p, m1, "floor.create", ["name": "f1"]).ok)
-            #expect(try await admin(d, p, "floor.create", ["name": "u1", "repo": repo.path]).ok)   // a user-created floor
-            let mf = try await term(d, p, "MF", maestro: true, floor: "f1")   // a Maestro standing on f1 (made by M1)
-            let mu = try await term(d, p, "MU", maestro: true, floor: "u1")
+            let m1 = try await term(d, p, "M1", shepherd: true, cwd: repo.path)
+            let m2 = try await term(d, p, "M2", shepherd: true, cwd: repo.path)
+            #expect(try await call(p, m1, "paddock.create", ["name": "f1"]).ok)
+            #expect(try await admin(d, p, "paddock.create", ["name": "u1", "repo": repo.path]).ok)   // a user-created paddock
+            let mf = try await term(d, p, "MF", shepherd: true, paddock: "f1")   // a Shepherd standing on f1 (made by M1)
+            let mu = try await term(d, p, "MU", shepherd: true, paddock: "u1")
             func decisions() async throws -> Int {   // workspace ones in the global store
                 (try await admin(d, p, "memory.list", ["kind": "decision"]).result?["records"]?.a ?? [])
                     .filter { $0["subject"]?.s?.hasPrefix("design system ativo") == true }.count
             }
-            for (t, args) in [(w, ["name": "A", "reason": "r"]), (w, ["name": "A", "floor": "f1", "reason": "r"]),
-                              (m2, ["name": "A", "floor": "f1", "reason": "r"])] {
-                #expect(try await call(p, t, "design.system.use", args).error?.code == .notMaestro, "\(args)")
+            for (t, args) in [(w, ["name": "A", "reason": "r"]), (w, ["name": "A", "paddock": "f1", "reason": "r"]),
+                              (m2, ["name": "A", "paddock": "f1", "reason": "r"])] {
+                #expect(try await call(p, t, "design.system.use", args).error?.code == .notShepherd, "\(args)")
             }
-            #expect(try await call(p, w, "design.system.undo", ["reason": "r"]).error?.code == .notMaestro)
-            #expect(try await call(p, m2, "design.system.undo", ["floor": "f1", "reason": "r"]).error?.code == .notMaestro)
-            // a Maestro on a floor: not the workspace (nor --none, nor undo), and not a floor it neither made nor stands in
-            let onFloor = ProtocolError(code: .notMaestro, message: "only the app or a Maestro on the ground can change the workspace design system; use --floor for your floor")
+            #expect(try await call(p, w, "design.system.undo", ["reason": "r"]).error?.code == .notShepherd)
+            #expect(try await call(p, m2, "design.system.undo", ["paddock": "f1", "reason": "r"]).error?.code == .notShepherd)
+            // a Shepherd on a paddock: not the workspace (nor --none, nor undo), and not a paddock it neither made nor stands in
+            let onPaddock = ProtocolError(code: .notShepherd, message: "only the app or a Shepherd on the pasture can change the workspace design system; use --paddock for your paddock")
             for args in [["name": "A", "reason": "r"], ["none": "true", "reason": "r"]] {
-                #expect(try await call(p, mf, "design.system.use", args).error == onFloor, "\(args)")
+                #expect(try await call(p, mf, "design.system.use", args).error == onPaddock, "\(args)")
             }
-            #expect(try await call(p, mf, "design.system.undo", ["reason": "r"]).error == onFloor)
-            #expect(try await call(p, mf, "design.system.use", ["name": "A", "floor": "f1", "reason": "r"]).error?.code == .notMaestro)   // M1's floor
-            #expect(try await call(p, mu, "design.system.use", ["name": "A", "floor": "f1", "reason": "r"]).error?.code == .notMaestro)
+            #expect(try await call(p, mf, "design.system.undo", ["reason": "r"]).error == onPaddock)
+            #expect(try await call(p, mf, "design.system.use", ["name": "A", "paddock": "f1", "reason": "r"]).error?.code == .notShepherd)   // M1's paddock
+            #expect(try await call(p, mu, "design.system.use", ["name": "A", "paddock": "f1", "reason": "r"]).error?.code == .notShepherd)
             #expect(try await decisions() == 0)
-            #expect(try await call(p, m1, "design.system.use", ["name": "A", "floor": "f1", "reason": "mine"]).ok)
-            #expect(try await call(p, mu, "design.system.use", ["name": "A", "floor": "u1", "reason": "where I stand"]).ok)
+            #expect(try await call(p, m1, "design.system.use", ["name": "A", "paddock": "f1", "reason": "mine"]).ok)
+            #expect(try await call(p, mu, "design.system.use", ["name": "A", "paddock": "u1", "reason": "where I stand"]).ok)
             #expect(try await admin(d, p, "design.system.use", ["name": "A", "reason": "the app"]).ok)
-            #expect(try await call(p, m2, "design.system.use", ["name": "A", "reason": "a ground Maestro"]).ok)
-            // the app's and the Maestro's workspace decisions are one subject in one store: the later supersedes
+            #expect(try await call(p, m2, "design.system.use", ["name": "A", "reason": "a pasture Shepherd"]).ok)
+            // the app's and the Shepherd's workspace decisions are one subject in one store: the later supersedes
             #expect(try await decisions() == 1)
-            #expect(try await admin(d, p, "design.system.use", ["name": "A", "floor": "f1", "reason": "admin"]).ok)
-            #expect(try await active(d, p) == ["A": ["floor:f1", "floor:u1", "workspace"]])
+            #expect(try await admin(d, p, "design.system.use", ["name": "A", "paddock": "f1", "reason": "admin"]).ok)
+            #expect(try await active(d, p) == ["A": ["paddock:f1", "paddock:u1", "workspace"]])
             #expect(try await admin(d, p, "design.system.use", ["none": "true", "reason": "clear"]).ok)
-            #expect(try await active(d, p) == ["A": ["floor:f1", "floor:u1"]])
+            #expect(try await active(d, p) == ["A": ["paddock:f1", "paddock:u1"]])
             #expect(try await decisions() == 1)
         }
     }
@@ -825,7 +825,7 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
             let warning = JSONValue.string("design systems are changing; library not enabled — run design.system.use again or retry")
             let n = try await admin(d, p, "design.new", ["name": "N"])
             #expect(n.ok && n.result?["designSystemError"] == warning && n.result?["designSystem"] == nil, "\(n)")
-            let m = try await term(d, p, "M", maestro: true)
+            let m = try await term(d, p, "M", shepherd: true)
             let o = try await call(p, m, "panel.open", ["plugin": "design", "file": "P", "placement": "canvas"])
             #expect(o.ok && o.result?["designSystemError"] == warning && o.result?["name"] == "design-1", "\(o)")
         }
@@ -856,26 +856,26 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
         let fx = try Fake(); defer { fx.cleanup() }
         try await withFake(fx) { d, p in
             #expect(try await use(d, p, "Nope").error?.code == .notFound)
-            #expect(try await admin(d, p, "design.system.use", ["name": "Nope", "floor": "nofloor", "reason": "r"]).error?.code == .notFound)
+            #expect(try await admin(d, p, "design.system.use", ["name": "Nope", "paddock": "nofloor", "reason": "r"]).error?.code == .notFound)
             #expect(try await admin(d, p, "design.system.use", ["name": "A"]).error?.code == .invalidArgs)   // a reason is needed
             let recs = try await admin(d, p, "memory.list", ["kind": "decision"]).result?["records"]?.a ?? []
             #expect(recs.isEmpty, "\(recs)")
         }
     }
 
-    @Test func floorDeleteClearsOverride() async throws {
+    @Test func paddockDeleteClearsOverride() async throws {
         let fx = try Fake(); defer { fx.cleanup() }
         let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
         try await withFake(fx) { d, p in
             #expect(try await admin(d, p, "design.system.create", ["name": "A", "reason": "r"]).ok)
-            #expect(try await admin(d, p, "floor.create", ["name": "f1", "repo": repo.path]).ok)
-            #expect(try await admin(d, p, "design.new", ["name": "F", "floor": "f1"]).ok)
-            #expect(try await use(d, p, "A", floor: "f1").ok)
-            #expect(try await active(d, p) == ["A": ["floor:f1"]])
-            #expect(try await admin(d, p, "floor.delete", ["name": "f1", "force": "true"]).ok)
+            #expect(try await admin(d, p, "paddock.create", ["name": "f1", "repo": repo.path]).ok)
+            #expect(try await admin(d, p, "design.new", ["name": "F", "paddock": "f1"]).ok)
+            #expect(try await use(d, p, "A", paddock: "f1").ok)
+            #expect(try await active(d, p) == ["A": ["paddock:f1"]])
+            #expect(try await admin(d, p, "paddock.delete", ["name": "f1", "force": "true"]).ok)
             let after = try await active(d, p)
             #expect(after == ["A": []], "\(after)")
-            // its file is on the ground now: the workspace's system reaches it
+            // its file is on the pasture now: the workspace's system reaches it
             let r = try await use(d, p, "A")
             #expect(outcomes(r) == ["F": true], "\(r)")
         }
@@ -901,7 +901,7 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
 
     // MARK: agent wrappers (Task 3)
 
-    /// M (corded to canvas panel `design-1` on screen file `S`), with system `A` active in the workspace.
+    /// M (leashed to canvas panel `design-1` on screen file `S`), with system `A` active in the workspace.
     private func screen(_ d: Daemon, _ p: Paths, systems: [(String, String?)] = [("A", nil)]) async throws -> Term {
         for (n, bg) in systems { try await system(d, p, n, bg: bg) }
         #expect(try await use(d, p, systems[0].0).ok)
@@ -1008,7 +1008,7 @@ extension DesignCommandTests { @Suite(.serialized) struct DesignSystemTests {
         }
     }
 
-    @Test func wrappersNeedCord() async throws {
+    @Test func wrappersNeedLeash() async throws {
         let fx = try Fake(); defer { fx.cleanup() }
         try await withFake(fx) { d, p in
             #expect(try await admin(d, p, "design.system.create", ["name": "A", "reason": "r"]).ok)

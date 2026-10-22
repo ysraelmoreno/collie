@@ -9,10 +9,10 @@ private struct Term { var id: String; var token: String }
 private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
     try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args), to: p.socket, timeoutSeconds: 60)
 }
-private func term(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL? = nil, floor: String? = nil) async throws -> Term {
+private func term(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL? = nil, paddock: String? = nil) async throws -> Term {
     var args: [String: JSONValue] = ["name": .string(name), "preset": .string("shell")]
     if let cwd { args["cwd"] = .string(cwd.path) }
-    if let floor { args["floor"] = .string(floor) }
+    if let paddock { args["paddock"] = .string(paddock) }
     let r = try await admin(d, p, "admin.spawn", args)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -76,21 +76,21 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
         }
     }
 
-    @Test func floorScopeNeedsFloorTerminal() async throws {
+    @Test func paddockScopeNeedsPaddockTerminal() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in
-            let ground = try await term(d, p, "G", cwd: repo)
-            let args = ["kind": "decision", "subject": "api", "title": "REST", "scope": "floor"]
-            #expect(try await call(p, ground, "memory.save", args).error?.code == .invalidArgs)
+            let pasture = try await term(d, p, "G", cwd: repo)
+            let args = ["kind": "decision", "subject": "api", "title": "REST", "scope": "paddock"]
+            #expect(try await call(p, pasture, "memory.save", args).error?.code == .invalidArgs)
             #expect(try await admin(d, p, "memory.save", args.mapValues { .string($0) }.merging(["repo": .string(repo.path)]) { a, _ in a })
                 .error?.code == .invalidArgs)
-            #expect(try await admin(d, p, "floor.create", ["name": .string("feat"), "repo": .string(repo.path)]).ok)
-            let f = try await term(d, p, "F", floor: "feat")
+            #expect(try await admin(d, p, "paddock.create", ["name": .string("feat"), "repo": .string(repo.path)]).ok)
+            let f = try await term(d, p, "F", paddock: "feat")
             let r = try await call(p, f, "memory.save", args)
             let o = obj(r)
-            #expect(r.ok && s(o["scope"]) == "floor" && s(o["floor"]) == "feat", "\(r)")
-            // the floor's worktree is its repo: the memory travels with the floor
-            #expect(s(o["file"])?.hasPrefix(real(repo) + "/.collie/floors/feat/.collie/memory/") == true, "\(o)")
+            #expect(r.ok && s(o["scope"]) == "paddock" && s(o["paddock"]) == "feat", "\(r)")
+            // the paddock's worktree is its repo: the memory travels with the paddock
+            #expect(s(o["file"])?.hasPrefix(real(repo) + "/.collie/paddocks/feat/.collie/memory/") == true, "\(o)")
             #expect(try await context(p, f).contains("REST"))
         }
     }
@@ -375,17 +375,17 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
         }
     }
 
-    @Test func floorDeleteEvictsItsMemory() async throws {
+    @Test func paddockDeleteEvictsItsMemory() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in
-            #expect(try await admin(d, p, "floor.create", ["name": .string("feat"), "repo": .string(repo.path)]).ok)
-            let floor = real(repo.appendingPathComponent(".collie/floors/feat"))   // as git (and the floor record) report it
+            #expect(try await admin(d, p, "paddock.create", ["name": .string("feat"), "repo": .string(repo.path)]).ok)
+            let paddock = real(repo.appendingPathComponent(".collie/paddocks/feat"))   // as git (and the paddock record) report it
             #expect(try await admin(d, p, "memory.save", ["kind": .string("decision"), "subject": .string("x"), "title": .string("X"),
-                                                          "repo": .string(floor)]).ok)
-            #expect(await d.router.memory.isCached(root: floor))
-            let del = try await admin(d, p, "floor.delete", ["name": .string("feat"), "force": .bool(true)])
+                                                          "repo": .string(paddock)]).ok)
+            #expect(await d.router.memory.isCached(root: paddock))
+            let del = try await admin(d, p, "paddock.delete", ["name": .string("feat"), "force": .bool(true)])
             #expect(del.ok, "\(del)")
-            #expect(await !d.router.memory.isCached(root: floor))
+            #expect(await !d.router.memory.isCached(root: paddock))
         }
     }
 

@@ -249,7 +249,7 @@ import os
     }
 
     /// The webview's frame: filling the slot, or a fixed viewport pinned top-left after `browser.resize` (docks);
-    /// a slot that sizes itself to the content (canvas node) is always filled. Off screen (other floor, culled,
+    /// a slot that sizes itself to the content (canvas node) is always filled. Off screen (other paddock, culled,
     /// hidden dock tab: no superview or no size) the page keeps a viewport so layout and screenshots still work.
     final class Container: NSView {
         static let defaultViewport = CGSize(width: 1280, height: 800)

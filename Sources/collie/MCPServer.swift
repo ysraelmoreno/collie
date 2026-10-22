@@ -4,12 +4,12 @@ import CollieProtocol
 /// JSON-RPC 2.0 over stdio, one message per line. Requests run concurrently; stdout writes are locked.
 enum MCPServer {
     private static let lock = NSLock()
-    private static var maestro: Bool { ProcessInfo.processInfo.environment["COLLIE_MAESTRO"] == "1" }
+    private static var shepherd: Bool { ProcessInfo.processInfo.environment["COLLIE_SHEPHERD"] == "1" }
     /// Every tool this terminal could call; `tools/call` checks against it (the daemon enforces reach).
-    private static var tools: [JSONValue] { MCPSchema.tools(maestro: maestro) }
+    private static var tools: [JSONValue] { MCPSchema.tools(shepherd: shepherd) }
     private nonisolated(unsafe) static var initialized = false, lastReach: Set<String>?   // under `lock`
 
-    /// Plug-in ids of the panels this terminal reaches (the daemon applies the cords); an error reaches none.
+    /// Plug-in ids of the panels this terminal reaches (the daemon applies the leashes); an error reaches none.
     private static func reach() async -> Set<String> {
         guard case .array(let ps)? = try? await Client.call("panel.list", [:]) else { return [] }
         return Set(ps.compactMap { if case .object(let o) = $0, case .string(let id)? = o["pluginId"] { id } else { nil } })
@@ -74,7 +74,7 @@ enum MCPServer {
         case "tools/list":
             let now = await reach()
             lock.withLock { lastReach = now }
-            let tools = (try? JSONEncoder().encode(MCPSchema.tools(maestro: maestro, plugins: now))).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
+            let tools = (try? JSONEncoder().encode(MCPSchema.tools(shepherd: shepherd, plugins: now))).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
             reply(id, ["tools": tools])
         case "tools/call":
             let p = o["params"] as? [String: Any] ?? [:]

@@ -76,21 +76,21 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
         try await withDaemon { d, p in
         let a = try await spawn(d, p, "A"); let b = try await spawn(d, p, "B"); _ = try await spawn(d, p, "C")
         #expect(a.resp.ok && b.resp.ok)
-        let c = try await send(p, Request(id: "c", token: d.adminToken, command: "admin.connect",
+        let c = try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash",
                                           args: ["a": .string("A"), "b": .string("b")]))
         #expect(c.ok)
         // A's token is only obtainable from its env; read it back through the shell
         let tok = try await tokenOf(d, a.id)
         let l = try await send(p, Request(id: "l", terminalId: a.id, token: tok, command: "list"))
         guard case .array(let rows)? = l.result else { Issue.record("no list: \(l)"); return }
-        #expect(rows == [.object(["name": .string("B"), "preset": .string("shell"), "running": .bool(true), "isMaestro": .bool(false)])])
+        #expect(rows == [.object(["name": .string("B"), "preset": .string("shell"), "running": .bool(true), "isShepherd": .bool(false)])])
     }
     }
 
-    @Test func maestroWithoutCordsListsNothing() async throws {
+    @Test func shepherdWithoutLeashesListsNothing() async throws {
         try await withDaemon { d, p in
         let m = try await send(p, Request(id: "m", token: d.adminToken, command: "admin.spawn", args: [
-            "name": .string("M"), "preset": .string("shell"), "cwd": .string("/tmp"), "maestro": .bool(true)]))
+            "name": .string("M"), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(true)]))
         guard case .object(let o)? = m.result, case .string(let mid)? = o["id"] else { Issue.record("spawn \(m)"); return }
         _ = try await spawn(d, p, "B")
         let tok = try await tokenOf(d, mid)
@@ -129,7 +129,7 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
         // spawn refuses a live duplicate name, so duplicates can only come from an older workspace.json
         let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))")), wsId = UUID()
         defer { try? FileManager.default.removeItem(at: paths.root) }
-        let rec = { (n: String) in TerminalRecord(id: UUID(), name: n, preset: .shell, command: nil, cwd: "/tmp", isMaestro: false) }
+        let rec = { (n: String) in TerminalRecord(id: UUID(), name: n, preset: .shell, command: nil, cwd: "/tmp", isShepherd: false) }
         try await WorkspaceStore(paths: paths).save(Workspace(id: wsId, name: "default", terminals: [rec("Dup"), rec("dup")]))
         let d = try Daemon(config: testConfig(paths, wsId))
         try await d.start()
@@ -140,7 +140,7 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
             #expect(again.resp.error?.code == .invalidArgs)
             let respawn = try await spawn(d, p, "DUP")
             #expect(respawn.resp.error?.code == .ambiguous)
-            let amb = try await send(p, Request(id: "1", token: d.adminToken, command: "admin.connect", args: ["a": .string("DUP"), "b": .string("Solo")]))
+            let amb = try await send(p, Request(id: "1", token: d.adminToken, command: "admin.leash", args: ["a": .string("DUP"), "b": .string("Solo")]))
             #expect(amb.error?.code == .ambiguous)
             let kill = try await send(p, Request(id: "2", token: d.adminToken, command: "admin.kill", args: ["target": .string("dup")]))
             #expect(kill.error?.code == .ambiguous)
@@ -177,7 +177,7 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
         try await withDaemon { d, p in
             let a = try await spawn(d, p, "A", preset: "custom", command: "exit 0")
             let b = try await spawn(d, p, "B")
-            #expect(try await admin(d, p, "connect", ["a": "A", "b": "B"]).ok)
+            #expect(try await admin(d, p, "leash", ["a": "A", "b": "B"]).ok)
             #expect(await waitFor(3) { await d.process(UUID(uuidString: a.id)!)?.isRunning == false })
             let a2 = try await spawn(d, p, "a")
             #expect(a2.resp.ok && a2.id == a.id)
@@ -199,14 +199,14 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
     @Test func killRemovesRecordAndItsConnections() async throws {
         try await withDaemon { d, p in
             let a = try await spawn(d, p, "A"), b = try await spawn(d, p, "B")
-            #expect(try await admin(d, p, "connect", ["a": "A", "b": "B"]).ok)
+            #expect(try await admin(d, p, "leash", ["a": "A", "b": "B"]).ok)
             #expect(try await admin(d, p, "kill", ["target": "A"]).ok)
             #expect(try await admin(d, p, "kill", ["target": "A"]).error?.code == .notFound)
             #expect(try saved(p, d).terminals.map(\.name) == ["B"] && saved(p, d).connections.isEmpty)
             #expect(try await names(d, p, from: b.id) == [])
             let a2 = try await spawn(d, p, "A")
             #expect(a2.resp.ok && a2.id != a.id)
-            #expect(try await admin(d, p, "connect", ["a": "A", "b": "B"]).ok)
+            #expect(try await admin(d, p, "leash", ["a": "A", "b": "B"]).ok)
             #expect(try await names(d, p, from: b.id) == ["A"])
         }
     }
@@ -214,9 +214,9 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
     @Test func selfConnectRejectedAndEdgesNotDuplicated() async throws {
         try await withDaemon { d, p in
             _ = try await spawn(d, p, "A"); _ = try await spawn(d, p, "B")
-            #expect(try await admin(d, p, "connect", ["a": "A", "b": "a"]).error?.code == .invalidArgs)
+            #expect(try await admin(d, p, "leash", ["a": "A", "b": "a"]).error?.code == .invalidArgs)
             for (x, y) in [("A", "B"), ("A", "B"), ("B", "A")] {
-                #expect(try await admin(d, p, "connect", ["a": x, "b": y]).ok)
+                #expect(try await admin(d, p, "leash", ["a": x, "b": y]).ok)
             }
             #expect(try saved(p, d).connections.count == 1)
         }
@@ -229,14 +229,14 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
         let d1 = try Daemon(config: cfg)
         try await d1.start()
         _ = try await spawn(d1, paths, "A"); _ = try await spawn(d1, paths, "B")
-        _ = try await admin(d1, paths, "connect", ["a": "A", "b": "B"])
+        _ = try await admin(d1, paths, "leash", ["a": "A", "b": "B"])
         await d1.stop()
         let d2 = try Daemon(config: cfg)
         try await d2.start()
         do {
             let b = try await spawn(d2, paths, "B")
             #expect(b.resp.ok)
-            #expect(try await admin(d2, paths, "connect", ["a": "A", "b": "B"]).ok)
+            #expect(try await admin(d2, paths, "leash", ["a": "A", "b": "B"]).ok)
             let r = try await send(paths, Request(id: "a", terminalId: b.id, token: try await tokenOf(d2, b.id), command: "ask",
                                                   args: ["target": .string("A"), "prompt": .string("hi")]))
             #expect(r.error?.code == .notRunning)

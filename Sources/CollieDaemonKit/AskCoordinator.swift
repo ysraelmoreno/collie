@@ -334,7 +334,7 @@ public actor AskCoordinator {
             throw ProtocolError(code: .deadlock,
                                 message: "Deadlock: '\(t.name)' is already waiting on '\(name(from))'; '\(name(from))' cannot ask '\(t.name)'")
         }
-        // R7: unguarded on purpose — v1 asks answer prompts (a Maestro's `collie ask B y`)
+        // R7: unguarded on purpose — v1 asks answer prompts (a Shepherd's `collie ask B y`)
         return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, cont: nil), timeout: timeout)
     }
 
@@ -355,7 +355,7 @@ public actor AskCoordinator {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
         }
         // from == to: adds no edge to the deadlock graph
-        // R10: never typed into a pending approval prompt (a recruit's first prompt, a partitura role)
+        // R10: never typed into a pending approval prompt (a summon's first prompt, a herd role)
         _ = try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, inject: true, guardsApproval: true, cont: nil),
                               timeout: hold)
     }

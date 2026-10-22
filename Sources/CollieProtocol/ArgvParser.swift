@@ -3,7 +3,7 @@ public enum ArgvParser {
         guard var name = argv.first else { throw bad("missing command") }
         var rest = Array(argv.dropFirst())
         // a group word: the first segment of some command (`artifact` for the `artifacts` plugin's `artifact.*`)
-        if ["admin", "floor", "panel", "memory"].contains(name) || Commands.all.contains(where: { $0.name.hasPrefix(name + ".") }) {
+        if ["admin", "paddock", "panel", "memory"].contains(name) || Commands.all.contains(where: { $0.name.hasPrefix(name + ".") }) {
             guard let sub = rest.first else { throw bad("missing \(name) subcommand") }
             name = "\(name).\(sub)"; rest.removeFirst()
             // a third word (`design system list`)

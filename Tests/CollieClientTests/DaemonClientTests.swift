@@ -53,12 +53,12 @@ let colliedURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().del
         try await d.start()
         let c = DaemonClient(paths: d.paths); c.start(); defer { c.stop() }
         #expect(await poll(5) { c.state == .connected })
-        let a = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", maestro: false)
-        _ = try await c.spawn(name: "B", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", maestro: false)
-        try await c.connect("A", "B")
+        let a = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", shepherd: false)
+        _ = try await c.spawn(name: "B", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", shepherd: false)
+        try await c.leash("A", "B")
         #expect(await poll(2) { c.terminals.count == 2 && c.connections.count == 1 })
         #expect(c.terminals.first?.id == a)
-        try await c.disconnect("A", "B")
+        try await c.unleash("A", "B")
         try await c.kill("B")
         #expect(await poll(2) { c.terminals.map(\.name) == ["A"] && c.connections.isEmpty })
     }
@@ -68,7 +68,7 @@ let colliedURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().del
         try await d.start()
         let c = DaemonClient(paths: d.paths); c.start(); defer { c.stop() }
         #expect(await poll(5) { c.state == .connected })
-        let a = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", maestro: false)
+        let a = try await c.spawn(name: "A", preset: .custom, command: d.cmd("exec sleep 300"), cwd: "/tmp", shepherd: false)
         #expect(await poll(2) { c.terminals.count == 1 })
 
         d.kill9()
@@ -89,7 +89,7 @@ let colliedURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().del
         // waits for "go", prints 10 MiB (well past the daemon's 4 MiB send queue + socket buffers), then idles
         let id = try await c.spawn(name: "Y", preset: .custom, command: d.cmd(
             "while [ ! -f '\(go.path)' ]; do sleep 0.05; done; head -c 10485760 /dev/zero | tr '\\0' a; " +
-            "touch '\(done.path)'; echo tail-marker; exec sleep 300"), cwd: "/tmp", maestro: false)
+            "touch '\(done.path)'; echo tail-marker; exec sleep 300"), cwd: "/tmp", shepherd: false)
         let s = c.attach(id); defer { s.close() }
         let watchdog = Task { try? await Task.sleep(for: .seconds(60)); s.close() }   // never hang the suite
         defer { watchdog.cancel() }
@@ -160,7 +160,7 @@ let colliedURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().del
         let d = Collied(); defer { d.cleanup() }
         try await d.start()
         let c = DaemonClient(paths: d.paths); c.start(); defer { c.stop() }
-        let id = try await c.spawn(name: "S", preset: .custom, command: d.cmd("echo up; exec /bin/sh"), cwd: "/tmp", maestro: false)
+        let id = try await c.spawn(name: "S", preset: .custom, command: d.cmd("echo up; exec /bin/sh"), cwd: "/tmp", shepherd: false)
         let s = c.attach(id); defer { s.close() }
         let watchdog = Task { try? await Task.sleep(for: .seconds(30)); s.close() }
         defer { watchdog.cancel() }
@@ -181,7 +181,7 @@ let colliedURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().del
         let d = Collied(); defer { d.cleanup() }
         try await d.start()
         let c = DaemonClient(paths: d.paths); c.start(); defer { c.stop() }
-        let id = try await c.spawn(name: "S", preset: .custom, command: d.cmd("echo up; exec /bin/sh"), cwd: "/tmp", maestro: false)
+        let id = try await c.spawn(name: "S", preset: .custom, command: d.cmd("echo up; exec /bin/sh"), cwd: "/tmp", shepherd: false)
         let s1 = c.attach(id), s2 = c.attach(id); defer { s1.close(); s2.close() }
         let watchdog = Task { try? await Task.sleep(for: .seconds(30)); s1.close(); s2.close() }
         defer { watchdog.cancel() }
@@ -209,7 +209,7 @@ let colliedURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().del
         try "trap 'echo \"winch $(stty size)\"' WINCH\necho ready\nwhile :; do sleep 0.01; done\n"
             .write(to: script, atomically: true, encoding: .utf8)
         let id = try await c.spawn(name: "W", preset: .custom, command: d.cmd("exec /bin/sh '\(script.path)'"),
-                                   cwd: "/tmp", maestro: false)
+                                   cwd: "/tmp", shepherd: false)
         let s = c.attach(id); defer { s.close() }
         let watchdog = Task { try? await Task.sleep(for: .seconds(30)); s.close() }
         defer { watchdog.cancel() }

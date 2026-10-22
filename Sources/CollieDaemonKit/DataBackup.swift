@@ -6,15 +6,17 @@ import CollieProtocol
 /// `.colliebackup` (an Orq `.orqbackup` is the same format; the extension is never checked here): a zip (`ditto -c -k --norsrc`, entries at its root) of the user's Collie data — `manifest.json`
 /// (`{format: 1, createdAt, collieVersion, parts, workspace}`) and the parts `design/` (figcraft server data, registries,
 /// systems, exports), `artifacts/` (with `.removed/`), `memory/`, `workspaces/` (without `*/terminals`, the scrollback
-/// spills), `work/` and `partituras/` (with `.removed/`). Machine-specific data stays out (`run/`, `hooks/`, `cache/`, `usage/`, `screens/`, `admin.token`);
+/// spills), `work/` and `herds/` (with `.removed/`). Machine-specific data stays out (`run/`, `hooks/`, `cache/`, `usage/`, `screens/`, `admin.token`);
 /// `default-workspace` travels as the manifest's `workspace`. It holds the design files' secret links: 0600, app only.
 ///
 /// An import is checked, extracted and staged in `<root>/.import-pending/`; collied applies it at its next start, before
 /// anything is loaded (the stores keep their data in memory: a swap under a live daemon would be written over).
 /// Nothing is deleted: the current parts move to `<root>/.replaced-<epochMs>/`.
 public enum DataBackup {
-    static let parts = ["design", "artifacts", "memory", "workspaces", "work", "partituras"]
+    static let parts = ["design", "artifacts", "memory", "workspaces", "work", "herds"]
     static let pendingName = ".import-pending"
+    /// Parts under the name an older backup gives them (Orq's and Collie's before the herding vocabulary).
+    static let legacyParts = [LegacyOrq.partituraDir: "herds"]
 
     struct Manifest: Codable {
         var format: Int; var createdAt: Date; var collieVersion: String; var parts: [String]; var workspace: String?
@@ -28,7 +30,8 @@ public enum DataBackup {
             format = try c.decode(Int.self, forKey: .format); createdAt = try c.decode(Date.self, forKey: .createdAt)
             collieVersion = try c.decodeIfPresent(String.self, forKey: .collieVersion)
                 ?? d.container(keyedBy: Legacy.self).decode(String.self, forKey: .orqVersion)
-            parts = try c.decode([String].self, forKey: .parts); workspace = try c.decodeIfPresent(String.self, forKey: .workspace)
+            parts = try c.decode([String].self, forKey: .parts).map { DataBackup.legacyParts[$0] ?? $0 }
+            workspace = try c.decodeIfPresent(String.self, forKey: .workspace)
         }
     }
 
@@ -184,7 +187,7 @@ public enum DataBackup {
         let names = try await run(zipinfo, ["-1", from.path], code: .invalidArgs)
         for n in names.split(separator: "\n").map(String.init) where !n.isEmpty {
             let comps = n.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-            guard !n.hasPrefix("/"), !comps.contains(".."), comps[0] == "manifest.json" || parts.contains(comps[0]) else {
+            guard !n.hasPrefix("/"), !comps.contains(".."), comps[0] == "manifest.json" || parts.contains(comps[0]) || legacyParts[comps[0]] != nil else {
                 throw bad("entry '\(n)' is outside the backup's parts")
             }
         }
@@ -197,6 +200,11 @@ public enum DataBackup {
             let data = tmp.appendingPathComponent("data")
             try await run(ditto, ["-x", "-k", "--norsrc", from.path, data.path], code: .invalidArgs)
             let s = try await UnixSocketClient.offPool { () throws -> Summary in
+                for (old, new) in legacyParts where FileManager.default.fileExists(atPath: data.appendingPathComponent(old).path) {
+                    guard rename(data.appendingPathComponent(old).path, data.appendingPathComponent(new).path) == 0 else {
+                        throw bad("it holds both \(old)/ and \(new)/")
+                    }
+                }
                 try check(data)
                 guard !dryRun else { return summary(data) }
                 let pending = root.appendingPathComponent(pendingName)

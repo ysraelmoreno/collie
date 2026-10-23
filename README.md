@@ -17,7 +17,7 @@ scripts/bundle-app.sh   # gera build/Collie.app (assinado ad hoc)
 Opcional: rode `scripts/make-signing-cert.sh` uma vez para criar a identidade autoassinada "Collie Local" no keychain de
 login (o macOS pede sua senha para confiar nela). Com ela o `bundle-app.sh` assina o app sempre com a mesma identidade e
 o macOS (TCC) mantém as permissões de Documentos e Acesso Total ao Disco entre rebuilds; sem ela a assinatura é ad hoc e
-as permissões são esquecidas a cada build. Outro nome: `COLLIE_SIGN_IDENTITY`.
+as permissões são esquecidas a cada build. No primeiro build o macOS pode pedir acesso do `codesign` à chave; escolha "Sempre Permitir". Outro nome: `COLLIE_SIGN_IDENTITY`.
 
 ## Instalar
 

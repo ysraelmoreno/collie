@@ -5,7 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # stable identity keeps TCC grants across rebuilds; ad-hoc = new code identity every build
 ID="${COLLIE_SIGN_IDENTITY:-Collie Local}"
-if security find-identity -v -p codesigning | grep -qF "\"$ID\""; then SIGN="$ID"
+IDS="$(security find-identity -v -p codesigning || true)"  # variable: grep -q + pipefail can SIGPIPE
+if grep -qF "\"$ID\"" <<<"$IDS"; then SIGN="$ID"
 else SIGN="-"; echo "warning: no \"$ID\" signing identity (run scripts/make-signing-cert.sh): ad-hoc, TCC grants reset on every rebuild" >&2; fi
 # one --product per invocation: repeated flags build only the last
 for p in CollieApp collied collie collie-ctty; do swift build -c release --product "$p"; done

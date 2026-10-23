@@ -34,6 +34,9 @@ enum HookCommands {
             try await send("work.hook", ["hook": .string(String(a[0].dropFirst("claude-".count))),
                                          "payload": .string(String(decoding: data, as: UTF8.self))], timeout: 2)
             return
+        case "claude-statusline":
+            statusline()
+            return
         case "claude-stop":
             source = "claude"
             message = HookPayload.claudeStopMessage(stdinJSON: FileHandle.standardInput.readDataToEndOfFile())
@@ -48,6 +51,39 @@ enum HookCommands {
         var args: [String: JSONValue] = ["source": .string(source)]
         if let message { args["message"] = .string(message) }
         try await send("turn.completed", args, timeout: 5)
+    }
+
+    /// Claude's statusLine feed: record the rate limits, then run the user's own statusLine with the same stdin and forward its stdout.
+    /// Never throws, always exits 0 (the caller's bar must not break). Env: COLLIE_USAGE_DIR / COLLIE_SOCKET (where), COLLIE_CLAUDE_SETTINGS (tests).
+    private static func statusline() {
+        let env = ProcessInfo.processInfo.environment
+        let data = (try? FileHandle.standardInput.read(upToCount: 1 << 20)) ?? Data()
+        if let limits = ClaudeRateLimits.extract(data), let dir = ClaudeRateLimits.usageDir(env: env) {
+            do { try ClaudeRateLimits.write(limits, to: dir) } catch { log("claude-statusline: \(error)") }
+        }
+        let settings = env["COLLIE_CLAUDE_SETTINGS"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
+        guard env["COLLIE_STATUSLINE_CHILD"] == nil,   // recursion guard: we are already inside a user statusLine
+              let sd = try? Data(contentsOf: settings), let cmd = ClaudeRateLimits.userStatusLineCommand(settings: sd),
+              !cmd.contains("claude-statusline") else { return }   // ponytail: also skips a user command that is us
+        let p = Process(), inp = Pipe(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", cmd]
+        p.environment = env.merging(["COLLIE_STATUSLINE_CHILD": "1"]) { $1 }
+        p.standardInput = inp; p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        let done = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in done.signal() }
+        guard (try? p.run()) != nil else { return }
+        var captured = Data()
+        let reader = Thread { captured = out.fileHandleForReading.readDataToEndOfFile(); done.signal() }
+        reader.start()
+        DispatchQueue.global().async { try? inp.fileHandleForWriting.write(contentsOf: data); try? inp.fileHandleForWriting.close() }
+        // both the exit and the EOF on stdout must happen, within 5 s
+        let deadline = DispatchTime.now() + 5
+        if done.wait(timeout: deadline) == .timedOut || done.wait(timeout: deadline) == .timedOut {
+            p.terminate(); log("claude-statusline: user command timed out"); return
+        }
+        FileHandle.standardOutput.write(captured)
     }
 
     /// `command` with the terminal's credentials (COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN).

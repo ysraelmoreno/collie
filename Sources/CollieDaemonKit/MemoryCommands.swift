@@ -80,7 +80,7 @@ extension CommandRouter {
             for s in stores {
                 // over-fetch: paddock memories of other paddocks are filtered out below
                 // the picked repo's index must work; a broken global one only drops its hits
-                let required = s === repo
+                let required = s === repo && s.exists   // a lot with no memories yet has no index: no hits
                 let found = try await s.run { m in
                     (required ? try m.requireIndex() : m.index())?.search(query, limit: limit * 2 + 10, includeInactive: inactive) ?? []
                 }

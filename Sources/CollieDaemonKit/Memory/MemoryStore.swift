@@ -4,9 +4,11 @@ import CollieCore
 /// Synchronous markdown file store; callers run it on a serial queue.
 struct MemoryStore {
     let dir: URL
-    /// Private (a lot's store in the app's data dir): folders 0700, files 0600, like the work registry.
-    let secure: Bool
-    init(dir: URL, secure: Bool = false) { self.dir = dir; self.secure = secure }
+    /// Private (a lot's store in the app's data dir): every folder from `secureRoot` down is 0700, files 0600, like the
+    /// work registry. Folders are made only on the first write: reading a store never creates it.
+    let secureRoot: URL?
+    init(dir: URL, secureRoot: URL? = nil) { self.dir = dir; self.secureRoot = secureRoot }
+    private var secure: Bool { secureRoot != nil }
 
     func all() -> (records: [MemoryRecord], problems: [(file: String, error: String)]) {
         var records: [MemoryRecord] = [], problems: [(file: String, error: String)] = []
@@ -26,6 +28,10 @@ struct MemoryStore {
         let folder = dest.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
                                                 attributes: secure ? [.posixPermissions: 0o700] : nil)
+        if let top = secureRoot?.standardizedFileURL.path {
+            var d = folder.standardizedFileURL
+            while d.path.hasPrefix(top) { chmod(d.path, 0o700); d = d.deletingLastPathComponent() }
+        }
         let tmp = folder.appendingPathComponent(".\(UUID().uuidString).tmp")
         do {
             try Data(MemoryFile.render(r).utf8).write(to: tmp)

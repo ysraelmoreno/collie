@@ -266,4 +266,69 @@ private func rec(_ title: String, scope: MemoryScope = .project, lot: UUID? = ni
         let lot = UUID(), r = rec("x", scope: .lot, lot: lot, status: .proposed)
         #expect(try MemoryFile.parse(MemoryFile.render(r)) == r)
     }
+
+    /// R5: a lot whose store still holds active or proposed memories can't be deleted; its store stays on disk.
+    @Test func lotDeleteRefusedWithLiveMemories() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            #expect(try await admin(d, p, "lot.create", ["name": "LA", "members": "A"]).ok)
+            let lid = await lotId(d, "LA")
+            let act = try await save(p, a, "q", "Active one")
+            let prop = rec("Proposed one", scope: .lot, lot: lid, status: .proposed)
+            let arch = rec("Archived one", scope: .lot, lot: lid, status: .archived)
+            try await d.router.memory.lotStore(lid).run { m in for r in [prop, arch] { try m.store.write(r) } }
+            #expect(try await admin(d, p, "admin.kill", ["target": "A"]).ok)
+            let refused = try await admin(d, p, "lot.delete", ["lot": "LA"])
+            #expect(refused.error?.code == .invalidArgs && refused.error?.message.contains("promote or discard") == true, "\(refused)")
+            #expect(try await admin(d, p, "memory.review", ["id": s(act["id"])!, "action": "discard", "lot": "LA"]).ok)
+            #expect(try await admin(d, p, "lot.delete", ["lot": "LA"]).error?.code == .invalidArgs)   // the proposal still blocks
+            #expect(try await admin(d, p, "memory.review", ["id": prop.id.uuidString, "action": "discard", "lot": "LA"]).ok)
+            #expect(try await admin(d, p, "lot.delete", ["lot": "LA"]).ok)   // archived + discarded only
+            let dir = p.root.appendingPathComponent("lots/\(lid.uuidString.lowercased())/memory")
+            #expect(MemoryStore(dir: dir).all().records.count == 3)   // nothing deleted
+        }
+    }
+
+    /// M1: an unknown scope stays archived, keeps its value on rewrite and is never restored (it would widen to project).
+    @Test func unknownScopeIsNeverRestored() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            let id = UUID()
+            let dir = repo.appendingPathComponent(".collie/memory/decision")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent("s-\(id.uuidString.lowercased().prefix(8)).md")
+            try "---\nid: \(id.uuidString.lowercased())\nkind: decision\nscope: herd\nsubject: s\ntitle: Herd secret\nstatus: active\norigin: app\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n\nzebra\n"
+                .write(to: file, atomically: true, encoding: .utf8)
+            #expect(try await admin(d, p, "memory.restore", ["id": id.uuidString, "repo": repo.path]).error?.code == .invalidArgs)
+            #expect(try await admin(d, p, "memory.pin", ["id": id.uuidString, "repo": repo.path]).ok)
+            #expect(try String(contentsOf: file, encoding: .utf8).contains("scope: herd"))   // a rewrite keeps the unknown scope
+            #expect(titles(try await call(p, a, "memory.search", ["query": "zebra", "inactive": "true"])).isEmpty)
+            #expect(try await call(p, a, "memory.get", ["id": id.uuidString]).error?.code == .notFound)
+            #expect(!output(try await call(p, a, "memory.hookContext")).contains("Herd secret"))
+        }
+    }
+
+    /// M3: reading, searching (`--all`) or injecting never creates a lot's store; the first save does.
+    @Test func lotStoreCreatedOnlyOnSave() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            #expect(try await admin(d, p, "lot.create", ["name": "LA", "members": "A"]).ok)
+            #expect(try await admin(d, p, "lot.create", ["name": "LB"]).ok)
+            let lots = p.root.appendingPathComponent("lots")
+            #expect(try await admin(d, p, "memory.search", ["query": "x", "all": "true", "repo": repo.path]).ok)
+            #expect(try await admin(d, p, "memory.search", ["query": "x", "lot": "LB"]).ok)
+            #expect(try await admin(d, p, "memory.list", ["lot": "LB"]).ok)
+            #expect(try await call(p, a, "memory.search", ["query": "x"]).ok)
+            _ = try await call(p, a, "memory.hookContext")
+            _ = try await call(p, a, "memory.hookRelevant", ["prompt": "anything goes here"])
+            #expect(!FileManager.default.fileExists(atPath: lots.path))
+            _ = try await save(p, a, "q", "First")
+            let la = await lotId(d, "LA"), lb = await lotId(d, "LB")
+            #expect(mode(lots.path) == 0o700 && mode(lots.appendingPathComponent(la.uuidString.lowercased()).path) == 0o700)
+            #expect(!FileManager.default.fileExists(atPath: lots.appendingPathComponent(lb.uuidString.lowercased()).path))
+        }
+    }
 }

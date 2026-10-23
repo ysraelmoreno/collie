@@ -70,6 +70,9 @@ enum MemoryCleanup {
         guard var r = all.first(where: { $0.id == id }) else {
             throw ProtocolError(code: .invalidArgs, message: "memory \(id.uuidString.lowercased()) not found")
         }
+        guard r.unknownScope == nil else {
+            throw ProtocolError(code: .invalidArgs, message: "memory \(id.uuidString.lowercased()) has a scope this Collie doesn't know ('\(r.unknownScope ?? "")'); it stays archived")
+        }
         r.status = .active; r.supersededBy = nil
         try store.write(r)   // restored first: a crash in between leaves two actives, never a dangling supersededBy
         for var o in all where o.status == .active && o.id != id && o.kind == r.kind && o.scope == r.scope

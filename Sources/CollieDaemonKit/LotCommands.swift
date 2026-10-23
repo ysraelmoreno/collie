@@ -73,8 +73,15 @@ extension CommandRouter {
             guard !lot.members.contains(where: { m in ws.terminals.contains { $0.id == m } }) else {
                 throw ProtocolError(code: .invalidArgs, message: "lot '\(lot.name)' still has terminals")
             }
+            // nothing reviewable may be stranded: its store (kept on disk) is reachable only through the lot (R5)
+            let store = await memory.lotStore(lot.id)
+            let live = try await store.run { m in m.store.all().records.contains { $0.status == .active || $0.status == .proposed } }
+            guard !live else {
+                throw ProtocolError(code: .invalidArgs, message: "lot '\(lot.name)' still has active or proposed memories: promote or discard them first (Revisar)")
+            }
             ws.lots.removeAll { $0.id == lot.id }
             try await persist()
+            await memory.evictLot(lot.id)
             await hub.emit(.lotRemoved(lot.id))
             return .object([:])
         default: throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")

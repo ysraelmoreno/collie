@@ -16,9 +16,9 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     private var idx: MemoryIndex?
     private(set) var indexError: String?
 
-    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil) {
+    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil, secureRoot: URL? = nil) {
         self.root = root; self.dbFile = dbFile; self.commonDir = commonDir; self.lotId = lotId
-        store = MemoryStore(dir: storeDir, secure: lotId != nil)
+        store = MemoryStore(dir: storeDir, secureRoot: secureRoot)
         queue = DispatchQueue(label: "collie.memory.\(storeDir.path)")
     }
 
@@ -53,6 +53,7 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     /// Queue only. Opened on first use (the cache dir is excluded from git first), refreshed on every call;
     /// nil when it can't open (`indexError` says why; retried at most every `reopenDelay`) — the store still works.
     func index() -> MemoryIndex? {
+        if lotId != nil, !exists { return nil }   // a lot that never saved a memory: no index (nor its dirs) yet
         if let commonDir, !excluded {
             do { try GitRunner.exclude(dbFile.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent + "/cache/", commonDir: commonDir); excluded = true } catch { memoryLog(error.message) }
         }
@@ -67,6 +68,9 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
         do { try idx.refresh() } catch { memoryLog("refresh \(path): \(error)") }   // stale but usable
         return idx
     }
+
+    /// A lot's store exists once its first memory is written (repo/global stores: always).
+    var exists: Bool { lotId == nil || FileManager.default.fileExists(atPath: store.dir.path) }
 
     /// Queue only: closes the SQLite handle (reopened on next use).
     func closeIndex() { idx = nil; lastOpenAttempt = nil }
@@ -130,17 +134,20 @@ actor MemoryService {
     }
 
     /// The store of lot `id`: `<root>/lots/<id>/memory` (0700, like the work registry); the lot's memories outlive the lot.
+    /// Nothing is created on disk until the first memory is saved.
     func lotStore(_ id: UUID) -> RepoMemory {
         if let r = byLot[id] { return r }
         let dir = lotsDir.appendingPathComponent(id.uuidString.lowercased())
-        for d in [lotsDir, dir] {
-            try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            chmod(d.path, 0o700)
-        }
         let r = RepoMemory(root: nil, storeDir: dir.appendingPathComponent("memory"),
-                           dbFile: dir.appendingPathComponent("cache/memory.sqlite"), commonDir: nil, lotId: id)
+                           dbFile: dir.appendingPathComponent("cache/memory.sqlite"), commonDir: nil, lotId: id, secureRoot: lotsDir)
         byLot[id] = r
         return r
+    }
+
+    /// Forgets a deleted lot's store (closing its index); the files stay on disk.
+    func evictLot(_ id: UUID) async {
+        guard let r = byLot.removeValue(forKey: id) else { return }
+        try? await r.run { $0.closeIndex() }
     }
 
     /// Drops the stores of `path` and below (a deleted paddock), closing their indexes.
@@ -241,8 +248,8 @@ actor MemoryService {
     static func visible(_ r: MemoryRecord, paddock: String?, lot: UUID?) -> Bool {
         switch r.scope {
         case .paddock: paddock != nil && r.paddock == paddock
-        case .lot: lot != nil && r.lotId == lot
-        case .project, .global: true
+        case .lot: lot != nil && r.lotId == lot && r.unknownScope == nil
+        case .project, .global: r.unknownScope == nil
         }
     }
 

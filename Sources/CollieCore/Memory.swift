@@ -12,6 +12,9 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var scope: MemoryScope
     public var paddock: String?          // paddock name when scope == .paddock
     public var lotId: UUID?              // when scope == .lot (the record lives in that lot's store)
+    /// A scope this Collie doesn't know, kept verbatim (rewrites keep it): such a record is archived, visible to no agent,
+    /// and can't be restored — it must never widen to project scope.
+    public var unknownScope: String?
     public var subject: String         // supersession-chain key (normalized: lowercase, collapsed spaces)
     public var title: String
     public var body: String
@@ -45,7 +48,7 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
 public enum MemoryFile {
     // Fixed key order: git diffs stay minimal.
     public static func render(_ r: MemoryRecord) -> String {
-        var l = ["id: \(r.id.uuidString.lowercased())", "kind: \(r.kind.rawValue)", "scope: \(r.scope.rawValue)"]
+        var l = ["id: \(r.id.uuidString.lowercased())", "kind: \(r.kind.rawValue)", "scope: \(r.unknownScope ?? r.scope.rawValue)"]
         if let f = r.paddock { l.append("paddock: \(str(f))") }
         if let lot = r.lotId { l.append("lot: \(lot.uuidString.lowercased())") }
         l.append("subject: \(str(r.subject))"); l.append("title: \(str(r.title))")
@@ -114,11 +117,11 @@ public enum MemoryFile {
         if let v = kv["superseded_by"] { supersededBy = try uuid(v, "superseded_by") }
         // R2: an unknown scope/status (a newer Collie, a hand edit) keeps the file readable but out of every injection:
         // archived is never auto-injected, cleaned up or purged; the user can restore it.
-        var scope = MemoryScope.project, status = MemoryStatus.active
-        if let v = kv["scope"] { if let e = MemoryScope(rawValue: v) { scope = e } else { status = .archived } }
+        var scope = MemoryScope.project, status = MemoryStatus.active, unknownScope: String?
+        if let v = kv["scope"] { if let e = MemoryScope(rawValue: v) { scope = e } else { status = .archived; unknownScope = v } }
         if let v = kv["status"], status == .active { status = MemoryStatus(rawValue: v) ?? .archived }
         let lotId = kv["lot"].flatMap { UUID(uuidString: $0) }   // malformed: nil (a lot record without its lot is visible to no one)
-        return MemoryRecord(
+        var rec = MemoryRecord(
             id: try uuid(try req("id"), "id"), kind: try enm("kind"), scope: scope,
             paddock: paddock, lotId: lotId, subject: try field("subject"), title: try field("title"),
             body: body, path: path, status: status,
@@ -126,6 +129,8 @@ public enum MemoryFile {
             supersedes: supersedes,
             supersededBy: supersededBy,
             origin: try field("origin"), createdAt: created, updatedAt: try date("updated"))
+        rec.unknownScope = unknownScope
+        return rec
     }
 
     /// "<kind>/<slug(subject) up to 48>-<id 8 hex>.md"; slug is [a-z0-9-] only.

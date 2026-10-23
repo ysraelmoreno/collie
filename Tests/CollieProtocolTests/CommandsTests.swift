@@ -91,7 +91,7 @@ import Testing
         let names = tools.compactMap { t -> String? in
             if case .object(let o) = t, case .string(let n)? = o["name"] { return n } else { return nil }
         }
-        #expect(names == ["list", "ask", "check", "paddock_list", "paddock_status", "panel_list", "events",
+        #expect(names == ["list", "ask", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                          "memory_save", "memory_search", "memory_list", "memory_get", "memory_context",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get",
                          "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",

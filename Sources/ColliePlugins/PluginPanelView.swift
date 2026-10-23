@@ -98,6 +98,9 @@ public extension PluginPanelView {
     private var live: [UUID: any PluginPanelView] = [:]
     private var failed: Set<UUID> = []   // no view for this plugin: don't retry on every call
     private var known: [UUID: Panel] = [:]   // the previous mirror: what `sync` diffs against
+    /// Headless panels' views: each in a never-ordered `BrowserInput.HostWindow` (plan 2K, Task 4 spike), so WebKit keeps
+    /// the page laid out, rendering and active (trusted input, `:hover`) with no dock tab or canvas node.
+    private var hosts: [UUID: NSWindow] = [:]
     private let panels: @MainActor () -> [Panel]
     private let context: @MainActor (Panel) -> PanelHostContext
 
@@ -111,6 +114,14 @@ public extension PluginPanelView {
         guard !failed.contains(id), let p = panels().first(where: { $0.id == id }) else { return nil }
         guard let v = PluginViews.make(p, host: context(p)) else { failed.insert(id); return nil }
         live[id] = v
+        // ponytail: headless is fixed at open (the daemon refuses moves in or out), so only creation hosts the view
+        if p.placement == .headless {
+            let w = BrowserInput.HostWindow(contentRect: CGRect(x: -20000, y: -20000, width: 1, height: 1),
+                                            styleMask: .borderless, backing: .buffered, defer: false)
+            v.view.frame = .zero   // an empty slot: the page keeps its viewport (`Container.offscreenFrame`)
+            w.contentView?.addSubview(v.view)
+            hosts[id] = w
+        }
         return v
     }
 
@@ -119,7 +130,7 @@ public extension PluginPanelView {
     public func sync(_ current: [Panel]) {
         let ids = Set(current.map(\.id))
         for (id, p) in known where !ids.contains(id) { PluginViews.removed(p, host: context(p)) }
-        for (id, v) in live where !ids.contains(id) { v.close(); live[id] = nil }
+        for (id, v) in live where !ids.contains(id) { v.close(); live[id] = nil; unhost(id, v) }
         failed.formIntersection(ids)
         known = Dictionary(current.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     }
@@ -137,7 +148,12 @@ public extension PluginPanelView {
     /// Delivers a plugin event to the panel's live view; a panel without one drops it (never creates a view).
     public func deliver(panel: UUID, event: String, payload: JSONValue) { live[panel]?.receive(event: event, payload: payload) }
 
-    public func closeAll() { for v in live.values { v.close() }; live = [:] }
+    public func closeAll() { for (id, v) in live { v.close(); unhost(id, v) }; live = [:] }
+
+    private func unhost(_ id: UUID, _ v: any PluginPanelView) {
+        guard let w = hosts.removeValue(forKey: id) else { return }
+        v.view.removeFromSuperview(); w.close()
+    }
 
     public func dispatch(_ panel: UUID, _ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         // the host call can beat the `.panel` event on ui.events: give the mirror up to 1 s

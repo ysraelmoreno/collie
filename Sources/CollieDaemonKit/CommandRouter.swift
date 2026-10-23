@@ -495,6 +495,7 @@ actor CommandRouter {
         for c in gone { await hub.emit(.disconnected(c)) }
         await hub.emit(.removed(t.id))
         await closeRemoved(terminal: t.id, cwd: t.cwd)
+        await closeHeadless(of: t.id)
     }
 
     /// Launches `rec` (new or relaunched in place): credentials, process, record, persist, `.spawned`.
@@ -535,7 +536,9 @@ actor CommandRouter {
     }
 
     private func processExited(_ id: UUID, _ process: ObjectIdentifier) async {
-        if await registry.process(id).map(ObjectIdentifier.init) == process { await memory.endSession(id); await jobsGone(terminal: id) }
+        if await registry.process(id).map(ObjectIdentifier.init) == process {
+            await memory.endSession(id); await jobsGone(terminal: id); await closeHeadless(of: id)
+        }
     }
 
     private var hooksDir: URL { config.paths.root.appendingPathComponent("hooks") }

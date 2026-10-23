@@ -61,7 +61,7 @@ private func lines(_ s: String) -> [[String: Any]] {
         #expect(((by(1)?["result"] as? [String: Any])?["protocolVersion"] as? String) == "2025-06-18")
         let tools = (by(2)?["result"] as? [String: Any])?["tools"] as? [[String: Any]]
         // no daemon: panel.list fails, so only the core and panel-free tools (no plug-in reached)
-        #expect(tools?.compactMap { $0["name"] as? String }.sorted() == ["ask", "check", "paddock_list", "paddock_status", "list", "panel_list", "events",
+        #expect(tools?.compactMap { $0["name"] as? String }.sorted() == ["ask", "check", "paddock_list", "paddock_status", "list", "panel_list", "panel_open", "panel_close", "panel_move", "events",
                          "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "device_list",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop",
                          "work_note", "work_status", "work_summary", "work_list", "work_get",

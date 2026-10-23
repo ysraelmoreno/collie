@@ -1,5 +1,10 @@
 /// Lives in CollieProtocol (not CollieCore) because PluginSpec references it and CollieCore depends on CollieProtocol.
-public enum PanelPlacement: String, Codable, Sendable { case dockLeft = "dock.left", dockRight = "dock.right", dockBottom = "dock.bottom", canvas }
+/// `headless`: a browser hosted but never shown (no canvas node, not in a dock); see `panel.open`.
+public enum PanelPlacement: String, Codable, Sendable {
+    case dockLeft = "dock.left", dockRight = "dock.right", dockBottom = "dock.bottom", canvas, headless
+    /// ponytail: a placement this build doesn't know (a newer one's) loads as `canvas` instead of failing the whole workspace.
+    public init(from d: Decoder) throws { self = PanelPlacement(rawValue: try d.singleValueContainer().decode(String.self)) ?? .canvas }
+}
 public enum StorageScope: String, Codable, Sendable { case isolated, workspace, global }   // default .isolated
 
 public struct PluginSpec: Sendable {
@@ -35,7 +40,7 @@ public enum PluginRegistry {
 
     static let browser = PluginSpec(
         id: "browser", title: "Browser",
-        placements: [.dockRight, .dockLeft, .dockBottom, .canvas], defaultPlacement: .dockRight,
+        placements: [.dockRight, .dockLeft, .dockBottom, .canvas, .headless], defaultPlacement: .dockRight,
         commands: [
             cmd("navigate", "Load a URL", [ParamSpec("url", .string, positional: true, required: true, help: "URL")]),
             cmd("snapshot", "Compact page tree with element refs (e1, e2, ...)"),

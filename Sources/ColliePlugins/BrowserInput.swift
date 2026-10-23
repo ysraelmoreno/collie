@@ -9,13 +9,18 @@ import WebKit
 @MainActor enum BrowserInput {
     enum MouseKind { case move, click }
 
-    /// Hosts a page that is never shown (headless): reports itself key so WebKit treats the page as active (`:hover`,
-    /// `:focus-visible`, mouse moves) while AppKit's real key window stays the user's (it can't become key or main).
+    /// Hosts a page that is never shown (headless): reports itself key and visible so WebKit treats the page as active
+    /// and rendering (`:hover`, `:focus-visible`, mouse moves, rAF, timers) while AppKit's real key window stays the
+    /// user's (it can't become key or main).
     /// Never order it in, and never use it for a visible panel: that one keeps its real window's key state.
     final class HostWindow: NSWindow {
         override var canBecomeKey: Bool { false }
         override var canBecomeMain: Bool { false }
         override var isKeyWindow: Bool { true }
+        /// Both: without them WebKit takes the page as hidden, stops `requestAnimationFrame`, throttles timers and
+        /// paints no new frames (plan 2K Review Focus 1, `BrowserHeadlessTests`). The window still never reaches the screen.
+        override var isVisible: Bool { true }
+        override var occlusionState: NSWindow.OcclusionState { .visible }
         override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
             super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
             isExcludedFromWindowsMenu = true

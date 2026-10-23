@@ -156,6 +156,37 @@ Limitações: só simulador (iPhone físico não); `device.text` só digita tecl
 barra; um arrasto vira um único swipe ao soltar (sem seguir o dedo, sem multitoque); o vídeo e a entrada dependem de o AXe
 acompanhar o Xcode (ele usa frameworks privados: uma atualização do Xcode pode quebrá-los até sair um AXe novo).
 
+## Navegador (Browser)
+
+O plug-in **Navegador** é um `WKWebView` que os agentes dirigem com `collie browser …` (`snapshot`, `click`, `fill`, `type`,
+`key`, `hover`, `resize`, `emulate`, `screenshot`, `storage`, `init-script`…; `--panel <nome>` se houver mais de um).
+
+**Navegadores de teste.** Qualquer terminal, não só o Pastor, abre seus próprios navegadores — só do plug-in Navegador,
+até 8 por terminal (`tooMany` além disso):
+
+- `collie panel open browser --url <url>`: **headless** — sem nó no canvas e fora das docas, mas a página roda de verdade
+  (animações, timers, entrada confiável, screenshots). Só o terminal que abriu, o app e o Pastor com guia até ele a veem em
+  `collie panel list` (`placement: "headless"`). Fecha sozinho quando o terminal é removido ou o processo dele sai, e os
+  screenshots dele vão junto.
+- `collie panel open browser --url <url> --visible`: um painel normal no canvas, no cercado do terminal.
+
+Nos dois casos o painel já nasce com uma guia até quem abriu. Um terminal que não é Pastor fecha e move só os navegadores
+que abriu (e os visíveis ficam no canvas). O Pastor segue como antes e também pode pedir `--placement headless`.
+
+Fluxo típico de QA responsivo, três navegadores em paralelo:
+
+```sh
+for w in 360 768 1280; do
+  collie panel open browser --name qa-$w --url http://localhost:3000
+  collie browser resize --panel qa-$w --width $w --height 800 &
+done; wait
+collie browser emulate --panel qa-360 --color-scheme dark --reduced-motion reduce
+for w in 360 768 1280; do collie browser screenshot --panel qa-$w --full-page --out shots/home-$w.png & done; wait
+collie panel close qa-360   # ou deixe: fecham quando o terminal sai
+```
+
+`--out` é gravado pelo processo `collie` (relativo ao diretório atual dele); o daemon só escreve em `<raiz>/screens`.
+
 ## Design
 
 O plug-in **Design** é o [figcraft](https://github.com/storytold/figcraft) v0.7.0 (fixado, sem a marca ArtCraft e sem

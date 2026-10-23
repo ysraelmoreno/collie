@@ -231,9 +231,20 @@ actor CommandRouter {
                 let s = await registry.scrollback(t.id)?.tail(lines: Int(try num(req, "lines", max: 1_000_000) ?? 200)) ?? (text: "", truncated: false)
                 return Response(id: req.id, ok: true, result: .object(["output": .string(s.text), "truncated": .bool(s.truncated)]))
             case "turn.completed":
-                await asks.turnCompleted(terminal: tid, message: str(req, "message"))
-                Task { await workTurnEnded(tid) }   // git runs detached: never delays or fails the hook
-                return Response(id: req.id, ok: true, result: .object([:]))
+                // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
+                let continued = flag(req, "continued")
+                if continued { await asks.turnContinued(terminal: tid) } else { await asks.turnCompleted(terminal: tid, message: str(req, "message")) }
+                guard flag(req, "capture"), !continued else {
+                    Task { await workTurnEnded(tid) }   // git runs detached: never delays or fails the hook
+                    return Response(id: req.id, ok: true, result: .object([:]))
+                }
+                // Claude's Stop may ask once per chunk: the turn's commits count, so git first (at most 3 s, then it goes on detached)
+                let (done, finish) = AsyncStream<Void>.makeStream()
+                Task { await workTurnEnded(tid); finish.finish() }
+                Task { try? await Task.sleep(for: .seconds(3)); finish.finish() }
+                for await _ in done {}
+                let ask = await stopAsk(tid)
+                return Response(id: req.id, ok: true, result: .object(ask.map { ["ask": .string($0)] } ?? [:]))
             case "work.hook":
                 if str(req, "hook") == "notification", let m = HookPayload.claudePermissionMessage(stdinJSON: Data((str(req, "payload") ?? "").utf8)) {
                     await asks.hookPermission(tid, message: String(m.prefix(500)))
@@ -546,6 +557,8 @@ actor CommandRouter {
     private func processExited(_ id: UUID, _ process: ObjectIdentifier) async {
         if await registry.process(id).map(ObjectIdentifier.init) == process {
             await memory.endSession(id); await jobsGone(terminal: id); await closeHeadless(of: id)
+            // the session's end for agents without a SessionEnd hook (Codex): its learnings become proposals
+            if let w = try? await work.active(terminal: id) { Task { await captureProposals(w.id) } }
         }
     }
 

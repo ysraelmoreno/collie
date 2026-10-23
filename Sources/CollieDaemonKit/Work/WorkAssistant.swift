@@ -83,6 +83,25 @@ actor WorkAssistant {
         }
     }
 
+    // MARK: captured proposals (MemoryCapture)
+
+    static let proposalInstructions = "Reescreva a nota abaixo como uma memória curta de projeto, em português: na primeira linha um título de até 80 caracteres, depois uma linha em branco e o corpo em até 3 frases. Use somente os fatos do texto. Não acrescente nomes, números ou conclusões que não estejam nele."
+
+    /// A captured proposal's title and body rewritten by the on-device model within `deadline`, sanitized like a rewrite;
+    /// nil (unavailable, failed, late, empty) keeps the deterministic text. Not cached: each proposal is asked once.
+    func rewriteProposal(title: String, body: String) async -> (title: String, body: String)? {
+        if case .unavailable = await model.availability() { return nil }
+        let gate = Gate(), (model, clock) = (self.model, self.clock), prompt = "\(title)\n\n\(body)"
+        let call = Task { gate.finish(await Self.ask(model, Self.proposalInstructions, prompt, [])) }
+        let timer = Task { try? await clock.sleep(for: Self.deadline); if gate.finish((nil, "timeout")) { call.cancel() } }
+        let r = await gate.value()
+        timer.cancel()
+        guard let text = r.text else { return nil }
+        let parts = text.split(separator: "\n", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard let t = parts.first, !t.isEmpty else { return nil }
+        return (t, parts.count > 1 && !parts[1].isEmpty ? parts[1] : body)
+    }
+
     // MARK: free questions (the chat's "?")
 
     static let questionInstructions = "Você responde perguntas sobre o trabalho dos agentes no Collie. Use as ferramentas para consultar o registro; responda só com o que elas devolverem, em português, em poucas frases. Se o registro não tiver a resposta, diga que não sabe."

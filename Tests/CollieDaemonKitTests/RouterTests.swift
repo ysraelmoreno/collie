@@ -16,6 +16,7 @@ func testConfig(_ paths: Paths, _ ws: UUID = UUID()) -> DaemonConfig {
     c.xcrunPath = fixtures.appendingPathComponent("fake-xcrun.sh")
     c.axePath = fixtures.appendingPathComponent("fake-axe.sh")
     c.captureUserEnv = false   // never the developer's rc files
+    c.localModel = FakeModel(.unavailable)   // never the real on-device model (tests that want one set it)
     return c
 }
 private func makeDaemon(_ configure: (inout DaemonConfig) -> Void = { _ in }) throws -> (Daemon, Paths) {

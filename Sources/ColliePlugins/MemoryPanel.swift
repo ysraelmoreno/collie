@@ -5,18 +5,21 @@ import CollieProtocol
 import CollieTheme
 import SwiftUI
 
-/// A memory row as `memory.list` returns it: the record plus where it lives and, for maps, since when its path is gone.
+/// A memory row as `memory.list` returns it: the record plus where it lives (`lot`: the lot's name, for a lot's store)
+/// and, for maps, since when its path is gone.
 public struct MemoryRow: Decodable, Identifiable, Equatable, Sendable {
     public let record: MemoryRecord
     public let file: String?
     public let missingSince: Date?
+    public let lot: String?
     public var id: UUID { record.id }
-    private enum K: String, CodingKey { case file, missingSince }
+    private enum K: String, CodingKey { case file, missingSince, lot }
     public init(from d: Decoder) throws {
         record = try MemoryRecord(from: d)
         let c = try d.container(keyedBy: K.self)
         file = try c.decodeIfPresent(String.self, forKey: .file)
         missingSince = try c.decodeIfPresent(Date.self, forKey: .missingSince)
+        lot = try? c.decodeIfPresent(String.self, forKey: .lot)
     }
 }
 public struct MemoryRepo: Decodable, Identifiable, Equatable, Sendable {
@@ -40,6 +43,8 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
     @Published public var repo: String?
     @Published public var tab: Tab = .review
     @Published public private(set) var unreviewed: [MemoryRow] = []
+    /// Captured, not yet reviewed (MemoryCapture): the picked repo's and every lot's, never injected until approved.
+    @Published public private(set) var proposals: [MemoryRow] = []
     @Published public private(set) var decisions: [MemoryRow] = []
     @Published public private(set) var superseded: [MemoryRow] = []
     @Published public private(set) var maps: [MemoryRow] = []
@@ -68,9 +73,10 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
         return try? d.decode(T.self, from: data)
     }
     private struct Listing: Decodable { var records: [MemoryRow]; var problems: [MemoryProblem] }
-    private func list(_ status: String, unreviewed: Bool = false) async -> Listing? {
+    private func list(_ status: String, unreviewed: Bool = false, lot: String? = nil) async -> Listing? {
         var args: [String: JSONValue] = ["status": .string(status)]
         if unreviewed { args["unreviewed"] = .bool(true) }
+        if let lot { args["lot"] = .string(lot) }
         return decode(await send("memory.list", args))
     }
 
@@ -89,6 +95,25 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
         if let l = await list("superseded") { superseded = l.records }
         if let l = await list("archived") { archived = l.records }
         if let l = await list("discarded") { discarded = l.records }
+        var props = await list("proposed")?.records ?? []
+        struct LotName: Decodable { var name: String }
+        let lots: [LotName] = decode(await send("lot.list")) ?? []
+        for l in lots { props += await list("proposed", lot: l.name)?.records ?? [] }
+        proposals = props
+    }
+
+    /// Proposals by lot (the project's last, `lot` nil), each group newest first.
+    public var proposalGroups: [(lot: String?, rows: [MemoryRow])] {
+        let keys = Array(Set(proposals.map(\.lot))).sorted { ($0 ?? "\u{10FFFF}") < ($1 ?? "\u{10FFFF}") }
+        return keys.map { k in (k, proposals.filter { $0.lot == k }) }
+    }
+    /// Every proposal of the group, approved one by one (each replaces the active memory of its subject); one reload.
+    public func approveAll(lot: String?) async {
+        error = nil
+        for r in proposals where r.lot == lot {
+            guard await send("memory.review", reviewArgs(r.id, "approve", lot: lot)) != nil else { break }
+        }
+        await load()
     }
     public func selectRepo(_ path: String) async { repo = path; await load(); if tab == .cleanup { await planCleanup() } }
 
@@ -96,16 +121,22 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
         error = nil
         if await send(command, args) != nil { await load() }
     }
-    public func approve(_ id: UUID) async { await review(id, "approve") }
+    /// `lot`: the record lives in that lot's store (a row's `lot`).
+    public func approve(_ id: UUID, lot: String? = nil) async { await review(id, "approve", lot: lot) }
     /// Out of injections but kept: restorable, and `purge` never deletes it.
     public func archive(_ id: UUID) async { await review(id, "archive") }
-    public func discard(_ id: UUID) async { await review(id, "discard") }
-    private func review(_ id: UUID, _ action: String, _ extra: [String: JSONValue] = [:]) async {
-        await change("memory.review", extra.merging(["id": .string(id.uuidString), "action": .string(action)]) { a, _ in a })
+    public func discard(_ id: UUID, lot: String? = nil) async { await review(id, "discard", lot: lot) }
+    private func reviewArgs(_ id: UUID, _ action: String, lot: String?, _ extra: [String: JSONValue] = [:]) -> [String: JSONValue] {
+        var a = extra.merging(["id": .string(id.uuidString), "action": .string(action)]) { a, _ in a }
+        if let lot { a["lot"] = .string(lot) }
+        return a
+    }
+    private func review(_ id: UUID, _ action: String, lot: String? = nil, _ extra: [String: JSONValue] = [:]) async {
+        await change("memory.review", reviewArgs(id, action, lot: lot, extra))
     }
     /// Editing counts as approving (the daemon marks it reviewed).
-    public func edit(_ id: UUID, title: String, body: String, subject: String) async {
-        await review(id, "approve", ["title": .string(title), "body": .string(body), "subject": .string(subject)])
+    public func edit(_ id: UUID, title: String, body: String, subject: String, lot: String? = nil) async {
+        await review(id, "approve", lot: lot, ["title": .string(title), "body": .string(body), "subject": .string(subject)])
     }
     public func restore(_ id: UUID) async { await change("memory.restore", ["id": .string(id.uuidString)]); if tab == .cleanup { await planCleanup() } }
     public func pin(_ id: UUID, _ pinned: Bool = true) async { await change(pinned ? "memory.pin" : "memory.unpin", ["id": .string(id.uuidString)]) }
@@ -186,7 +217,7 @@ struct MemoryPanelView: View {
         .background(Color.collieSurface)
         .task { await model.load() }
         .onChange(of: model.tab) { _, t in if t == .cleanup { Task { await model.planCleanup() } } }
-        .sheet(item: $editing) { row in EditSheet(row: row) { t, b, s in Task { await model.edit(row.id, title: t, body: b, subject: s) } } }
+        .sheet(item: $editing) { row in EditSheet(row: row) { t, b, s in Task { await model.edit(row.id, title: t, body: b, subject: s, lot: row.lot) } } }
         .confirmationDialog("Esvaziar descartadas?", isPresented: $confirmPurge, titleVisibility: .visible) {
             Button("Apagar \(model.discarded.count) arquivo(s)", role: .destructive) { model.purgeConfirmed = true; Task { await model.purge() } }
         } message: { Text("\(model.discarded.count) arquivo(s) serão apagados do disco. Isso não pode ser desfeito.") }
@@ -216,8 +247,8 @@ struct MemoryPanelView: View {
                 Button { model.tab = t } label: {
                     HStack(spacing: 4) {
                         Text(t.rawValue).font(.collieUI(13, on ? .semibold : .medium)).foregroundStyle(on ? Color.collieText : .collieTextSecondary)
-                        if t == .review && !model.unreviewed.isEmpty {
-                            Text("\(model.unreviewed.count)").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                        if t == .review && !(model.unreviewed.isEmpty && model.proposals.isEmpty) {
+                            Text("\(model.unreviewed.count + model.proposals.count)").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
                         }
                     }
                     .frame(maxWidth: .infinity).frame(height: 30)
@@ -250,6 +281,25 @@ struct MemoryPanelView: View {
     @ViewBuilder private var content: some View {
         switch model.tab {
         case .review:
+            if !model.proposals.isEmpty {
+                section("Propostas")
+                noMatch(model.proposals)
+                ForEach(model.proposalGroups, id: \.lot) { g in
+                    HStack {
+                        Text(g.lot.map { "Lote \($0)" } ?? "Projeto").font(.collieUI(12, .semibold)).foregroundStyle(Color.collieTextSecondary)
+                        Spacer()
+                        act("Aprovar todas") { Task { await model.approveAll(lot: g.lot) } }
+                    }
+                    ForEach(shown(g.rows)) { r in
+                        item(r, meta: meta(r), badge: "proposta") {
+                            act("Aprovar", .primary) { Task { await model.approve(r.id, lot: r.lot) } }
+                            act("Editar") { editing = r }
+                            act("Descartar", .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
+                        }
+                    }
+                }
+                section("Não revisadas")
+            }
             if model.unreviewed.isEmpty { empty("Nada para revisar.") }
             noMatch(model.unreviewed)
             ForEach(shown(model.unreviewed)) { r in

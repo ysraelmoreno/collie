@@ -161,14 +161,16 @@ private let dialog = "stty raw -echo; " + dialogText + "k=$(dd bs=1 count=1 2>/d
         }
     }
 
-    /// B2a: a Stop hook (the turn ended, so no dialog is open) drops the approval; nothing is typed.
-    @Test func stopHookDropsApproval() async throws {
+    /// B2a: a Stop hook (the turn ended, so no dialog is open) drops the approval; nothing is typed. Also Claude's Stop
+    /// that may ask for a capture, and the continued Stop after such an ask.
+    @Test(arguments: ["", "capture", "continued"]) func stopHookDropsApproval(_ extra: String) async throws {
         try await withDaemon { d, p in
             let t = try await term(d, p, "A", yesNo)
             _ = try #require(await pending(d, p, t))
             let before = await d.scrollbackTotalBytes(t.uuid)
-            let r = try await send(p, Request(id: "s", terminalId: t.id, token: t.token, command: "turn.completed",
-                                              args: ["message": .string("pronto"), "source": .string("generic")]))
+            var args: [String: JSONValue] = ["message": .string("pronto"), "source": .string(extra.isEmpty ? "generic" : "claude")]
+            if !extra.isEmpty { args[extra] = .bool(true) }
+            let r = try await send(p, Request(id: "s", terminalId: t.id, token: t.token, command: "turn.completed", args: args))
             #expect(r.ok, "\(r)")
             #expect(try await approvals(d, p).isEmpty)
             #expect(await d.scrollbackTotalBytes(t.uuid) == before)

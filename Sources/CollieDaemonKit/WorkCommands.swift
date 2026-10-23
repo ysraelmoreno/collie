@@ -21,6 +21,8 @@ extension CommandRouter {
             guard let w else { return }
             try await work.update(w.id) { Self.apply(events, to: &$0, now: now) }
             workStoreBroken = false
+            // compaction or the session's end: what it learned becomes proposals (detached: the hook never waits on the model)
+            if events.contains(where: { $0 == .compacted || $0 == .sessionEnded }) { Task { await captureProposals(w.id) } }
             await goneIfDead(tid)   // the terminal may have died or been removed while this hook ran
         } catch {
             workFailed("hook \(str(r, "hook") ?? "?")", error)
@@ -209,6 +211,7 @@ extension CommandRouter {
                 if let reason { $0.notes.append(WorkNote(at: now, text: "Done: \(reason)")) }
                 $0.closedAt = now; $0.closedBy = by
             }
+            Task { await captureProposals(w.id) }   // its learnings become proposals (the model may take seconds)
             return .object(["id": .string(w.id.uuidString.lowercased())])
 
         case "work.reopen":

@@ -10,6 +10,7 @@ private actor FakeDaemon {
     var calls: [(String, [String: JSONValue])] = []
     var plan: [JSONValue] = []
     var failing: Set<String> = []
+    var lots: [String: UUID] = [:]
     init(_ r: [MemoryRecord]) { records = r }
 
     func handle(_ cmd: String, _ a: [String: JSONValue]) throws(ProtocolError) -> JSONValue {
@@ -24,16 +25,19 @@ private actor FakeDaemon {
         }
         switch cmd {
         case "memory.repos": return .array([.object(["path": .string("/r"), "scope": .string("project")])])
+        case "lot.list": return .array(lots.keys.sorted().map { .object(["name": .string($0)]) })
         case "memory.list":
-            let st = s("status") ?? "active", un = a["unreviewed"] == .bool(true)
-            return .object(["records": .array(records.filter { $0.status.rawValue == st && (!un || !$0.reviewed) }
-                .map { enc($0, $0.kind == .map && $0.path == "gone.txt" ? ["missingSince": .string("2026-10-01T00:00:00Z")] : [:]) }),
+            let st = s("status") ?? "active", un = a["unreviewed"] == .bool(true), lot = s("lot").flatMap { lots[$0] }
+            return .object(["records": .array(records.filter { $0.status.rawValue == st && (!un || !$0.reviewed) && $0.lotId == lot }
+                .map { enc($0, ($0.kind == .map && $0.path == "gone.txt" ? ["missingSince": .string("2026-10-01T00:00:00Z")] : [:])
+                    .merging(s("lot").map { ["lot": .string($0)] } ?? [:]) { a, _ in a }) }),
                             "problems": .array([.object(["file": .string("/r/bad.md"), "error": .string("x")])])])
         case "memory.review":
             let i = records.firstIndex { $0.id.uuidString == s("id") }!
             records[i].reviewed = true
             if s("action") == "discard" { records[i].status = .discarded }
             if s("action") == "archive" { records[i].status = .archived }
+            if s("action") == "approve", records[i].status == .proposed { records[i].status = .active }
             if let t = s("title") { records[i].title = t }
             return .null
         case "memory.restore":
@@ -53,6 +57,7 @@ private actor FakeDaemon {
         default: return .null
         }
     }
+    func setLots(_ l: [String: UUID]) { lots = l }
     func names() -> [String] { calls.map(\.0) }
     func last(_ c: String) -> [String: JSONValue]? { calls.last { $0.0 == c }?.1 }
     func all(_ c: String) -> [[String: JSONValue]] { calls.filter { $0.0 == c }.map(\.1) }
@@ -176,6 +181,26 @@ private actor FakeDaemon {
         await m.purge()
         #expect((await d.names()).contains("memory.purge"))
         #expect(m.discarded.isEmpty && !m.purgeConfirmed)
+    }
+
+    @Test func proposalsGroupedByLot() async {
+        let lot = UUID()
+        var a = rec("redis", status: .proposed); a.lotId = lot
+        var b = rec("argon2", status: .proposed); b.lotId = lot
+        let c = rec("postgres", status: .proposed)
+        let (m, d) = make([a, b, c, rec("active one")])
+        await d.setLots(["Login": lot])
+        await m.load()
+        #expect(m.proposalGroups.map(\.lot) == ["Login", nil])
+        #expect(m.proposalGroups.map { $0.rows.map(\.record.title).sorted() } == [["argon2", "redis"], ["postgres"]])
+        #expect(!m.unreviewed.contains { $0.record.status == .proposed })
+        await m.approveAll(lot: "Login")
+        let reviews = await d.all("memory.review")
+        #expect(reviews.count == 2 && reviews.allSatisfy { $0["lot"] == .string("Login") && $0["action"] == .string("approve") })
+        #expect(m.proposalGroups.map(\.lot) == [nil])
+        await m.discard(c.id)
+        let lastReview = await d.last("memory.review")
+        #expect(m.proposals.isEmpty && lastReview?["lot"] == nil)
     }
 }
 

@@ -25,6 +25,20 @@ public enum HookPayload {
         return last
     }
 
+    /// Claude sets `stop_hook_active` on a Stop that follows a turn a Stop hook made it continue: never block that one.
+    /// nil: unreadable stdin (no block, the turn still ends).
+    public static func claudeStopHookActive(stdinJSON: Data) -> Bool? {
+        guard let o = try? JSONSerialization.jsonObject(with: stdinJSON) as? [String: Any] else { return nil }
+        return o["stop_hook_active"] as? Bool ?? false
+    }
+
+    /// The Stop hook reply that makes Claude continue one more turn with `reason` as its instruction.
+    public static func claudeStopBlock(reason: String) -> String? {
+        guard let d = try? JSONSerialization.data(withJSONObject: ["decision": "block", "reason": reason], options: [.withoutEscapingSlashes])
+        else { return nil }
+        return String(decoding: d, as: UTF8.self)
+    }
+
     /// Longest prompt (UTF-8 bytes) the memory hook looks at.
     public static let maxPromptBytes = 64 * 1024
 

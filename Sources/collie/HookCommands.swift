@@ -3,7 +3,7 @@ import CollieCore
 import CollieProtocol
 import CollieDaemonKit
 
-/// `collie hook ...`: never fails, never prints (but the memory hooks print their injection JSON). Errors go to hooks.log.
+/// `collie hook ...`: never fails, never prints (but the memory hooks print their injection JSON, and claude-stop its block reply). Errors go to hooks.log.
 enum HookCommands {
     static func run(_ args: [String]) async {
         do { try await dispatch(args) } catch { log("\(args.first ?? "?"): \(error)") }
@@ -38,8 +38,12 @@ enum HookCommands {
             statusline()
             return
         case "claude-stop":
-            source = "claude"
-            message = HookPayload.claudeStopMessage(stdinJSON: FileHandle.standardInput.readDataToEndOfFile())
+            // prints the block reply only when the daemon asks for one; every failure is just a log line (fail open)
+            if let out = await MemoryHookClient.stopOutput(stdin: FileHandle.standardInput.readDataToEndOfFile(),
+                                                           env: ProcessInfo.processInfo.environment, onError: { log("claude-stop: \($0)") }) {
+                print(out)
+            }
+            return
         case "codex-notify":
             source = "codex"
             message = a.count > 1 ? HookPayload.codexNotifyMessage(argJSON: a[1]) : nil

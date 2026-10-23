@@ -420,6 +420,9 @@ public actor AskCoordinator {
         }
     }
 
+    /// A Stop hook made the agent go on (Claude's `stop_hook_active`): no dialog is open, but the turn is not over.
+    public func turnContinued(terminal: UUID) { targets[terminal]?.approval.dismiss() }
+
     /// Fails the in-flight ask and every queued ask for this terminal.
     public func processExited(_ terminal: UUID) {
         guard let t = targets[terminal] else { return }

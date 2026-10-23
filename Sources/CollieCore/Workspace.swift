@@ -54,6 +54,9 @@ public struct Connection: Codable, Sendable, Equatable {
     public init(a: UUID, b: UUID) { self.a = a; self.b = b }
 }
 
+/// Whether the Shepherd should have UI work designed first: ask the user, always, or never.
+public enum DesignFirst: String, Codable, Sendable, CaseIterable { case ask, always, never }
+
 public struct Workspace: Codable, Sendable, Equatable {
     public var schemaVersion: Int = 3
     public var id: UUID
@@ -63,10 +66,11 @@ public struct Workspace: Codable, Sendable, Equatable {
     public var paddocks: [Paddock]
     public var panels: [Panel]
     public var designSystem: UUID?   // active design system of pasture and of paddocks without their own
+    public var designFirst: DesignFirst = .ask   // set only by `design.prefer` / Preferences
     public init(id: UUID, name: String, terminals: [TerminalRecord] = [], connections: [Connection] = [], paddocks: [Paddock] = [], panels: [Panel] = []) {
         self.id = id; self.name = name; self.terminals = terminals; self.connections = connections; self.paddocks = paddocks; self.panels = panels
     }
-    private enum K: String, CodingKey { case schemaVersion, id, name, terminals, connections, paddocks, panels, designSystem }
+    private enum K: String, CodingKey { case schemaVersion, id, name, terminals, connections, paddocks, panels, designSystem, designFirst }
     private enum Legacy: String, CodingKey { case floors }   // before the herding vocabulary
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -77,6 +81,7 @@ public struct Workspace: Codable, Sendable, Equatable {
             ?? decoder.container(keyedBy: Legacy.self).decodeIfPresent([Paddock].self, forKey: .floors) ?? []   // v1 files have none
         panels = try c.decodeIfPresent([Panel].self, forKey: .panels) ?? []   // v1/v2 files have none
         designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
+        designFirst = try c.decodeIfPresent(DesignFirst.self, forKey: .designFirst) ?? .ask
     }
     // schemaVersion always writes the current version (a decoded v1 file is re-saved as 3).
     public func encode(to encoder: Encoder) throws {
@@ -84,5 +89,6 @@ public struct Workspace: Codable, Sendable, Equatable {
         try c.encode(schemaVersion, forKey: .schemaVersion); try c.encode(id, forKey: .id); try c.encode(name, forKey: .name)
         try c.encode(terminals, forKey: .terminals); try c.encode(connections, forKey: .connections); try c.encode(paddocks, forKey: .paddocks)
         try c.encode(panels, forKey: .panels); try c.encodeIfPresent(designSystem, forKey: .designSystem)
+        if designFirst != .ask { try c.encode(designFirst, forKey: .designFirst) }   // ponytail: the default is never written
     }
 }

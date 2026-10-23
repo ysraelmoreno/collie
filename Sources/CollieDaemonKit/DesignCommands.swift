@@ -28,6 +28,17 @@ extension CommandRouter {
             var out: [String: JSONValue] = ["name": .string(f.name)]
             out.merge(await enableActiveSystem(f, deadline)) { _, b in b }
             return .object(out)
+        case "design.prefer":
+            guard let v = try str(r, "value") else { return .object(["designFirst": .string(ws.designFirst.rawValue)]) }
+            if let me = caller, !me.isShepherd { throw ProtocolError(code: .notShepherd, message: "'design.prefer' is Shepherd-only to set") }
+            guard let pref = DesignFirst(rawValue: v) else {
+                throw ProtocolError(code: .invalidArgs, message: "'\(v)' is not a design-first value; use \(DesignFirst.allCases.map(\.rawValue).joined(separator: "|"))")
+            }
+            let before = ws.designFirst
+            ws.designFirst = pref
+            do { try await persist() } catch { ws.designFirst = before; throw error }
+            // ponytail: no WorkspaceEvent for workspace fields; the app reads the value when it needs it
+            return .object(["designFirst": .string(pref.rawValue)])
         case "design.help":
             // figcraft's commands, then Collie's own design.system.* (one line each), kept by the same query
             let q = (try str(r, "query") ?? "").trimmingCharacters(in: .whitespaces).lowercased()

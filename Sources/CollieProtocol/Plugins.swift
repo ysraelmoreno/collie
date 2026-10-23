@@ -169,6 +169,8 @@ extension PluginRegistry {
             gcmd("help", "figcraft command ids and their parameters [{id,help}]",
                  [ParamSpec("query", .rest, positional: true, help: "Keep commands whose id or docs contain this text")], timeout: 30, panelFree: true),
             gcmd("link", "The panel file's edit link (the app only)", timeout: 30, exposedToMCP: false),
+            gcmd("prefer", "The workspace's design-first preference (ask|always|never) for UI work; with a value sets it (Shepherd or the app) (ignores --panel); returns {designFirst}",
+                 [ParamSpec("value", .string, positional: true, help: "ask|always|never (omit to read)")], timeout: 10, panelFree: true),
             gcmd("system.list", "Design systems [{name,version,active}] (ignores --panel)", timeout: 10, panelFree: true),
             gcmd("system.create", "Create a design system: a design file of that name seeded with starter tokens, a text style and a component (or a copy of --from), published as version 1 (ignores --panel); returns {name,version}",
                  [ParamSpec("name", .string, positional: true, required: true, help: "Name (1-80 of A-Z a-z 0-9 space . _ -)"),

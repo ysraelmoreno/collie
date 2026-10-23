@@ -24,6 +24,7 @@ enum Client {
         // `--out` is the caller's own file, written here (relative to this process's cwd; over MCP, the `collie mcp` server's cwd), never by the daemon
         var args = args
         let out = command == "browser.screenshot" ? args.removeValue(forKey: "out") : nil
+        if let out, case .string = out {} else if out != nil { throw ProtocolError(code: .invalidArgs, message: "--out must be a string") }
         let result = try await send(command, args)
         guard case .string(let dest)? = out else { return result }
         return try OutFile.copyPath(of: result, to: dest, cwd: FileManager.default.currentDirectoryPath)

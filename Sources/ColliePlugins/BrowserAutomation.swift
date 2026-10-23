@@ -218,10 +218,11 @@ enum BrowserAutomation {
       }
 
       // the element's box in viewport CSS px, scrolled into view and cut to the viewport (for a clipped screenshot)
-      function rect(ref) {
+      async function rect(ref) {
         const el = find(ref);
         if (!el) return missing(ref);
-        el.scrollIntoView({ block: 'center', inline: 'center' });
+        el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+        await new Promise(r => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 150); });
         const b = el.getBoundingClientRect();
         const x = Math.max(b.left, 0), y = Math.max(b.top, 0);
         const w = Math.min(b.right, innerWidth) - x, h = Math.min(b.bottom, innerHeight) - y;

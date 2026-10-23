@@ -96,6 +96,7 @@ extension BrowserPanel {
 
     /// 16384 output pixels: past this a PNG is unwieldy (and CGContext/WebKit start failing).
     static let screenshotMaxPixels = 16384
+    static let screenshotMaxBytes = 512 << 20
 
     /// PNG `<root>/screens/<panelId>-<uuid>.png` (dir 0700; removed with the panel); only the newest `screenshotKeep` are kept. Encoding, writing and pruning
     /// run off the main actor (a large page is a large PNG). `--clip x,y,w,h` (viewport CSS px) or `--ref` crops; `--full-page` tiles the document.
@@ -110,11 +111,17 @@ extension BrowserPanel {
         if full { cg = try await fullPage(web) }
         else if let clip { cg = try await snapshot(web, rect: try Self.clipRect(clip, in: web.bounds.size)) }
         else if let ref {
-            let r = try await page("rect", [ref])
+            // a screenshot must not move the viewport: the scroll before is restored, also on error
+            let before = try await Self.pageNumbers(web, "return [scrollX, scrollY]")
+            let restore = "scrollTo({ left: \(before[0]), top: \(before[1]), behavior: 'instant' }); return [0]"
+            let r: [String: JSONValue]
+            do throws(ProtocolError) { r = try await page("rect", [ref]) } catch { _ = try? await Self.pageNumbers(web, restore); throw error }
             guard case .number(let x)? = r["x"], case .number(let y)? = r["y"], case .number(let w)? = r["width"], case .number(let h)? = r["height"] else {
                 throw ProtocolError(code: .internal, message: "browser: bad rect reply")
             }
-            cg = try await snapshot(web, rect: CGRect(x: x, y: y, width: w, height: h))
+            do throws(ProtocolError) { cg = try await snapshot(web, rect: CGRect(x: x, y: y, width: w, height: h)) }
+            catch { _ = try? await Self.pageNumbers(web, restore); throw error }
+            _ = try? await Self.pageNumbers(web, restore)
         } else { cg = try await snapshot(web, rect: nil) }
         let dir = host.root.appendingPathComponent("screens", isDirectory: true)
         let prefix = panel.id.uuidString + "-"
@@ -148,7 +155,7 @@ extension BrowserPanel {
     /// Tiles: scroll by the viewport height, snapshot each, stitch at backing scale; the frame is never resized (`vh` keeps its
     /// meaning) and the scroll position is restored. The last tile is the partial one: the page clamps its scroll, so it overlaps
     /// the previous tile and is drawn at its real offset.
-    /// ponytail: viewport width only (no horizontal tiling); fixed/sticky elements repeat per tile; scrolling inside a nested container is not followed.
+    /// ponytail: the height is measured once at the start (content that grows while capturing, lazy/infinite, is cut; re-measure per tile if needed); viewport width only (no horizontal tiling); fixed/sticky elements repeat per tile; scrolling inside a nested container is not followed.
     private func fullPage(_ web: WKWebView) async throws(ProtocolError) -> CGImage {
         let vh = Int(web.bounds.height)
         let doc = try await Self.pageNumbers(web, "return [Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), scrollX, scrollY]")
@@ -168,6 +175,9 @@ extension BrowserPanel {
                 if ctx == nil {
                     scale = Double(tile.width) / web.bounds.width
                     let h = Int((Double(height) * scale).rounded())
+                    guard tile.width * h * 4 <= Self.screenshotMaxBytes else {
+                        throw ProtocolError(code: .invalidArgs, message: "--full-page: \(tile.width)x\(h) px is too large (over 512 MiB); use --clip or --ref")
+                    }
                     guard h <= Self.screenshotMaxPixels else {
                         throw ProtocolError(code: .invalidArgs, message: "--full-page: the page is \(h) px tall, over the \(Self.screenshotMaxPixels) px cap; use --clip or --ref")
                     }
@@ -189,7 +199,7 @@ extension BrowserPanel {
     private static func pageNumbers(_ web: WKWebView, _ body: String) async throws(ProtocolError) -> [Int] {
         do {
             let r = try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page) as? [Any]
-            return (r ?? []).map { ($0 as? NSNumber)?.intValue ?? 0 }
+            return (r ?? []).map { Int(($0 as? NSNumber)?.doubleValue.rounded() ?? 0) }
         } catch { throw ProtocolError(code: .unavailable, message: "screenshot failed: \(BrowserAutomation.jsMessage(error))") }
     }
 

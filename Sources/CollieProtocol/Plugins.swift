@@ -51,7 +51,7 @@ public enum PluginRegistry {
             cmd("wait", "Wait for text or a selector",
                 [ParamSpec("text", .string, help: "Text to wait for"), ParamSpec("selector", .string, help: "CSS selector"),
                  ParamSpec("timeout", .int, help: "Seconds (default 10, max 120)")], timeout: 120),
-            cmd("screenshot", "Screenshot to a PNG file; returns {path, width, height} (pixels at backing scale). --full-page tiles the document by viewport height (max 16384 px tall; position:fixed/sticky elements repeat in every tile); --clip x,y,w,h (viewport CSS px) or --ref crops; --out copies the PNG to PATH (written by the collie process, relative to its cwd; for MCP the cwd of `collie mcp`) and returns that path",
+            cmd("screenshot", "Screenshot to a PNG file; returns {path, width, height} (pixels at backing scale). --full-page tiles the document by viewport height (max 16384 px tall; content growing during the capture, e.g. lazy/infinite, is cut at the height measured at the start; position:fixed/sticky elements repeat in every tile); --clip x,y,w,h (viewport CSS px) or --ref crops; --out copies the PNG to PATH (written by the collie process, relative to its cwd; for MCP the cwd of `collie mcp`) and returns that path",
                 [ParamSpec("full-page", .flag, help: "Whole document, tiled by viewport height"),
                  ParamSpec("clip", .string, help: "x,y,w,h in viewport CSS px"),
                  ParamSpec("ref", .string, help: "Element ref to crop to"),

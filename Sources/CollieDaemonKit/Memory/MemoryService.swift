@@ -2,10 +2,11 @@ import Foundation
 import CollieCore
 import CollieProtocol
 
-/// One memory store (a repo's `.collie/memory`, or the global one) with its derived index.
+/// One memory store (a repo's `.collie/memory`, a lot's, or the global one) with its derived index.
 /// All store/index/SQLite work runs on its serial `queue` (through `run`), never on the cooperative pool.
 final class RepoMemory: @unchecked Sendable {   // the mutable state below is touched only on `queue`
-    let root: URL?          // git toplevel (a paddock's worktree for paddock terminals); nil = global
+    let root: URL?          // git toplevel (a paddock's worktree for paddock terminals); nil = global or a lot
+    let lotId: UUID?        // a lot's store (in the app's data dir, beside the work registry)
     let store: MemoryStore
     private let dbFile: URL
     private let commonDir: URL?
@@ -15,13 +16,13 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     private var idx: MemoryIndex?
     private(set) var indexError: String?
 
-    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?) {
-        self.root = root; self.dbFile = dbFile; self.commonDir = commonDir
-        store = MemoryStore(dir: storeDir)
+    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil) {
+        self.root = root; self.dbFile = dbFile; self.commonDir = commonDir; self.lotId = lotId
+        store = MemoryStore(dir: storeDir, secure: lotId != nil)
         queue = DispatchQueue(label: "collie.memory.\(storeDir.path)")
     }
 
-    var scope: MemoryScope { root == nil ? .global : .project }
+    var scope: MemoryScope { lotId != nil ? .lot : root == nil ? .global : .project }
     /// Where results say the memory lives: the repo root, or the global store dir.
     var path: String { root?.path ?? store.dir.path }
     func file(_ r: MemoryRecord) -> String { store.dir.appendingPathComponent(MemoryFile.fileName(r)).path }
@@ -88,18 +89,22 @@ func repoPathExists(_ p: String, root: URL) -> Bool {
 
 func memoryLog(_ m: String) { FileHandle.standardError.write(Data("collied: memory: \(m)\n".utf8)) }
 
-/// Memory per repository (git toplevel of a cwd; global outside git) and what each terminal's session already got.
+/// Memory per repository (git toplevel of a cwd; global outside git), per lot, and what each terminal's session already got.
 actor MemoryService {
     let global: RepoMemory
     private let globalDir: URL
+    private let lotsDir: URL
     private var byCwd: [String: RepoMemory] = [:]    // repos only: outside git (or on a git failure) is asked again next time
     private var byRoot: [String: RepoMemory] = [:]
-    private var injected: [UUID: Set<UUID>] = [:]
+    private var byLot: [UUID: RepoMemory] = [:]
+    /// Ids injected in a terminal's session, and the lot they were injected for: a change of lot starts over.
+    private var injected: [UUID: (lot: UUID?, ids: Set<UUID>)] = [:]
     static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código."
     static let relevantHeader = "Memória relacionada (Collie):"
 
     init(globalDir: URL) {
         self.globalDir = globalDir
+        lotsDir = globalDir.deletingLastPathComponent().appendingPathComponent("lots")   // beside `work/`
         global = RepoMemory(root: nil, storeDir: globalDir,
                             dbFile: globalDir.deletingLastPathComponent().appendingPathComponent("cache/memory.sqlite"), commonDir: nil)
     }
@@ -124,6 +129,20 @@ actor MemoryService {
         return r
     }
 
+    /// The store of lot `id`: `<root>/lots/<id>/memory` (0700, like the work registry); the lot's memories outlive the lot.
+    func lotStore(_ id: UUID) -> RepoMemory {
+        if let r = byLot[id] { return r }
+        let dir = lotsDir.appendingPathComponent(id.uuidString.lowercased())
+        for d in [lotsDir, dir] {
+            try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            chmod(d.path, 0o700)
+        }
+        let r = RepoMemory(root: nil, storeDir: dir.appendingPathComponent("memory"),
+                           dbFile: dir.appendingPathComponent("cache/memory.sqlite"), commonDir: nil, lotId: id)
+        byLot[id] = r
+        return r
+    }
+
     /// Drops the stores of `path` and below (a deleted paddock), closing their indexes.
     func evict(under path: String) async {
         let gone = byRoot.filter { $0.key == path || $0.key.hasPrefix(path + "/") }
@@ -134,43 +153,53 @@ actor MemoryService {
 
     func isCached(root: String) -> Bool { byRoot[root] != nil }   // tests
 
-    /// What an agent reads: its repo's memory plus the global one.
-    func readable(_ cwd: String) async -> [RepoMemory] {
+    /// What an agent reads: its lot's memory (if in a lot), its repo's and the global one. Never another lot's.
+    func readable(_ cwd: String, lot: UUID? = nil) async -> [RepoMemory] {
         let r = await repo(for: cwd)
-        return r === global ? [r] : [r, global]
+        return (lot.map { [lotStore($0)] } ?? []) + (r === global ? [r] : [r, global])
     }
 
-    /// Session summary; these memories count as injected for `terminal` (a new session replaces the old set).
-    func context(for terminal: UUID, cwd: String, paddock: String? = nil, limit: Int = 4096) async -> String {
-        let (text, ids) = await contextText(cwd: cwd, paddock: paddock, limit: limit)
-        injected[terminal] = ids
+    /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set).
+    func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, limit: Int = 4096) async -> String {
+        let (text, ids) = await contextText(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
+        injected[terminal] = (lot, ids)
         return text
     }
 
-    func contextText(cwd: String, paddock: String?, limit: Int = 4096) async -> (text: String, ids: Set<UUID>) {
-        var recs: [MemoryRecord] = []
-        for s in await readable(cwd) {
-            recs += (try? await s.run { m in
+    /// Pinned memories of every readable store in full, then an index (titles) of the rest of the lot's — or, outside a
+    /// lot, of the rest of the project's/global; unpinned project memories reach a lot member only by prompt relevance.
+    func contextText(cwd: String, paddock: String?, lot: UUID? = nil, limit: Int = 4096) async -> (text: String, ids: Set<UUID>) {
+        var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = []
+        for s in await readable(cwd, lot: lot) {
+            let recs = (try? await s.run { m -> [MemoryRecord] in
                 _ = m.index()   // refresh first: resolves two actives a land (or a hand edit) left behind
+                try? MemoryCleanup.expireProposals(store: m.store)
                 // a map whose path is gone from disk stays out
-                return m.store.all().records.filter { $0.status == .active && Self.visible($0, paddock: paddock) && m.present($0) }
+                return m.store.all().records.filter { $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId) && m.present($0) }
             }) ?? []
+            pinned += recs.filter(\.pinned)
+            if lot == nil || s.lotId != nil { rest += recs.filter { !$0.pinned } }
         }
-        return Self.renderContext(recs, limit: limit)
+        return Self.renderContext(pinned, index: rest, limit: limit)
     }
 
+    /// Lot hits weigh ×1.5 over project/global ones.
+    static let lotBoost = 1.5
+
     /// Memories relevant to `prompt` not yet injected in this session; "" when nothing is.
-    func relevant(for terminal: UUID, cwd: String, paddock: String? = nil, prompt: String, limit: Int = 2048, max: Int = 5) async -> String {
+    func relevant(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, prompt: String, limit: Int = 2048, max: Int = 5) async -> String {
+        if let cur = injected[terminal], cur.lot != lot { injected[terminal] = nil }   // moved to another lot: start over
         let q = Self.significantTerms(prompt).joined(separator: " ")
         guard !q.isEmpty, max > 0 else { return "" }
         var hits: [(hit: MemoryHit, store: RepoMemory)] = []
-        for s in await readable(cwd) {
+        for s in await readable(cwd, lot: lot) {
             let found = (try? await s.run { m in (m.index()?.search(q, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
-            hits += found.filter { Self.visible($0.record, paddock: paddock) }.map { ($0, s) }
+            hits += found.filter { Self.visible($0.record, paddock: paddock, lot: s.lotId) }
+                .map { (MemoryHit(record: $0.record, score: $0.score * (s.lotId != nil ? Self.lotBoost : 1)), s) }
         }
         hits.sort { $0.hit.score > $1.hit.score }
         guard let top = hits.first?.hit.score, top > 0 else { return "" }
-        let seen = injected[terminal] ?? []
+        let seen = injected[terminal]?.ids ?? []
         // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor
         let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && !seen.contains($0.hit.record.id) }
         var lines = [Self.relevantHeader], used = Self.relevantHeader.utf8.count, chosen: [(hit: MemoryHit, store: RepoMemory)] = []
@@ -180,7 +209,7 @@ actor MemoryService {
             lines.append(line); used += 1 + line.utf8.count; chosen.append(h)
         }
         guard !chosen.isEmpty else { return "" }
-        injected[terminal, default: []].formUnion(chosen.map(\.hit.record.id))
+        injected[terminal, default: (lot, [])].ids.formUnion(chosen.map(\.hit.record.id))
         var stores: [RepoMemory] = []
         for h in chosen where !stores.contains(where: { $0 === h.store }) { stores.append(h.store) }
         for s in stores {
@@ -208,7 +237,14 @@ actor MemoryService {
         MemoryIndex.ftsTerms(prompt).filter { $0.count >= 3 && !stopwords.contains($0.lowercased()) }
     }
 
-    static func visible(_ r: MemoryRecord, paddock: String?) -> Bool { r.scope != .paddock || (paddock != nil && r.paddock == paddock) }
+    /// `lot`: the lot of the store the record came from (nil for a repo/global store, where no lot memory is visible).
+    static func visible(_ r: MemoryRecord, paddock: String?, lot: UUID?) -> Bool {
+        switch r.scope {
+        case .paddock: paddock != nil && r.paddock == paddock
+        case .lot: lot != nil && r.lotId == lot
+        case .project, .global: true
+        }
+    }
 
     private static func oneLine(_ s: String, max: Int) -> String {
         let l = s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -218,6 +254,22 @@ actor MemoryService {
         oneLine(String(body.split(separator: "\n", omittingEmptySubsequences: true).first ?? ""), max: 200)
     }
     private static func mark(_ r: MemoryRecord) -> String { r.reviewed ? "" : " (não revisada, \(r.origin))" }
+
+    static let indexTitle = "Índice (só títulos; `collie memory search` traz o resto):"
+
+    /// `full` as `renderContext(_:limit:)`, then one line per `index` record (title only, newest first) in what is left.
+    /// Only `full` ids count as injected: an index line can still bring its body by prompt relevance.
+    static func renderContext(_ full: [MemoryRecord], index: [MemoryRecord], limit: Int) -> (text: String, ids: Set<UUID>) {
+        var (out, ids) = renderContext(full, limit: limit)
+        guard !out.isEmpty else { return (out, ids) }
+        var started = false
+        for r in index.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            let add = (started ? "" : "\n\n\(indexTitle)") + "\n- " + (r.kind == .map ? r.path.map { "\(oneLine($0, max: 200)) — " } ?? "" : "") + oneLine(r.title, max: 200)
+            guard out.utf8.count + add.utf8.count <= limit else { break }
+            out += add; started = true
+        }
+        return (out, ids)
+    }
 
     /// Header, then active decisions (title + first line), the map (`path — title`), pitfalls; pinned first, then newest.
     /// At most `limit` UTF-8 bytes, whole items only (one that doesn't fit is skipped).

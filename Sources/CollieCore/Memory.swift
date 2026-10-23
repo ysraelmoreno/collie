@@ -2,14 +2,16 @@ import Foundation
 import CollieProtocol
 
 public enum MemoryKind: String, Codable, Sendable { case decision, map, pitfall }
-public enum MemoryScope: String, Codable, Sendable { case project, paddock, global }
-public enum MemoryStatus: String, Codable, Sendable { case active, superseded, archived, discarded }
+public enum MemoryScope: String, Codable, Sendable { case project, paddock, global, lot }
+/// `proposed`: captured, not yet reviewed — never injected until approved.
+public enum MemoryStatus: String, Codable, Sendable { case active, superseded, archived, discarded, proposed }
 
 public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var kind: MemoryKind
     public var scope: MemoryScope
     public var paddock: String?          // paddock name when scope == .paddock
+    public var lotId: UUID?              // when scope == .lot (the record lives in that lot's store)
     public var subject: String         // supersession-chain key (normalized: lowercase, collapsed spaces)
     public var title: String
     public var body: String
@@ -22,11 +24,11 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var origin: String          // "<terminal> (<preset>)" or "app"
     public var createdAt: Date
     public var updatedAt: Date
-    public init(id: UUID = UUID(), kind: MemoryKind, scope: MemoryScope = .project, paddock: String? = nil, subject: String,
+    public init(id: UUID = UUID(), kind: MemoryKind, scope: MemoryScope = .project, paddock: String? = nil, lotId: UUID? = nil, subject: String,
                 title: String, body: String = "", path: String? = nil, status: MemoryStatus = .active,
                 reviewed: Bool = false, pinned: Bool = false, supersedes: UUID? = nil, supersededBy: UUID? = nil,
                 origin: String = "app", createdAt: Date = Date(), updatedAt: Date? = nil) {
-        self.id = id; self.kind = kind; self.scope = scope; self.paddock = paddock
+        self.id = id; self.kind = kind; self.scope = scope; self.paddock = paddock; self.lotId = lotId
         self.subject = MemoryRecord.normalize(subject); self.title = title; self.body = body; self.path = path
         self.status = status; self.reviewed = reviewed; self.pinned = pinned
         self.supersedes = supersedes; self.supersededBy = supersededBy; self.origin = origin
@@ -45,6 +47,7 @@ public enum MemoryFile {
     public static func render(_ r: MemoryRecord) -> String {
         var l = ["id: \(r.id.uuidString.lowercased())", "kind: \(r.kind.rawValue)", "scope: \(r.scope.rawValue)"]
         if let f = r.paddock { l.append("paddock: \(str(f))") }
+        if let lot = r.lotId { l.append("lot: \(lot.uuidString.lowercased())") }
         l.append("subject: \(str(r.subject))"); l.append("title: \(str(r.title))")
         if let p = r.path { l.append("path: \(str(p))") }
         l.append("status: \(r.status.rawValue)"); l.append("reviewed: \(r.reviewed)"); l.append("pinned: \(r.pinned)")
@@ -109,10 +112,16 @@ public enum MemoryFile {
         if let v = kv["path"] { path = try unstr(v, "path") }
         if let v = kv["supersedes"] { supersedes = try uuid(v, "supersedes") }
         if let v = kv["superseded_by"] { supersededBy = try uuid(v, "superseded_by") }
+        // R2: an unknown scope/status (a newer Collie, a hand edit) keeps the file readable but out of every injection:
+        // archived is never auto-injected, cleaned up or purged; the user can restore it.
+        var scope = MemoryScope.project, status = MemoryStatus.active
+        if let v = kv["scope"] { if let e = MemoryScope(rawValue: v) { scope = e } else { status = .archived } }
+        if let v = kv["status"], status == .active { status = MemoryStatus(rawValue: v) ?? .archived }
+        let lotId = kv["lot"].flatMap { UUID(uuidString: $0) }   // malformed: nil (a lot record without its lot is visible to no one)
         return MemoryRecord(
-            id: try uuid(try req("id"), "id"), kind: try enm("kind"), scope: try enm("scope", MemoryScope.project),
-            paddock: paddock, subject: try field("subject"), title: try field("title"),
-            body: body, path: path, status: try enm("status", MemoryStatus.active),
+            id: try uuid(try req("id"), "id"), kind: try enm("kind"), scope: scope,
+            paddock: paddock, lotId: lotId, subject: try field("subject"), title: try field("title"),
+            body: body, path: path, status: status,
             reviewed: try flag("reviewed"), pinned: try flag("pinned"),
             supersedes: supersedes,
             supersededBy: supersededBy,

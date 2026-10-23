@@ -62,7 +62,7 @@ private func lines(_ s: String) -> [[String: Any]] {
         let tools = (by(2)?["result"] as? [String: Any])?["tools"] as? [[String: Any]]
         // no daemon: panel.list fails, so only the core and panel-free tools (no plug-in reached)
         #expect(tools?.compactMap { $0["name"] as? String }.sorted() == ["ask", "check", "paddock_list", "paddock_status", "list", "panel_list", "panel_open", "panel_close", "panel_move", "events",
-                         "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "device_list",
+                         "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "memory_promote", "device_list",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop",
                          "work_note", "work_status", "work_summary", "work_list", "work_get", "lot_leave", "lot_list", "lot_get",
                          "design_files", "design_new", "design_help", "design_prefer", "design_system_list", "design_system_create", "design_system_history",

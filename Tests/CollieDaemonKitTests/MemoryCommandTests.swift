@@ -104,7 +104,7 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
             let b = obj(try await call(p, t, "memory.save", ["kind": "decision", "subject": "DB ", "title": "Use Postgres", "body": "jsonb"]))
             #expect(b["superseded"] == a["id"])
             let c = try await context(p, t)
-            #expect(c.hasPrefix(MemoryService.header) && c.contains("- Use Postgres: jsonb (não revisada, T (shell))") && !c.contains("MySQL"), "\(c)")
+            #expect(c.hasPrefix(MemoryService.header) && c.contains("\n- Use Postgres") && !c.contains("MySQL"), "\(c)")
         }
     }
 
@@ -137,7 +137,7 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
                                                             "body": .string("edited body")])
             #expect(r.ok && obj(r)["reviewed"] == .bool(true), "\(r)")
             let c = try await context(p, t)
-            #expect(c.contains("- Use Postgres: edited body") && !c.contains("não revisada"), "\(c)")
+            #expect(c.contains("\n- Use Postgres"), "\(c)")   // unpinned: an index line (the body comes by relevance)
             #expect(try await admin(d, p, "memory.pin", ["id": .string(id), "repo": .string(repo.path)]).ok)
             let repos = rows(try await admin(d, p, "memory.repos").result)
             #expect(repos.map { s($0["path"]) } == [real(repo), p.root.appendingPathComponent("memory").path], "\(repos)")
@@ -152,7 +152,7 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
             let r = MemoryRecord(kind: .decision, subject: "s\(i)", title: "Decision number \(i)", body: "because reason \(i)\nmore detail",
                                  createdAt: Date(timeIntervalSince1970: 1_700_000_000 + Double(i)))
             try store.write(r)
-            expected.insert("- Decision number \(i): because reason \(i) (não revisada, app)")
+            expected.insert("- Decision number \(i)")   // index lines: titles only
         }
         try await withDaemon { d, p in
             let t = try await term(d, p, "T", cwd: repo)
@@ -160,7 +160,7 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
             #expect(c.utf8.count <= 4096 && c.hasPrefix(MemoryService.header))
             let items = c.split(separator: "\n").filter { $0.hasPrefix("- ") }.map(String.init)
             #expect(items.count > 10 && items.allSatisfy(expected.contains), "\(c)")
-            #expect(items.first == "- Decision number 299: because reason 299 (não revisada, app)")   // newest first
+            #expect(items.first == "- Decision number 299")   // newest first
         }
     }
 
@@ -183,7 +183,10 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
             #expect(await mem.relevant(for: tid, cwd: repo.path, prompt: "hello, how are you?").isEmpty)
             await mem.endSession(tid)
             #expect(await mem.relevant(for: tid, cwd: repo.path, prompt: prompt).contains("Postgres pool"))
-            // the session summary counts as injected too
+            // the session summary's pinned memories count as injected too (index lines are titles only: not injected)
+            let ui = rows(try await admin(d, p, "memory.search", ["query": .string("swiftui"), "repo": .string(repo.path)]).result)
+            let uid = try #require(ui.first.flatMap { s($0["id"]) })
+            #expect(try await admin(d, p, "memory.pin", ["id": .string(uid), "repo": .string(repo.path)]).ok)
             let other = UUID()
             #expect(await mem.context(for: other, cwd: repo.path).contains("SwiftUI canvas"))
             #expect(await mem.relevant(for: other, cwd: repo.path, prompt: "the swiftui canvas").isEmpty)
@@ -235,7 +238,7 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
                                                             "title": .string("Use SQLite"), "body": .string("new body"), "subject": .string("Storage")])
             let o = obj(r)
             #expect(r.ok && s(o["title"]) == "Use SQLite" && s(o["body"]) == "new body" && s(o["subject"]) == "storage" && o["reviewed"] == .bool(true), "\(r)")
-            #expect(try await context(p, t).contains("- Use SQLite: new body"))
+            #expect(try await context(p, t).contains("\n- Use SQLite"))
         }
     }
 

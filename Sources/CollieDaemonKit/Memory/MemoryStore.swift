@@ -4,7 +4,9 @@ import CollieCore
 /// Synchronous markdown file store; callers run it on a serial queue.
 struct MemoryStore {
     let dir: URL
-    init(dir: URL) { self.dir = dir }
+    /// Private (a lot's store in the app's data dir): folders 0700, files 0600, like the work registry.
+    let secure: Bool
+    init(dir: URL, secure: Bool = false) { self.dir = dir; self.secure = secure }
 
     func all() -> (records: [MemoryRecord], problems: [(file: String, error: String)]) {
         var records: [MemoryRecord] = [], problems: [(file: String, error: String)] = []
@@ -22,10 +24,12 @@ struct MemoryStore {
     func write(_ r: MemoryRecord) throws {
         let dest = dir.appendingPathComponent(MemoryFile.fileName(r))
         let folder = dest.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+                                                attributes: secure ? [.posixPermissions: 0o700] : nil)
         let tmp = folder.appendingPathComponent(".\(UUID().uuidString).tmp")
         do {
             try Data(MemoryFile.render(r).utf8).write(to: tmp)
+            if secure, chmod(tmp.path, 0o600) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             if rename(tmp.path, dest.path) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         } catch { try? FileManager.default.removeItem(at: tmp); throw error }
         // A changed subject renames the file: drop stale copies of this id.
@@ -36,7 +40,7 @@ struct MemoryStore {
         var new = new
         let olds = all().records.filter {
             $0.status == .active && $0.id != new.id && $0.kind == new.kind && $0.scope == new.scope
-                && $0.paddock == new.paddock && MemoryRecord.normalize($0.subject) == MemoryRecord.normalize(new.subject)
+                && $0.paddock == new.paddock && $0.lotId == new.lotId && MemoryRecord.normalize($0.subject) == MemoryRecord.normalize(new.subject)
         }
         new.subject = MemoryRecord.normalize(new.subject)
         if let o = olds.first { new.supersedes = o.id }

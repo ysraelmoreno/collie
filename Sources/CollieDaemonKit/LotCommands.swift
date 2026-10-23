@@ -54,12 +54,8 @@ extension CommandRouter {
             let lot = try findLot(try need(r, "lot"))
             // joining is the memory/board boundary: a Shepherd joins only its own lot, or one whose every live member it
             // is or reaches; a lot without live terminals is the user's (no member names in the refusal)
-            if let me = caller, ws.lot(of: me.id)?.id != lot.id {
-                let reach = Set([me.id] + ConnectionGraph.reachable(from: me.id, in: ws).map(\.id))
-                let live = lot.members.filter { m in ws.terminals.contains { $0.id == m } }
-                guard !live.isEmpty, live.allSatisfy(reach.contains) else {
-                    throw ProtocolError(code: .notConnected, message: "No reach to every terminal of lot '\(lot.name)'")
-                }
+            if let me = caller, !mayEnter(lot, me) {
+                throw ProtocolError(code: .notConnected, message: "No reach to every terminal of lot '\(lot.name)'")
             }
             try await place([t.id], in: lot.id)
             return describe(ws.lots.first { $0.id == lot.id } ?? lot, for: caller)
@@ -83,6 +79,16 @@ extension CommandRouter {
             return .object([:])
         default: throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
+    }
+
+    /// The isolation boundary (join, another lot's memory): `me`'s own lot, or — for a Shepherd — a lot whose every live
+    /// member it is or reaches by leash. A lot without live terminals is the user's.
+    func mayEnter(_ lot: Lot, _ me: TerminalRecord) -> Bool {
+        if ws.lot(of: me.id)?.id == lot.id { return true }
+        guard me.isShepherd else { return false }
+        let reach = Set([me.id] + ConnectionGraph.reachable(from: me.id, in: ws).map(\.id))
+        let live = lot.members.filter { m in ws.terminals.contains { $0.id == m } }
+        return !live.isEmpty && live.allSatisfy(reach.contains)
     }
 
     func findLot(_ key: String) throws(ProtocolError) -> Lot {

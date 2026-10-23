@@ -109,7 +109,7 @@ private func flags(_ r: Response) -> (needed: Bool?, restarted: Bool?) {
             let id = try #require(UUID(uuidString: a.id))
             #expect(await waitFor(10) { await d.scrollbackText(id).contains("RC=") })
             let text = await d.scrollbackText(id)
-            #expect(text.contains("admin commands are not allowed from managed terminals") && text.contains("RC=1"), "\(text)")
+            #expect(text.contains("the admin token can't be used from inside a Collie terminal") && text.contains("RC=1"), "\(text)")
             #expect(try await snapshot(d, p).terminals.first { $0.name == "b" }?.isShepherd == false)
         }
     }

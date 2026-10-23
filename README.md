@@ -329,6 +329,14 @@ um).
   com o valor do usuário quando ele tem um.
 - O preset Shell não muda: não usa a captura e continua lendo os próprios rc files.
 
+**Token de admin.** Cada agente usa só o token do próprio terminal (`COLLIE_TOKEN`). O daemon recusa o token de admin
+(`admin.token`) vindo de dentro de um terminal do Collie: de um processo na sessão Unix do terminal (cada terminal roda na
+sua) ou descendente dele, e de processos que o daemon roda (hooks git, provedores de uso); um processo que o daemon não
+consegue identificar também é recusado. Dentro de um terminal sem `COLLIE_TOKEN`, o `collie` nem lê o arquivo. Limite: isso
+fecha os caminhos triviais (`cat admin.token`, `unset COLLIE_TOKEN`, um processo em segundo plano), não isola processos do
+mesmo usuário; um agente que sai da sessão (`setsid` + fork duplo) passa. Isolamento real exige os agentes sob outro usuário
+do macOS ou num sandbox.
+
 ## Ferramentas do Collie no agente
 
 - **MCP `collie`:** cada terminal Claude recebe `--mcp-config` com um servidor `collie` (arquivo 0600 por terminal, sem token:

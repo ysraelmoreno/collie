@@ -166,13 +166,15 @@ actor CommandRouter {
         guard let t = req.token, constantTimeEqual(t, auth.adminToken) else {
             throw ProtocolError(code: .unauthorized, message: "Invalid admin token")
         }
-        // agents can read admin.token too; refuse callers running inside a terminal we spawned, or inside a
-        // daemon-run child (git hooks, usage providers: agent-writable code)
-        // ponytail: defense-in-depth, not a security boundary. Fails open (allows) for peers that were
-        // reparented/double-forked away from the tree, a peer that already exited before the
-        // sysctl walk, and pid 0 (peer pid unknown). Real isolation needs agents under another uid/sandbox.
-        if descends(peer, fromAny: await registry.livePids().union(BoundedProcess.livePids())) {
-            throw ProtocolError(code: .unauthorized, message: "admin commands are not allowed from managed terminals")
+        // agents can read admin.token too; refuse callers inside a terminal we spawned (each runs in its own session:
+        // POSIX_SPAWN_SETSID, so the terminal's pid is its session id) or inside a daemon-run child (git hooks, usage
+        // providers: agent-writable code). A peer we can't identify (pid unknown, gone before the check) is refused.
+        // ponytail: closes the trivial paths (cat admin.token, unset COLLIE_TOKEN, background/double-fork), not same-uid
+        // isolation: a process that leaves the session (setsid + double fork -> reparented to launchd) passes. Real
+        // isolation needs agents under another uid/sandbox.
+        let terminals = await registry.livePids()
+        if insideManaged(peer, sessions: terminals, ancestors: terminals.union(BoundedProcess.livePids())) {
+            throw ProtocolError(code: .unauthorized, message: "the admin token can't be used from inside a Collie terminal")
         }
     }
 
@@ -595,6 +597,15 @@ actor CommandRouter {
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
                                           shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1")
     }
+}
+
+/// True if `pid` can't be identified (0, already gone), belongs to the session led by one of `sessions`, or
+/// descends (up to 64 levels) from one of `ancestors`.
+func insideManaged(_ pid: pid_t, sessions: Set<pid_t>, ancestors: Set<pid_t>) -> Bool {
+    guard pid > 0 else { return true }
+    let sid = getsid(pid)
+    guard sid > 0, parentPid(pid) != nil else { return true }
+    return sessions.contains(sid) || descends(pid, fromAny: ancestors)
 }
 
 /// True if `pid` or one of its ancestors (up to 64 levels) is in `pids`.

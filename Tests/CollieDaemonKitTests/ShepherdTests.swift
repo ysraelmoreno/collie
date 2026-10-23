@@ -279,7 +279,7 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
             guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { Issue.record("\(r)"); return }
             #expect(await waitFor(10) { await d.scrollbackText(UUID(uuidString: id)!).contains("RC=") })
             let text = await d.scrollbackText(UUID(uuidString: id)!)
-            #expect(text.contains("M=1") && text.contains("admin commands are not allowed from managed terminals")
+            #expect(text.contains("M=1") && text.contains("the admin token can't be used from inside a Collie terminal")
                     && text.contains("RC=1"), "\(text)")
             #expect(try await snapshot(d, p).connections.isEmpty)
         }

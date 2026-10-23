@@ -7,6 +7,8 @@ import CollieProtocol
 
 private let collieBin = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().appendingPathComponent(".build/debug/collie").path
+private let cttyBin = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().appendingPathComponent(".build/debug/collie-ctty").path
 
 /// Open fds of this process whose path lies under `root` (spill logs). Immune to other tests running in parallel.
 private func fdsUnder(_ root: URL) -> Int {
@@ -107,7 +109,7 @@ private func kill(_ d: Daemon, _ p: Paths, _ name: String) async throws -> Respo
             let r = try await UnixSocketClient.send(Request(id: "u", token: d.adminToken, command: "ui.usage"), to: p.socket, timeoutSeconds: 40)
             #expect(r.ok, "\(r)")
             let text = (try? String(contentsOf: out, encoding: .utf8)) ?? ""
-            #expect(text.contains("admin commands are not allowed from managed terminals") && text.contains("RC=1"), "\(text)")
+            #expect(text.contains("the admin token can't be used from inside a Collie terminal") && text.contains("RC=1"), "\(text)")
             let snap = try await send(p, Request(id: "s", token: d.adminToken, command: "ui.snapshot"))
             #expect(try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(snap.result)).connections.isEmpty)
         }
@@ -122,10 +124,61 @@ private func kill(_ d: Daemon, _ p: Paths, _ name: String) async throws -> Respo
             let id = UUID(uuidString: a.id)!
             #expect(await waitFor(10) { await d.scrollbackText(id).contains("RC=") })
             let text = await d.scrollbackText(id)
-            #expect(text.contains("admin commands are not allowed from managed terminals") && text.contains("RC=1"), "\(text)")
+            #expect(text.contains("the admin token can't be used from inside a Collie terminal") && text.contains("RC=1"), "\(text)")
             // the test process is not a terminal descendant: still allowed
             let ok = try await send(p, Request(id: "c", token: d.adminToken, command: "admin.leash", args: ["a": .string("A"), "b": .string("B")]))
             #expect(ok.ok, "\(ok)")
         }
+    }
+
+    /// Terminals start through collie-ctty in their own session: a grandchild, and a child that double-forked away
+    /// (reparented to launchd, same session), are refused the admin token; the terminal's own token still works.
+    @Test func adminFromTerminalSessionIsRefused() async throws {
+        try await withDaemon(configure: { $0.cttyHelper = URL(fileURLWithPath: cttyBin) }) { d, p in
+            _ = try await spawn(d, p, "B")
+            let script = p.root.appendingPathComponent("agent.sh")
+            try """
+            A='\(collieBin)'; export COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)'
+            /bin/sh -c '"$0" admin leash A B; echo RC1=$?' "$A"
+            ( ( sleep 1; "$A" admin leash A B; echo RC2=$? ) & )
+            sleep 4; "$A" list; echo RC3=$?
+            """.write(to: script, atomically: true, encoding: .utf8)
+            let a = try await spawn(d, p, "A", preset: "custom", command: "/bin/sh '\(script.path)'; exec sleep 300")
+            let id = UUID(uuidString: a.id)!
+            #expect(await waitFor(15) { await d.scrollbackText(id).contains("RC3=") })
+            let text = await d.scrollbackText(id)
+            #expect(text.contains("RC1=1") && text.contains("RC2=1") && text.contains("RC3=0"), "\(text)")
+            let snap = try await send(p, Request(id: "s", token: d.adminToken, command: "ui.snapshot"))
+            #expect(try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(snap.result)).connections.isEmpty)
+        }
+    }
+
+    /// A peer the daemon can't identify (pid unknown, or gone before the check) is refused: fail closed.
+    @Test func adminFromUnidentifiedPeerIsRefused() async throws {
+        try await withDaemon { d, _ in
+            let req = Request(id: "x", token: d.adminToken, command: "admin.list")
+            try await d.router.adminOnly(req, peer: getpid())
+            let gone = Process(); gone.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+            try gone.run(); gone.waitUntilExit()
+            for pid: pid_t in [0, gone.processIdentifier] {
+                do { try await d.router.adminOnly(req, peer: pid); Issue.record("admin allowed from peer \(pid)") }
+                catch { #expect((error as? ProtocolError)?.code == .unauthorized, "\(pid)") }
+            }
+        }
+    }
+
+    /// The CLI inside a Collie terminal without its own token never falls back to the admin token file.
+    @Test func cliInsideTerminalDoesNotReadAdminFile() throws {
+        let tok = FileManager.default.temporaryDirectory.appendingPathComponent("tok-\(UUID().uuidString)")
+        try "x".write(to: tok, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: tok) }
+        let pr = Process(), err = Pipe()
+        pr.executableURL = URL(fileURLWithPath: collieBin); pr.arguments = ["admin", "leash", "A", "B"]
+        pr.environment = ["COLLIE_TERMINAL_ID": UUID().uuidString, "COLLIE_SOCKET": "/nonexistent/collie.sock",
+                          "COLLIE_ADMIN_TOKEN_FILE": tok.path]
+        pr.standardError = err; pr.standardOutput = Pipe()
+        try pr.run(); pr.waitUntilExit()
+        let text = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        #expect(pr.terminationStatus != 0 && text.contains("the admin token can't be used from inside a Collie terminal"), "\(text)")
     }
 }

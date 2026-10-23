@@ -217,6 +217,19 @@ enum BrowserAutomation {
         return { scrollY: Math.round(window.scrollY) };
       }
 
+      // the element's box in viewport CSS px, scrolled into view and cut to the viewport (for a clipped screenshot)
+      async function rect(ref) {
+        const el = find(ref);
+        if (!el) return missing(ref);
+        el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+        await new Promise(r => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 150); });
+        const b = el.getBoundingClientRect();
+        const x = Math.max(b.left, 0), y = Math.max(b.top, 0);
+        const w = Math.min(b.right, innerWidth) - x, h = Math.min(b.bottom, innerHeight) - y;
+        if (!(w > 0 && h > 0)) return fail('invalidArgs', 'ref ' + ref + ' has no visible area');
+        return { x, y, width: w, height: h };
+      }
+
       // MutationObserver for prompt detection, polling for changes it can't see (layout, visibility).
       function wait(text, selector, ms) {
         const ok = () => selector ? !!document.querySelector(selector)
@@ -237,7 +250,37 @@ enum BrowserAutomation {
         });
       }
 
-      const api = { snapshot, text, click, fill, type, key, scroll, wait };
+      // hover without a window (no trusted input): pointer/mouse over, enter and move at the center; `:hover` doesn't apply
+      function hover(ref) {
+        const el = find(ref);
+        if (!el) return missing(ref);
+        el.scrollIntoView({ block: 'center', inline: 'center' });
+        const b = el.getBoundingClientRect();
+        const at = { bubbles: true, cancelable: true, composed: true, view: window, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2,
+                     pointerId: 1, isPrimary: true, pointerType: 'mouse' };
+        for (const t of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']) {
+          const C = t.startsWith('pointer') ? PointerEvent : MouseEvent;
+          el.dispatchEvent(new C(t, t.endsWith('enter') ? Object.assign({}, at, { bubbles: false, cancelable: false }) : at));
+        }
+        return { ok: true };
+      }
+
+      // trusted input (BrowserInput): `settled` resolves once `n` trusted `type` events reached the window, or after `ms`
+      let armed = Promise.resolve(true);
+      function arm(type, n, ms) {
+        if (n <= 0) { armed = Promise.resolve(true); return { ok: true }; }
+        armed = new Promise(resolve => {
+          let left = n;
+          const on = e => { if (e.isTrusted && --left <= 0) done(true); };
+          const t = setTimeout(() => done(false), ms);
+          const done = v => { clearTimeout(t); removeEventListener(type, on, true); resolve(v); };
+          addEventListener(type, on, true);
+        });
+        return { ok: true };
+      }
+      async function settled() { return { seen: await armed }; }
+
+      const api = { snapshot, text, click, fill, type, key, scroll, rect, wait, hover, arm, settled };
       Object.defineProperty(window, '__collie', { value: Object.freeze(api), configurable: false, writable: false, enumerable: false });
     })();
     """#
@@ -263,6 +306,79 @@ enum BrowserAutomation {
       addEventListener('unhandledrejection', e => post('error', ['Unhandled rejection: ' + fmt(e.reason)]));
     })();
     """#
+
+    /// Page world, all frames: emulates `prefers-reduced-motion` (`reduce` | `no-preference` | `system` = off). Idempotent:
+    /// run again on a page that has it, it only switches the mode. Queries naming the feature (matchMedia, CSSOM rules,
+    /// `<link media>`, `<style media>`) are rewritten to an always-true / always-false media feature.
+    /// ponytail: CSSOM rewrite, no public WebKit override; cross-origin sheets reported, not covered
+    static func motionScript(_ mode: String) -> String {
+        #"""
+        (() => {
+          const mode = '__MODE__';
+          let m = window.__collieMotion;
+          if (m) return m.set(mode);
+          const RM = /\(\s*prefers-reduced-motion\s*(?::\s*(reduce|no-preference)\s*)?\)/gi;
+          const orig = new WeakMap();   // node / MediaList -> its original text
+          let cur = 'system', uncovered = 0;
+          const rewrite = t => cur === 'system' ? t : t.replace(RM, (_, v) => ((v || 'reduce').toLowerCase() === cur) ? '(width >= 0px)' : '(width < 0px)');
+          const media = (target, get, set) => {
+            const text = orig.has(target) ? orig.get(target) : get();
+            if (!orig.has(target)) { if (!/prefers-reduced-motion/i.test(text)) return; orig.set(target, text); }
+            const next = rewrite(text); if (next !== get()) set(next);
+          };
+          const rules = (list) => {
+            for (const r of list) {
+              if (r.media) media(r, () => r.media.mediaText, v => { r.media.mediaText = v; });
+              if (r.styleSheet) sheet(r.styleSheet);
+              if (r.cssRules) rules(r.cssRules);
+            }
+          };
+          const sheet = s => {
+            const n = s.ownerNode;
+            if (n && n.getAttribute && n.hasAttribute('media')) media(n, () => n.getAttribute('media'), v => n.setAttribute('media', v));
+            else if (!n) media(s, () => s.media.mediaText, v => { s.media.mediaText = v; });   // an adopted sheet's own media
+            let list; try { list = s.cssRules; } catch (_) { uncovered++; return; }
+            rules(list);
+          };
+          // open shadow roots, registered by the attachShadow wrapper (closed ones can't be reached: counted)
+          const roots = new Set(); let closed = 0;
+          const seen = new WeakSet();
+          const watch = root => {
+            if (cur === 'system' || seen.has(root)) return;   // not while off: switching on scans for roots
+            seen.add(root); roots.add(new WeakRef(root));
+            new MutationObserver(watched).observe(root, { childList: true, subtree: true });
+          };
+          const scan = n => { for (const el of n.querySelectorAll('*')) if (el.shadowRoot) { watch(el.shadowRoot); scan(el.shadowRoot); } };
+          const scope = d => { for (const s of Array.from(d.styleSheets)) sheet(s); for (const s of Array.from(d.adoptedStyleSheets || [])) sheet(s); };
+          const apply = () => {
+            uncovered = 0; scope(document);
+            for (const ref of roots) { const r = ref.deref(); if (r && r.isConnected !== false) scope(r); else if (!r) roots.delete(ref); }
+          };
+          let queued = false;
+          function later() { if (queued || cur === 'system') return; queued = true; queueMicrotask(() => { queued = false; apply(); }); }
+          const sheetNode = n => n.nodeType === 1 && (/^(STYLE|LINK)$/.test(n.nodeName) || !!n.querySelector('style,link'));
+          function watched(ms) { if (cur !== 'system' && ms.some(x => Array.from(x.addedNodes).some(sheetNode))) later(); }
+          const mm = window.matchMedia;
+          window.matchMedia = function (q) { return mm.call(this, rewrite(String(q))); };
+          const attach = Element.prototype.attachShadow;
+          Element.prototype.attachShadow = function (init) {
+            const root = attach.call(this, init);
+            if (init && init.mode === 'closed') closed++; else watch(root);
+            return root;
+          };
+          for (const P of [Document.prototype, ShadowRoot.prototype]) {   // adopting a sheet is not a DOM mutation
+            const d = Object.getOwnPropertyDescriptor(P, 'adoptedStyleSheets');
+            if (d && d.set) Object.defineProperty(P, 'adoptedStyleSheets', { ...d, set(v) { d.set.call(this, v); later(); } });
+          }
+          document.addEventListener('DOMContentLoaded', later);
+          document.addEventListener('load', later, true);
+          new MutationObserver(watched).observe(document, { childList: true, subtree: true });
+          m = { set(v) { cur = v; if (v !== 'system') scan(document); apply(); }, uncovered: () => uncovered, closedRoots: () => closed };
+          Object.defineProperty(window, '__collieMotion', { value: m });
+          m.set(mode);
+        })();
+        """#.replacingOccurrences(of: "__MODE__", with: mode)
+    }
 
     /// Calls `window.__collie.<fn>(...args)` in the page and decodes its JSON reply; `{"error":…}` becomes a ProtocolError.
     @MainActor static func call(_ web: WKWebView, _ fn: String, _ args: [Any]) async throws(ProtocolError) -> [String: JSONValue] {

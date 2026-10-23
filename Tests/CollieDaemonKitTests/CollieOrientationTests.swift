@@ -9,7 +9,8 @@ import Testing
     @Test func orientationFollowsReach() {
         let none = text()
         #expect(none.hasPrefix("You are running inside Collie, terminal \"Ana\"."))
-        #expect(!none.contains("Design panel") && !none.contains("Browser panel") && !none.contains("collie panel open") && !none.contains("As Shepherd"))
+        #expect(!none.contains("Design panel") && !none.contains("Browser panel") && !none.contains("As Shepherd"))
+        #expect(none.contains("collie panel open browser [--url <url>] [--visible]") && !none.contains("design --file") && !text(shepherd: true).contains("Your own test browsers"))
         #expect(none.contains("none yet") && none.contains("Artifacts: collie artifact"))
         #expect(none.contains("collie work task defer <task> \"<reason>\"") && none.contains("collie work done") && text(shepherd: true).contains("collie work status"))
         let d = text(paddock: "F1", peers: ["Bob"], panels: [("Home", "design")])

@@ -7,27 +7,43 @@ struct PanelEvent: Sendable { let seq: Int; let name: String; let payload: JSONV
 let panelEventCap = 200
 
 /// `panel.*` and `events`: the admin token (same managed-terminal ancestry check as `admin.*`) or a terminal token.
-/// Terminals see only reachable panels (canvas: leashed; dock: everyone). Only a Shepherd opens panels; it closes
-/// the ones it created or is leashed to, and moves only its own.
+/// Terminals see only reachable panels (canvas: leashed; dock: everyone; headless: its creator; `panel.list` also lists it
+/// to the creator's leashed Shepherd, which can't reach it). A Shepherd opens any panel, closes the ones it created or is leashed to, and moves only its own. Any other
+/// terminal opens only browsers (headless unless `--visible`, leashed to it, at most `testerBrowserCap`) and closes and
+/// moves only its own.
 extension CommandRouter {
     func panelCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
         func refuse(_ m: String) -> ProtocolError { ProtocolError(code: .notShepherd, message: m) }
-        func shepherdOnly() throws(ProtocolError) {
-            if let me = caller, !me.isShepherd { throw refuse("'\(r.command)' is Shepherd-only") }
-        }
         let visible = caller.map { ConnectionGraph.reachablePanels(from: $0.id, in: ws) } ?? ws.panels
+
+        let tester = caller.map { !$0.isShepherd } ?? false
 
         switch r.command {
         case "panel.list":
-            return try isoJSON(visible)
+            return try isoJSON(visible + (caller.map { ConnectionGraph.listedHeadless(from: $0.id, in: ws) } ?? []))
         case "panel.open":
-            try shepherdOnly()
             let pluginId = try need(r, "plugin")
+            if tester, pluginId != "browser" { throw refuse("a terminal that isn't a Shepherd opens only browser panels") }
             guard let spec = PluginRegistry.spec(pluginId) else {
                 throw ProtocolError(code: .notFound, message: "Plugin '\(pluginId)' not found")
             }
-            let placement = try placementArg(r, spec)
+            var placement = flag(r, "visible") ? PanelPlacement.canvas : try placementArg(r, spec)
+            if tester {
+                if r.args["placement"] == nil, !flag(r, "visible") { placement = .headless }
+                guard placement == .canvas || placement == .headless else { throw refuse("a terminal that isn't a Shepherd opens browsers headless or --visible on the canvas") }
+            }
+            if placement == .headless, caller == nil {   // nothing would ever close it
+                throw ProtocolError(code: .invalidArgs, message: "placement headless is for terminals")
+            }
+            // a request still in flight from an exited terminal would leave a panel nothing closes; no await after this
+            // until the panel is appended (cap, name), except the device/design lookups
+            if let me = caller, await registry.process(me.id)?.isRunning != true {
+                throw ProtocolError(code: .notRunning, message: "terminal '\(me.name)' is not running")
+            }
+            if tester, let me = caller, ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == "browser" }) >= Self.testerBrowserCap {
+                throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open browsers per terminal; close one with `panel close`")
+            }
             guard let storage = StorageScope(rawValue: str(r, "storage") ?? "isolated") else {
                 throw ProtocolError(code: .invalidArgs, message: "storage must be isolated|workspace|global")
             }
@@ -56,21 +72,27 @@ extension CommandRouter {
             o.merge(designWarning) { _, b in b }   // the panel is open; its file just lacks the library
             return .object(o)
         case "panel.close":
-            try shepherdOnly()
             let p = try findPanel(try need(r, "name"))
+            if tester, p.createdBy != caller?.id { throw refuse("a terminal that isn't a Shepherd closes only the panels it opened") }
             if let me = caller, p.createdBy != me.id, !ws.connections.contains(where: { Set([$0.a, $0.b]) == Set([me.id, p.id]) }) {
                 throw refuse("only the Shepherd that opened panel '\(p.name)' or one leashed to it can close it")
             }
             try await remove(p)
             return .object([:])
         case "panel.move":
-            try shepherdOnly()
             let p = try findPanel(try need(r, "name"))
-            if let me = caller, p.createdBy != me.id { throw refuse("only the Shepherd that opened panel '\(p.name)' can move it") }
+            if let me = caller, p.createdBy != me.id {
+                throw refuse(tester ? "a terminal that isn't a Shepherd moves only the panels it opened" : "only the Shepherd that opened panel '\(p.name)' can move it")
+            }
             guard let spec = PluginRegistry.spec(p.pluginId) else {
                 throw ProtocolError(code: .unavailable, message: "Plugin '\(p.pluginId)' is not available")
             }
             let placement = try placementArg(r, spec)
+            // ponytail: headless stays headless (its lifecycle is its creator's); add a move out when someone asks for it
+            if placement == .headless || p.placement == .headless {
+                throw ProtocolError(code: .invalidArgs, message: "a headless panel can't be moved; close it and open another")
+            }
+            if tester, placement != .canvas { throw refuse("a terminal that isn't a Shepherd keeps its browsers on the canvas") }
             guard let i = ws.panels.firstIndex(where: { $0.id == p.id }) else { return .object([:]) }
             let canvas = placement == .canvas, before = ws.panels[i]
             ws.panels[i].placement = placement
@@ -143,8 +165,8 @@ extension CommandRouter {
         let p = Panel(id: UUID(), name: name, pluginId: pluginId, placement: placement,
                       paddockId: canvas ? paddock : nil, state: state, createdBy: caller?.id)
         ws.panels.append(p)
-        // the opening Shepherd reaches its canvas panel through a leash; a docked one needs none
-        let leash = caller.flatMap { me in canvas ? Connection(a: me.id, b: p.id) : nil }
+        // the opening terminal is leashed to its canvas or headless panel; a docked one needs none
+        let leash = caller.flatMap { me in canvas || placement == .headless ? Connection(a: me.id, b: p.id) : nil }
         if let leash { ws.connections.append(leash) }
         do { try await persist() } catch {
             ws.panels.removeAll { $0.id == p.id }
@@ -197,14 +219,36 @@ extension CommandRouter {
 
     /// Leashes terminal `t` to canvas panel `p` (idempotent).
     func leash(_ t: TerminalRecord, _ p: Panel) async throws {
+        if p.placement == .headless { throw ProtocolError(code: .invalidArgs, message: "a headless panel is reachable only by the terminal that opened it") }
         guard p.placement == .canvas else { throw ProtocolError(code: .invalidArgs, message: "dock panels need no leash") }
         try await link(t.id, p.id)
     }
     func unleash(_ t: TerminalRecord, _ p: Panel) async throws { try await unlink(t.id, p.id) }
 
-    /// Closes `p`: drops its leashes and events, persists, emits `.disconnected` per leash, then `.panelRemoved`.
+    /// Max open browser panels per non-Shepherd terminal.
+    static let testerBrowserCap = 8
+
+    /// `terminal` was removed or its process exited: its headless panels close (`.panelRemoved` lets the app drop their
+    /// screenshots and data, as for any close).
+    func closeHeadless(of terminal: UUID) async {
+        for p in ws.panels where p.placement == .headless && p.createdBy == terminal {
+            try? await remove(p)   // a failed persist: the record is gone in memory anyway (and dropped at the next start)
+        }
+    }
+
+    /// `<root>/screens/<panel id>-*`: the panel's screenshots. The app deletes them too on `.panelRemoved`; the daemon
+    /// does it as well so a panel closed while the app isn't running leaves none behind.
+    nonisolated static func removeScreenshots(of id: UUID, root: URL) {
+        let dir = root.appendingPathComponent("screens", isDirectory: true), prefix = id.uuidString + "-"
+        for f in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where f.hasPrefix(prefix) {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(f))
+        }
+    }
+
+    /// Closes `p`: drops its leashes, events and screenshots, persists, emits `.disconnected` per leash, then `.panelRemoved`.
     func remove(_ p: Panel) async throws {
         ws.panels.removeAll { $0.id == p.id }
+        Self.removeScreenshots(of: p.id, root: config.paths.root)
         panelEvents[p.id] = nil
         await devices.panelClosed(p.id)
         await design.panelClosed(p.id, openFiles: openDesignFiles)

@@ -7,10 +7,10 @@ import CollieProtocol
 
 @MainActor private final class Probe: PluginPanelView {
     static var received: [String] = []
-    static var closed: [UUID] = [], removed: [UUID] = [], reconciled: [[UUID]] = []
+    static var closed: [UUID] = [], removed: [UUID] = [], reconciled: [[UUID]] = [], made: [UUID] = []
     let panel: Panel
     let view = NSView()
-    init(panel: Panel, host: PanelHostContext) { self.panel = panel }
+    init(panel: Panel, host: PanelHostContext) { self.panel = panel; Self.made.append(panel.id) }
     func handle(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         guard command == "echo" else { throw ProtocolError(code: .invalidArgs, message: "bad") }
         return .object(["panel": .string(panel.name)])
@@ -87,6 +87,19 @@ import CollieProtocol
         let before = Probe.reconciled.count
         s.sessionStarted([d, ghost])
         #expect(Probe.reconciled.count == before + 1 && Probe.reconciled.last == [d.id])
+    }
+
+    @Test func headlessViewStartsAtOpenInItsHostWindow() {
+        let h = Panel(id: UUID(), name: "h", pluginId: "probe", placement: .headless), c = Panel(id: UUID(), name: "c", pluginId: "probe", placement: .canvas)
+        let (s, clear) = store([h, c])
+        s.sync([h, c])   // the `.panel` mirror update: no command sent yet
+        #expect(Probe.made.contains(h.id) && !Probe.made.contains(c.id))
+        let w = s.instance(for: h.id)?.view.window
+        #expect(w is BrowserInput.HostWindow)
+        w?.orderFront(nil); w?.makeKeyAndOrderFront(nil); w?.orderFrontRegardless(); w?.order(.above, relativeTo: 0)
+        #expect(NSWindow.windowNumbers(options: [])?.contains(NSNumber(value: w?.windowNumber ?? -1)) != true)   // never on screen
+        clear(); s.sync([])
+        #expect(Probe.closed.contains(h.id) && s.instance(for: h.id) == nil)
     }
 
     @Test func dispatchWaitsForMirror() async throws {

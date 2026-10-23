@@ -22,10 +22,24 @@ public enum ConnectionGraph {
         }
     }
 
-    /// Canvas panels need a leash to `from` (terminal<->panel is a Connection); docked panels are reachable by every terminal.
+    /// Canvas panels need a leash to `from` (terminal<->panel is a Connection); docked panels are reachable by every terminal;
+    /// a headless one only by its creator (`panel.list` also lists it to a Shepherd leashed to the creator: `listedHeadless`).
     public static func reachablePanels(from: UUID, in ws: Workspace) -> [Panel] {
         let peers = Set(ws.connections.compactMap { $0.a == from ? $0.b : $0.b == from ? $0.a : nil })
-        return ws.panels.filter { $0.placement != .canvas || peers.contains($0.id) }
+        return ws.panels.filter { p in
+            switch p.placement {
+            case .canvas: return peers.contains(p.id)
+            case .headless: return p.createdBy == from
+            case .dockLeft, .dockRight, .dockBottom: return true
+            }
+        }
+    }
+
+    /// Listing only (never reach): a Shepherd sees the headless panels of the terminals leashed to it.
+    public static func listedHeadless(from: UUID, in ws: Workspace) -> [Panel] {
+        guard ws.terminals.contains(where: { $0.id == from && $0.isShepherd }) else { return [] }
+        let peers = Set(reachable(from: from, in: ws).map(\.id))
+        return ws.panels.filter { $0.placement == .headless && $0.createdBy.map(peers.contains) == true }
     }
 
     /// `from` nil: the admin (the user / app), which reaches every panel.

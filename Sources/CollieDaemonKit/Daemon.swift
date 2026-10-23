@@ -89,6 +89,11 @@ public final class Daemon: Sendable {
         // repair: a canvas panel left on a paddock that no longer exists (before paddock.delete moved them) goes to pasture
         let paddockIds = Set(ws.paddocks.map(\.id))
         for i in ws.panels.indices where ws.panels[i].paddockId.map({ !paddockIds.contains($0) }) == true { ws.panels[i].paddockId = nil }
+        // headless panels close with their terminals, and a previous daemon's terminals all died with it
+        let headless = Set(ws.panels.filter { $0.placement == .headless }.map(\.id))
+        ws.panels.removeAll { headless.contains($0.id) }
+        ws.connections.removeAll { headless.contains($0.a) || headless.contains($0.b) }
+        for id in headless { CommandRouter.removeScreenshots(of: id, root: config.paths.root) }
         let asks = AskCoordinator(idleQuietSeconds: config.idleQuietSeconds, heldMaxSeconds: config.heldMaxSeconds)
         // a replay (base64 of the whole memory tail) must always fit the stream send queue on its own
         precondition(config.memoryCapBytes / 3 * 4 + 64 * 1024 < UnixSocketServer.Connection.sendCap,

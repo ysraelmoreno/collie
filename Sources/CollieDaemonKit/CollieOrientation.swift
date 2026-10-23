@@ -46,6 +46,8 @@ enum CollieOrientation {
             lines.append("- As Shepherd you can open panels: collie panel open \(open) (leashed to you, on your paddock).")
             lines.append("  Give one to an agent: collie leash <agent> <panel>; collie panel close|move. Team: collie summon|dismiss|leash|unleash, collie paddock …")
             lines.append("- Herds: collie herd list | apply <id> --name <n> [--paddock true|false] | save <name> --terminals a,b")
+        } else {
+            lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")
         }
         lines.append("Run `collie <group> --help` for details.")
         return lines.joined(separator: "\n")

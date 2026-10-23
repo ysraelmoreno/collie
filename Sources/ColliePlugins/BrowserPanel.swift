@@ -41,20 +41,18 @@ import os
         self.panel = panel; self.host = host
         let config = WKWebViewConfiguration()
         config.websiteDataStore = Self.dataStore(for: panel, workspaceId: host.workspaceId)
+        config.preferences.tabFocusesLinks = true   // Tab walks links and buttons too (as in Chrome), not only text fields
         config.setURLSchemeHandler(DesignSchemeHandler(root: host.root.appendingPathComponent("artifacts"), artifacts: true), forURLScheme: Self.artifactScheme)
         let content = config.userContentController
-        content.addUserScript(WKUserScript(source: BrowserAutomation.script, injectionTime: .atDocumentStart,
-                                           forMainFrameOnly: true, in: BrowserAutomation.world))
-        content.addUserScript(WKUserScript(source: BrowserAutomation.consoleScript, injectionTime: .atDocumentStart,
-                                           forMainFrameOnly: true, in: .page))
         let web = WKWebView(frame: .zero, configuration: config)
         webView = web
         super.init()
+        installScripts()
         content.add(WeakHandler(self), contentWorld: .page, name: BrowserAutomation.consoleHandler)
         web.navigationDelegate = self
         web.uiDelegate = self
+        container.headless = panel.placement == .headless   // fixed at open: the daemon refuses moves in or out
         container.web = web
-        container.addSubview(web)
         container.offscreenFrame()
         Self.liveIds.insert(panel.id)
         // a same-document (fragment) navigation has no didFinish: its URL change ends the wait
@@ -75,6 +73,30 @@ import os
         container.web = nil
         webView = nil
         failNavigations(ProtocolError(code: .unavailable, message: "browser closed"))
+    }
+
+    /// Reduced-motion emulation (`nil` = the system's); the color scheme lives on the web view's `appearance`.
+    var reducedMotion: String?
+    var colorScheme: String?
+    /// `browser.init-script`: kept for the panel's life, in order, after the built-in scripts.
+    var initScripts: [(id: String, js: String)] = []
+    var nextInitScript = 0
+
+    /// (Re)builds the user scripts, in order: built-ins, then the motion emulation, then the init scripts.
+    func installScripts() {
+        guard let content = webView?.configuration.userContentController else { return }
+        content.removeAllUserScripts()
+        content.addUserScript(WKUserScript(source: BrowserAutomation.script, injectionTime: .atDocumentStart,
+                                           forMainFrameOnly: true, in: BrowserAutomation.world))
+        content.addUserScript(WKUserScript(source: BrowserAutomation.consoleScript, injectionTime: .atDocumentStart,
+                                           forMainFrameOnly: true, in: .page))
+        if let reducedMotion {
+            content.addUserScript(WKUserScript(source: BrowserAutomation.motionScript(reducedMotion), injectionTime: .atDocumentStart,
+                                               forMainFrameOnly: false, in: .page))
+        }
+        for s in initScripts {
+            content.addUserScript(WKUserScript(source: s.js, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        }
     }
 
     func live() throws(ProtocolError) -> WKWebView {
@@ -248,24 +270,45 @@ import os
         host.emit("browser.console", .object(["level": .string(level), "text": .string(text)]))
     }
 
-    /// The webview's frame: filling the slot, or a fixed viewport pinned top-left after `browser.resize` (docks);
-    /// a slot that sizes itself to the content (canvas node) is always filled. Off screen (other paddock, culled,
-    /// hidden dock tab: no superview or no size) the page keeps a viewport so layout and screenshots still work.
+    /// The page slot. Without a viewport the webview fills the slot. With one (`browser.resize`) the page keeps that
+    /// size whatever the slot is: `page` has bounds = viewport and a frame = the viewport scaled to fit the slot
+    /// (`scale` ≤ 1, centered at the top), so the web view's own frame (= viewport) never changes. Off screen (other
+    /// paddock, culled, hidden dock tab: no superview or no size) the page keeps a viewport so layout and
+    /// screenshots still work.
     final class Container: NSView {
         static let defaultViewport = CGSize(width: 1280, height: 800)
-        var web: WKWebView?
+        /// Holds the web view; its bounds/frame carry the fit-to-slot scale.
+        let page = NSView()
+        var web: WKWebView? { didSet { if let web { page.addSubview(web) } } }
         var viewport: CGSize? { didSet { needsLayout = true; offscreenFrame() } }
+        /// Hosted headless (`PanelViewStore`): its slot is the big never-shown host window, so it lays out as off screen.
+        var headless = false
+        private var offscreen: Bool { headless || superview == nil || bounds.isEmpty }
+        /// Slot points per page CSS px (1 without a viewport or off screen). A CSS px (x, y) is at `page.frame.origin + (x, y) * scale` in this view.
+        private(set) var scale: CGFloat = 1
         override var isFlipped: Bool { true }
+        override init(frame: NSRect) { super.init(frame: frame); addSubview(page) }
+        required init?(coder: NSCoder) { fatalError() }
         override func layout() {
             super.layout()
-            if superview == nil || bounds.isEmpty { offscreenFrame() }
-            else if let viewport, !(superview is PanelContentSizing) { web?.frame = CGRect(origin: .zero, size: viewport) }
-            else { web?.frame = bounds }
+            if offscreen { offscreenFrame(); return }
+            guard let viewport else { place(CGRect(origin: .zero, size: bounds.size), viewport: bounds.size); return }
+            let s = min(bounds.width / viewport.width, bounds.height / viewport.height, 1)
+            let size = CGSize(width: viewport.width * s, height: viewport.height * s)
+            place(CGRect(x: ((bounds.width - size.width) / 2).rounded(), y: 0, width: size.width, height: size.height), viewport: viewport)
+        }
+        /// `frame` first: setting a frame resets the bounds size.
+        private func place(_ frame: CGRect, viewport: CGSize) {
+            page.frame = frame
+            page.bounds = CGRect(origin: .zero, size: viewport)
+            web?.frame = page.bounds
+            scale = viewport.width > 0 ? frame.width / viewport.width : 1
         }
         /// Unmounted: the `browser.resize` viewport, else the last size it had, else 1280×800.
         func offscreenFrame() {
-            guard let web, superview == nil || bounds.isEmpty else { return }
-            web.frame = CGRect(origin: .zero, size: viewport ?? (web.frame.isEmpty ? Self.defaultViewport : web.frame.size))
+            guard let web, offscreen else { return }
+            let size = viewport ?? (web.frame.isEmpty ? Self.defaultViewport : web.frame.size)
+            place(CGRect(origin: .zero, size: size), viewport: size)
         }
         override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); needsLayout = true }
     }

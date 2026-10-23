@@ -98,6 +98,8 @@ extension CommandRouter {
             guard let spec = PluginRegistry.spec(p.pluginId), spec.placements.contains(p.placement) else {
                 throw invalid("plug-in \(p.pluginId) não está disponível")
             }
+            // headless panels belong to the terminal that opens them, never to a herd
+            guard p.placement != .headless else { throw invalid("painel \(p.key): headless não vale em rebanho") }
         }
         // the PATH the agents get (the user's, else the daemon's)
         let path = UserEnvironment.merge(user: await userEnv.current(), collie: ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"],

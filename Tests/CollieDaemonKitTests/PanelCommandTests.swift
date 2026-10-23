@@ -147,12 +147,13 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool {
     @Test func nonShepherdCannotOpen() async throws {
         try await withDaemon { d, p in
             let a = try await term(d, p, "A")
-            for (cmd, args) in [("panel.open", ["plugin": "browser"]), ("panel.close", ["name": "web"]),
+            #expect(try await admin(d, p, "panel.open", ["plugin": "browser", "name": "web"]).ok)
+            for (cmd, args) in [("panel.open", ["plugin": "memory"]), ("panel.close", ["name": "web"]),
                                 ("panel.move", ["name": "web", "placement": "canvas"])] {
                 let r = try await call(p, a, cmd, args)
                 #expect(r.error?.code == .notShepherd, "\(cmd): \(r)")
             }
-            #expect(try await snapshot(d, p).panels.isEmpty)
+            #expect(try await snapshot(d, p).panels.map(\.name) == ["web"])
         }
     }
 

@@ -1,5 +1,10 @@
 /// Lives in CollieProtocol (not CollieCore) because PluginSpec references it and CollieCore depends on CollieProtocol.
-public enum PanelPlacement: String, Codable, Sendable { case dockLeft = "dock.left", dockRight = "dock.right", dockBottom = "dock.bottom", canvas }
+/// `headless`: a browser hosted but never shown (no canvas node, not in a dock); see `panel.open`.
+public enum PanelPlacement: String, Codable, Sendable {
+    case dockLeft = "dock.left", dockRight = "dock.right", dockBottom = "dock.bottom", canvas, headless
+    /// ponytail: a placement this build doesn't know (a newer one's) loads as `canvas` instead of failing the whole workspace.
+    public init(from d: Decoder) throws { self = PanelPlacement(rawValue: try d.singleValueContainer().decode(String.self)) ?? .canvas }
+}
 public enum StorageScope: String, Codable, Sendable { case isolated, workspace, global }   // default .isolated
 
 public struct PluginSpec: Sendable {
@@ -35,15 +40,16 @@ public enum PluginRegistry {
 
     static let browser = PluginSpec(
         id: "browser", title: "Browser",
-        placements: [.dockRight, .dockLeft, .dockBottom, .canvas], defaultPlacement: .dockRight,
+        placements: [.dockRight, .dockLeft, .dockBottom, .canvas, .headless], defaultPlacement: .dockRight,
         commands: [
             cmd("navigate", "Load a URL", [ParamSpec("url", .string, positional: true, required: true, help: "URL")]),
             cmd("snapshot", "Compact page tree with element refs (e1, e2, ...)"),
-            cmd("click", "Click an element", [ParamSpec("ref", .string, positional: true, required: true, help: "Element ref")]),
+            cmd("click", "Click an element (a real mouse click when the page is in a window; reply trusted: true)", [ParamSpec("ref", .string, positional: true, required: true, help: "Element ref")]),
+            cmd("hover", "Move the pointer over an element (:hover applies when the page is in a window)", [ParamSpec("ref", .string, positional: true, required: true, help: "Element ref")]),
             cmd("fill", "Fill an input", [ParamSpec("ref", .string, positional: true, required: true, help: "Element ref"),
                                          ParamSpec("text", .rest, positional: true, required: true, help: "Text")]),
-            cmd("type", "Type text into the focused element", [ParamSpec("text", .rest, positional: true, required: true, help: "Text")]),
-            cmd("key", "Press a key", [ParamSpec("key", .string, positional: true, required: true, help: "Enter, Tab, Escape, ArrowDown...")]),
+            cmd("type", "Type text into the focused element", [ParamSpec("text", .rest, positional: true, required: true, help: "Text (up to 1024 characters)")]),
+            cmd("key", "Press a key", [ParamSpec("key", .string, positional: true, required: true, help: "Enter, Tab, Shift+Tab, Escape, ArrowDown, Meta+a (select all)...; Meta+c/x/v are refused (no clipboard access)")]),
             cmd("scroll", "Scroll an element into view or by dy pixels",
                 [ParamSpec("ref", .string, help: "Element ref"), ParamSpec("dy", .int, help: "Vertical pixels")]),
             cmd("eval", "Evaluate JavaScript", [ParamSpec("js", .rest, positional: true, required: true, help: "JavaScript")]),
@@ -51,9 +57,27 @@ public enum PluginRegistry {
             cmd("wait", "Wait for text or a selector",
                 [ParamSpec("text", .string, help: "Text to wait for"), ParamSpec("selector", .string, help: "CSS selector"),
                  ParamSpec("timeout", .int, help: "Seconds (default 10, max 120)")], timeout: 120),
-            cmd("screenshot", "Screenshot to a PNG file; returns {path}"),
+            cmd("screenshot", "Screenshot to a PNG file; returns {path, width, height} (pixels at backing scale). --full-page tiles the document by viewport height (max 16384 px tall; content growing during the capture, e.g. lazy/infinite, is cut at the height measured at the start; position:fixed/sticky elements repeat in every tile); --clip x,y,w,h (viewport CSS px) or --ref crops; --out copies the PNG to PATH (written by the collie process, relative to its cwd; for MCP the cwd of `collie mcp`) and returns that path",
+                [ParamSpec("full-page", .flag, help: "Whole document, tiled by viewport height"),
+                 ParamSpec("clip", .string, help: "x,y,w,h in viewport CSS px"),
+                 ParamSpec("ref", .string, help: "Element ref to crop to"),
+                 ParamSpec("out", .string, help: "Copy the PNG here (created dirs, overwritten)")]),
             cmd("console", "Recent console lines", [ParamSpec("lines", .int, help: "Lines (default 100, max 500)")]),
-            cmd("resize", "Resize the viewport", [ParamSpec("width", .int, help: "320-4096"), ParamSpec("height", .int, help: "320-4096")]),
+            cmd("resize", "Set the page viewport (the panel keeps its size; the page is shown scaled to fit); returns {width, height, scale}",
+                [ParamSpec("width", .int, help: "200-4096"), ParamSpec("height", .int, help: "200-4096 (default: the current one)"),
+                 ParamSpec("reset", .flag, help: "Back to filling the panel")]),
+            cmd("emulate", "Emulate media features until changed; returns {colorScheme, reducedMotion, uncoveredSheets, uncoveredShadowRoots}; reduced motion rewrites readable stylesheets (document, adopted, open shadow roots): uncoveredSheets = unreadable (cross-origin) sheets, uncoveredShadowRoots = closed shadow roots",
+                [ParamSpec("color-scheme", .string, help: "light | dark | system"),
+                 ParamSpec("reduced-motion", .string, help: "reduce | no-preference | system")]),
+            cmd("reload", "Reload the page; --hard bypasses the cache (reloadFromOrigin); returns {url, title}", [ParamSpec("hard", .flag, help: "Revalidate everything with the origin")]),
+            cmd("storage", "clear | set | get on the page's origin. clear [--local] [--session] [--cookies] (none = all) empties local/session storage and cookies of THIS panel's data store only: an isolated panel loses all its cookies, a workspace/global panel only the current site's (other panels and sites sharing that store are untouched). set --key K --value V / get --key K use localStorage (the page needs an origin, not about:blank)",
+                [ParamSpec("action", .string, positional: true, required: true, help: "clear | set | get"),
+                 ParamSpec("local", .flag, help: "clear: localStorage"), ParamSpec("session", .flag, help: "clear: sessionStorage"),
+                 ParamSpec("cookies", .flag, help: "clear: cookies (see above)"),
+                 ParamSpec("key", .string, help: "set/get: key"), ParamSpec("value", .string, help: "set: value")]),
+            cmd("init-script", "add | list | clear: JavaScript run at document start (main frame, page world, before the page's scripts) on every later load of this panel; not run on the current page, kept until the panel closes (not persisted). add --js JS returns {id}; list; clear [--id ID] (none = all)",
+                [ParamSpec("action", .string, positional: true, required: true, help: "add | list | clear"),
+                 ParamSpec("js", .string, help: "add: JavaScript (up to 64 KiB, at most 32 scripts)"), ParamSpec("id", .string, help: "clear: one script")]),
         ],
         events: ["browser.loaded", "browser.console"])
 }

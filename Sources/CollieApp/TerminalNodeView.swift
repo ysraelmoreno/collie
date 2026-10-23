@@ -204,7 +204,32 @@ import CollieTheme
     /// AppKit resets every layer's scale on a backing change: re-apply once all subviews have had theirs.
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        DispatchQueue.main.async { [weak self] in self?.rasterScale = 0; self?.updateRasterScale() }
+        DispatchQueue.main.async { [weak self] in self?.rasterScale = 0; self?.updateRasterScale(); self?.reconcileGrid() }
+    }
+
+    /// During a window live resize (drag, fullscreen) SwiftTerm only queues a new size for its next frame tick,
+    /// and it has no end-of-resize flush: apply it now.
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        reconcileGrid()
+    }
+
+    /// If the grid lags the frame (a queued size never applied, or applied late over a newer one), re-runs SwiftTerm's
+    /// frame path, as `setFontKeepingModes` does: `processSizeChange` resizes, then `sizeChanged` resizes the PTY.
+    /// No-op when the grid already fills the frame, so it cannot loop. Never during a live resize (it would only queue).
+    func reconcileGrid() {
+        guard let t = term, !t.inLiveResize else { return }
+        let size = t.frame.size, d = t.terminalDimensions, grid = t.getOptimalFrameSize().size
+        guard size.width > 0, size.height > 0, d.cols > 0, d.rows > 0 else { return }
+        // ponytail: cell width read back from the grid includes the legacy scroller's share; with "always show
+        // scroll bars" a grid one column short can pass. Fine for this repair (the bug is dozens of cells).
+        let cell = CGSize(width: grid.width / CGFloat(d.cols), height: grid.height / CGFloat(d.rows))
+        let fits = grid.width <= size.width + 0.01 && grid.height <= size.height + 0.01
+        let fills = size.width - grid.width < cell.width - 0.01 && size.height - grid.height < cell.height - 0.01
+        guard !(fits && fills) else { return }
+        Log.canvas.debug("grid \(self.id) stale \(d.cols)x\(d.rows) for \(size.debugDescription, privacy: .public): resync")
+        t.setFrameSize(.zero)
+        t.setFrameSize(size)
     }
 
     private var bodyFrame: CGRect {
@@ -222,6 +247,7 @@ import CollieTheme
         label?.frame = bodyFrame.insetBy(dx: 4, dy: max(bodyFrame.height / 2 - 10 / canvas.zoom, 0))
         leash.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = Self.cornerFrame(bounds)
+        reconcileGrid()
     }
 
     /// Inset from the 14 pt rounded corner so the grip isn't clipped.
@@ -265,6 +291,8 @@ import CollieTheme
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         Log.canvas.debug("pty resize \(newCols)x\(newRows)")
         stream?.resize(cols: UInt16(clamping: newCols), rows: UInt16(clamping: newRows))
+        // A queued size applied by a later frame tick can undo a newer synchronous one: check once it has landed.
+        DispatchQueue.main.async { [weak self] in self?.reconcileGrid() }
     }
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}

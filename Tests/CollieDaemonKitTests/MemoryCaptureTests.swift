@@ -216,4 +216,145 @@ private func proposals(_ store: RepoMemory, count: Int = 1) async throws -> [Mem
             #expect(await m.calls.first?.instructions == WorkAssistant.proposalInstructions)
         }
     }
+
+    // MARK: fix round 1
+
+    /// I1: an ask queued behind a capturing terminal is typed only after the continued Stop, and gets its own reply.
+    @Test func askHeldDuringCaptureTurn() async throws {
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: URL(fileURLWithPath: "/tmp"))
+            let asks = await d.router.asks
+            try await call(p, t, "turn.completed", ["source": "generic"])   // hook-capable: completes by hook only
+            try await doneTask(p, t, "login form")
+            let first = Task { try await asks.ask(from: UUID(), to: t.uuid, prompt: "echo one", raw: false, timeout: .seconds(30)) }
+            #expect(await waitFor(10) { await asks.isBusy(t.uuid) })
+            let second = Task { try await asks.ask(from: UUID(), to: t.uuid, prompt: "echo two", raw: false, timeout: .seconds(30)) }
+            #expect(await waitFor(10) { await asks.queued(t.uuid) == 1 })
+            #expect(reason(await stop(p, t)) != nil)   // blocks
+            #expect(try await first.value.output == "Pronto: o login funciona.")
+            try await Task.sleep(for: .milliseconds(300))
+            let (q, busy) = (await asks.queued(t.uuid), await asks.isBusy(t.uuid))
+            #expect(q == 1 && !busy)   // held: not typed into the capture turn
+            // an ask arriving meanwhile waits too
+            let third = Task { try await asks.ask(from: UUID(), to: t.uuid, prompt: "echo three", raw: false, timeout: .seconds(30)) }
+            #expect(await waitFor(10) { await asks.queued(t.uuid) == 2 })
+            #expect(await stop(p, t, "stop-continued") == nil)   // the capture turn's reply answers nothing
+            let ok1 = await waitFor(10) { let b = await asks.isBusy(t.uuid), q = await asks.queued(t.uuid); return b && q == 1 }
+            #expect(ok1)
+            try await call(p, t, "turn.completed", ["source": "generic", "message": "two done"])
+            #expect(try await second.value.output == "two done")
+            try await call(p, t, "turn.completed", ["source": "generic", "message": "three done"])
+            #expect(try await third.value.output == "three done")
+        }
+    }
+
+    @Test func captureHoldCapReleases() async throws {
+        try await withDaemon(configure: { $0.captureHoldSeconds = 1 }) { d, p in
+            let t = try await term(d, p, "T", cwd: URL(fileURLWithPath: "/tmp"))
+            let asks = await d.router.asks
+            try await call(p, t, "turn.completed", ["source": "generic"])
+            try await doneTask(p, t, "login form")
+            let first = Task { try await asks.ask(from: UUID(), to: t.uuid, prompt: "echo one", raw: false, timeout: .seconds(30)) }
+            #expect(await waitFor(10) { await asks.isBusy(t.uuid) })
+            let second = Task { try await asks.ask(from: UUID(), to: t.uuid, prompt: "echo two", raw: false, timeout: .seconds(30)) }
+            #expect(await waitFor(10) { await asks.queued(t.uuid) == 1 })
+            #expect(reason(await stop(p, t)) != nil)
+            _ = try await first.value
+            let busy = await asks.isBusy(t.uuid)
+            #expect(!busy)
+            // no continued Stop: the cap releases the queue
+            let ok0 = await waitFor(10) { let b = await asks.isBusy(t.uuid), q = await asks.queued(t.uuid); return b && q == 0 }
+            #expect(ok0)
+            try await call(p, t, "turn.completed", ["source": "generic", "message": "two done"])
+            #expect(try await second.value.output == "two done")
+        }
+    }
+
+    @Test func noBlockStopReleasesAtOnce() async throws {
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: URL(fileURLWithPath: "/tmp"))
+            let asks = await d.router.asks
+            try await call(p, t, "turn.completed", ["source": "generic"])
+            let first = Task { try await asks.ask(from: UUID(), to: t.uuid, prompt: "echo one", raw: false, timeout: .seconds(30)) }
+            #expect(await waitFor(10) { await asks.isBusy(t.uuid) })
+            let second = Task { try await asks.ask(from: UUID(), to: t.uuid, prompt: "echo two", raw: false, timeout: .seconds(30)) }
+            #expect(await waitFor(10) { await asks.queued(t.uuid) == 1 })
+            #expect(await stop(p, t) == nil)   // no work: no block
+            _ = try await first.value
+            let ok0 = await waitFor(10) { let b = await asks.isBusy(t.uuid), q = await asks.queued(t.uuid); return b && q == 0 }
+            #expect(ok0)
+            try await call(p, t, "turn.completed", ["source": "generic", "message": "two done"])
+            #expect(try await second.value.output == "two done")
+        }
+    }
+
+    /// M1: the save the agent makes in the capture turn doesn't skip the next chunk's ask.
+    @Test func complySaveDoesNotSkipNextChunk() async throws {
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: URL(fileURLWithPath: "/tmp"))
+            try await doneTask(p, t, "login form")
+            #expect(reason(await stop(p, t)) != nil)
+            try await call(p, t, "memory.save", ["kind": "decision", "subject": "sessions", "title": "Sessions in Redis"])
+            #expect(await stop(p, t, "stop-continued") == nil)
+            try await doneTask(p, t, "csrf")
+            #expect(reason(await stop(p, t)) != nil)
+        }
+    }
+
+    /// R6: the chunk's proposals are written even after the Stop asked about it and the agent declined.
+    @Test func proposalsWrittenAfterAsk() async throws {
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: URL(fileURLWithPath: "/tmp"))
+            try await call(p, t, "work.task.add", ["title": "OAuth"])
+            try await call(p, t, "work.task.drop", ["task": "OAuth", "reason": "o provedor caiu"])
+            try await doneTask(p, t, "login form")
+            #expect(reason(await stop(p, t)) != nil)
+            #expect(await stop(p, t, "stop-continued") == nil)   // "nada a registrar"
+            try await call(p, t, "work.done", ["reason": "login pronto"])
+            #expect(Set(try await proposals(d.router.memory.global, count: 2).map(\.title)) == ["Abandonado: OAuth", "login pronto"])
+        }
+    }
+
+    /// M3: a failed write leaves the chunk unmarked; the next trigger writes it.
+    @Test func failedWriteRetries() async throws {
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: URL(fileURLWithPath: "/tmp"))
+            let dir = await d.router.memory.global.store.dir, fm = FileManager.default
+            let elsewhere = p.root.appendingPathComponent("elsewhere")
+            try fm.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+            try? fm.removeItem(at: dir)
+            try fm.createDirectory(at: dir.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: dir, withDestinationURL: elsewhere)   // the store refuses a symlink: the write fails
+            try await call(p, t, "work.note", ["text": "Escolhemos argon2", "decision": "true"])
+            try await call(p, t, "work.hook", ["hook": "precompact", "payload": "{}"])
+            let w = try #require(try await d.router.work.active(terminal: t.uuid))
+            await d.router.captureProposals(w.id)   // waits for the detached one, then fails again
+            #expect(try await d.router.work.get(w.id)?.proposedAt == nil)
+            try fm.removeItem(at: dir)
+            await d.router.captureProposals(w.id)
+            #expect(try await proposals(d.router.memory.global).map(\.title) == ["Escolhemos argon2"])
+            #expect(try await d.router.work.get(w.id)?.proposedAt != nil)
+        }
+    }
+
+    /// M4: the model's rewrite is capped and scrubbed.
+    @Test func rewriteCappedAndScrubbed() async throws {
+        let long = "Usamos argon2 com a chave sk-ant-abcdefghijklmnop e Bearer abc.def.ghi " + String(repeating: "x", count: 5000)
+        try await withDaemon(configure: { $0.localModel = FakeModel(.answer("Senhas com argon2 password=hunter2\n\n" + long)) }) { d, p in
+            let t = try await term(d, p, "T", cwd: URL(fileURLWithPath: "/tmp"))
+            try await call(p, t, "work.note", ["text": "Escolhemos argon2", "decision": "true"])
+            try await call(p, t, "work.done")
+            let r = try #require(try await proposals(d.router.memory.global).first)
+            #expect(r.body.count <= MemoryCapture.maxBody && r.title.count <= MemoryCapture.maxTitle)
+            for leak in ["sk-ant-", "abc.def.ghi", "hunter2"] { #expect(!(r.title + r.body).contains(leak), "\(leak)") }
+        }
+    }
+
+    /// M6: bare bearer tokens, sk- keys and passwords.
+    @Test func scrubsKeyShapes() {
+        let x = LotBoards.scrub("Authorization: Bearer eyJhbGciOi.x-y_z key sk-ant-api03-abcdefghij sk-proj-abcdefghijk password=hunter2 passwd: s3cret ok")
+        for leak in ["eyJhbGciOi", "sk-ant", "sk-proj", "hunter2", "s3cret"] { #expect(!x.contains(leak), "\(leak): \(x)") }
+        #expect(x.contains("Bearer [hidden]") && x.hasSuffix(" ok"))
+        #expect(LotBoards.scrub("risk-free task-list") == "risk-free task-list")
+    }
 }

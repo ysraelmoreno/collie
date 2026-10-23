@@ -31,13 +31,15 @@ public struct WorkNote: Codable, Sendable, Equatable {
 }
 
 /// What a terminal's agent is doing: tasks, jobs, notes and commits. `closedBy`: "merge", "agent:<name>" or "app".
-/// `commits`: short sha and subject, at most 200. `capturedAt`/`capturedCommit`: when its learnings were last captured
-/// (MemoryCapture) and the newest commit then: what came after is the next chunk.
+/// `commits`: short sha and subject, at most 200. `capturedAt`/`capturedCommit`: when Claude's Stop last asked about its
+/// learnings (MemoryCapture) and the newest commit then; `proposedAt`/`proposedCommit`: the same for the proposals
+/// written from it. What came after each is that one's next chunk.
 public struct Work: Codable, Sendable, Equatable {
     public var id: UUID; public var title: String; public var terminalId: UUID; public var paddockId: UUID?; public var branch: String?
     public var openedAt: Date; public var closedAt: Date?; public var closedBy: String?
     public var tasks: [WorkTask]; public var jobs: [WorkJob]; public var notes: [WorkNote]; public var commits: [String]
     public var capturedAt: Date?; public var capturedCommit: String?
+    public var proposedAt: Date?; public var proposedCommit: String?
     public init(id: UUID = UUID(), title: String, terminalId: UUID, paddockId: UUID? = nil, branch: String? = nil, openedAt: Date = Date(),
                 closedAt: Date? = nil, closedBy: String? = nil, tasks: [WorkTask] = [], jobs: [WorkJob] = [], notes: [WorkNote] = [],
                 commits: [String] = []) {
@@ -45,7 +47,7 @@ public struct Work: Codable, Sendable, Equatable {
         self.openedAt = openedAt; self.closedAt = closedAt; self.closedBy = closedBy
         self.tasks = tasks; self.jobs = jobs; self.notes = notes; self.commits = commits
     }
-    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit }
+    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, proposedAt, proposedCommit }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -59,5 +61,7 @@ public struct Work: Codable, Sendable, Equatable {
         // R2: a malformed capture mark only means "never captured"
         capturedAt = (try? c.decodeIfPresent(Date.self, forKey: .capturedAt)) ?? nil
         capturedCommit = (try? c.decodeIfPresent(String.self, forKey: .capturedCommit)) ?? nil
+        proposedAt = (try? c.decodeIfPresent(Date.self, forKey: .proposedAt)) ?? nil
+        proposedCommit = (try? c.decodeIfPresent(String.self, forKey: .proposedCommit)) ?? nil
     }
 }

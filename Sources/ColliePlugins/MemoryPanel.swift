@@ -105,7 +105,7 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
     /// Proposals by lot (the project's last, `lot` nil), each group newest first.
     public var proposalGroups: [(lot: String?, rows: [MemoryRow])] {
         let keys = Array(Set(proposals.map(\.lot))).sorted { ($0 ?? "\u{10FFFF}") < ($1 ?? "\u{10FFFF}") }
-        return keys.map { k in (k, proposals.filter { $0.lot == k }) }
+        return keys.map { k in (k, proposals.filter { $0.lot == k }.sorted { $0.record.createdAt > $1.record.createdAt }) }
     }
     /// Every proposal of the group, approved one by one (each replaces the active memory of its subject); one reload.
     public func approveAll(lot: String?) async {

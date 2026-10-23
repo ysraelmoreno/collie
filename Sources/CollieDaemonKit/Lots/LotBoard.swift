@@ -129,10 +129,14 @@ actor LotBoards {
         return quoted ? "\"\(cut)\"" : cut
     }
 
-    /// Board text is never secret-bearing: design links and `token=`/`key=`/`secret=`/`edit=` values (`COLLIE_TOKEN=…`
-    /// included) are hidden before a post is stored.
-    /// `secrets`: the daemon's live tokens, hidden wherever they appear.
+    /// Board text (and captured memory) is never secret-bearing: design links, `token=`/`key=`/`secret=`/`edit=` values
+    /// (`COLLIE_TOKEN=…` included), `password=`/`passwd:` values, `Bearer <token>` and `sk-…`/`sk-ant-…` keys are hidden
+    /// before it is stored. `secrets`: the daemon's live tokens, hidden wherever they appear.
+    /// ponytail: known shapes only; an arbitrary bare secret with no marker passes.
     static func scrub(_ s: String, secrets: Set<String> = []) -> String {
         DesignService.scrub(s, secrets).replacing(/(?i)[A-Za-z0-9_]*(?:token|secret|key|edit)=[^\s&"'`<>)]*/, with: "[hidden]")
+            .replacing(/(?i)\b(?:password|passwd|pwd)\s*[=:]\s*[^\s&"'`<>)]+/, with: "[hidden]")
+            .replacing(/(?i)\bBearer\s+[A-Za-z0-9._~+\/=-]+/, with: "Bearer [hidden]")
+            .replacing(/\bsk-[A-Za-z0-9_-]{8,}/, with: "[hidden]")
     }
 }

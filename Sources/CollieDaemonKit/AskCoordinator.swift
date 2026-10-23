@@ -264,6 +264,9 @@ public actor AskCoordinator {
         var swallowedFor: UUID?
         /// A re-pump is scheduled for a user ask waiting for the agent to stop working.
         var quietPoll = false
+        /// Claude's Stop may answer with a capture block: no queued ask is typed until the daemon decided, and, when it
+        /// blocked, until the continued Stop (or `captureHoldMax`): the capture turn never takes, or answers, an ask.
+        var captureHold: UUID?
     }
     private struct Waiter {
         var from: UUID, to: UUID, prompt: String, raw: Bool
@@ -297,8 +300,9 @@ public actor AskCoordinator {
     private nonisolated let approvalSink: AsyncStream<ApprovalEvent>.Continuation
     /// Guarded prompts held back because output after an input was not scanned yet (tests).
     private(set) var windowDeferrals = 0
-    public init(idleQuietSeconds: Double, heldMaxSeconds: Double = 600) {
-        idleQuiet = .seconds(idleQuietSeconds); heldMax = .seconds(heldMaxSeconds)
+    private let captureHoldMax: Duration
+    public init(idleQuietSeconds: Double, heldMaxSeconds: Double = 600, captureHoldSeconds: Double = 120) {
+        idleQuiet = .seconds(idleQuietSeconds); heldMax = .seconds(heldMaxSeconds); captureHoldMax = .seconds(captureHoldSeconds)
         (approvalEvents, approvalSink) = AsyncStream.makeStream(of: ApprovalEvent.self, bufferingPolicy: .bufferingNewest(100))
     }
 
@@ -420,8 +424,36 @@ public actor AskCoordinator {
         }
     }
 
-    /// A Stop hook made the agent go on (Claude's `stop_hook_active`): no dialog is open, but the turn is not over.
-    public func turnContinued(terminal: UUID) { targets[terminal]?.approval.dismiss() }
+    /// A Stop hook made the agent go on (Claude's `stop_hook_active`): no dialog is open; the capture turn it ran is
+    /// over, so a held queue goes on. Its reply completes no ask.
+    public func turnContinued(terminal: UUID) {
+        targets[terminal]?.approval.dismiss()
+        if let h = targets[terminal]?.captureHold { releaseCapture(terminal, h) }
+    }
+
+    /// Before Claude's Stop is reported: holds `terminal`'s queue until `releaseCapture` (no block) or the continued Stop.
+    func holdForCapture(_ terminal: UUID) -> UUID? {
+        guard targets[terminal] != nil else { return nil }
+        let h = UUID()
+        targets[terminal]?.captureHold = h
+        return h
+    }
+
+    /// The daemon blocked the Stop: the hold lasts until the continued Stop, at most `captureHoldMax`.
+    func captureBlocked(_ terminal: UUID, _ hold: UUID) {
+        let cap = captureHoldMax
+        Task { [weak self] in
+            try? await Task.sleep(for: cap)
+            await self?.releaseCapture(terminal, hold)
+        }
+    }
+
+    /// Ends hold `hold` (a later one stays) and types the next queued ask.
+    func releaseCapture(_ terminal: UUID, _ hold: UUID) {
+        guard targets[terminal]?.captureHold == hold else { return }
+        targets[terminal]?.captureHold = nil
+        pump(terminal)
+    }
 
     /// Fails the in-flight ask and every queued ask for this terminal.
     public func processExited(_ terminal: UUID) {
@@ -560,7 +592,7 @@ public actor AskCoordinator {
 
     /// Starts the next queued ask for `to` if it is ready for injection and its slot is free.
     private func pump(_ to: UUID) {
-        guard let t = targets[to], t.ready, t.inflight == nil, let id = t.queue.first, let w = waiters[id] else { return }
+        guard let t = targets[to], t.ready, t.inflight == nil, t.captureHold == nil, let id = t.queue.first, let w = waiters[id] else { return }
         if w.guardsApproval, t.approval.pending != nil { finish(id, .failure(Self.awaitingApproval(t.name))); return }
         // output after an input not scanned yet may hold a prompt `pending` doesn't show: wait for the scan
         let unscanned = w.guardsApproval && t.approval.inWindow

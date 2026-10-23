@@ -250,7 +250,37 @@ enum BrowserAutomation {
         });
       }
 
-      const api = { snapshot, text, click, fill, type, key, scroll, rect, wait };
+      // hover without a window (no trusted input): pointer/mouse over, enter and move at the center; `:hover` doesn't apply
+      function hover(ref) {
+        const el = find(ref);
+        if (!el) return missing(ref);
+        el.scrollIntoView({ block: 'center', inline: 'center' });
+        const b = el.getBoundingClientRect();
+        const at = { bubbles: true, cancelable: true, composed: true, view: window, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2,
+                     pointerId: 1, isPrimary: true, pointerType: 'mouse' };
+        for (const t of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']) {
+          const C = t.startsWith('pointer') ? PointerEvent : MouseEvent;
+          el.dispatchEvent(new C(t, t.endsWith('enter') ? Object.assign({}, at, { bubbles: false, cancelable: false }) : at));
+        }
+        return { ok: true };
+      }
+
+      // trusted input (BrowserInput): `settled` resolves once `n` trusted `type` events reached the window, or after `ms`
+      let armed = Promise.resolve(true);
+      function arm(type, n, ms) {
+        if (n <= 0) { armed = Promise.resolve(true); return { ok: true }; }
+        armed = new Promise(resolve => {
+          let left = n;
+          const on = e => { if (e.isTrusted && --left <= 0) done(true); };
+          const t = setTimeout(() => done(false), ms);
+          const done = v => { clearTimeout(t); removeEventListener(type, on, true); resolve(v); };
+          addEventListener(type, on, true);
+        });
+        return { ok: true };
+      }
+      async function settled() { return { seen: await armed }; }
+
+      const api = { snapshot, text, click, fill, type, key, scroll, rect, wait, hover, arm, settled };
       Object.defineProperty(window, '__collie', { value: Object.freeze(api), configurable: false, writable: false, enumerable: false });
     })();
     """#

@@ -41,6 +41,7 @@ import os
         self.panel = panel; self.host = host
         let config = WKWebViewConfiguration()
         config.websiteDataStore = Self.dataStore(for: panel, workspaceId: host.workspaceId)
+        config.preferences.tabFocusesLinks = true   // Tab walks links and buttons too (as in Chrome), not only text fields
         config.setURLSchemeHandler(DesignSchemeHandler(root: host.root.appendingPathComponent("artifacts"), artifacts: true), forURLScheme: Self.artifactScheme)
         let content = config.userContentController
         let web = WKWebView(frame: .zero, configuration: config)

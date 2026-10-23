@@ -24,13 +24,19 @@ extension BrowserPanel {
         case "browser.text":
             return await BrowserAutomation.boundedOffMain(try await page("text", [BrowserAutomation.resultCap]), key: "output")
         case "browser.click":
-            return .object(try await page("click", [try Self.string(args, "ref")]))
+            return try await pointer(try Self.string(args, "ref"), .click)
+        case "browser.hover":
+            return try await pointer(try Self.string(args, "ref"), .move)
         case "browser.fill":
             return .object(try await page("fill", [try Self.string(args, "ref"), try Self.string(args, "text")]))
         case "browser.type":
-            return .object(try await page("type", [try Self.string(args, "text")]))
+            let text = try Self.string(args, "text")
+            guard let web = try trustedInput() else { return Self.untrusted(try await page("type", [text])) }
+            return try await settle("keyup", text.count) { BrowserInput.type(web, text) }
         case "browser.key":
-            return .object(try await page("key", [try Self.string(args, "key")]))
+            let key = try BrowserInput.parse(try Self.string(args, "key"))
+            guard let web = try trustedInput() else { return Self.untrusted(try await page("key", [key.name])) }
+            return try await settle("keyup", 1) { BrowserInput.send(web, [key]) }
         case "browser.scroll":
             let ref = try? Self.string(args, "ref"), dy = try Self.int(args, "dy")
             guard ref != nil || dy != nil else { throw ProtocolError(code: .invalidArgs, message: "give --ref or --dy") }
@@ -55,6 +61,36 @@ extension BrowserPanel {
 
     private func page(_ fn: String, _ args: [Any]) async throws(ProtocolError) -> [String: JSONValue] {
         try await BrowserAutomation.call(try live(), fn, args)
+    }
+
+    /// The web view when it is in a window (visible, or headless in a `BrowserInput.HostWindow`): AppKit events reach
+    /// it as the user's own. Without one, the JS path dispatches synthetic events (`trusted: false`).
+    private func trustedInput() throws(ProtocolError) -> WKWebView? {
+        let web = try live()
+        return web.window == nil ? nil : web
+    }
+
+    private static func untrusted(_ r: [String: JSONValue]) -> JSONValue { .object(r.merging(["trusted": .bool(false)]) { $1 }) }
+
+    /// Sends trusted events and replies once the page has seen `count` trusted `event`s (or 1 s passed: a disabled
+    /// control, a move to where the pointer already is), so the next command sees their effect.
+    private func settle(_ event: String, _ count: Int, _ send: () -> Void) async throws(ProtocolError) -> JSONValue {
+        _ = try await page("arm", [event, count, 1000])
+        send()
+        _ = try await page("settled", [])
+        return .object(["ok": .bool(true), "trusted": .bool(true)])
+    }
+
+    /// Click or hover at the center of the ref's visible box (scrolled into view first).
+    private func pointer(_ ref: String, _ kind: BrowserInput.MouseKind) async throws(ProtocolError) -> JSONValue {
+        guard let web = try trustedInput() else { return Self.untrusted(try await page(kind == .click ? "click" : "hover", [ref])) }
+        let r = try await page("rect", [ref])
+        guard case .number(let x)? = r["x"], case .number(let y)? = r["y"], case .number(let w)? = r["width"], case .number(let h)? = r["height"] else {
+            throw ProtocolError(code: .internal, message: "browser: bad rect reply")
+        }
+        return try await settle(kind == .click ? "mouseup" : "mousemove", 1) {
+            BrowserInput.mouse(web, at: CGPoint(x: x + w / 2, y: y + h / 2), kind: kind)
+        }
     }
 
     static func waitSeconds(_ args: [String: JSONValue]) throws(ProtocolError) -> Int {

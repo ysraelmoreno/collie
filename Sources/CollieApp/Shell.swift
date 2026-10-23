@@ -41,7 +41,6 @@ struct Shell<Content: View>: View {
             }
         }
         .background(Color.collieBackground)
-        .toolbar(.hidden, for: .windowToolbar)   // the traffic lights stay
     }
 }
 
@@ -50,6 +49,7 @@ struct CanvasChrome<Banners: View>: View {
     let structure: WindowStructure
     let ctx: ShellContext
     @ViewBuilder let banners: Banners
+    static var lightsInset: CGFloat { 28 }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -70,7 +70,9 @@ struct CanvasChrome<Banners: View>: View {
             banners
             if structure == .compact { HostNotice(client: ctx.client) }
         }
-        .padding(structure == .compact ? 12 : 0)
+        .padding(.horizontal, structure == .compact ? 12 : 0)
+        .padding(.bottom, structure == .compact ? 12 : 0)
+        .padding(.top, structure == .compact ? Self.lightsInset : 0)   // the hidden title bar leaves the traffic lights over the canvas
     }
 }
 
@@ -230,6 +232,7 @@ struct HostNotice: View {
 
 private struct WorkspaceSidebar: View {
     let ctx: ShellContext
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         let client = ctx.client
@@ -255,8 +258,14 @@ private struct WorkspaceSidebar: View {
             HerdsSection(ctx: ctx)
             section("USO")
             usage
+            Button { openSettings() } label: {
+                Image(systemName: "gearshape").font(.system(size: 14)).foregroundStyle(Color.collieMuted).frame(width: 24, height: 24).contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help("Preferências (⌘,)").accessibilityLabel("Preferências")
         }
         .padding(14)
+        .padding(.top, CanvasChrome<EmptyView>.lightsInset)   // "collie" sits below the traffic lights (hidden title bar)
         .frame(width: 240, alignment: .leading).frame(maxHeight: .infinity, alignment: .top)
         .background(Color.collieSidebar)
         .overlay(alignment: .trailing) { Rectangle().fill(Color.collieBorder).frame(width: 1) }

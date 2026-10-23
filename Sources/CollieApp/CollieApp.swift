@@ -86,6 +86,7 @@ enum Config {
                 .onAppear(perform: Self.applyTheme)
                 .onChange(of: theme) { Self.applyTheme() }
         }
+        .windowStyle(.hiddenTitleBar)   // no title bar band; the traffic lights stay, over the content (the sidebar/bar are inset)
         .commands {
             CommandGroup(after: .newItem) {
                 Divider()

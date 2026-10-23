@@ -15,7 +15,7 @@
 - Nothing written to the user's global config (`~/.claude`, `~/.codex`, …); orientation only.
 - Only Shepherds get the design-first line; other terminals keep today's "Design panel …" line when they reach one.
 - UI work = new screen, new flow, or visible change to an interface. Not: backend, refactor, tests, bug without visual change, docs.
-- Orientation stays ≤ 1200 chars (`CollieOrientation.limit`) in the worst case (Shepherd, 3 names per group, all plug-ins).
+- Orientation stays ≤ 1300 chars (`CollieOrientation.limit`, raised for the Collie vocabulary) in the worst case (Shepherd, 3 names per group, all plug-ins).
 - Orientation text is English (agents); herd texts and UI copy pt-BR, original wording.
 - `designFirst` is decoded with a default (old `workspace.json` without it → `ask`) and only written by the new command or Preferences.
 
@@ -59,7 +59,7 @@ The Shepherd gets exactly one of these lines (original text, keep it this short)
 - none, `always`: `- UI work (new screen, flow or visible change): open a design panel (collie panel open design --file <feature>) and have it designed before implementing. Not for backend, refactors or tests.`
 - `never`: no line.
 
-- [ ] **Step 1: Tests** `shepherdAskLine`, `shepherdAlwaysLine`, `shepherdNeverNoLine`, `shepherdWithPanelUsesIt` (wins over every preference), `nonShepherdNoDesignFirstLine`, `worstCaseFitsLimit` (Shepherd, long names, all plug-ins, each preference → `count <= 1200`).
+- [ ] **Step 1: Tests** `shepherdAskLine`, `shepherdAlwaysLine`, `shepherdNeverNoLine`, `shepherdWithPanelUsesIt` (wins over every preference), `nonShepherdNoDesignFirstLine`, `worstCaseFitsLimit` (Shepherd, long names, all plug-ins, each preference → `count <= 1300`).
 - [ ] **Step 2:** Implement; if the worst case overflows, shorten other lines, never drop the design-first line before the name lists shrink.
 - [ ] **Step 3:** Tests PASS. Commit `feat(orientation): Shepherd offers a design for UI work`.
 

@@ -1,7 +1,12 @@
 #!/bin/bash
-# Builds build/Collie.app (Collie + collied + collie), ad-hoc signed with hardened runtime. Idempotent.
+# Builds build/Collie.app (Collie + collied + collie), signed with hardened runtime: identity "Collie Local"
+# (scripts/make-signing-cert.sh; override with COLLIE_SIGN_IDENTITY) when present, else ad-hoc. Idempotent.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# stable identity keeps TCC grants across rebuilds; ad-hoc = new code identity every build
+ID="${COLLIE_SIGN_IDENTITY:-Collie Local}"
+if security find-identity -v -p codesigning | grep -qF "\"$ID\""; then SIGN="$ID"
+else SIGN="-"; echo "warning: no \"$ID\" signing identity (run scripts/make-signing-cert.sh): ad-hoc, TCC grants reset on every rebuild" >&2; fi
 # one --product per invocation: repeated flags build only the last
 for p in CollieApp collied collie collie-ctty; do swift build -c release --product "$p"; done
 BIN="$(swift build -c release --show-bin-path)"
@@ -28,9 +33,9 @@ if [ -x vendor/figcraft/bin/figcraft-server ] && [ -f vendor/figcraft/web/index.
   mkdir -p "$APP/Contents/Resources/figcraft"
   cp -R vendor/figcraft/bin vendor/figcraft/web vendor/figcraft/licenses "$APP/Contents/Resources/figcraft/"
   # --deep doesn't sign Mach-O under Resources: sign the helpers themselves
-  codesign --force -s - --options runtime "$APP/Contents/Resources/figcraft/bin/"*
+  codesign --force -s "$SIGN" --options runtime "$APP/Contents/Resources/figcraft/bin/"*
 else echo "warning: vendor/figcraft missing (run scripts/build-figcraft.sh): no design engine" >&2; fi
-codesign --force --deep -s - --options runtime "$APP"
+codesign --force --deep -s "$SIGN" --options runtime "$APP"
 codesign -v "$APP"
 echo "ok: $APP"
 echo "Instalar: copie $APP para /Applications antes do primeiro uso (collied iniciado pelo launchd a partir de ~/Documents, ~/Desktop ou ~/Downloads trava no TCC)."

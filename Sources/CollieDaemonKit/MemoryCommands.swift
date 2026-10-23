@@ -147,7 +147,17 @@ extension CommandRouter {
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
             let text: String
             if r.command == "memory.hookContext" {
-                let mem = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id)
+                // compact/resume: the work state (first), the board's handoff and status posts, then the memory index, in one 4096-byte budget
+                let recall = ["compact", "resume"].contains(str(r, "source") ?? "")
+                var head: [String] = []
+                if recall {
+                    if let w = try? await work.active(terminal: me.id) { head.append(WorkStatusText.recall(w)) }
+                    if let myLot { head.append(await boards.recall(to: me.id, lot: myLot, limit: 1_200)) }
+                    head = head.filter { !$0.isEmpty }
+                }
+                let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
+                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, limit: 4096 - used)
+                let mem = (head + [rest == MemoryService.header ? "" : rest]).filter { !$0.isEmpty }.joined(separator: "\n\n")
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
                     peers: ConnectionGraph.reachable(from: me.id, in: ws).map(\.name),

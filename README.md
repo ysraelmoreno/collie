@@ -482,6 +482,25 @@ repositório (fica no log). Uma falha ao guardar vira uma mensagem do Collie no 
 **Limite documentado:** o controle de "já guardei este fechamento" fica em memória do daemon; depois de reiniciá-lo, o mesmo
 fechamento pode ser guardado de novo.
 
+## Memória e lotes
+
+A memória do Collie vive em três escopos: **global** (vale em todo lugar), **projeto** (o repositório do terminal) e **lote** (um grupo de terminais com um objetivo, que só os membros enxergam). Memórias antigas, sem lote, são do projeto.
+
+- **Isolamento.** Um agente lê o seu lote, o seu projeto e o global; nunca o de outro lote, nem no mesmo pasto. `collie memory search` sem opções devolve só isso. Só o app (você) e um Pastor que alcança todos os membros de um lote podem buscar ou entrar em outro (`--lot`, `--all`). Lotes não dão alcance: quem fala com quem continua sendo só a guia.
+- **Quadro.** Cada lote tem um quadro (`collie lot board`, `collie lot post --kind handoff|question|status|answer --to <nome>`). Recados endereçados a você chegam no próximo prompt, uma vez; são dados de outro agente, não ordens.
+- **Propostas.** Ao fechar um trabalho (e ao fim da sessão) o Collie propõe memórias. Elas ficam em Revisar → Propostas até você aprovar, editar ou descartar; depois de 14 dias sem revisão viram descartadas (restauráveis, nada é apagado sozinho). O Claude também é perguntado, no máximo uma vez por trecho de trabalho, o que vale registrar.
+- **Promover.** Uma memória do lote pode ser promovida ao projeto (`collie memory promote`).
+
+**O que é injetado, e quando** (até 4096 bytes no início, 2048 por prompt, fora a orientação do Collie):
+
+| Quando | O que entra |
+|---|---|
+| Início | memórias fixadas e o índice (títulos) do lote e do projeto |
+| Cada prompt | recados do quadro endereçados a você, depois as memórias relevantes ao prompt, sem repetir |
+| Depois de compactar (e ao retomar) | seu trabalho ativo (tarefas abertas e as 3 últimas notas), o último recado do quadro para você e os 3 últimos status do lote, depois o índice de memórias |
+
+O recado entregue na compactação não é repetido no prompt seguinte. Codex e Cursor recebem a mesma injeção de início e de prompt; não têm o passo de compactação.
+
 ## Backup dos dados
 
 Menu **Arquivo → Exportar dados do Collie…** gera um `.zip` (0600) com `manifest.json` na raiz.

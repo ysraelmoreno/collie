@@ -16,9 +16,11 @@ enum HookCommands {
         case "claude-session-start", "claude-prompt":
             // prints the injection JSON on success only; every failure is just a log line
             let isPrompt = a.first == "claude-prompt"
-            let prompt = isPrompt ? HookPayload.userPromptSubmitPrompt(stdinJSON: FileHandle.standardInput.readDataToEndOfFile()) : nil
+            let stdin = FileHandle.standardInput.readDataToEndOfFile()
+            let prompt = isPrompt ? HookPayload.userPromptSubmitPrompt(stdinJSON: stdin) : nil
             if isPrompt && prompt == nil { log("claude-prompt: no prompt in the stdin payload"); return }
-            if let out = await MemoryHookClient.output(event: isPrompt ? .userPromptSubmit : .sessionStart, prompt: prompt,
+            let source = isPrompt ? nil : HookPayload.claudeSessionSource(stdinJSON: stdin)
+            if let out = await MemoryHookClient.output(event: isPrompt ? .userPromptSubmit : .sessionStart, prompt: prompt, source: source,
                                                        env: ProcessInfo.processInfo.environment, onError: { log("\(a[0]): \($0)") }) {
                 print(out)
             }

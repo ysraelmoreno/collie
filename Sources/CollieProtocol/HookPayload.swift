@@ -32,6 +32,13 @@ public enum HookPayload {
         return o["stop_hook_active"] as? Bool ?? false
     }
 
+    /// SessionStart's `source` (startup|resume|compact|clear); anything else, or unreadable stdin: nil (= startup).
+    public static func claudeSessionSource(stdinJSON: Data) -> String? {
+        guard let o = try? JSONSerialization.jsonObject(with: stdinJSON) as? [String: Any], let s = o["source"] as? String,
+              ["startup", "resume", "compact", "clear"].contains(s) else { return nil }
+        return s
+    }
+
     /// The Stop hook reply that makes Claude continue one more turn with `reason` as its instruction.
     public static func claudeStopBlock(reason: String) -> String? {
         guard let d = try? JSONSerialization.data(withJSONObject: ["decision": "block", "reason": reason], options: [.withoutEscapingSlashes])

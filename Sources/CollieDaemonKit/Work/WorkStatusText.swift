@@ -52,6 +52,22 @@ public enum WorkStatusText {
         return bounded(lines)
     }
 
+    /// What the agent needs after a compaction (plain text, at most 1200 UTF-8 bytes): its work's open tasks and last 3 notes.
+    /// The agent's own text, one line each (`RerailText.clean`).
+    public static func recall(_ w: Work) -> String {
+        let open = w.tasks.filter { $0.state == .open || $0.state == .inProgress }
+        var lines = ["Seu trabalho ativo (Collie): \(RerailText.clean(w.title))"]
+        lines += open.map { "- \($0.state == .inProgress ? "em andamento" : "aberta"): \(RerailText.clean($0.title))" }
+        lines += w.notes.suffix(3).map { "- nota: \(RerailText.clean($0.text))" }
+        var out = ""
+        for l in lines {
+            let add = (out.isEmpty ? "" : "\n") + LotBoards.cut(l, bytes: 300)
+            guard out.utf8.count + add.utf8.count <= 1_200 else { break }
+            out += add
+        }
+        return out
+    }
+
     /// Joins lines up to `limit` characters; the cut ends with "… e mais <n>".
     private static func bounded(_ lines: [String]) -> String {
         var out = ""

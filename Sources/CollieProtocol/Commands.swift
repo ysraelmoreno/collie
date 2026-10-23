@@ -152,6 +152,7 @@ public enum Commands {
                     timeoutSeconds: 30),
         // Hooks (Claude Code SessionStart / UserPromptSubmit): terminal-only, reply is the text to inject.
         CommandSpec(name: "memory.hookContext", summary: "Hook: memory summary for a new Claude session",
+                    params: [ParamSpec("source", .string, help: "startup|resume|compact|clear (compact/resume restore the work state and the board)")],
                     timeoutSeconds: 5, exposedToMCP: false),
         CommandSpec(name: "memory.hookRelevant", summary: "Hook: memories relevant to a prompt, not yet injected",
                     params: [ParamSpec("prompt", .string, required: true)], timeoutSeconds: 5, exposedToMCP: false),

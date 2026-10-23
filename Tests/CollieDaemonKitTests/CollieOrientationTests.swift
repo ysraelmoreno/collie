@@ -1,9 +1,11 @@
 import Testing
+import CollieCore
 @testable import CollieDaemonKit
 
 @Suite struct CollieOrientationTests {
-    private func text(shepherd: Bool = false, paddock: String? = nil, peers: [String] = [], panels: [(name: String, pluginId: String)] = []) -> String {
-        CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: paddock, peers: peers, panels: panels)
+    private func text(shepherd: Bool = false, paddock: String? = nil, peers: [String] = [], panels: [(name: String, pluginId: String)] = [],
+                      paddockPanels: [(name: String, pluginId: String)] = [], pref: DesignFirst = .ask) -> String {
+        CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: pref)
     }
 
     @Test func orientationFollowsReach() {
@@ -47,5 +49,40 @@ import Testing
         #expect(t.split(separator: "\n", omittingEmptySubsequences: false).count == plain.split(separator: "\n", omittingEmptySubsequences: false).count)
         #expect(t.contains("\"a bc\""))
         for l in t.split(separator: "\n") where l.hasPrefix("- Design panel") { #expect(l.filter { $0 == "\"" }.count == 2) }
+    }
+
+    @Test func shepherdAskLine() {
+        let t = text(shepherd: true)
+        #expect(t.contains("and no design panel: ask the user once whether to design it in FigCraft first. Save the answer: collie design prefer always|never. Not for backend, refactors or tests."))
+        #expect(!text(shepherd: true, paddock: "F1").contains("collie design prefer"))
+        #expect(text(shepherd: true, paddock: "F1").contains("ask the user once"))
+    }
+    @Test func shepherdAlwaysLine() {
+        #expect(text(shepherd: true, pref: .always).contains("open a design panel (collie panel open design --file <feature>) and have it designed before implementing."))
+    }
+    @Test func shepherdNeverNoLine() {
+        #expect(!text(shepherd: true, pref: .never).contains("UI work"))
+    }
+    @Test func shepherdWithPanelUsesIt() {
+        for pref in DesignFirst.allCases {
+            let t = text(shepherd: true, panels: [("Home", "design")], pref: pref)
+            #expect(t.contains("use design panel \"Home\" first; leash it to whoever implements."), "\(pref)")
+            #expect(!t.contains("ask the user once") && !t.contains("open a design panel (collie"))
+        }
+        let p = text(shepherd: true, paddock: "F1", paddockPanels: [("Draft", "design")], pref: .never)
+        #expect(p.contains("use design panel \"Draft\" first"))
+    }
+    @Test func nonShepherdNoDesignFirstLine() {
+        #expect(!text(pref: .always).contains("UI work") && !text(panels: [("Home", "design")]).contains("UI work"))
+    }
+    @Test func worstCaseFitsLimit() {
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        for pref in DesignFirst.allCases {
+            for withDesign in [true, false] {
+                let t = text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: withDesign ? ps : ps.filter { $0.pluginId != "design" }, pref: pref)
+                #expect(t.count <= 1300, "\(pref) \(t.count)")
+                if withDesign || pref != .never { #expect(t.contains("UI work")) }
+            }
+        }
     }
 }

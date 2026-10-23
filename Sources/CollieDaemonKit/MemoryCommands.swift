@@ -129,7 +129,9 @@ extension CommandRouter {
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
                     peers: ConnectionGraph.reachable(from: me.id, in: ws).map(\.name),
-                    panels: ConnectionGraph.reachablePanels(from: me.id, in: ws).map { ($0.name, $0.pluginId) })
+                    panels: ConnectionGraph.reachablePanels(from: me.id, in: ws).map { ($0.name, $0.pluginId) },
+                    paddockPanels: ws.panels.filter { $0.paddockId != nil && $0.paddockId == me.paddockId }.map { ($0.name, $0.pluginId) },
+                    designFirst: ws.designFirst)
                 // ponytail: the bare header (no memories) counts as empty
                 text = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
             } else {

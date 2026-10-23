@@ -56,6 +56,9 @@ public enum PluginRegistry {
             cmd("resize", "Set the page viewport (the panel keeps its size; the page is shown scaled to fit); returns {width, height, scale}",
                 [ParamSpec("width", .int, help: "200-4096"), ParamSpec("height", .int, help: "200-4096 (default: the current one)"),
                  ParamSpec("reset", .flag, help: "Back to filling the panel")]),
+            cmd("emulate", "Emulate media features until changed; returns {colorScheme, reducedMotion, uncoveredSheets} (cross-origin stylesheets can't be rewritten for reduced motion)",
+                [ParamSpec("color-scheme", .string, help: "light | dark | system"),
+                 ParamSpec("reduced-motion", .string, help: "reduce | no-preference | system")]),
         ],
         events: ["browser.loaded", "browser.console"])
 }

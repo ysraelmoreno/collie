@@ -46,6 +46,8 @@ extension BrowserPanel {
             return await BrowserAutomation.boundedOffMain(["output": .string(consoleLines.suffix(n).joined(separator: "\n"))], key: "output")
         case "browser.resize":
             return try resize(args)
+        case "browser.emulate":
+            return try await emulate(args)
         default:
             throw ProtocolError(code: .invalidArgs, message: "unknown browser command: \(command)")
         }
@@ -162,6 +164,34 @@ extension BrowserPanel {
         container.layoutSubtreeIfNeeded()
         let size = container.viewport ?? web.frame.size
         return .object(["width": .number(size.width), "height": .number(size.height), "scale": .number(Double(container.scale))])
+    }
+
+    /// `--color-scheme` is the web view's appearance (public API); `--reduced-motion` has no public override, so it is a
+    /// user script (see `BrowserAutomation.motionScript`), also run on the current page (main frame; other frames
+    /// pick it up on their next load). Both persist for the panel until changed.
+    private func emulate(_ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
+        let web = try live()
+        func choice(_ key: String, _ allowed: [String]) throws(ProtocolError) -> String? {
+            guard let v = args[key], v != .null else { return nil }
+            guard case .string(let s) = v, allowed.contains(s) else {
+                throw ProtocolError(code: .invalidArgs, message: "--\(key) must be \(allowed.joined(separator: ", "))")
+            }
+            return s
+        }
+        let scheme = try choice("color-scheme", ["light", "dark", "system"])
+        let motion = try choice("reduced-motion", ["reduce", "no-preference", "system"])
+        if let scheme {
+            colorScheme = scheme == "system" ? nil : scheme
+            web.appearance = scheme == "light" ? NSAppearance(named: .aqua) : scheme == "dark" ? NSAppearance(named: .darkAqua) : nil
+        }
+        if let motion {
+            reducedMotion = motion == "system" ? nil : motion
+            installScripts()
+            _ = try? await web.evaluateJavaScript(BrowserAutomation.motionScript(reducedMotion ?? "system"), in: nil, contentWorld: .page)
+        }
+        let uncovered = (try? await web.evaluateJavaScript("window.__collieMotion ? window.__collieMotion.uncovered() : 0", in: nil, contentWorld: .page)) as? Int
+        return .object(["colorScheme": .string(colorScheme ?? "system"), "reducedMotion": .string(reducedMotion ?? "system"),
+                        "uncoveredSheets": .number(Double(uncovered ?? 0))])
     }
 
     /// Same document, other fragment: WebKit navigates in place, without didFinish.

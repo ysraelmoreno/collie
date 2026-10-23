@@ -43,13 +43,10 @@ import os
         config.websiteDataStore = Self.dataStore(for: panel, workspaceId: host.workspaceId)
         config.setURLSchemeHandler(DesignSchemeHandler(root: host.root.appendingPathComponent("artifacts"), artifacts: true), forURLScheme: Self.artifactScheme)
         let content = config.userContentController
-        content.addUserScript(WKUserScript(source: BrowserAutomation.script, injectionTime: .atDocumentStart,
-                                           forMainFrameOnly: true, in: BrowserAutomation.world))
-        content.addUserScript(WKUserScript(source: BrowserAutomation.consoleScript, injectionTime: .atDocumentStart,
-                                           forMainFrameOnly: true, in: .page))
         let web = WKWebView(frame: .zero, configuration: config)
         webView = web
         super.init()
+        installScripts()
         content.add(WeakHandler(self), contentWorld: .page, name: BrowserAutomation.consoleHandler)
         web.navigationDelegate = self
         web.uiDelegate = self
@@ -74,6 +71,24 @@ import os
         container.web = nil
         webView = nil
         failNavigations(ProtocolError(code: .unavailable, message: "browser closed"))
+    }
+
+    /// Reduced-motion emulation (`nil` = the system's); the color scheme lives on the web view's `appearance`.
+    var reducedMotion: String?
+    var colorScheme: String?
+
+    /// (Re)builds the user scripts, in order: built-ins, then the motion emulation. Task 5's init scripts go after these.
+    func installScripts() {
+        guard let content = webView?.configuration.userContentController else { return }
+        content.removeAllUserScripts()
+        content.addUserScript(WKUserScript(source: BrowserAutomation.script, injectionTime: .atDocumentStart,
+                                           forMainFrameOnly: true, in: BrowserAutomation.world))
+        content.addUserScript(WKUserScript(source: BrowserAutomation.consoleScript, injectionTime: .atDocumentStart,
+                                           forMainFrameOnly: true, in: .page))
+        if let reducedMotion {
+            content.addUserScript(WKUserScript(source: BrowserAutomation.motionScript(reducedMotion), injectionTime: .atDocumentStart,
+                                               forMainFrameOnly: false, in: .page))
+        }
     }
 
     func live() throws(ProtocolError) -> WKWebView {

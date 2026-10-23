@@ -264,6 +264,53 @@ enum BrowserAutomation {
     })();
     """#
 
+    /// Page world, all frames: emulates `prefers-reduced-motion` (`reduce` | `no-preference` | `system` = off). Idempotent:
+    /// run again on a page that has it, it only switches the mode. Queries naming the feature (matchMedia, CSSOM rules,
+    /// `<link media>`, `<style media>`) are rewritten to an always-true / always-false media feature.
+    /// ponytail: CSSOM rewrite, no public WebKit override; cross-origin sheets reported, not covered
+    static func motionScript(_ mode: String) -> String {
+        #"""
+        (() => {
+          const mode = '__MODE__';
+          let m = window.__collieMotion;
+          if (m) return m.set(mode);
+          const RM = /\(\s*prefers-reduced-motion\s*(?::\s*(reduce|no-preference)\s*)?\)/gi;
+          const orig = new WeakMap();   // node / MediaList -> its original text
+          let cur = 'system', uncovered = 0;
+          const rewrite = t => cur === 'system' ? t : t.replace(RM, (_, v) => ((v || 'reduce').toLowerCase() === cur) ? '(width >= 0px)' : '(width < 0px)');
+          const media = (target, get, set) => {
+            const text = orig.has(target) ? orig.get(target) : get();
+            if (!orig.has(target)) { if (!/prefers-reduced-motion/i.test(text)) return; orig.set(target, text); }
+            const next = rewrite(text); if (next !== get()) set(next);
+          };
+          const rules = (list) => {
+            for (const r of list) {
+              if (r.media) media(r, () => r.media.mediaText, v => { r.media.mediaText = v; });
+              if (r.styleSheet) sheet(r.styleSheet);
+              if (r.cssRules) rules(r.cssRules);
+            }
+          };
+          const sheet = s => {
+            const n = s.ownerNode;
+            if (n && n.getAttribute && n.hasAttribute('media')) media(n, () => n.getAttribute('media'), v => n.setAttribute('media', v));
+            let list; try { list = s.cssRules; } catch (_) { uncovered++; return; }
+            rules(list);
+          };
+          const apply = () => { uncovered = 0; for (const s of Array.from(document.styleSheets)) sheet(s); };
+          let queued = false;
+          const later = () => { if (queued) return; queued = true; queueMicrotask(() => { queued = false; apply(); }); };
+          const mm = window.matchMedia;
+          window.matchMedia = function (q) { return mm.call(this, rewrite(String(q))); };
+          document.addEventListener('DOMContentLoaded', later);
+          document.addEventListener('load', later, true);
+          new MutationObserver(later).observe(document, { childList: true, subtree: true });
+          m = { set(v) { cur = v; apply(); }, uncovered: () => uncovered };
+          Object.defineProperty(window, '__collieMotion', { value: m });
+          m.set(mode);
+        })();
+        """#.replacingOccurrences(of: "__MODE__", with: mode)
+    }
+
     /// Calls `window.__collie.<fn>(...args)` in the page and decodes its JSON reply; `{"error":…}` becomes a ProtocolError.
     @MainActor static func call(_ web: WKWebView, _ fn: String, _ args: [Any]) async throws(ProtocolError) -> [String: JSONValue] {
         let raw: Any?

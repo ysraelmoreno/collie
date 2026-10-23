@@ -5,12 +5,20 @@ import CollieProtocol
 /// Runs the declarative usage providers in `dir` (in parallel, cached per provider). One bad provider never affects the others.
 actor UsageService {
     private let dir: URL
+    /// `<root>/usage`: handed to providers as COLLIE_USAGE_DIR (the dir `collie hook claude-statusline` writes into).
+    private let usageDir: URL
     private var cache: [String: (report: UsageReport, at: ContinuousClock.Instant)] = [:]
 
     init(dir: URL) {
         self.dir = dir
+        usageDir = dir.deletingLastPathComponent()
         let fm = FileManager.default
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // upgrade the pre-2J claude seed only if still byte-identical (never a user-edited file); idempotent
+        let claudeFile = dir.appendingPathComponent("claude.json")
+        if fm.contents(atPath: claudeFile.path) == Data(DefaultUsageProviders.claudeV1.utf8) {
+            fm.createFile(atPath: claudeFile.path, contents: Data(DefaultUsageProviders.claude.utf8), attributes: [.posixPermissions: 0o600])
+        }
         // once (marker beside the dir): providers the user deleted stay deleted
         let seeded = dir.deletingLastPathComponent().appendingPathComponent(".seeded")
         guard !fm.fileExists(atPath: seeded.path) else { return }
@@ -49,7 +57,7 @@ actor UsageService {
         }
         var tasks: [String: Task<UsageReport, Never>] = [:]
         for s in slots { if let p = s.provider {
-            tasks[s.id] = inflight[s.id] ?? { let t = Task { await Self.fetch(p) }; inflight[s.id] = t; return t }()
+            tasks[s.id] = inflight[s.id] ?? { let t = Task { await Self.fetch(p, usageDir: usageDir) }; inflight[s.id] = t; return t }()
         } }
         var out: [UsageReport] = []
         for s in slots {
@@ -62,7 +70,7 @@ actor UsageService {
         return out
     }
 
-    private static func fetch(_ p: UsageProvider) async -> UsageReport {
+    private static func fetch(_ p: UsageProvider, usageDir: URL) async -> UsageReport {
         func fail(_ m: String) -> UsageReport { UsageReport(providerId: p.id, label: p.label, error: m) }
         guard let cmd = p.command.first, !cmd.isEmpty else { return fail("invalid provider: empty command") }
         let env = ProcessInfo.processInfo.environment
@@ -70,6 +78,7 @@ actor UsageService {
         guard let exe = resolve(cmd, path: path) else { return fail("command not found: \(cmd)") }
         var penv = ["PATH": path]
         for k in ["HOME", "USER", "LANG"] { if let v = env[k] { penv[k] = v } }
+        penv["COLLIE_USAGE_DIR"] = usageDir.path
         let secs = min(max(p.timeoutSeconds ?? 30, 0.1), 120)
         let res: ProcessResult
         do {
@@ -81,7 +90,12 @@ actor UsageService {
         if res.status != 0 { return fail("exit \(res.status): \(res.stderr.prefix(200))") }
         let text: String
         switch p.parse {
-        case .json: text = res.stdout
+        case .json:
+            // empty = nothing recorded yet (e.g. claude before any statusLine refresh): "—" windows, not an error
+            if res.stdout.allSatisfy(\.isWhitespace) {
+                return UsageReport(providerId: p.id, label: p.label, windows: p.windows.map { WindowValue(label: $0.label, usedPercent: nil, resetsAt: nil) })
+            }
+            text = res.stdout
         case .jsonlLast(let needle):
             guard let l = res.stdout.split(whereSeparator: \.isNewline).last(where: { $0.contains(needle) }) else {
                 return fail("no output line contains '\(needle)'")

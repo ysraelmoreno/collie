@@ -1,10 +1,27 @@
 /// Seeded into `<root>/usage/providers/<id>.json` when that directory is empty. Embedded (not SwiftPM resources) so the
 /// daemon binary stays self-contained; users edit the seeded copies.
 enum DefaultUsageProviders {
-    // Claude Code: no official local, non-prompt way to read plan usage (`claude --help` has no usage/status subcommand;
-    // the only routes are an interactive /usage or a stream-json session, which spend tokens, or the OAuth API, which needs
-    // credentials). Shipped disabled; the windows are a template for a future source.
+    // Claude Code: the plan windows come from the `statusLine` JSON Claude pipes to `collie hook claude-statusline` (wired by
+    // AgentLaunch into every Collie-launched Claude), which writes `<usage dir>/claude-rate-limits.json`. This only cats it;
+    // no file yet (no Collie Claude has refreshed, or not a subscriber) -> empty output -> a report with "—" windows.
     static let claude = """
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "enabled": true,
+      "command": ["/bin/sh", "-c", "cat \\"$COLLIE_USAGE_DIR/claude-rate-limits.json\\" 2>/dev/null; true"],
+      "timeoutSeconds": 10,
+      "parse": { "type": "json" },
+      "windows": [
+        { "label": "5h", "usedPercent": "/five_hour/used_percentage", "resetsAt": "/five_hour/resets_at" },
+        { "label": "7d", "usedPercent": "/seven_day/used_percentage", "resetsAt": "/seven_day/resets_at" }
+      ]
+    }
+    """
+
+    /// The claude template shipped before plan 2J (disabled, no source). `UsageService` replaces `providers/claude.json` with
+    /// the current template only when it is byte-equal to this, so a user-edited file is never touched.
+    static let claudeV1 = """
     {
       "id": "claude",
       "label": "Claude Code",
@@ -18,6 +35,7 @@ enum DefaultUsageProviders {
       ]
     }
     """
+
 
     // Codex: rollout logs carry `token_count` events with `rate_limits.primary` (5h) / `.secondary` (7d).
     // Prints the newest rollout's last line carrying a non-null rate_limits object (filtered in the shell: whole rollouts can exceed the 1 MiB cap); `jsonlLast` still applies.

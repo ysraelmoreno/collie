@@ -548,6 +548,7 @@ actor CommandRouter {
         let env = ProcessInfo.processInfo.environment
         var e: [String: String] = [
             "COLLIE_SOCKET": config.paths.socket.path, "COLLIE_TERMINAL_ID": rec.id.uuidString, "COLLIE_TOKEN": token,
+            "COLLIE_USAGE_DIR": config.paths.root.appendingPathComponent("usage").path,   // = UsageService's parent of providers/
             "COLLIE_TERMINAL_NAME": rec.name, "COLLIE_WORKSPACE_ID": ws.id.uuidString,
             "TERM": "xterm-256color", "TERM_PROGRAM": "Collie",
             "PATH": env["PATH"] ?? "/usr/bin:/bin",

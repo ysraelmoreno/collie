@@ -101,6 +101,51 @@ private func write(_ ps: [UsageProvider], to dir: URL) throws {
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
     }
 
+    /// `<tmp>/usage/providers` plus the usage dir that holds the rate-limits file.
+    private func usageTree() -> (providers: URL, usage: URL, cleanup: () -> Void) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("collie-usage-\(UUID().uuidString)")
+        let providers = root.appendingPathComponent("usage/providers")
+        try? FileManager.default.createDirectory(at: providers, withIntermediateDirectories: true)
+        return (providers, root.appendingPathComponent("usage"), { try? FileManager.default.removeItem(at: root) })
+    }
+
+    @Test func claudeProviderReadsRateLimitsFile() async throws {
+        let t = usageTree(); defer { t.cleanup() }
+        let sample = #"{"five_hour":{"used_percentage":23.5,"resets_at":1700000000},"seven_day":{"used_percentage":41,"resets_at":1700600000},"recorded_at":1}"#
+        try Data(sample.utf8).write(to: t.usage.appendingPathComponent("claude-rate-limits.json"))
+        let svc = UsageService(dir: t.providers)   // seeds the real default claude template
+        let r = try #require(await svc.reports().first { $0.providerId == "claude" })
+        #expect(r.error == nil)
+        #expect(r.windows.map(\.label) == ["5h", "7d"])
+        #expect(r.windows[0].usedPercent == 23.5 && r.windows[1].usedPercent == 41)
+        #expect(r.windows[0].resetsAt == Date(timeIntervalSince1970: 1_700_000_000))
+        #expect(r.windows[1].resetsAt == Date(timeIntervalSince1970: 1_700_600_000))
+    }
+
+    @Test func claudeProviderWithoutFileHasNoPercentsAndNoError() async throws {
+        let t = usageTree(); defer { t.cleanup() }
+        let r = try #require(await UsageService(dir: t.providers).reports().first { $0.providerId == "claude" })
+        #expect(r.error == nil)
+        #expect(r.windows.map(\.label) == ["5h", "7d"] && r.windows.allSatisfy { $0.usedPercent == nil && $0.resetsAt == nil })
+    }
+
+    @Test func upgradesOldClaudeSeed() throws {
+        let t = usageTree(); defer { t.cleanup() }
+        let f = t.providers.appendingPathComponent("claude.json")
+        try Data(DefaultUsageProviders.claudeV1.utf8).write(to: f)
+        _ = UsageService(dir: t.providers)
+        #expect(try Data(contentsOf: f) == Data(DefaultUsageProviders.claude.utf8))
+    }
+
+    @Test func keepsEditedClaudeProvider() throws {
+        let t = usageTree(); defer { t.cleanup() }
+        let f = t.providers.appendingPathComponent("claude.json")
+        let edited = Data((DefaultUsageProviders.claudeV1 + "\n").utf8)
+        try edited.write(to: f)
+        _ = UsageService(dir: t.providers)
+        #expect(try Data(contentsOf: f) == edited)
+    }
+
     @Test func uiUsageIsAdminOnlyAndReturnsReports() async throws {
         try await withDaemon { d, p in
             let bad = try await send(p, Request(id: "u", token: "nope", command: "ui.usage"))

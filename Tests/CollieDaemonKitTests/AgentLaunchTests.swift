@@ -24,6 +24,15 @@ import CollieCore
         let perm = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as! Int
         #expect(perm == 0o600)
     }
+    @Test func claudeSettingsHaveStatusLine() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let r = rec(.claude)
+        _ = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        let o = try JSONSerialization.jsonObject(with: Data(contentsOf: AgentLaunch.settingsFile(r.id, in: dir))) as! [String: Any]
+        let sl = try #require(o["statusLine"] as? [String: Any])
+        #expect(sl["type"] as? String == "command" && sl["padding"] as? Int == 0)
+        #expect(sl["command"] as? String == "'/opt/o rq/collie' hook claude-statusline")
+    }
     @Test func claudeExplicitCommandRules() throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let a = try AgentLaunch.launchSpec(for: rec(.claude, "claude --model x"), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")

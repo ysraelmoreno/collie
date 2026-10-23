@@ -38,7 +38,10 @@ public enum AgentLaunch {
                 if let matcher { e["matcher"] = matcher }
                 return [e]
             }
-            let json: [String: Any] = ["hooks": ["Stop": hook("claude-stop", 10),
+            let json: [String: Any] = [
+                // plan usage (ClaudeRateLimits): the hook records rate_limits, then runs the user's own statusLine
+                "statusLine": ["type": "command", "command": quote(collie.path) + " hook claude-statusline", "padding": 0],
+                "hooks": ["Stop": hook("claude-stop", 10),
                                                  "SessionStart": hook("claude-session-start", 5),
                                                  "UserPromptSubmit": hook("claude-prompt", 5),
                                                  // the work registry (WorkHookParser)

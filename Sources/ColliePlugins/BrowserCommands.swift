@@ -189,9 +189,10 @@ extension BrowserPanel {
             installScripts()
             _ = try? await web.evaluateJavaScript(BrowserAutomation.motionScript(reducedMotion ?? "system"), in: nil, contentWorld: .page)
         }
-        let uncovered = (try? await web.evaluateJavaScript("window.__collieMotion ? window.__collieMotion.uncovered() : 0", in: nil, contentWorld: .page)) as? Int
+        let counts = (try? await web.evaluateJavaScript("window.__collieMotion ? [window.__collieMotion.uncovered(), window.__collieMotion.closedRoots()] : [0, 0]", in: nil, contentWorld: .page)) as? [Int]
         return .object(["colorScheme": .string(colorScheme ?? "system"), "reducedMotion": .string(reducedMotion ?? "system"),
-                        "uncoveredSheets": .number(Double(uncovered ?? 0))])
+                        "uncoveredSheets": .number(Double(counts?[0] ?? 0)),
+                        "uncoveredShadowRoots": .number(Double(counts?[1] ?? 0))])
     }
 
     /// Same document, other fragment: WebKit navigates in place, without didFinish.

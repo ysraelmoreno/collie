@@ -101,4 +101,90 @@ import CollieProtocol
         do { _ = try await emulate(b, ["color-scheme": .string("sepia")]); Issue.record("expected invalidArgs") }
         catch let e as ProtocolError { #expect(e.code == .invalidArgs && e.message.contains("--color-scheme")) }
     }
+
+    // MARK: coverage fixture
+
+    /// Each probe `<p id=…>` is black (the default) unless; its rule turns it the named color when the media query holds.
+    static let fixture = """
+    <style>@import url("data:text/css,%23imp%7Bcolor%3Argb(5%2C5%2C5)%7D") (prefers-reduced-motion: reduce);</style>
+    <style>
+      @media not (prefers-reduced-motion: reduce) { #not { color: rgb(1, 1, 1); } }
+      @media screen and (prefers-reduced-motion: reduce) { #and { color: rgb(2, 2, 2); } }
+      @supports (display: block) { @media (prefers-reduced-motion: reduce) { #sup { color: rgb(3, 3, 3); } } }
+      @layer l { @media (prefers-reduced-motion: reduce) { #layer { color: rgb(4, 4, 4); } } }
+    </style>
+    <link rel=stylesheet media="(prefers-reduced-motion: reduce)" href="data:text/css,%23cross%7Bcolor%3Argb(6%2C6%2C6)%7D">
+    <p id=not>.</p><p id=and>.</p><p id=sup>.</p><p id=layer>.</p><p id=imp>.</p><p id=cross>.</p>
+    <p id=late>.</p><p id=adopt>.</p><p id=shadowHost></p>
+    <script>
+      const sh = document.getElementById('shadowHost').attachShadow({ mode: 'open' });
+      sh.innerHTML = '<style>@media (prefers-reduced-motion: reduce) { b { color: rgb(8, 8, 8); } }</style><b id=inShadow>.</b>';
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync('@media (prefers-reduced-motion: reduce) { #adopt { color: rgb(9, 9, 9); } }');
+      document.adoptedStyleSheets = [sheet];
+    </script>
+    """
+    func color(_ id: String) -> String { "getComputedStyle(document.getElementById('\(id)')).color" }
+    func rgb(_ n: Int) -> JSONValue { .string("rgb(\(n), \(n), \(n))") }
+    func settle(_ b: BrowserPanel, _ id: String, _ want: JSONValue) async throws -> Bool {
+        for _ in 0..<50 {
+            if try await js(b, color(id)) == want { return true }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        return false
+    }
+
+    @Test func combosNestedImportAdoptedShadowAndRuntimeSheets() async throws {
+        let b = try await browser(); defer { b.close() }
+        try await b.load(html: Self.fixture)
+        let black = rgb(0)
+        // system: originals
+        #expect(try await js(b, color("not")) == rgb(1))
+        #expect(try await js(b, color("and")) == black)
+        let r = try await emulate(b, ["reduced-motion": .string("reduce")])
+        #expect(try await js(b, color("not")) == black)          // `not (...)` flips
+        for (id, n) in [("and", 2), ("sup", 3), ("layer", 4), ("adopt", 9)] { #expect(try await js(b, color(id)) == rgb(n), "\(id)") }
+        #expect(try await js(b, "getComputedStyle(document.getElementById('shadowHost').shadowRoot.getElementById('inShadow')).color") == rgb(8))
+        #expect(try await settle(b, "imp", rgb(5)))             // @import ... media
+        #expect(try await settle(b, "cross", rgb(6)))           // link media attribute (sheet itself unreadable)
+        if case .number(let n)? = r["uncoveredSheets"] { #expect(n >= 0) }
+        // a sheet added after the emulation
+        _ = try await js(b, "document.head.insertAdjacentHTML('beforeend', '<style>@media (prefers-reduced-motion: reduce) { #late { color: rgb(7, 7, 7); } }</style>'); 1")
+        #expect(try await settle(b, "late", rgb(7)))
+        // idempotent
+        _ = try await emulate(b, ["reduced-motion": .string("reduce")])
+        for (id, n) in [("and", 2), ("sup", 3), ("late", 7), ("adopt", 9)] { #expect(try await js(b, color(id)) == rgb(n), "\(id) again") }
+        // no-preference: the opposite
+        _ = try await emulate(b, ["reduced-motion": .string("no-preference")])
+        #expect(try await js(b, color("not")) == rgb(1))
+        #expect(try await js(b, color("and")) == black)
+        // system restores every original
+        _ = try await emulate(b, ["reduced-motion": .string("system")])
+        #expect(try await js(b, color("not")) == rgb(1))
+        for id in ["and", "sup", "layer", "adopt", "late", "imp", "cross"] { #expect(try await js(b, color(id)) == black, "\(id) restored") }
+    }
+
+    @Test func unreadableSheetsAndClosedShadowRootsAreCounted() async throws {
+        let b = try await browser(); defer { b.close() }
+        _ = try await emulate(b, ["reduced-motion": .string("reduce")])   // before the load: attachShadow is seen
+        try await b.load(html: """
+        <style id=x>p{color:red}</style><p>x</p><div id=h></div>
+        <script>
+        // simulates a cross-origin sheet: reading its rules throws SecurityError
+        const real = Object.getOwnPropertyDescriptor(CSSStyleSheet.prototype, 'cssRules').get;
+        Object.defineProperty(CSSStyleSheet.prototype, 'cssRules', { get() {
+          if (this.ownerNode && this.ownerNode.id === 'x') throw new DOMException('blocked', 'SecurityError');
+          return real.call(this);
+        } });
+        document.getElementById('h').attachShadow({ mode: 'closed' })</script>
+        """)
+                var r: [String: JSONValue] = [:]
+        for _ in 0..<50 {
+            r = try await emulate(b, [:])
+            if r["uncoveredSheets"] != .number(0) { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(r["uncoveredSheets"] != .number(0))
+        #expect(r["uncoveredShadowRoots"] == .number(1))
+    }
 }

@@ -293,18 +293,38 @@ enum BrowserAutomation {
           const sheet = s => {
             const n = s.ownerNode;
             if (n && n.getAttribute && n.hasAttribute('media')) media(n, () => n.getAttribute('media'), v => n.setAttribute('media', v));
+            else if (!n) media(s, () => s.media.mediaText, v => { s.media.mediaText = v; });   // an adopted sheet's own media
             let list; try { list = s.cssRules; } catch (_) { uncovered++; return; }
             rules(list);
           };
-          const apply = () => { uncovered = 0; for (const s of Array.from(document.styleSheets)) sheet(s); };
+          // open shadow roots, registered by the attachShadow wrapper (closed ones can't be reached: counted)
+          const roots = new Set(); let closed = 0;
+          const watch = root => { roots.add(new WeakRef(root)); new MutationObserver(later).observe(root, { childList: true, subtree: true }); };
+          const scope = d => { for (const s of Array.from(d.styleSheets)) sheet(s); for (const s of Array.from(d.adoptedStyleSheets || [])) sheet(s); };
+          const apply = () => {
+            uncovered = 0; scope(document);
+            for (const ref of roots) { const r = ref.deref(); if (r && r.isConnected !== false) scope(r); else if (!r) roots.delete(ref); }
+          };
           let queued = false;
-          const later = () => { if (queued) return; queued = true; queueMicrotask(() => { queued = false; apply(); }); };
+          function later() { if (queued || cur === 'system') return; queued = true; queueMicrotask(() => { queued = false; apply(); }); }
+          const sheetNode = n => n.nodeType === 1 && (/^(STYLE|LINK)$/.test(n.nodeName) || !!n.querySelector('style,link'));
           const mm = window.matchMedia;
           window.matchMedia = function (q) { return mm.call(this, rewrite(String(q))); };
+          const attach = Element.prototype.attachShadow;
+          Element.prototype.attachShadow = function (init) {
+            const root = attach.call(this, init);
+            if (init && init.mode === 'closed') closed++; else watch(root);
+            return root;
+          };
+          for (const P of [Document.prototype, ShadowRoot.prototype]) {   // adopting a sheet is not a DOM mutation
+            const d = Object.getOwnPropertyDescriptor(P, 'adoptedStyleSheets');
+            if (d && d.set) Object.defineProperty(P, 'adoptedStyleSheets', { ...d, set(v) { d.set.call(this, v); later(); } });
+          }
+          for (const el of document.querySelectorAll('*')) if (el.shadowRoot) watch(el.shadowRoot);   // installed after load
           document.addEventListener('DOMContentLoaded', later);
           document.addEventListener('load', later, true);
-          new MutationObserver(later).observe(document, { childList: true, subtree: true });
-          m = { set(v) { cur = v; apply(); }, uncovered: () => uncovered };
+          new MutationObserver(ms => { if (cur !== 'system' && ms.some(x => Array.from(x.addedNodes).some(sheetNode))) later(); }).observe(document, { childList: true, subtree: true });
+          m = { set(v) { cur = v; apply(); }, uncovered: () => uncovered, closedRoots: () => closed };
           Object.defineProperty(window, '__collieMotion', { value: m });
           m.set(mode);
         })();

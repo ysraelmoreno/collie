@@ -31,12 +31,13 @@ extension BrowserPanel {
             return .object(try await page("fill", [try Self.string(args, "ref"), try Self.string(args, "text")]))
         case "browser.type":
             let text = try Self.string(args, "text")
+            try BrowserInput.checkLength(text)
             guard let web = try trustedInput() else { return Self.untrusted(try await page("type", [text])) }
-            return try await settle("keyup", text.count, ms: 1000 + 20 * text.count) { BrowserInput.type(web, text) }
+            return try await settle("keyup", text.count, ms: 1000 + 20 * text.count) { () throws(ProtocolError) in try BrowserInput.type(web, text) }
         case "browser.key":
             let key = try BrowserInput.parse(try Self.string(args, "key"))
             guard let web = try trustedInput() else { return Self.untrusted(try await page("key", [key.name])) }
-            return try await settle("keyup", 1) { BrowserInput.press(web, key) }
+            return try await settle("keyup", 1) { () throws(ProtocolError) in try BrowserInput.press(web, key) }
         case "browser.scroll":
             let ref = try? Self.string(args, "ref"), dy = try Self.int(args, "dy")
             guard ref != nil || dy != nil else { throw ProtocolError(code: .invalidArgs, message: "give --ref or --dy") }
@@ -74,10 +75,12 @@ extension BrowserPanel {
 
     /// Sends trusted events and replies once the page has seen `count` trusted `event`s, so the next command sees their
     /// effect; after `ms` (a disabled control, a move to where the pointer already is, a busy page) `settled: false`.
-    private func settle(_ event: String, _ count: Int, ms: Int = 1000, _ send: () -> Void) async throws(ProtocolError) -> JSONValue {
+    /// `send` returns the serial of its last keyDown (0: none): once settled, those keyDowns are resolved (see `BrowserInput.sent`).
+    private func settle(_ event: String, _ count: Int, ms: Int = 1000, _ send: () throws(ProtocolError) -> Int) async throws(ProtocolError) -> JSONValue {
         _ = try await page("arm", [event, count, ms])
-        send()
+        let serial = try send()
         let r = try await page("settled", [])
+        if r["seen"] == .bool(true), serial > 0 { BrowserInput.resolve(through: serial, in: try live()) }   // unsure (timed out): kept
         return .object(["ok": .bool(true), "trusted": .bool(true), "settled": r["seen"] ?? .bool(false)])
     }
 
@@ -89,7 +92,7 @@ extension BrowserPanel {
             throw ProtocolError(code: .internal, message: "browser: bad rect reply")
         }
         return try await settle(kind == .click ? "mouseup" : "mousemove", 1) {
-            BrowserInput.mouse(web, at: CGPoint(x: x + w / 2, y: y + h / 2), kind: kind)
+            BrowserInput.mouse(web, at: CGPoint(x: x + w / 2, y: y + h / 2), kind: kind); return 0
         }
     }
 

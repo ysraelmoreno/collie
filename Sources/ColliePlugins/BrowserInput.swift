@@ -64,17 +64,23 @@ import WebKit
     /// Meta+a: its menu re-send is dropped (see `ours`), so select-all is done on the web view itself.
     static func isSelectAll(_ k: Key) -> Bool { k.mods.intersection([.command, .control, .option, .shift]) == .command && k.name.lowercased() == "a" }
 
-    static func key(_ web: WKWebView, _ spec: String) throws(ProtocolError) { press(web, try parse(spec)) }
+    @discardableResult static func key(_ web: WKWebView, _ spec: String) throws(ProtocolError) -> Int { try press(web, try parse(spec)) }
 
-    static func press(_ web: WKWebView, _ k: Key) {
-        send(web, [k])
+    @discardableResult static func press(_ web: WKWebView, _ k: Key) throws(ProtocolError) -> Int {
+        let s = try send(web, [k])
         if isSelectAll(k) { web.selectAll(nil) }
+        return s
     }
 
     /// One key press per character (`\n` is Enter).
     /// ponytail: keyCode 0 for characters (the page's `event.code` is wrong for them; `key` is right); map a layout if it matters.
-    static func type(_ web: WKWebView, _ text: String) {
-        send(web, text.map { $0 == "\n" ? Key(name: "Enter", chars: "\r", code: 36) : Key(name: String($0), chars: String($0), code: 0) })
+    static let typeMax = 1024
+    static func checkLength(_ text: String) throws(ProtocolError) {
+        guard text.count <= typeMax else { throw ProtocolError(code: .invalidArgs, message: "--text is over \(typeMax) characters; split it") }
+    }
+    @discardableResult static func type(_ web: WKWebView, _ text: String) throws(ProtocolError) -> Int {
+        try checkLength(text)
+        return try send(web, text.map { $0 == "\n" ? Key(name: "Enter", chars: "\r", code: 36) : Key(name: String($0), chars: String($0), code: 0) })
     }
 
     /// `at` in page CSS px (viewport coordinates). `.click` moves there first, as a pointer would.
@@ -101,43 +107,54 @@ import WebKit
     /// bounds/frame carry the fit-to-slot scale, so AppKit's conversion does the scale and the flip.
     static func windowPoint(_ web: WKWebView, _ p: CGPoint) -> CGPoint { web.convert(p, to: nil) }
 
-    static func send(_ web: WKWebView, _ keys: [Key]) {
+    /// Sends the keys; returns the serial of the last keyDown (for `resolve(through:in:)`). Refused while `keep` keyDowns
+    /// are unresolved: an entry is never evicted (fail closed).
+    @discardableResult static func send(_ web: WKWebView, _ keys: [Key]) throws(ProtocolError) -> Int {
+        guard sent.count + keys.count <= keep else {
+            throw ProtocolError(code: .unavailable, message: "too many pending keys (the page hasn't answered \(sent.count)); wait and retry")
+        }
+        installMonitor()
         let n = web.window?.windowNumber ?? 0
         for k in keys {
             for t in [NSEvent.EventType.keyDown, .keyUp] {
                 guard let e = NSEvent.keyEvent(with: t, location: .zero, modifierFlags: k.mods, timestamp: ProcessInfo.processInfo.systemUptime,
                                                windowNumber: n, context: nil, characters: k.chars, charactersIgnoringModifiers: k.chars,
                                                isARepeat: false, keyCode: k.code) else { continue }
-                ours(e)
-                if t == .keyDown { web.keyDown(with: e) } else { web.keyUp(with: e) }
+                if t == .keyDown { serial += 1; sent.append((serial, ObjectIdentifier(web), e)); web.keyDown(with: e) } else { web.keyUp(with: e) }
             }
         }
+        return serial
     }
 
     /// A keyDown the page doesn't handle goes back to `NSApp.sendEvent` (WebKit re-sends the same object, however
     /// late the page answers), which hands it to the app's key window (the user's terminal) or its menus: ours are
-    /// dropped there. Only keyDowns are re-sent; one leaves the list when it is dropped.
-    /// ponytail: bounded by count, never by age: the last `keep` keyDowns (a handled one is never re-sent, so it only
-    /// leaves by count). A re-send gets through only if its page stays unanswered across 4096 later keys; drop on settle if that ever matters.
+    /// dropped there. Only keyDowns are re-sent. An entry is resolved when its re-send is dropped, or by
+    /// `resolve(through:in:)` once that page has seen a later trusted keyup: WebKit answers key events in order and
+    /// re-sends synchronously on the answer, so every keyDown before it is done (handled, or re-sent and dropped).
     static var keep = 4096
-    private static var sent: [NSEvent] = []
+    private static var sent: [(serial: Int, web: ObjectIdentifier, event: NSEvent)] = []
+    private static var serial = 0
     private static var monitor: Any?
     private(set) static var dropped = 0
-    private static func ours(_ e: NSEvent) {
-        guard e.type == .keyDown else { return }
-        if monitor == nil {
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { e in
-                let id = ObjectIdentifier(e)
-                let drop = MainActor.assumeIsolated {
-                    guard let i = sent.firstIndex(where: { ObjectIdentifier($0) == id }) else { return false }
-                    sent.remove(at: i)
-                    dropped += 1
-                    return true
-                }
-                return drop ? nil : e
+    static var pending: Int { sent.count }
+
+    /// Only `web`'s own: another page's late answer says nothing about this one's.
+    static func resolve(through s: Int, in web: WKWebView) {
+        let id = ObjectIdentifier(web)
+        sent.removeAll { $0.web == id && $0.serial <= s }
+    }
+
+    private static func installMonitor() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { e in
+            let id = ObjectIdentifier(e)
+            let drop = MainActor.assumeIsolated {
+                guard let i = sent.firstIndex(where: { ObjectIdentifier($0.event) == id }) else { return false }
+                sent.remove(at: i)
+                dropped += 1
+                return true
             }
+            return drop ? nil : e
         }
-        sent.append(e)
-        if sent.count > keep { sent.removeFirst(sent.count - keep) }
     }
 }

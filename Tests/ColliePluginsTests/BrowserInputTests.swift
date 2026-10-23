@@ -170,6 +170,56 @@ import CollieProtocol
         #expect(leaked == ["q"])
     }
 
+    /// R5: with the pending list full, keys are refused, never sent with an older entry evicted.
+    @Test func fullPendingListRefusesKeys() async throws {
+        let h = try await browser("<p>nothing editable</p>"); defer { h.close() }
+        _ = try await run(h.b, "key", ["key": .string("x")])   // our monitor is installed
+        var leaked: [String] = []
+        let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { e in
+            let c = e.characters ?? ""
+            MainActor.assumeIsolated { leaked.append(c) }
+            return e
+        }
+        defer { NSEvent.removeMonitor(m!) }
+        let keep = BrowserInput.keep; BrowserInput.keep = 2; defer { BrowserInput.keep = keep }
+        do { _ = try await run(h.b, "type", ["text": .string("abc")]); Issue.record("expected refusal") }
+        catch let e as ProtocolError { #expect(e.code == .unavailable) }
+        _ = try await run(h.b, "type", ["text": .string("ab")])   // fits: sent, unhandled, dropped
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(leaked.isEmpty)
+        #expect(BrowserInput.pending == 0)
+    }
+
+    /// A page settling says nothing about another page's pending keys: a stalled page's late re-send is still dropped.
+    @Test func otherPageSettlingKeepsPendingKeys() async throws {
+        let stalled = try await browser("""
+            <script>addEventListener('keydown', e => { const t = Date.now(); while (Date.now() - t < 1500); })</script><p>x</p>
+            """)
+        let other = try await browser(#"<input aria-label="Name">"#)
+        defer { stalled.close(); other.close() }
+        _ = try await run(other.b, "click", ["ref": .string(try await ref(other.b, "Name"))])
+        let before = BrowserInput.dropped
+        try BrowserInput.key(try #require(stalled.b.webView), "Enter")
+        _ = try await run(other.b, "type", ["text": .string("ab")])   // settles while the Enter is pending
+        #expect(await pollUntil(10) { BrowserInput.dropped > before })
+    }
+
+    @Test func typeOver1024IsRefused() async throws {
+        let h = try await browser("<input>"); defer { h.close() }
+        do { _ = try await run(h.b, "type", ["text": .string(String(repeating: "a", count: 1025))]); Issue.record("expected invalidArgs") }
+        catch let e as ProtocolError { #expect(e.code == .invalidArgs && e.message.contains("--text")) }
+    }
+
+    /// Handled keys never get a re-send: they're resolved once the page settles, so a long session never fills the list.
+    @Test func handledKeysDontFillTheList() async throws {
+        let h = try await browser(#"<input aria-label="Name" id="n">"#); defer { h.close() }
+        _ = try await run(h.b, "click", ["ref": .string(try await ref(h.b, "Name"))])
+        let keep = BrowserInput.keep; BrowserInput.keep = 4; defer { BrowserInput.keep = keep }
+        for _ in 0..<5 { #expect(try await run(h.b, "type", ["text": .string("abc")])["settled"] == .bool(true)) }
+        #expect(BrowserInput.pending == 0)
+        #expect(try await eval(h.b, "n.value.length") == .number(15))
+    }
+
     @Test func metaASelectsAllAndClipboardIsRefused() async throws {
         let h = try await browser(#"<input aria-label="Name" id="n">"#); defer { h.close() }
         _ = try await run(h.b, "click", ["ref": .string(try await ref(h.b, "Name"))])

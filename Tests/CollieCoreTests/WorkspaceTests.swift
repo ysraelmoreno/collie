@@ -15,4 +15,11 @@ import Foundation
             #expect(try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(w)).designFirst == v)
         }
     }
+    @Test func invalidDesignFirstDecodesAsAsk() throws {
+        for bad in [#""Always""#, "7", "null", "{}"] {
+            let json = #"{"schemaVersion":3,"id":"\#(UUID())","name":"keep","terminals":[],"connections":[],"designFirst":\#(bad)}"#
+            let w = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+            #expect(w.designFirst == .ask && w.name == "keep", "\(bad)")
+        }
+    }
 }

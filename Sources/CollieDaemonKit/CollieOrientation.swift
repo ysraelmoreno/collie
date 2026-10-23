@@ -36,7 +36,7 @@ enum CollieOrientation {
         var lines = [
             "You are running inside Collie, terminal \(quote(terminal))\(paddock.map { ", on paddock \(quote($0))" } ?? ""). Use Collie's tools (`collie` MCP server or CLI):",
             "- Agents leashed to you: collie list / collie ask <name> \"<prompt>\" / collie check <name> (\(peers.isEmpty ? "none yet" : names(peers))).",
-            "- Project memory: collie memory search|save — check before re-reading code.",
+            "- Project memory: collie memory search|save — check before re-reading.",
             "- Work log: collie work status; collie work task defer <task> \"<reason>\" | drop …; collie work done.",
         ]
         let d = of("design"), b = of("browser"), v = of("device")
@@ -48,16 +48,19 @@ enum CollieOrientation {
             let hints = ["design": "design --file <name>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             let open = PluginRegistry.canvasPluginIds.map { hints[$0] ?? $0 }.joined(separator: " | ")
             lines.append("- As Shepherd you can open panels: collie panel open \(open) (leashed to you, on your paddock).")
-            lines.append("  Give one to an agent: collie leash <agent> <panel>; collie panel close|move. Team: collie summon|dismiss|leash|unleash, collie paddock …")
-            // reachable design panels first, then the paddock's (a Shepherd can leash those itself)
-            var dn = d; for n in of(paddockPanels, "design") where !dn.contains(n) { dn.append(n) }
-            if !dn.isEmpty {
-                lines.append("- UI work (new screen, flow or visible change): use design panel \(names(dn)) first; leash it to whoever implements. Not for backend, refactors or tests.")
+            lines.append("  Hand one over: collie leash <agent> <panel>; collie panel close|move. Team: collie summon|dismiss|leash|unleash, collie paddock …")
+            // leashed design panels are usable; a paddock-only one is not reachable until the user leashes it
+            let notFor = "Not for backend, refactors, tests, docs, invisible fixes."
+            let loose = of(paddockPanels, "design").filter { !d.contains($0) }
+            if !d.isEmpty {
+                lines.append("- UI work (new screen, flow or visible change): use design panel \(names(d)) first; leash it to whoever implements. \(notFor)")
+            } else if !loose.isEmpty {
+                lines.append("- UI work (new screen, flow or visible change): design panel \(names(loose)) is on your paddock but not leashed to you; ask the user to leash it to you, then design first. \(notFor)")
             } else if designFirst == .ask {
-                // ponytail: `design prefer` is pasture-only, so a paddock Shepherd is not told to save
-                lines.append("- UI work (new screen, flow or visible change) and no design panel: ask the user once whether to design it in FigCraft first. " + (paddock == nil ? "Save the answer: collie design prefer always|never." : "The pasture saves the answer.") + " Not for backend, refactors or tests.")
+                // ponytail: `design prefer` is pasture-only; a paddock Shepherd tells the user where to set it
+                lines.append("- UI work (new screen, flow or visible change) and no design panel: ask the user once whether to design it in FigCraft first. " + (paddock == nil ? "Save the answer: collie design prefer always|never." : "Tell the user to set it in Collie's Preferences.") + " \(notFor)")
             } else if designFirst == .always {
-                lines.append("- UI work (new screen, flow or visible change): open a design panel (collie panel open design --file <feature>) and have it designed before implementing. Not for backend, refactors or tests.")
+                lines.append("- UI work (new screen, flow or visible change): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name. \(notFor)")
             }
             lines.append("- Herds: collie herd list | apply <id> --name <n> | save <name> --terminals a,b")
         } else {

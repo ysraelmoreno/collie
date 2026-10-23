@@ -53,12 +53,12 @@ import CollieCore
 
     @Test func shepherdAskLine() {
         let t = text(shepherd: true)
-        #expect(t.contains("and no design panel: ask the user once whether to design it in FigCraft first. Save the answer: collie design prefer always|never. Not for backend, refactors or tests."))
-        #expect(!text(shepherd: true, paddock: "F1").contains("collie design prefer"))
+        #expect(t.contains("and no design panel: ask the user once whether to design it in FigCraft first. Save the answer: collie design prefer always|never. Not for backend, refactors, tests, docs, invisible fixes."))
+        #expect(!text(shepherd: true, paddock: "F1").contains("collie design prefer") && text(shepherd: true, paddock: "F1").contains("Collie's Preferences"))
         #expect(text(shepherd: true, paddock: "F1").contains("ask the user once"))
     }
     @Test func shepherdAlwaysLine() {
-        #expect(text(shepherd: true, pref: .always).contains("open a design panel (collie panel open design --file <feature>) and have it designed before implementing."))
+        #expect(text(shepherd: true, pref: .always).contains("open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name."))
     }
     @Test func shepherdNeverNoLine() {
         #expect(!text(shepherd: true, pref: .never).contains("UI work"))
@@ -69,8 +69,17 @@ import CollieCore
             #expect(t.contains("use design panel \"Home\" first; leash it to whoever implements."), "\(pref)")
             #expect(!t.contains("ask the user once") && !t.contains("open a design panel (collie"))
         }
-        let p = text(shepherd: true, paddock: "F1", paddockPanels: [("Draft", "design")], pref: .never)
-        #expect(p.contains("use design panel \"Draft\" first"))
+    }
+    @Test func unleashedPaddockPanelAsksForLeash() {
+        for pref in DesignFirst.allCases {
+            let t = text(shepherd: true, paddock: "F1", paddockPanels: [("Draft", "design")], pref: pref)
+            #expect(t.contains("design panel \"Draft\" is on your paddock but not leashed to you; ask the user to leash it"), "\(pref)")
+            #expect(!t.contains("use design panel") && !t.contains("ask the user once"))
+        }
+        let both = text(shepherd: true, paddock: "F1", panels: [("Home", "design")], paddockPanels: [("Draft", "design")])
+        #expect(both.contains("use design panel \"Home\" first") && !both.contains("Draft"))
+        let long = (1...20).map { (name: String(repeating: "y", count: 60) + "\($0)", pluginId: "design") }
+        #expect(text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, paddockPanels: long).count <= 1300)
     }
     @Test func nonShepherdNoDesignFirstLine() {
         #expect(!text(pref: .always).contains("UI work") && !text(panels: [("Home", "design")]).contains("UI work"))

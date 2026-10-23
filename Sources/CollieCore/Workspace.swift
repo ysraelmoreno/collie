@@ -81,7 +81,7 @@ public struct Workspace: Codable, Sendable, Equatable {
             ?? decoder.container(keyedBy: Legacy.self).decodeIfPresent([Paddock].self, forKey: .floors) ?? []   // v1 files have none
         panels = try c.decodeIfPresent([Panel].self, forKey: .panels) ?? []   // v1/v2 files have none
         designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
-        designFirst = try c.decodeIfPresent(DesignFirst.self, forKey: .designFirst) ?? .ask
+        designFirst = (try? c.decodeIfPresent(DesignFirst.self, forKey: .designFirst)) ?? .ask   // an unknown value must never discard the workspace
     }
     // schemaVersion always writes the current version (a decoded v1 file is re-saved as 3).
     public func encode(to encoder: Encoder) throws {

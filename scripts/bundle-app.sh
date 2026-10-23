@@ -3,14 +3,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # one --product per invocation: repeated flags build only the last
-for p in CollieApp collied collie; do swift build -c release --product "$p"; done
+for p in CollieApp collied collie collie-ctty; do swift build -c release --product "$p"; done
 BIN="$(swift build -c release --show-bin-path)"
 APP=build/Collie.app
 rm -rf "$APP"
 # collie/collied live in Helpers/: "Collie" and "collie" collide in MacOS/ on case-insensitive APFS
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN/CollieApp" "$APP/Contents/MacOS/Collie"
-cp "$BIN/collied" "$BIN/collie" "$APP/Contents/Helpers/"
+cp "$BIN/collied" "$BIN/collie" "$BIN/collie-ctty" "$APP/Contents/Helpers/"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 cp Resources/NOTICE-scrcpy "$APP/Contents/Resources/"

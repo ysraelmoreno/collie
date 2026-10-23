@@ -8,11 +8,13 @@ public actor TerminalRegistry {
     private let memoryCapBytes: Int
     private let runDir: URL
     private let writeStall: Duration
+    private let cttyHelper: String?
     private var procs: [UUID: PTYProcess] = [:]
     private var buffers: [UUID: ScrollbackBuffer] = [:]
 
-    public init(spillDir: URL, memoryCapBytes: Int, runDir: URL, writeStall: Duration = .seconds(2)) {
+    public init(spillDir: URL, memoryCapBytes: Int, runDir: URL, writeStall: Duration = .seconds(2), cttyHelper: String? = nil) {
         self.spillDir = spillDir; self.memoryCapBytes = memoryCapBytes; self.runDir = runDir; self.writeStall = writeStall
+        self.cttyHelper = cttyHelper
     }
 
     public func spawn(_ rec: TerminalRecord, launch: LaunchSpec) throws -> PTYProcess {
@@ -20,7 +22,8 @@ public actor TerminalRegistry {
         let sb = ScrollbackBuffer(memoryCapBytes: memoryCapBytes,
                                   spillURL: spillDir.appendingPathComponent("\(rec.id.uuidString)-\(ms).log"))
         do {
-            let p = try PTYProcess(spec: launch, scrollback: sb, writeStall: writeStall)
+            let p = try PTYProcess(spec: cttyHelper.map(launch.throughControllingTerminal) ?? launch, scrollback: sb,
+                                   writeStall: writeStall)
             do { try OrphanReaper.record(pid: p.pid, terminal: rec.id, in: runDir) } catch {
                 p.terminate()
                 throw ProtocolError(code: .internal, message: "cannot record terminal pid: \(error)")

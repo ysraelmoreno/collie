@@ -13,6 +13,12 @@ public struct LaunchSpec: Sendable {
         self.executable = executable; self.arguments = arguments; self.environment = environment
         self.cwd = cwd; self.cols = cols; self.rows = rows
     }
+    /// The same command run through `collie-ctty` at `helper`, which makes the PTY its controlling terminal first.
+    public func throughControllingTerminal(_ helper: String) -> LaunchSpec {
+        var s = self
+        s.arguments = [executable] + arguments; s.executable = helper
+        return s
+    }
 }
 
 /// `stalled`: the reader did not accept input before the write deadline (bytes already written stay written).
@@ -87,7 +93,8 @@ public final class PTYProcess: @unchecked Sendable {
         posix_spawnattr_setsigmask(&attr, &empty)
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETSID | POSIX_SPAWN_CLOEXEC_DEFAULT
                                               | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
-        // session leader opening the slave without O_NOCTTY acquires it as controlling tty
+        // On macOS this open does not make the replica the new session's controlling terminal: commands that need one
+        // (SIGWINCH on resize, ^C to the foreground job) are wrapped by `LaunchSpec.throughControllingTerminal`.
         posix_spawn_file_actions_addopen(&acts, 0, slave, O_RDWR, 0)
         posix_spawn_file_actions_adddup2(&acts, 0, 1)
         posix_spawn_file_actions_adddup2(&acts, 0, 2)

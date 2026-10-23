@@ -74,6 +74,8 @@ do {
     var config = DaemonConfig(paths: Paths(root: root), collieExecutable: collie, workspaceId: workspace!)
     config.scrcpyServer = FileManager.default.fileExists(atPath: scrcpy.path) ? scrcpy : nil
     config.figcraftDir = figcraft
+    let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
+    config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil
     config.captureUserEnv = ProcessInfo.processInfo.environment["COLLIE_USER_ENV"] != "off"   // tests: never the developer's rc files
     // hash of the file this process started from; read off the cooperative pool
     config.build = await Task.detached { selfPath().flatMap(BuildID.of) }.value

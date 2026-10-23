@@ -216,3 +216,28 @@ private final class Tally: @unchecked Sendable {
     func add(_ failure: String?) { l.lock(); total += 1; if let failure { lost.append(failure) }; l.unlock() }
     var result: (Int, [String]) { l.lock(); defer { l.unlock() }; return (total, lost) }
 }
+
+/// `collie-ctty`, built with the tests (CollieTerminalTests depends on it).
+private let cttyHelper = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().appendingPathComponent(".build/debug/collie-ctty").path
+
+@Suite struct ControllingTerminalTests {
+    /// zsh spawned straight onto the PTY had no controlling terminal: a resize changed the size but sent no SIGWINCH,
+    /// so Claude Code kept drawing at its start size.
+    @Test func resizeReachesZshAsSigwinch() async throws {
+        let sb = ScrollbackBuffer(spillURL: nil)
+        let script = #"trap 'echo "winch $(stty size)"' WINCH; echo "tty=$(ps -o tty= -p $$)"; while :; do sleep 0.05; done"#
+        let p = try PTYProcess(spec: spec("/bin/zsh", ["-fc", script]).throughControllingTerminal(cttyHelper),
+                               scrollback: sb)
+        defer { p.terminate() }
+        #expect(await waitUntil { sb.text(since: 0).text.contains("tty=") })
+        #expect(!sb.text(since: 0).text.contains("tty=??"), "\(sb.text(since: 0).text)")
+        p.resize(cols: 127, rows: 38)
+        #expect(await waitUntil { sb.text(since: 0).text.contains("winch 38 127") }, "\(sb.text(since: 0).text)")
+    }
+
+    @Test func wrapsTheCommand() {
+        let s = spec("/bin/zsh", ["-lc", "claude"]).throughControllingTerminal("/x/collie-ctty")
+        #expect(s.executable == "/x/collie-ctty" && s.arguments == ["/bin/zsh", "-lc", "claude"])
+    }
+}

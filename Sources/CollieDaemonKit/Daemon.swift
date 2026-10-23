@@ -36,6 +36,9 @@ public struct DaemonConfig: Sendable {
     public var devicePollInterval: Duration = .seconds(2)
     /// The scrcpy-server jar pushed to devices for video; nil/missing: device panels report it is not bundled.
     public var scrcpyServer: URL?
+    /// `collie-ctty` (next to collied): terminals start through it so the PTY is their controlling terminal
+    /// (resizes reach them as SIGWINCH); nil: started directly (tests).
+    public var cttyHelper: URL?
     /// How long a device video session outlives its last viewer.
     public var deviceGrace: Duration = .seconds(5)
     /// The bundled figcraft (`bin/figcraft-server`, `bin/figcraft-cli`, `web/`); nil/missing: design commands report it is not bundled.
@@ -78,7 +81,7 @@ public final class Daemon: Sendable {
         let spillDir = wsDir.appendingPathComponent("terminals")
         let registry = TerminalRegistry(spillDir: spillDir,
                                         memoryCapBytes: config.memoryCapBytes, runDir: config.paths.runDir,
-                                        writeStall: config.writeStall)
+                                        writeStall: config.writeStall, cttyHelper: config.cttyHelper?.path)
         // ponytail: a corrupt/missing workspace.json starts a fresh workspace.
         let loaded = (try? Data(contentsOf: wsDir.appendingPathComponent("workspace.json")))
             .flatMap { try? JSONDecoder().decode(Workspace.self, from: $0) }

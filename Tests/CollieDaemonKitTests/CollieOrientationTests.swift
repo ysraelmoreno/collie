@@ -4,8 +4,9 @@ import CollieCore
 
 @Suite struct CollieOrientationTests {
     private func text(shepherd: Bool = false, paddock: String? = nil, peers: [String] = [], panels: [(name: String, pluginId: String)] = [],
-                      paddockPanels: [(name: String, pluginId: String)] = [], pref: DesignFirst = .ask) -> String {
-        CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: pref)
+                      paddockPanels: [(name: String, pluginId: String)] = [], pref: DesignFirst = .ask,
+                      lot: (name: String, goal: String)? = nil) -> String {
+        CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: pref, lot: lot)
     }
 
     @Test func orientationFollowsReach() {
@@ -91,6 +92,32 @@ import CollieCore
                 let t = text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: withDesign ? ps : ps.filter { $0.pluginId != "design" }, pref: pref)
                 #expect(t.count <= 1300, "\(pref) \(t.count)")
                 if withDesign || pref != .never { #expect(t.contains("UI work")) }
+            }
+        }
+    }
+
+    @Test func lotLine() {
+        #expect(text(lot: ("Login", "tela de login")).contains("- Lot \"Login\" (tela de login): collie lot board / collie lot post --kind handoff --to <name> \"<what, where, next>\"; save lot decisions with collie memory save."))
+        #expect(text(lot: ("Login", "")).contains("- Lot \"Login\": collie lot board"))
+        #expect(!text().contains("collie lot board"))
+        let t = text(lot: ("L", "a\nb\"c «d»"))
+        #expect(t.contains("(a bc d)") && t.split(separator: "\n").count == text().split(separator: "\n").count + 1)
+    }
+    /// R4: the lot line fits the 1300 limit with 2L's Shepherd design line in the worst case (T1 adds no other line).
+    @Test func worstCaseWithLotFitsLimit() {
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        let loose = (1...20).map { (name: String(repeating: "y", count: 60) + "\($0)", pluginId: "design") }
+        let lot = (name: String(repeating: "L", count: 64), goal: String(repeating: "objetivo ", count: 60))
+        for pref in DesignFirst.allCases {
+            for (panels, paddockPanels) in [(ps, []), (ps.filter { $0.pluginId != "design" }, loose), (ps.filter { $0.pluginId != "design" }, [])] {
+                for shepherd in [true, false] {
+                    let t = text(shepherd: shepherd, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" },
+                                 panels: panels, paddockPanels: paddockPanels, pref: pref, lot: lot)
+                    #expect(t.count <= 1300, "\(pref) \(shepherd) \(t.count)")
+                    #expect(t.contains("collie herd list") == shepherd && t.contains("collie panel open"))
+                    #expect(t.contains("collie lot board"))
+                    if shepherd && (pref != .never || !paddockPanels.isEmpty || panels.contains { $0.pluginId == "design" }) { #expect(t.contains("UI work")) }
+                }
             }
         }
     }

@@ -41,7 +41,7 @@ private func msg(_ i: Int) -> ChatMessage { ChatMessage(role: .user, text: "m\(i
             for i in 0..<5_000 { try await log.append(msg(i)) }
             let cur = lines(dir.appendingPathComponent("work-chat.jsonl"))
             let old = lines(dir.appendingPathComponent("work-chat-archive.jsonl"))
-            #expect(cur.count >= ChatLog.keep && cur.count <= ChatLog.high)
+            #expect(cur.count >= log.keep && cur.count <= log.high)
             #expect(cur.count == 1_181 && old.count == 3_819)
             // none lost, none twice, in order
             let texts = (old + cur).compactMap { try? JSONDecoder().decode(Probe.self, from: Data($0.utf8)).text }

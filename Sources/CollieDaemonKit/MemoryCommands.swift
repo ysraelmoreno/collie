@@ -153,11 +153,16 @@ extension CommandRouter {
                     peers: ConnectionGraph.reachable(from: me.id, in: ws).map(\.name),
                     panels: ConnectionGraph.reachablePanels(from: me.id, in: ws).map { ($0.name, $0.pluginId) },
                     paddockPanels: ws.panels.filter { $0.paddockId != nil && $0.paddockId == me.paddockId }.map { ($0.name, $0.pluginId) },
-                    designFirst: ws.designFirst)
+                    designFirst: ws.designFirst, lot: myLot.map { ($0.name, $0.goal) })
                 // ponytail: the bare header (no memories) counts as empty
                 text = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
             } else {
-                text = await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, prompt: HookPayload.boundedPrompt(try need(r, "prompt")))
+                // board posts addressed to the caller first (newest first), then memories, in one 2048-byte budget
+                let limit = 2048, prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
+                let posts = if let myLot { await boards.inject(to: me.id, lot: myLot, limit: limit) } else { "" }
+                let left = posts.isEmpty ? limit : limit - posts.utf8.count - 2
+                let mem = await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, prompt: prompt, limit: left)
+                text = [posts, mem].filter { !$0.isEmpty }.joined(separator: "\n\n")
             }
             return .object(["output": .string(text)])
 

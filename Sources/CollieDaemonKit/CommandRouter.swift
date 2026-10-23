@@ -40,6 +40,8 @@ actor CommandRouter {
     nonisolated let work: WorkStore
     /// The work chat of this workspace (`<root>/work/work-chat-<workspace>.jsonl`).
     nonisolated let chat: ChatLog
+    /// Lots' boards (`<root>/lots/<id>/board.jsonl`).
+    nonisolated let boards: LotBoards
     /// Saved herds (`<root>/herds`).
     nonisolated let herds: HerdStore
     /// The on-device model's rewrites of work summaries.
@@ -92,6 +94,7 @@ actor CommandRouter {
         let workDir = config.paths.root.appendingPathComponent("work")
         self.work = WorkStore(dir: workDir) { id in Task { await me.router?.workChanged(id) } }
         self.chat = ChatLog(dir: workDir, name: "work-chat-\(config.workspaceId.uuidString.lowercased())")
+        self.boards = LotBoards(lotsDir: config.paths.root.appendingPathComponent("lots"))
         self.herds = HerdStore(dir: config.paths.root.appendingPathComponent("herds"))
         self.assistant = WorkAssistant(model: config.localModel)
         me.router = self

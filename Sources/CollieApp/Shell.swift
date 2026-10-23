@@ -355,6 +355,7 @@ private struct HerdsSection: View {
 private struct LotsSection: View {
     let client: DaemonClient
     @State private var deleting: Lot?
+    @State private var opened: Lot?
     @State private var creating = false
     @State private var newName = ""
     @State private var newGoal = ""
@@ -373,13 +374,16 @@ private struct LotsSection: View {
                 }
                 .padding(.horizontal, 8).padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading).contentShape(.rect)
                 .help(LotSummary.help(l, names: names))
+                .onTapGesture { opened = l }
                 .contextMenu {
+                    Button("Abrir quadro") { opened = l }
                     Button("Apagar lote…") { deleting = l }.disabled(!client.isEmpty(l))
                 }
             }
             Button("Novo lote…") { newName = ""; newGoal = ""; creating = true }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
             if let error { Text(error).font(.collieUI(11)).foregroundStyle(Color.collieDanger).lineLimit(3) }
         }
+        .sheet(item: $opened) { l in LotView(client: client, lot: l) { opened = nil } }
         .confirmationDialog("Apagar o lote \(deleting?.name ?? "")?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("Apagar lote", role: .destructive) { if let l = deleting { run { try await client.deleteLot(l.name) } } }
             Button("Cancelar", role: .cancel) {}
@@ -401,11 +405,66 @@ private struct LotsSection: View {
     }
 }
 
+/// A lot opened from the sidebar. Quadro: its board, newest first — agents' text, shown as plain text (never a link or
+/// markdown), read again on open and on Atualizar.
+private struct LotView: View {
+    let client: DaemonClient
+    let lot: Lot
+    let close: () -> Void
+    @State private var posts: [LotPost] = []
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(lot.name).font(.collieUI(15, .medium)).foregroundStyle(Color.collieText).lineLimit(1)
+                Spacer()
+                Button("Atualizar") { Task { await load() } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+                Button("Fechar", action: close).keyboardShortcut(.cancelAction).controlSize(.small)
+            }
+            TabView {
+                board.tabItem { Text("Quadro") }
+            }
+        }
+        .padding(12).frame(minWidth: 480, minHeight: 360)
+        .task { await load() }
+    }
+
+    private var board: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                if let error { Text(error).font(.collieUI(11)).foregroundStyle(Color.collieDanger) }
+                if posts.isEmpty && error == nil {
+                    Text("Nenhum recado ainda. Os agentes do lote postam com collie lot post.").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                }
+                ForEach(posts) { p in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(LotSummary.postHeader(p)).font(.collieMono(10)).foregroundStyle(Color.collieMuted).lineLimit(1)
+                        Text(verbatim: p.text).font(.collieUI(12)).foregroundStyle(Color.collieText).textSelection(.enabled)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(4)
+        }
+    }
+
+    private func load() async {
+        do { posts = try await client.lotBoard(lot.name); error = nil } catch { self.error = "\(error)" }
+    }
+}
+
 /// The sidebar's copy for a lot (tested without the app).
 enum LotSummary {
     /// Member names in lot order; ids that are no longer terminals are skipped.
     static func memberNames(_ l: Lot, terminals: [TerminalRecord]) -> [String] {
         l.members.compactMap { m in terminals.first { $0.id == m }?.name }
+    }
+    /// `entrega · A → B · ref x · 14:03` (kind in pt-BR).
+    static func postHeader(_ p: LotPost) -> String {
+        let kind = ["handoff": "entrega", "question": "pergunta", "status": "status", "answer": "resposta"][p.kind] ?? p.kind
+        let who = p.from + (p.toName.map { " → \($0)" } ?? "")
+        return [kind, who, p.ref.map { "ref \($0)" }, p.at.formatted(date: .abbreviated, time: .shortened)].compactMap { $0 }.joined(separator: " · ")
     }
     static func help(_ l: Lot, names: [String]) -> String {
         [l.name, l.goal.isEmpty ? nil : l.goal, names.isEmpty ? "sem terminais" : "\(names.count) terminal\(names.count == 1 ? "" : "is")"]

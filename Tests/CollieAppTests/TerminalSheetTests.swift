@@ -25,3 +25,14 @@ import CollieProtocol
     #expect(LotSummary.help(lots[1], names: ["a"]) == "Alfa · login · 1 terminal")
     #expect(LotSummary.help(lots[0], names: []) == "zeta · sem terminais")
 }
+
+@Test func lotBoardPostHeader() throws {
+    let p = LotPost(kind: "handoff", from: "A", toName: "B", ref: "w1", text: "pronto")
+    let h = LotSummary.postHeader(p)
+    #expect(h.hasPrefix("entrega · A → B · ref w1 · "))
+    #expect(LotSummary.postHeader(LotPost(kind: "future", from: "app", text: "x")).hasPrefix("future · app · "))
+    // the board reply decodes into posts (ISO dates)
+    let json = #"[{"id":"\#(p.id.uuidString)","at":"2026-10-23T12:00:00Z","kind":"status","from":"A","text":"oi"}]"#
+    let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+    #expect(try d.decode([LotPost].self, from: Data(json.utf8)).first?.text == "oi")
+}

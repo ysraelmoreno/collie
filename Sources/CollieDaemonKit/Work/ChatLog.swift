@@ -2,42 +2,51 @@ import Foundation
 import CollieCore
 import CollieProtocol
 
-/// `<dir>/<name>.jsonl` (0600): the work chat's newest messages, one JSON object per line, oldest first. Past `high`
-/// the oldest go to `<dir>/<name>-archive.jsonl` (append-only) until `keep` remain; `clear` moves the whole file there.
-/// Disk work runs on one serial queue, off the cooperative pool.
-actor ChatLog {
-    static let keep = 1_000, high = 1_200
+/// The work chat (`work-chat-<workspace>.jsonl`).
+typealias ChatLog = JSONLLog<ChatMessage>
+
+/// `<dir>/<name>.jsonl` (0600): the newest records (the work chat's messages, a lot's board posts), one JSON object per
+/// line, oldest first. Past `high` the oldest go to `<dir>/<name>-archive.jsonl` (append-only) until `keep` remain;
+/// `clear` moves the whole file there. Disk work runs on one serial queue, off the cooperative pool.
+actor JSONLLog<M: Codable & Sendable & Identifiable> where M.ID == UUID {
+    nonisolated let keep: Int, high: Int
     let dir: URL
     private let name: String
-    private var all: [ChatMessage]?   // loaded on first use
-    private let io = DispatchQueue(label: "collie.chat")
+    private var all: [M]?   // loaded on first use
+    private let io: DispatchQueue
 
-    init(dir: URL, name: String = "work-chat") { self.dir = dir; self.name = name }
+    init(dir: URL, name: String = "work-chat", keep: Int = 1_000, high: Int = 1_200) {
+        self.dir = dir; self.name = name; self.keep = keep; self.high = high
+        io = DispatchQueue(label: "collie.\(name)")
+    }
 
     var file: URL { dir.appendingPathComponent("\(name).jsonl") }
     var archive: URL { dir.appendingPathComponent("\(name)-archive.jsonl") }
 
-    func append(_ m: ChatMessage) async throws {
+    func append(_ m: M) async throws {
         var list = try await load()
         list.append(m)
         let f = file, a = archive
         // memory is updated before the write is queued (in order, on the serial queue): a concurrent append never loses this one
-        if list.count > Self.high {
-            let gone = try list.prefix(list.count - Self.keep).map(Self.line)
-            let kept = Array(list.suffix(Self.keep))
-            let data = try kept.reduce(into: Data()) { $0.append(try Self.line($1)) }
+        if list.count > high {
+            let gone = try list.prefix(list.count - keep).map(line)
+            let kept = Array(list.suffix(keep))
+            let data = try kept.reduce(into: Data()) { $0.append(try line($1)) }
             all = kept
             // archive first: append-only, so a failure after it only duplicates lines on retry
             try await write { try WorkStore.append(gone, to: a); try DesignService.writePrivate(data, to: f) }
         } else {
-            let line = try Self.line(m)
+            let line = try line(m)
             all = list
             try await write { try WorkStore.append([line], to: f) }
         }
     }
 
+    /// Every record kept in the file, oldest first.
+    func records() async throws -> [M] { try await load() }
+
     /// Newest first: the `limit` messages older than `before` (nil: the newest). An id not in the file: `notFound`.
-    func page(before: UUID?, limit: Int) async throws -> [ChatMessage] {
+    func page(before: UUID?, limit: Int) async throws -> [M] {
         let list = try await load()
         var end = list.endIndex
         if let before {
@@ -54,11 +63,11 @@ actor ChatLog {
         _ = try await load()
         all = []
         let f = file, a = archive
-        try await write {
+        try await write { [name] in
             let d: Data
             do { d = try Data(contentsOf: f) }
             catch let e as CocoaError where e.code == .fileReadNoSuchFile { return }
-            catch { throw ProtocolError(code: .internal, message: "chat: cannot read \(f.path)") }
+            catch { throw ProtocolError(code: .internal, message: "\(name): cannot read \(f.path)") }
             if !d.isEmpty { try WorkStore.append([d], to: a) }
             try WorkStore.truncate(f)
         }
@@ -75,16 +84,16 @@ actor ChatLog {
 
     // MARK: disk
 
-    private func load() async throws -> [ChatMessage] {
+    private func load() async throws -> [M] {
         if let all { return all }
         let f = file
-        let loaded = try await onIO { () throws -> [ChatMessage] in
+        let loaded = try await onIO { [name] () throws -> [M] in
             let d: Data
             do { d = try Data(contentsOf: f) }
             catch let e as CocoaError where e.code == .fileReadNoSuchFile { return [] }
-            catch { throw ProtocolError(code: .internal, message: "chat: cannot read \(f.path)") }
+            catch { throw ProtocolError(code: .internal, message: "\(name): cannot read \(f.path)") }
             // ponytail: an unreadable line is skipped (not shown), never rewritten away until the next overflow or clear
-            return d.split(separator: 0x0A).compactMap { try? Self.decoder.decode(ChatMessage.self, from: Data($0)) }
+            return d.split(separator: 0x0A).compactMap { try? jsonlDecoder.decode(M.self, from: Data($0)) }
         }
         if all == nil { all = loaded }
         return all ?? loaded
@@ -95,11 +104,8 @@ actor ChatLog {
         do { try await onIO(body) } catch { all = nil; throw error }
     }
 
-    private static let encoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = [.sortedKeys]; return e }()
-    private static let decoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
-
-    private static func line(_ m: ChatMessage) throws(ProtocolError) -> Data {
-        guard var d = try? encoder.encode(m) else { throw ProtocolError(code: .internal, message: "chat: cannot encode") }
+    private func line(_ m: M) throws(ProtocolError) -> Data {
+        guard var d = try? jsonlEncoder.encode(m) else { throw ProtocolError(code: .internal, message: "\(name): cannot encode") }
         d.append(0x0A); return d
     }
 
@@ -110,3 +116,7 @@ actor ChatLog {
         } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
     }
 }
+
+// generic types can't hold static stored properties
+private let jsonlEncoder: JSONEncoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; e.outputFormatting = [.sortedKeys]; return e }()
+private let jsonlDecoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()

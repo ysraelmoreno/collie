@@ -253,6 +253,12 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         else { _ = try await admin("lot.leave", ["terminal": .string(terminal)]) }
     }
     public func deleteLot(_ name: String) async throws { _ = try await admin("lot.delete", ["lot": .string(name)]) }
+    /// A lot's board, newest first (the newest `limit`).
+    public func lotBoard(_ name: String, limit: Int = 200) async throws -> [LotPost] {
+        guard let r = try await admin("lot.board", ["lot": .string(name), "limit": .number(Double(limit))]) else { return [] }
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        return try d.decode([LotPost].self, from: JSONEncoder().encode(r))
+    }
     /// The lot `terminal` is in (at most one).
     public func lot(of terminal: UUID) -> Lot? { lots.first { $0.members.contains(terminal) } }
     /// Lots the user may delete: none of their members is still a terminal.

@@ -4,7 +4,8 @@ import CollieProtocol
 
 /// `lot.*`: the admin token, or a terminal. Lots never grant reach: a Shepherd groups only itself and the terminals it
 /// reaches by leash, any terminal may leave its own lot, and a terminal sees member names only of itself, the terminals
-/// it reaches and its own lot's members (lot names and goals are visible to all, like `paddock.list`).
+/// it reaches and its own lot's members (lot names and goals are visible to all, like `paddock.list`). A lot's board is
+/// read and posted by its members, Shepherds that `mayEnter` it and the admin; `--to` names a member of that lot.
 extension CommandRouter {
     func lotCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin (the user / app)
@@ -84,6 +85,33 @@ extension CommandRouter {
             await memory.evictLot(lot.id)
             await hub.emit(.lotRemoved(lot.id))
             return .object([:])
+        case "lot.post", "lot.board":
+            let lot = try boardLot(r, caller)
+            if r.command == "lot.board" {
+                let since = try str(r, "since").map { s throws(ProtocolError) -> UUID in
+                    guard let u = UUID(uuidString: s) else { throw ProtocolError(code: .invalidArgs, message: "'since' must be a post id") }
+                    return u
+                }
+                let kind = try str(r, "kind").map(Self.postKind)
+                let limit = Int(try num(r, "limit", max: Double(LotBoards.high)) ?? 50)
+                return .array(try await boards.posts(lot.id, since: since, kind: kind, limit: limit).map { try isoJSON($0) })
+            }
+            let kind = try Self.postKind(try need(r, "kind"))
+            let text = LotBoards.scrub(try need(r, "text").trimmingCharacters(in: .whitespacesAndNewlines))
+            guard !text.isEmpty, text.count <= LotPost.maxText else {
+                throw ProtocolError(code: .invalidArgs, message: "text must be 1-\(LotPost.maxText) characters")
+            }
+            let ref = str(r, "ref").map { LotBoards.clean($0, max: LotPost.maxRef) }.flatMap { $0.isEmpty ? nil : $0 }
+            // only a live member of this lot: anyone else (another lot's, unknown) reads as unknown — no leak
+            let to = try str(r, "to").map { n throws(ProtocolError) -> TerminalRecord in
+                guard let t = ws.terminals.first(where: { $0.name.caseInsensitiveCompare(n) == .orderedSame && lot.members.contains($0.id) }) else {
+                    throw ProtocolError(code: .notFound, message: "Terminal '\(n)' not found")
+                }
+                return t
+            }
+            let p = LotPost(kind: kind, from: caller?.name ?? "app", fromId: caller?.id, to: to?.id, toName: to?.name, ref: ref, text: text)
+            try await boards.post(p, in: lot.id)
+            return try isoJSON(p)
         default: throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
     }
@@ -96,6 +124,25 @@ extension CommandRouter {
         let reach = Set([me.id] + ConnectionGraph.reachable(from: me.id, in: ws).map(\.id))
         let live = lot.members.filter { m in ws.terminals.contains { $0.id == m } }
         return !live.isEmpty && live.allSatisfy(reach.contains)
+    }
+
+    /// The board `lot.post`/`lot.board` work on: `--lot` (the admin; a terminal only one it `mayEnter`), else the caller's
+    /// lot. A lot the caller may not enter reads as unknown (no leak).
+    private func boardLot(_ r: Request, _ caller: TerminalRecord?) throws(ProtocolError) -> Lot {
+        if let n = str(r, "lot") {
+            guard let l = try? findLot(n), caller.map({ mayEnter(l, $0) }) ?? true else {
+                throw ProtocolError(code: .notFound, message: "Lot '\(n)' not found")
+            }
+            return l
+        }
+        guard let me = caller else { throw ProtocolError(code: .invalidArgs, message: "Missing argument 'lot'") }
+        guard let l = ws.lot(of: me.id) else { throw ProtocolError(code: .notFound, message: "'\(me.name)' is in no lot") }
+        return l
+    }
+
+    private static func postKind(_ k: String) throws(ProtocolError) -> String {
+        guard LotPost.kinds.contains(k) else { throw ProtocolError(code: .invalidArgs, message: "kind must be handoff|question|status|answer") }
+        return k
     }
 
     func findLot(_ key: String) throws(ProtocolError) -> Lot {

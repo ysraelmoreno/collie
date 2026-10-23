@@ -18,19 +18,23 @@ enum CollieOrientation {
 
     static func text(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                      panels: [(name: String, pluginId: String)],
-                     paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .ask) -> String {
-        // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts)
-        for n in [3, 1, 0] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, n)
+                     paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .ask,
+                     lot: (name: String, goal: String)? = nil) -> String {
+        // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
+        // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
+        for n in [3, 1, 0, -1] {
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, n)
             if t.count <= limit { return t }
         }
-        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, 0)
+        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, -1)
     }
 
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                               panels: [(name: String, pluginId: String)],
-                              paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst, _ k: Int) -> String {
-        func names(_ xs: [String]) -> String { Self.names(xs, k) }
+                              paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
+                              lot: (name: String, goal: String)?, _ k: Int) -> String {
+        func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
+        let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
         func of(_ id: String) -> [String] { panels.filter { $0.pluginId == id }.map(\.name) }
         var lines = [
@@ -39,6 +43,11 @@ enum CollieOrientation {
             "- Project memory: collie memory search|save — check before re-reading.",
             "- Work log: collie work status; collie work task defer <task> \"<reason>\" | drop …; collie work done.",
         ]
+        if let lot {
+            // the goal is the user's text: one line, short (a long one only loses its tail)
+            let goal = tight ? "" : LotBoards.clean(lot.goal, max: k > 0 ? 80 : 30)
+            lines.append("- Lot \(quote(tight ? String(lot.name.prefix(20)) : lot.name))\(goal.isEmpty ? "" : " (\(goal))"): collie lot board / collie lot post --kind handoff --to <name> \"<what, where, next>\"" + (tight ? "." : "; save lot decisions with collie memory save."))
+        }
         let d = of("design"), b = of("browser"), v = of("device")
         if !d.isEmpty { lines.append("- Design panel \(names(d)): collie design …. Do not use other design editors or external artifact tools.") }
         if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens and checks pages.") }
@@ -47,8 +56,12 @@ enum CollieOrientation {
         if isShepherd {
             let hints = ["design": "design --file <name>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             let open = PluginRegistry.canvasPluginIds.map { hints[$0] ?? $0 }.joined(separator: " | ")
-            lines.append("- As Shepherd you can open panels: collie panel open \(open) (leashed to you, on your paddock).")
-            lines.append("  Hand one over: collie leash <agent> <panel>; collie panel close|move. Team: collie summon|dismiss|leash|unleash, collie paddock …")
+            if tight {
+                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …")
+            } else {
+                lines.append("- As Shepherd you can open panels: collie panel open \(open) (leashed to you, on your paddock).")
+                lines.append("  Hand one over: collie leash <agent> <panel>; collie panel close|move. Team: collie summon|dismiss|leash|unleash, collie paddock …")
+            }
             // leashed design panels are usable; a paddock-only one is not reachable until the user leashes it
             let notFor = "Not for backend, refactors, tests, docs, invisible fixes."
             let loose = of(paddockPanels, "design").filter { !d.contains($0) }
@@ -66,7 +79,7 @@ enum CollieOrientation {
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")
         }
-        lines.append("Run `collie <group> --help` for details.")
+        if !tight { lines.append("Run `collie <group> --help` for details.") }
         return lines.joined(separator: "\n")
     }
 }

@@ -97,11 +97,12 @@ extension CommandRouter {
                 return .array(try await boards.posts(lot.id, since: since, kind: kind, limit: limit).map { try isoJSON($0) })
             }
             let kind = try Self.postKind(try need(r, "kind"))
-            let text = LotBoards.scrub(try need(r, "text").trimmingCharacters(in: .whitespacesAndNewlines))
-            guard !text.isEmpty, text.count <= LotPost.maxText else {
-                throw ProtocolError(code: .invalidArgs, message: "text must be 1-\(LotPost.maxText) characters")
+            let secrets = await auth.secrets()
+            let text = LotBoards.scrub(try need(r, "text").trimmingCharacters(in: .whitespacesAndNewlines), secrets: secrets)
+            guard !text.isEmpty, text.count <= LotPost.maxText, text.utf8.count <= LotPost.maxTextBytes else {
+                throw ProtocolError(code: .invalidArgs, message: "text must be 1-\(LotPost.maxText) characters (\(LotPost.maxTextBytes) bytes)")
             }
-            let ref = str(r, "ref").map { LotBoards.clean($0, max: LotPost.maxRef) }.flatMap { $0.isEmpty ? nil : $0 }
+            let ref = str(r, "ref").map { LotBoards.clean(LotBoards.scrub($0, secrets: secrets), max: LotPost.maxRef) }.flatMap { $0.isEmpty ? nil : $0 }
             // only a live member of this lot: anyone else (another lot's, unknown) reads as unknown — no leak
             let to = try str(r, "to").map { n throws(ProtocolError) -> TerminalRecord in
                 guard let t = ws.terminals.first(where: { $0.name.caseInsensitiveCompare(n) == .orderedSame && lot.members.contains($0.id) }) else {

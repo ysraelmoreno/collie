@@ -49,5 +49,7 @@ public actor AuthRegistry {
         return constantTimeEqual(t, token)
     }
     public func revoke(_ terminal: UUID) { tokens[terminal] = nil }
+    /// Every live token (admin and terminals): what agent-written text must never carry.
+    func secrets() -> Set<String> { Set(tokens.values).union([adminToken]) }
     public func revokeAll() { tokens.removeAll() }
 }

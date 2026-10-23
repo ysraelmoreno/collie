@@ -36,6 +36,9 @@ private func populate(_ root: URL, _ tag: String, workspace: UUID = UUID()) {
     put(root, "work/work-archive.jsonl", tag)
     put(root, "herds/\(tag).collieherd", tag)
     put(root, "herds/.removed/old-1.collieherd", tag)
+    put(root, "lots/l1/memory/\(tag).md", tag)
+    put(root, "lots/l1/board.jsonl", tag)
+    put(root, "lots/l1/cache/memory.sqlite", "index")
     put(root, "default-workspace", workspace.uuidString)
     for p in ["admin.token", "run/collied.sock.x", "hooks/x.claude.json", "cache/c", "usage/providers/p.json", "screens/s.png"] { put(root, p, "machine") }
 }
@@ -73,10 +76,11 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         let n = Set(try await names(out))
         for p in ["manifest.json", "design/files.json", "design/systems.json", "design/server/data.db", "artifacts/artifacts.json",
                   "artifacts/.removed/old/index.html", "memory/A.md", "workspaces/\(ws.uuidString)/workspace.json",
-                  "work/work.json", "work/work-archive.jsonl", "herds/A.collieherd", "herds/.removed/old-1.collieherd"] {
+                  "work/work.json", "work/work-archive.jsonl", "herds/A.collieherd", "herds/.removed/old-1.collieherd",
+                  "lots/l1/memory/A.md", "lots/l1/board.jsonl"] {
             #expect(n.contains(p), "\(p) missing: \(n.sorted())")
         }
-        for bad in ["admin.token", "default-workspace", "run/", "hooks/", "cache/", "usage/", "screens/", "/terminals/", ".backup-"] {
+        for bad in ["admin.token", "default-workspace", "run/", "hooks/", "cache/", "lots/l1/cache", "usage/", "screens/", "/terminals/", ".backup-"] {
             #expect(!n.contains { $0.hasPrefix(bad) || $0.contains(bad) }, "\(bad) leaked: \(n.sorted())")
         }
         let mode = try FileManager.default.attributesOfItem(atPath: out.path)[.posixPermissions] as? Int
@@ -85,7 +89,7 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         try await ditto(["-x", "-k", out.path, x.path], in: x)
         let m = try JSONSerialization.jsonObject(with: Data(contentsOf: x.appendingPathComponent("manifest.json"))) as? [String: Any]
         #expect(m?["format"] as? Int == 1 && m?["collieVersion"] as? String == "v-test" && m?["createdAt"] is String)
-        #expect(Set(m?["parts"] as? [String] ?? []) == ["design", "artifacts", "memory", "workspaces", "work", "herds"])
+        #expect(Set(m?["parts"] as? [String] ?? []) == ["design", "artifacts", "memory", "workspaces", "work", "herds", "lots"])
         #expect(m?["workspace"] as? String == ws.uuidString)
         #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).allSatisfy { !$0.hasPrefix(".backup-") })
     }
@@ -115,7 +119,27 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         #expect(read(a, "\(old)/workspaces/\(wa.uuidString)/workspace.json") == "A")
         #expect(read(a, "\(old)/default-workspace") == wa.uuidString)
         #expect(read(a, "\(old)/herds/A.collieherd") == "A")
+        #expect(read(a, "lots/l1/memory/B.md") == "B" && read(a, "\(old)/lots/l1/memory/A.md") == "A")   // lots too, nothing deleted
         #expect(!DataBackup.applyPending(Paths(root: a)))   // nothing pending any more
+    }
+
+    /// A lot's memory and board (written by the real stores) survive export → import into a fresh root.
+    @Test func lotsRoundTrip() async throws {
+        let a = tempRoot(), b = tempRoot(), lot = UUID()
+        defer { for r in [a, b] { try? FileManager.default.removeItem(at: r) } }
+        let mem = MemoryService(globalDir: a.appendingPathComponent("memory"))
+        let rec = MemoryRecord(kind: .decision, scope: .lot, lotId: lot, subject: "css", title: "Use Tailwind", body: "")
+        _ = try await mem.lotStore(lot).run { m in try m.store.save(rec) }
+        _ = try await mem.lotStore(lot).run { m in m.index() != nil }   // builds lots/<id>/cache
+        try await LotBoards(lotsDir: a.appendingPathComponent("lots")).post(LotPost(kind: "handoff", from: "A", text: "tela pronta"), in: lot)
+        let out = a.appendingPathComponent("a.colliebackup")
+        _ = try await DataBackup.export(root: a, to: out, server: server(a), version: "t")
+        #expect(!(try await names(out)).contains { $0.contains("/cache/") })
+        _ = try await DataBackup.stage(root: b, from: out, dryRun: false)
+        #expect(DataBackup.applyPending(Paths(root: b)))
+        let got = try await MemoryService(globalDir: b.appendingPathComponent("memory")).lotStore(lot).run { m in m.store.all().records.map(\.title) }
+        #expect(got == ["Use Tailwind"])
+        #expect(try await LotBoards(lotsDir: b.appendingPathComponent("lots")).posts(lot).map(\.text) == ["tela pronta"])
     }
 
     @Test func stagedImportRecheckedAtStart() async throws {

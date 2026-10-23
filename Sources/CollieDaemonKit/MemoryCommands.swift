@@ -290,8 +290,12 @@ extension CommandRouter {
                     path rawPath: String?, repo: RepoMemory, paddock paddockName: String?, lot: Lot? = nil,
                     origin: String) async throws -> (MemoryRecord, RepoMemory, MemoryRecord?) {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
-        let subject = MemoryRecord.normalize(rawSubject)
-        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        // memory is never secret-bearing: a live token pasted in is hidden
+        let secrets = await auth.secrets()
+        func hide(_ x: String) -> String { secrets.reduce(x) { $0.replacingOccurrences(of: $1, with: "[hidden]") } }
+        let subject = MemoryRecord.normalize(hide(rawSubject))
+        let title = hide(rawTitle).trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = hide(body)
         guard !subject.isEmpty, !title.isEmpty else { throw invalid("subject and title must not be blank") }
         guard subject.count <= 300, title.count <= 300, body.utf8.count <= 64 * 1024 else {
             throw invalid("subject/title are limited to 300 characters and body to 64 KiB")

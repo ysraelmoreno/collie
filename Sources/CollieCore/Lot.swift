@@ -40,7 +40,7 @@ extension Workspace {
 /// terminal are injected into its prompts, `status` (and anything else) only on `lot.board`.
 public struct LotPost: Codable, Sendable, Equatable, Identifiable {
     public static let kinds = ["handoff", "question", "status", "answer"]
-    public static let maxText = 4_000, maxRef = 200
+    public static let maxText = 4_000, maxTextBytes = 16_384, maxRef = 200
     public var id: UUID
     public var at: Date
     public var kind: String

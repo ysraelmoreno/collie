@@ -197,4 +197,56 @@ private func lines(_ url: URL) -> [String] {
             #expect(memoryShown)
         }
     }
+
+    /// I2: what a recipient got stays seen after a restart (a new `LotBoards` on the same dir); an addressed post not yet
+    /// delivered still arrives; a board from before the seen file counts its older posts as seen.
+    @Test func seenSurvivesRestart() async throws {
+        let root = URL(fileURLWithPath: "/tmp/collie-board-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let b = UUID(), lot = Lot(name: "L", members: [b])
+        let one = LotBoards(lotsDir: root)
+        try await one.post(LotPost(kind: "handoff", from: "A", to: b, text: "primeiro"), in: lot.id)
+        #expect(await one.inject(to: b, lot: lot, limit: 2048).contains("primeiro"))
+        try await one.post(LotPost(kind: "handoff", from: "A", to: b, text: "segundo"), in: lot.id)
+        let file = root.appendingPathComponent("\(lot.id.uuidString.lowercased())/board-seen.json")
+        #expect(mode(file.path) == 0o600)
+        let two = LotBoards(lotsDir: root, startedAt: Date().addingTimeInterval(60))
+        let got = await two.inject(to: b, lot: lot, limit: 2048)
+        #expect(got.contains("segundo") && !got.contains("primeiro"), "\(got)")
+        #expect(await LotBoards(lotsDir: root).inject(to: b, lot: lot, limit: 2048) == "")
+        // upgrade: no seen file — posts older than the daemon's start are not injected again
+        try FileManager.default.removeItem(at: file)
+        try await LotBoards(lotsDir: root).post(LotPost(kind: "status", from: "A", text: "x"), in: lot.id)
+        let old = LotPost(at: Date().addingTimeInterval(-10), kind: "handoff", from: "A", to: b, text: "antigo")
+        let up = LotBoards(lotsDir: root)
+        try await JSONLLog<LotPost>(dir: root.appendingPathComponent(lot.id.uuidString.lowercased()), name: "board", keep: 500, high: 600).append(old)
+        #expect(await up.inject(to: b, lot: lot, limit: 2048) == "")
+    }
+
+    /// M1: the injected cut counts UTF-8 bytes and never splits a character.
+    @Test func injectedPostCappedByBytes() async throws {
+        let root = URL(fileURLWithPath: "/tmp/collie-board-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let b = UUID(), lot = Lot(name: "L", members: [b]), boards = LotBoards(lotsDir: root)
+        try await boards.post(LotPost(kind: "handoff", from: "A", to: b, text: String(repeating: "👩‍👩‍👧", count: 600)), in: lot.id)
+        let got = await boards.inject(to: b, lot: lot, limit: 2048)
+        let line = try #require(got.split(separator: "\n").last)
+        #expect(got.utf8.count <= 2048 && line.utf8.count <= LotBoards.injectMaxBytes + 64, "\(got.utf8.count)")
+        #expect(line.hasSuffix("👩‍👩‍👧…»"))
+        #expect(LotBoards.cut("aé😀", bytes: 4) == "aé…" && LotBoards.cut("abc", bytes: 3) == "abc")
+    }
+
+    /// M2/M3: `--ref` is scrubbed like the text, and live tokens are hidden wherever they appear.
+    @Test func refAndTokensScrubbed() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: repo), b = try await term(d, p, "B", cwd: repo)
+            #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "A,B"]).ok)
+            #expect(try await post(p, a, "status", "meu token é \(a.token) e o admin \(d.adminToken)", ref: "figcraft://f?token=zz").ok)
+            let row = try #require(rows(try await call(p, b, "lot.board")).first)
+            #expect(s(row["text"]) == "meu token é [hidden] e o admin [hidden]" && s(row["ref"]) == "[link]", "\(row)")
+            let m = try await call(p, a, "memory.save", ["kind": "decision", "subject": "s", "title": "t \(b.token)", "body": "x \(b.token)"])
+            if case .object(let o)? = m.result { #expect(s(o["title"]) == "t [hidden]" && s(o["body"]) == "x [hidden]", "\(o)") }
+        }
+    }
 }

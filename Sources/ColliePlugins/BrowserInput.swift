@@ -124,6 +124,8 @@ import WebKit
     /// been up far longer by the time anything runs). A keyDown the page doesn't handle goes back to `NSApp.sendEvent`
     /// (WebKit re-sends the same object, however late the page answers), which would hand it to the app's key window
     /// (the user's terminal) or its menus: a local monitor drops every key event with this timestamp, unconditionally.
+    /// Rule: any local or global NSEvent key monitor in Collie must ignore events whose `timestamp == BrowserInput.sentinel`.
+    /// AppKit calls local monitors in no fixed order, so another monitor can see a re-sent synthetic key before ours drops it.
     static let sentinel: TimeInterval = 0.000_042
     private static var monitor: Any?
     private(set) static var dropped = 0

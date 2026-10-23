@@ -73,6 +73,7 @@ struct CanvasView: NSViewRepresentable {
         addSubview(leashes)   // below the nodes (they are inserted under the minimap, above this)
         addSubview(minimap)
         observe()
+        // key monitors: ignore BrowserInput.sentinel events — see BrowserInput.sentinel
         // The terminal's scrollWheel is not overridable: route scrolls here unless the terminal under the cursor has focus.
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] e in
             MainActor.assumeIsolated { self?.interceptScroll(e) ?? false } ? nil : e

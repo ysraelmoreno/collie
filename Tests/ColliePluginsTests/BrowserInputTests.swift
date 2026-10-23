@@ -189,9 +189,11 @@ import CollieProtocol
         let h = try await browser("<p>x</p>"); defer { h.close() }
         _ = try await run(h.b, "key", ["key": .string("Escape")])
         let leaks = Leaks(); defer { leaks.stop() }
+        let before = BrowserInput.dropped
         NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                          windowNumber: 0, context: nil, characters: "q", charactersIgnoringModifiers: "q", isARepeat: false, keyCode: 12)!)
         #expect(leaks.keys == ["q"])
+        #expect(BrowserInput.dropped == before)
         #expect(BrowserInput.sentinel < ProcessInfo.processInfo.systemUptime / 1000)
     }
 

@@ -55,6 +55,12 @@ extension BrowserPanel {
             return try resize(args)
         case "browser.emulate":
             return try await emulate(args)
+        case "browser.reload":
+            return try await reload(hard: args["hard"] == .bool(true))
+        case "browser.storage":
+            return try await storage(args)
+        case "browser.init-script":
+            return try await initScript(args)
         default:
             throw ProtocolError(code: .invalidArgs, message: "unknown browser command: \(command)")
         }
@@ -323,6 +329,99 @@ extension BrowserPanel {
         return .object(["colorScheme": .string(colorScheme ?? "system"), "reducedMotion": .string(reducedMotion ?? "system"),
                         "uncoveredSheets": .number(Double(counts?[0] ?? 0)),
                         "uncoveredShadowRoots": .number(Double(counts?[1] ?? 0))])
+    }
+
+    private func reload(hard: Bool) async throws(ProtocolError) -> JSONValue {
+        let web = try live()
+        appLoad = web.url   // an artifact page reloads like the load the app asked for
+        try await wait(for: hard ? web.reloadFromOrigin() : web.reload())
+        let title = (try? await web.evaluateJavaScript("document.title", in: nil, contentWorld: .page)) as? String
+        return .object(["url": .string(web.url?.absoluteString ?? ""), "title": .string(title ?? web.title ?? "")])
+    }
+
+    // MARK: storage
+
+    /// `get`/`set` act on the localStorage of the page's origin; `clear` on the origin's local/session storage and on the
+    /// cookies of this panel's own data store (never another panel's, never the user's other browsers). Values travel as
+    /// call arguments (JSON-encoded by WebKit), never spliced into the script. Runs in the automation world: the page
+    /// can't tamper with the Storage prototype, and the storage itself is the page's.
+    private func storage(_ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
+        let web = try live()
+        let action = try Self.string(args, "action")
+        func storageJS(_ body: String, _ a: [String: Any] = [:]) async throws(ProtocolError) -> Any? {
+            let origin = try? await web.evaluateJavaScript("location.origin", in: nil, contentWorld: BrowserAutomation.world) as? String
+            guard let origin, origin != "null", !origin.isEmpty else {
+                throw ProtocolError(code: .invalidArgs, message: "storage needs a page with an origin (not about:blank); navigate first")
+            }
+            do { return try await web.callAsyncJavaScript(body, arguments: a, in: nil, contentWorld: BrowserAutomation.world) }
+            catch { throw ProtocolError(code: .invalidArgs, message: BrowserAutomation.jsMessage(error)) }
+        }
+        switch action {
+        case "get":
+            let v = try await storageJS("return localStorage.getItem(key)", ["key": try Self.string(args, "key")])
+            return .object(["value": BrowserAutomation.json(v)])
+        case "set":
+            _ = try await storageJS("localStorage.setItem(key, value)", ["key": try Self.string(args, "key"), "value": try Self.string(args, "value")])
+            return .object(["ok": .bool(true)])
+        case "clear":
+            let any = ["local", "session", "cookies"].contains { args[$0] == .bool(true) }
+            func want(_ k: String) -> Bool { !any || args[k] == .bool(true) }
+            var cleared: [String] = [], cookies = 0
+            if want("local") { _ = try await storageJS("localStorage.clear()"); cleared.append("local") }
+            if want("session") { _ = try await storageJS("sessionStorage.clear()"); cleared.append("session") }
+            if want("cookies") { cookies = try await clearCookies(web); cleared.append("cookies") }
+            return .object(["cleared": .array(cleared.map { .string($0) }), "cookies": .number(Double(cookies))])
+        default:
+            throw ProtocolError(code: .invalidArgs, message: "storage action must be clear, set or get")
+        }
+    }
+
+    /// An isolated panel owns its whole store: every cookie goes. A workspace or global store is shared with other
+    /// panels: only the current site's cookies (the cookie domain covers the page host).
+    private func clearCookies(_ web: WKWebView) async throws(ProtocolError) -> Int {
+        let store = web.configuration.websiteDataStore.httpCookieStore
+        var cookies = await store.allCookies()
+        if Self.scope(panel) != .isolated {
+            guard let host = web.url?.host?.lowercased() else {
+                throw ProtocolError(code: .invalidArgs, message: "--cookies on a shared store clears the current site's cookies: navigate first")
+            }
+            cookies = cookies.filter { c in
+                let d = c.domain.lowercased().drop { $0 == "." }
+                return host == d || host.hasSuffix("." + d)
+            }
+        }
+        for c in cookies { await store.deleteCookie(c) }
+        return cookies.count
+    }
+
+    static let initScriptMaxBytes = 64 << 10, initScriptMax = 32
+
+    /// `add --js` (→ `{id}`), `list`, `clear [--id]`: user scripts run at document start in every later main-frame load of
+    /// this panel (page world, before the page's own scripts); not run on the current page, not persisted.
+    private func initScript(_ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
+        _ = try live()
+        switch try Self.string(args, "action") {
+        case "add":
+            let js = try Self.string(args, "js")
+            guard js.utf8.count <= Self.initScriptMaxBytes else { throw ProtocolError(code: .invalidArgs, message: "--js is over \(Self.initScriptMaxBytes) bytes") }
+            guard initScripts.count < Self.initScriptMax else { throw ProtocolError(code: .invalidArgs, message: "at most \(Self.initScriptMax) init scripts; clear some") }
+            nextInitScript += 1
+            let id = "s\(nextInitScript)"
+            initScripts.append((id, js))
+            installScripts()
+            return .object(["id": .string(id)])
+        case "list":
+            return .object(["scripts": .array(initScripts.map { .object(["id": .string($0.id), "js": .string(String($0.js.prefix(200)))]) })])
+        case "clear":
+            if let id = try? Self.string(args, "id") {
+                guard initScripts.contains(where: { $0.id == id }) else { throw ProtocolError(code: .invalidArgs, message: "--id: no init script \(id)") }
+                initScripts.removeAll { $0.id == id }
+            } else { initScripts = [] }
+            installScripts()
+            return .object(["ok": .bool(true), "remaining": .number(Double(initScripts.count))])
+        default:
+            throw ProtocolError(code: .invalidArgs, message: "init-script action must be add, list or clear")
+        }
     }
 
     /// Same document, other fragment: WebKit navigates in place, without didFinish.

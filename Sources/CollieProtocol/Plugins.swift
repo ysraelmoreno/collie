@@ -64,6 +64,15 @@ public enum PluginRegistry {
             cmd("emulate", "Emulate media features until changed; returns {colorScheme, reducedMotion, uncoveredSheets, uncoveredShadowRoots}; reduced motion rewrites readable stylesheets (document, adopted, open shadow roots): uncoveredSheets = unreadable (cross-origin) sheets, uncoveredShadowRoots = closed shadow roots",
                 [ParamSpec("color-scheme", .string, help: "light | dark | system"),
                  ParamSpec("reduced-motion", .string, help: "reduce | no-preference | system")]),
+            cmd("reload", "Reload the page; --hard bypasses the cache (reloadFromOrigin); returns {url, title}", [ParamSpec("hard", .flag, help: "Revalidate everything with the origin")]),
+            cmd("storage", "clear | set | get on the page's origin. clear [--local] [--session] [--cookies] (none = all) empties local/session storage and cookies of THIS panel's data store only: an isolated panel loses all its cookies, a workspace/global panel only the current site's (other panels and sites sharing that store are untouched). set --key K --value V / get --key K use localStorage (the page needs an origin, not about:blank)",
+                [ParamSpec("action", .string, positional: true, required: true, help: "clear | set | get"),
+                 ParamSpec("local", .flag, help: "clear: localStorage"), ParamSpec("session", .flag, help: "clear: sessionStorage"),
+                 ParamSpec("cookies", .flag, help: "clear: cookies (see above)"),
+                 ParamSpec("key", .string, help: "set/get: key"), ParamSpec("value", .string, help: "set: value")]),
+            cmd("init-script", "add | list | clear: JavaScript run at document start (main frame, page world, before the page's scripts) on every later load of this panel; not run on the current page, kept until the panel closes (not persisted). add --js JS returns {id}; list; clear [--id ID] (none = all)",
+                [ParamSpec("action", .string, positional: true, required: true, help: "add | list | clear"),
+                 ParamSpec("js", .string, help: "add: JavaScript (up to 64 KiB, at most 32 scripts)"), ParamSpec("id", .string, help: "clear: one script")]),
         ],
         events: ["browser.loaded", "browser.console"])
 }

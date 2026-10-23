@@ -77,8 +77,11 @@ import os
     /// Reduced-motion emulation (`nil` = the system's); the color scheme lives on the web view's `appearance`.
     var reducedMotion: String?
     var colorScheme: String?
+    /// `browser.init-script`: kept for the panel's life, in order, after the built-in scripts.
+    var initScripts: [(id: String, js: String)] = []
+    var nextInitScript = 0
 
-    /// (Re)builds the user scripts, in order: built-ins, then the motion emulation. Task 5's init scripts go after these.
+    /// (Re)builds the user scripts, in order: built-ins, then the motion emulation, then the init scripts.
     func installScripts() {
         guard let content = webView?.configuration.userContentController else { return }
         content.removeAllUserScripts()
@@ -89,6 +92,9 @@ import os
         if let reducedMotion {
             content.addUserScript(WKUserScript(source: BrowserAutomation.motionScript(reducedMotion), injectionTime: .atDocumentStart,
                                                forMainFrameOnly: false, in: .page))
+        }
+        for s in initScripts {
+            content.addUserScript(WKUserScript(source: s.js, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
         }
     }
 

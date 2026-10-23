@@ -216,20 +216,21 @@ import CollieTheme
 
     /// If the grid lags the frame (a queued size never applied, or applied late over a newer one), re-runs SwiftTerm's
     /// frame path, as `setFontKeepingModes` does: `processSizeChange` resizes, then `sizeChanged` resizes the PTY.
-    /// No-op when the grid already fills the frame, so it cannot loop. Never during a live resize (it would only queue).
-    func reconcileGrid() {
-        guard let t = term, !t.inLiveResize else { return }
+    /// No-op when the grid is what SwiftTerm would compute for the frame, so it cannot loop. Never during a live resize
+    /// (it would only queue). Returns whether it re-ran the frame path.
+    @discardableResult func reconcileGrid() -> Bool {
+        guard let t = term, !t.inLiveResize else { return false }
         let size = t.frame.size, d = t.terminalDimensions, grid = t.getOptimalFrameSize().size
-        guard size.width > 0, size.height > 0, d.cols > 0, d.rows > 0 else { return }
-        // ponytail: cell width read back from the grid includes the legacy scroller's share; with "always show
-        // scroll bars" a grid one column short can pass. Fine for this repair (the bug is dozens of cells).
-        let cell = CGSize(width: grid.width / CGFloat(d.cols), height: grid.height / CGFloat(d.rows))
-        let fits = grid.width <= size.width + 0.01 && grid.height <= size.height + 0.01
-        let fills = size.width - grid.width < cell.width - 0.01 && size.height - grid.height < cell.height - 0.01
-        guard !(fits && fills) else { return }
+        guard size.width > 0, size.height > 0, d.cols > 0, d.rows > 0 else { return false }
+        // SwiftTerm's own math (`processSizeChange`): cols = Int((width - scroller) / cellW), rows = Int(height / cellH).
+        // The scroller reserves width only in the legacy style (MacTerminalView `reservedScrollerWidth`).
+        let scroller = t.scrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        let cellW = (grid.width - scroller) / CGFloat(d.cols), cellH = grid.height / CGFloat(d.rows)
+        guard Int((size.width - scroller) / cellW) != d.cols || Int(size.height / cellH) != d.rows else { return false }
         Log.canvas.debug("grid \(self.id) stale \(d.cols)x\(d.rows) for \(size.debugDescription, privacy: .public): resync")
         t.setFrameSize(.zero)
         t.setFrameSize(size)
+        return true
     }
 
     private var bodyFrame: CGRect {

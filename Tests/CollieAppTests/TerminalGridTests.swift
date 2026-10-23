@@ -109,3 +109,18 @@ private let small = CGSize(width: 640, height: 400), big = CGSize(width: 1000, h
     let t2 = try #require(v.term)
     #expect(t2 !== t && dims(t2) == before)
 }
+
+/// A body just under a whole number of cells: SwiftTerm floors to one row/col fewer, which is correct,
+/// so reconcile must not read it as stale (it sits in the zoom hot path).
+@MainActor @Test func reconcileMatchesSwiftTermsFloorJustUnderAWholeCell() throws {
+    let (v, _, t) = try makeNode(size: big); defer { v.unmount() }
+    let grid = t.getOptimalFrameSize().size, d = t.terminalDimensions
+    let cellW = grid.width / CGFloat(d.cols), cellH = grid.height / CGFloat(d.rows)
+    let under = CGSize(width: cellW * 100 - 0.001, height: cellH * 30 - 0.001 + TerminalNodeView.titleHeight)
+    v.place(CGRect(origin: .zero, size: under), canvasSize: under)
+    v.layoutSubtreeIfNeeded()
+    #expect(dims(t) == gridFor(under))
+    let sink = SizeSink(); t.terminalDelegate = sink
+    #expect(v.reconcileGrid() == false)
+    #expect(sink.sizes.isEmpty)
+}

@@ -24,8 +24,16 @@ private func rejects(_ p: Herd, _ reason: String) {
     }
 
     @Test func factoryIsValid() throws {
-        #expect(Herd.factory.map(\.id) == ["feature-fullstack", "investigar-bug"])
+        #expect(Herd.factory.map(\.id) == ["feature-fullstack", "feature-com-design", "investigar-bug"])
         for f in Herd.factory { try HerdFormat.validate(f); #expect(f.builtIn) }
+    }
+
+    @Test func factoryFeatureComDesignValid() throws {
+        let h = try #require(Herd.factory.first { $0.id == "feature-com-design" })
+        try HerdFormat.validate(h)
+        #expect(h.wantsPaddock && h.terminals.map(\.key) == ["pastor", "designer", "interface", "tester"])
+        #expect(h.leashes == [["pastor", "designer"], ["pastor", "interface"], ["pastor", "tester"], ["designer", "design"],
+                              ["interface", "design"], ["interface", "navegador"], ["tester", "design"], ["tester", "navegador"]])
     }
 
     @Test func validationRejects() throws {

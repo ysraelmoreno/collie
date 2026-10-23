@@ -242,6 +242,21 @@ extension Herd {
             leashes: [["pastor", "backend"], ["pastor", "interface"], ["pastor", "revisor"], ["interface", "design"], ["interface", "navegador"]],
             builtIn: true),
         Herd(
+            id: "feature-com-design", name: "Feature com design",
+            summary: "Pastor, designer, interface e tester: desenha no FigCraft, implementa e confere contra o design.", wantsPaddock: true,
+            terminals: [
+                HerdTerminal(key: "pastor", preset: .claude, role: "Você conduz esta feature do desenho à entrega. Peça primeiro as telas ao designer; quando ele disser quais estão prontas, passe-as à interface. Antes de dar como pronto, peça ao tester a comparação com o design e só encerre quando as diferenças estiverem resolvidas.", isShepherd: true, frame: row(0)),
+                HerdTerminal(key: "designer", preset: .claude, role: "Você desenha as telas no painel Design com `collie design …`, seguindo o design system ativo. Avise o Pastor, pela guia, quais telas estão prontas.", frame: row(1)),
+                HerdTerminal(key: "interface", preset: .claude, role: "Você implementa a interface a partir do desenho: leia-o com `collie design inspect` e `collie design export`. Confira o resultado no Navegador e responda ao Pastor com o que mudou.", frame: row(2)),
+                HerdTerminal(key: "tester", preset: .claude, role: "Você compara `collie design screenshot` com `collie browser screenshot` (e com os dispositivos, se houver) nas larguras que o Pastor indicar. Relate cada diferença ao Pastor, com as duas imagens.", frame: row(3)),
+            ],
+            panels: [
+                HerdPanel(key: "design", pluginId: "design", placement: .canvas, state: ["file": .string("Feature")], frame: below(1)),
+                HerdPanel(key: "navegador", pluginId: "browser", placement: .canvas, frame: below(2)),
+            ],
+            leashes: [["pastor", "designer"], ["pastor", "interface"], ["pastor", "tester"], ["designer", "design"], ["interface", "design"], ["interface", "navegador"], ["tester", "design"], ["tester", "navegador"]],
+            builtIn: true),
+        Herd(
             id: "investigar-bug", name: "Investigar bug",
             summary: "Pastor, investigador da causa e quem escreve o teste que falha.", wantsPaddock: false,
             terminals: [

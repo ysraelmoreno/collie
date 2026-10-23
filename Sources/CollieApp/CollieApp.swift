@@ -105,7 +105,7 @@ enum Config {
                 Button("Parar serviço") { stopService() }
             }
         }
-        Settings { PreferencesView() }
+        Settings { PreferencesView(client: client) }
     }
 
     /// Also from the Preferences window (the main one may be closed). `NSApp` is nil until the app object exists.

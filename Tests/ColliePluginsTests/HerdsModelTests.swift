@@ -14,7 +14,7 @@ private actor Fake {
         case "herd.apply": if let applyError { throw applyError }; return .object([:])
         case "herd.save": return .object(["id": .string("x"), "warnings": .array([.string("painel d não entra")])])
         case "herd.list": return .array([])
-        case "herd.get": return try! JSONDecoder().decode(JSONValue.self, from: HerdFormat.encode(Herd.factory[1]))
+        case "herd.get": return try! JSONDecoder().decode(JSONValue.self, from: HerdFormat.encode(Herd.factory[2]))
         default: return .object([:])
         }
     }
@@ -41,7 +41,7 @@ private func tempFile(_ data: Data) throws -> URL {
         #expect(err == nil)
         let a = await f.last("herd.apply")
         #expect(a == ["id": .string("investigar-bug"), "name": .string("Bug 12"), "paddock": .bool(true), "cwd": .string("/tmp/repo"),
-                      "onPaddock": .string("cercado-a"), "expect": .string(HerdFormat.digest(Herd.factory[1]))])
+                      "onPaddock": .string("cercado-a"), "expect": .string(HerdFormat.digest(Herd.factory[2]))])
         #expect(m.takeAnchor() == CGPoint(x: 10, y: 20))
         #expect(m.takeAnchor() == nil)
         _ = await m.apply(id: "investigar-bug", name: "n", paddock: nil, cwd: "/", onPaddock: nil, at: .zero)
@@ -110,9 +110,9 @@ private func tempFile(_ data: Data) throws -> URL {
         let (m, f) = make()
         await m.select("investigar-bug")
         let pv = m.preview
-        #expect(pv?.herd == { var p = Herd.factory[1]; p.builtIn = false; return p }())
+        #expect(pv?.herd == { var p = Herd.factory[2]; p.builtIn = false; return p }())
         _ = await m.apply(id: "investigar-bug", name: "n", paddock: nil, cwd: "/", onPaddock: nil, at: .zero)
-        #expect(await f.last("herd.apply")?["expect"] == .string(HerdFormat.digest(Herd.factory[1])))
+        #expect(await f.last("herd.apply")?["expect"] == .string(HerdFormat.digest(Herd.factory[2])))
         await m.select("investigar-bug")
         #expect(m.preview?.token != pv?.token)   // a fresh preview each fetch
     }

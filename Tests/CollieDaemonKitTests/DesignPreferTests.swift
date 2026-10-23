@@ -10,9 +10,10 @@ import CollieProtocol
         try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "design.prefer", args: args.mapValues { .string($0) }),
                                         to: p.socket, timeoutSeconds: 30)
     }
-    private func term(_ d: Daemon, _ p: Paths, shepherd: Bool) async throws -> Term {
-        let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
-            args: ["name": .string(shepherd ? "M" : "W"), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(shepherd)]),
+    private func term(_ d: Daemon, _ p: Paths, shepherd: Bool, paddock: String? = nil) async throws -> Term {
+        var a: [String: JSONValue] = ["name": .string(paddock != nil ? "MP" : shepherd ? "M" : "W"), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(shepherd)]
+        if let paddock { a["paddock"] = .string(paddock) }
+        let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn", args: a),
             to: p.socket, timeoutSeconds: 60)
         guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
         return Term(id: id, token: try await tokenOf(d, id))
@@ -49,6 +50,19 @@ import CollieProtocol
             let m = try await term(d, p, shepherd: true)
             let e = try await call(p, m, ["value": "sometimes"]).error
             #expect(e?.code == .invalidArgs && e?.message.contains("ask|always|never") == true)
+        }
+    }
+
+    @Test func preferSetOnlyFromPasture() async throws {
+        try await withDaemon { d, p in
+            let m = try await term(d, p, shepherd: true)
+            #expect(try await call(p, m, ["value": "never"]).ok)
+            let repo = try await makeRepo(); defer { try? FileManager.default.removeItem(at: repo) }
+            let c = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "paddock.create", args: ["name": "u1", "repo": .string(repo.path)]), to: p.socket, timeoutSeconds: 60)
+            #expect(c.ok, "\(c)")
+            let mp = try await term(d, p, shepherd: true, paddock: "u1")
+            #expect(try await call(p, mp, ["value": "always"]).error?.code == .notShepherd)
+            #expect(value(try await call(p, mp)) == "never")
         }
     }
 }

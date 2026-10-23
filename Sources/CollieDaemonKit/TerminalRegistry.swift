@@ -22,7 +22,9 @@ public actor TerminalRegistry {
         let sb = ScrollbackBuffer(memoryCapBytes: memoryCapBytes,
                                   spillURL: spillDir.appendingPathComponent("\(rec.id.uuidString)-\(ms).log"))
         do {
-            let p = try PTYProcess(spec: cttyHelper.map(launch.throughControllingTerminal) ?? launch, scrollback: sb,
+            // checked per spawn: an app update can replace Helpers/ under a running daemon
+            let helper = cttyHelper.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+            let p = try PTYProcess(spec: helper.map(launch.throughControllingTerminal) ?? launch, scrollback: sb,
                                    writeStall: writeStall)
             do { try OrphanReaper.record(pid: p.pid, terminal: rec.id, in: runDir) } catch {
                 p.terminate()

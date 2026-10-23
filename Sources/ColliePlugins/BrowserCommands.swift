@@ -10,7 +10,35 @@ extension BrowserPanel {
     /// `browser.wait` stays below its 120 s command timeout so the reply (found or not) still gets back.
     static let waitMaxSeconds = 115
 
+    /// R8: an agent's command never leaves a visible panel holding the user's keyboard focus. Trusted Tab, a click into
+    /// a field or a page `focus()` make the web view its window's first responder; the window's previous one (the
+    /// user's terminal) gets it back. The page keeps its own focus (`activeElement`, `:focus-visible`).
     public func handle(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
+        guard !container.headless, let window = container.window else { return try await run(command, args) }
+        let before = window.firstResponder
+        defer {
+            restoreFocus(window, before)
+            // ponytail: WebKit can take first responder a turn late; one more check covers it
+            DispatchQueue.main.async { [weak self, weak window, weak before] in
+                MainActor.assumeIsolated { if let window { self?.restoreFocus(window, before) } }
+            }
+        }
+        return try await run(command, args)
+    }
+
+    /// Gives `before` back its first responder status when it was outside this panel and the page has taken it.
+    private func restoreFocus(_ window: NSWindow, _ before: NSResponder?) {
+        func inPanel(_ r: NSResponder?) -> Bool { (r as? NSView)?.isDescendant(of: container) == true }
+        guard window.firstResponder !== before, inPanel(window.firstResponder), !inPanel(before) else { return }
+        window.makeFirstResponder(before)
+    }
+
+    /// WebKit edits text only while the web view is first responder: it holds it until the keys settle, then `handle`
+    /// gives it back. Taken right before the keys (the page's own focus update then lands after them).
+    /// ponytail: keys the user types during that window (≤ the settle timeout) reach the page.
+    private func keyboard(_ web: WKWebView) { web.window?.makeFirstResponder(web) }
+
+    private func run(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         switch command {
         case "browser.navigate":
             let web = try live()
@@ -33,11 +61,11 @@ extension BrowserPanel {
             let text = try Self.string(args, "text")
             try BrowserInput.checkLength(text)
             guard let web = try trustedInput() else { return Self.untrusted(try await page("type", [text])) }
-            return try await settle("keyup", text.count, ms: 1000 + 20 * text.count) { () throws(ProtocolError) in try BrowserInput.type(web, text) }
+            return try await settle("keyup", text.count, ms: 1000 + 20 * text.count) { () throws(ProtocolError) in keyboard(web); try BrowserInput.type(web, text) }
         case "browser.key":
             let key = try BrowserInput.parse(try Self.string(args, "key"))
             guard let web = try trustedInput() else { return Self.untrusted(try await page("key", [key.name])) }
-            return try await settle("keyup", 1) { BrowserInput.press(web, key) }
+            return try await settle("keyup", 1) { keyboard(web); BrowserInput.press(web, key) }
         case "browser.scroll":
             let ref = try? Self.string(args, "ref"), dy = try Self.int(args, "dy")
             guard ref != nil || dy != nil else { throw ProtocolError(code: .invalidArgs, message: "give --ref or --dy") }

@@ -116,9 +116,11 @@ public extension PluginPanelView {
         live[id] = v
         // ponytail: headless is fixed at open (the daemon refuses moves in or out), so only creation hosts the view
         if p.placement == .headless {
-            let w = BrowserInput.HostWindow(contentRect: CGRect(x: -20000, y: -20000, width: 1, height: 1),
+            // Big bounds: once the web view is first responder WebKit drops moves outside its `visibleRect` (hover).
+            // The container still lays out as off screen, so the page keeps its viewport (`Container.offscreenFrame`).
+            let w = BrowserInput.HostWindow(contentRect: CGRect(x: -20000, y: -20000, width: 4096, height: 4096),
                                             styleMask: .borderless, backing: .buffered, defer: false)
-            v.view.frame = .zero   // an empty slot: the page keeps its viewport (`Container.offscreenFrame`)
+            v.view.frame = CGRect(x: 0, y: 0, width: 4096, height: 4096)
             w.contentView?.addSubview(v.view)
             hosts[id] = w
         }

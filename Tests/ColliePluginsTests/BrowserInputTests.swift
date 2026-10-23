@@ -9,13 +9,25 @@ import CollieProtocol
 /// Trusted keyboard and mouse input: the page hosted headless in a `BrowserInput.HostWindow` (local HTML only).
 @MainActor @Suite(.serialized) struct BrowserInputTests {
     @MainActor final class Hosted {
-        let b: BrowserPanel, window: NSWindow
-        init(_ b: BrowserPanel, _ w: NSWindow) { self.b = b; window = w }
-        func close() { b.close(); window.close() }
+        let b: BrowserPanel, window: NSWindow, done: () -> Void
+        init(_ b: BrowserPanel, _ w: NSWindow, done: @escaping () -> Void = {}) { self.b = b; window = w; self.done = done }
+        func close() { b.close(); window.close(); done() }
     }
 
-    func browser(_ html: String, slot: CGSize = CGSize(width: 600, height: 400), window: Bool = true) async throws -> Hosted {
+    /// `headless`: hosted the way production hosts a headless panel (`PanelViewStore`), not in a slot-sized window.
+    func browser(headless: Bool = false, _ html: String, slot: CGSize = CGSize(width: 600, height: 400), window: Bool = true) async throws -> Hosted {
         _ = NSApplication.shared
+        if headless {
+            PluginViews.register("browser", BrowserPanel.self)
+            let panel = Panel(id: UUID(), name: "b", pluginId: "browser", placement: .headless, state: [:])
+            let store = PanelViewStore(panels: { [panel] }) {
+                PanelHostContext(panel: $0, root: FileManager.default.temporaryDirectory, workspaceId: nil, call: { _, _ in .null }, emit: { _, _ in })
+            }
+            let b = try #require(store.instance(for: panel.id) as? BrowserPanel)
+            let w = try #require(b.webView?.window)
+            try await b.load(html: html)
+            return Hosted(b, w) { store.closeAll() }
+        }
         let panel = Panel(id: UUID(), name: "b", pluginId: "browser", placement: .dockRight, state: [:])
         let b = BrowserPanel(panel: panel, host: PanelHostContext(panel: panel, root: FileManager.default.temporaryDirectory,
                                                                   workspaceId: nil, call: { _, _ in .null }) { _, _ in })
@@ -50,22 +62,24 @@ import CollieProtocol
         <input id="one" aria-label="One"><button id="two">Two</button><a id="three" href="#x">Three</a><button id="four">Four</button>
         """
     let focused = "document.activeElement.id + '/' + (document.querySelector(':focus-visible') || {}).id"
+    // ponytail: in a window, R8 gives first responder back after each command: the page keeps `activeElement` but is
+    // unfocused, so `:focus-visible` no longer matches; checked headless only
 
-    @Test func tabMovesFocusVisible() async throws {
-        let h = try await browser(Self.tabbables); defer { h.close() }
+    @Test(arguments: [false, true]) func tabMovesFocusVisible(headless: Bool) async throws {
+        let h = try await browser(headless: headless, Self.tabbables); defer { h.close() }
         for _ in 0..<3 { #expect(try await run(h.b, "key", ["key": .string("Tab")])["trusted"] == .bool(true)) }
-        #expect(try await eval(h.b, focused) == .string("three/three"))
+        #expect(try await eval(h.b, headless ? focused : "document.activeElement.id") == .string(headless ? "three/three" : "three"))
     }
 
-    @Test func shiftTabBack() async throws {
-        let h = try await browser(Self.tabbables); defer { h.close() }
+    @Test(arguments: [false, true]) func shiftTabBack(headless: Bool) async throws {
+        let h = try await browser(headless: headless, Self.tabbables); defer { h.close() }
         for _ in 0..<3 { _ = try await run(h.b, "key", ["key": .string("Tab")]) }
         _ = try await run(h.b, "key", ["key": .string("Shift+Tab")])
-        #expect(try await eval(h.b, focused) == .string("two/two"))
+        #expect(try await eval(h.b, headless ? focused : "document.activeElement.id") == .string(headless ? "two/two" : "two"))
     }
 
-    @Test func hoverAppliesHoverStyle() async throws {
-        let h = try await browser("""
+    @Test(arguments: [false, true]) func hoverAppliesHoverStyle(headless: Bool) async throws {
+        let h = try await browser(headless: headless, """
             <style>#t { width: 100px; height: 40px } #t:hover { color: rgb(255, 0, 0) }</style>
             <script>window.moves = []; addEventListener('mousemove', e => moves.push(e.isTrusted))</script>
             <p>x</p><button id="t">Target</button>
@@ -78,8 +92,63 @@ import CollieProtocol
         #expect(try await eval(h.b, "moves.length > 0 && moves.every(x => x)") == .bool(true))
     }
 
-    @Test func clickIsTrusted() async throws {
-        let h = try await browser("""
+    /// Final review I1: once the page has focus (Tab, a click into a field, a page `focus()`), the web view is the host
+    /// window's first responder and WebKit drops moves outside its `visibleRect`: the headless host must be big.
+    @Test(arguments: ["tab", "click", "js"]) func headlessHoverAfterFocus(focus: String) async throws {
+        let h = try await browser(headless: true, """
+            <style>#t { width: 100px; height: 40px } #t:hover { color: rgb(255, 0, 0) }</style>
+            <input aria-label="Field"><button id="o">Other</button><button id="t">Target</button>
+            """)
+        defer { h.close() }
+        switch focus {
+        case "tab": _ = try await run(h.b, "key", ["key": .string("Tab")])
+        case "click": _ = try await run(h.b, "click", ["ref": .string(try await ref(h.b, "Field"))])
+        default: _ = try await eval(h.b, "document.querySelector('input').focus()")
+        }
+        _ = try await run(h.b, "hover", ["ref": .string(try await ref(h.b, "Other"))])
+        #expect(try await run(h.b, "hover", ["ref": .string(try await ref(h.b, "Target"))])["settled"] == .bool(true))
+        #expect(try await eval(h.b, "getComputedStyle(t).color") == .string("rgb(255, 0, 0)"))
+        #expect(try await eval(h.b, "innerWidth") == .number(1280))   // the big host never becomes the viewport
+    }
+
+    /// Ruling R8: agent input on a visible panel never takes the user's keyboard focus (their terminal keeps it), and
+    /// the page keeps its own focus.
+    @Test(arguments: ["tab", "click", "fill", "eval"]) func visiblePanelGivesFocusBack(path: String) async throws {
+        _ = NSApplication.shared
+        let panel = Panel(id: UUID(), name: "v", pluginId: "browser", placement: .canvas, state: [:])
+        let b = BrowserPanel(panel: panel, host: PanelHostContext(panel: panel, root: FileManager.default.temporaryDirectory,
+                                                                  workspaceId: nil, call: { _, _ in .null }) { _, _ in })
+        let w = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 900, height: 500), styleMask: [.titled], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        defer { b.close(); w.close() }
+        let terminal = NSTextView(frame: CGRect(x: 610, y: 0, width: 280, height: 400))
+        b.container.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+        w.contentView?.addSubview(b.container); w.contentView?.addSubview(terminal)
+        w.contentView?.layoutSubtreeIfNeeded()
+        #expect(w.makeFirstResponder(terminal))
+        try await b.load(html: #"<input id="one" aria-label="One"><button id="two">Two</button>"#)
+        switch path {
+        case "tab": _ = try await run(b, "key", ["key": .string("Tab")])
+        case "click": _ = try await run(b, "click", ["ref": .string(try await ref(b, "One"))])
+        case "fill": _ = try await run(b, "fill", ["ref": .string(try await ref(b, "One")), "text": .string("x")])
+        default: _ = try await eval(b, "one.focus()")
+        }
+        try await Task.sleep(for: .milliseconds(50))   // past the late re-check
+        #expect(w.firstResponder === terminal)
+        #expect(try await eval(b, "document.activeElement.id") == .string("one"))
+        // keys still edit the page's field (the web view holds first responder only while they settle); its caret
+        // survives, though WebKit reports `selectionStart` 0 while the page is unfocused
+        _ = try await run(b, "type", ["text": .string("q")])
+        #expect(try await eval(b, "one.value") == .string(path == "fill" ? "xq" : "q"))
+        _ = try await run(b, "key", ["key": .string("Meta+a")])
+        _ = try await run(b, "type", ["text": .string("Z")])
+        #expect(try await eval(b, "one.value") == .string("Z"))
+        #expect(terminal.string.isEmpty)
+        #expect(w.firstResponder === terminal)
+    }
+
+    @Test(arguments: [false, true]) func clickIsTrusted(headless: Bool) async throws {
+        let h = try await browser(headless: headless, """
             <script>window.seen = []</script>
             <button onclick="seen.push(event.isTrusted)" onmousedown="seen.push('down')">Go</button>
             """)
@@ -110,8 +179,8 @@ import CollieProtocol
         #expect(try await eval(h.b, "hits") == .array([.string("b"), .string("a"), .string("c")]))
     }
 
-    @Test func typeInsertsText() async throws {
-        let h = try await browser("""
+    @Test(arguments: [false, true]) func typeInsertsText(headless: Bool) async throws {
+        let h = try await browser(headless: headless, """
             <script>window.keys = []; addEventListener('keydown', e => keys.push(e.isTrusted))</script>
             <input aria-label="Name" id="n">
             """)
@@ -124,8 +193,8 @@ import CollieProtocol
         #expect(try await eval(h.b, "keys.length == 12 && keys.every(x => x)") == .bool(true))
     }
 
-    @Test func enterSubmitsForm() async throws {
-        let h = try await browser(#"<form onsubmit="event.preventDefault(); window.sent = this.q.value"><input name="q" aria-label="Q"></form>"#)
+    @Test(arguments: [false, true]) func enterSubmitsForm(headless: Bool) async throws {
+        let h = try await browser(headless: headless, #"<form onsubmit="event.preventDefault(); window.sent = this.q.value"><input name="q" aria-label="Q"></form>"#)
         defer { h.close() }
         _ = try await run(h.b, "click", ["ref": .string(try await ref(h.b, "Q"))])
         _ = try await run(h.b, "type", ["text": .string("ab")])
@@ -209,7 +278,9 @@ import CollieProtocol
         _ = try await run(h.b, "type", ["text": .string("abc")])
         let r = try await run(h.b, "key", ["key": .string("Meta+a")])
         #expect(r["settled"] == .bool(true))
-        #expect(await pollUntil { (try? await eval(h.b, "n.selectionStart + ',' + n.selectionEnd")) == .string("0,3") })
+        // typed over: the selection is all (R8 gives first responder back, and WebKit reports `selectionStart` 0 then)
+        _ = try await run(h.b, "type", ["text": .string("Z")])
+        #expect(await pollUntil { (try? await eval(h.b, "n.value")) == .string("Z") })
         for k in ["Meta+c", "Meta+x", "Meta+V"] {
             do { _ = try await run(h.b, "key", ["key": .string(k)]); Issue.record("expected invalidArgs for \(k)") }
             catch let e as ProtocolError { #expect(e.code == .invalidArgs && e.message.contains(k)) }

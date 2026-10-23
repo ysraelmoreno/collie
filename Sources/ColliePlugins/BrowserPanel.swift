@@ -51,6 +51,7 @@ import os
         content.add(WeakHandler(self), contentWorld: .page, name: BrowserAutomation.consoleHandler)
         web.navigationDelegate = self
         web.uiDelegate = self
+        container.headless = panel.placement == .headless   // fixed at open: the daemon refuses moves in or out
         container.web = web
         container.offscreenFrame()
         Self.liveIds.insert(panel.id)
@@ -280,6 +281,9 @@ import os
         let page = NSView()
         var web: WKWebView? { didSet { if let web { page.addSubview(web) } } }
         var viewport: CGSize? { didSet { needsLayout = true; offscreenFrame() } }
+        /// Hosted headless (`PanelViewStore`): its slot is the big never-shown host window, so it lays out as off screen.
+        var headless = false
+        private var offscreen: Bool { headless || superview == nil || bounds.isEmpty }
         /// Slot points per page CSS px (1 without a viewport or off screen). A CSS px (x, y) is at `page.frame.origin + (x, y) * scale` in this view.
         private(set) var scale: CGFloat = 1
         override var isFlipped: Bool { true }
@@ -287,7 +291,7 @@ import os
         required init?(coder: NSCoder) { fatalError() }
         override func layout() {
             super.layout()
-            if superview == nil || bounds.isEmpty { offscreenFrame(); return }
+            if offscreen { offscreenFrame(); return }
             guard let viewport else { place(CGRect(origin: .zero, size: bounds.size), viewport: bounds.size); return }
             let s = min(bounds.width / viewport.width, bounds.height / viewport.height, 1)
             let size = CGSize(width: viewport.width * s, height: viewport.height * s)
@@ -302,7 +306,7 @@ import os
         }
         /// Unmounted: the `browser.resize` viewport, else the last size it had, else 1280×800.
         func offscreenFrame() {
-            guard let web, superview == nil || bounds.isEmpty else { return }
+            guard let web, offscreen else { return }
             let size = viewport ?? (web.frame.isEmpty ? Self.defaultViewport : web.frame.size)
             place(CGRect(origin: .zero, size: size), viewport: size)
         }

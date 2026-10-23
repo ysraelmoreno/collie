@@ -144,19 +144,24 @@ extension BrowserPanel {
         (try? u.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
     }
 
-    /// Fixed viewport in a dock; a canvas node resizes itself to it.
+    /// The page's viewport, independent of the panel: the container shows it scaled down to fit its slot.
+    /// `--reset` goes back to filling the slot.
     private func resize(_ args: [String: JSONValue]) throws(ProtocolError) -> JSONValue {
         let web = try live()
-        let current = container.viewport ?? web.frame.size
-        func dim(_ key: String, _ fallback: CGFloat) throws(ProtocolError) -> CGFloat {
-            guard let v = try Self.int(args, key) else { return max(fallback.rounded(), 320) }
-            guard (320...4096).contains(v) else { throw ProtocolError(code: .invalidArgs, message: "\(key) must be 320-4096") }
-            return CGFloat(v)
+        if case .bool(true)? = args["reset"] {
+            container.viewport = nil
+        } else {
+            let current = container.viewport ?? web.frame.size
+            func dim(_ key: String, _ fallback: CGFloat) throws(ProtocolError) -> CGFloat {
+                guard let v = try Self.int(args, key) else { return max(fallback.rounded(), 200) }
+                guard (200...4096).contains(v) else { throw ProtocolError(code: .invalidArgs, message: "--\(key) must be 200-4096") }
+                return CGFloat(v)
+            }
+            container.viewport = CGSize(width: try dim("width", current.width), height: try dim("height", current.height))
         }
-        let size = CGSize(width: try dim("width", current.width), height: try dim("height", current.height))
-        container.viewport = size
-        (container.superview as? PanelContentSizing)?.setContentSize(size)
-        return .object(["width": .number(size.width), "height": .number(size.height)])
+        container.layoutSubtreeIfNeeded()
+        let size = container.viewport ?? web.frame.size
+        return .object(["width": .number(size.width), "height": .number(size.height), "scale": .number(Double(container.scale))])
     }
 
     /// Same document, other fragment: WebKit navigates in place, without didFinish.

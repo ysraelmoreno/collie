@@ -175,7 +175,7 @@ import CollieProtocol
         let b = try await browser("<body style='background:red'>x</body>", root: root)
         defer { b.close() }
         let r = try await run(b, "resize", ["width": .number(400), "height": .number(500)])
-        #expect(r == ["width": .number(400), "height": .number(500)])
+        #expect(r["width"] == .number(400) && r["height"] == .number(500))
         b.container.layoutSubtreeIfNeeded()
         #expect(b.webView?.frame.size == CGSize(width: 400, height: 500))   // no self-sizing host: fixed viewport
         do { _ = try await run(b, "resize", ["width": .number(100)]); Issue.record("expected invalidArgs") }

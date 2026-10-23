@@ -53,7 +53,9 @@ public enum PluginRegistry {
                  ParamSpec("timeout", .int, help: "Seconds (default 10, max 120)")], timeout: 120),
             cmd("screenshot", "Screenshot to a PNG file; returns {path}"),
             cmd("console", "Recent console lines", [ParamSpec("lines", .int, help: "Lines (default 100, max 500)")]),
-            cmd("resize", "Resize the viewport", [ParamSpec("width", .int, help: "320-4096"), ParamSpec("height", .int, help: "320-4096")]),
+            cmd("resize", "Set the page viewport (the panel keeps its size; the page is shown scaled to fit); returns {width, height, scale}",
+                [ParamSpec("width", .int, help: "200-4096"), ParamSpec("height", .int, help: "200-4096 (default: the current one)"),
+                 ParamSpec("reset", .flag, help: "Back to filling the panel")]),
         ],
         events: ["browser.loaded", "browser.console"])
 }

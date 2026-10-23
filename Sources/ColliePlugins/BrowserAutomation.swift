@@ -217,6 +217,18 @@ enum BrowserAutomation {
         return { scrollY: Math.round(window.scrollY) };
       }
 
+      // the element's box in viewport CSS px, scrolled into view and cut to the viewport (for a clipped screenshot)
+      function rect(ref) {
+        const el = find(ref);
+        if (!el) return missing(ref);
+        el.scrollIntoView({ block: 'center', inline: 'center' });
+        const b = el.getBoundingClientRect();
+        const x = Math.max(b.left, 0), y = Math.max(b.top, 0);
+        const w = Math.min(b.right, innerWidth) - x, h = Math.min(b.bottom, innerHeight) - y;
+        if (!(w > 0 && h > 0)) return fail('invalidArgs', 'ref ' + ref + ' has no visible area');
+        return { x, y, width: w, height: h };
+      }
+
       // MutationObserver for prompt detection, polling for changes it can't see (layout, visibility).
       function wait(text, selector, ms) {
         const ok = () => selector ? !!document.querySelector(selector)
@@ -237,7 +249,7 @@ enum BrowserAutomation {
         });
       }
 
-      const api = { snapshot, text, click, fill, type, key, scroll, wait };
+      const api = { snapshot, text, click, fill, type, key, scroll, rect, wait };
       Object.defineProperty(window, '__collie', { value: Object.freeze(api), configurable: false, writable: false, enumerable: false });
     })();
     """#

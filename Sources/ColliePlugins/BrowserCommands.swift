@@ -40,7 +40,7 @@ extension BrowserPanel {
         case "browser.eval":
             return try await eval(try Self.string(args, "js"))
         case "browser.screenshot":
-            return try await screenshot()
+            return try await screenshot(args)
         case "browser.console":
             let n = min(max(try Self.int(args, "lines") ?? 100, 1), Self.consoleCap)
             return await BrowserAutomation.boundedOffMain(["output": .string(consoleLines.suffix(n).joined(separator: "\n"))], key: "output")
@@ -94,21 +94,103 @@ extension BrowserPanel {
         }
     }
 
+    /// 16384 output pixels: past this a PNG is unwieldy (and CGContext/WebKit start failing).
+    static let screenshotMaxPixels = 16384
+
     /// PNG `<root>/screens/<panelId>-<uuid>.png` (dir 0700; removed with the panel); only the newest `screenshotKeep` are kept. Encoding, writing and pruning
-    /// run off the main actor (a large page is a large PNG).
-    private func screenshot() async throws(ProtocolError) -> JSONValue {
+    /// run off the main actor (a large page is a large PNG). `--clip x,y,w,h` (viewport CSS px) or `--ref` crops; `--full-page` tiles the document.
+    private func screenshot(_ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         let web = try live()
+        let clip = try? Self.string(args, "clip"), ref = try? Self.string(args, "ref")
+        let full = args["full-page"] == .bool(true)
+        guard clip == nil || ref == nil else { throw ProtocolError(code: .invalidArgs, message: "give --clip or --ref, not both") }
+        guard !full || (clip == nil && ref == nil) else { throw ProtocolError(code: .invalidArgs, message: "--full-page cannot combine with --clip or --ref") }
         container.offscreenFrame()
+        let cg: CGImage
+        if full { cg = try await fullPage(web) }
+        else if let clip { cg = try await snapshot(web, rect: try Self.clipRect(clip, in: web.bounds.size)) }
+        else if let ref {
+            let r = try await page("rect", [ref])
+            guard case .number(let x)? = r["x"], case .number(let y)? = r["y"], case .number(let w)? = r["width"], case .number(let h)? = r["height"] else {
+                throw ProtocolError(code: .internal, message: "browser: bad rect reply")
+            }
+            cg = try await snapshot(web, rect: CGRect(x: x, y: y, width: w, height: h))
+        } else { cg = try await snapshot(web, rect: nil) }
+        let dir = host.root.appendingPathComponent("screens", isDirectory: true)
+        let prefix = panel.id.uuidString + "-"
+        return try await BrowserAutomation.offMain { Self.savePNG(cg, in: dir, prefix: prefix) }.get()
+    }
+
+    private func snapshot(_ web: WKWebView, rect: CGRect?) async throws(ProtocolError) -> CGImage {
+        let config = WKSnapshotConfiguration()
+        if let rect { config.rect = rect }   // the web view's bounds are the page viewport (1:1 with CSS px)
         let image: NSImage
-        do { image = try await web.takeSnapshot(configuration: nil) } catch {
+        do { image = try await web.takeSnapshot(configuration: config) } catch {
             throw ProtocolError(code: .unavailable, message: "screenshot failed: \(error.localizedDescription)")
         }
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             throw ProtocolError(code: .unavailable, message: "screenshot: the page has no size")
         }
-        let dir = host.root.appendingPathComponent("screens", isDirectory: true)
-        let prefix = panel.id.uuidString + "-"
-        return try await BrowserAutomation.offMain { Self.savePNG(cg, in: dir, prefix: prefix) }.get()
+        return cg
+    }
+
+    /// `x,y,w,h` in viewport CSS px, cut to the viewport.
+    static func clipRect(_ s: String, in viewport: CGSize) throws(ProtocolError) -> CGRect {
+        let n = s.split(separator: ",", omittingEmptySubsequences: false).map { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard n.count == 4, !n.contains(where: { $0 == nil || !$0!.isFinite }), n[2]! > 0, n[3]! > 0 else {
+            throw ProtocolError(code: .invalidArgs, message: "--clip must be x,y,w,h (numbers, w and h > 0)")
+        }
+        let r = CGRect(x: n[0]!, y: n[1]!, width: n[2]!, height: n[3]!).intersection(CGRect(origin: .zero, size: viewport))
+        guard !r.isNull, !r.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "--clip is outside the viewport (\(Int(viewport.width))x\(Int(viewport.height)))") }
+        return r
+    }
+
+    /// Tiles: scroll by the viewport height, snapshot each, stitch at backing scale; the frame is never resized (`vh` keeps its
+    /// meaning) and the scroll position is restored. The last tile is the partial one: the page clamps its scroll, so it overlaps
+    /// the previous tile and is drawn at its real offset.
+    /// ponytail: viewport width only (no horizontal tiling); fixed/sticky elements repeat per tile; scrolling inside a nested container is not followed.
+    private func fullPage(_ web: WKWebView) async throws(ProtocolError) -> CGImage {
+        let vh = Int(web.bounds.height)
+        let doc = try await Self.pageNumbers(web, "return [Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), scrollX, scrollY]")
+        let height = max(doc[0], vh)
+        var ctx: CGContext?
+        var scale = 0.0
+        var result: ProtocolError?
+        let tiles = (height + vh - 1) / vh
+        tileLoop: for i in 0..<tiles {
+            do throws(ProtocolError) {
+                let y = try await Self.pageNumbers(web, """
+                    scrollTo({ top: \(i * vh), left: 0, behavior: 'instant' });
+                    await new Promise(r => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 150); });
+                    return [scrollY]
+                    """)[0]
+                let tile = try await snapshot(web, rect: nil)
+                if ctx == nil {
+                    scale = Double(tile.width) / web.bounds.width
+                    let h = Int((Double(height) * scale).rounded())
+                    guard h <= Self.screenshotMaxPixels else {
+                        throw ProtocolError(code: .invalidArgs, message: "--full-page: the page is \(h) px tall, over the \(Self.screenshotMaxPixels) px cap; use --clip or --ref")
+                    }
+                    ctx = CGContext(data: nil, width: tile.width, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                    space: tile.colorSpace ?? CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)
+                    guard ctx != nil else { throw ProtocolError(code: .internal, message: "screenshot: cannot allocate \(tile.width)x\(h)") }
+                }
+                let top = Int((Double(y) * scale).rounded())
+                ctx!.draw(tile, in: CGRect(x: 0, y: ctx!.height - top - tile.height, width: tile.width, height: tile.height))
+            } catch { result = error; break tileLoop }
+        }
+        _ = try? await Self.pageNumbers(web, "scrollTo({ top: \(doc[2]), left: \(doc[1]), behavior: 'instant' }); return [0]")
+        if let result { throw result }
+        guard let cg = ctx?.makeImage() else { throw ProtocolError(code: .unavailable, message: "screenshot: the page has no size") }
+        return cg
+    }
+
+    /// Runs `body` (async function body returning an array of numbers) in the page world.
+    private static func pageNumbers(_ web: WKWebView, _ body: String) async throws(ProtocolError) -> [Int] {
+        do {
+            let r = try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page) as? [Any]
+            return (r ?? []).map { ($0 as? NSNumber)?.intValue ?? 0 }
+        } catch { throw ProtocolError(code: .unavailable, message: "screenshot failed: \(BrowserAutomation.jsMessage(error))") }
     }
 
     nonisolated static func removeScreenshots(in dir: URL, prefix: String) {

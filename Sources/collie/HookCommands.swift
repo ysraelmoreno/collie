@@ -65,25 +65,10 @@ enum HookCommands {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
         guard env["COLLIE_STATUSLINE_CHILD"] == nil,   // recursion guard: we are already inside a user statusLine
               let sd = try? Data(contentsOf: settings), let cmd = ClaudeRateLimits.userStatusLineCommand(settings: sd),
-              !cmd.contains("claude-statusline") else { return }   // ponytail: also skips a user command that is us
-        let p = Process(), inp = Pipe(), out = Pipe()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", cmd]
-        p.environment = env.merging(["COLLIE_STATUSLINE_CHILD": "1"]) { $1 }
-        p.standardInput = inp; p.standardOutput = out; p.standardError = FileHandle.nullDevice
-        let done = DispatchSemaphore(value: 0)
-        p.terminationHandler = { _ in done.signal() }
-        guard (try? p.run()) != nil else { return }
-        var captured = Data()
-        let reader = Thread { captured = out.fileHandleForReading.readDataToEndOfFile(); done.signal() }
-        reader.start()
-        DispatchQueue.global().async { try? inp.fileHandleForWriting.write(contentsOf: data); try? inp.fileHandleForWriting.close() }
-        // both the exit and the EOF on stdout must happen, within 5 s
-        let deadline = DispatchTime.now() + 5
-        if done.wait(timeout: deadline) == .timedOut || done.wait(timeout: deadline) == .timedOut {
-            p.terminate(); log("claude-statusline: user command timed out"); return
+              !ClaudeRateLimits.invokesOurHook(cmd) else { return }
+        if let out = ClaudeRateLimits.runUserCommand(cmd, stdin: data, env: env.merging(["COLLIE_STATUSLINE_CHILD": "1"]) { $1 }) {
+            FileHandle.standardOutput.write(out)
         }
-        FileHandle.standardOutput.write(captured)
     }
 
     /// `command` with the terminal's credentials (COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN).

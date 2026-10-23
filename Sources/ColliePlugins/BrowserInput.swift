@@ -9,11 +9,18 @@ import WebKit
 @MainActor enum BrowserInput {
     enum MouseKind { case move, click }
 
-    /// Hosts a page that is never shown (headless): never ordered in, and reports itself key so WebKit treats the page
-    /// as active (`:hover`, `:focus-visible`, mouse moves). AppKit's real key window is unaffected.
+    /// Hosts a page that is never shown (headless): reports itself key so WebKit treats the page as active (`:hover`,
+    /// `:focus-visible`, mouse moves) while AppKit's real key window stays the user's (it can't become key or main).
+    /// Never order it in, and never use it for a visible panel: that one keeps its real window's key state.
     final class HostWindow: NSWindow {
-        override var canBecomeKey: Bool { true }
+        override var canBecomeKey: Bool { false }
+        override var canBecomeMain: Bool { false }
         override var isKeyWindow: Bool { true }
+        override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+            super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
+            isExcludedFromWindowsMenu = true
+            isReleasedWhenClosed = false
+        }
     }
 
     /// `name`: the DOM `key` value (what the JS fallback takes).
@@ -48,10 +55,21 @@ import WebKit
         guard name.count == 1 else {
             throw ProtocolError(code: .invalidArgs, message: "key: unknown key '\(name)' (Enter, Tab, Escape, Backspace, Delete, Space, arrows, Home, End, PageUp, PageDown or one character)")
         }
+        if mods.contains(.command), ["c", "x", "v"].contains(name.lowercased()) {
+            throw ProtocolError(code: .invalidArgs, message: "key: \(spec) is not supported (the clipboard is the user's)")
+        }
         return Key(name: name, chars: name, code: 0, mods: mods)
     }
 
-    static func key(_ web: WKWebView, _ spec: String) throws(ProtocolError) { send(web, [try parse(spec)]) }
+    /// Meta+a: its menu re-send is dropped (see `ours`), so select-all is done on the web view itself.
+    static func isSelectAll(_ k: Key) -> Bool { k.mods.intersection([.command, .control, .option, .shift]) == .command && k.name.lowercased() == "a" }
+
+    static func key(_ web: WKWebView, _ spec: String) throws(ProtocolError) { press(web, try parse(spec)) }
+
+    static func press(_ web: WKWebView, _ k: Key) {
+        send(web, [k])
+        if isSelectAll(k) { web.selectAll(nil) }
+    }
 
     /// One key press per character (`\n` is Enter).
     /// ponytail: keyCode 0 for characters (the page's `event.code` is wrong for them; `key` is right); map a layout if it matters.
@@ -96,25 +114,30 @@ import WebKit
         }
     }
 
-    /// A key event the page doesn't handle goes back to `NSApp.sendEvent` (WebKit re-sends it), which hands it to the
-    /// app's key window (the user's terminal) or its menus (Meta+q): ours are dropped there.
-    /// Ours are told apart by identity (WebKit re-sends the same object), kept 30 s.
+    /// A keyDown the page doesn't handle goes back to `NSApp.sendEvent` (WebKit re-sends the same object, however
+    /// late the page answers), which hands it to the app's key window (the user's terminal) or its menus: ours are
+    /// dropped there. Only keyDowns are re-sent; one leaves the list when it is dropped.
+    /// ponytail: bounded by count, never by age: the last `keep` keyDowns (a handled one is never re-sent, so it only
+    /// leaves by count). A re-send gets through only if its page stays unanswered across 4096 later keys; drop on settle if that ever matters.
+    static var keep = 4096
     private static var sent: [NSEvent] = []
     private static var monitor: Any?
     private(set) static var dropped = 0
     private static func ours(_ e: NSEvent) {
+        guard e.type == .keyDown else { return }
         if monitor == nil {
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { e in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { e in
                 let id = ObjectIdentifier(e)
                 let drop = MainActor.assumeIsolated {
-                    guard sent.contains(where: { ObjectIdentifier($0) == id }) else { return false }
+                    guard let i = sent.firstIndex(where: { ObjectIdentifier($0) == id }) else { return false }
+                    sent.remove(at: i)
                     dropped += 1
                     return true
                 }
                 return drop ? nil : e
             }
         }
-        sent.removeAll { e.timestamp - $0.timestamp > 30 }
         sent.append(e)
+        if sent.count > keep { sent.removeFirst(sent.count - keep) }
     }
 }

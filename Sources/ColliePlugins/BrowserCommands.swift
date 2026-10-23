@@ -32,11 +32,11 @@ extension BrowserPanel {
         case "browser.type":
             let text = try Self.string(args, "text")
             guard let web = try trustedInput() else { return Self.untrusted(try await page("type", [text])) }
-            return try await settle("keyup", text.count) { BrowserInput.type(web, text) }
+            return try await settle("keyup", text.count, ms: 1000 + 20 * text.count) { BrowserInput.type(web, text) }
         case "browser.key":
             let key = try BrowserInput.parse(try Self.string(args, "key"))
             guard let web = try trustedInput() else { return Self.untrusted(try await page("key", [key.name])) }
-            return try await settle("keyup", 1) { BrowserInput.send(web, [key]) }
+            return try await settle("keyup", 1) { BrowserInput.press(web, key) }
         case "browser.scroll":
             let ref = try? Self.string(args, "ref"), dy = try Self.int(args, "dy")
             guard ref != nil || dy != nil else { throw ProtocolError(code: .invalidArgs, message: "give --ref or --dy") }
@@ -72,13 +72,13 @@ extension BrowserPanel {
 
     private static func untrusted(_ r: [String: JSONValue]) -> JSONValue { .object(r.merging(["trusted": .bool(false)]) { $1 }) }
 
-    /// Sends trusted events and replies once the page has seen `count` trusted `event`s (or 1 s passed: a disabled
-    /// control, a move to where the pointer already is), so the next command sees their effect.
-    private func settle(_ event: String, _ count: Int, _ send: () -> Void) async throws(ProtocolError) -> JSONValue {
-        _ = try await page("arm", [event, count, 1000])
+    /// Sends trusted events and replies once the page has seen `count` trusted `event`s, so the next command sees their
+    /// effect; after `ms` (a disabled control, a move to where the pointer already is, a busy page) `settled: false`.
+    private func settle(_ event: String, _ count: Int, ms: Int = 1000, _ send: () -> Void) async throws(ProtocolError) -> JSONValue {
+        _ = try await page("arm", [event, count, ms])
         send()
-        _ = try await page("settled", [])
-        return .object(["ok": .bool(true), "trusted": .bool(true)])
+        let r = try await page("settled", [])
+        return .object(["ok": .bool(true), "trusted": .bool(true), "settled": r["seen"] ?? .bool(false)])
     }
 
     /// Click or hover at the center of the ref's visible box (scrolled into view first).

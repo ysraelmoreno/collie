@@ -44,7 +44,7 @@ public enum PluginRegistry {
             cmd("fill", "Fill an input", [ParamSpec("ref", .string, positional: true, required: true, help: "Element ref"),
                                          ParamSpec("text", .rest, positional: true, required: true, help: "Text")]),
             cmd("type", "Type text into the focused element", [ParamSpec("text", .rest, positional: true, required: true, help: "Text")]),
-            cmd("key", "Press a key", [ParamSpec("key", .string, positional: true, required: true, help: "Enter, Tab, Shift+Tab, Escape, ArrowDown, Meta+a...")]),
+            cmd("key", "Press a key", [ParamSpec("key", .string, positional: true, required: true, help: "Enter, Tab, Shift+Tab, Escape, ArrowDown, Meta+a (select all)...; Meta+c/x/v are refused (no clipboard access)")]),
             cmd("scroll", "Scroll an element into view or by dy pixels",
                 [ParamSpec("ref", .string, help: "Element ref"), ParamSpec("dy", .int, help: "Vertical pixels")]),
             cmd("eval", "Evaluate JavaScript", [ParamSpec("js", .rest, positional: true, required: true, help: "JavaScript")]),

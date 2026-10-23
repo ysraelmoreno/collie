@@ -141,6 +141,55 @@ import CollieProtocol
         #expect(await pollUntil { BrowserInput.dropped > before })
     }
 
+    /// I1: a re-send that comes back late (page busy), after later keys were sent, is still dropped: nothing reaches
+    /// a monitor installed after ours (AppKit calls them in order; the key window comes after both).
+    @Test func lateResendIsStillDropped() async throws {
+        let h = try await browser("""
+            <script>addEventListener('keydown', e => { if (e.key === 'Enter') { const t = Date.now(); while (Date.now() - t < 1500); } })</script><p>x</p>
+            """)
+        defer { h.close() }
+        let web = try #require(h.b.webView)
+        _ = try await run(h.b, "key", ["key": .string("x")])   // our monitor is installed
+        var leaked: [String] = []
+        let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { e in
+            let c = e.characters ?? ""
+            MainActor.assumeIsolated { leaked.append(c) }
+            return e
+        }
+        defer { NSEvent.removeMonitor(m!) }
+        let keep = BrowserInput.keep; BrowserInput.keep = 2; defer { BrowserInput.keep = keep }
+        let before = BrowserInput.dropped
+        try BrowserInput.key(web, "Enter")   // stalls the page 1.5 s, then comes back unhandled
+        try BrowserInput.key(web, "y")       // sent while Enter is pending
+        #expect(await pollUntil(10) { BrowserInput.dropped >= before + 2 })
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(leaked.isEmpty)
+        // a sanity check that the leak monitor sees what isn't ours
+        NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                                         characters: "q", charactersIgnoringModifiers: "q", isARepeat: false, keyCode: 12)!)
+        #expect(leaked == ["q"])
+    }
+
+    @Test func metaASelectsAllAndClipboardIsRefused() async throws {
+        let h = try await browser(#"<input aria-label="Name" id="n">"#); defer { h.close() }
+        _ = try await run(h.b, "click", ["ref": .string(try await ref(h.b, "Name"))])
+        _ = try await run(h.b, "type", ["text": .string("abc")])
+        let r = try await run(h.b, "key", ["key": .string("Meta+a")])
+        #expect(r["settled"] == .bool(true))
+        #expect(await pollUntil { (try? await eval(h.b, "n.selectionStart + ',' + n.selectionEnd")) == .string("0,3") })
+        for k in ["Meta+c", "Meta+x", "Meta+V"] {
+            do { _ = try await run(h.b, "key", ["key": .string(k)]); Issue.record("expected invalidArgs for \(k)") }
+            catch let e as ProtocolError { #expect(e.code == .invalidArgs && e.message.contains(k)) }
+        }
+    }
+
+    @Test func replyTellsWhetherInputSettled() async throws {
+        let h = try await browser("<input aria-label='In'>"); defer { h.close() }
+        _ = try await run(h.b, "click", ["ref": .string(try await ref(h.b, "In"))])
+        #expect(try await run(h.b, "type", ["text": .string(String(repeating: "a", count: 200))])["settled"] == .bool(true))
+        #expect(try await eval(h.b, "document.querySelector('input').value.length") == .number(200))
+    }
+
     @Test func noWindowFallsBackToScript() async throws {
         let h = try await browser("<script>window.n = 0</script><button onclick=\"n++\">Inc</button>", window: false); defer { h.close() }
         let r = try await run(h.b, "click", ["ref": .string(try await ref(h.b, "Inc"))])

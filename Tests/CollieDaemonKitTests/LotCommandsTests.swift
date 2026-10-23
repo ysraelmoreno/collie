@@ -86,6 +86,30 @@ private func leash(_ d: Daemon, _ p: Paths, _ a: String, _ b: String) async thro
         }
     }
 
+    /// Joining is the memory/board boundary: a Shepherd joins only its own lot or one whose every live member it reaches.
+    @Test func shepherdJoinsOnlyReachedLots() async throws {
+        try await withDaemon { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            _ = try await term(d, p, "W"); _ = try await term(d, p, "Secret"); _ = try await term(d, p, "V")
+            try await leash(d, p, "M", "W"); try await leash(d, p, "M", "V")
+            #expect(try await admin(d, p, "lot.create", ["name": .string("Checkout"), "members": .string("Secret")]).ok)
+            for t in ["M", "W"] {   // itself or a reached terminal into a stranger's lot: refused, no member named
+                let r = try await call(p, m, "lot.join", ["terminal": t, "lot": "Checkout"])
+                #expect(r.error?.code == .notConnected && r.error?.message.contains("Secret") == false, "\(r)")
+            }
+            #expect(try await lots(d, p).first { $0.name == "Checkout" }?.members.count == 1)
+            // a lot whose live members are all reached: ok; then it is M's own lot
+            #expect(try await admin(d, p, "lot.create", ["name": .string("Mine"), "members": .string("W")]).ok)
+            #expect(try await call(p, m, "lot.join", ["lot": "Mine"]).ok)
+            #expect(try await call(p, m, "lot.join", ["terminal": "V", "lot": "Mine"]).ok)
+            #expect(members(try await call(p, m, "lot.get")) == ["M", "V", "W"])
+            // a lot with no live terminals: the user's only
+            #expect(try await admin(d, p, "lot.create", ["name": .string("Old")]).ok)
+            #expect(try await call(p, m, "lot.join", ["terminal": "W", "lot": "Old"]).error?.code == .notConnected)
+            #expect(try await admin(d, p, "lot.join", ["terminal": .string("W"), "lot": .string("Old")]).ok)
+        }
+    }
+
     @Test func summonInheritsLot() async throws {
         try await withDaemon { d, p in
             let m = try await term(d, p, "M", shepherd: true)

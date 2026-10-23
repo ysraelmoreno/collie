@@ -125,14 +125,18 @@ extension CommandRouter {
         }
 
         // one lot for the herd: its terminals, and the applying Shepherd when it is in no lot yet (join would move it)
-        var lotName = j.paddock?.name ?? applyName, n = 2
-        while ws.lots.contains(where: { $0.name.caseInsensitiveCompare(lotName) == .orderedSame }) { lotName = "\(j.paddock?.name ?? applyName)-\(n)"; n += 1 }
-        let lot = Lot(name: String(lotName.prefix(64)), goal: String(pt.summary.prefix(500)),
+        let base = String((j.paddock?.name ?? applyName).prefix(64))
+        var lotName = base, n = 2   // unique after the 64-character cut
+        while ws.lots.contains(where: { $0.name.caseInsensitiveCompare(lotName) == .orderedSame }) {
+            let s = "-\(n)"; lotName = String(base.prefix(64 - s.count)) + s; n += 1
+        }
+        let lot = Lot(name: lotName, goal: String(pt.summary.prefix(500)),
                       paddockId: j.paddock?.id ?? caller?.paddockId ?? onPaddock?.id)
         var members = j.terminals.map(\.rec.id)
         if let me = caller, ws.lot(of: me.id) == nil { members.insert(me.id, at: 0) }
+        let lotsBefore = ws.lots
         ws.lots.append(lot)
-        do { try await place(members, in: lot.id) } catch { warnings.append("lote \(lot.name) não foi salvo") }   // the herd stands either way
+        do { try await place(members, in: lot.id) } catch { ws.lots = lotsBefore; warnings.append("lote \(lot.name) não foi salvo") }   // the herd stands either way
 
         // the app places the nodes; frames are relative to the herd's corner (the applier stands at its Shepherd's)
         var frames: [String: HerdFrame] = [:]
@@ -150,7 +154,7 @@ extension CommandRouter {
             "warnings": .array(warnings.map { .string($0) }),
         ]
         if let f = j.paddock { out["paddock"] = .object(["id": .string(f.id.uuidString), "name": .string(f.name)]) }
-        out["lot"] = .object(["id": .string(lot.id.uuidString), "name": .string(lot.name)])
+        if ws.lots.contains(where: { $0.id == lot.id }) { out["lot"] = .object(["id": .string(lot.id.uuidString), "name": .string(lot.name)]) }
         return .object(out)
     }
 

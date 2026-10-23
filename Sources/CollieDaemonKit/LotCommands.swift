@@ -44,13 +44,23 @@ extension CommandRouter {
             var ids: [UUID] = []
             for n in names(r, "members") { let t = try target(n); if !ids.contains(t.id) { ids.append(t.id) } }
             let lot = Lot(name: name, goal: goal, paddockId: paddock)
+            let before = ws.lots
             ws.lots.append(lot)
-            try await place(ids, in: lot.id)
+            do { try await place(ids, in: lot.id) } catch { ws.lots = before; throw error }   // memory must match disk
             return describe(ws.lots.first { $0.id == lot.id } ?? lot, for: caller)
         case "lot.join":
             if let me = caller, !me.isShepherd { throw refuse("'lot.join' is Shepherd-only") }
             let t = try subject()
             let lot = try findLot(try need(r, "lot"))
+            // joining is the memory/board boundary: a Shepherd joins only its own lot, or one whose every live member it
+            // is or reaches; a lot without live terminals is the user's (no member names in the refusal)
+            if let me = caller, ws.lot(of: me.id)?.id != lot.id {
+                let reach = Set([me.id] + ConnectionGraph.reachable(from: me.id, in: ws).map(\.id))
+                let live = lot.members.filter { m in ws.terminals.contains { $0.id == m } }
+                guard !live.isEmpty, live.allSatisfy(reach.contains) else {
+                    throw ProtocolError(code: .notConnected, message: "No reach to every terminal of lot '\(lot.name)'")
+                }
+            }
             try await place([t.id], in: lot.id)
             return describe(ws.lots.first { $0.id == lot.id } ?? lot, for: caller)
         case "lot.leave":
@@ -84,11 +94,12 @@ extension CommandRouter {
 
     /// Moves `ids` into lot `lot` (nil: out of any lot), out of whichever lot held them; persists, emits each changed lot.
     func place(_ ids: [UUID], in lot: UUID?) async throws {
+        let before = ws.lots
         var changed = Set<UUID>()
         if let lot { changed.insert(lot) }   // a new lot is emitted even with no members
         for id in ids { if let l = dropFromLot(id) { changed.insert(l.id) } }
         if let lot, let i = ws.lots.firstIndex(where: { $0.id == lot }) { ws.lots[i].members += ids }
-        try await persist()
+        do { try await persist() } catch { ws.lots = before; throw error }
         for l in ws.lots where changed.contains(l.id) { await hub.emit(.lot(l)) }
     }
 

@@ -14,6 +14,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var badges: [UUID: StatusBadge] = [:]
     public private(set) var paddocks: [Paddock] = []
     public private(set) var panels: [Panel] = []
+    public private(set) var lots: [Lot] = []
     /// `BuildID` of the connected daemon (nil: not connected yet, or a daemon that predates it).
     public private(set) var daemonBuild: String?
     /// The `ui.host` role: `.replaced` when another Collie window took it (see `resumeHost()`).
@@ -125,6 +126,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             connections = snap.connections
             paddocks = snap.paddocks
             panels = snap.panels
+            lots = snap.lots
             daemonBuild = snap.build
             workspaceId = (try? String(contentsOf: paths.root.appendingPathComponent("default-workspace"), encoding: .utf8))
                 .flatMap { UUID(uuidString: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
@@ -167,6 +169,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             terminals.removeAll { $0.id == id }
             connections.removeAll { $0.a == id || $0.b == id }
             badges[id] = nil
+            for i in lots.indices { lots[i].members.removeAll { $0 == id } }   // the daemon's .lot follows; same result
         case .connected(let c): if !connections.contains(where: { same($0, c) }) { connections.append(c) }
         case .disconnected(let c): connections.removeAll { same($0, c) }
         case .status(let id, let b): badges[id] = b
@@ -181,6 +184,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             panels.removeAll { $0.id == id }
             connections.removeAll { $0.a == id || $0.b == id }
         case .pluginEvent(let panel, let name, let payload): pluginEventHandler?(panel, name, payload)
+        case .lot(let l):
+            if let i = lots.firstIndex(where: { $0.id == l.id }) { lots[i] = l } else { lots.append(l) }
+        case .lotRemoved(let id): lots.removeAll { $0.id == id }
         case .herdApplied(let by, let anchor, let frames, let paddock): onHerdApplied?(by, anchor, frames, paddock)
         }
     }
@@ -238,6 +244,20 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         if force { args["force"] = .bool(true) }
         _ = try await admin("paddock.delete", args, timeout: 300)
     }
+    public func createLot(name: String, goal: String) async throws {
+        _ = try await admin("lot.create", ["name": .string(name), "goal": .string(goal)])
+    }
+    /// `lot` nil: out of its lot.
+    public func setLot(_ terminal: String, _ lot: String?) async throws {
+        if let lot { _ = try await admin("lot.join", ["terminal": .string(terminal), "lot": .string(lot)]) }
+        else { _ = try await admin("lot.leave", ["terminal": .string(terminal)]) }
+    }
+    public func deleteLot(_ name: String) async throws { _ = try await admin("lot.delete", ["lot": .string(name)]) }
+    /// The lot `terminal` is in (at most one).
+    public func lot(of terminal: UUID) -> Lot? { lots.first { $0.members.contains(terminal) } }
+    /// Lots the user may delete: none of their members is still a terminal.
+    public func isEmpty(_ lot: Lot) -> Bool { !lot.members.contains { m in terminals.contains { $0.id == m } } }
+
     public func usage() async throws -> [UsageReport] {
         guard let r = try await admin("ui.usage", [:], timeout: 130) else { return [] }
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601

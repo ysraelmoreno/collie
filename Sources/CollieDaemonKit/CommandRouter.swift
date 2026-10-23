@@ -144,7 +144,7 @@ actor CommandRouter {
             let running = await registry.process(t.id)?.isRunning == true
             badges[t.id.uuidString] = running ? live[t.id] : .stopped
         }
-        let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, paddocks: ws.paddocks, panels: ws.panels, build: config.build)
+        let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, paddocks: ws.paddocks, panels: ws.panels, lots: ws.lots, build: config.build)
         return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(snap))
     }
 
@@ -194,6 +194,9 @@ actor CommandRouter {
             }
             if req.command.hasPrefix("work."), req.command != "work.hook" {   // admin or terminal; reach rules in workCommand
                 return Response(id: req.id, ok: true, result: try await workCommand(req, peer: peer))
+            }
+            if req.command.hasPrefix("lot.") {   // admin or terminal; reach rules in lotCommand
+                return Response(id: req.id, ok: true, result: try await lotCommand(req, peer: peer))
             }
             if req.command.hasPrefix("herd.") {   // admin or Shepherd; app-only ones checked in herdCommand
                 return Response(id: req.id, ok: true, result: try await herdCommand(req, peer: peer))
@@ -491,8 +494,10 @@ actor CommandRouter {
         ws.terminals.removeAll { $0.id == t.id }
         let gone = ws.connections.filter { $0.a == t.id || $0.b == t.id }
         ws.connections.removeAll { $0.a == t.id || $0.b == t.id }
+        let left = dropFromLot(t.id)   // the lot itself stays, even empty
         try await persist()
         for c in gone { await hub.emit(.disconnected(c)) }
+        if let left { await hub.emit(.lot(left)) }
         await hub.emit(.removed(t.id))
         await closeRemoved(terminal: t.id, cwd: t.cwd)
         await closeHeadless(of: t.id)

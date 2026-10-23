@@ -17,6 +17,7 @@ struct TerminalSheet: View {
     @State private var command: String
     @State private var cwd: String
     @State private var shepherd: Bool
+    @State private var lotId: UUID?
     @State private var error: String?
     @State private var busy = false
 
@@ -35,6 +36,7 @@ struct TerminalSheet: View {
         case .edit(let t):
             _name = State(initialValue: t.name); _presetRaw = State(initialValue: t.preset.rawValue)
             _command = State(initialValue: t.command ?? ""); _cwd = State(initialValue: t.cwd); _shepherd = State(initialValue: t.isShepherd)
+            _lotId = State(initialValue: client.lot(of: t.id)?.id)
         }
     }
 
@@ -44,6 +46,7 @@ struct TerminalSheet: View {
         client.paddocks.first { $0.id == (original.map(\.paddockId) ?? client.currentPaddock) }
     }
     private var preset: Preset { Preset(rawValue: presetRaw) ?? .shell }
+    private var chosenLot: Lot? { client.lots.first { $0.id == lotId } }
     private var newClaudeFolder: Bool {
         original == nil && preset == .claude
             && !(UserDefaults.standard.stringArray(forKey: Self.trustedKey) ?? []).contains(paddock?.path ?? cwd)
@@ -79,6 +82,12 @@ struct TerminalSheet: View {
                 field("Cercado") {
                     Text(paddock?.name ?? "Pasto").font(.collieUI(14)).foregroundStyle(Color.collieTextSecondary).frame(height: 36)
                 }
+            }
+            field("Lote") {
+                Picker("Lote", selection: $lotId) {
+                    ForEach(LotChoice.all(client.lots)) { Text($0.title).tag($0.id) }
+                }
+                .labelsHidden().frame(maxWidth: 260, alignment: .leading)
             }
             if paddock == nil {
                 field("Pasta") {
@@ -149,6 +158,7 @@ struct TerminalSheet: View {
             do {
                 let id = try await client.spawn(name: n, preset: preset, command: preset == .custom ? c : nil, cwd: dir,
                                            shepherd: shepherd, paddock: paddock?.name)
+                if let l = chosenLot { try await client.setLot(n, l.name) }   // grouping only, never a leash
                 if case .create(let at?) = mode {
                     canvas.setFrame(CGRect(origin: at, size: CanvasState.defaultTerminalSize), for: id)
                 }
@@ -170,6 +180,7 @@ struct TerminalSheet: View {
             do {
                 try await client.update(o.name, newName: c.newName, shepherd: c.shepherd, preset: c.preset,
                                         command: c.command, cwd: c.cwd, restart: restart)
+                if client.lot(of: o.id)?.id != lotId { try await client.setLot(c.newName ?? o.name, chosenLot?.name) }
                 dismiss()
             } catch { self.error = "\(error)"; busy = false }
         }

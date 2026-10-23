@@ -264,6 +264,27 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
         }
     }
 
+    /// The herd's terminals become a lot named after the application; the applying Shepherd joins when it has no lot.
+    @Test func herdApplyCreatesLot() async throws {
+        let fx = try FakeAgents(); defer { fx.cleanup() }
+        try await withDaemon(configure: fx.configure) { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            let r = try await call(p, m, "herd.apply", ["id": .string("investigar-bug"), "name": .string("x")])
+            guard case .object(let o)? = r.result, case .object(let lot)? = o["lot"] else { Issue.record("\(r)"); return }
+            #expect(lot["name"] == .string("x"))
+            let s = try await snapshot(d, p)
+            let l = try #require(s.lots.first)
+            #expect(s.lots.count == 1 && l.goal == bug.summary)
+            #expect(Set(l.members) == Set(s.terminals.map(\.id)))   // M, x-investigador, x-testes
+            // a second application gets its own lot; the app's has no Shepherd to add
+            #expect(try await apply(d, p, ["id": .string("investigar-bug"), "name": .string("y"), "cwd": .string("/tmp")]).ok)
+            let after = try await snapshot(d, p)
+            let y = try #require(after.lots.first { $0.name == "y" })
+            #expect(Set(y.members) == Set(after.terminals.filter { $0.name.hasPrefix("y-") }.map(\.id)) && y.members.count == 3)
+            #expect(after.lots.first { $0.name == "x" }?.members.count == 3)
+        }
+    }
+
     @Test func changedSincePreviewIsRefused() async throws {
         let fx = try FakeAgents(); defer { fx.cleanup() }
         try await withDaemon(configure: fx.configure) { d, p in

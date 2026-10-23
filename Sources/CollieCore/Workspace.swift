@@ -67,10 +67,11 @@ public struct Workspace: Codable, Sendable, Equatable {
     public var panels: [Panel]
     public var designSystem: UUID?   // active design system of pasture and of paddocks without their own
     public var designFirst: DesignFirst = .ask   // set only by `design.prefer` / Preferences
+    public var lots: [Lot] = []
     public init(id: UUID, name: String, terminals: [TerminalRecord] = [], connections: [Connection] = [], paddocks: [Paddock] = [], panels: [Panel] = []) {
         self.id = id; self.name = name; self.terminals = terminals; self.connections = connections; self.paddocks = paddocks; self.panels = panels
     }
-    private enum K: String, CodingKey { case schemaVersion, id, name, terminals, connections, paddocks, panels, designSystem, designFirst }
+    private enum K: String, CodingKey { case schemaVersion, id, name, terminals, connections, paddocks, panels, designSystem, designFirst, lots }
     private enum Legacy: String, CodingKey { case floors }   // before the herding vocabulary
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -82,6 +83,7 @@ public struct Workspace: Codable, Sendable, Equatable {
         panels = try c.decodeIfPresent([Panel].self, forKey: .panels) ?? []   // v1/v2 files have none
         designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
         designFirst = (try? c.decodeIfPresent(DesignFirst.self, forKey: .designFirst)) ?? .ask   // an unknown value must never discard the workspace
+        lots = ((try? c.decodeIfPresent([Lossy<Lot>].self, forKey: .lots)) ?? []).compactMap(\.value)   // a bad entry is dropped, never the workspace
     }
     // schemaVersion always writes the current version (a decoded v1 file is re-saved as 3).
     public func encode(to encoder: Encoder) throws {
@@ -89,6 +91,7 @@ public struct Workspace: Codable, Sendable, Equatable {
         try c.encode(schemaVersion, forKey: .schemaVersion); try c.encode(id, forKey: .id); try c.encode(name, forKey: .name)
         try c.encode(terminals, forKey: .terminals); try c.encode(connections, forKey: .connections); try c.encode(paddocks, forKey: .paddocks)
         try c.encode(panels, forKey: .panels); try c.encodeIfPresent(designSystem, forKey: .designSystem)
+        if !lots.isEmpty { try c.encode(lots, forKey: .lots) }
         if designFirst != .ask { try c.encode(designFirst, forKey: .designFirst) }   // ponytail: the default is never written
     }
 }

@@ -107,12 +107,13 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var badges: [String: StatusBadge]
     public var paddocks: [Paddock]
     public var panels: [Panel]
+    public var lots: [Lot]
     /// `BuildID` of the daemon's executable (nil from a daemon that predates it).
     public var build: String?
-    public init(terminals: [TerminalRecord], connections: [Connection], badges: [String: StatusBadge], paddocks: [Paddock] = [], panels: [Panel] = [], build: String? = nil) {
-        self.terminals = terminals; self.connections = connections; self.badges = badges; self.paddocks = paddocks; self.panels = panels; self.build = build
+    public init(terminals: [TerminalRecord], connections: [Connection], badges: [String: StatusBadge], paddocks: [Paddock] = [], panels: [Panel] = [], lots: [Lot] = [], build: String? = nil) {
+        self.terminals = terminals; self.connections = connections; self.badges = badges; self.paddocks = paddocks; self.panels = panels; self.lots = lots; self.build = build
     }
-    private enum K: String, CodingKey { case terminals, connections, badges, paddocks, panels, build }
+    private enum K: String, CodingKey { case terminals, connections, badges, paddocks, panels, lots, build }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         terminals = try c.decode([TerminalRecord].self, forKey: .terminals)
@@ -120,6 +121,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         badges = try c.decode([String: StatusBadge].self, forKey: .badges)
         paddocks = try c.decodeIfPresent([Paddock].self, forKey: .paddocks) ?? []
         panels = try c.decodeIfPresent([Panel].self, forKey: .panels) ?? []
+        lots = ((try? c.decodeIfPresent([Lossy<Lot>].self, forKey: .lots)) ?? []).compactMap(\.value)
         build = try c.decodeIfPresent(String.self, forKey: .build)
     }
 }
@@ -131,12 +133,13 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
          paddock(Paddock), paddockRemoved(UUID), notify(UUID, message: String),   // paddock/panel = upsert
          panel(Panel), panelRemoved(UUID), pluginEvent(panel: UUID, name: String, payload: JSONValue),
          terminal(TerminalRecord),   // upsert (edited in place)
+         lot(Lot), lotRemoved(UUID),   // lot = upsert
          /// A herd was applied: `by` the applying terminal (nil = the app), `anchor` the Shepherd whose frame the
          /// layout is relative to (nil: none), `frames` by terminal/panel id, `paddock` the paddock it created (nil: none).
          /// The app places the nodes.
          herdApplied(by: UUID?, anchor: UUID?, frames: [String: HerdFrame], paddock: UUID?)
 
-    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock }
+    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -155,6 +158,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case "terminal": self = .terminal(try c.decode(TerminalRecord.self, forKey: .r))
         case "panel": self = .panel(try c.decode(Panel.self, forKey: .p))
         case "panelRemoved": self = .panelRemoved(try id())
+        case "lot": self = .lot(try c.decode(Lot.self, forKey: .l))
+        case "lotRemoved": self = .lotRemoved(try id())
         case "pluginEvent": self = .pluginEvent(panel: try id(), name: try c.decode(String.self, forKey: .name), payload: try c.decode(JSONValue.self, forKey: .payload))
         case "herdApplied":
             self = .herdApplied(by: try c.decodeIfPresent(UUID.self, forKey: .by), anchor: try c.decodeIfPresent(UUID.self, forKey: .anchor),
@@ -180,6 +185,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .terminal(let r): try c.encode("terminal", forKey: .t); try c.encode(r, forKey: .r)
         case .panel(let x): try c.encode("panel", forKey: .t); try c.encode(x, forKey: .p)
         case .panelRemoved(let id): try c.encode("panelRemoved", forKey: .t); try c.encode(id, forKey: .id)
+        case .lot(let x): try c.encode("lot", forKey: .t); try c.encode(x, forKey: .l)
+        case .lotRemoved(let id): try c.encode("lotRemoved", forKey: .t); try c.encode(id, forKey: .id)
         case .pluginEvent(let id, let n, let pl):
             try c.encode("pluginEvent", forKey: .t); try c.encode(id, forKey: .id); try c.encode(n, forKey: .name); try c.encode(pl, forKey: .payload)
         case .herdApplied(let by, let anchor, let frames, let paddock):

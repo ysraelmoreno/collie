@@ -256,6 +256,7 @@ private struct WorkspaceSidebar: View {
                 }
             }
             HerdsSection(ctx: ctx)
+            LotsSection(client: client)
             section("USO")
             usage
             Button { openSettings() } label: {
@@ -347,6 +348,68 @@ private struct HerdsSection: View {
             Button("Aplicar…") { ctx.openHerds(nil) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
         }
         .task(id: ctx.client.state == .connected) { if ctx.client.state == .connected { await model.refresh() } }
+    }
+}
+
+/// LOTES: terminals grouped by effort (name, goal, members). Only a lot without terminals can be deleted (its memories stay).
+private struct LotsSection: View {
+    let client: DaemonClient
+    @State private var deleting: Lot?
+    @State private var creating = false
+    @State private var newName = ""
+    @State private var newGoal = ""
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("LOTES").font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
+            ForEach(client.lots) { l in
+                let names = LotSummary.memberNames(l, terminals: client.terminals)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(l.name).font(.collieUI(13, .medium)).foregroundStyle(Color.collieText).lineLimit(1)
+                    if !l.goal.isEmpty { Text(l.goal).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(2) }
+                    Text(names.isEmpty ? "sem terminais" : names.joined(separator: ", "))
+                        .font(.collieMono(10)).foregroundStyle(Color.collieMuted).lineLimit(2)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 4).frame(maxWidth: .infinity, alignment: .leading).contentShape(.rect)
+                .help(LotSummary.help(l, names: names))
+                .contextMenu {
+                    Button("Apagar lote…") { deleting = l }.disabled(!client.isEmpty(l))
+                }
+            }
+            Button("Novo lote…") { newName = ""; newGoal = ""; creating = true }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+            if let error { Text(error).font(.collieUI(11)).foregroundStyle(Color.collieDanger).lineLimit(3) }
+        }
+        .confirmationDialog("Apagar o lote \(deleting?.name ?? "")?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
+            Button("Apagar lote", role: .destructive) { if let l = deleting { run { try await client.deleteLot(l.name) } } }
+            Button("Cancelar", role: .cancel) {}
+        } message: { Text("As memórias do lote continuam guardadas.") }
+        .alert("Novo lote", isPresented: $creating) {
+            TextField("Nome", text: $newName)
+            TextField("Objetivo", text: $newGoal)
+            Button("Criar") {
+                let n = newName.trimmingCharacters(in: .whitespaces), g = newGoal
+                if !n.isEmpty { run { try await client.createLot(name: n, goal: g) } }
+            }
+            Button("Cancelar", role: .cancel) {}
+        } message: { Text("Agrupa terminais de um mesmo esforço. Não liga ninguém: só a guia dá alcance.") }
+    }
+
+    private func run(_ op: @escaping () async throws -> Void) {
+        error = nil
+        Task { do { try await op() } catch { self.error = "\(error)" } }
+    }
+}
+
+/// The sidebar's copy for a lot (tested without the app).
+enum LotSummary {
+    /// Member names in lot order; ids that are no longer terminals are skipped.
+    static func memberNames(_ l: Lot, terminals: [TerminalRecord]) -> [String] {
+        l.members.compactMap { m in terminals.first { $0.id == m }?.name }
+    }
+    static func help(_ l: Lot, names: [String]) -> String {
+        [l.name, l.goal.isEmpty ? nil : l.goal, names.isEmpty ? "sem terminais" : "\(names.count) terminal\(names.count == 1 ? "" : "is")"]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 }
 

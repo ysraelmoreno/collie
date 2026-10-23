@@ -124,6 +124,16 @@ extension CommandRouter {
             throw ProtocolError(code: e.code, message: e.message + (all.isEmpty ? "" : " (" + all.joined(separator: "; ") + ")"))
         }
 
+        // one lot for the herd: its terminals, and the applying Shepherd when it is in no lot yet (join would move it)
+        var lotName = j.paddock?.name ?? applyName, n = 2
+        while ws.lots.contains(where: { $0.name.caseInsensitiveCompare(lotName) == .orderedSame }) { lotName = "\(j.paddock?.name ?? applyName)-\(n)"; n += 1 }
+        let lot = Lot(name: String(lotName.prefix(64)), goal: String(pt.summary.prefix(500)),
+                      paddockId: j.paddock?.id ?? caller?.paddockId ?? onPaddock?.id)
+        var members = j.terminals.map(\.rec.id)
+        if let me = caller, ws.lot(of: me.id) == nil { members.insert(me.id, at: 0) }
+        ws.lots.append(lot)
+        do { try await place(members, in: lot.id) } catch { warnings.append("lote \(lot.name) não foi salvo") }   // the herd stands either way
+
         // the app places the nodes; frames are relative to the herd's corner (the applier stands at its Shepherd's)
         var frames: [String: HerdFrame] = [:]
         var ids: [String: UUID] = Dictionary(uniqueKeysWithValues: j.terminals.map { ($0.key, $0.rec.id) } + j.panels.map { ($0.key, $0.panel.id) })
@@ -140,6 +150,7 @@ extension CommandRouter {
             "warnings": .array(warnings.map { .string($0) }),
         ]
         if let f = j.paddock { out["paddock"] = .object(["id": .string(f.id.uuidString), "name": .string(f.name)]) }
+        out["lot"] = .object(["id": .string(lot.id.uuidString), "name": .string(lot.name)])
         return .object(out)
     }
 

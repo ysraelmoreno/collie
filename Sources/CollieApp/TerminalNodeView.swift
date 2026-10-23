@@ -46,7 +46,8 @@ import CollieTheme
             restart: { [weak self] in self?.restart() },
             kill: { [weak self] in self?.kill() },
             edit: { [weak self] in self?.edit() },
-            closeNode: { [weak self] in self?.confirmClose() }))
+            closeNode: { [weak self] in self?.confirmClose() },
+            setLot: { [weak self] in self?.setLot($0) }))
         title.onDrag = { [weak self] d in self?.move(d) }
         title.onClick = { [weak self] in self?.focus() }
         title.menuProvider = { [weak self] e in self?.menu(for: e) }
@@ -122,9 +123,24 @@ import CollieTheme
         m.addItem(ActionItem("Editar…") { [weak self] in self?.edit() })
         m.addItem(ActionItem("Reiniciar") { [weak self] in self?.restart() })
         m.addItem(ActionItem("Matar") { [weak self] in self?.kill() })
+        let lots = NSMenuItem(title: "Lote", action: nil, keyEquivalent: ""), sub = NSMenu()
+        let mine = client.lot(of: id)?.id
+        for choice in LotChoice.all(client.lots) {
+            let item = ActionItem(choice.title) { [weak self] in self?.setLot(choice.lot) }
+            item.state = choice.lot?.id == mine ? .on : .off
+            sub.addItem(item)
+        }
+        lots.submenu = sub
+        m.addItem(lots)
         m.addItem(.separator())
         m.addItem(ActionItem("Fechar nó…") { [weak self] in self?.confirmClose() })
         return m
+    }
+
+    /// Grouping only: a lot never leashes anything.
+    private func setLot(_ lot: Lot?) {
+        guard let name else { return }
+        Task { do { try await client.setLot(name, lot?.name) } catch { Log.canvas.error("lot \(name): \(error)") } }
     }
 
     private var name: String? { client.terminals.first { $0.id == id }?.name }
@@ -438,6 +454,7 @@ struct NodeTitleBar: View {
     let client: DaemonClient
     let model: NodeModel
     let restart: () -> Void, kill: () -> Void, edit: () -> Void, closeNode: () -> Void
+    let setLot: (Lot?) -> Void
 
     var body: some View {
         let t = client.terminals.first { $0.id == id }
@@ -450,6 +467,7 @@ struct NodeTitleBar: View {
                 Text("pastoreando \(client.connections.filter { $0.a == id || $0.b == id }.count)").foregroundStyle(Color.collieMuted)
             }
             Text(t?.preset.rawValue ?? "").foregroundStyle(Color.collieMuted).lineLimit(1)
+            if let l = client.lot(of: id) { CollieTag(l.name, tone: .secondary).help(l.goal.isEmpty ? "Lote \(l.name)" : "Lote \(l.name): \(l.goal)") }
             if case .disconnected = client.state { Text("desconectado").foregroundStyle(Color.collieDanger) }
             if let text = status.text { Text(text).foregroundStyle(color(status)).lineLimit(1) }
             if case .stopped = status { Button("Reiniciar", action: restart).controlSize(.mini) }
@@ -458,6 +476,12 @@ struct NodeTitleBar: View {
                 Button("Editar…", action: edit)
                 Button("Reiniciar", action: restart)
                 Button("Matar", action: kill)
+                Menu("Lote") {
+                    let mine = client.lot(of: id)?.id
+                    ForEach(LotChoice.all(client.lots)) { c in
+                        Toggle(c.title, isOn: Binding(get: { c.lot?.id == mine }, set: { _ in setLot(c.lot) }))
+                    }
+                }
                 Divider()
                 Button("Fechar nó…", action: closeNode)
             } label: { Image(systemName: "ellipsis") }
@@ -478,4 +502,12 @@ struct NodeTitleBar: View {
         case .stopped: .collieDanger
         }
     }
+}
+
+/// One entry of the "Lote" pickers: no lot, then every lot by name.
+struct LotChoice: Identifiable, Equatable {
+    let lot: Lot?
+    var id: UUID? { lot?.id }
+    var title: String { lot?.name ?? "Sem lote" }
+    static func all(_ lots: [Lot]) -> [LotChoice] { [LotChoice(lot: nil)] + lots.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map { LotChoice(lot: $0) } }
 }

@@ -67,7 +67,7 @@ extension CommandRouter {
     }
 
     /// A list given as an array of names or one comma-separated string.
-    private func names(_ r: Request, _ k: String) -> [String] {
+    func names(_ r: Request, _ k: String) -> [String] {
         switch r.args[k] {
         case .array(let a)?: return a.compactMap { if case .string(let s) = $0 { s.trimmingCharacters(in: .whitespaces) } else { nil } }.filter { !$0.isEmpty }
         case .string(let s)?: return s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }

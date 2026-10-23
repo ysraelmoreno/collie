@@ -32,9 +32,9 @@ enum Client {
 
     private static func send(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         var token = env["COLLIE_TOKEN"], terminalId = env["COLLIE_TERMINAL_ID"]
-        // paddock.* / memory.* / work.* outside a terminal (no COLLIE_TOKEN) is the user: admin token
+        // paddock.* / memory.* / work.* / lot.* outside a terminal (no COLLIE_TOKEN) is the user: admin token
         if command.hasPrefix("admin.") || command.hasPrefix("ui.")
-            || ((command.hasPrefix("paddock.") || command.hasPrefix("memory.") || command.hasPrefix("work.")) && token == nil) {
+            || ((command.hasPrefix("paddock.") || command.hasPrefix("memory.") || command.hasPrefix("work.") || command.hasPrefix("lot.")) && token == nil) {
             let file = env["COLLIE_ADMIN_TOKEN_FILE"].map { URL(fileURLWithPath: $0) } ?? Paths().adminTokenFile
             guard let t = try? String(contentsOf: file, encoding: .utf8) else {
                 throw ProtocolError(code: .unauthorized, message: "cannot read admin token at \(file.path)")

@@ -39,4 +39,19 @@ import CollieProtocol
         #expect(visibleTerminals(all, paddock: nil).map(\.name) == ["g"])
         #expect(visibleTerminals(all, paddock: fl).map(\.name) == ["x"])
     }
+
+    @Test func appliesLotEvents() {
+        let c = DaemonClient(paths: Paths(root: URL(fileURLWithPath: "/tmp/collie-none")))
+        let t = TerminalRecord(id: UUID(), name: "a", preset: .shell, command: nil, cwd: "/", isShepherd: false)
+        c.apply(.spawned(t))
+        var l = Lot(name: "L", members: [t.id])
+        c.apply(.lot(l)); c.apply(.lot(Lot(name: "M")))
+        #expect(c.lots.map(\.name) == ["L", "M"] && c.lot(of: t.id)?.name == "L" && !c.isEmpty(l))
+        l.goal = "g"; c.apply(.lot(l))   // upsert by id
+        #expect(c.lots.count == 2 && c.lots[0].goal == "g")
+        c.apply(.removed(t.id))
+        #expect(c.lot(of: t.id) == nil && c.isEmpty(c.lots[0]))
+        c.apply(.lotRemoved(l.id))
+        #expect(c.lots.map(\.name) == ["M"])
+    }
 }

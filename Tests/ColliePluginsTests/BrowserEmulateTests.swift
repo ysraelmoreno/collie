@@ -147,7 +147,11 @@ import CollieProtocol
         #expect(try await js(b, "getComputedStyle(document.getElementById('shadowHost').shadowRoot.getElementById('inShadow')).color") == rgb(8))
         #expect(try await settle(b, "imp", rgb(5)))             // @import ... media
         #expect(try await settle(b, "cross", rgb(6)))           // link media attribute (sheet itself unreadable)
-        if case .number(let n)? = r["uncoveredSheets"] { #expect(n >= 0) }
+        let settled = try await emulate(b, [:])   // all sheets loaded by now
+        // the opaque-origin data: <link> is unreadable: reported, though its media attribute was still rewritten
+        if case .number(let n)? = settled["uncoveredSheets"] { #expect(n >= 1 && n <= 2) } else { Issue.record("no uncoveredSheets") }
+        #expect(settled["uncoveredShadowRoots"] == .number(0))
+        _ = r
         // a sheet added after the emulation
         _ = try await js(b, "document.head.insertAdjacentHTML('beforeend', '<style>@media (prefers-reduced-motion: reduce) { #late { color: rgb(7, 7, 7); } }</style>'); 1")
         #expect(try await settle(b, "late", rgb(7)))
@@ -186,5 +190,34 @@ import CollieProtocol
         }
         #expect(r["uncoveredSheets"] != .number(0))
         #expect(r["uncoveredShadowRoots"] == .number(1))
+    }
+
+    /// Emulation already on when the page creates its shadow root / adopts a sheet: the wrapper and setter paths.
+    @Test func emulationBeforeShadowRootAndAdoptedSheet() async throws {
+        let b = try await browser(); defer { b.close() }
+        _ = try await emulate(b, ["reduced-motion": .string("reduce")])
+        try await b.load(html: """
+        <p id=adopt>.</p><div id=h></div>
+        <script>
+          const sh = document.getElementById('h').attachShadow({ mode: 'open' });
+          sh.innerHTML = '<b id=s>.</b>';
+          const sty = document.createElement('style');   // a sheet added to the root after it exists
+          sty.textContent = '@media (prefers-reduced-motion: reduce) { b { color: rgb(8, 8, 8); } }';
+          sh.appendChild(sty);
+          const sheet = new CSSStyleSheet();
+          sheet.replaceSync('@media (prefers-reduced-motion: reduce) { #adopt { color: rgb(9, 9, 9); } }');
+          document.adoptedStyleSheets = [sheet];
+        </script>
+        """)
+        let inShadow = "getComputedStyle(document.getElementById('h').shadowRoot.getElementById('s')).color"
+        var ok = false
+        for _ in 0..<50 {
+            if try await js(b, inShadow) == rgb(8), try await js(b, color("adopt")) == rgb(9) { ok = true; break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(ok)
+        _ = try await emulate(b, ["reduced-motion": .string("system")])
+        #expect(try await js(b, inShadow) == rgb(0))
+        #expect(try await js(b, color("adopt")) == rgb(0))
     }
 }

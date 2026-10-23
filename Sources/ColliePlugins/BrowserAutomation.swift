@@ -299,7 +299,13 @@ enum BrowserAutomation {
           };
           // open shadow roots, registered by the attachShadow wrapper (closed ones can't be reached: counted)
           const roots = new Set(); let closed = 0;
-          const watch = root => { roots.add(new WeakRef(root)); new MutationObserver(later).observe(root, { childList: true, subtree: true }); };
+          const seen = new WeakSet();
+          const watch = root => {
+            if (cur === 'system' || seen.has(root)) return;   // not while off: switching on scans for roots
+            seen.add(root); roots.add(new WeakRef(root));
+            new MutationObserver(watched).observe(root, { childList: true, subtree: true });
+          };
+          const scan = n => { for (const el of n.querySelectorAll('*')) if (el.shadowRoot) { watch(el.shadowRoot); scan(el.shadowRoot); } };
           const scope = d => { for (const s of Array.from(d.styleSheets)) sheet(s); for (const s of Array.from(d.adoptedStyleSheets || [])) sheet(s); };
           const apply = () => {
             uncovered = 0; scope(document);
@@ -308,6 +314,7 @@ enum BrowserAutomation {
           let queued = false;
           function later() { if (queued || cur === 'system') return; queued = true; queueMicrotask(() => { queued = false; apply(); }); }
           const sheetNode = n => n.nodeType === 1 && (/^(STYLE|LINK)$/.test(n.nodeName) || !!n.querySelector('style,link'));
+          function watched(ms) { if (cur !== 'system' && ms.some(x => Array.from(x.addedNodes).some(sheetNode))) later(); }
           const mm = window.matchMedia;
           window.matchMedia = function (q) { return mm.call(this, rewrite(String(q))); };
           const attach = Element.prototype.attachShadow;
@@ -320,11 +327,10 @@ enum BrowserAutomation {
             const d = Object.getOwnPropertyDescriptor(P, 'adoptedStyleSheets');
             if (d && d.set) Object.defineProperty(P, 'adoptedStyleSheets', { ...d, set(v) { d.set.call(this, v); later(); } });
           }
-          for (const el of document.querySelectorAll('*')) if (el.shadowRoot) watch(el.shadowRoot);   // installed after load
           document.addEventListener('DOMContentLoaded', later);
           document.addEventListener('load', later, true);
-          new MutationObserver(ms => { if (cur !== 'system' && ms.some(x => Array.from(x.addedNodes).some(sheetNode))) later(); }).observe(document, { childList: true, subtree: true });
-          m = { set(v) { cur = v; apply(); }, uncovered: () => uncovered, closedRoots: () => closed };
+          new MutationObserver(watched).observe(document, { childList: true, subtree: true });
+          m = { set(v) { cur = v; if (v !== 'system') scan(document); apply(); }, uncovered: () => uncovered, closedRoots: () => closed };
           Object.defineProperty(window, '__collieMotion', { value: m });
           m.set(mode);
         })();

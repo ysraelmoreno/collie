@@ -100,7 +100,15 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool { s.c
             #expect(try await call(p, a, "panel.open", ["plugin": "browser", "name": "qa"]).ok)
             #expect(names(try await call(p, b, "panel.list")) == [])
             #expect(names(try await call(p, m2, "panel.list")) == [])
-            #expect(names(try await call(p, m, "panel.list")) == ["qa"])   // the creator's leashed Shepherd
+            #expect(names(try await call(p, m, "panel.list")) == ["qa"])   // the creator's leashed Shepherd: listed only
+            for (cmd, args) in [("browser.snapshot", [:]), ("browser.eval", ["js": "1"]), ("browser.fill", ["ref": "e1", "text": "x"]),
+                                ("browser.storage", ["action": "clear"]), ("events", [:]), ("unleash", ["a": "M", "b": "qa"])] {
+                let r = try await call(p, m, cmd, args.merging(cmd == "unleash" ? [:] : ["panel": "qa"]) { $1 })
+                #expect(r.error?.code == .notConnected, "\(cmd): \(r)")
+            }
+            let herd = try await call(p, m, "herd.save", ["name": "H", "terminals": "A", "panels": "qa"])
+            #expect(herd.error?.code == .notConnected, "\(herd)")
+            #expect(try await call(p, m, "panel.move", ["name": "qa", "placement": "canvas"]).error?.code == .notShepherd)
             #expect(names(try await admin(d, p, "panel.list")) == ["qa"])
             // B can't drive or close it; A's other browsers don't count against B
             #expect(try await call(p, b, "browser.snapshot", ["panel": "qa"]).error?.code == .notConnected)
@@ -109,6 +117,17 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool { s.c
             #expect(try await call(p, b, "panel.open", ["plugin": "browser", "name": "qb"]).ok)
             #expect(names(try await call(p, b, "panel.list")) == ["qb"])
             #expect(names(try await call(p, a, "panel.list")) == ["qa"])
+        }
+    }
+
+    @Test func exitedTerminalCannotOpen() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            try await d.process(a.uuid)?.write(Data("exit\n".utf8))
+            #expect(await waitFor(10) { await d.process(a.uuid)?.isRunning == false })
+            #expect(try await call(p, a, "panel.open", ["plugin": "browser"]).error?.code == .notRunning)
+            #expect(try await call(p, a, "panel.open", ["plugin": "browser", "visible": "true"]).error?.code == .notRunning)
+            #expect(try await snapshot(d, p).panels.isEmpty)
         }
     }
 

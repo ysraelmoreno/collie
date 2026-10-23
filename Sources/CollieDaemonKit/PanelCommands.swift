@@ -7,8 +7,8 @@ struct PanelEvent: Sendable { let seq: Int; let name: String; let payload: JSONV
 let panelEventCap = 200
 
 /// `panel.*` and `events`: the admin token (same managed-terminal ancestry check as `admin.*`) or a terminal token.
-/// Terminals see only reachable panels (canvas: leashed; dock: everyone; headless: its creator and the creator's leashed
-/// Shepherd). A Shepherd opens any panel, closes the ones it created or is leashed to, and moves only its own. Any other
+/// Terminals see only reachable panels (canvas: leashed; dock: everyone; headless: its creator; `panel.list` also lists it
+/// to the creator's leashed Shepherd, which can't reach it). A Shepherd opens any panel, closes the ones it created or is leashed to, and moves only its own. Any other
 /// terminal opens only browsers (headless unless `--visible`, leashed to it, at most `testerBrowserCap`) and closes and
 /// moves only its own.
 extension CommandRouter {
@@ -21,7 +21,7 @@ extension CommandRouter {
 
         switch r.command {
         case "panel.list":
-            return try isoJSON(visible)
+            return try isoJSON(visible + (caller.map { ConnectionGraph.listedHeadless(from: $0.id, in: ws) } ?? []))
         case "panel.open":
             let pluginId = try need(r, "plugin")
             if tester, pluginId != "browser" { throw refuse("a terminal that isn't a Shepherd opens only browser panels") }
@@ -35,6 +35,11 @@ extension CommandRouter {
             }
             if placement == .headless, caller == nil {   // nothing would ever close it
                 throw ProtocolError(code: .invalidArgs, message: "placement headless is for terminals")
+            }
+            // a request still in flight from an exited terminal would leave a panel nothing closes; no await after this
+            // until the panel is appended (cap, name), except the device/design lookups
+            if let me = caller, await registry.process(me.id)?.isRunning != true {
+                throw ProtocolError(code: .notRunning, message: "terminal '\(me.name)' is not running")
             }
             if tester, let me = caller, ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == "browser" }) >= Self.testerBrowserCap {
                 throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open browsers per terminal; close one with `panel close`")

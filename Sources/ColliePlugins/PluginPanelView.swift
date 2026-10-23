@@ -129,6 +129,7 @@ public extension PluginPanelView {
     /// (live or never instantiated) and a live view is closed.
     public func sync(_ current: [Panel]) {
         let ids = Set(current.map(\.id))
+        startHeadless(current)
         for (id, p) in known where !ids.contains(id) { PluginViews.removed(p, host: context(p)) }
         for (id, v) in live where !ids.contains(id) { v.close(); live[id] = nil; unhost(id, v) }
         failed.formIntersection(ids)
@@ -143,6 +144,12 @@ public extension PluginPanelView {
             let placeholder = Panel(id: UUID(), name: "", pluginId: id, placement: .canvas)
             PluginViews.reconcile(id, current.filter { $0.pluginId == id }, host: context(placeholder))
         }
+        startHeadless(current)
+    }
+
+    /// A headless page runs from its open (loads its URL, emits events), not from its first command.
+    private func startHeadless(_ current: [Panel]) {
+        for p in current where p.placement == .headless && live[p.id] == nil { _ = instance(for: p.id) }
     }
 
     /// Delivers a plugin event to the panel's live view; a panel without one drops it (never creates a view).

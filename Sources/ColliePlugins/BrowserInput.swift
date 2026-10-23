@@ -25,7 +25,14 @@ import WebKit
             super.init(contentRect: contentRect, styleMask: styleMask, backing: backing, defer: flag)
             isExcludedFromWindowsMenu = true
             isReleasedWhenClosed = false
+            collectionBehavior = [.transient, .ignoresCycle]
+            setAccessibilityElement(false)   // it "is visible": keep it out of assistive tools
         }
+        // never on screen, whatever asks
+        override func orderFront(_ sender: Any?) {}
+        override func orderFrontRegardless() {}
+        override func makeKeyAndOrderFront(_ sender: Any?) {}
+        override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) { if place == .out { super.order(place, relativeTo: otherWin) } }
     }
 
     /// `name`: the DOM `key` value (what the JS fallback takes).

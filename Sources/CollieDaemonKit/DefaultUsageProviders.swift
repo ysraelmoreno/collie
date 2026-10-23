@@ -3,13 +3,13 @@
 enum DefaultUsageProviders {
     // Claude Code: the plan windows come from the `statusLine` JSON Claude pipes to `collie hook claude-statusline` (wired by
     // AgentLaunch into every Collie-launched Claude), which writes `<usage dir>/claude-rate-limits.json`. This only cats it;
-    // no file yet (no Collie Claude has refreshed, or not a subscriber) -> empty output -> a report with "—" windows.
+    // no (or empty) file yet (no Collie Claude has refreshed, or not a subscriber) -> prints `{}` -> a report with "—" windows.
     static let claude = """
     {
       "id": "claude",
       "label": "Claude Code",
       "enabled": true,
-      "command": ["/bin/sh", "-c", "cat \\"$COLLIE_USAGE_DIR/claude-rate-limits.json\\" 2>/dev/null; true"],
+      "command": ["/bin/sh", "-c", "f=\\"$COLLIE_USAGE_DIR/claude-rate-limits.json\\"; if [ -s \\"$f\\" ]; then cat \\"$f\\"; else echo '{}'; fi"],
       "timeoutSeconds": 10,
       "parse": { "type": "json" },
       "windows": [
@@ -35,7 +35,6 @@ enum DefaultUsageProviders {
       ]
     }
     """
-
 
     // Codex: rollout logs carry `token_count` events with `rate_limits.primary` (5h) / `.secondary` (7d).
     // Prints the newest rollout's last line carrying a non-null rate_limits object (filtered in the shell: whole rollouts can exceed the 1 MiB cap); `jsonlLast` still applies.

@@ -129,6 +129,20 @@ private func write(_ ps: [UsageProvider], to dir: URL) throws {
         #expect(r.windows.map(\.label) == ["5h", "7d"] && r.windows.allSatisfy { $0.usedPercent == nil && $0.resetsAt == nil })
     }
 
+    @Test func claudeProviderWithEmptyFileHasNoError() async throws {
+        let t = usageTree(); defer { t.cleanup() }
+        try Data().write(to: t.usage.appendingPathComponent("claude-rate-limits.json"))
+        let r = try #require(await UsageService(dir: t.providers).reports().first { $0.providerId == "claude" })
+        #expect(r.error == nil && r.windows.allSatisfy { $0.usedPercent == nil })
+    }
+
+    @Test func genericJsonProviderWithEmptyOutputStillErrors() async throws {
+        let dir = tmpDir(); defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        try write([provider("e", "true")], to: dir)
+        let r = try #require(await UsageService(dir: dir).reports().first)
+        #expect(r.error == "unreadable JSON output")
+    }
+
     @Test func upgradesOldClaudeSeed() throws {
         let t = usageTree(); defer { t.cleanup() }
         let f = t.providers.appendingPathComponent("claude.json")

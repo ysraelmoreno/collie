@@ -90,12 +90,7 @@ actor UsageService {
         if res.status != 0 { return fail("exit \(res.status): \(res.stderr.prefix(200))") }
         let text: String
         switch p.parse {
-        case .json:
-            // empty = nothing recorded yet (e.g. claude before any statusLine refresh): "—" windows, not an error
-            if res.stdout.allSatisfy(\.isWhitespace) {
-                return UsageReport(providerId: p.id, label: p.label, windows: p.windows.map { WindowValue(label: $0.label, usedPercent: nil, resetsAt: nil) })
-            }
-            text = res.stdout
+        case .json: text = res.stdout
         case .jsonlLast(let needle):
             guard let l = res.stdout.split(whereSeparator: \.isNewline).last(where: { $0.contains(needle) }) else {
                 return fail("no output line contains '\(needle)'")
@@ -107,7 +102,8 @@ actor UsageService {
             WindowValue(label: w.label, usedPercent: JSONPointer.eval(w.usedPercent, in: root).flatMap(number),
                         resetsAt: w.resetsAt.flatMap { JSONPointer.eval($0, in: root) }.flatMap(date))
         }
-        if ws.allSatisfy({ $0.usedPercent == nil && $0.resetsAt == nil }) { return fail("no usage fields found") }
+        // a bare `{}` is "nothing recorded yet" (the claude provider before any statusLine refresh): "—" windows, not an error
+        if ws.allSatisfy({ $0.usedPercent == nil && $0.resetsAt == nil }), root != .object([:]) { return fail("no usage fields found") }
         return UsageReport(providerId: p.id, label: p.label, windows: ws)
     }
 

@@ -37,7 +37,7 @@ extension BrowserPanel {
         case "browser.key":
             let key = try BrowserInput.parse(try Self.string(args, "key"))
             guard let web = try trustedInput() else { return Self.untrusted(try await page("key", [key.name])) }
-            return try await settle("keyup", 1) { () throws(ProtocolError) in try BrowserInput.press(web, key) }
+            return try await settle("keyup", 1) { BrowserInput.press(web, key) }
         case "browser.scroll":
             let ref = try? Self.string(args, "ref"), dy = try Self.int(args, "dy")
             guard ref != nil || dy != nil else { throw ProtocolError(code: .invalidArgs, message: "give --ref or --dy") }
@@ -75,12 +75,11 @@ extension BrowserPanel {
 
     /// Sends trusted events and replies once the page has seen `count` trusted `event`s, so the next command sees their
     /// effect; after `ms` (a disabled control, a move to where the pointer already is, a busy page) `settled: false`.
-    /// `send` returns the serial of its last keyDown (0: none): once settled, those keyDowns are resolved (see `BrowserInput.sent`).
-    private func settle(_ event: String, _ count: Int, ms: Int = 1000, _ send: () throws(ProtocolError) -> Int) async throws(ProtocolError) -> JSONValue {
+    /// A reply signal only: our key events are dropped on re-send by their timestamp (`BrowserInput.sentinel`).
+    private func settle(_ event: String, _ count: Int, ms: Int = 1000, _ send: () throws(ProtocolError) -> Void) async throws(ProtocolError) -> JSONValue {
         _ = try await page("arm", [event, count, ms])
-        let serial = try send()
+        try send()
         let r = try await page("settled", [])
-        if r["seen"] == .bool(true), serial > 0 { BrowserInput.resolve(through: serial, in: try live()) }   // unsure (timed out): kept
         return .object(["ok": .bool(true), "trusted": .bool(true), "settled": r["seen"] ?? .bool(false)])
     }
 
@@ -92,7 +91,7 @@ extension BrowserPanel {
             throw ProtocolError(code: .internal, message: "browser: bad rect reply")
         }
         return try await settle(kind == .click ? "mouseup" : "mousemove", 1) {
-            BrowserInput.mouse(web, at: CGPoint(x: x + w / 2, y: y + h / 2), kind: kind); return 0
+            BrowserInput.mouse(web, at: CGPoint(x: x + w / 2, y: y + h / 2), kind: kind)
         }
     }
 

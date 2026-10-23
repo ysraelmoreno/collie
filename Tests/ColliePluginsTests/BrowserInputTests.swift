@@ -141,83 +141,64 @@ import CollieProtocol
         #expect(await pollUntil { BrowserInput.dropped > before })
     }
 
-    /// I1: a re-send that comes back late (page busy), after later keys were sent, is still dropped: nothing reaches
-    /// a monitor installed after ours (AppKit calls them in order; the key window comes after both).
-    @Test func lateResendIsStillDropped() async throws {
-        let h = try await browser("""
-            <script>addEventListener('keydown', e => { if (e.key === 'Enter') { const t = Date.now(); while (Date.now() - t < 1500); } })</script><p>x</p>
-            """)
-        defer { h.close() }
-        let web = try #require(h.b.webView)
-        _ = try await run(h.b, "key", ["key": .string("x")])   // our monitor is installed
-        var leaked: [String] = []
-        let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { e in
-            let c = e.characters ?? ""
-            MainActor.assumeIsolated { leaked.append(c) }
-            return e
+    /// Records keyDowns other local monitors see. AppKit calls monitors in no fixed order (both seen), so one may see
+    /// our re-send before ours drops it; what matters is that ours drops it before the key window: every keyDown
+    /// seen here must be either sentinel-stamped (ours returns nil for it) or not ours.
+    @MainActor final class Leaks {
+        var seen: [(String, TimeInterval)] = []
+        var keys: [String] { seen.filter { $0.1 != BrowserInput.sentinel }.map(\.0) }   // what ours lets through
+        private var m: Any?
+        init() {
+            m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] e in
+                let c = e.characters ?? "", t = e.timestamp
+                MainActor.assumeIsolated { self?.seen.append((c, t)) }
+                return e
+            }
         }
-        defer { NSEvent.removeMonitor(m!) }
-        let keep = BrowserInput.keep; BrowserInput.keep = 2; defer { BrowserInput.keep = keep }
-        let before = BrowserInput.dropped
-        try BrowserInput.key(web, "Enter")   // stalls the page 1.5 s, then comes back unhandled
-        try BrowserInput.key(web, "y")       // sent while Enter is pending
-        #expect(await pollUntil(10) { BrowserInput.dropped >= before + 2 })
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(leaked.isEmpty)
-        // a sanity check that the leak monitor sees what isn't ours
-        NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
-                                         characters: "q", charactersIgnoringModifiers: "q", isARepeat: false, keyCode: 12)!)
-        #expect(leaked == ["q"])
+        func stop() { if let m { NSEvent.removeMonitor(m) }; m = nil }
     }
 
-    /// R5: with the pending list full, keys are refused, never sent with an older entry evicted.
-    @Test func fullPendingListRefusesKeys() async throws {
-        let h = try await browser("<p>nothing editable</p>"); defer { h.close() }
-        _ = try await run(h.b, "key", ["key": .string("x")])   // our monitor is installed
-        var leaked: [String] = []
-        let m = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { e in
-            let c = e.characters ?? ""
-            MainActor.assumeIsolated { leaked.append(c) }
-            return e
-        }
-        defer { NSEvent.removeMonitor(m!) }
-        let keep = BrowserInput.keep; BrowserInput.keep = 2; defer { BrowserInput.keep = keep }
-        do { _ = try await run(h.b, "type", ["text": .string("abc")]); Issue.record("expected refusal") }
-        catch let e as ProtocolError { #expect(e.code == .unavailable) }
-        _ = try await run(h.b, "type", ["text": .string("ab")])   // fits: sent, unhandled, dropped
-        try await Task.sleep(for: .milliseconds(300))
-        #expect(leaked.isEmpty)
-        #expect(BrowserInput.pending == 0)
+    static let stalls = "<script>addEventListener('keydown', e => { const t = Date.now(); while (Date.now() - t < 1500); })</script><p>x</p>"
+
+    /// C2: a command that timed out on a busy page, then another one: every late re-send is still dropped.
+    @Test func stalledPageNeverLeaks() async throws {
+        let h = try await browser(Self.stalls); defer { h.close() }
+        _ = try await run(h.b, "key", ["key": .string("Escape")])   // monitors in order: ours first
+        let leaks = Leaks(); defer { leaks.stop() }
+        let before = BrowserInput.dropped
+        #expect(try await run(h.b, "key", ["key": .string("x")])["settled"] == .bool(false))
+        _ = try await run(h.b, "type", ["text": .string("y")])
+        #expect(await pollUntil(10) { BrowserInput.dropped >= before + 2 })   // x and y came back unhandled, stamped, dropped
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(leaks.keys.isEmpty)
     }
 
-    /// A page settling says nothing about another page's pending keys: a stalled page's late re-send is still dropped.
-    @Test func otherPageSettlingKeepsPendingKeys() async throws {
-        let stalled = try await browser("""
-            <script>addEventListener('keydown', e => { const t = Date.now(); while (Date.now() - t < 1500); })</script><p>x</p>
-            """)
-        let other = try await browser(#"<input aria-label="Name">"#)
-        defer { stalled.close(); other.close() }
-        _ = try await run(other.b, "click", ["ref": .string(try await ref(other.b, "Name"))])
-        let before = BrowserInput.dropped
-        try BrowserInput.key(try #require(stalled.b.webView), "Enter")
-        _ = try await run(other.b, "type", ["text": .string("ab")])   // settles while the Enter is pending
-        #expect(await pollUntil(10) { BrowserInput.dropped > before })
+    /// I2: typing into a focused iframe (keyups don't reach the top window: never settles) is never refused and never leaks.
+    @Test func iframeTypingNeverRefusedNorLeaks() async throws {
+        let h = try await browser(#"<iframe srcdoc="<input id=i>" style="width:300px;height:80px"></iframe>"#); defer { h.close() }
+        _ = try await run(h.b, "key", ["key": .string("Escape")])
+        let leaks = Leaks(); defer { leaks.stop() }
+        _ = try await eval(h.b, "new Promise(r => { const f = document.querySelector('iframe'); const go = () => { f.contentDocument.getElementById('i').focus(); r(1) }; f.contentDocument.readyState === 'complete' ? go() : f.onload = go })")
+        for _ in 0..<3 { _ = try await run(h.b, "type", ["text": .string(String(repeating: "a", count: 100))]) }
+        #expect(await pollUntil(10) { (try? await eval(h.b, "document.querySelector('iframe').contentDocument.getElementById('i').value.length")) == .number(300) })
+        #expect(leaks.keys.isEmpty)
+    }
+
+    /// The monitor drops only our sentinel-stamped events: a real key event passes.
+    @Test func realKeyEventsPassTheMonitor() async throws {
+        let h = try await browser("<p>x</p>"); defer { h.close() }
+        _ = try await run(h.b, "key", ["key": .string("Escape")])
+        let leaks = Leaks(); defer { leaks.stop() }
+        NSApp.sendEvent(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                         windowNumber: 0, context: nil, characters: "q", charactersIgnoringModifiers: "q", isARepeat: false, keyCode: 12)!)
+        #expect(leaks.keys == ["q"])
+        #expect(BrowserInput.sentinel < ProcessInfo.processInfo.systemUptime / 1000)
     }
 
     @Test func typeOver1024IsRefused() async throws {
         let h = try await browser("<input>"); defer { h.close() }
         do { _ = try await run(h.b, "type", ["text": .string(String(repeating: "a", count: 1025))]); Issue.record("expected invalidArgs") }
         catch let e as ProtocolError { #expect(e.code == .invalidArgs && e.message.contains("--text")) }
-    }
-
-    /// Handled keys never get a re-send: they're resolved once the page settles, so a long session never fills the list.
-    @Test func handledKeysDontFillTheList() async throws {
-        let h = try await browser(#"<input aria-label="Name" id="n">"#); defer { h.close() }
-        _ = try await run(h.b, "click", ["ref": .string(try await ref(h.b, "Name"))])
-        let keep = BrowserInput.keep; BrowserInput.keep = 4; defer { BrowserInput.keep = keep }
-        for _ in 0..<5 { #expect(try await run(h.b, "type", ["text": .string("abc")])["settled"] == .bool(true)) }
-        #expect(BrowserInput.pending == 0)
-        #expect(try await eval(h.b, "n.value.length") == .number(15))
     }
 
     @Test func metaASelectsAllAndClipboardIsRefused() async throws {

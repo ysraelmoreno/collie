@@ -215,7 +215,10 @@ import CollieTheme
         super.layout()
         let bounds = CGRect(origin: .zero, size: canvasSize)
         title.frame = CGRect(x: 0, y: 0, width: bounds.width, height: Self.titleHeight)
-        term?.frame = bodyFrame
+        if let t = term {
+            t.frame = bodyFrame
+            Log.canvas.debug("grid \(self.id) frame \(self.bodyFrame.size.debugDescription, privacy: .public) dims \(t.terminalDimensions.cols)x\(t.terminalDimensions.rows) live \(self.inLiveResize)")
+        }
         label?.frame = bodyFrame.insetBy(dx: 4, dy: max(bodyFrame.height / 2 - 10 / canvas.zoom, 0))
         leash.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = Self.cornerFrame(bounds)

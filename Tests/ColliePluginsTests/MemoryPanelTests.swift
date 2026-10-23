@@ -202,6 +202,21 @@ private actor FakeDaemon {
         let lastReview = await d.last("memory.review")
         #expect(m.proposals.isEmpty && lastReview?["lot"] == nil)
     }
+
+    @Test func lotMemoriesGroupedAndActionsCarryTheLot() async {
+        let la = UUID(), lb = UUID()
+        var a = rec("jwt", reviewed: true); a.lotId = la
+        var b = rec("cache"); b.lotId = lb
+        let (m, d) = make([a, b, rec("project one")])
+        await d.setLots(["LA": la, "LB": lb])
+        await m.load()
+        #expect(m.lotMemoryGroups.map(\.lot) == ["LA", "LB"] && m.lotMemories.count == 2)
+        #expect(!m.unreviewed.contains { $0.record.title == "jwt" })
+        await m.pin(a.id, lot: "LA"); await m.promote(a.id, lot: "LA"); await m.archive(b.id, lot: "LB")
+        await m.restore(b.id, lot: "LB"); await m.discard(b.id, lot: "LB")
+        for c in ["memory.pin", "memory.promote", "memory.restore"] { #expect(await d.last(c)?["lot"] != nil, "\(c)") }
+        #expect((await d.all("memory.review")).allSatisfy { $0["lot"] == .string("LB") })
+    }
 }
 
 extension FakeDaemon {

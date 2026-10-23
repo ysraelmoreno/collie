@@ -90,6 +90,7 @@ private func hook(_ p: Paths, _ t: Term, _ source: String?) async throws -> Stri
             let all = try await hook(p, a, "compact")
             let orientation = try await hook(p, a, "startup").utf8.count
             #expect(all.contains("Tela de login") && all.contains("Quadro do lote"))
+            #expect(all.contains("[handoff]") && all.contains("hhhhhhhh"), "a long handoff comes back cut, not skipped")
             // orientation (≤ 1300) is outside the 4096 context budget (R4)
             #expect(all.utf8.count <= 4096 + 1300 + 4, "\(all.utf8.count) / \(orientation)")
         }

@@ -141,6 +141,19 @@ private func rec(_ title: String, scope: MemoryScope = .project, lot: UUID? = ni
         }
     }
 
+    @Test func agentPromotionIsUnreviewedAndUnpinned() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            #expect(try await admin(d, p, "lot.create", ["name": "LA", "members": "A"]).ok)
+            let lot = try await save(p, a, "auth", "JWT", body: "x")
+            #expect(try await admin(d, p, "memory.review", ["id": s(lot["id"])!, "lot": "LA", "action": "approve"]).ok)
+            #expect(try await admin(d, p, "memory.pin", ["id": s(lot["id"])!, "lot": "LA"]).ok)
+            let o = obj(try await call(p, a, "memory.promote", ["id": s(lot["id"])!]))
+            #expect(o["pinned"] != .bool(true) && o["reviewed"] != .bool(true), "\(o)")
+        }
+    }
+
     @Test func promoteMovesToProject() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

@@ -495,11 +495,11 @@ A memória do Collie vive em três escopos: **global** (vale em todo lugar), **p
 
 | Quando | O que entra |
 |---|---|
-| Início | memórias fixadas e o índice (títulos) do lote e do projeto |
+| Início | memórias fixadas e o índice (títulos) do lote (dentro de um lote) ou do projeto e global (fora de um) |
 | Cada prompt | recados do quadro endereçados a você, depois as memórias relevantes ao prompt, sem repetir |
 | Depois de compactar (e ao retomar) | seu trabalho ativo (tarefas abertas e as 3 últimas notas), o último recado do quadro para você e os 3 últimos status do lote, depois o índice de memórias |
 
-O recado entregue na compactação não é repetido no prompt seguinte. Codex e Cursor recebem a mesma injeção de início e de prompt; não têm o passo de compactação.
+O recado entregue na compactação não é repetido no prompt seguinte. Só o Claude recebe essa injeção (início, prompt e compactação). O Codex ainda não recebe nada no início nem no prompt (não tem esse gancho): leia os recados com `collie lot board`. O preset do Cursor ainda não está disponível.
 
 ## Backup dos dados
 

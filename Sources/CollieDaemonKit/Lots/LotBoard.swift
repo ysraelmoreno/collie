@@ -79,7 +79,7 @@ actor LotBoards {
     }
 
     /// After a compaction the agent's context is gone, so its latest handoff (even one a prompt already delivered) and the
-    /// lot's last 3 status posts come back, fenced like `inject`, in at most `limit` bytes. The handoff counts as seen from
+    /// lot's last 3 status posts come back, fenced like `inject`, in at most `limit` bytes (a handoff too long for what is left is cut, never skipped). The handoff counts as seen from
     /// here on: the next prompt does not repeat it. "" when there is nothing.
     func recall(to terminal: UUID, lot: Lot, limit: Int) async -> String {
         let all = (try? await log(lot.id).records()) ?? []
@@ -88,8 +88,13 @@ actor LotBoards {
         var out = header, got: [LotPost] = []
         guard header.utf8.count <= limit else { return "" }
         for p in picks {
-            let line = "\n" + Self.line(p)
-            guard out.utf8.count + line.utf8.count <= limit else { continue }
+            var line = "\n" + Self.line(p)
+            if out.utf8.count + line.utf8.count > limit {
+                // cut the text to what is left (the line without text, "…" included, is the overhead); no room: skip it
+                let room = limit - out.utf8.count - ("\n" + Self.line(p, textBytes: 0)).utf8.count
+                guard room > 0 else { continue }
+                line = "\n" + Self.line(p, textBytes: room)
+            }
             out += line; got.append(p)
         }
         guard !got.isEmpty else { return "" }
@@ -127,9 +132,9 @@ actor LotBoards {
 
     /// One injected post: `- [handoff] de "A" (ref: x): «text»` — a single line, so the text can't fake a header, another
     /// post or a memory line; « » are taken out of it so it can't close its own quote.
-    static func line(_ p: LotPost) -> String {
+    static func line(_ p: LotPost, textBytes: Int = injectMaxBytes) -> String {
         "- [\(clean(p.kind, max: 16))] de \(clean(p.from, max: 40, quoted: true))"
-            + (p.ref.map { " (ref: \(clean($0, max: LotPost.maxRef)))" } ?? "") + ": «\(cut(clean(p.text, max: .max), bytes: injectMaxBytes))»"
+            + (p.ref.map { " (ref: \(clean($0, max: LotPost.maxRef)))" } ?? "") + ": «\(cut(clean(p.text, max: .max), bytes: textBytes))»"
     }
 
     /// At most `bytes` UTF-8 bytes (plus "…" when cut), whole characters only: never a split scalar or grapheme.

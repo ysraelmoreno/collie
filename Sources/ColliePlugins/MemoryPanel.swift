@@ -45,6 +45,8 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
     @Published public private(set) var unreviewed: [MemoryRow] = []
     /// Captured, not yet reviewed (MemoryCapture): the picked repo's and every lot's, never injected until approved.
     @Published public private(set) var proposals: [MemoryRow] = []
+    /// Every lot's active memories (R8): what an agent saved inside a lot, reviewable and promotable from here.
+    @Published public private(set) var lotMemories: [MemoryRow] = []
     @Published public private(set) var decisions: [MemoryRow] = []
     @Published public private(set) var superseded: [MemoryRow] = []
     @Published public private(set) var maps: [MemoryRow] = []
@@ -100,6 +102,15 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
         let lots: [LotName] = decode(await send("lot.list")) ?? []
         for l in lots { props += await list("proposed", lot: l.name)?.records ?? [] }
         proposals = props
+        var mem: [MemoryRow] = []
+        for l in lots { mem += await list("active", lot: l.name)?.records ?? [] }
+        lotMemories = mem
+    }
+
+    /// Lot memories by lot name, each group newest first.
+    public var lotMemoryGroups: [(lot: String, rows: [MemoryRow])] {
+        let keys = Array(Set(lotMemories.compactMap(\.lot))).sorted()
+        return keys.map { k in (k, lotMemories.filter { $0.lot == k }.sorted { $0.record.createdAt > $1.record.createdAt }) }
     }
 
     /// Proposals by lot (the project's last, `lot` nil), each group newest first.
@@ -124,7 +135,9 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
     /// `lot`: the record lives in that lot's store (a row's `lot`).
     public func approve(_ id: UUID, lot: String? = nil) async { await review(id, "approve", lot: lot) }
     /// Out of injections but kept: restorable, and `purge` never deletes it.
-    public func archive(_ id: UUID) async { await review(id, "archive") }
+    public func archive(_ id: UUID, lot: String? = nil) async { await review(id, "archive", lot: lot) }
+    /// A lot memory becomes the project's (unreviewed, unpinned); the lot's copy is superseded.
+    public func promote(_ id: UUID, lot: String) async { await change("memory.promote", ["id": .string(id.uuidString), "lot": .string(lot)]) }
     public func discard(_ id: UUID, lot: String? = nil) async { await review(id, "discard", lot: lot) }
     private func reviewArgs(_ id: UUID, _ action: String, lot: String?, _ extra: [String: JSONValue] = [:]) -> [String: JSONValue] {
         var a = extra.merging(["id": .string(id.uuidString), "action": .string(action)]) { a, _ in a }
@@ -138,8 +151,13 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
     public func edit(_ id: UUID, title: String, body: String, subject: String, lot: String? = nil) async {
         await review(id, "approve", lot: lot, ["title": .string(title), "body": .string(body), "subject": .string(subject)])
     }
-    public func restore(_ id: UUID) async { await change("memory.restore", ["id": .string(id.uuidString)]); if tab == .cleanup { await planCleanup() } }
-    public func pin(_ id: UUID, _ pinned: Bool = true) async { await change(pinned ? "memory.pin" : "memory.unpin", ["id": .string(id.uuidString)]) }
+    private func withLot(_ id: UUID, _ lot: String?) -> [String: JSONValue] {
+        var a: [String: JSONValue] = ["id": .string(id.uuidString)]
+        if let lot { a["lot"] = .string(lot) }
+        return a
+    }
+    public func restore(_ id: UUID, lot: String? = nil) async { await change("memory.restore", withLot(id, lot)); if tab == .cleanup { await planCleanup() } }
+    public func pin(_ id: UUID, _ pinned: Bool = true, lot: String? = nil) async { await change(pinned ? "memory.pin" : "memory.unpin", withLot(id, lot)) }
 
     /// Leaves `error` alone: it runs right after `load`, whose error must stay visible.
     public func planCleanup() async {
@@ -247,8 +265,8 @@ struct MemoryPanelView: View {
                 Button { model.tab = t } label: {
                     HStack(spacing: 4) {
                         Text(t.rawValue).font(.collieUI(13, on ? .semibold : .medium)).foregroundStyle(on ? Color.collieText : .collieTextSecondary)
-                        if t == .review && !(model.unreviewed.isEmpty && model.proposals.isEmpty) {
-                            Text("\(model.unreviewed.count + model.proposals.count)").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                        if t == .review && !(model.unreviewed.isEmpty && model.proposals.isEmpty && model.lotMemories.isEmpty) {
+                            Text("\(model.unreviewed.count + model.proposals.count + model.lotMemories.filter { !$0.record.reviewed }.count)").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
                         }
                     }
                     .frame(maxWidth: .infinity).frame(height: 30)
@@ -307,6 +325,22 @@ struct MemoryPanelView: View {
                     act("Aprovar", .primary) { Task { await model.approve(r.id) } }
                     act("Editar") { editing = r }
                     act("Descartar", .quiet) { Task { await model.discard(r.id) } }
+                }
+            }
+            if !model.lotMemories.isEmpty {
+                section("Memórias dos lotes")
+                noMatch(model.lotMemories)
+                ForEach(model.lotMemoryGroups, id: \.lot) { g in
+                    Text("Lote \(g.lot)").font(.collieUI(12, .semibold)).foregroundStyle(Color.collieTextSecondary)
+                    ForEach(shown(g.rows)) { r in
+                        item(r, meta: meta(r), badge: r.record.reviewed ? nil : "não revisada") {
+                            if !r.record.reviewed { act("Aprovar", .primary) { Task { await model.approve(r.id, lot: r.lot) } } }
+                            act("Promover ao projeto") { Task { await model.promote(r.id, lot: g.lot) } }
+                            act(r.record.pinned ? "desafixar" : "fixar") { Task { await model.pin(r.id, !r.record.pinned, lot: r.lot) } }
+                            act("Arquivar") { Task { await model.archive(r.id, lot: r.lot) } }
+                            act("Descartar", .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
+                        }
+                    }
                 }
             }
         case .decisions:

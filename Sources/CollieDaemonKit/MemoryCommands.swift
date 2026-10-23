@@ -236,7 +236,7 @@ extension CommandRouter {
                 return rec
             }
             let rec = MemoryRecord(kind: old.kind, scope: target === memory.global ? .global : .project, subject: old.subject,
-                                   title: old.title, body: old.body, path: old.path, reviewed: old.reviewed, pinned: old.pinned,
+                                   title: old.title, body: old.body, path: old.path, reviewed: caller == nil && old.reviewed, pinned: caller == nil && old.pinned,   // an agent's promotion is unreviewed and unpinned
                                    supersedes: old.id, origin: old.origin)
             let saved = try await target.run { m in try m.store.save(rec).saved }   // replaces the project's active one of that subject
             try await src.run { m in

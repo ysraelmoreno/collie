@@ -165,11 +165,15 @@ actor MemoryService {
         for r in gone.values { try? await r.run { $0.closeIndex() } }
     }
 
-    /// A store already opened, by its `RepoMemory.key`.
-    func store(key: String) -> RepoMemory? {
+    /// A store by its `RepoMemory.key`; a repo not opened in this run (a queued job after a restart) is opened if the
+    /// path is still that repo's root.
+    func store(key: String) async -> RepoMemory? {
         if key == "global" { return global }
         if key.hasPrefix("lot:") { return UUID(uuidString: String(key.dropFirst(4))).map { lotStore($0) } }
-        return byRoot[key]
+        if let r = byRoot[key] { return r }
+        guard key.hasPrefix("/") else { return nil }
+        let r = await repo(for: key)
+        return r.key == key ? r : nil
     }
 
     func isCached(root: String) -> Bool { byRoot[root] != nil }   // tests
@@ -267,7 +271,7 @@ actor MemoryService {
         for (id, k) in cur.ids { byKey[k, default: []].append(id) }
         var stores: [RepoMemory] = [], gone: [MemoryRecord] = []
         for (k, ids) in byKey.sorted(by: { $0.key < $1.key }) {
-            guard let s = store(key: k) else { continue }
+            guard let s = await store(key: k) else { continue }
             stores.append(s)
             let recs = (try? await s.run { m in m.index()?.records(ids) ?? [:] }) ?? [:]
             gone += recs.values.filter { $0.status != .active }   // a record the index lacks (file gone) is left alone

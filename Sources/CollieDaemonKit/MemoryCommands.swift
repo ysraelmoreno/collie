@@ -173,6 +173,10 @@ extension CommandRouter {
                 // one 2048-byte budget: retractions, the rules pushed to the caller, board posts addressed to it (newest
                 // first), then memories
                 let prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
+                // a likely correction goes to the curator detached: the hook never waits for it
+                if CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id]) {
+                    Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt) }
+                }
                 var left = 2048, parts: [String] = []
                 func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
                 let ret = await memory.retractions(for: me.id, limit: left)

@@ -76,6 +76,12 @@ actor Curator {
         for n in names.sorted() where n.hasSuffix(".json") {
             let u = dir.appendingPathComponent("jobs/\(n)")
             if let j = (try? Data(contentsOf: u)).flatMap({ try? Self.decoder.decode(CuratorJob.self, from: $0) }) {
+                // R9: attempts are saved before each run, so a job that crashed the daemon on its last one is parked here
+                if j.attempts >= Self.maxAttempts {
+                    FileHandle.standardError.write(Data("collied: curator: job \(n) crashed \(j.attempts) runs, moved to failed/\n".utf8))
+                    _ = rename(u.path, dir.appendingPathComponent("failed/\(n)").path)
+                    continue
+                }
                 jobs.append(j); self.names[j.id] = n; continue
             }
             // an unknown kind (a later Collie's) or a damaged file: kept aside, never run
@@ -197,11 +203,13 @@ actor Curator {
             let next = jobs.filter { backoff[$0.id].map { $0 < ticks } ?? true }
                 .min { ($0.kind == .correction ? 0 : 1, $0.createdAt) < ($1.kind == .correction ? 0 : 1, $1.createdAt) }
             guard let job = next, capReason() == nil, await runner.availability() == .available else { return }
+            count(job, +1)   // R9: on disk before the run (a crash still counts)
             do {
                 try await handler(job, { c throws(ProtocolError) in try await self.call(c) })
                 remove(job)
                 recent[job.dedupe] = now()
             } catch let e as ProtocolError where e.code == .unavailable {
+                count(job, -1)
                 return   // logged out / cap mid-run (before any run): the job waits, no attempt spent
             } catch {
                 backoff[job.id] = ticks
@@ -210,15 +218,19 @@ actor Curator {
         }
     }
 
+    private func count(_ job: CuratorJob, _ d: Int) {
+        guard let i = jobs.firstIndex(where: { $0.id == job.id }) else { return }
+        jobs[i].attempts += d
+        write(jobs[i], to: file(job))
+    }
+
+    /// The attempt was counted before the run.
     private func fail(_ job: CuratorJob) {
         guard let i = jobs.firstIndex(where: { $0.id == job.id }) else { return }
-        jobs[i].attempts += 1
         if jobs[i].attempts >= Self.maxAttempts {
             write(jobs[i], to: dir.appendingPathComponent("failed/\(file(job).lastPathComponent)"))
             remove(job)
             recent[job.dedupe] = now()
-        } else {
-            write(jobs[i], to: file(job))
         }
     }
 
@@ -244,12 +256,5 @@ actor Curator {
         usage.inputTokens += out.inputTokens; usage.outputTokens += out.outputTokens; usage.costUSD += out.costUSD
         write(usage, to: dir.appendingPathComponent("usage.json"))
         return out
-    }
-}
-
-extension CommandRouter {
-    /// A job's work (Tasks 5/6 fill each kind). ponytail: until then a job waits (unavailable spends no attempt).
-    func curate(_ job: CuratorJob, _ call: Curator.Call) async throws {
-        throw ProtocolError(code: .unavailable, message: "sem tratador para \(job.kind.rawValue)")
     }
 }

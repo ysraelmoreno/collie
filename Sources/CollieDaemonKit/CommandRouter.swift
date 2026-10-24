@@ -65,6 +65,9 @@ actor CommandRouter {
     nonisolated let userEnv: UserEnvironment
     /// The memory curator's queue (`<root>/curator`), run by `config.curatorRunner` or the headless `claude`.
     nonisolated let curator: Curator
+    /// The last 500 characters of each terminal's last turn (`turn.completed`): a bare "não" answering a question is a
+    /// correction. ponytail: one string per terminal, never pruned (tiny).
+    var lastTurn: [UUID: String] = [:]
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
     var importingArtifacts: Set<UUID> = []
     /// A `herd.apply` in flight: one at a time, the next waits.
@@ -266,7 +269,10 @@ actor CommandRouter {
                 if continued {
                     await asks.turnContinued(terminal: tid)
                     await captureContinued(tid)
-                } else { await asks.turnCompleted(terminal: tid, message: str(req, "message")) }
+                } else {
+                    if let m = str(req, "message") { lastTurn[tid] = String(m.suffix(500)) }
+                    await asks.turnCompleted(terminal: tid, message: str(req, "message"))
+                }
                 guard capture else {
                     Task { await workTurnEnded(tid) }   // git runs detached: never delays or fails the hook
                     return Response(id: req.id, ok: true, result: .object([:]))

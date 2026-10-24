@@ -250,6 +250,37 @@ private let oneCall: Curator.Handler = { j, call in
         await c.stop()
     }
 
+    /// R9: the attempt is on disk before the run, so a job that crashes the daemon each time is parked after 3 starts.
+    @Test func attemptSavedBeforeRun() async throws {
+        let dir = tempDir(), fake = FakeCurator()
+        fake.gated = true
+        let c = Curator(dir: dir, runner: fake, clock: ManualClock())
+        _ = await c.enqueue(job())
+        await c.start(handler: oneCall)
+        #expect(await waitFor(10) { fake.calls == 1 })
+        let jobs = dir.appendingPathComponent("jobs")
+        func onDisk() throws -> CuratorJob {
+            let n = try #require(try FileManager.default.contentsOfDirectory(atPath: jobs.path).first)
+            return try Curator.decoder.decode(CuratorJob.self, from: Data(contentsOf: jobs.appendingPathComponent(n)))
+        }
+        #expect(try onDisk().attempts == 1)   // mid-run: a crash now still counts
+        await c.stop()   // the run stays blocked, like a crash mid-run
+        // two more crashed starts: written with attempts 3, the next load parks it
+        var j = try onDisk(); j.attempts = Curator.maxAttempts
+        let n = try #require(try FileManager.default.contentsOfDirectory(atPath: jobs.path).first)
+        try Curator.encoder.encode(j).write(to: jobs.appendingPathComponent(n))
+        let again = Curator(dir: dir, runner: fake, clock: ManualClock())
+        #expect(await again.queued(kind: .correction).isEmpty)
+        #expect(await again.status().failed == 1)
+        // a handler that waits (unavailable) gives the attempt back
+        let w = Curator(dir: tempDir(), runner: FakeCurator(), clock: ManualClock())
+        _ = await w.enqueue(job())
+        await w.start { _, _ in throw ProtocolError(code: .unavailable, message: "sem tratador") }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await w.queued(kind: .correction).first?.attempts == 0)
+        await w.stop()
+    }
+
     /// A reloaded job removes the file it was loaded from, whatever its name.
     @Test func jobFileStableAcrossReload() async throws {
         let dir = tempDir(), fake = FakeCurator(), j = job()

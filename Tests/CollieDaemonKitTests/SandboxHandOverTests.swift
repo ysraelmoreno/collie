@@ -131,7 +131,8 @@ import CollieProtocol
             #expect((try? SandboxLaunch.handOver(try put(rel), terminal: id, root: root)) != nil, "\(rel)")
         }
         for rel in ["admin.token", "sandbox/\(UUID().uuidString).sb", "sandbox/x/state/history", "memory/m.md", "screens/.x/p.png",
-                    "artifacts/artifacts.json", "artifacts/.removed/a/v1/index.html", "design/files.json", "hooks/x.claude.json"] {
+                    "artifacts/artifacts.json", "artifacts/.removed/a/v1/index.html", "design/files.json", "hooks/x.claude.json",
+                    "screens-evil/p.png", "screens/sub/p.png", "design/exports/x.css"] {
             #expect(throws: (any Error).self, "\(rel)") { try SandboxLaunch.handOver(try put(rel), terminal: id, root: root) }
         }
         #expect(files(id, root).count == 3)

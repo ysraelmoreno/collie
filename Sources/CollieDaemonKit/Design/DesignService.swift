@@ -421,7 +421,10 @@ actor DesignService {
                     let r: MCPResult
                     do throws(ProtocolError) { r = try await c.result("batch", a, timeout: try Self.left(deadline)) }
                     catch { throw Self.unsure(error) }
-                    if r.isError { throw Self.located(r.texts.joined(separator: "\n"), ids) }   // the engine refused it
+                    if r.isError {   // the engine refused it
+                        let text = r.texts.joined(separator: "\n")
+                        throw Self.located(skip.isEmpty ? text : Self.callerSteps(text, sent: steps.indices.filter { !skip.contains($0) }), ids)
+                    }
                     return Self.decoded(r)
                 }
                 guard !skip.isEmpty, case .array(var done) = r else { return r }
@@ -797,9 +800,7 @@ actor DesignService {
     private static func checkParams(_ cmd: String, _ p: [String: JSONValue]) throws(ProtocolError) {
         // a batch's `{"$step": n}` references resolve in the engine, after these checks: none where a check looks
         if p["$step"] != nil { throw ProtocolError(code: .invalidArgs, message: "step references are not allowed in 'params'") }
-        if selectionEdits.contains(cmd), p["ids"] == nil || p["ids"] == .null {
-            throw ProtocolError(code: .invalidArgs, message: "\(cmd) needs ids: agents never act on the user's selection")
-        }
+        try needsTargets(cmd, p)
         if cmd == "variable.import" { try noStepRef(p["variables"], "variables") }
         if cmd == "text.preview" { try noStepRef(p["command"], "command"); try noStepRef(p["params"], "params") }
         let refused: Bool = switch cmd {
@@ -815,8 +816,8 @@ actor DesignService {
         // text.preview runs its inner command (text.style) with the inner params
         if cmd == "text.preview", case .string(let c)? = p["command"] {
             switch p["params"] {
-            case nil, .null?: break
-            case .object(let ip)?: try checkLinks(c, ip)
+            case nil, .null?: try needsTargets(c, [:])
+            case .object(let ip)?: try checkLinks(c, ip); try needsTargets(c, ip)
             default: throw ProtocolError(code: .invalidArgs, message: "text.preview params must be an object")
             }
         }
@@ -916,26 +917,120 @@ actor DesignService {
     }
 
     static let skipped = JSONValue.object(["skipped": .string("no ids")])
-    /// Engine commands that act on the current selection when `ids` is missing (edit.rs, structure.rs). An agent names
-    /// its layers: never the user's selection. ponytail: these three; the engine's other `{ids?}` commands still fall
-    /// back (agents select with select.set first).
+    /// Edits whose `ids: []` (an agent's filter that found nothing) is skipped instead of sent.
     static let selectionEdits: Set<String> = ["edit.delete", "edit.duplicate", "object.group"]
     static func noIds(_ cmd: String, _ p: [String: JSONValue]) -> Bool { selectionEdits.contains(cmd) && p["ids"] == .array([]) }
 
+    /// R7/R10: an agent names its layers, never the user's selection. The engine's commands whose params doc takes
+    /// `ids?`/`id?` (figcraft v0.7.0 `crates/engine/src`, spec params; `params.rs` `targets()`: no `ids` array and no
+    /// `id` = the selection), among the permitted ones, minus `proto.evaluate` (its `id?` defaults to the document's
+    /// modes) and `vector.edit.*` (`selectionOnly`). They need `ids` (an array) or `id`.
+    /// ponytail: a static table; a new engine version's commands need it regenerated from the spec params docs.
+    static let targetCommands: Set<String> = [
+        "align.bottom", "align.hcenter", "align.left", "align.right", "align.top", "align.vcenter",
+        "annotation.add", "annotation.edit", "annotation.list", "annotation.remove",
+        "arrange.back", "arrange.backward", "arrange.forward", "arrange.front", "arrange.packH", "arrange.packV",
+        "arrange.roundToPixels", "arrange.spacing", "arrange.tidy",
+        "bool.exclude", "bool.flatten", "bool.intersect", "bool.subtract", "bool.union",
+        "component.addProperty", "component.addVariant", "component.combineVariants", "component.create",
+        "component.createMultiple", "component.deleteProperty", "component.detach", "component.editProperty",
+        "component.exposeInstance", "component.goToMain", "component.hideWhenPublishing", "component.makeSlot",
+        "component.playground", "component.properties", "component.pushChanges", "component.removeSlot",
+        "component.resetInstance", "component.resetOverride", "component.restoreMain",
+        "distribute.horizontal", "distribute.vertical",
+        "edit.delete", "edit.duplicate",
+        "effect.add", "effect.move", "effect.remove", "effect.set",
+        "export.add", "export.remove", "export.update",
+        "fill.add", "fill.move", "fill.pattern", "fill.remove", "fill.set",
+        "frame.swapOrientation",
+        "grid.add", "grid.move", "grid.remove",
+        "image.adjust", "image.savePreset",
+        "inspect.assets", "inspect.code", "inspect.componentCode", "inspect.properties",
+        "instance.exposed", "instance.resetSlot", "instance.setProperties", "instance.slotInsert", "instance.swap",
+        "layout.add", "layout.remove", "layout.setTrack", "layout.suggest",
+        "measure.distances", "measure.padding",
+        "node.reparent",
+        "object.batchRename", "object.convertToFrame", "object.convertToGroup", "object.convertToSection",
+        "object.flipH", "object.flipV", "object.frameSelection", "object.group", "object.mask", "object.moveToPage",
+        "object.opacityKeys", "object.rasterize", "object.releaseMask", "object.removeFill", "object.removeFrame",
+        "object.removeStroke", "object.rename", "object.resizeToFit", "object.rotate180", "object.rotateLeft",
+        "object.rotateRight", "object.setThumbnail", "object.swapFillStroke", "object.toggleLock",
+        "object.toggleVisible", "object.ungroup", "object.wrapInSection",
+        "page.delete", "page.duplicate", "page.move", "page.rename", "page.setBackground",
+        "proto.action.add", "proto.action.move", "proto.action.remove", "proto.action.set",
+        "proto.conditional.addBlock", "proto.conditional.removeBlock", "proto.conditional.setCondition",
+        "proto.interaction.add", "proto.interaction.clear", "proto.interaction.remove", "proto.interaction.set",
+        "section.toggleContents",
+        "selection.colors",
+        "shapeBuilder.merge", "shapeBuilder.regions", "shapeBuilder.remove",
+        "stroke.add", "stroke.brush", "stroke.move", "stroke.remove", "stroke.set", "stroke.widthProfile",
+        "style.apply", "style.detach",
+        "text.alignCenter", "text.alignJustify", "text.alignLeft", "text.alignRight", "text.bold", "text.bulletList",
+        "text.case", "text.caseLower", "text.caseOriginal", "text.caseSmallCaps", "text.caseTitle", "text.caseUpper",
+        "text.decoration", "text.italic", "text.lineHeightDown", "text.lineHeightUp", "text.link", "text.listStyle",
+        "text.maxLines", "text.numberList", "text.paragraphIndent", "text.paragraphSpacing", "text.pathOptions",
+        "text.removeFromPath", "text.set", "text.setFeatures", "text.setVariations", "text.sizeDown", "text.sizeUp",
+        "text.strikethrough", "text.style", "text.trackingDown", "text.trackingUp", "text.underline",
+        "text.weightDown", "text.weightUp",
+        "transform.move", "transform.moveTo", "transform.resize", "transform.rotate", "transform.scale",
+        "variable.bind", "variable.setMode",
+        "vector.flatten", "vector.join", "vector.offset", "vector.outlineStroke", "vector.reverse", "vector.simplify",
+        "vector.smoothJoin",
+    ]
+    /// Other params that default to the selection: each group needs one of its keys.
+    static let selectionDefaults: [String: [[String]]] = [
+        "guide.remove": [["index"]], "proto.flow.add": [["start"]], "proto.present": [["start"]],
+        "text.onPath": [["text"], ["path"]], "style.create": [["from", "value"]],
+    ]
+    /// Commands with no target param that act on the selection (or vector edit mode's selected points): refused.
+    static let selectionOnly: Set<String> = [
+        "transform.nudge", "transform.nudgeSize", "transform.rotationOrigin", "transform.setRotationOrigin",
+        "object.hideOthers", "text.listIndent", "text.listOutdent", "vector.deleteHeal",
+    ]
+    private static func needsTargets(_ cmd: String, _ p: [String: JSONValue]) throws(ProtocolError) {
+        if selectionOnly.contains(cmd) || cmd.hasPrefix("vector.edit.") {
+            throw ProtocolError(code: .invalidArgs, message: "\(cmd) acts only on the user's selection: not available to agents")
+        }
+        func given(_ k: String) -> Bool {
+            switch p[k] {
+            case nil, .null?: false
+            case .array?, .object?: true            // an object: a `$step` reference
+            default: k != "ids"                     // a non-array `ids` is ignored by the engine: the selection
+            }
+        }
+        var groups = selectionDefaults[cmd] ?? []
+        if targetCommands.contains(cmd) { groups.insert(["ids", "id"], at: 0) }
+        for g in groups where !g.contains(where: given) {
+            let what = g == ["ids", "id"] ? "ids" : g.joined(separator: " or ")
+            throw ProtocolError(code: .invalidArgs, message: "\(cmd) needs \(what): agents never act on the user's selection")
+        }
+    }
+
+    /// The engine's own batch errors count the steps it was sent (`step n`, `` `$step` n ``, `0 to n`): back to the
+    /// caller's numbers (`sent[i]` = the caller's index of sent step i). Numbers out of range stay as they are.
+    static func callerSteps(_ message: String, sent: [Int]) -> String {
+        message.replacing(/(step |`\$step` |0 to )(\d+)/) { m in
+            guard let i = Int(m.output.2), sent.indices.contains(i) else { return String(m.output.0) }
+            return "\(m.output.1)\(sent[i])"
+        }
+    }
+
     /// `steps` without the `skip` indices; `{"$step": n}` renumbered to the steps sent. A reference to a skipped step
-    /// is refused (it has no result).
+    /// is refused (it has no result). Only whole, non-negative indices are renumbered (never `Int(n)` on any Double).
     static func withoutSkipped(_ steps: [JSONValue], skip: Set<Int>) throws(ProtocolError) -> [JSONValue] {
         var to: [Int: Int] = [:]
         for i in steps.indices where !skip.contains(i) { to[i] = to.count }
         func walk(_ v: JSONValue) throws(ProtocolError) -> JSONValue {
             switch v {
-            case .object(let o):
-                if o.count == 1, case .number(let n)? = o["$step"] {
-                    guard let m = to[Int(n)] else {
-                        throw ProtocolError(code: .invalidArgs, message: "{\"$step\": \(Int(n))} refers to a step skipped for having no ids")
-                    }
-                    return .object(["$step": .number(Double(m))])
+            case .object(var o) where o["$step"] != nil:   // `{"$step": n}`, `{"$step": n, "field": f}` (the engine's forms)
+                // not a step index (1.5, -1, 1e300, a string): as is, for the engine to refuse
+                guard case .number(let n)? = o["$step"], let k = Int(exactly: n), k >= 0 else { return v }
+                if let m = to[k] { o["$step"] = .number(Double(m)); return .object(o) }
+                if skip.contains(k) {
+                    throw ProtocolError(code: .invalidArgs, message: "{\"$step\": \(k)} refers to a step skipped for having no ids")
                 }
+                return v   // past the last step: the engine refuses it
+            case .object(let o):
                 var out: [String: JSONValue] = [:]
                 for (k, x) in o { out[k] = try walk(x) }
                 return .object(out)

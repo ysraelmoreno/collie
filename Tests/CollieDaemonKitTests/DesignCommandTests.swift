@@ -124,7 +124,7 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
             #expect(try await admin(d, p, "admin.leash", ["a": "W", "b": "design-1"]).ok)
             let a = try await call(p, m, "design.run", ["command": "node.create", "params": #"{"type":"frame"}"#])
             #expect(a.ok && field(a, "command") == .string("node.create"), "\(a)")
-            #expect(try await call(p, w, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, w, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             let inits = fx.calls.filter { $0.hasPrefix("initialize ") }
             #expect(inits.contains("initialize M") && inits.contains("initialize W"), "\(inits)")
             // each client joined the file before its first command
@@ -197,10 +197,10 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         try await withDesign(fx) { d, p in
             _ = try await shepherdWithPanel(d, p)
             let w = try await term(d, p, "w")
-            #expect(try await call(p, w, "design.run", ["command": "align.left", "panel": "design-1"]).error?.code == .notConnected)
+            #expect(try await call(p, w, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#, "panel": "design-1"]).error?.code == .notConnected)
             #expect(try await call(p, w, "design.inspect").error?.code == .notFound)
             #expect(try await admin(d, p, "admin.leash", ["a": "w", "b": "design-1"]).ok)
-            let r = try await call(p, w, "design.run", ["command": "align.left"])
+            let r = try await call(p, w, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#])
             #expect(r.ok, "\(r)")
         }
     }
@@ -222,7 +222,7 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         try await withDesign(fx) { d, p in
             let m = try await shepherdWithPanel(d, p)
             var seen: [Response] = []
-            for (cmd, args) in [("design.files", [:]), ("design.run", ["command": "align.left"]), ("design.run", ["command": "node.bad.leak"]),
+            for (cmd, args) in [("design.files", [:]), ("design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]), ("design.run", ["command": "node.bad.leak"]),
                                 ("design.run", ["command": "collab.peers"]), ("design.run", ["command": "collab.share"]),
                                 ("design.batch", ["commands": #"[{"command":"node.bad.leak"}]"#]),
                                 ("design.batch", ["commands": #"[{"command":"collab.leave"}]"#]),
@@ -258,8 +258,8 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
                 #expect(try await call(p, m, "design.batch", ["commands": #"[{"command":"\#(cmd)","params":\#(params)}]"#]).error?.code == .invalidArgs)
             }
             #expect(try await call(p, m, "design.run", ["command": "variable.import", "params": #"{"variables":{}}"#]).ok)
-            #expect(try await call(p, m, "design.run", ["command": "text.preview", "params": #"{"command":"style.apply","params":{}}"#]).ok)
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "text.preview", "params": #"{"command":"style.apply","params":{"ids":[1]}}"#]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             #expect(!fx.calls.contains { $0.contains("publishToServer") || $0.contains("file.open") || $0.contains("app.quit")
                                          || $0.contains("plugin.") || $0.contains("image.place") || $0.contains("tools/call batch") }, "\(fx.calls)")
             let help = text(try await call(p, m, "design.help"))
@@ -420,6 +420,79 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         #expect(throws: ProtocolError.self) { try DesignService.withoutSkipped(toSkipped, skip: [0]) }
     }
 
+    // final review F1: odd `$step` values pass to the engine unchanged (no trap)
+    @Test func oddStepRefsPassThrough() async throws {
+        for n: JSONValue in [.number(1e300), .number(1.5), .number(-1), .number(.infinity), .string("x")] {
+            let s: [JSONValue] = [.object(["command": .string("node.set"), "params": .object(["ids": .array([.object(["$step": n])])])])]
+            #expect(try DesignService.withoutSkipped(s, skip: []) == s, "\(n)")
+            #expect(try DesignService.withoutSkipped([.object(["command": .string("edit.delete")])] + s, skip: [0]) == s, "\(n)")
+        }
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            _ = try await call(p, m, "design.batch", ["commands": #"[{"command":"node.set","params":{"ids":[{"$step":1e300}]}}]"#])
+            #expect(try await call(p, m, "design.files").ok)   // the daemon is still up
+        }
+    }
+
+    // F2: `{"$step": n, "field": f}` renumbered too, `field` kept; a reference to a skipped step refused
+    @Test func stepRefWithFieldRenumbered() throws {
+        func set(_ ref: JSONValue) -> JSONValue { .object(["command": .string("node.set"), "params": .object(["ids": .array([ref])])]) }
+        let a = JSONValue.object(["command": .string("node.create")]), skip = JSONValue.object(["command": .string("edit.delete")])
+        let out = try DesignService.withoutSkipped([a, skip, a, a, set(.object(["$step": .number(2), "field": .string("id")]))], skip: [1])
+        #expect(out == [a, a, a, set(.object(["$step": .number(1), "field": .string("id")]))])
+        #expect(throws: ProtocolError.self) { try DesignService.withoutSkipped([a, skip, set(.object(["$step": .number(1), "field": .string("id")]))], skip: [1]) }
+    }
+
+    // F5: the engine counts the steps it was sent; the caller's numbers are given back
+    @Test func engineStepNumbersMappedBack() {
+        let m = DesignService.callerSteps("step 2: `$step` 1 must be an earlier step (0 to 1); step 1's result has no `x`", sent: [0, 2, 4])
+        #expect(m == "step 4: `$step` 2 must be an earlier step (0 to 2); step 2's result has no `x`", "\(m)")
+        #expect(DesignService.callerSteps("step 9: x", sent: [0, 2]) == "step 9: x")   // out of range: as is
+    }
+
+    // F3 (R7/R10): every engine command that falls back to the selection needs its targets from agents
+    @Test func agentCommandsNeedTargets() async throws {
+        // the engine's `{ids?}`/`{id?}` commands (the appendix of the final review) are all in the table
+        for c in ["fill.set", "object.ungroup", "layout.add", "transform.move", "bool.union", "component.detach", "page.delete",
+                  "align.left", "text.style", "style.apply", "inspect.code", "edit.delete", "edit.duplicate", "object.group"] {
+            #expect(DesignService.targetCommands.contains(c), "\(c)")
+        }
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            func run(_ cmd: String, _ params: String) async throws -> Response { try await call(p, m, "design.run", ["command": cmd, "params": params]) }
+            func needs(_ cmd: String, _ what: String = "ids") -> ProtocolError {
+                ProtocolError(code: .invalidArgs, message: "\(cmd) needs \(what): agents never act on the user's selection")
+            }
+            for cmd in DesignService.targetCommands.sorted() {   // table-driven: none reaches the engine without a target
+                #expect(try await run(cmd, "{}").error == needs(cmd), "\(cmd)")
+            }
+            #expect(try await run("fill.set", ##"{"ids":"5","color":"#f00"}"##).error == needs("fill.set"))   // not an array: the engine falls back
+            #expect(try await run("fill.set", #"{"ids":null,"id":null}"#).error == needs("fill.set"))
+            #expect(!fx.calls.contains { c in DesignService.targetCommands.contains { c.hasSuffix(" " + $0) } }, "\(fx.calls)")
+            for (cmd, params) in [("fill.set", ##"{"ids":[1],"color":"#f00"}"##), ("page.delete", #"{"id":"0:1"}"#), ("edit.delete", #"{"id":3}"#),   // F4: id too
+                                  ("edit.duplicate", #"{"id":3}"#), ("guide.remove", #"{"index":0}"#), ("text.onPath", #"{"text":1,"path":2}"#),
+                                  ("style.create", #"{"type":"paint","name":"a","value":[]}"#), ("proto.flow.add", #"{"start":1}"#), ("select.set", #"{"ids":[1]}"#),
+                                  ("select.all", "{}"), ("node.create", #"{"type":"frame"}"#)] {
+                #expect(try await run(cmd, params).ok, "\(cmd) \(params)")
+            }
+            for (cmd, params, what) in [("guide.remove", "{}", "index"), ("proto.flow.add", "{}", "start"), ("proto.present", "{}", "start"),
+                                        ("text.onPath", #"{"text":1}"#, "path"), ("text.onPath", #"{"path":1}"#, "text"),
+                                        ("style.create", #"{"type":"paint","name":"a"}"#, "from or value")] {
+                #expect(try await run(cmd, params).error == needs(cmd, what), "\(cmd) \(params)")
+            }
+            for cmd in ["transform.nudge", "transform.nudgeSize", "object.hideOthers", "text.listIndent", "text.listOutdent",
+                        "transform.rotationOrigin", "transform.setRotationOrigin", "vector.deleteHeal", "vector.edit.begin", "vector.edit.nudge"] {
+                let e = ProtocolError(code: .invalidArgs, message: "\(cmd) acts only on the user's selection: not available to agents")
+                #expect(try await run(cmd, #"{"ids":[1],"dx":1,"dy":1}"#).error == e, "\(cmd)")
+                #expect(try await call(p, m, "design.batch", ["commands": #"[{"command":"\#(cmd)"}]"#]).error == e, "\(cmd)")
+            }
+            // text.preview's inner command too
+            #expect(try await run("text.preview", #"{"command":"text.style","params":{"fontSize":12}}"#).error == needs("text.style"))
+        }
+    }
+
     @Test func deleteWithoutIdsRefused() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
@@ -518,9 +591,9 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx, idle: .milliseconds(300)) { d, p in
             let m = try await shepherdWithPanel(d, p)
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             #expect(await waitFor(10) { await d.router.design.liveClients == 0 })
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)   // a new client
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)   // a new client
             #expect(fx.calls.filter { $0 == "initialize M" }.count == 2, "\(fx.calls)")
         }
     }
@@ -532,10 +605,10 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
             for i in 1...9 {
                 #expect(try await call(p, m, "panel.open", ["plugin": "design", "file": "F\(i)", "placement": "dock.right"]).ok)
             }
-            for i in 1...8 { #expect(try await call(p, m, "design.run", ["command": "align.left", "panel": "design-\(i)"]).ok) }
+            for i in 1...8 { #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#, "panel": "design-\(i)"]).ok) }
             #expect(await d.router.design.liveClients == 8)
             // a ninth closes the one idle the longest
-            #expect(try await call(p, m, "design.run", ["command": "align.left", "panel": "design-9"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#, "panel": "design-9"]).ok)
             #expect(await d.router.design.liveClients == 8)
             // every client busy: refused
             async let busy: [Response] = withThrowingTaskGroup(of: Response.self) { g in
@@ -543,7 +616,7 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
                 return try await g.reduce(into: []) { $0.append($1) }
             }
             try await Task.sleep(for: .milliseconds(800))
-            let r = try await call(p, m, "design.run", ["command": "align.left", "panel": "design-1"])
+            let r = try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#, "panel": "design-1"])
             #expect(r.error == ProtocolError(code: .unavailable, message: "design engine busy"), "\(r)")
             #expect(try await busy.allSatisfy(\.ok))
         }
@@ -553,15 +626,15 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
             let m = try await shepherdWithPanel(d, p)
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             await d.router.figcraft.stop()
-            let r = try await call(p, m, "design.run", ["command": "align.left"])
+            let r = try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#])
             #expect(r.ok, "\(r)")
             #expect(fx.calls.filter { $0 == "initialize M" }.count == 2, "\(fx.calls)")
             #expect(await d.router.design.liveClients == 1)
             // a client that died is recreated within the same call
             #expect(try await call(p, m, "design.run", ["command": "node.die"]).error?.code == .unavailable)
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             #expect(fx.calls.filter { $0 == "initialize M" }.count == 3, "\(fx.calls)")
         }
     }
@@ -570,12 +643,12 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in
             let m = try await shepherdWithPanel(d, p)   // stored link: the fake's host=127.0.0.1:47900
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             let before = try await serverPort(d)
             await d.router.figcraft.stop()
             let held = occupy(before)   // the server comes back on another port
             defer { close(held) }
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             let now = try await serverPort(d)
             #expect(now != before && fx.calls.last { $0.hasPrefix("join ") } == "join 127.0.0.1:\(now)", "\(now) \(fx.calls)")
             let link = try await admin(d, p, "design.link", ["panel": "design-1"])
@@ -588,11 +661,11 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx, timeoutCap: .milliseconds(1500)) { d, p in
             let m = try await shepherdWithPanel(d, p)
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             let r = try await call(p, m, "design.run", ["command": "node.slow"])   // answers after 2 s
             #expect(r.error?.code == .timeout && r.error?.message.contains("may still have been applied") == true, "\(r)")
             #expect(await d.router.design.liveClients == 0)   // not reused: it may still be applying the edit
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             #expect(fx.calls.filter { $0 == "initialize M" }.count == 2, "\(fx.calls)")
         }
     }
@@ -616,8 +689,8 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
             let m = try await shepherdWithPanel(d, p)
             let w = try await term(d, p, "W")
             #expect(try await admin(d, p, "admin.leash", ["a": "W", "b": "design-1"]).ok)
-            #expect(try await call(p, m, "design.run", ["command": "align.left"]).ok)
-            #expect(try await call(p, w, "design.run", ["command": "align.left"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
+            #expect(try await call(p, w, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#]).ok)
             #expect(await d.router.design.liveClients == 2)
             #expect(try await admin(d, p, "admin.kill", ["target": "W"]).ok)   // a removed terminal's clients go
             #expect(await d.router.design.liveClients == 1)
@@ -813,17 +886,17 @@ extension DesignCommandTests {
                 return o["status"]
             }
             #expect(try await status() == .string("current"))   // the daemon's own client of F1, now idle
-            for i in 2...7 { #expect(try await call(p, m, "design.run", ["command": "align.left", "panel": "design-\(i)"]).ok) }
+            for i in 2...7 { #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#, "panel": "design-\(i)"]).ok) }
             #expect(await d.router.design.liveClients == 8)
             // the eighth terminal client closes the daemon's, not M's of F1 (idle the longest)
-            #expect(try await call(p, m, "design.run", ["command": "align.left", "panel": "design-8"]).ok)
+            #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#, "panel": "design-8"]).ok)
             func joins() -> Int { fx.calls.filter { $0.hasPrefix("initialize") }.count }
             let n = joins()
-            for i in 1...8 { #expect(try await call(p, m, "design.run", ["command": "align.left", "panel": "design-\(i)"]).ok) }
+            for i in 1...8 { #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#, "panel": "design-\(i)"]).ok) }
             #expect(joins() == n, "\(fx.calls.suffix(30))")
             // all eight are M's: the status check makes no room, so it can't tell
             #expect(try await status() == .string("unknown"))
-            for i in 1...8 { #expect(try await call(p, m, "design.run", ["command": "align.left", "panel": "design-\(i)"]).ok) }
+            for i in 1...8 { #expect(try await call(p, m, "design.run", ["command": "align.left", "params": #"{"ids":[1]}"#, "panel": "design-\(i)"]).ok) }
             #expect(joins() == n)
             #expect(await d.router.design.liveClients == 8)
         }

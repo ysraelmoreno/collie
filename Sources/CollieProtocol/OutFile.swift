@@ -9,6 +9,8 @@ public enum OutFile {
             throw ProtocolError(code: .internal, message: "--out: the reply has no path")
         }
         guard !dest.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "--out needs a path") }
+        // a source this process can't read (in a sandbox: one the daemon didn't hand over) is not a write failure
+        guard FileManager.default.isReadableFile(atPath: src) else { throw ProtocolError(code: .invalidArgs, message: "--out: cannot read \(src)") }
         var url = URL(fileURLWithPath: dest, relativeTo: URL(fileURLWithPath: cwd, isDirectory: true)).standardizedFileURL
         let fm = FileManager.default
         func isDir(_ u: URL) -> Bool { var d: ObjCBool = false; return fm.fileExists(atPath: u.path, isDirectory: &d) && d.boolValue }

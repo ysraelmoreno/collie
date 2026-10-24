@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import CollieProtocol
 
 @Suite struct CommandsTests {
@@ -145,5 +146,14 @@ import Testing
         }
         #expect(Commands.all.filter { $0.params.contains { $0.name == "out" } }.map(\.name).filter { !Commands.outputFile.contains($0) }
                 == ["admin.data.export"])   // its own --out: the daemon writes the backup
+    }
+
+    // final review F6: a source the caller can't read is "cannot read", not "cannot write"
+    @Test func outReadFailureSaysCannotRead() {
+        let src = "/nonexistent-\(UUID().uuidString)/p.png"
+        let e = #expect(throws: ProtocolError.self) {
+            try OutFile.copyPath(of: .object(["path": .string(src)]), to: "x.png", cwd: FileManager.default.temporaryDirectory.path)
+        }
+        #expect(e?.message == "--out: cannot read \(src)", "\(String(describing: e))")
     }
 }

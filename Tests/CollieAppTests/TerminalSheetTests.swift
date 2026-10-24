@@ -36,3 +36,28 @@ import CollieProtocol
     let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
     #expect(try d.decode([LotPost].self, from: Data(json.utf8)).first?.text == "oi")
 }
+
+@Test func accessCardCopy() throws {
+    #expect(["read", "write", "delete", "exec"].map(AccessCopy.verb) == ["ler", "escrever", "apagar", "executar"])
+    let claude = TerminalRecord(id: UUID(), name: "a", preset: .claude, command: nil, cwd: "/", isShepherd: false)
+    let codex = TerminalRecord(id: UUID(), name: "b", preset: .codex, command: nil, cwd: "/", isShepherd: false)
+    #expect(AccessCopy.resumeNote(claude).contains("retoma a conversa"))
+    #expect(AccessCopy.resumeNote(codex).contains("sem retomar"))
+    // R29: control and bidi characters spelled out; 
+    #expect(AccessCopy.shown("a\u{202E}txt.exe\nb é") == "a\\u{202E}txt.exe\\u{A}b é")
+    // the card and the detection state cross the events stream intact
+    let d = SandboxDenial(terminal: UUID(), op: "read", path: "/Users/u/Doc é/x", count: 3, requested: true, reason: "r", refusal: nil, folderRefusal: "Amplo")
+    for e in [WorkspaceEvent.sandboxDenied(d), .sandboxDetection(available: false)] {
+        #expect(try JSONDecoder().decode(WorkspaceEvent.self, from: JSONEncoder().encode(e)) == e)
+    }
+    #expect(d.folder == "/Users/u/Doc é" && d.access == .read)
+}
+
+/// R32: a sandboxed terminal whose folder is the home itself warns that the project is the whole home.
+@Test func homeFolderWarning() {
+    let home = NSHomeDirectory()
+    #expect(TerminalSheet.homeWarning(cwd: home, free: false)?.contains("toda a sua pasta pessoal") == true)
+    #expect(TerminalSheet.homeWarning(cwd: home + "/", free: false) != nil)
+    #expect(TerminalSheet.homeWarning(cwd: home, free: true) == nil)   // a free terminal has no project
+    #expect(TerminalSheet.homeWarning(cwd: home + "/code", free: false) == nil)
+}

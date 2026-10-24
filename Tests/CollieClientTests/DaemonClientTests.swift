@@ -27,7 +27,7 @@ let colliedURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().del
 
     func start() async throws {
         let old = try? String(contentsOf: paths.adminTokenFile, encoding: .utf8)
-        let p = Process(); p.executableURL = colliedURL; p.arguments = ["--root", root.path]
+        let p = Process(); p.executableURL = colliedURL; p.arguments = ["--root", root.path, "--no-terminal-sandbox"]
         p.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"]) { $1 }
         try p.run(); procs.append(p)
         try #require(await poll(5) {

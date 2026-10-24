@@ -55,7 +55,7 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
             #expect(o["name"] == .string("W"))
             #expect(try await names(p, m) == ["W"])
             let w = try #require(try await snapshot(d, p).terminals.first { $0.id.uuidString == wid })
-            #expect(!w.isShepherd && w.cwd == "/tmp" && w.paddockId == nil)
+            #expect(!w.isShepherd && w.cwd == "/private/tmp" && w.paddockId == nil)   // the resolved cwd that was checked
             #expect(try await call(p, m, "summon", ["name": "w", "preset": "shell"]).error?.code == .invalidArgs)
             #expect(try await call(p, m, "summon", ["name": "X", "preset": "shell", "paddock": "nope"]).error?.code == .notFound)
         }
@@ -80,11 +80,13 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
             #expect(try await admin(d, paths, "restart", ["name": .string("M")]).ok)
             let m = Term(id: mid.uuidString, token: try await tokenOf(d, mid.uuidString))
             #expect(try await call(paths, m, "summon", ["name": "A", "preset": "shell", "paddock": "feat"]).ok)
-            #expect(try await call(paths, m, "summon", ["name": "B", "preset": "shell", "cwd": "/"]).ok)
+            #expect(try await call(paths, m, "summon", ["name": "B", "preset": "shell", "cwd": "/"]).error?.code == .invalidArgs)   // outside its paddock
+            #expect(try await call(paths, m, "summon", ["name": "B", "preset": "shell", "cwd": paddockDir.path]).ok)
             let ts = try await snapshot(d, paths).terminals
             let a = try #require(ts.first { $0.name == "A" }), b = try #require(ts.first { $0.name == "B" })
-            #expect(a.paddockId == fl.id && a.cwd == paddockDir.path)
-            #expect(b.paddockId == fl.id && b.cwd == "/")   // inherits the Shepherd's paddock
+            let real = SignedAppCheck.realPath(paddockDir)   // spawned in the resolved cwd that was checked
+            #expect(a.paddockId == fl.id && a.cwd == real)
+            #expect(b.paddockId == fl.id && b.cwd == real)   // inherits the Shepherd's paddock
         } catch { await d.stop(); throw error }
         await d.stop()
     }
@@ -123,16 +125,16 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
         }
     }
 
-    /// Final-review I3: restarting a record whose paddock is gone relaunches it in the pasture, never in the missing dir.
-    @Test func restartWithPaddockGoneFallsBackToPasture() async throws {
+    /// Final-review I3, then plan 4S R8: restarting a record whose paddock is gone is refused (never widened to the pasture).
+    @Test func restartWithPaddockGoneIsRefused() async throws {
         let root = URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))"), id = UUID()
         let gone = root.appendingPathComponent(".collie/paddocks/gone").path
         try await seeded([TerminalRecord(id: id, name: "W", preset: .shell, command: nil, cwd: gone, isShepherd: false, paddockId: UUID())],
                          root: root) { d, p in
             let r = try await admin(d, p, "restart", ["name": .string("W")])
-            #expect(r.ok, "\(r)")
+            #expect(r.error?.message == "o cercado de W não existe mais; crie o terminal de novo", "\(r)")
             let w = try #require(try await snapshot(d, p).terminals.first)
-            #expect(w.paddockId == nil && w.cwd == root.path, "\(w)")
+            #expect(w.paddockId != nil && w.cwd == gone, "\(w)")
         }
     }
 

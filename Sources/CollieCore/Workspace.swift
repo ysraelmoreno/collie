@@ -2,6 +2,14 @@ import Foundation
 
 public enum Preset: String, Codable, Sendable, CaseIterable { case shell, claude, codex, custom }
 
+/// `free`: "Terminal livre (sem sandbox)", created only by the user in the app; unreachable by any leash.
+public enum TerminalSandbox: String, Codable, Sendable {
+    case sandboxed, free
+    public init(from d: Decoder) throws {   // fail closed: an unknown value is sandboxed
+        self = TerminalSandbox(rawValue: try d.singleValueContainer().decode(String.self)) ?? .sandboxed
+    }
+}
+
 public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
@@ -10,11 +18,16 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     public var cwd: String
     public var isShepherd: Bool
     public var paddockId: UUID?   // nil = pasture
-    public init(id: UUID, name: String, preset: Preset, command: String?, cwd: String, isShepherd: Bool, paddockId: UUID? = nil) {
+    public var sandbox: TerminalSandbox
+    /// Resolved project folder (git toplevel of the cwd, the paddock's worktree, else the folder); nil = not computed yet.
+    public var projectRoot: String?
+    public init(id: UUID, name: String, preset: Preset, command: String?, cwd: String, isShepherd: Bool, paddockId: UUID? = nil,
+                sandbox: TerminalSandbox = .sandboxed, projectRoot: String? = nil) {
         self.id = id; self.name = name; self.preset = preset; self.command = command
         self.cwd = cwd; self.isShepherd = isShepherd; self.paddockId = paddockId
+        self.sandbox = sandbox; self.projectRoot = projectRoot
     }
-    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId }
+    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot }
     private enum Legacy: String, CodingKey { case isMaestro, floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self), l = try d.container(keyedBy: Legacy.self)
@@ -23,6 +36,8 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
         cwd = try c.decode(String.self, forKey: .cwd)
         isShepherd = try c.decodeIfPresent(Bool.self, forKey: .isShepherd) ?? l.decode(Bool.self, forKey: .isMaestro)
         paddockId = try c.decodeIfPresent(UUID.self, forKey: .paddockId) ?? l.decodeIfPresent(UUID.self, forKey: .floorId)
+        sandbox = (try? c.decodeIfPresent(TerminalSandbox.self, forKey: .sandbox)) ?? .sandboxed   // records before the sandbox
+        projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
     }
 }
 

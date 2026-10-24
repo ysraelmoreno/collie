@@ -17,6 +17,7 @@ struct TerminalSheet: View {
     @State private var command: String
     @State private var cwd: String
     @State private var shepherd: Bool
+    @State private var free = false   // never remembered: each free terminal is a fresh decision
     @State private var lotId: UUID?
     @State private var error: String?
     @State private var busy = false
@@ -108,6 +109,23 @@ struct TerminalSheet: View {
             .padding(.horizontal, 14).padding(.vertical, 12).frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.collieSidebar))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.collieBorder, lineWidth: 1))
+            if original == nil {
+                Toggle(isOn: $free) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Terminal livre (sem sandbox)").font(.collieUI(14, .semibold)).foregroundStyle(Color.collieText)
+                        Text("Vê e altera tudo o que você pode; nenhuma guia chega a ele. Só para o seu próprio trabalho.")
+                            .font(.collieUI(13)).foregroundStyle(free ? Color.collieDanger : Color.collieTextSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(.checkbox)
+                .padding(.horizontal, 14).padding(.vertical, 12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.collieSidebar))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(free ? Color.collieDanger : Color.collieBorder, lineWidth: 1))
+            }
+            if paddock == nil, let w = Self.homeWarning(cwd: cwd, free: original == nil ? free : original?.sandbox == .free) {
+                Text(w).font(.collieUI(12)).foregroundStyle(Color.collieAttention).fixedSize(horizontal: false, vertical: true)
+            }
             if needsRestart {
                 Text("Pastor, preset, comando e pasta valem depois de reiniciar").font(.collieUI(12)).foregroundStyle(Color.collieAttention)
             }
@@ -137,6 +155,12 @@ struct TerminalSheet: View {
         .background(Color.collieSurface)
     }
 
+    /// R32: a sandboxed terminal at `~` has the whole home as its project (rc files and agent config stay closed).
+    static func homeWarning(cwd: String, free: Bool) -> String? {
+        guard !free, URL(fileURLWithPath: cwd).standardizedFileURL.path == URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path else { return nil }
+        return "O projeto será toda a sua pasta pessoal: o agente poderá ler e alterar tudo nela (menos segredos, rc do shell e configuração global dos agentes). Prefira a pasta do projeto."
+    }
+
     private func label(_ text: String) -> some View { Text(text).font(.collieUI(13, .medium)).foregroundStyle(Color.collieText) }
 
     private func field(_ title: String, @ViewBuilder _ content: () -> some View) -> some View {
@@ -157,7 +181,7 @@ struct TerminalSheet: View {
         Task {
             do {
                 let id = try await client.spawn(name: n, preset: preset, command: preset == .custom ? c : nil, cwd: dir,
-                                           shepherd: shepherd, paddock: paddock?.name)
+                                           shepherd: shepherd, paddock: paddock?.name, sandbox: free ? .free : .sandboxed)
                 if let l = chosenLot { try await client.setLot(n, l.name) }   // grouping only, never a leash
                 if case .create(let at?) = mode {
                     canvas.setFrame(CGRect(origin: at, size: CanvasState.defaultTerminalSize), for: id)

@@ -5,10 +5,12 @@ import CollieDaemonKit
 
 var root = Paths.defaultRoot
 var workspace: UUID?
+var terminalSandbox = true   // R15: fail closed; only `--no-terminal-sandbox` (tests, dev runs) turns it off
 var it = CommandLine.arguments.dropFirst().makeIterator()
 while let a = it.next() {
     switch a {
     case "--root": if let v = it.next() { root = URL(fileURLWithPath: v) }
+    case "--no-terminal-sandbox": terminalSandbox = false
     case "--workspace":
         guard let v = it.next(), let u = UUID(uuidString: v) else { FileHandle.standardError.write(Data("bad --workspace\n".utf8)); exit(2) }
         workspace = u
@@ -76,6 +78,9 @@ do {
     config.figcraftDir = figcraft
     let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
     config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil
+    // every non-free terminal starts sandboxed (R15), whatever the root
+    if terminalSandbox { config.sandboxHome = URL(fileURLWithPath: NSHomeDirectory()); config.watchDenials = true }
+    FileHandle.standardError.write(Data("collied: terminal sandbox \(terminalSandbox ? "on (home \(NSHomeDirectory()))" : "OFF (--no-terminal-sandbox)")\n".utf8))
     // admin only from the app this daemon ships with (Contents/Helpers/collied -> Contents/MacOS/Collie); see forDaemon
     if let me = selfPath() {
         let (check, note) = SignedAppCheck.forDaemon(executable: me, root: root, defaultRoot: Paths.defaultRoot)

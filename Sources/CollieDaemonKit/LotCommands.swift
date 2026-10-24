@@ -82,6 +82,11 @@ extension CommandRouter {
             }
             ws.lots.removeAll { $0.id == lot.id }
             try await persist()
+            // M5: its grants go with it (a lot id is never reused, so orphans never widened; they only piled up)
+            if sandboxGrants.contains(where: { $0.scope == .lot && $0.owner == lot.id }) {
+                sandboxGrants.removeAll { $0.scope == .lot && $0.owner == lot.id }
+                try? saveGrants()
+            }
             await memory.evictLot(lot.id)
             await hub.emit(.lotRemoved(lot.id))
             return .object([:])
@@ -105,7 +110,8 @@ extension CommandRouter {
             let ref = str(r, "ref").map { LotBoards.clean(LotBoards.scrub($0, secrets: secrets), max: LotPost.maxRef) }.flatMap { $0.isEmpty ? nil : $0 }
             // only a live member of this lot: anyone else (another lot's, unknown) reads as unknown — no leak
             let to = try str(r, "to").map { n throws(ProtocolError) -> TerminalRecord in
-                guard let t = ws.terminals.first(where: { $0.name.caseInsensitiveCompare(n) == .orderedSame && lot.members.contains($0.id) }) else {
+                guard let t = ws.terminals.first(where: { $0.name.caseInsensitiveCompare(n) == .orderedSame && lot.members.contains($0.id)
+                                                          && $0.sandbox == .sandboxed }) else {   // R6: nothing posts into a free terminal
                     throw ProtocolError(code: .notFound, message: "Terminal '\(n)' not found")
                 }
                 return t
@@ -123,7 +129,7 @@ extension CommandRouter {
         if ws.lot(of: me.id)?.id == lot.id { return true }
         guard me.isShepherd else { return false }
         let reach = Set([me.id] + ConnectionGraph.reachable(from: me.id, in: ws).map(\.id))
-        let live = lot.members.filter { m in ws.terminals.contains { $0.id == m } }
+        let live = lot.members.filter { m in ws.terminals.contains { $0.id == m && $0.sandbox == .sandboxed } }
         return !live.isEmpty && live.allSatisfy(reach.contains)
     }
 
@@ -155,6 +161,9 @@ extension CommandRouter {
 
     /// Moves `ids` into lot `lot` (nil: out of any lot), out of whichever lot held them; persists, emits each changed lot.
     func place(_ ids: [UUID], in lot: UUID?) async throws {
+        if lot != nil, let f = ws.terminals.first(where: { ids.contains($0.id) && $0.sandbox == .free }) {   // R6, the admin too
+            throw ProtocolError(code: .invalidArgs, message: "'\(f.name)' is a free terminal (sem sandbox): it joins no lot")
+        }
         let before = ws.lots
         var changed = Set<UUID>()
         if let lot { changed.insert(lot) }   // a new lot is emitted even with no members

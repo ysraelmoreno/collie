@@ -9,7 +9,7 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 
 /// A fake `claude` on the agents' PATH (never the real one): `prelude` runs first (by `$COLLIE_TERMINAL_NAME`), then the
 /// fake agent. The launch shell skips the login profile, so path_helper can't put a real claude ahead of it.
-private struct FakeAgents {
+struct FakeAgents {   // also SandboxRootsTests
     let dir = URL(fileURLWithPath: "/tmp/collie-pt-\(UUID().uuidString.prefix(8))")
     init(_ prelude: String = "") throws {
         let bin = dir.appendingPathComponent("bin")
@@ -257,7 +257,7 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
             #expect(s.terminals.map(\.name).sorted() == ["M", "x-investigador", "x-testes"])
             #expect(s.terminals.filter(\.isShepherd).map(\.name) == ["M"])
             #expect(pairs(s) == [["M", "x-investigador"], ["M", "x-testes"]])
-            #expect(s.terminals.allSatisfy { $0.cwd == "/tmp" })
+            #expect(s.terminals.allSatisfy { $0.cwd == ($0.name == "M" ? "/tmp" : "/private/tmp") })   // a Shepherd's: resolved as checked
             let other = try await call(p, m, "herd.apply", ["id": .string("investigar-bug"), "name": .string("y"), "cwd": .string("/")])
             #expect(other.error?.code == .invalidArgs, "\(other)")
             #expect(try await state(d, p) == s)

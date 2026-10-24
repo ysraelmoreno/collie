@@ -88,6 +88,7 @@ extension CommandRouter {
                 throw ProtocolError(code: .unavailable, message: "Plugin '\(p.pluginId)' is not available")
             }
             let placement = try placementArg(r, spec)
+            if placement == .canvas, let me = caller { try refuseFreeLeash(me.id) }   // before anything changes
             // ponytail: headless stays headless (its lifecycle is its creator's); add a move out when someone asks for it
             if placement == .headless || p.placement == .headless {
                 throw ProtocolError(code: .invalidArgs, message: "a headless panel can't be moved; close it and open another")
@@ -151,6 +152,7 @@ extension CommandRouter {
     /// whether the design file was created by this call.
     func openPanel(name: String, pluginId: String, placement: PanelPlacement, state: [String: JSONValue], file: String?,
                    paddock: UUID?, caller: TerminalRecord?) async throws -> (Panel, [String: JSONValue], fileCreated: Bool) {
+        if let me = caller, placement == .canvas || placement == .headless { try refuseFreeLeash(me.id) }   // before any side effect
         var state = state, designWarning: [String: JSONValue] = [:], fileCreated = false
         if let file {   // a new name: created on the panel's paddock, with the active design system's library
             let deadline = design.deadline("panel.open")

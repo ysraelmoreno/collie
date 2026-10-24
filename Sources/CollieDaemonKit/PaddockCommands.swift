@@ -97,7 +97,11 @@ extension CommandRouter {
 
     /// Creates paddock `name` off `repo`'s repository, records and persists it, emits `.paddock`. The caller holds `claim(name)`.
     func createPaddock(_ name: String, repo: URL, createdBy: UUID?) async throws -> Paddock {
-        let f = try await PaddockManager.create(name: name, repoRoot: try await PaddockManager.repoRoot(of: repo), createdBy: createdBy)
+        let root = try await PaddockManager.repoRoot(of: repo)
+        if let me = ws.terminals.first(where: { $0.id == createdBy }), !(try await paddockRepoAllowed(root, for: me)) {
+            throw ProtocolError(code: .invalidArgs, message: "the repo \(root.path) is outside your project: a paddock there would be wider than it")
+        }
+        let f = try await PaddockManager.create(name: name, repoRoot: root, createdBy: createdBy)
         ws.paddocks.append(f)
         do { try await persist() } catch {
             ws.paddocks.removeAll { $0.id == f.id }
@@ -106,6 +110,14 @@ extension CommandRouter {
         }
         await hub.emit(.paddock(f))
         return f
+    }
+
+    /// I1: a terminal's paddock repo (found by git, which knows nothing of R9/R11: a dotfiles `~/.git` is a repo to it)
+    /// lies within the terminal's project, or is the pasture of the terminal's own paddock.
+    func paddockRepoAllowed(_ root: URL, for me: TerminalRecord) async throws -> Bool {
+        if ProjectRoot.contains(root.path, root: try await projectRoot(of: me)) { return true }
+        guard let pasture = ws.paddocks.first(where: { $0.id == me.paddockId }).map({ URL(fileURLWithPath: $0.repoRoot) }) else { return false }
+        return SignedAppCheck.realPath(pasture) == SignedAppCheck.realPath(root)
     }
 
     /// Paddock by name (case-insensitive); refuses one with a create/land/delete in flight.

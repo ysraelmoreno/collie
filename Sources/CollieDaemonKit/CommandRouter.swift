@@ -67,12 +67,24 @@ actor CommandRouter {
     var importingArtifacts: Set<UUID> = []
     /// A `herd.apply` in flight: one at a time, the next waits.
     var applyingHerd = false
+    /// The user's sandbox grants (`<root>/sandbox/grants.json`), the pending access cards, the terminals whose profile
+    /// this daemon rendered (a denial's tag must name one), whether denials are seen (nil: no watcher), the watcher.
+    var sandboxGrants: [SandboxGrant]
+    var accessCards = SandboxCards()
+    var sandboxKnown: Set<UUID> = []
+    var sandboxDetection: Bool?
+    var sandboxWatch: Task<Void, Never>?
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
     init(config: DaemonConfig, auth: AuthRegistry, registry: TerminalRegistry, store: WorkspaceStore,
          asks: AskCoordinator, hub: StreamHub, workspace: Workspace, userEnv: UserEnvironment) {
         self.config = config; self.auth = auth; self.registry = registry; self.store = store; self.userEnv = userEnv
         self.asks = asks; self.hub = hub; self.ws = workspace
+        // R26: every stored grant passes the refusals again (an edited grants.json, a rule added since): refused ones go
+        let home = config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()), root = config.paths.root
+        self.sandboxGrants = SandboxGrantStore(root: root).load()
+            .filter { SandboxGrantStore.refusal($0.path, op: $0.access.rawValue, home: home, collie: root,
+                                                app: SandboxInput.appBundle(of: config.collieExecutable)) == nil }
         self.usage = UsageService(dir: config.paths.root.appendingPathComponent("usage/providers"))
         self.memory = MemoryService(globalDir: config.paths.root.appendingPathComponent("memory"))
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
@@ -205,6 +217,9 @@ actor CommandRouter {
             if req.command.hasPrefix("lot.") {   // admin or terminal; reach rules in lotCommand
                 return Response(id: req.id, ok: true, result: try await lotCommand(req, peer: peer))
             }
+            if req.command.hasPrefix("access.") {   // request/list: a terminal; grant/deny/revoke: the app alone
+                return Response(id: req.id, ok: true, result: try await accessCommand(req, peer: peer))
+            }
             if req.command.hasPrefix("herd.") {   // admin or Shepherd; app-only ones checked in herdCommand
                 return Response(id: req.id, ok: true, result: try await herdCommand(req, peer: peer))
             }
@@ -221,6 +236,10 @@ actor CommandRouter {
             }
             switch req.command {
             case "list": return Response(id: req.id, ok: true, result: await list(from: tid))
+            case "open":   // the sandbox's `open` shim (R4): URLs and installed apps only, opened outside the sandbox
+                let home = config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory())
+                try await config.opener(try OpenCommand.arguments(target: str(req, "target"), app: str(req, "app"), cwd: req.cwd, home: home))
+                return Response(id: req.id, ok: true, result: .object([:]))
             case "ask":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
                 guard await registry.process(t.id)?.isRunning == true else {   // also covers records reloaded after restart
@@ -351,6 +370,12 @@ actor CommandRouter {
             }
             var fl: Paddock?
             if let f = str(r, "paddock") { fl = try findPaddock(f) }
+            let sandbox: TerminalSandbox   // the only path to a free terminal: the user, in the app
+            switch r.args["sandbox"] {
+            case nil, .string("sandboxed")?: sandbox = .sandboxed
+            case .string("free")?: sandbox = .free
+            default: throw ProtocolError(code: .invalidArgs, message: "sandbox must be sandboxed or free")
+            }
             // same name: a dead record is relaunched in place (keeps id + connections); a live one is refused
             let old = try lookup(name)
             if let old {
@@ -359,10 +384,25 @@ actor CommandRouter {
                 }
                 await discard(old.id)
             }
+            let cwd = str(r, "cwd") ?? fl?.path ?? r.cwd ?? NSHomeDirectory()
             let rec = TerminalRecord(id: old?.id ?? UUID(), name: name, preset: preset, command: str(r, "command"),
-                                     cwd: str(r, "cwd") ?? fl?.path ?? r.cwd ?? NSHomeDirectory(), isShepherd: flag(r, "shepherd"),
-                                     paddockId: fl?.id)
-            let result = try await launch(rec)
+                                     cwd: cwd, isShepherd: flag(r, "shepherd"), paddockId: fl?.id,
+                                     sandbox: sandbox, projectRoot: ProjectRoot.resolve(cwd: cwd, paddock: fl, home: sandboxHomeDir).path)
+            // M2: relaunched free in place: the old record's leashes and lot go before the free process exists (nothing
+            // reaches a free terminal, not even during the launch's awaits); a launch that fails puts them back
+            var dropped: [Connection] = [], lot: UUID?
+            if sandbox == .free, let old {
+                dropped = ws.connections.filter { $0.a == old.id || $0.b == old.id }
+                for c in dropped { try await unlink(c.a, c.b) }
+                lot = ws.lot(of: old.id)?.id
+                if lot != nil { try await place([old.id], in: nil) }
+            }
+            let result: [String: JSONValue]
+            do { result = try await launch(rec) } catch {
+                for c in dropped { try? await link(c.a, c.b) }
+                if let lot, let old { try? await place([old.id], in: lot) }
+                throw error
+            }
             try await ensurePaddock(of: rec)
             return .object(result)
         case "admin.restart":
@@ -406,7 +446,7 @@ actor CommandRouter {
                 guard t.paddockId == nil else {
                     throw ProtocolError(code: .invalidArgs, message: "cwd of a paddock terminal follows its paddock")
                 }
-                t.cwd = c
+                if c != t.cwd { t.cwd = c; t.projectRoot = nil }   // computed again at its next launch
             }
             if t.preset == .custom && (t.command ?? "").isEmpty {
                 throw ProtocolError(code: .invalidArgs, message: "preset custom needs a command")
@@ -465,20 +505,17 @@ actor CommandRouter {
     }
 
     /// Relaunches `t` in place (same id, so leashes and asks keep pointing at it). The caller holds the name reservation.
-    func relaunch(_ t: TerminalRecord) async throws -> [String: JSONValue] {
-        var t = t
+    /// `resume`: the agent picks its conversation up again (Claude `--continue`), after a sandbox grant or revoke.
+    func relaunch(_ t: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
         if let fid = t.paddockId {
             if paddockDeleting.contains(fid) { throw ProtocolError(code: .invalidArgs, message: "paddock of '\(t.name)' is being deleted") }
-            if !ws.paddocks.contains(where: { $0.id == fid }) {   // paddock gone: back to the pasture, never into a missing dir
-                t.paddockId = nil
-                if !FileManager.default.fileExists(atPath: t.cwd) {
-                    let pasture = LegacyOrq.pasture(ofPaddockPath: t.cwd)
-                    t.cwd = pasture.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil } ?? NSHomeDirectory()
-                }
+            // R8: never widened to the pasture; the saved project stays
+            guard let fl = ws.paddocks.first(where: { $0.id == fid }), FileManager.default.fileExists(atPath: fl.path) else {
+                throw ProtocolError(code: .invalidArgs, message: "o cercado de \(t.name) não existe mais; crie o terminal de novo")
             }
         }
         await discard(t.id)
-        let result = try await launch(t)
+        let result = try await launch(t, resume: resume)
         try await ensurePaddock(of: t)
         return result
     }
@@ -492,8 +529,9 @@ actor CommandRouter {
         try await link(a.id, b.id)
     }
 
-    /// Idempotent leash between two ids; persists, emits `.connected`.
+    /// Idempotent leash between two ids; persists, emits `.connected`. Never to a free terminal.
     func link(_ a: UUID, _ b: UUID) async throws {
+        try refuseFreeLeash(a, b)
         guard !ws.connections.contains(where: { Set([$0.a, $0.b]) == Set([a, b]) }) else { return }
         let c = Connection(a: a, b: b)
         ws.connections.append(c)
@@ -515,6 +553,8 @@ actor CommandRouter {
     /// Kills `t` and forgets its record and leashes; emits `.disconnected` per leash, then `.removed`.
     func remove(_ t: TerminalRecord) async throws {
         await discard(t.id)
+        SandboxLaunch.remove(t.id, root: config.paths.root)
+        await sandboxGone(t.id)
         ws.terminals.removeAll { $0.id == t.id }
         let gone = ws.connections.filter { $0.a == t.id || $0.b == t.id }
         ws.connections.removeAll { $0.a == t.id || $0.b == t.id }
@@ -528,7 +568,9 @@ actor CommandRouter {
     }
 
     /// Launches `rec` (new or relaunched in place): credentials, process, record, persist, `.spawned`.
-    func launch(_ rec: TerminalRecord) async throws -> [String: JSONValue] {
+    func launch(_ rec: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
+        var rec = rec
+        if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }, home: sandboxHomeDir).path }
         // the capture can take seconds: a relaunched record killed meanwhile stays gone
         let existed = ws.terminals.contains { $0.id == rec.id }
         let user = await agentEnv(rec)
@@ -539,11 +581,15 @@ actor CommandRouter {
         if existed, let fid = rec.paddockId, paddockDeleting.contains(fid) || !ws.paddocks.contains(where: { $0.id == fid }) {
             throw ProtocolError(code: .invalidArgs, message: "paddock of '\(rec.name)' is being deleted")
         }
+        if !sandboxed(rec) { sandboxKnown.remove(rec.id); accessCards.forget(terminal: rec.id) }   // R29: relaunched free
+        // R25: Claude resumes only a conversation it had (else `--continue` exits at once)
+        let resume = resume && AgentLaunch.hasClaudeConversation(cwd: rec.cwd, home: sandboxHomeDir, env: user)
         await memory.endSession(rec.id)   // a new process is a new session: memories may be injected again
         let token = await auth.issue(for: rec.id)
         let p: PTYProcess, sb: ScrollbackBuffer?
         do {
-            p = try await registry.spawn(rec, launch: try launchSpec(rec, token: token, user: user))
+            let spec = try launchSpec(rec, token: token, user: user, resume: resume)
+            p = try await registry.spawn(rec, launch: spec, sandbox: sandboxed(rec) ? try prepareSandbox(rec) : nil)
             sb = await registry.scrollback(rec.id)
             if let sb { await asks.attach(rec, process: p, scrollback: sb) }
             // natural exit ends the memory session too, unless a newer launch already replaced this process
@@ -572,13 +618,58 @@ actor CommandRouter {
         }
     }
 
+    /// The project of `t`; a record from before the sandbox gets it computed now, and saved.
+    func projectRoot(of t: TerminalRecord) async throws -> URL {
+        if let r = t.projectRoot { return URL(fileURLWithPath: r) }
+        let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId }, home: sandboxHomeDir)
+        if let i = ws.terminals.firstIndex(where: { $0.id == t.id }) { ws.terminals[i].projectRoot = root.path; try await persist() }
+        return root
+    }
+
+    /// The project of a terminal an agent creates at `cwd`: `cwd` must lie within `allowed` (the creator's project, or a
+    /// paddock it owns), and outside the paddock worktrees nested there unless it goes into that paddock. Never wider than `allowed`.
+    func childProject(cwd: String, paddock: Paddock?, allowed: URL) throws(ProtocolError) -> URL {
+        guard ProjectRoot.contains(cwd, root: allowed) else {
+            throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is outside your project \(allowed.path)")
+        }
+        if paddock == nil, let p = ws.paddocks.first(where: { p in
+            let w = URL(fileURLWithPath: p.path)
+            return ProjectRoot.contains(cwd, root: w) && !ProjectRoot.contains(allowed.path, root: w)
+        }) {
+            throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is inside paddock '\(p.name)'; use --paddock")
+        }
+        let root = ProjectRoot.resolve(cwd: cwd, paddock: paddock, home: sandboxHomeDir)
+        return ProjectRoot.contains(root.path, root: allowed) ? root : allowed
+    }
+
+    /// Every leash (terminal or panel, `link` and the panel paths' own) refuses a free end.
+    func refuseFreeLeash(_ ids: UUID...) throws(ProtocolError) {
+        if let f = ws.terminals.first(where: { ids.contains($0.id) && $0.sandbox == .free }) {
+            throw ProtocolError(code: .notConnected, message: "'\(f.name)' is a free terminal (sem sandbox): no leash reaches it")
+        }
+    }
+
+    /// A free terminal summons nothing (R7): refused before anything launches.
+    func refuseFreeSummoner(_ me: TerminalRecord) throws(ProtocolError) {
+        guard me.sandbox == .sandboxed else {
+            throw ProtocolError(code: .notConnected, message: "'\(me.name)' is a free terminal (sem sandbox): it can't summon")
+        }
+    }
+
+    /// Only the app's `admin.spawn` makes a free terminal: any other creation path asking for one is refused.
+    func refuseFree(_ r: Request) throws(ProtocolError) {
+        if flag(r, "free") || (r.args["sandbox"] != nil && str(r, "sandbox") != TerminalSandbox.sandboxed.rawValue) {
+            throw ProtocolError(code: .unauthorized, message: "a free terminal (sem sandbox) is created only by the user in the app")
+        }
+    }
+
     private var hooksDir: URL { config.paths.root.appendingPathComponent("hooks") }
 
     /// The user's interactive environment for agents; none for the `shell` preset (it reads its rc files itself).
     func agentEnv(_ rec: TerminalRecord) async -> [String: String] { rec.preset == .shell ? [:] : await userEnv.current() }
 
     /// `user` (from `agentEnv`) under Collie's keys.
-    func launchSpec(_ rec: TerminalRecord, token: String, user: [String: String]) throws -> LaunchSpec {
+    func launchSpec(_ rec: TerminalRecord, token: String, user: [String: String], resume: Bool = false) throws -> LaunchSpec {
         let env = ProcessInfo.processInfo.environment
         var e: [String: String] = [
             "COLLIE_SOCKET": config.paths.socket.path, "COLLIE_TERMINAL_ID": rec.id.uuidString, "COLLIE_TOKEN": token,
@@ -594,8 +685,45 @@ actor CommandRouter {
             e["COLLIE_PADDOCK_NAME"] = f.name; e["COLLIE_PADDOCK_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.branch
         }
         e = UserEnvironment.merge(user: user, collie: e, collieBin: config.collieExecutable.deletingLastPathComponent().path)
+        if sandboxed(rec), let home = config.sandboxHome {
+            e = SandboxLaunch.environment(e, id: rec.id, root: config.paths.root, shell: config.shell, home: home)
+        }
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
-                                          shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1")
+                                          shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec),
+                                          resume: resume)
+    }
+
+    /// Every terminal but a free one runs in its sandbox (a record from before the sandbox too, on its next start).
+    func sandboxed(_ rec: TerminalRecord) -> Bool { rec.sandbox == .sandboxed && config.sandboxHome != nil }
+
+    func sandboxProject(_ rec: TerminalRecord) -> URL {
+        URL(fileURLWithPath: rec.projectRoot ?? ProjectRoot.resolve(cwd: rec.cwd, paddock: nil, home: sandboxHomeDir).path)
+    }
+
+    /// A pasture never writes its paddocks: the ones there are, and the folder new ones go into.
+    func closedPaddocks(_ project: URL) -> [URL] {
+        ws.paddocks.map { URL(fileURLWithPath: $0.path) }
+            .filter { ProjectRoot.contains($0.path, root: project) && !ProjectRoot.contains(project.path, root: $0) }
+            + [project.appendingPathComponent(LegacyOrq.repoDirName(repoRoot: project)).appendingPathComponent("paddocks")]
+    }
+
+    /// Renders `rec`'s profile and files (`launch` filled its project first); returns the profile.
+    func prepareSandbox(_ rec: TerminalRecord) throws -> URL {
+        let project = sandboxProject(rec)
+        let git = SandboxInput.gitDirs(of: project)
+        let input = SandboxInput(terminal: rec.id, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
+                                 paddockWorktrees: closedPaddocks(project), home: config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()),
+                                 collieRoot: config.paths.root,
+                                 ownFiles: [AgentLaunch.settingsFile(rec.id, in: hooksDir), AgentLaunch.mcpFile(rec.id, in: hooksDir)],
+                                 terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
+                                 agent: rec.preset, command: rec.command,
+                                 grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, project: project.path, lot: ws.lot(of: rec.id)?.id),
+                                 appBundle: SandboxInput.appBundle(of: config.collieExecutable))
+        // R29: an id reused on another project (same-name respawn elsewhere) loses its terminal grants
+        let stale = sandboxGrants.filter { $0.scope == .terminal && $0.owner == rec.id && $0.project != nil && $0.project != project.path }
+        if !stale.isEmpty { sandboxGrants.removeAll { g in stale.contains { $0.id == g.id } }; try? saveGrants() }
+        sandboxKnown.insert(rec.id)   // before its process exists: its first denial is its own (startup race)
+        return try SandboxLaunch.prepare(input, root: config.paths.root, collie: config.collieExecutable)
     }
 }
 

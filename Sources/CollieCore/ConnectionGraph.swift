@@ -3,10 +3,11 @@ import CollieProtocol
 
 public enum ConnectionGraph {
     // Every terminal, Shepherd included, reaches only the peers it is leashed to (undirected; spec §5).
+    // A free terminal (no sandbox) is out of every leash, both ways: nothing reaches it, it reaches nothing.
     public static func reachable(from: UUID, in ws: Workspace) -> [TerminalRecord] {
-        guard ws.terminals.contains(where: { $0.id == from }) else { return [] }
+        guard ws.terminals.contains(where: { $0.id == from && $0.sandbox == .sandboxed }) else { return [] }
         let peers = Set(ws.connections.compactMap { $0.a == from ? $0.b : $0.b == from ? $0.a : nil })
-        return ws.terminals.filter { $0.id != from && peers.contains($0.id) }
+        return ws.terminals.filter { $0.id != from && $0.sandbox == .sandboxed && peers.contains($0.id) }
     }
 
     public static func resolve(name: String, from: UUID, in ws: Workspace) throws(ProtocolError) -> TerminalRecord {

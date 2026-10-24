@@ -162,7 +162,7 @@ private final class Rig {
                     "code/repo/.git/info/attributes", "code/repo/.git/commondir", "code/repo/.git/worktrees/p/gitdir",
                     // R27: the folders of .git/HEAD, .git/modules/s/index, .git/worktrees/w/HEAD; bare repos; too wide; never granted
                     "code/repo/.git", "code/repo/.git/modules/s", "code/repo/.git/worktrees/w", "code/srv/bare.git", "code/repo/.git/objects",
-                    "Library", "Library/Application Support", "Library/Keychains/login.keychain-db", "Library/Mail/V10",
+                    "Library", "Library/Application Support", "Library/Keychains", "Library/Keychains/login.keychain-db", "Library/Mail/V10",
                     "Library/Messages/chat.db", "Library/Group Containers/x", "Library/Containers/com.x"] {
             #expect(no(bad), "\(bad)")
         }

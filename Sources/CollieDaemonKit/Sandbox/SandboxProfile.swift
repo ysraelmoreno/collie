@@ -88,6 +88,15 @@ enum SandboxProfile {
             if e.hasSuffix("/") { return rx("^" + re(base + "/" + e) + ".+") }
             return sub(base + "/" + e)
         }
+        /// R-H1 (2Q review): a closed entry and, when it is a symlink (dotfiles, stow), its resolved target too: Seatbelt
+        /// matches the resolved path, so the target would stay open. ponytail: resolved at render (a link made later
+        /// takes effect at the terminal's next start)
+        func closing(_ es: [String]) -> [String] {
+            es.map { entry(home, $0) } + es.filter { !$0.hasSuffix("*") && !$0.hasSuffix("/") }.compactMap { e in
+                let r = real(URL(fileURLWithPath: home + "/" + e))
+                return r == home + "/" + e ? nil : sub(r)
+            }
+        }
         var out = ["(version 1)", "(allow default)"]
         func rule(_ verb: String, _ op: String, tagged: Bool = false, _ filters: [String]) {
             guard !filters.isEmpty else { return }
@@ -101,7 +110,7 @@ enum SandboxProfile {
         // containers) and Collie's data (below). No read grant is rendered (a stored one is moot): nothing re-opens them.
         // ssh keeps what `git`/`ssh` need without the keys
         out.append(";; reads: open; secrets, browser profiles, mail/messages/containers closed")
-        rule("deny", "file-read*", tagged: true, EssentialPaths.readClosed.map { entry(home, $0) })
+        rule("deny", "file-read*", tagged: true, closing(EssentialPaths.readClosed))
         rule("allow", "file-read*", [lit(home + "/.ssh"), lit(home + "/.ssh/known_hosts"), lit(home + "/.ssh/config"),
                                      rx("^" + re(home + "/.ssh/") + "[^/]+\\.pub$")])
 
@@ -154,10 +163,10 @@ enum SandboxProfile {
         // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
         // launchd agents, ~/Applications, the app bundle (I3). R23: secrets. (N2: after the `.build/` re-allow above)
         rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
-        rule("deny", "file-write*", tagged: true, EssentialPaths.secrets.map { entry(home, $0) })
+        rule("deny", "file-write*", tagged: true, closing(EssentialPaths.readClosed))   // M1: what is never read, never moved away
         // R35: their parents themselves (never their other children): renaming `~/Library` or `~/.config` away, writing
         // inside and renaming back would get past the denies on the leaves. From the home down, computed from the lists
-        let protected = (EssentialPaths.neverWritable + EssentialPaths.agentConfig + EssentialPaths.secrets)
+        let protected = (EssentialPaths.neverWritable + EssentialPaths.agentConfig + EssentialPaths.readClosed)
             .map { home + "/" + ($0.hasSuffix("*") ? String($0.dropLast()) : $0) } + [collie]
         var parents: Set<String> = [home]
         for p in protected where under(p, home) {

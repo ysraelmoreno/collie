@@ -92,7 +92,7 @@ enum EssentialPaths {
     /// Closed even when a grant covers them: never read, never written. Browser profiles: every Chromium-family and
     /// Firefox dir (Claude Code probes their `NativeMessagingHosts`: refused, so silent).
     static let secrets = [
-        ".ssh", ".aws", ".netrc", ".gem/credentials", ".cargo/credentials", ".cargo/credentials.toml", ".docker/config.json", ".gnupg", ".kube", ".config/gcloud", ".azure",
+        ".ssh", ".aws", ".netrc", ".git-credentials", ".pypirc", ".gem/credentials", ".cargo/credentials", ".cargo/credentials.toml", ".docker/config.json", ".gnupg", ".kube", ".config/gcloud", ".azure",
         "Library/Application Support/Google", "Library/Application Support/Chromium", "Library/Application Support/BraveSoftware",
         "Library/Application Support/Microsoft Edge*", "Library/Application Support/Vivaldi", "Library/Application Support/Arc",
         "Library/Application Support/Opera*", "Library/Application Support/com.operasoftware.Opera*",

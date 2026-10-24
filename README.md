@@ -387,7 +387,7 @@ Codex usam); se um dia sair do macOS, o sandbox para de funcionar e o Collie ter
   repositórios, o resto do `$HOME`), menos os segredos, os perfis de navegador, `~/Library/{Mail,Messages,Containers,Group
   Containers}` e a pasta de dados do Collie (só os arquivos que ele gera para o próprio terminal são legíveis). Nenhum
   clique abre esses; um bloqueio de leitura nunca vira cartão.
-- **Segredos (nem leitura nem escrita).** Chaves de `~/.ssh`, `~/.aws`, `~/.netrc`, `~/.docker/config.json`, `~/.gnupg`
+- **Segredos (nem leitura nem escrita).** Chaves de `~/.ssh`, `~/.aws`, `~/.netrc`, `~/.git-credentials`, `~/.pypirc`, `~/.docker/config.json`, `~/.gnupg`
   (assinar commits com gpg deixa de funcionar; assinatura por ssh com o agente funciona) e os perfis de navegador (Chrome
   e toda a pasta `Google`, Chromium, Edge, Brave, Vivaldi, Arc, Opera, Firefox/Mozilla, Safari, Cookies). O git por SSH
   continua funcionando pelo ssh-agent (`SSH_AUTH_SOCK`), sem ler as chaves. `~/.npmrc` segue legível (pode ter token de registry).

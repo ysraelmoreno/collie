@@ -23,8 +23,7 @@ extension CommandRouter {
             let base = URL(fileURLWithPath: r.cwd ?? me.cwd, isDirectory: true)
             let path = SignedAppCheck.realPath(URL(fileURLWithPath: try need(r, "path"), relativeTo: base).absoluteURL)
             if read {   // 2Q: reads are open but for what no click opens: no card, the answer says which
-                let why = SandboxGrantStore.refusal(path, op: "read", home: sandboxHomeDir, collie: config.paths.root,
-                                                    app: SandboxInput.appBundle(of: config.collieExecutable))
+                let why = SandboxGrantStore.readRefusal(path, home: sandboxHomeDir, collie: config.paths.root)
                 return .object(["shown": .bool(false), "message": .string(why.map { "Nunca liberado: \($0)" }
                     ?? "Leitura fora do projeto já é livre no sandbox: nada a pedir. Se a leitura falhou, é um caminho que nunca é liberado (segredos, perfis de navegador, e-mail, dados do Collie).")])
             }

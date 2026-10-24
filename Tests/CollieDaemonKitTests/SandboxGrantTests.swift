@@ -339,6 +339,12 @@ private final class Rig {
             guard case .object(let o1)? = open.result, case .string(let m1)? = o1["message"],
                   case .object(let o2)? = never.result, case .string(let m2)? = o2["message"] else { Issue.record("\(open) \(never)"); return }
             #expect(m1.contains("já é livre") && m2.contains("Nunca") && o1["shown"] == .bool(false))
+            // L1: what is readable though never granted (keychain, launchd agents) says reads are open
+            for rel in ["Library/Keychains/login.keychain-db", "Library/LaunchAgents/x.plist"] {
+                let r = try await rig.call(a, "access.request", ["path": .string(rig.f.home.appendingPathComponent(rel).path), "read": .bool(true)])
+                guard case .object(let o)? = r.result, case .string(let m)? = o["message"] else { Issue.record("\(r)"); return }
+                #expect(m.contains("já é livre"), "\(rel): \(m)")
+            }
             #expect(try await rig.list().cards.count == n)
         }
     }

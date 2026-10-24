@@ -46,6 +46,22 @@ struct SandboxGrantStore {
     /// dir (`.git`, `*.git`). The Collie app bundle and its folders (I3). For writes, also what the profile closes after
     /// every grant (R32: config run outside (`~/.config/gh` too), preferences, `~/Applications`; R34: global agent config is grantable) and `closed`: a pasture's
     /// paddock worktrees (M3). A refused card shows only Negar.
+    /// Why `path` (resolved) is never read, nil: it is readable (2Q: reads are open but for `readClosed` and Collie's data).
+    static func readRefusal(_ path: String, home: URL, collie: URL) -> String? {
+        let p = URL(fileURLWithPath: path).pathComponents
+        guard p.starts(with: URL(fileURLWithPath: SignedAppCheck.realPath(collie)).pathComponents)
+                || EssentialPaths.readClosed.contains(where: { closes(p, $0, home: home) }) else { return nil }
+        return refusal(path, op: "read", home: home, collie: collie) ?? "Nunca lido no sandbox."
+    }
+
+    /// `p` (components) lies in the home-relative entry `e`; a `x*` entry: any name starting with x at that depth (and below).
+    static func closes(_ p: [String], _ e: String, home: URL) -> Bool {
+        func comps(_ u: URL) -> [String] { URL(fileURLWithPath: SignedAppCheck.realPath(u)).pathComponents }
+        guard e.hasSuffix("*") else { return p.starts(with: comps(home.appendingPathComponent(e))) }
+        let c = comps(home.appendingPathComponent(String(e.dropLast()))), n = c.count
+        return p.count >= n && p.prefix(n - 1).elementsEqual(c.prefix(n - 1)) && p[n - 1].hasPrefix(c[n - 1])
+    }
+
     static func refusal(_ path: String, op: String, home: URL, collie: URL, app: URL? = nil, closed: [URL] = []) -> String? {
         if op == "exec" { return "Executar este programa não pode ser liberado no sandbox." }
         let p = URL(fileURLWithPath: path).pathComponents
@@ -54,11 +70,7 @@ struct SandboxGrantStore {
             return "Amplo demais: o Collie não libera a pasta pessoal, ~/Library ou ~/Library/Application Support inteiras, nem o que fica acima delas."
         }
         func within(_ u: URL) -> Bool { p.starts(with: comps(u)) }
-        func closes(_ e: String) -> Bool {   // a `x*` entry: any name starting with x at that depth (and below)
-            guard e.hasSuffix("*") else { return within(home.appendingPathComponent(e)) }
-            let c = comps(home.appendingPathComponent(String(e.dropLast()))), n = c.count
-            return p.count >= n && p.prefix(n - 1).elementsEqual(c.prefix(n - 1)) && p[n - 1].hasPrefix(c[n - 1])
-        }
+        func closes(_ e: String) -> Bool { Self.closes(p, e, home: home) }
         if within(collie) { return "Dados do Collie (e o token de admin) nunca são liberados para um agente." }
         if (EssentialPaths.secrets + EssentialPaths.neverGranted).contains(where: closes) {
             return "Segredos (chaves SSH, credenciais, chaves do sistema, e-mail, mensagens, perfis de navegador) e agentes do launchd nunca são liberados."

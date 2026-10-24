@@ -141,6 +141,37 @@ final class FakeHome {
         #expect(try !f.ok(p, "cat \(AgentLaunch.quote(f.repo.path))/k"))
     }
 
+    /// 2Q review H1: a closed dir that is a symlink (dotfiles) stays closed at its target; L2: plaintext git/pypi credentials.
+    @Test func symlinkedSecretTargetDenied() throws {
+        let f = try FakeHome(), fm = FileManager.default
+        let target = f.home.appendingPathComponent("dotfiles/aws")
+        try fm.createDirectory(at: target, withIntermediateDirectories: true)
+        try "k".write(to: target.appendingPathComponent("credentials"), atomically: false, encoding: .utf8)
+        try fm.removeItem(at: f.home.appendingPathComponent(".aws"))
+        try fm.createSymbolicLink(at: f.home.appendingPathComponent(".aws"), withDestinationURL: target)
+        for c in [".git-credentials", ".pypirc"] { try "k".write(to: f.home.appendingPathComponent(c), atomically: false, encoding: .utf8) }
+        let p = try f.profile(f.input(project: f.home))
+        for c in [".aws/credentials", "dotfiles/aws/credentials", ".git-credentials", ".pypirc"] {
+            #expect(try !f.ok(p, "cat \(f.h(c))"), "\(c)")
+        }
+        #expect(try !f.ok(p, "echo y > \(f.h("dotfiles/aws/credentials"))"))
+        #expect(try f.ok(p, "echo y > \(f.h("dotfiles/other"))"))
+    }
+
+    /// 2Q review M1: with the home as project, a read-closed dir can't be renamed away (then read).
+    @Test func readClosedNotRenamed() throws {
+        let f = try FakeHome(git: false)
+        for d in ["Library/Mail/V10", "Library/Messages", "Library/Containers/com.x"] {
+            try FileManager.default.createDirectory(at: f.home.appendingPathComponent(d), withIntermediateDirectories: true)
+        }
+        let p = try f.profile(f.input(project: f.home))
+        for d in ["Library/Mail", "Library/Messages", "Library/Containers"] {
+            #expect(try !f.ok(p, "mv \(f.h(d)) \(f.h("moved"))"), "\(d)")
+            #expect(FileManager.default.fileExists(atPath: f.home.appendingPathComponent(d).path), "\(d)")
+        }
+        #expect(try !f.ok(p, "echo y > \(f.h("Library/Mail/V10/x"))"))
+    }
+
     /// 2Q (user decision): `git push` over HTTPS runs gh as its credential helper: readable, never writable.
     @Test func ghConfigReadableNotWritable() throws {
         let f = try FakeHome()

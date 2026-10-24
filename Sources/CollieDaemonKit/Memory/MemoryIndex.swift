@@ -204,9 +204,12 @@ final class MemoryIndex {
     /// Reads (up to ×2) × recency, or ×1.5 pinned (pinned memories don't decay). Its one `?` is now.
     private static let multiplier = "(1 + 0.1 * min(coalesce(s.reads, 0), 10)) * (CASE WHEN d.pinned THEN 1.5 ELSE collie_recency(? - d.updatedAt) END)"
     static let vectorMin = 0.55
+    /// Languages whose model may bring hits no word matched. pt is not one: its sentence model scores related and
+    /// unrelated text alike (0.66–0.76), so its vectors only re-rank word hits (R3; meaning in pt comes from aliases).
+    static let vectorOnlyLangs: Set<String> = ["en"]
 
     /// bm25 × multiplier; with a query `vector`, blended: `m × (0.6 × b / bTop + 0.4 × max(cos, 0))` over the word hits
-    /// plus the records of the same language whose cosine is ≥ `vectorMin`.
+    /// plus (for `vectorOnlyLangs`) the records of the same language whose cosine is ≥ `vectorMin`.
     func search(_ query: String, vector: (lang: String, vector: [Float])? = nil, limit: Int, kinds: Set<MemoryKind>? = nil,
                 includeInactive: Bool = false) -> [MemoryHit] {
         let match = MemoryIndex.ftsQuery(query)
@@ -245,7 +248,7 @@ final class MemoryIndex {
             }
         }
         // ponytail: brute-force cosine over the store's vecs; an ANN index if a store passes ~20 000
-        let q = vector.vector.map(Double.init)
+        let q = vector.vector.map(Double.init), vectorOnly = Self.vectorOnlyLangs.contains(vector.lang)
         let qn = q.reduce(0) { $0 + $1 * $1 }.squareRoot()
         let sql = """
             SELECT d.id, v.v, \(Self.multiplier) AS m
@@ -263,7 +266,7 @@ final class MemoryIndex {
             vDSP_svesqD(x, 1, &vn, vDSP_Length(n))
             guard vn > 0 else { return }
             let cos = dot / (qn * vn.squareRoot()), id = text(row, 0)
-            if cand[id] != nil { cand[id]!.cos = cos } else if cos >= Self.vectorMin { cand[id] = (0, sqlite3_column_double(row, 2), cos) }
+            if cand[id] != nil { cand[id]!.cos = cos } else if vectorOnly, cos >= Self.vectorMin { cand[id] = (0, sqlite3_column_double(row, 2), cos) }
         }
         let bTop = cand.values.map(\.b).max() ?? 0
         let ranked = cand.map { id, c in (id, c.m * (0.6 * (bTop > 0 ? c.b / bTop : 0) + 0.4 * max(c.cos, 0))) }

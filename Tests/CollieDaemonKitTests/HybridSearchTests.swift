@@ -6,10 +6,11 @@ import CollieProtocol
 @testable import CollieDaemonKit
 
 /// Words map to fixed concept axes (teste/suíte/filter… → axis 0, cor/botão → 1, postgres/banco → 2); any other word adds
-/// a little weight on a hashed axis. `lang == nil`: a language with no model (embeds nothing).
+/// a little weight on a hashed axis. `lang == nil`: a language with no model (embeds nothing). Labelled `en` by default:
+/// only English vectors bring vector-only hits (R3); `pt` ones only re-rank word hits.
 struct ConceptEmbedder: MemoryEmbedder {
     var dim = 8
-    var lang: String? = "pt"
+    var lang: String? = "en"
     static let concepts: [String: Int] = [
         "teste": 0, "testes": 0, "test": 0, "tests": 0, "suíte": 0, "suite": 0, "filter": 0, "rodo": 0, "rodar": 0,
         "cor": 1, "botão": 1, "azul": 1, "postgres": 2, "banco": 2,
@@ -46,7 +47,8 @@ private func tempRoot() throws -> URL {
 @Suite struct HybridSearchTests {
     let prompt = "como rodo os testes?"
 
-    /// Review Focus 4: no shared word, found by meaning (prompt hook and `memory.search`).
+    /// Review Focus 4 (mechanics, with an `en`-labelled model): no shared word, found by meaning (prompt hook and
+    /// `memory.search`). With the real pt model this is aliases' job (R3, `ptOnlyReranks`).
     @Test func meaningMatchesPortuguese() async throws {
         let root = try tempRoot(); defer { try? FileManager.default.removeItem(at: root) }
         let dir = root.appendingPathComponent("memory")
@@ -73,6 +75,27 @@ private func tempRoot() throws -> URL {
             }
             #expect(t == "Suíte: só swift test --filter")
         }
+    }
+
+    /// Like the real pt model: every cosine bunched high, an unrelated memory the highest. pt vectors only re-rank word
+    /// hits: the unrelated one is never a candidate, the word hits are ordered by meaning.
+    @Test func ptOnlyReranks() async throws {
+        struct Bunched: MemoryEmbedder {
+            func embed(_ text: String) -> (lang: String, vector: [Float])? {
+                let t = text.lowercased()
+                let v: [Float] = t.contains("botão") ? [1, 0.3, 0] : t.contains("lentos") ? [1, 0.3, 0.05] : t.contains("rodar") ? [1, 0, 0.6] : [1, 0.3, 0]
+                return ("pt", v)
+            }
+        }
+        let root = try tempRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("memory")
+        let near = rec("Testes lentos", body: "testes"), far = rec("Rodar testes", body: "testes"), unrelated = rec("Cor do botão", body: "azul")
+        let mem = MemoryService(globalDir: dir, embedder: Bunched())
+        try await mem.global.run { m in for r in [near, far, unrelated] { try m.store.write(r) } }
+        let text = await mem.relevant(for: UUID(), cwd: dir.path, prompt: prompt)
+        #expect(text.contains(near.title) && text.contains(far.title) && !text.contains(unrelated.title), "\(text)")
+        let ids = try await mem.global.run { m in try m.requireIndex().search("testes", vector: Bunched().embed(prompt), limit: 10).map(\.record.id) }
+        #expect(ids == [near.id, far.id])   // equal bm25: the nearer meaning first
     }
 
     @Test func bm25StillWins() throws {

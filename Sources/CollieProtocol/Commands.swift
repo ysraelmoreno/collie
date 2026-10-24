@@ -23,6 +23,9 @@ public struct CommandSpec: Sendable {
 
 public enum Commands {
     public static let all: [CommandSpec] = core + PluginRegistry.all.flatMap(\.commands)
+    /// Commands whose result `path` is a file the daemon made for the caller: a sandboxed terminal gets it cloned into
+    /// its own readable `files/` (plan 2O). Never memory files, artifacts, crash logs or anything else under the root.
+    public static let outputFile: Set<String> = ["design.screenshot", "design.export", "browser.screenshot", "device.screenshot"]
     static let core: [CommandSpec] = [
         CommandSpec(name: "list", summary: "List connected agents", timeoutSeconds: 10),
         CommandSpec(name: "ask", summary: "Send a prompt to an agent and wait for its reply",

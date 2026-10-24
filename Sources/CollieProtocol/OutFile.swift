@@ -1,6 +1,7 @@
 import Foundation
 
-/// `--out PATH` of `browser screenshot`: the caller's process copies the daemon's file (the daemon writes only under its root).
+/// `--out PATH` of every command in `Commands.outputFile` (screenshots, design exports): the caller's process copies the
+/// daemon's file (the daemon writes only under its root; a sandboxed caller gets its readable clone, `SandboxLaunch.handOver`).
 public enum OutFile {
     /// Copies `result.path` to `dest` (relative to `cwd`; parent dirs created, existing file replaced) and returns the result with `path` = the new absolute path.
     public static func copyPath(of result: JSONValue, to dest: String, cwd: String) throws(ProtocolError) -> JSONValue {
@@ -8,6 +9,8 @@ public enum OutFile {
             throw ProtocolError(code: .internal, message: "--out: the reply has no path")
         }
         guard !dest.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "--out needs a path") }
+        // a source this process can't read (in a sandbox: one the daemon didn't hand over) is not a write failure
+        guard FileManager.default.isReadableFile(atPath: src) else { throw ProtocolError(code: .invalidArgs, message: "--out: cannot read \(src)") }
         var url = URL(fileURLWithPath: dest, relativeTo: URL(fileURLWithPath: cwd, isDirectory: true)).standardizedFileURL
         let fm = FileManager.default
         func isDir(_ u: URL) -> Bool { var d: ObjCBool = false; return fm.fileExists(atPath: u.path, isDirectory: &d) && d.boolValue }

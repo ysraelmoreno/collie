@@ -50,8 +50,11 @@ public enum AgentLaunch {
     /// `innerSandboxOff`: the terminal runs in Collie's sandbox, where Seatbelt can't nest (Task 1): agents start with
     /// their own sandbox off (Claude `sandbox.enabled false` in Collie's settings file, never the user's; Codex
     /// `--sandbox danger-full-access`; a custom `cursor-agent` command `--sandbox disabled`). Collie's still applies.
+    /// `filesDir`: the sandboxed terminal's handed-over files (`SandboxLaunch.handOver`); Claude gets it as a working
+    /// directory (`permissions.additionalDirectories`, in Collie's settings file only), so reading one never prompts.
     public static func launchSpec(for rec: TerminalRecord, env: [String: String], hooksDir: URL, collie: URL, shell: String,
-                                  codexMCP: Bool = false, innerSandboxOff: Bool = false, resume: Bool = false) throws -> LaunchSpec {
+                                  codexMCP: Bool = false, innerSandboxOff: Bool = false, resume: Bool = false,
+                                  filesDir: URL? = nil) throws -> LaunchSpec {
         func spec(_ args: [String]) -> LaunchSpec { LaunchSpec(executable: shell, arguments: args, environment: env, cwd: rec.cwd) }
         func claude(_ base: String) throws -> LaunchSpec {
             let f = settingsFile(rec.id, in: hooksDir)
@@ -75,6 +78,7 @@ public enum AgentLaunch {
                                                  // permission dialogs: a pending approval (ApprovalTracker)
                                                  "Notification": hook("claude-notification", 5)]]
             if innerSandboxOff { json["sandbox"] = ["enabled": false] }
+            if let filesDir { json["permissions"] = ["additionalDirectories": [filesDir.path]] }
             func write(_ o: [String: Any], _ to: URL) throws {
                 let data = try JSONSerialization.data(withJSONObject: o, options: [.withoutEscapingSlashes])
                 guard FileManager.default.createFile(atPath: to.path, contents: data, attributes: [.posixPermissions: 0o600]) else {

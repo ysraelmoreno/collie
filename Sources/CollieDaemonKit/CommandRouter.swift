@@ -228,7 +228,7 @@ actor CommandRouter {
                     : plugin.id == "artifacts" ? try await artifactCommand(req, peer: peer)
                     : plugin.runsInDaemon ? try await deviceCommand(req, peer: peer)
                     : try await pluginCommand(req, plugin: plugin, spec: spec, peer: peer)
-                return Response(id: req.id, ok: true, result: result)
+                return Response(id: req.id, ok: true, result: await handedOver(result, for: req))
             }
             guard let idStr = req.terminalId, let tid = UUID(uuidString: idStr), let t = req.token,
                   await auth.verify(terminal: tid, token: t) else {
@@ -690,7 +690,23 @@ actor CommandRouter {
         }
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
                                           shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec),
-                                          resume: resume)
+                                          resume: resume, filesDir: sandboxed(rec) ? SandboxLaunch.filesDir(rec.id, root: config.paths.root) : nil)
+    }
+
+    static let outputFileCommands = Commands.outputFile
+
+    /// A file the daemon made for a sandboxed caller (`outputFileCommands`' `path`) cloned into the terminal's readable
+    /// `files/`, the reply pointing at the clone. Anything else (admin, free terminal, other command, a source that is
+    /// not a regular file under the root): `result` unchanged. `r` already passed its command's principal check.
+    func handedOver(_ result: JSONValue, for r: Request) async -> JSONValue {
+        guard Self.outputFileCommands.contains(r.command), case .object(var o) = result, case .string(let p)? = o["path"],
+              let id = r.terminalId.flatMap(UUID.init(uuidString:)), let rec = ws.terminals.first(where: { $0.id == id }),
+              sandboxed(rec) else { return result }
+        let root = config.paths.root
+        guard let out = try? await UnixSocketClient.offPool({ try SandboxLaunch.handOver(URL(fileURLWithPath: p), terminal: id, root: root) })
+        else { return result }
+        o["path"] = .string(out.path)
+        return .object(o)
     }
 
     /// Every terminal but a free one runs in its sandbox (a record from before the sandbox too, on its next start).

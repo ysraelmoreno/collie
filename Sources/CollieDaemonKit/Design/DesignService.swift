@@ -404,22 +404,32 @@ actor DesignService {
                 let params = try str("params").map { try Self.json($0, "params") } ?? .object([:])
                 guard case .object(let p) = params else { throw ProtocolError(code: .invalidArgs, message: "'params' must be a JSON object") }
                 try Self.checkParams(cmd, p)
+                if Self.noIds(cmd, p) { return Self.skipped }
                 return try await use { c throws(ProtocolError) in
                     do throws(ProtocolError) { return try await c.command(cmd, p, timeout: try Self.left(deadline)) }
                     catch { throw Self.unsure(error) }
                 }
             case "design.batch":
                 let steps = try Self.steps(text: try await Self.batchText(commands: str("commands"), file: str("file"), cwd: cwd))
-                var a: [String: JSONValue] = ["commands": .array(steps.map(\.raw))]
+                // an agent's filter that found nothing: `[]`, or edits with `ids: []`, are skipped (never sent)
+                let skip = Set(steps.indices.filter { Self.noIds(steps[$0].command, steps[$0].params) })
+                guard skip.count < steps.count else { return .object(["results": .array(steps.map { _ in Self.skipped })]) }
+                var a: [String: JSONValue] = ["commands": .array(try Self.withoutSkipped(steps.map(\.raw), skip: skip))]
                 if let l = str("label") { a["label"] = .string(l) }
-                let ids = steps.map(\.command)
-                return try await use { c throws(ProtocolError) in
+                let ids = steps.indices.map { skip.contains($0) ? "" : steps[$0].command }   // the caller's step numbers
+                let r = try await use { c throws(ProtocolError) in
                     let r: MCPResult
                     do throws(ProtocolError) { r = try await c.result("batch", a, timeout: try Self.left(deadline)) }
                     catch { throw Self.unsure(error) }
-                    if r.isError { throw Self.located(r.texts.joined(separator: "\n"), ids) }   // the engine refused it
+                    if r.isError {   // the engine refused it
+                        let text = r.texts.joined(separator: "\n")
+                        throw Self.located(skip.isEmpty ? text : Self.callerSteps(text, sent: steps.indices.filter { !skip.contains($0) }), ids)
+                    }
                     return Self.decoded(r)
                 }
+                guard !skip.isEmpty, case .array(var done) = r else { return r }
+                for i in skip.sorted() where i <= done.count { done.insert(Self.skipped, at: i) }   // each in its own place
+                return .array(done)
             case "design.inspect":
                 let depth = try DeviceService.int(args, "depth", 1...64)
                 return try await use { c throws(ProtocolError) in
@@ -787,9 +797,10 @@ actor DesignService {
     }
 
     /// Allowed commands that can also name a file: only their in-memory forms (the client's write root confines the rest).
-    private static func checkParams(_ cmd: String, _ p: [String: JSONValue]) throws(ProtocolError) {
+    private static func checkParams(_ cmd: String, _ p: [String: JSONValue], inBatch: Bool = false) throws(ProtocolError) {
         // a batch's `{"$step": n}` references resolve in the engine, after these checks: none where a check looks
         if p["$step"] != nil { throw ProtocolError(code: .invalidArgs, message: "step references are not allowed in 'params'") }
+        try needsTargets(cmd, p, inBatch: inBatch)
         if cmd == "variable.import" { try noStepRef(p["variables"], "variables") }
         if cmd == "text.preview" { try noStepRef(p["command"], "command"); try noStepRef(p["params"], "params") }
         let refused: Bool = switch cmd {
@@ -805,8 +816,8 @@ actor DesignService {
         // text.preview runs its inner command (text.style) with the inner params
         if cmd == "text.preview", case .string(let c)? = p["command"] {
             switch p["params"] {
-            case nil, .null?: break
-            case .object(let ip)?: try checkLinks(c, ip)
+            case nil, .null?: try needsTargets(c, [:], inBatch: inBatch)
+            case .object(let ip)?: try checkLinks(c, ip); try needsTargets(c, ip, inBatch: inBatch)
             default: throw ProtocolError(code: .invalidArgs, message: "text.preview params must be an object")
             }
         }
@@ -887,10 +898,10 @@ actor DesignService {
         }
     }
 
-    /// The batch's steps: `[{command, params?}]`, each allowed.
-    private static func steps(text: String) throws(ProtocolError) -> [(command: String, raw: JSONValue)] {
-        guard case .array(let a) = try json(text, "commands"), !a.isEmpty else {
-            throw ProtocolError(code: .invalidArgs, message: "the batch must be a non-empty JSON array of {command, params}")
+    /// The batch's steps: `[{command, params?}]`, each allowed (`[]`: none).
+    private static func steps(text: String) throws(ProtocolError) -> [(command: String, params: [String: JSONValue], raw: JSONValue)] {
+        guard case .array(let a) = try json(text, "commands") else {
+            throw ProtocolError(code: .invalidArgs, message: "the batch must be a JSON array of {command, params}")
         }
         return try a.enumerated().map { (i, step) throws(ProtocolError) in
             guard case .object(let o) = step, case .string(let cmd)? = o["command"] else {
@@ -900,9 +911,139 @@ actor DesignService {
             switch o["params"] { case nil, .null?: params = [:]; case .object(let p)?: params = p
             default: throw ProtocolError(code: .invalidArgs, message: "batch step \(i + 1): 'params' must be an object") }
             let ok = try allowed(cmd)
-            try checkParams(cmd, params)
-            return (ok, step)
+            try checkParams(cmd, params, inBatch: true)
+            return (ok, params, step)
         }
+    }
+
+    static let skipped = JSONValue.object(["skipped": .string("no ids")])
+    /// Edits whose `ids: []` (an agent's filter that found nothing) is skipped instead of sent.
+    static let selectionEdits: Set<String> = ["edit.delete", "edit.duplicate", "object.group"]
+    static func noIds(_ cmd: String, _ p: [String: JSONValue]) -> Bool { selectionEdits.contains(cmd) && p["ids"] == .array([]) }
+
+    /// R7/R10: an agent names its layers, never the user's selection. The engine's commands whose params doc takes
+    /// `ids?`/`id?` (figcraft v0.7.0 `crates/engine/src`, spec params; `params.rs` `targets()`: no `ids` array and no
+    /// `id` = the selection), among the permitted ones, minus `proto.evaluate` (its `id?` defaults to the document's
+    /// modes) and `vector.edit.*` (`selectionOnly`). They need `ids` (an array) or `id`.
+    /// ponytail: a static table; a new engine version's commands need it regenerated from the spec params docs.
+    static let targetCommands: Set<String> = [
+        "align.bottom", "align.hcenter", "align.left", "align.right", "align.top", "align.vcenter",
+        "annotation.add", "annotation.edit", "annotation.list", "annotation.remove",
+        "arrange.back", "arrange.backward", "arrange.forward", "arrange.front", "arrange.packH", "arrange.packV",
+        "arrange.roundToPixels", "arrange.spacing", "arrange.tidy",
+        "bool.exclude", "bool.flatten", "bool.intersect", "bool.subtract", "bool.union",
+        "component.addProperty", "component.addVariant", "component.combineVariants", "component.create",
+        "component.createMultiple", "component.deleteProperty", "component.detach", "component.editProperty",
+        "component.exposeInstance", "component.goToMain", "component.hideWhenPublishing", "component.makeSlot",
+        "component.playground", "component.properties", "component.pushChanges", "component.removeSlot",
+        "component.resetInstance", "component.resetOverride", "component.restoreMain",
+        "distribute.horizontal", "distribute.vertical",
+        "edit.delete", "edit.duplicate",
+        "effect.add", "effect.move", "effect.remove", "effect.set",
+        "export.add", "export.remove", "export.update",
+        "fill.add", "fill.move", "fill.pattern", "fill.remove", "fill.set",
+        "frame.swapOrientation",
+        "grid.add", "grid.move", "grid.remove",
+        "image.adjust", "image.savePreset",
+        "inspect.assets", "inspect.code", "inspect.componentCode", "inspect.properties",
+        "instance.exposed", "instance.resetSlot", "instance.setProperties", "instance.slotInsert", "instance.swap",
+        "layout.add", "layout.remove", "layout.setTrack", "layout.suggest",
+        "measure.distances", "measure.padding",
+        "node.reparent",
+        "object.batchRename", "object.convertToFrame", "object.convertToGroup", "object.convertToSection",
+        "object.flipH", "object.flipV", "object.frameSelection", "object.group", "object.mask", "object.moveToPage",
+        "object.opacityKeys", "object.rasterize", "object.releaseMask", "object.removeFill", "object.removeFrame",
+        "object.removeStroke", "object.rename", "object.resizeToFit", "object.rotate180", "object.rotateLeft",
+        "object.rotateRight", "object.setThumbnail", "object.swapFillStroke", "object.toggleLock",
+        "object.toggleVisible", "object.ungroup", "object.wrapInSection",
+        "page.delete", "page.duplicate", "page.move", "page.rename", "page.setBackground",
+        "proto.action.add", "proto.action.move", "proto.action.remove", "proto.action.set",
+        "proto.conditional.addBlock", "proto.conditional.removeBlock", "proto.conditional.setCondition",
+        "proto.interaction.add", "proto.interaction.clear", "proto.interaction.remove", "proto.interaction.set",
+        "section.toggleContents",
+        "selection.colors",
+        "shapeBuilder.merge", "shapeBuilder.regions", "shapeBuilder.remove",
+        "stroke.add", "stroke.brush", "stroke.move", "stroke.remove", "stroke.set", "stroke.widthProfile",
+        "style.apply", "style.detach",
+        "text.alignCenter", "text.alignJustify", "text.alignLeft", "text.alignRight", "text.bold", "text.bulletList",
+        "text.case", "text.caseLower", "text.caseOriginal", "text.caseSmallCaps", "text.caseTitle", "text.caseUpper",
+        "text.decoration", "text.italic", "text.lineHeightDown", "text.lineHeightUp", "text.link", "text.listStyle",
+        "text.maxLines", "text.numberList", "text.paragraphIndent", "text.paragraphSpacing", "text.pathOptions",
+        "text.removeFromPath", "text.set", "text.setFeatures", "text.setVariations", "text.sizeDown", "text.sizeUp",
+        "text.strikethrough", "text.style", "text.trackingDown", "text.trackingUp", "text.underline",
+        "text.weightDown", "text.weightUp",
+        "transform.move", "transform.moveTo", "transform.resize", "transform.rotate", "transform.scale",
+        "variable.bind", "variable.setMode",
+        "vector.flatten", "vector.join", "vector.offset", "vector.outlineStroke", "vector.reverse", "vector.simplify",
+        "vector.smoothJoin",
+    ]
+    /// Other params that default to the selection: each group needs one of its keys.
+    static let selectionDefaults: [String: [[String]]] = [
+        "guide.remove": [["index"]], "proto.flow.add": [["start"]], "proto.present": [["start"]],
+        "text.onPath": [["text"], ["path"]], "style.create": [["from", "value"]],
+    ]
+    /// Commands with no target param that act on the selection (or vector edit mode's selected points): refused.
+    static let selectionOnly: Set<String> = [
+        "transform.nudge", "transform.nudgeSize", "transform.rotationOrigin", "transform.setRotationOrigin",
+        "object.hideOthers", "text.listIndent", "text.listOutdent", "vector.deleteHeal",
+    ]
+    /// `inBatch`: a `{"$step": n}` object stands for an earlier step's result (design.run has none).
+    private static func needsTargets(_ cmd: String, _ p: [String: JSONValue], inBatch: Bool) throws(ProtocolError) {
+        if selectionOnly.contains(cmd) || cmd.hasPrefix("vector.edit.") {
+            throw ProtocolError(code: .invalidArgs, message: "\(cmd) acts only on the user's selection: not available to agents")
+        }
+        // only what the engine takes as a target; anything else falls through to the selection (`params.rs` `targets()`)
+        func given(_ k: String) -> Bool {
+            if k == "value", let v = p[k] { return v != .null }   // style.create's own style JSON, not a target
+            switch p[k] {
+            case .object(let o)?: return inBatch && o["$step"] != nil
+            case .array?: return k == "ids"                // `[]`: skipped or refused by the engine, never the selection
+            case .number?: return k != "ids"               // a layer id, or the guide's `index`
+            case .string?: return k != "ids" && k != "index"   // a layer id
+            default: return false
+            }
+        }
+        var groups = selectionDefaults[cmd] ?? []
+        if targetCommands.contains(cmd) { groups.insert(["ids", "id"], at: 0) }
+        for g in groups where !g.contains(where: given) {
+            let what = g == ["ids", "id"] ? "ids" : g.joined(separator: " or ")
+            throw ProtocolError(code: .invalidArgs, message: "\(cmd) needs \(what): agents never act on the user's selection")
+        }
+    }
+
+    /// The engine's own batch errors count the steps it was sent (`step n`, `` `$step` n ``, `0 to n`): back to the
+    /// caller's numbers (`sent[i]` = the caller's index of sent step i). Numbers out of range stay as they are.
+    static func callerSteps(_ message: String, sent: [Int]) -> String {
+        message.replacing(/(step |`\$step` |0 to )(\d+)/) { m in
+            guard let i = Int(m.output.2), sent.indices.contains(i) else { return String(m.output.0) }
+            return "\(m.output.1)\(sent[i])"
+        }
+    }
+
+    /// `steps` without the `skip` indices; `{"$step": n}` renumbered to the steps sent. A reference to a skipped step
+    /// is refused (it has no result). Only whole, non-negative indices are renumbered (never `Int(n)` on any Double).
+    static func withoutSkipped(_ steps: [JSONValue], skip: Set<Int>) throws(ProtocolError) -> [JSONValue] {
+        var to: [Int: Int] = [:]
+        for i in steps.indices where !skip.contains(i) { to[i] = to.count }
+        func walk(_ v: JSONValue) throws(ProtocolError) -> JSONValue {
+            switch v {
+            case .object(var o) where o["$step"] != nil:   // `{"$step": n}`, `{"$step": n, "field": f}` (the engine's forms)
+                // not a step index (1.5, -1, 1e300, a string): as is, for the engine to refuse
+                guard case .number(let n)? = o["$step"], let k = Int(exactly: n), k >= 0 else { return v }
+                if let m = to[k] { o["$step"] = .number(Double(m)); return .object(o) }
+                if skip.contains(k) {
+                    throw ProtocolError(code: .invalidArgs, message: "{\"$step\": \(k)} refers to a step skipped for having no ids")
+                }
+                return v   // past the last step: the engine refuses it
+            case .object(let o):
+                var out: [String: JSONValue] = [:]
+                for (k, x) in o { out[k] = try walk(x) }
+                return .object(out)
+            case .array(let a): return .array(try a.map { x throws(ProtocolError) in try walk(x) })
+            default: return v
+            }
+        }
+        return try steps.indices.filter { !skip.contains($0) }.map { i throws(ProtocolError) in try walk(steps[i]) }
     }
 
     /// The engine's refusal of a batch (an `isError` answer: it applied nothing), with the step it names: engine errors

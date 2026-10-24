@@ -20,6 +20,25 @@ import CollieProtocol
         #expect(MemoryFile.render(r).hasPrefix("---\nid: "))
     }
 
+    @Test func hitsRoundTrip() throws {
+        var r = full(); r.hits = 7
+        let text = MemoryFile.render(r)
+        #expect(text.contains("pinned: true\nhits: 7\n"))
+        #expect(try MemoryFile.parse(text) == r)
+    }
+
+    @Test func fileWithoutHitsDecodes() throws {
+        #expect(try MemoryFile.parse(MemoryFile.render(full())).hits == nil)
+        #expect(throws: ProtocolError.self) { try MemoryFile.parse(MemoryFile.render(full()).replacingOccurrences(of: "pinned: true", with: "pinned: true\nhits: x")) }
+    }
+
+    /// An old record's file (no `hits`) is byte-identical after a parse and a rewrite.
+    @Test func renderOmitsNilHits() throws {
+        let old = MemoryFile.render(full())
+        #expect(!old.contains("hits:"))
+        #expect(MemoryFile.render(try MemoryFile.parse(old)) == old)
+    }
+
     @Test func subjectIsNormalized() {
         #expect(MemoryRecord(kind: .decision, subject: "  Use   SQLite\tNow ", title: "t").subject == "use sqlite now")
     }

@@ -37,7 +37,7 @@ extension CommandRouter {
         }
         let adminCommands: Set<String> = ["memory.review", "memory.restore", "memory.pin", "memory.unpin",
                                           "memory.cleanup", "memory.purge", "memory.repos", "memory.curator",
-                                          "memory.digest", "memory.undo", "memory.resolve"]
+                                          "memory.digest", "memory.undo", "memory.resolve", "memory.consolidate"]
         if caller != nil, adminCommands.contains(r.command) {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is admin-only")
         }
@@ -71,6 +71,7 @@ extension CommandRouter {
             let (saved, target, old) = try await saveMemory(kind, scope: scope, subject: try need(r, "subject"), title: try need(r, "title"),
                                                             body: str(r, "body") ?? "", path: str(r, "path"), repo: project,
                                                             paddock: paddockName, lot: lot, origin: origin)
+            if kind == .pitfall { await enqueuePitfall(saved.id, store: target) }
             return try memJSON(saved, target, ["superseded": old.map { .string($0.id.uuidString) } ?? .null])
 
         case "memory.search":
@@ -149,6 +150,11 @@ extension CommandRouter {
         case "memory.context":
             let cwd = caller?.cwd ?? project.root?.path ?? memory.global.path
             return .object(["output": .string(await memory.contextText(cwd: cwd, paddock: paddockName, lot: (lotArg ?? myLot)?.id).text)])
+
+        case "memory.checklist":
+            let cwd = caller?.cwd ?? project.root?.path ?? memory.global.path
+            let text = await memory.checklist(cwd: cwd, lot: (lotArg ?? myLot)?.id).text
+            return .object(["output": .string(text.isEmpty ? "Nenhuma armadilha registrada neste projeto." : text)])
 
         case "memory.hookContext", "memory.hookRelevant":
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
@@ -308,6 +314,10 @@ extension CommandRouter {
             let keep = try need(r, "keep")
             guard ["newer", "older"].contains(keep) else { throw invalid("keep must be newer|older") }
             return try isoJSON(try await resolveAsk(e, keepNewer: keep == "newer"))
+
+        case "memory.consolidate":   // run now: the store's cleanup (in the digest) and its cluster job queued
+            await consolidate(repo)
+            return .object(["queued": .number(Double(await curator.queued(kind: .consolidate).filter { $0.store == repo.key }.count))])
 
         case "memory.curator":
             if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }

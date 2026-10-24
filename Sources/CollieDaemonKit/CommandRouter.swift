@@ -47,6 +47,7 @@ actor CommandRouter {
     /// The on-device model's rewrites of work summaries.
     nonisolated let assistant: WorkAssistant
     var jobSweeper: Task<Void, Never>?
+    var consolidator: Task<Void, Never>?
     /// The work store failed and was logged; reset by the next good read.
     var workStoreBroken = false
     /// Works whose proposals are being captured (MemoryCapture): one capture a work at a time.

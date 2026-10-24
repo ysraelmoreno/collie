@@ -117,7 +117,7 @@ enum MemoryCleanup {
         return Double(wa.intersection(wb).count) / Double(wa.union(wb).count) >= jaccardMin
     }
 
-    private static func words(_ r: MemoryRecord) -> Set<String> {
+    static func words(_ r: MemoryRecord) -> Set<String> {
         Set("\(r.title) \(r.body)".lowercased().split(whereSeparator: { !($0.isLetter || $0.isNumber) }).map(String.init))
     }
 }

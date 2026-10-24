@@ -35,7 +35,7 @@ private func create(kind: String = "decision", scope: String = "project", title:
               case .object(let item)? = opsP["items"], case .object(let ip)? = item["properties"],
               case .object(let op)? = ip["op"], case .array(let e)? = op["enum"] else { Issue.record("shape"); return }
         let names = e.compactMap { v -> String? in if case .string(let x) = v { x } else { nil } }
-        #expect(names.sorted() == ["activate", "ask", "create", "drop", "merge", "retire", "score", "supersede"])
+        #expect(names.sorted() == ["activate", "ask", "bump", "create", "drop", "merge", "retire", "score", "supersede"])
     }
 
     @Test func validOpsKept() {

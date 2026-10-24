@@ -326,4 +326,21 @@ private let oneCall: Curator.Handler = { j, call in
         #expect(o["cap"] == .number(5) && o["available"] == .bool(true) && o["today"] == .number(0))
         await d.stop()
     }
+
+    /// R8: a flood of other jobs stops at cap − cap/4; the reserved rest is the corrections'.
+    @Test func reviewFloodCantBlockCorrection() async throws {
+        let fake = FakeCurator()
+        let c = Curator(dir: tempDir(), runner: fake, clock: ManualClock())
+        await c.setCap(40)
+        for _ in 0..<35 { _ = await c.enqueue(job(.pitfall)) }
+        await c.start(handler: oneCall)
+        #expect(await waitFor(10) { fake.calls == 30 })
+        try await Task.sleep(for: .milliseconds(200))
+        let left = await c.queued(kind: .pitfall)
+        #expect(fake.calls == 30 && left.count == 5)
+        #expect(await c.enqueue(job(.correction)))
+        #expect(await waitFor(10) { await c.queued(kind: .correction).isEmpty })
+        #expect(fake.calls == 31)
+        await c.stop()
+    }
 }

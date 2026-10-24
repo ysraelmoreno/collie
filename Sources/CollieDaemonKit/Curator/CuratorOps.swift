@@ -13,6 +13,8 @@ enum CuratorOp: Equatable, Sendable {
     case drop(id: UUID, reason: String)
     case score(id: UUID, delta: Double, reason: String)
     case ask(ids: [UUID], question: String)
+    /// A pitfall class got one more hit; `example`: the new case, one line.
+    case bump(id: UUID, example: String)
 }
 
 struct CuratorNew: Equatable, Sendable {
@@ -47,12 +49,12 @@ enum CuratorOps {
         let op: JSONValue = .object([
             "type": .string("object"), "additionalProperties": .bool(false), "required": .array([.string("op")]),
             "properties": .object([
-                "op": oneOf(["create", "supersede", "merge", "retire", "activate", "drop", "score", "ask"]),
+                "op": oneOf(["create", "supersede", "merge", "retire", "activate", "drop", "score", "ask", "bump"]),
                 "kind": oneOf(["feedback", "decision", "map", "pitfall"]),
                 "scope": oneOf(["project", "paddock", "global", "lot"]),
                 "id": str, "ids": uuids, "into": str, "by": str,
                 "subject": str, "title": str, "body": str, "why": str, "howToApply": str,
-                "reason": str, "question": str, "delta": .object(["type": .string("number"), "minimum": .number(-1), "maximum": .number(1)]),
+                "reason": str, "question": str, "example": str, "delta": .object(["type": .string("number"), "minimum": .number(-1), "maximum": .number(1)]),
             ]),
         ])
         let root: JSONValue = .object([
@@ -129,6 +131,9 @@ enum CuratorOps {
         case "score":
             guard let target = id("id"), case .number(let d)? = o["delta"], d.isFinite else { return nil }
             return .score(id: target, delta: min(1, max(-1, d)), reason: reason)
+        case "bump":
+            guard let target = id("id"), let ex = filled("example", PitfallClasses.exampleMax) else { return nil }
+            return .bump(id: target, example: ex)
         case "ask":
             guard let about = ids("ids"), !about.isEmpty, let q = filled("question", lineMax) else { return nil }
             return .ask(ids: about, question: q)

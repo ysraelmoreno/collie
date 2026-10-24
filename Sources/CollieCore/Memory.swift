@@ -23,6 +23,8 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var status: MemoryStatus
     public var reviewed: Bool
     public var pinned: Bool
+    /// A pitfall class (one memory per kind of mistake): how many times it happened. nil: not a class.
+    public var hits: Int?
     public var supersedes: UUID?
     public var supersededBy: UUID?
     public var origin: String          // "<terminal> (<preset>)" or "app"
@@ -30,11 +32,11 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var updatedAt: Date
     public init(id: UUID = UUID(), kind: MemoryKind, scope: MemoryScope = .project, paddock: String? = nil, lotId: UUID? = nil, subject: String,
                 title: String, body: String = "", path: String? = nil, status: MemoryStatus = .active,
-                reviewed: Bool = false, pinned: Bool = false, supersedes: UUID? = nil, supersededBy: UUID? = nil,
+                reviewed: Bool = false, pinned: Bool = false, hits: Int? = nil, supersedes: UUID? = nil, supersededBy: UUID? = nil,
                 origin: String = "app", createdAt: Date = Date(), updatedAt: Date? = nil) {
         self.id = id; self.kind = kind; self.scope = scope; self.paddock = paddock; self.lotId = lotId
         self.subject = MemoryRecord.normalize(subject); self.title = title; self.body = body; self.path = path
-        self.status = status; self.reviewed = reviewed; self.pinned = pinned
+        self.status = status; self.reviewed = reviewed; self.pinned = pinned; self.hits = hits
         self.supersedes = supersedes; self.supersededBy = supersededBy; self.origin = origin
         // ms precision: matches the on-disk format so a reloaded record == the in-memory one.
         func ms(_ d: Date) -> Date { Date(timeIntervalSince1970: (d.timeIntervalSince1970 * 1000).rounded() / 1000) }
@@ -55,6 +57,7 @@ public enum MemoryFile {
         l.append("subject: \(str(r.subject))"); l.append("title: \(str(r.title))")
         if let p = r.path { l.append("path: \(str(p))") }
         l.append("status: \(r.status.rawValue)"); l.append("reviewed: \(r.reviewed)"); l.append("pinned: \(r.pinned)")
+        if let h = r.hits { l.append("hits: \(h)") }
         if let s = r.supersedes { l.append("supersedes: \(s.uuidString.lowercased())") }
         if let s = r.supersededBy { l.append("superseded_by: \(s.uuidString.lowercased())") }
         l.append("origin: \(str(r.origin))")
@@ -111,7 +114,8 @@ public enum MemoryFile {
         if body.hasPrefix("\n") { body.removeFirst() }
         if body.hasSuffix("\n") { body.removeLast() }
         let created = try date("created")
-        var paddock: String?, path: String?, supersedes: UUID?, supersededBy: UUID?
+        var paddock: String?, path: String?, supersedes: UUID?, supersededBy: UUID?, hits: Int?
+        if let v = kv["hits"] { guard let n = Int(v), n >= 0 else { throw bad("bad 'hits'") }; hits = n }
         if let v = kv["paddock"] { paddock = try unstr(v, "paddock") }
         if let v = kv["path"] { path = try unstr(v, "path") }
         if let v = kv["supersedes"] { supersedes = try uuid(v, "supersedes") }
@@ -126,7 +130,7 @@ public enum MemoryFile {
             id: try uuid(try req("id"), "id"), kind: try enm("kind"), scope: scope,
             paddock: paddock, lotId: lotId, subject: try field("subject"), title: try field("title"),
             body: body, path: path, status: status,
-            reviewed: try flag("reviewed"), pinned: try flag("pinned"),
+            reviewed: try flag("reviewed"), pinned: try flag("pinned"), hits: hits,
             supersedes: supersedes,
             supersededBy: supersededBy,
             origin: try field("origin"), createdAt: created, updatedAt: try date("updated"))

@@ -23,6 +23,8 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     }
 
     var scope: MemoryScope { lotId != nil ? .lot : root == nil ? .global : .project }
+    /// `MemoryService.store(key:)` finds the store again: "lot:<id>", the repo root path, or "global".
+    var key: String { lotId.map { "lot:\($0.uuidString.lowercased())" } ?? root?.path ?? "global" }
     /// Where results say the memory lives: the repo root, or the global store dir.
     var path: String { root?.path ?? store.dir.path }
     func file(_ r: MemoryRecord) -> String { store.dir.appendingPathComponent(MemoryFile.fileName(r)).path }
@@ -101,10 +103,15 @@ actor MemoryService {
     private var byCwd: [String: RepoMemory] = [:]    // repos only: outside git (or on a git failure) is asked again next time
     private var byRoot: [String: RepoMemory] = [:]
     private var byLot: [UUID: RepoMemory] = [:]
-    /// Ids injected in a terminal's session, and the lot they were injected for: a change of lot starts over.
-    private var injected: [UUID: (lot: UUID?, ids: Set<UUID>)] = [:]
+    /// Ids injected in a terminal's session (→ the `key` of their store), and the lot they were injected for: a change of
+    /// lot starts over. ponytail: in the actor only — lost on a daemon restart, when the terminals restart too.
+    private var injected: [UUID: (lot: UUID?, ids: [UUID: String])] = [:]
+    /// Rules pushed to a terminal (its correction became one), emitted ahead of its next prompt's hits.
+    private var pending: [UUID: [UUID]] = [:]
     static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código."
     static let relevantHeader = "Memória relacionada (Collie):"
+    static let rulesHeader = "Regra nova do usuário (Collie):"
+    static let retractedHeader = "Memória retirada (Collie):"
 
     init(globalDir: URL) {
         self.globalDir = globalDir
@@ -158,6 +165,13 @@ actor MemoryService {
         for r in gone.values { try? await r.run { $0.closeIndex() } }
     }
 
+    /// A store already opened, by its `RepoMemory.key`.
+    func store(key: String) -> RepoMemory? {
+        if key == "global" { return global }
+        if key.hasPrefix("lot:") { return UUID(uuidString: String(key.dropFirst(4))).map { lotStore($0) } }
+        return byRoot[key]
+    }
+
     func isCached(root: String) -> Bool { byRoot[root] != nil }   // tests
 
     /// What an agent reads: its lot's memory (if in a lot), its repo's and the global one. Never another lot's.
@@ -168,15 +182,21 @@ actor MemoryService {
 
     /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set).
     func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, limit: Int = 4096) async -> String {
-        let (text, ids) = await contextText(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
-        injected[terminal] = (lot, ids)
-        return text
+        let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
+        injected[terminal] = (lot, c.ids)
+        return c.text
     }
 
     /// Pinned memories of every readable store in full, then an index (titles) of the rest of the lot's — or, outside a
     /// lot, of the rest of the project's/global; unpinned project memories reach a lot member only by prompt relevance.
     func contextText(cwd: String, paddock: String?, lot: UUID? = nil, limit: Int = 4096) async -> (text: String, ids: Set<UUID>) {
-        var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = []
+        let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
+        return (c.text, Set(c.ids.keys))
+    }
+
+    /// `contextText`, with each injected id's store key.
+    private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int) async -> (text: String, ids: [UUID: String]) {
+        var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = [], owner: [UUID: String] = [:]
         for s in await readable(cwd, lot: lot) {
             let recs = (try? await s.run { m -> [MemoryRecord] in
                 _ = m.index()   // refresh first: resolves two actives a land (or a hand edit) left behind
@@ -185,17 +205,98 @@ actor MemoryService {
                 return m.store.all().records.filter { $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId) && m.present($0) }
             }) ?? []
             pinned += recs.filter(\.pinned)
+            for r in recs where r.pinned { owner[r.id] = s.key }
             if lot == nil || s.lotId != nil { rest += recs.filter { !$0.pinned } }
         }
-        return Self.renderContext(pinned, index: rest, limit: limit)
+        let (text, ids) = Self.renderContext(pinned, index: rest, limit: limit)
+        return (text, owner.filter { ids.contains($0.key) })
     }
 
     /// Lot hits weigh ×1.5 over project/global ones.
     static let lotBoost = 1.5
 
-    /// Memories relevant to `prompt` not yet injected in this session; "" when nothing is.
+    /// Pushed rules first (`pushedRules`), then the memories relevant to `prompt` not yet injected in this session;
+    /// "" when nothing is.
     func relevant(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, prompt: String, limit: Int = 2048, max: Int = 5) async -> String {
-        if let cur = injected[terminal], cur.lot != lot { injected[terminal] = nil }   // moved to another lot: start over
+        let rules = await pushedRules(for: terminal, cwd: cwd, paddock: paddock, lot: lot, limit: limit)
+        let left = rules.isEmpty ? limit : limit - rules.utf8.count - 2
+        let mem = await hits(for: terminal, cwd: cwd, paddock: paddock, lot: lot, prompt: prompt, limit: left, max: max)
+        return [rules, mem].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    /// Moved to another lot: the session's set starts over.
+    private func sync(_ terminal: UUID, lot: UUID?) {
+        if let cur = injected[terminal], cur.lot != lot { injected[terminal] = nil }
+    }
+
+    func pushRule(_ id: UUID, to terminal: UUID) {
+        if pending[terminal]?.contains(id) != true { pending[terminal, default: []].append(id) }
+    }
+
+    /// The rules pushed to `terminal` that are active, visible to it and not yet injected, in push order, marked injected;
+    /// one that doesn't fit `limit` waits for the next prompt.
+    func pushedRules(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, limit: Int) async -> String {
+        sync(terminal, lot: lot)
+        guard let ids = pending.removeValue(forKey: terminal), !ids.isEmpty else { return "" }
+        let seen = injected[terminal]?.ids ?? [:]
+        var found: [UUID: (rec: MemoryRecord, key: String)] = [:]
+        for s in await readable(cwd, lot: lot) {
+            let recs = (try? await s.run { m in m.index()?.records(ids) ?? [:] }) ?? [:]
+            for r in recs.values where found[r.id] == nil && r.status == .active && seen[r.id] == nil
+                && Self.visible(r, paddock: paddock, lot: s.lotId) && s.present(r) { found[r.id] = (r, s.key) }
+        }
+        var out = Self.rulesHeader, chosen: [UUID: String] = [:], wait: [UUID] = []
+        for id in ids {
+            guard let f = found[id] else { continue }   // gone, inactive or already seen: dropped
+            let line = "\n" + Self.relevantLine(f.rec)
+            guard out.utf8.count + line.utf8.count <= limit else { wait.append(id); continue }
+            out += line; chosen[id] = f.key
+        }
+        if !wait.isEmpty { pending[terminal] = wait + (pending[terminal] ?? []) }
+        guard !chosen.isEmpty else { return "" }
+        injected[terminal, default: (lot, [:])].ids.merge(chosen) { a, _ in a }
+        return out
+    }
+
+    /// The ids injected in `terminal`'s session that are no longer active (superseded, archived — a curator's change or a
+    /// hand edit, the index sees both), one line each, removed from the set once said; over `limit`, `… e mais <n>` and
+    /// the rest wait for the next prompt. "" when there is none.
+    func retractions(for terminal: UUID, limit: Int) async -> String {
+        guard let cur = injected[terminal], !cur.ids.isEmpty else { return "" }
+        var byKey: [String: [UUID]] = [:]
+        for (id, k) in cur.ids { byKey[k, default: []].append(id) }
+        var stores: [RepoMemory] = [], gone: [MemoryRecord] = []
+        for (k, ids) in byKey.sorted(by: { $0.key < $1.key }) {
+            guard let s = store(key: k) else { continue }
+            stores.append(s)
+            let recs = (try? await s.run { m in m.index()?.records(ids) ?? [:] }) ?? [:]
+            gone += recs.values.filter { $0.status != .active }   // a record the index lacks (file gone) is left alone
+        }
+        guard !gone.isEmpty else { return "" }
+        gone.sort { ($0.updatedAt, $0.id.uuidString) < ($1.updatedAt, $1.id.uuidString) }
+        // the replacement: usually in the same store; a promotion's in another of the session's stores
+        let wanted = Array(Set(gone.compactMap(\.supersededBy)))
+        var next: [UUID: MemoryRecord] = [:]
+        for s in stores where !wanted.isEmpty {
+            let recs = (try? await s.run { m in m.index()?.records(wanted) ?? [:] }) ?? [:]
+            next.merge(recs.filter { $0.value.status == .active }) { a, _ in a }
+        }
+        var out = Self.retractedHeader, said: [UUID] = []
+        for (i, r) in gone.enumerated() {
+            let use = r.supersededBy.flatMap { next[$0] }.map { " Use: \(Self.oneLine($0.title, max: 60))." } ?? ""
+            let line = "\nNão vale mais: \(Self.oneLine(r.title, max: 60)).\(use)"
+            let tail = i + 1 < gone.count ? "\n… e mais \(gone.count - i - 1)".utf8.count : 0
+            guard out.utf8.count + line.utf8.count + tail <= limit else { break }
+            out += line; said.append(r.id)
+        }
+        guard !said.isEmpty else { return "" }
+        if said.count < gone.count { out += "\n… e mais \(gone.count - said.count)" }
+        for id in said { injected[terminal]?.ids[id] = nil }
+        return out
+    }
+
+    private func hits(for terminal: UUID, cwd: String, paddock: String?, lot: UUID?, prompt: String, limit: Int, max: Int) async -> String {
+        sync(terminal, lot: lot)
         let q = Self.significantTerms(prompt).joined(separator: " ")
         guard !q.isEmpty, max > 0 else { return "" }
         var hits: [(hit: MemoryHit, store: RepoMemory)] = []
@@ -206,9 +307,9 @@ actor MemoryService {
         }
         hits.sort { $0.hit.score > $1.hit.score }
         guard let top = hits.first?.hit.score, top > 0 else { return "" }
-        let seen = injected[terminal]?.ids ?? []
+        let seen = injected[terminal]?.ids ?? [:]
         // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor
-        let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && !seen.contains($0.hit.record.id) }
+        let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && seen[$0.hit.record.id] == nil }
         var lines = [Self.relevantHeader], used = Self.relevantHeader.utf8.count, chosen: [(hit: MemoryHit, store: RepoMemory)] = []
         for h in picked where chosen.count < max {
             let line = Self.relevantLine(h.hit.record)
@@ -216,7 +317,7 @@ actor MemoryService {
             lines.append(line); used += 1 + line.utf8.count; chosen.append(h)
         }
         guard !chosen.isEmpty else { return "" }
-        injected[terminal, default: (lot, [])].ids.formUnion(chosen.map(\.hit.record.id))
+        injected[terminal, default: (lot, [:])].ids.merge(chosen.map { ($0.hit.record.id, $0.store.key) }) { a, _ in a }
         var stores: [RepoMemory] = []
         for h in chosen where !stores.contains(where: { $0 === h.store }) { stores.append(h.store) }
         for s in stores {
@@ -226,7 +327,7 @@ actor MemoryService {
         return lines.joined(separator: "\n")
     }
 
-    func endSession(_ terminal: UUID) { injected[terminal] = nil }
+    func endSession(_ terminal: UUID) { injected[terminal] = nil; pending[terminal] = nil }
 
     // MARK: text
 
@@ -278,12 +379,12 @@ actor MemoryService {
         return (out, ids)
     }
 
-    /// Header, then active decisions (title + first line), the map (`path — title`), pitfalls; pinned first, then newest.
+    /// Header, then active user rules (feedback), decisions (title + first line), the map (`path — title`), pitfalls; pinned first, then newest.
     /// At most `limit` UTF-8 bytes, whole items only (one that doesn't fit is skipped).
     static func renderContext(_ recs: [MemoryRecord], limit: Int) -> (text: String, ids: Set<UUID>) {
         var out = header, ids = Set<UUID>()
         guard out.utf8.count <= limit else { return ("", []) }
-        let sections: [(MemoryKind, String)] = [(.decision, "Decisões:"), (.map, "Mapa:"), (.pitfall, "Armadilhas:")]
+        let sections: [(MemoryKind, String)] = [(.feedback, "Regras do usuário:"), (.decision, "Decisões:"), (.map, "Mapa:"), (.pitfall, "Armadilhas:")]
         for (kind, title) in sections {
             let items = recs.filter { $0.kind == kind }.sorted { ($0.pinned ? 1 : 0, $0.updatedAt) > ($1.pinned ? 1 : 0, $1.updatedAt) }
             var started = false
@@ -305,7 +406,7 @@ actor MemoryService {
     }
 
     private static func relevantLine(_ r: MemoryRecord) -> String {
-        let label = ["decision": "decisão", "map": "mapa", "pitfall": "armadilha"][r.kind.rawValue] ?? r.kind.rawValue
+        let label = ["feedback": "regra", "decision": "decisão", "map": "mapa", "pitfall": "armadilha"][r.kind.rawValue] ?? r.kind.rawValue
         let head = r.kind == .map ? (r.path.map { "\(oneLine($0, max: 200)) — " } ?? "") + oneLine(r.title, max: 200) : oneLine(r.title, max: 200)
         let body = oneLine(r.body, max: 300)
         return "- [\(label)] \(head)" + (body.isEmpty ? "" : ": \(body)") + mark(r)

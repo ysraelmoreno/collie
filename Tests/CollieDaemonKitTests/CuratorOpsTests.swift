@@ -5,8 +5,7 @@ import CollieProtocol
 @testable import CollieDaemonKit
 
 private let a = UUID(), b = UUID(), c = UUID()
-// ponytail: `feedback` arrives in Task 4; until then the allowed set is decision|pitfall
-private let job = CuratorScope(ids: [a, b, c], scopes: [.project, .global], kinds: [.decision, .pitfall], maxOps: 12)
+private let job = CuratorScope(ids: [a, b, c], scopes: [.project, .global], kinds: [.feedback, .decision, .pitfall], maxOps: 12)
 
 private func ops(_ list: [[String: JSONValue]]) -> JSONValue { .object(["ops": .array(list.map { .object($0) })]) }
 private func s(_ v: String) -> JSONValue { .string(v) }
@@ -76,6 +75,9 @@ private func create(kind: String = "decision", scope: String = "project", title:
         ]), scope: job)
         #expect(r.ops == [.retire(id: a, reason: "ok")])
         #expect(r.dropped == 8)
+        // feedback is a real kind now
+        guard case .create(let n)? = CuratorOps.validate(ops([create(kind: "feedback")]), scope: job).ops.first else { Issue.record("feedback dropped"); return }
+        #expect(n.kind == .feedback)
     }
 
     @Test func textBounded() {

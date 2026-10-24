@@ -58,7 +58,10 @@ extension CommandRouter {
 
         switch r.command {
         case "memory.save":
-            guard let kind = MemoryKind(rawValue: try need(r, "kind")) else { throw invalid("kind must be decision|map|pitfall") }
+            // feedback is the user's (a correction, the app): an agent can't save one
+            guard let kind = MemoryKind(rawValue: try need(r, "kind")), caller == nil || kind != .feedback else {
+                throw invalid("kind must be decision|map|pitfall")
+            }
             let lot = lotArg ?? myLot
             guard let scope = MemoryScope(rawValue: str(r, "scope") ?? (lot != nil ? "lot" : "project")) else {
                 throw invalid("scope must be lot|project|paddock|global")
@@ -96,7 +99,7 @@ extension CommandRouter {
 
         case "memory.list":
             let kind = try str(r, "kind").map { k throws(ProtocolError) -> MemoryKind in
-                guard let v = MemoryKind(rawValue: k) else { throw invalid("kind must be decision|map|pitfall") }
+                guard let v = MemoryKind(rawValue: k) else { throw invalid("kind must be feedback|decision|map|pitfall") }
                 return v
             }
             guard let status = MemoryStatus(rawValue: str(r, "status") ?? "active") else {
@@ -167,12 +170,19 @@ extension CommandRouter {
                 // ponytail: the bare header (no memories) counts as empty
                 text = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
             } else {
-                // board posts addressed to the caller first (newest first), then memories, in one 2048-byte budget
-                let limit = 2048, prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
-                let posts = if let myLot { await boards.inject(to: me.id, lot: myLot, limit: limit) } else { "" }
-                let left = posts.isEmpty ? limit : limit - posts.utf8.count - 2
-                let mem = await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, prompt: prompt, limit: left)
-                text = [posts, mem].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                // one 2048-byte budget: retractions, the rules pushed to the caller, board posts addressed to it (newest
+                // first), then memories
+                let prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
+                var left = 2048, parts: [String] = []
+                func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
+                let ret = await memory.retractions(for: me.id, limit: left)
+                add(ret)
+                // ponytail: retractions that overflowed hold the rest for the next prompt (titles are one line: no "\n…" inside)
+                if ret.contains("\n… e mais ") { left = 0 }
+                add(await memory.pushedRules(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, limit: left))
+                if let myLot, left > 0 { add(await boards.inject(to: me.id, lot: myLot, limit: left)) }
+                if left > 0 { add(await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, prompt: prompt, limit: left)) }
+                text = parts.joined(separator: "\n\n")
             }
             return .object(["output": .string(text)])
 

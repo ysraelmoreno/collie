@@ -48,7 +48,6 @@ enum CuratorOps {
             "type": .string("object"), "additionalProperties": .bool(false), "required": .array([.string("op")]),
             "properties": .object([
                 "op": oneOf(["create", "supersede", "merge", "retire", "activate", "drop", "score", "ask"]),
-                // ponytail: `feedback` is listed ahead of Task 4's kind; until then it is dropped by `validate`
                 "kind": oneOf(["feedback", "decision", "map", "pitfall"]),
                 "scope": oneOf(["project", "paddock", "global", "lot"]),
                 "id": str, "ids": uuids, "into": str, "by": str,

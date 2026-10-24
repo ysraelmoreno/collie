@@ -52,4 +52,19 @@ import CollieProtocol
         let r = MemoryRecord(kind: .map, subject: "x", title: "t", createdAt: Date(timeIntervalSince1970: 1_700_000_000.123456789))
         #expect(try MemoryFile.parse(MemoryFile.render(r)) == r)
     }
+
+    @Test func feedbackRoundTrips() throws {
+        let r = MemoryRecord(kind: .feedback, scope: .global, subject: "idioma", title: "Sempre responda em português", body: "o usuário pediu")
+        #expect(try MemoryFile.parse(MemoryFile.render(r)) == r)
+        #expect(MemoryFile.render(r).contains("\nkind: feedback\n"))
+        #expect(MemoryFile.fileName(r).hasPrefix("feedback/"))
+    }
+
+    /// A file written before `feedback` existed still parses; the three old kinds keep their raw values.
+    @Test func oldFilesDecode() throws {
+        let old = "---\nid: abcdef12-0000-0000-0000-000000000000\nkind: pitfall\nscope: project\nsubject: git\ntitle: t\nstatus: active\nreviewed: false\npinned: false\norigin: app\ncreated: 2025-01-01T00:00:00Z\nupdated: 2025-01-01T00:00:00Z\n---\n\nbody\n"
+        let r = try MemoryFile.parse(old)
+        #expect(r.kind == .pitfall && r.body == "body")
+        #expect([MemoryKind.decision, .map, .pitfall].map(\.rawValue) == ["decision", "map", "pitfall"])
+    }
 }

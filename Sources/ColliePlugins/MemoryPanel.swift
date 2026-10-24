@@ -429,7 +429,7 @@ struct MemoryPanelView: View {
 
 extension MemoryKind {
     /// The card tag's text.
-    var label: String { switch self { case .decision: "decisão"; case .map: "mapa"; case .pitfall: "armadilha" } }
+    var label: String { switch self { case .feedback: "regra"; case .decision: "decisão"; case .map: "mapa"; case .pitfall: "armadilha" } }
 }
 
 private struct EditSheet: View {

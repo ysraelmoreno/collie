@@ -17,11 +17,12 @@
 - The source must be a regular file whose resolved path is under the daemon's root (no symlink follow); otherwise the result is returned unchanged.
 - Free terminals and the admin are unchanged (they can read the root).
 - `files/` keeps the newest 100 files per terminal; it goes with the terminal (`SandboxLaunch.remove` already deletes the dir).
+- Claude Code must not ask before reading `files/`: the user's own `permissions.blockReadsOutsideWorkingDirectories` (their global settings, never touched) makes it prompt "Read outside the working directories" for any root path (user screenshot 2026-10-24, Pastor reading `~/Library/Application Support/Collie/screens/…png`). Collie adds `files/` to Claude's working directories through its per-terminal `--settings` file only (`permissions.additionalDirectories`).
 - Design-engine selection belongs to the user: no agent command acts on it.
 
 ## Review Focus
 
-1. A designer agent in a sandboxed terminal: `collie design screenshot --panel design-1` then reads the returned PNG (Claude's Read tool) → works.
+1. A designer agent in a sandboxed terminal: `collie design screenshot --panel design-1` then reads the returned PNG (Claude's Read tool) → works, with no Claude Code permission prompt.
 2. `collie design screenshot --out shot.png` from a project subdir → file there, readable, path absolute in the reply.
 3. Same file name twice (two screenshots in one ms on two panels): no overwrite — keep the source's unique name, add a suffix on collision.
 4. Daemon restart: earlier `files/` contents still readable; a new result doesn't fail if `files/` is missing (created 0700).
@@ -47,7 +48,8 @@
   - `prunesToHundred`, `nameCollisionGetsSuffix`.
 - [ ] **Step 2:** Run the filter → FAIL.
 - [ ] **Step 3:** Implement; clone off the cooperative pool (`UnixSocketClient.offPool`), as the other file I/O in the router.
-- [ ] **Step 4:** Tests PASS. Commit `fix(sandbox): output files readable by the terminal that asked`.
+- [ ] **Step 4:** In `AgentLaunch.claude(_:)` (`Sources/CollieDaemonKit/AgentLaunch.swift:56`), for a sandboxed terminal, the settings JSON gets `"permissions": {"additionalDirectories": [<filesDir>]}` (create the dir 0700 before launch). Test `claudeSettingsAddFilesDir` (sandboxed → present with that path; free terminal → absent). Manual: a sandboxed Claude reads a handed-over screenshot with no "Read outside the working directories" prompt.
+- [ ] **Step 5:** Tests PASS. Commit `fix(sandbox): output files readable by the terminal that asked`.
 
 ### Task 2: `--out` for every output-file command
 

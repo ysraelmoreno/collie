@@ -66,10 +66,7 @@ enum EssentialPaths {
     /// R19: the home dirs the daemon makes for a terminal: only its agent's (none for a shell). A missing one is made
     /// a real directory, never through a symlink (I1); any other missing dir stays missing (a tool creating it hits a denial).
     static func agentHome(_ preset: Preset, command: String?) -> [String] {
-        // B3: the executable's basename, past a leading `env [VAR=val…]`
-        var words = (command ?? "").split(whereSeparator: \.isWhitespace).map { String($0.split(separator: "/").last ?? $0) }
-        if words.first == "env" { words = Array(words.dropFirst().drop { $0.contains("=") }) }
-        let first = words.first
+        let first = commandAgent(command ?? "")?.name
         let home: String? = switch preset {
         case .claude: ".claude"
         case .codex: ".codex"
@@ -77,6 +74,39 @@ enum EssentialPaths {
         case .shell: nil
         }
         return home.map { [$0] + (agentStateDirs[$0] ?? []) } ?? []
+    }
+
+    /// B3/M4: the program a command runs: the executable's basename past a leading `env [VAR=val…]`, and where that
+    /// word ends in `command` (a flag goes in right after it).
+    static func commandAgent(_ command: String) -> (name: String, end: String.Index)? {
+        var rest = command[...]
+        func word() -> Substring? {
+            rest = rest.drop(while: \.isWhitespace)
+            guard !rest.isEmpty else { return nil }
+            let w = rest.prefix { !$0.isWhitespace }
+            rest = rest[w.endIndex...]
+            return w
+        }
+        func base(_ w: Substring) -> String { String(w.split(separator: "/").last ?? w) }
+        guard var w = word() else { return nil }
+        if base(w) == "env" { repeat { guard let n = word() else { return nil }; w = n } while w.contains("=") }
+        return (base(w), w.endIndex)
+    }
+
+    /// R32: never writable, rendered after the project and every grant, so no project root (the home itself included)
+    /// and no click reopens them: config another unsandboxed program executes from (shell rc, git and package-manager
+    /// config, the global agent config except `~/.claude.json`), preferences, launchd agents, `~/Applications` (`collie
+    /// open` launches apps from there). The agents' state is re-opened after (`agentStateWrites`).
+    static let neverWritable = [
+        ".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout", ".zcompdump*", ".oh-my-zsh", ".p10k.zsh", ".config/zsh",
+        ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".inputrc", ".config/fish", ".config/starship.toml",
+        ".gitconfig", ".gitignore_global", ".config/git", ".npmrc", ".yarnrc", ".yarnrc.yml",
+        ".claude", ".codex", ".cursor", ".config/cursor",
+        "Library/Preferences", "Library/LaunchAgents", "Applications",
+    ]
+    /// What `neverWritable` closes that the agents write: their state (R18: dirs' children only) and history files.
+    static var agentStateWrites: [String] {
+        homeWrites.filter { e in [".claude/", ".codex/", ".cursor/"].contains { e.hasPrefix($0) } }
     }
 
     /// Closed even when a grant covers them.

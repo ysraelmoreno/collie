@@ -83,7 +83,8 @@ actor CommandRouter {
         // R26: every stored grant passes the refusals again (an edited grants.json, a rule added since): refused ones go
         let home = config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()), root = config.paths.root
         self.sandboxGrants = SandboxGrantStore(root: root).load()
-            .filter { SandboxGrantStore.refusal($0.path, op: $0.access.rawValue, home: home, collie: root) == nil }
+            .filter { SandboxGrantStore.refusal($0.path, op: $0.access.rawValue, home: home, collie: root,
+                                                app: SandboxInput.appBundle(of: config.collieExecutable)) == nil }
         self.usage = UsageService(dir: config.paths.root.appendingPathComponent("usage/providers"))
         self.memory = MemoryService(globalDir: config.paths.root.appendingPathComponent("memory"))
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
@@ -386,12 +387,21 @@ actor CommandRouter {
             let cwd = str(r, "cwd") ?? fl?.path ?? r.cwd ?? NSHomeDirectory()
             let rec = TerminalRecord(id: old?.id ?? UUID(), name: name, preset: preset, command: str(r, "command"),
                                      cwd: cwd, isShepherd: flag(r, "shepherd"), paddockId: fl?.id,
-                                     sandbox: sandbox, projectRoot: ProjectRoot.resolve(cwd: cwd, paddock: fl).path)
-            let result = try await launch(rec)
-            // relaunched free in place, once it runs: the old record's leashes and lot go (nothing reaches a free terminal)
+                                     sandbox: sandbox, projectRoot: ProjectRoot.resolve(cwd: cwd, paddock: fl, home: sandboxHomeDir).path)
+            // M2: relaunched free in place: the old record's leashes and lot go before the free process exists (nothing
+            // reaches a free terminal, not even during the launch's awaits); a launch that fails puts them back
+            var dropped: [Connection] = [], lot: UUID?
             if sandbox == .free, let old {
-                for c in ws.connections where c.a == old.id || c.b == old.id { try await unlink(c.a, c.b) }
-                if ws.lots.contains(where: { $0.members.contains(old.id) }) { try await place([old.id], in: nil) }
+                dropped = ws.connections.filter { $0.a == old.id || $0.b == old.id }
+                for c in dropped { try await unlink(c.a, c.b) }
+                lot = ws.lot(of: old.id)?.id
+                if lot != nil { try await place([old.id], in: nil) }
+            }
+            let result: [String: JSONValue]
+            do { result = try await launch(rec) } catch {
+                for c in dropped { try? await link(c.a, c.b) }
+                if let lot, let old { try? await place([old.id], in: lot) }
+                throw error
             }
             try await ensurePaddock(of: rec)
             return .object(result)
@@ -560,7 +570,7 @@ actor CommandRouter {
     /// Launches `rec` (new or relaunched in place): credentials, process, record, persist, `.spawned`.
     func launch(_ rec: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
         var rec = rec
-        if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }).path }
+        if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }, home: sandboxHomeDir).path }
         // the capture can take seconds: a relaunched record killed meanwhile stays gone
         let existed = ws.terminals.contains { $0.id == rec.id }
         let user = await agentEnv(rec)
@@ -573,7 +583,7 @@ actor CommandRouter {
         }
         if !sandboxed(rec) { sandboxKnown.remove(rec.id); accessCards.forget(terminal: rec.id) }   // R29: relaunched free
         // R25: Claude resumes only a conversation it had (else `--continue` exits at once)
-        let resume = resume && AgentLaunch.hasClaudeConversation(cwd: rec.cwd, home: sandboxHomeDir)
+        let resume = resume && AgentLaunch.hasClaudeConversation(cwd: rec.cwd, home: sandboxHomeDir, env: user)
         await memory.endSession(rec.id)   // a new process is a new session: memories may be injected again
         let token = await auth.issue(for: rec.id)
         let p: PTYProcess, sb: ScrollbackBuffer?
@@ -611,7 +621,7 @@ actor CommandRouter {
     /// The project of `t`; a record from before the sandbox gets it computed now, and saved.
     func projectRoot(of t: TerminalRecord) async throws -> URL {
         if let r = t.projectRoot { return URL(fileURLWithPath: r) }
-        let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
+        let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId }, home: sandboxHomeDir)
         if let i = ws.terminals.firstIndex(where: { $0.id == t.id }) { ws.terminals[i].projectRoot = root.path; try await persist() }
         return root
     }
@@ -628,7 +638,7 @@ actor CommandRouter {
         }) {
             throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is inside paddock '\(p.name)'; use --paddock")
         }
-        let root = ProjectRoot.resolve(cwd: cwd, paddock: paddock)
+        let root = ProjectRoot.resolve(cwd: cwd, paddock: paddock, home: sandboxHomeDir)
         return ProjectRoot.contains(root.path, root: allowed) ? root : allowed
     }
 
@@ -686,21 +696,29 @@ actor CommandRouter {
     /// Every terminal but a free one runs in its sandbox (a record from before the sandbox too, on its next start).
     func sandboxed(_ rec: TerminalRecord) -> Bool { rec.sandbox == .sandboxed && config.sandboxHome != nil }
 
-    /// Renders `rec`'s profile and files (`launch` filled its project first); returns the profile.
-    func prepareSandbox(_ rec: TerminalRecord) throws -> URL {
-        let project = URL(fileURLWithPath: rec.projectRoot ?? ProjectRoot.resolve(cwd: rec.cwd, paddock: nil).path)
-        let git = SandboxInput.gitDirs(of: project)
-        // a pasture never writes its paddocks: the ones there are, and the folder new ones go into
-        let paddocks = ws.paddocks.map { URL(fileURLWithPath: $0.path) }
+    func sandboxProject(_ rec: TerminalRecord) -> URL {
+        URL(fileURLWithPath: rec.projectRoot ?? ProjectRoot.resolve(cwd: rec.cwd, paddock: nil, home: sandboxHomeDir).path)
+    }
+
+    /// A pasture never writes its paddocks: the ones there are, and the folder new ones go into.
+    func closedPaddocks(_ project: URL) -> [URL] {
+        ws.paddocks.map { URL(fileURLWithPath: $0.path) }
             .filter { ProjectRoot.contains($0.path, root: project) && !ProjectRoot.contains(project.path, root: $0) }
             + [project.appendingPathComponent(LegacyOrq.repoDirName(repoRoot: project)).appendingPathComponent("paddocks")]
+    }
+
+    /// Renders `rec`'s profile and files (`launch` filled its project first); returns the profile.
+    func prepareSandbox(_ rec: TerminalRecord) throws -> URL {
+        let project = sandboxProject(rec)
+        let git = SandboxInput.gitDirs(of: project)
         let input = SandboxInput(terminal: rec.id, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
-                                 paddockWorktrees: paddocks, home: config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()),
+                                 paddockWorktrees: closedPaddocks(project), home: config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()),
                                  collieRoot: config.paths.root,
                                  ownFiles: [AgentLaunch.settingsFile(rec.id, in: hooksDir), AgentLaunch.mcpFile(rec.id, in: hooksDir)],
                                  terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
                                  agent: rec.preset, command: rec.command,
-                                 grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, project: project.path, lot: ws.lot(of: rec.id)?.id))
+                                 grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, project: project.path, lot: ws.lot(of: rec.id)?.id),
+                                 appBundle: SandboxInput.appBundle(of: config.collieExecutable))
         // R29: an id reused on another project (same-name respawn elsewhere) loses its terminal grants
         let stale = sandboxGrants.filter { $0.scope == .terminal && $0.owner == rec.id && $0.project != nil && $0.project != project.path }
         if !stale.isEmpty { sandboxGrants.removeAll { g in stale.contains { $0.id == g.id } }; try? saveGrants() }

@@ -123,6 +123,9 @@ struct TerminalSheet: View {
                 .background(RoundedRectangle(cornerRadius: 12).fill(Color.collieSidebar))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(free ? Color.collieDanger : Color.collieBorder, lineWidth: 1))
             }
+            if paddock == nil, let w = Self.homeWarning(cwd: cwd, free: original == nil ? free : original?.sandbox == .free) {
+                Text(w).font(.collieUI(12)).foregroundStyle(Color.collieAttention).fixedSize(horizontal: false, vertical: true)
+            }
             if needsRestart {
                 Text("Pastor, preset, comando e pasta valem depois de reiniciar").font(.collieUI(12)).foregroundStyle(Color.collieAttention)
             }
@@ -150,6 +153,12 @@ struct TerminalSheet: View {
         }
         .padding(.horizontal, 26).padding(.vertical, 24).frame(width: 560)
         .background(Color.collieSurface)
+    }
+
+    /// R32: a sandboxed terminal at `~` has the whole home as its project (rc files and agent config stay closed).
+    static func homeWarning(cwd: String, free: Bool) -> String? {
+        guard !free, URL(fileURLWithPath: cwd).standardizedFileURL.path == URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path else { return nil }
+        return "O projeto será toda a sua pasta pessoal: o agente poderá ler e alterar tudo nela (menos segredos, rc do shell e configuração global dos agentes). Prefira a pasta do projeto."
     }
 
     private func label(_ text: String) -> some View { Text(text).font(.collieUI(13, .medium)).foregroundStyle(Color.collieText) }

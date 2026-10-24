@@ -86,6 +86,9 @@ extension CommandRouter {
             do { root = try await PaddockManager.repoRoot(of: URL(fileURLWithPath: cwd)) } catch {
                 throw invalid("\(cwd) não está num repositório git: um cercado precisa de um")
             }
+            if let me = caller, !(try await paddockRepoAllowed(root, for: me)) {
+                throw invalid("o repositório \(root.path) fica fora do seu projeto: o cercado seria mais largo que ele")
+            }
             // what PaddockManager.create would refuse, refused here in Portuguese
             if FileManager.default.fileExists(atPath: root.appendingPathComponent("\(LegacyOrq.repoDirName(repoRoot: root))/paddocks/\(name)").path) {
                 throw invalid("o cercado \(name) já existe")
@@ -177,7 +180,7 @@ extension CommandRouter {
         // a paddock this application made bounds its own terminals, like a Shepherd's `summon --paddock`
         let root = try allowed.map { a throws(ProtocolError) in
             try childProject(cwd: at, paddock: fl, allowed: j.paddock.map { ProjectRoot.resolve(cwd: $0.path, paddock: $0) } ?? a)
-        } ?? ProjectRoot.resolve(cwd: at, paddock: fl)
+        } ?? ProjectRoot.resolve(cwd: at, paddock: fl, home: sandboxHomeDir)
         for t in made {
             try Task.checkCancellation()
             let rec = TerminalRecord(id: UUID(), name: member(t.key), preset: t.preset, command: t.command, cwd: at,

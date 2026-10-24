@@ -19,14 +19,22 @@ public enum AgentLaunch {
     }
     /// Env names the `collie mcp` child needs from the agent (names only: values never reach argv or files).
     static let mcpEnv = ["COLLIE_SOCKET", "COLLIE_TERMINAL_ID", "COLLIE_TOKEN", "COLLIE_TERMINAL_NAME", "COLLIE_WORKSPACE_ID", "COLLIE_SHEPHERD"]
-    /// Claude has an earlier conversation for `cwd` (R25): a session file in `~/.claude/projects/<cwd, every
-    /// non-alphanumeric character a dash>` (the unresolved or resolved cwd).
-    static func hasClaudeConversation(cwd: String, home: URL) -> Bool {
-        let dir = home.appendingPathComponent(".claude/projects")
+    /// Claude has an earlier conversation for `cwd` (R25): a session file in `<config>/projects/<cwd, every
+    /// non-alphanumeric character a dash>` (the unresolved or resolved cwd). `<config>`: `CLAUDE_CONFIG_DIR` from the
+    /// terminal's `env`, else `~/.claude`. A name over 200 characters Claude cuts and suffixes with a hash: any dir with
+    /// that 200-character prefix counts. ponytail: a near-twin long cwd may match (a plain `--continue` that finds nothing)
+    static func hasClaudeConversation(cwd: String, home: URL, env: [String: String] = [:]) -> Bool {
+        let dir = env["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            .map { $0.appendingPathComponent("projects") } ?? home.appendingPathComponent(".claude/projects")
+        let fm = FileManager.default
+        func sessions(_ name: String) -> Bool {
+            ((try? fm.contentsOfDirectory(atPath: dir.appendingPathComponent(name).path)) ?? []).contains { $0.hasSuffix(".jsonl") }
+        }
         return Set([cwd, SignedAppCheck.realPath(URL(fileURLWithPath: cwd))]).contains { c in
             let enc = String(c.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
-            let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent(enc).path)) ?? []
-            return files.contains { $0.hasSuffix(".jsonl") }
+            guard enc.count > 200 else { return sessions(enc) }
+            let head = String(enc.prefix(200))
+            return ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).contains { $0.hasPrefix(head) && sessions($0) }
         }
     }
     /// JSON (and TOML-compatible) literal of a string or string array.
@@ -81,12 +89,13 @@ public enum AgentLaunch {
             return spec(["-lc", base + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path) + (resume ? " --continue" : "")])
         }
         if let c = rec.command {
-            let first = c.split(whereSeparator: \.isWhitespace).first
-            if rec.preset == .claude, first == "claude" { return try claude(c) }
+            // M4: the program past `env VAR=…` and a path (R19/B3's detection): Claude gets Collie's settings file
+            let agent = EssentialPaths.commandAgent(c)
+            if rec.preset == .claude || rec.preset == .custom, agent?.name == "claude" { return try claude(c) }
             // a custom codex/cursor-agent command: the same inner-sandbox switch, unless it picks a sandbox itself
-            if innerSandboxOff, let first, !c.contains("--sandbox"),
-               let flag = ["codex": " -c " + quote(#"sandbox_mode="danger-full-access""#), "cursor-agent": " --sandbox disabled"][String(first)] {
-                return spec(["-lc", String(first) + flag + c[first.endIndex...]])
+            if innerSandboxOff, let agent, !c.contains("--sandbox"),
+               let flag = ["codex": " -c " + quote(#"sandbox_mode="danger-full-access""#), "cursor-agent": " --sandbox disabled"][agent.name] {
+                return spec(["-lc", String(c[..<agent.end]) + flag + c[agent.end...]])
             }
             return spec(["-lc", c])
         }

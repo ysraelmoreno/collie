@@ -24,8 +24,12 @@ extension CommandRouter {
             let path = SignedAppCheck.realPath(URL(fileURLWithPath: try need(r, "path"), relativeTo: base).absoluteURL)
             let secrets = await auth.secrets()
             let reason = str(r, "reason").map { LotBoards.clean(LotBoards.scrub($0, secrets: secrets), max: 300) }.flatMap { $0.isEmpty ? nil : $0 }
-            await raise(SandboxDenial(terminal: me.id, op: write ? "write" : "read", path: path, requested: true, reason: reason))
-            return .object(["shown": .bool(true), "message": .string("Pedido mostrado ao usuário no app; nada é liberado sem o clique dele.")])
+            let d = SandboxDenial(terminal: me.id, op: write ? "write" : "read", path: path, requested: true, reason: reason)
+            let absorbed = accessCards.cards[SandboxCards.key(d)] != nil
+            await raise(d)
+            return .object(["shown": .bool(!absorbed), "message": .string(absorbed
+                ? "Já há um aviso aberto no app para essa pasta; o pedido foi somado a ele. Nada é liberado sem o clique do usuário."
+                : "Pedido mostrado ao usuário no app; nada é liberado sem o clique dele.")])
         case "access.list":
             if let me = caller { return try isoJSON(SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)) }
             return .object(["grants": try isoJSON(sandboxGrants), "cards": try isoJSON(accessCards.all),
@@ -48,7 +52,8 @@ extension CommandRouter {
             guard SignedAppCheck.realPath(URL(fileURLWithPath: path)) == path else {
                 throw ProtocolError(code: .invalidArgs, message: "O caminho mudou desde o cartão (agora é um link): nada foi liberado.")
             }
-            if let why = SandboxGrantStore.refusal(path, op: access.rawValue, home: sandboxHomeDir, collie: config.paths.root) {
+            if let why = SandboxGrantStore.refusal(path, op: access.rawValue, home: sandboxHomeDir, collie: config.paths.root,
+                                                   app: SandboxInput.appBundle(of: config.collieExecutable), closed: closedPaddocks(sandboxProject(t))) {
                 throw ProtocolError(code: .invalidArgs, message: why)
             }
             let owner: UUID
@@ -69,7 +74,8 @@ extension CommandRouter {
             // ponytail: the lot's other running members get it at their next start (only the card's terminal restarts)
             let running = await registry.process(t.id)?.isRunning == true
             if running { _ = try await relaunch(t, resume: true) }
-            return .object(["grant": try isoJSON(g), "restarted": .bool(running), "resumed": .bool(running && t.resumesConversation && AgentLaunch.hasClaudeConversation(cwd: t.cwd, home: sandboxHomeDir))])
+            let env = await agentEnv(t)
+            return .object(["grant": try isoJSON(g), "restarted": .bool(running), "resumed": .bool(running && t.resumesConversation && AgentLaunch.hasClaudeConversation(cwd: t.cwd, home: sandboxHomeDir, env: env))])
         case "access.deny":
             try appOnly()
             let t = try accessTerminal(r)
@@ -113,10 +119,11 @@ extension CommandRouter {
     /// for is dropped (R5: a forged or stale tag).
     func raise(_ denial: SandboxDenial) async {
         guard sandboxKnown.contains(denial.terminal) else { return }
-        let home = sandboxHomeDir, collie = config.paths.root
+        let home = sandboxHomeDir, collie = config.paths.root, app = SandboxInput.appBundle(of: config.collieExecutable)
+        let closed = ws.terminals.first { $0.id == denial.terminal }.map { closedPaddocks(sandboxProject($0)) } ?? []
         let c = accessCards.add(denial) { d in   // a card to show: what can't be released, and why
-            d.refusal = SandboxGrantStore.refusal(d.path, op: d.op, home: home, collie: collie)
-            d.folderRefusal = d.refusal ?? SandboxGrantStore.refusal(d.folder, op: d.op, home: home, collie: collie)
+            d.refusal = SandboxGrantStore.refusal(d.path, op: d.op, home: home, collie: collie, app: app, closed: closed)
+            d.folderRefusal = d.refusal ?? SandboxGrantStore.refusal(d.folder, op: d.op, home: home, collie: collie, app: app, closed: closed)
         }
         if let c { await hub.emit(.sandboxDenied(c)) }
     }

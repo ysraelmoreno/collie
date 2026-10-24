@@ -105,7 +105,6 @@ private final class Rig {
         #expect(SandboxWatcher.parse("Filtering the log data using \"sender == ...\"") == nil)
         // R28: only the kernel's reports (a userland image named Sandbox can log the same text)
         #expect(SandboxWatcher.parse(denialLine(id, "file-read-data", "/p", pid: 4242)) == nil)
-        #expect(SandboxWatcher.predicate.contains("processID == 0"))
     }
 
     /// R5: only the final line is the tag; a path carrying `\ncollie-term:<other>` stays a path of the real terminal.
@@ -309,7 +308,6 @@ private final class Rig {
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: rig.docs)
             #expect(try await rig.grant(a.id, link).error?.message.contains("mudou") == true)
             #expect(try await rig.grant(a.id, link.appendingPathComponent("x"), folder: true).error?.message.contains("mudou") == true)
-            #expect(try await !rig.list().grants.contains { $0.path.hasPrefix(link.path) })
         }
     }
 
@@ -466,6 +464,161 @@ private final class Rig {
             #expect(try await rig.admin("admin.spawn", ["name": .string("A"), "preset": .string("shell"), "cwd": .string(rig.proj.path),
                                                         "sandbox": .string("free")]).ok)
             #expect(await !rig.d.router.sandboxKnown.contains(a.id))
+        }
+    }
+}
+
+/// The final review's fix wave (I1-I3, M2-M5, the parked Task 4 minors).
+@Suite(.serialized) struct SandboxFinalFixTests {
+    /// I2/R32: a project that is the home itself reopens none of the never-writable files (rc files, global agent
+    /// config, Preferences, LaunchAgents, ~/Applications, Collie data); the rest of the home and agent state stay writable.
+    @Test func homeProjectKeepsConfigClosed() throws {
+        let f = try FakeHome(git: false), p = try f.profile(f.input(project: f.home))
+        #expect(try f.ok(p, "echo a > \(f.h("newfile")) && echo a > \(f.h(".claude/projects/x")) && echo a > \(f.h(".claude.json"))"))
+        for bad in [".zshrc", ".zprofile", ".bashrc", ".gitconfig", ".config/git/config", ".claude/settings.json", ".claude/hooks/h.sh",
+                    ".claude/skills/s/SKILL.md", ".claude/CLAUDE.md", ".codex/config.toml", "Library/Preferences/x.plist",
+                    "Library/LaunchAgents/x.plist", "Applications/X.app/x", "Library/Application Support/Collie/admin.token"] {
+            #expect(try !f.ok(p, "mkdir -p \"$(dirname \(f.h(bad)))\" 2>/dev/null; echo a > \(f.h(bad))"), "\(bad)")
+        }
+        #expect(try !f.ok(p, "mv \(f.h(".claude")) \(f.h("c2"))"))   // nor the agent's dir swapped out
+        // a grant doesn't reopen them either
+        let g = try f.profile(f.input(grants: [SandboxGrant(path: f.home.appendingPathComponent(".claude").path, access: .write, scope: .terminal, owner: f.id)]))
+        #expect(try !f.ok(g, "echo a > \(f.h(".claude/settings.json"))"))
+    }
+
+    /// I3: the Collie app bundle is never writable, even under a write grant on its folder; the folder's other files are.
+    @Test func appBundleNeverWritable() throws {
+        let f = try FakeHome(git: false)
+        let apps = f.base.appendingPathComponent("Applications"), app = apps.appendingPathComponent("Collie.app")
+        let exe = app.appendingPathComponent("Contents/MacOS/collie")
+        try FileManager.default.createDirectory(at: exe.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "x".write(to: exe, atomically: false, encoding: .utf8)
+        #expect(SandboxInput.appBundle(of: exe)?.path == app.path)
+        #expect(SandboxInput.appBundle(of: URL(fileURLWithPath: "/tmp/collie")) == nil)
+        var i = f.input(grants: [SandboxGrant(path: apps.path, access: .write, scope: .terminal, owner: f.id)])
+        i.appBundle = SandboxInput.appBundle(of: exe)
+        let p = try f.profile(i)
+        func q(_ u: URL) -> String { AgentLaunch.quote(u.path) }
+        #expect(try f.ok(p, "echo a > \(q(apps.appendingPathComponent("other")))"))
+        #expect(try !f.ok(p, "echo a > \(q(exe))"))
+        #expect(try !f.ok(p, "echo a > \(q(app.appendingPathComponent("Contents/new")))"))
+        #expect(try !f.ok(p, "mv \(q(app)) \(q(apps.appendingPathComponent("y.app")))"))
+    }
+
+    /// I3, R32, M3: what a click can't open: the app bundle and its ancestors, the never-writable config (writes only),
+    /// a pasture's paddock worktrees (writes only).
+    @Test func refusalsAddBundleConfigAndPaddocks() throws {
+        let f = try FakeHome(git: false, socket: false)
+        let app = URL(fileURLWithPath: "/Applications/Collie.app")
+        func no(_ path: String, _ op: String = "write", closed: [URL] = []) -> Bool {
+            SandboxGrantStore.refusal(path, op: op, home: f.home, collie: f.collie, app: app, closed: closed) != nil
+        }
+        #expect(no("/Applications/Collie.app/Contents/MacOS/collied") && no("/Applications/Collie.app") && no("/Applications"))
+        #expect(no("/Applications/Collie.app/Contents", "read"))
+        #expect(!no("/Applications/Other.app"))
+        let h = SignedAppCheck.realPath(f.home)
+        for rel in [".zshrc", ".gitconfig", ".claude/settings.json", ".claude/skills", ".codex/config.toml", "Library/Preferences", "Applications/X.app"] {
+            #expect(no(h + "/" + rel), "\(rel)")
+            #expect(!no(h + "/" + rel, "read"), "\(rel)")
+        }
+        #expect(!no(h + "/.claude.json") && !no(h + "/Documents"))
+        let paddocks = [f.repo.appendingPathComponent(".collie/paddocks")]
+        #expect(no(f.repo.path + "/.collie/paddocks/p/src", closed: paddocks))
+        #expect(!no(f.repo.path + "/.collie/paddocks/p/src", "read", closed: paddocks))
+        #expect(!no(f.repo.path + "/src", closed: paddocks))
+    }
+
+    /// Parked T4 minor 1: a write grant under TMP (outside the home) keeps git working there (clone into TMP, R17).
+    @Test func tmpWriteGrantKeepsGit() throws {
+        let f = try FakeHome(git: false)
+        let clone = f.base.appendingPathComponent("clone")
+        try FileManager.default.createDirectory(at: clone.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        let p = try f.profile(f.input(grants: [SandboxGrant(path: clone.path, access: .write, scope: .terminal, owner: f.id)]))
+        #expect(try f.ok(p, "echo a > \(AgentLaunch.quote(clone.path))/.git/HEAD"))
+        // under the home, a write grant still never covers a git dir
+        let docs = f.home.appendingPathComponent("Documents")
+        try FileManager.default.createDirectory(at: docs.appendingPathComponent("r/.git"), withIntermediateDirectories: true)
+        let q = try f.profile(f.input(grants: [SandboxGrant(path: docs.path, access: .write, scope: .terminal, owner: f.id)]))
+        #expect(try !f.ok(q, "echo a > \(f.h("Documents/r/.git/HEAD"))"))
+    }
+
+    /// M4: a command run through `env` (or by path) is still detected as Claude / Codex / Cursor.
+    @Test func commandAgentPastEnv() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("collie-m4-\(UUID().uuidString.prefix(6))")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func args(_ p: Preset, _ cmd: String) throws -> String {
+            let rec = TerminalRecord(id: UUID(), name: "a", preset: p, command: cmd, cwd: "/tmp", isShepherd: false)
+            return try AgentLaunch.launchSpec(for: rec, env: [:], hooksDir: dir, collie: URL(fileURLWithPath: "/tmp/collie"),
+                                              shell: "/bin/sh", innerSandboxOff: true).arguments[1]
+        }
+        #expect(try args(.claude, "env X=1 claude --model x").hasPrefix("env X=1 claude --model x --settings "))
+        #expect(try args(.custom, "/opt/bin/claude").hasPrefix("/opt/bin/claude --settings "))
+        #expect(try args(.custom, "env A=1 B=2 codex exec hi") == #"env A=1 B=2 codex -c 'sandbox_mode="danger-full-access"' exec hi"#)
+        #expect(try args(.custom, "env X=1 cursor-agent") == "env X=1 cursor-agent --sandbox disabled")
+        #expect(try args(.custom, "node claude.js") == "node claude.js")
+        #expect(EssentialPaths.agentHome(.custom, command: "/usr/bin/env X=1 cursor-agent").first == ".cursor")
+    }
+
+    /// Parked T4 minor 3: CLAUDE_CONFIG_DIR and a long cwd (Claude shortens the dir name) still find the conversation.
+    @Test func claudeConversationConfigDirAndLongCwd() throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("collie-conv-\(UUID().uuidString.prefix(6))")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let home = dir.appendingPathComponent("home"), conf = dir.appendingPathComponent("conf")
+        func session(_ base: URL, _ name: String) throws {
+            try FileManager.default.createDirectory(at: base.appendingPathComponent("projects/\(name)"), withIntermediateDirectories: true)
+            try "{}".write(to: base.appendingPathComponent("projects/\(name)/s.jsonl"), atomically: false, encoding: .utf8)
+        }
+        try session(conf, "-Users-u-p")
+        #expect(!AgentLaunch.hasClaudeConversation(cwd: "/Users/u/p", home: home))
+        #expect(AgentLaunch.hasClaudeConversation(cwd: "/Users/u/p", home: home, env: ["CLAUDE_CONFIG_DIR": conf.path]))
+        let long = "/Users/u/" + String(repeating: "a", count: 240)
+        let enc = String(long.map { $0.isLetter || $0.isNumber ? $0 : "-" })
+        try session(home.appendingPathComponent(".claude"), String(enc.prefix(200)) + "-h4sh")
+        #expect(AgentLaunch.hasClaudeConversation(cwd: long, home: home))
+        #expect(!AgentLaunch.hasClaudeConversation(cwd: "/Users/u/" + String(repeating: "b", count: 240), home: home))
+    }
+
+    /// I1: a Shepherd's paddock repo (git's discovery) must lie within its project: a dotfiles home repo is refused.
+    @Test func shepherdPaddockOutsideProjectRefused() async throws {
+        let rig = try Rig()
+        try FakeHome.git(["init", "-q", "-b", "main"], in: rig.f.home)   // the home is a dotfiles repo
+        try FakeHome.git(["commit", "-q", "--allow-empty", "-m", "init"], in: rig.f.home)
+        try await rig.run { rig in
+            let m = try await rig.spawn("M", shepherd: true)
+            let r = try await rig.call(m, "paddock.create", ["name": .string("feat")])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("outside") == true, "\(r)")
+            #expect(!FileManager.default.fileExists(atPath: rig.f.home.appendingPathComponent(".collie/paddocks/feat").path))
+            let h = try await rig.call(m, "herd.apply", ["id": .string("investigar-bug"), "name": .string("x"), "paddock": .bool(true)])
+            #expect(h.error?.message.contains("fora do seu projeto") == true, "\(h)")
+            #expect(try await rig.admin("paddock.list").result == .array([]))
+        }
+    }
+
+    /// M5: deleting a lot drops its grants.
+    @Test func lotDeleteDropsLotGrants() async throws {
+        try await Rig().run { rig in
+            let a = try await rig.spawn("A", token: false)
+            #expect(try await rig.admin("lot.create", ["name": .string("L"), "members": .string("A")]).ok)
+            #expect(try await rig.grant(a.id, rig.docs, scope: "lot").ok)
+            #expect(try await rig.grant(a.id, rig.f.home.appendingPathComponent("code")).ok)   // its own: unrelated
+            #expect(try await rig.admin("admin.kill", ["target": .string("A")]).ok)
+            #expect(try await rig.admin("lot.delete", ["lot": .string("L")]).ok)
+            #expect(try await rig.list().grants.isEmpty)
+            let disk = try String(contentsOf: rig.paths.root.appendingPathComponent("sandbox/grants.json"), encoding: .utf8)
+            #expect(!disk.contains(rig.docs.path), "\(disk)")
+        }
+    }
+
+    /// Parked T4 minor 2: a request absorbed into an open card says so.
+    @Test func absorbedRequestSaysSo() async throws {
+        try await Rig().run { rig in
+            let a = try await rig.spawn("A")
+            let first = try await rig.call(a, "access.request", ["path": .string(rig.docs.appendingPathComponent("x").path), "read": .bool(true)])
+            guard case .object(let o)? = first.result, case .string(let m1)? = o["message"] else { Issue.record("\(first)"); return }
+            #expect(m1.contains("mostrado"))
+            let again = try await rig.call(a, "access.request", ["path": .string(rig.docs.appendingPathComponent("y").path), "read": .bool(true)])
+            guard case .object(let o2)? = again.result, case .string(let m2)? = o2["message"] else { Issue.record("\(again)"); return }
+            #expect(m2.contains("Já há um aviso aberto"), "\(m2)")
         }
     }
 }

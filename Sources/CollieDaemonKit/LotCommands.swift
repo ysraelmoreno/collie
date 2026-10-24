@@ -82,6 +82,11 @@ extension CommandRouter {
             }
             ws.lots.removeAll { $0.id == lot.id }
             try await persist()
+            // M5: its grants go with it (a lot id is never reused, so orphans never widened; they only piled up)
+            if sandboxGrants.contains(where: { $0.scope == .lot && $0.owner == lot.id }) {
+                sandboxGrants.removeAll { $0.scope == .lot && $0.owner == lot.id }
+                try? saveGrants()
+            }
             await memory.evictLot(lot.id)
             await hub.emit(.lotRemoved(lot.id))
             return .object([:])

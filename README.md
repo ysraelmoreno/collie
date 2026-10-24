@@ -374,14 +374,21 @@ Codex usam); se um dia sair do macOS, o sandbox para de funcionar e o Collie ter
 
 - **Escrita fora do projeto.** O terminal escreve só na pasta do projeto (o primeiro ancestral do diretório com `.git`,
   procurado sem rodar o git e nunca acima do seu `$HOME`; num cercado, a worktree do cercado) e nas pastas de trabalho
-  das ferramentas (temporários, caches de build e de pacotes, estado do próprio agente).
+  das ferramentas (temporários, caches de build e de pacotes, estado do próprio agente). **Se a pasta do terminal for
+  o próprio `~`, o projeto é toda a sua pasta pessoal** (a folha de novo terminal avisa): o agente lê e altera tudo nela,
+  menos os segredos e o que nunca é gravável (abaixo).
+- **Nunca gravável, qualquer que seja o projeto ou o liberado.** Os rc do shell (`.zshrc`, `.zprofile`, `.bashrc`…),
+  `~/.gitconfig` e `~/.config/git`, `~/.npmrc`/`.yarnrc`, a configuração global dos agentes (`~/.claude`, `~/.codex`,
+  `~/.cursor`, menos as pastas de estado deles e o `~/.claude.json`), `~/Library/Preferences`, `~/Library/LaunchAgents`,
+  `~/Applications`, o app do Collie e a pasta de dados dele. Isso vale também para um projeto dentro delas (um terminal
+  em `~/.claude` não edita as suas skills: faça isso fora do Collie ou num terminal livre).
 - **Leitura fora do projeto.** Só o projeto, o sistema, as toolchains e o que as ferramentas precisam (Xcode, Homebrew,
   nvm, caches, o estado do agente, os arquivos que o Collie gera para o terminal). Documentos, outros repositórios e o
   resto do `$HOME` não são lidos. Limite: leituras fora do `$HOME` e de `/private/tmp` seguem abertas.
 - **Segredos.** Chaves de `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/.docker/config.json`, `~/.gnupg` (assinar
   commits com gpg deixa de funcionar; assinatura por ssh com o agente funciona) e perfis de navegador. O git por SSH
   continua funcionando pelo ssh-agent (`SSH_AUTH_SOCK`), sem ler as chaves. `~/.npmrc` segue legível (pode ter token de registry).
-- **Internos do Collie.** O app, o daemon, o LaunchAgent, a pasta de dados e o `admin.token` não são escritos nem lidos.
+- **Internos do Collie.** O app (o bundle `Collie.app` inteiro), o daemon, o LaunchAgent, a pasta de dados e o `admin.token` não são escritos nem lidos.
   O agente fala com o Collie só pelo `collie`, com o token do próprio terminal.
 - **Configuração global dos agentes, só leitura** (`~/.claude/settings.json`, hooks, skills, comandos, plugins,
   `CLAUDE.md`, `~/.codex/config.toml`…), com a exceção do `~/.claude.json` (veja os riscos). `~/.claude/shell-snapshots` e
@@ -409,7 +416,9 @@ Quem decidiu cada um foi você; nenhum é uma fronteira. Um agente mal-intencion
 - **Os caches graváveis guardam código que roda fora** (`~/.npm`, `~/.cache`, `~/.cargo/registry`, `go/pkg`, DerivedData):
   escrever neles pode virar execução fora do sandbox (`~/.npm/_npx`, ambientes do pre-commit).
 - **A memória em `~/.claude/projects` é compartilhada com terminais livres:** texto escrito por um agente com sandbox
-  pode chegar ao prompt do Claude de um terminal livre.
+  pode chegar ao prompt do Claude de um terminal livre. O mesmo vale para a memória do próprio Collie: o que um agente
+  com sandbox salva com `collie memory save --scope project|global` é injetado nos hooks de um terminal livre daquele
+  projeto (ou de todos, no global). Revise as memórias (Revisar) antes de confiar nelas num terminal livre.
 - **A proteção do `.git` aninhado é defesa em profundidade.** Dentro de `.build/` e `Carthage/Checkouts/` um repositório
   plantado vale; e um repositório preparado em `/tmp` e movido (rename) para dentro do projeto, com um gitlink no índice,
   ainda faz o seu git rodar a configuração dele. **Revise o que o agente mudou, incluindo gitlinks novos em
@@ -434,10 +443,14 @@ do terminal e na aba "Liberados" do lote; **Revogar** reinicia na hora os termin
 "detecção indisponível" no nó indica que o Collie não está vendo os bloqueios agora (os bloqueios continuam valendo).
 O que um clique **nunca** libera: a pasta de dados e o token do Collie, segredos, `.git/hooks`, `.git/config`,
 `.git/info/attributes`, `commondir` e qualquer `.git`/`*.git` (submódulos, worktrees, bare), `~/Library` e
-`~/Library/Application Support` inteiros, e `~/Library/{Keychains,Mail,Messages,Cookies,Safari,Containers,Group Containers}`.
+`~/Library/Application Support` inteiros, `~/Library/{Keychains,Mail,Messages,Cookies,Safari,Containers,Group Containers}`,
+o app do Collie e as pastas que o contêm (como `/Applications`), a escrita no que é "nunca gravável" (acima) e, num
+terminal do pasto, a escrita nos cercados dele (abra um terminal no cercado). Esses cartões mostram só **Negar**.
+Liberar escrita numa pasta dentro de `/tmp` não bloqueia o git ali (os temporários já são graváveis; clonar lá funciona).
 Cada liberado guarda exatamente o caminho mostrado no cartão (resolvido uma vez); trocar um link depois não o alarga.
 O agente também pode pedir: `collie access request <caminho> --read|--write --reason "…"` (o motivo é limpo de segredos
-e mostrado no mesmo cartão). Terminais livres não têm sandbox, então não pedem.
+e mostrado no mesmo cartão; se já houver um cartão aberto para aquela pasta, o pedido soma-se a ele e a resposta diz
+isso). Terminais livres não têm sandbox, então não pedem.
 
 **`collie open <url|app>`.** O `open` do terminal chama o daemon, que o executa fora do sandbox só para URLs http(s)/mailto e
 apps instalados (`/Applications`, `~/Applications`, os do Xcode: `open -a Simulator` funciona). Scripts, `.command`,

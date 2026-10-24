@@ -23,6 +23,8 @@ struct SandboxInput {
     /// The custom command (a `cursor-agent` one gets `~/.cursor`, R19).
     var command: String? = nil
     var grants: [SandboxGrant] = []
+    /// The Collie.app bundle (`collied`, `collie`, `collie-ctty`, which launchd runs outside any sandbox): never writable (I3).
+    var appBundle: URL? = nil
     var userTemp = SandboxInput.darwinDir(_CS_DARWIN_USER_TEMP_DIR)
     var userCache = SandboxInput.darwinDir(_CS_DARWIN_USER_CACHE_DIR)
 
@@ -30,6 +32,17 @@ struct SandboxInput {
         var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
         let n = confstr(name, &buf, buf.count)
         return URL(fileURLWithPath: n > 0 ? String(cString: buf) : NSTemporaryDirectory())
+    }
+
+    /// The `.app` bundle holding `executable` (resolved); nil outside one (a dev build).
+    /// ponytail: a dev build's binaries aren't closed (they're a build output in the user's checkout)
+    static func appBundle(of executable: URL) -> URL? {
+        var u = URL(fileURLWithPath: SignedAppCheck.realPath(executable))
+        while u.pathComponents.count > 1 {
+            if u.pathExtension == "app" { return u }
+            u = u.deletingLastPathComponent()
+        }
+        return nil
     }
 
     /// The git dirs of `project`: `.git` a directory → (it, nil); a `.git` file (`gitdir: X`) of a worktree → (X's
@@ -115,14 +128,21 @@ enum SandboxProfile {
         // R27: a write grant never covers a git dir beneath it (`.git` or `*.git`: hooks, config, modules, worktrees, bare)
         let writeGrants = grants.filter { $0.access == .write }.map(\.path)
         rule("allow", "file-write*", writeGrants.map(sub))
-        rule("deny", "file-write*", tagged: true, writeGrants.map { rx("^" + re($0) + "/(.+/)?[^/]*\\.git(/|$)") })
+        // except a grant under TMP outside the home: TMP is writable anyway, and clones go there (R17)
+        func under(_ p: String, _ root: String) -> Bool { URL(fileURLWithPath: p).pathComponents.starts(with: URL(fileURLWithPath: root).pathComponents) }
+        let temps = ["/private/tmp", real(i.userTemp)]
+        rule("deny", "file-write*", tagged: true, writeGrants.filter { g in under(g, home) || !temps.contains { under(g, $0) } }
+             .map { rx("^" + re($0) + "/(.+/)?[^/]*\\.git(/|$)") })
         rule("allow", "file-write*", writes)
         // a pasture never writes its paddocks: their worktrees, nor any worktree's git dir in the common dir
         var closed = i.paddockWorktrees.map { sub(real($0)) }
         if let common, worktree == nil { closed.append(sub(common + "/worktrees")) }
         rule("deny", "file-write*", tagged: true, closed)
-        // R23: what no grant re-opens (rendered after every allow): secrets, launchd agents
-        rule("deny", "file-write*", tagged: true, (EssentialPaths.secrets + ["Library/LaunchAgents"]).map { entry(home, $0) })
+        // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
+        // launchd agents, ~/Applications, the app bundle (I3); then the agents' own state again. R23: secrets
+        rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
+        rule("allow", "file-write*", EssentialPaths.agentStateWrites.map { entry(home, $0) })
+        rule("deny", "file-write*", tagged: true, EssentialPaths.secrets.map { entry(home, $0) })
         // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
         // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
         // R17: no nested `.git` (dir, file or link) anywhere in the project either: the user's git or IDE runs its config.

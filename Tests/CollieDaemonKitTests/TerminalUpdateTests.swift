@@ -104,12 +104,12 @@ private func flags(_ r: Response) -> (needed: Bool?, restarted: Bool?) {
     @Test func updateFromManagedTerminalIsRefused() async throws {
         try await withDaemon { d, p in
             _ = try await spawn(d, p, "b")
-            let cmd = "COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin update b --shepherd true; echo RC=$?; exec sleep 300"
+            let cmd = "env -u COLLIE_TERMINAL_ID COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin update b --shepherd true; echo RC=$?; exec sleep 300"
             let a = try await spawn(d, p, "a", preset: "custom", command: cmd)
             let id = try #require(UUID(uuidString: a.id))
             #expect(await waitFor(10) { await d.scrollbackText(id).contains("RC=") })
             let text = await d.scrollbackText(id)
-            #expect(text.contains("admin commands are not allowed from managed terminals") && text.contains("RC=1"), "\(text)")
+            #expect(text.contains("the admin token can't be used from inside a Collie terminal") && text.contains("RC=1"), "\(text)")
             #expect(try await snapshot(d, p).terminals.first { $0.name == "b" }?.isShepherd == false)
         }
     }

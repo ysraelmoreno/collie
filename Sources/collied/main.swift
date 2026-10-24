@@ -76,6 +76,14 @@ do {
     config.figcraftDir = figcraft
     let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
     config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil
+    // admin only from the app this daemon ships with (Contents/Helpers/collied -> Contents/MacOS/Collie); see forDaemon
+    if let me = selfPath() {
+        let (check, note) = SignedAppCheck.forDaemon(executable: me, root: root, defaultRoot: Paths.defaultRoot)
+        config.adminPeerCheck = check
+        FileHandle.standardError.write(Data("collied: \(note)\n".utf8))
+    } else {   // can't tell where we run from: as unbundled on the default root
+        config.adminPeerCheck = SignedAppCheck(app: URL(fileURLWithPath: "/nonexistent/Collie"))
+    }
     config.captureUserEnv = ProcessInfo.processInfo.environment["COLLIE_USER_ENV"] != "off"   // tests: never the developer's rc files
     // hash of the file this process started from; read off the cooperative pool
     config.build = await Task.detached { selfPath().flatMap(BuildID.of) }.value

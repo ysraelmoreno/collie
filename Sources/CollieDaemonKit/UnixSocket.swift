@@ -6,11 +6,18 @@ import CollieProtocol
 
 private let connectionDeadline: TimeInterval = 30
 
+/// The connecting process: its pid (LOCAL_PEERPID; 0 when unavailable) and audit token (LOCAL_PEERTOKEN; nil when unavailable).
+public struct Peer: Sendable {
+    public let pid: pid_t
+    public let audit: audit_token_t?
+    public init(pid: pid_t, audit: audit_token_t? = nil) { self.pid = pid; self.audit = audit }
+}
+
 public final class UnixSocketServer: @unchecked Sendable {
     private let path: URL
-    private let handler: @Sendable (Request, pid_t) async -> Response
+    private let handler: @Sendable (Request, Peer) async -> Response
     /// `ui.*` requests: return a Response to reply and close, or nil after calling `open` on the connection.
-    let streamHandler: (@Sendable (Request, pid_t, Connection) async -> Response?)?
+    let streamHandler: (@Sendable (Request, Peer, Connection) async -> Response?)?
     private let statLock = NSLock()
     private var peak = 0
     /// High-water mark of unsent bytes queued on any one stream (diagnostics/tests).
@@ -29,12 +36,12 @@ public final class UnixSocketServer: @unchecked Sendable {
     public convenience init(path: URL, handler: @escaping @Sendable (Request) async -> Response) {
         self.init(path: path, peerHandler: { r, _ in await handler(r) })
     }
-    /// `peerHandler` also receives the client's pid (LOCAL_PEERPID; 0 when unavailable).
-    public init(path: URL, peerHandler: @escaping @Sendable (Request, pid_t) async -> Response) {
+    /// `peerHandler` also receives the client process.
+    public init(path: URL, peerHandler: @escaping @Sendable (Request, Peer) async -> Response) {
         self.path = path; self.handler = peerHandler; self.streamHandler = nil
     }
-    init(path: URL, peerHandler: @escaping @Sendable (Request, pid_t) async -> Response,
-         streamHandler: @escaping @Sendable (Request, pid_t, Connection) async -> Response?) {
+    init(path: URL, peerHandler: @escaping @Sendable (Request, Peer) async -> Response,
+         streamHandler: @escaping @Sendable (Request, Peer, Connection) async -> Response?) {
         self.path = path; self.handler = peerHandler; self.streamHandler = streamHandler
     }
 
@@ -96,14 +103,16 @@ public final class UnixSocketServer: @unchecked Sendable {
             prepare(cfd)
             var pid: pid_t = 0, len = socklen_t(MemoryLayout<pid_t>.size)
             if getsockopt(cfd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) != 0 { pid = 0 }
-            Connection(fd: cfd, peer: pid, server: self).begin()
+            var tok = audit_token_t(), tlen = socklen_t(MemoryLayout<audit_token_t>.size)
+            let audit = getsockopt(cfd, SOL_LOCAL, LOCAL_PEERTOKEN, &tok, &tlen) == 0 ? tok : nil
+            Connection(fd: cfd, peer: Peer(pid: pid, audit: audit), server: self).begin()
         }
     }
 
     /// One accepted client. Request mode: one line in, one line out, close. Stream mode (`ui.*`, after `open`):
     /// client lines -> `onFrame`; `send` queues lines (bounded) flushed by a write source. Never blocks a caller.
     final class Connection: @unchecked Sendable {     // read/source state on server.queue only; send queue under `lock`
-        let fd: Int32; let peer: pid_t; let server: UnixSocketServer
+        let fd: Int32; let peer: Peer; let server: UnixSocketServer
         var buf = Data(); var src: DispatchSourceRead?; var timer: DispatchSourceTimer?; var done = false
         private var streaming = false, wsrc: DispatchSourceWrite?, wArmed = false, sources = 1
         private var onFrame: (@Sendable (StreamFrame) -> Void)?
@@ -114,7 +123,7 @@ public final class UnixSocketServer: @unchecked Sendable {
         private var out = Data(), outOff = 0, cut = false, closed = false, kicked = false, draining = false
         private var midLine = false     // the last byte written was not a newline (compaction moves outOff, not this)
         private var onClose: (@Sendable () -> Void)?
-        init(fd: Int32, peer: pid_t, server: UnixSocketServer) { self.fd = fd; self.peer = peer; self.server = server }
+        init(fd: Int32, peer: Peer, server: UnixSocketServer) { self.fd = fd; self.peer = peer; self.server = server }
 
         func begin() {
             let s = DispatchSource.makeReadSource(fileDescriptor: fd, queue: server.queue)

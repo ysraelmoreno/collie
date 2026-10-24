@@ -11,7 +11,8 @@ import CollieCore
 /// moment its profile is rendered (`prepareSandbox`), before its process exists, so its first denial isn't dropped.
 /// The kernel also collapses repeats ("N duplicate reports") and drops a few % in storms: cards are best effort.
 enum SandboxWatcher {
-    static let predicate = #"sender == "Sandbox" AND eventMessage CONTAINS "\#(SandboxProfile.tagPrefix)""#
+    /// R28: the kernel's reports only (`processID == 0`): a userland image named `Sandbox` can't forge cards.
+    static let predicate = #"sender == "Sandbox" AND processID == 0 AND eventMessage CONTAINS "\#(SandboxProfile.tagPrefix)""#
 
     struct Line: Equatable { var terminal: UUID; var op: String; var path: String; var count: Int }
 
@@ -21,7 +22,8 @@ enum SandboxWatcher {
     /// planted `\ncollie-term:<other id>` in it stays part of the path (R5).
     static func parse(_ ndjson: String) -> Line? {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(ndjson.utf8)) as? [String: Any],
-              let msg = obj["eventMessage"] as? String else { return nil }
+              let msg = obj["eventMessage"] as? String,
+              (obj["processID"] as? Int).map({ $0 == 0 }) ?? true else { return nil }   // R28: kernel only
         var lines = msg.split(separator: "\n", omittingEmptySubsequences: false)
         while lines.last?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeLast() }
         guard lines.count >= 2, let tag = lines.popLast()?.trimmingCharacters(in: .whitespaces),
@@ -111,16 +113,17 @@ struct SandboxCards {
     static func key(_ d: SandboxDenial) -> Key { Key(terminal: d.terminal, op: d.op, folder: d.folder) }
 
     /// Records `d`; returns the card to send to the app, nil when quiet (deduped, rate-limited, over the cap, denied).
-    /// `decorate` fills a card that will be shown (a new one, or a request): it runs only then, never per storm line.
+    /// `decorate` fills a new card that will be shown: it runs only then, never per storm line.
     mutating func add(_ d: SandboxDenial, now: Date = Date(), decorate: (inout SandboxDenial) -> Void = { _ in }) -> SandboxDenial? {
         var d = d
         let k = Self.key(d)
         guard !denied.contains(k) else { return nil }
         if var c = cards[k] {
             c.count += d.count; c.at = d.at
-            if d.requested { decorate(&d); c.requested = true; c.reason = d.reason; c.path = d.path; c.refusal = d.refusal }
+            // R29: a request never replaces the card's path (what Liberar opens), and shares the rate limit
+            if d.requested { c.requested = true; c.reason = d.reason }
             cards[k] = c
-            guard d.requested || now.timeIntervalSince(lastSent[k] ?? .distantPast) >= Self.updateEvery else { return nil }
+            guard now.timeIntervalSince(lastSent[k] ?? .distantPast) >= Self.updateEvery else { return nil }
             lastSent[k] = now
             return c
         }

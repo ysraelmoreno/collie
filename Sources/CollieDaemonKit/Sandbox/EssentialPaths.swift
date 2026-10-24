@@ -87,6 +87,13 @@ enum EssentialPaths {
         "Library/Safari", "Library/Cookies",
     ]
 
+    /// Never granted (R27), on top of `secrets`: the user's mail, messages, app containers and keychain files. Not
+    /// read-denied (Claude reads its Keychain login, R12): only refused as grants (`SandboxGrantStore.refusal`).
+    static let neverGranted = ["Library/LaunchAgents", "Library/Keychains", "Library/Mail", "Library/Messages", "Library/Cookies",
+                               "Library/Safari", "Library/Containers", "Library/Group Containers"]
+    /// Too wide to grant as a whole (R27), like the home itself.
+    static let tooWide = ["Library", "Library/Application Support"]
+
     /// The per-user cache dir (`DARWIN_USER_CACHE_DIR`) holds every app's caches: only the build tools' names are writable.
     static let userCacheWrites = ["clang", "org.llvm.clang*", "org.swift.*", "swift*", "com.apple.DeveloperTools",
                                   "com.apple.dt.*", "com.apple.CoreSimulator.*", "com.apple.metal*", "com.apple.xcrun*", "node*"]

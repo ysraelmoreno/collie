@@ -43,6 +43,10 @@ import CollieProtocol
     let codex = TerminalRecord(id: UUID(), name: "b", preset: .codex, command: nil, cwd: "/", isShepherd: false)
     #expect(AccessCopy.resumeNote(claude).contains("retoma a conversa"))
     #expect(AccessCopy.resumeNote(codex).contains("sem retomar"))
+    // R29: control and bidi characters spelled out; distinct card ids per (op, folder)
+    #expect(AccessCopy.shown("a\u{202E}txt.exe\nb é") == "a\\u{202E}txt.exe\\u{A}b é")
+    let r = SandboxDenial(terminal: UUID(), op: "read", path: "/x/a"), w = SandboxDenial(terminal: r.terminal, op: "write", path: "/x/b")
+    #expect(r.cardId != w.cardId)
     // the card and the detection state cross the events stream intact
     let d = SandboxDenial(terminal: UUID(), op: "read", path: "/Users/u/Doc é/x", count: 3, requested: true, reason: "r", refusal: nil, folderRefusal: "Amplo")
     for e in [WorkspaceEvent.sandboxDenied(d), .sandboxDetection(available: false)] {

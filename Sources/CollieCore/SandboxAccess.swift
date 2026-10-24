@@ -10,9 +10,12 @@ public struct SandboxGrant: Codable, Sendable, Equatable, Identifiable {
     public var access: Access
     public var scope: Scope
     public var owner: UUID
+    /// A terminal grant's project when it was clicked (R29): a reused id on another project loses it.
+    public var project: String?
     public var createdAt: Date
-    public init(id: UUID = UUID(), path: String, access: Access, scope: Scope, owner: UUID, createdAt: Date = Date()) {
-        self.id = id; self.path = path; self.access = access; self.scope = scope; self.owner = owner; self.createdAt = createdAt
+    public init(id: UUID = UUID(), path: String, access: Access, scope: Scope, owner: UUID, project: String? = nil, createdAt: Date = Date()) {
+        self.id = id; self.path = path; self.access = access; self.scope = scope; self.owner = owner; self.project = project
+        self.createdAt = createdAt
     }
 }
 
@@ -46,8 +49,8 @@ public struct SandboxDenial: Codable, Sendable, Equatable {
 }
 
 extension TerminalRecord {
-    /// Restarted after a grant, the agent picks its conversation up again: Claude (`--continue`). Codex and Cursor
-    /// start a new one (their resume wasn't confirmed by the spike).
+    /// Restarted after a grant, the agent can pick its conversation up again: Claude (`--continue`, when it had one,
+    /// R25). Codex and Cursor start a new one (their resume wasn't confirmed by the spike).
     public var resumesConversation: Bool {
         preset == .claude && (command.map { $0.split(whereSeparator: \.isWhitespace).first == "claude" } ?? true)
     }

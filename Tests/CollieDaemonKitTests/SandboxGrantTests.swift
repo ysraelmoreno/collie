@@ -22,9 +22,9 @@ final class LineFeed: @unchecked Sendable {
 }
 
 /// One `log stream --style ndjson` line as Task 1 saw them.
-func denialLine(_ tag: UUID, _ op: String, _ path: String, proc: String = "cat(4242)") -> String {
+func denialLine(_ tag: UUID, _ op: String, _ path: String, proc: String = "cat(4242)", pid: Int = 0) -> String {
     let msg = "Sandbox: \(proc) deny(1) \(op) \(path)\n\(SandboxProfile.tagPrefix)\(tag.uuidString)"
-    let data = try! JSONSerialization.data(withJSONObject: ["eventMessage": msg, "processID": 0, "senderImagePath": "/System/Library/Extensions/Sandbox.kext"])
+    let data = try! JSONSerialization.data(withJSONObject: ["eventMessage": msg, "processID": pid, "senderImagePath": "/System/Library/Extensions/Sandbox.kext"])
     return String(decoding: data, as: UTF8.self)
 }
 
@@ -103,6 +103,9 @@ private final class Rig {
         #expect(SandboxWatcher.parse(denialLine(id, "file-read-data", "/p", proc: "cat(1) 499 duplicate reports for cat(1)"))?.count == 499)
         #expect(SandboxWatcher.parse(#"{"eventMessage":"Sandbox: cat(1) deny(1) file-read-data /p"}"#) == nil)   // untagged
         #expect(SandboxWatcher.parse("Filtering the log data using \"sender == ...\"") == nil)
+        // R28: only the kernel's reports (a userland image named Sandbox can log the same text)
+        #expect(SandboxWatcher.parse(denialLine(id, "file-read-data", "/p", pid: 4242)) == nil)
+        #expect(SandboxWatcher.predicate.contains("processID == 0"))
     }
 
     /// R5: only the final line is the tag; a path carrying `\ncollie-term:<other>` stays a path of the real terminal.
@@ -138,6 +141,9 @@ private final class Rig {
         #expect(c.add(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/g"), now: now + 3) != nil)   // its count, later
         for i in 0..<10_000 { _ = c.add(SandboxDenial(terminal: t, op: "write", path: "/h/d\(i)/f"), now: now) }
         #expect(c.cards.count == SandboxCards.perTerminal && c.dropped == 10_000 - (SandboxCards.perTerminal - 1))
+        // R29: a request joins the folder's card without replacing its path, under the same rate limit
+        let req = c.add(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/other", requested: true, reason: "r"), now: now + 3.5)
+        #expect(req == nil && c.all.first { $0.op == "read" }?.path == "/h/Documents/f0" && c.all.first { $0.op == "read" }?.requested == true)
         let k = SandboxCards.key(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/x"))
         c.deny(k)
         #expect(c.add(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/y"), now: now + 10) == nil)   // Negar: quiet
@@ -154,12 +160,16 @@ private final class Rig {
         for bad in ["", ".ssh", ".ssh/id_ed25519", ".aws/credentials", ".config/gh/hosts.yml", ".netrc", ".docker/config.json",
                     "Library/Application Support/Google/Chrome/Default", "Library/Application Support/Collie/admin.token",
                     "Library/LaunchAgents/x.plist", "code/repo/.git/hooks/pre-commit", "code/repo/.git/config",
-                    "code/repo/.git/info/attributes", "code/repo/.git/commondir", "code/repo/.git/worktrees/p/gitdir"] {
+                    "code/repo/.git/info/attributes", "code/repo/.git/commondir", "code/repo/.git/worktrees/p/gitdir",
+                    // R27: the folders of .git/HEAD, .git/modules/s/index, .git/worktrees/w/HEAD; bare repos; too wide; never granted
+                    "code/repo/.git", "code/repo/.git/modules/s", "code/repo/.git/worktrees/w", "code/srv/bare.git", "code/repo/.git/objects",
+                    "Library", "Library/Application Support", "Library/Keychains/login.keychain-db", "Library/Mail/V10",
+                    "Library/Messages/chat.db", "Library/Group Containers/x", "Library/Containers/com.x"] {
             #expect(no(bad), "\(bad)")
         }
         #expect(SandboxGrantStore.refusal("/", op: "read", home: f.home, collie: f.collie) != nil)
         #expect(SandboxGrantStore.refusal(f.base.path, op: "read", home: f.home, collie: f.collie) != nil)   // above home
-        for ok in ["Documents", "Documents/x", ".claude/settings.json", ".zshrc", "code/repo/.git/objects", "Library/Application Support/Foo"] {
+        for ok in ["Documents", "Documents/x", ".claude/settings.json", ".zshrc", "code/repo", ".gitignore", "Library/Application Support/Foo", "Library/Preferences"] {
             #expect(!no(ok), "\(ok)")
         }
         #expect(no("Documents/x", op: "exec"))
@@ -174,6 +184,13 @@ private final class Rig {
                                               shell: "/bin/sh", resume: true).arguments.joined(separator: " ")
         }
         #expect(try args(.claude).hasSuffix(" --continue"))
+        // R25: the router asks for it only when Claude has a conversation for that cwd
+        let home = dir.appendingPathComponent("home")
+        #expect(!AgentLaunch.hasClaudeConversation(cwd: "/Users/u/my.proj", home: home))
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".claude/projects/-Users-u-my-proj"), withIntermediateDirectories: true)
+        #expect(!AgentLaunch.hasClaudeConversation(cwd: "/Users/u/my.proj", home: home))   // empty: none
+        try "{}".write(to: home.appendingPathComponent(".claude/projects/-Users-u-my-proj/s.jsonl"), atomically: false, encoding: .utf8)
+        #expect(AgentLaunch.hasClaudeConversation(cwd: "/Users/u/my.proj", home: home))
         #expect(try !args(.codex).contains("--continue"))
         #expect(try !args(.shell).contains("--continue"))
         #expect(TerminalRecord(id: UUID(), name: "a", preset: .claude, command: nil, cwd: "/", isShepherd: false).resumesConversation)
@@ -287,6 +304,12 @@ private final class Rig {
             let free = try await rig.admin("admin.spawn", ["name": .string("F"), "preset": .string("shell"), "cwd": .string(rig.proj.path), "sandbox": .string("free")])
             guard case .object(let o)? = free.result, case .string(let fid)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(free)") }
             #expect(try await rig.grant(UUID(uuidString: fid)!, rig.docs).error?.message.contains("livre") == true)
+            // R26: the card's path exactly; one that is now a link (swapped since the card) is refused, not followed
+            let link = rig.f.base.appendingPathComponent("swap")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: rig.docs)
+            #expect(try await rig.grant(a.id, link).error?.message.contains("mudou") == true)
+            #expect(try await rig.grant(a.id, link.appendingPathComponent("x"), folder: true).error?.message.contains("mudou") == true)
+            #expect(try await !rig.list().grants.contains { $0.path.hasPrefix(link.path) })
         }
     }
 
@@ -301,6 +324,17 @@ private final class Rig {
             #expect(await waitFor(20) { await rig.d.scrollbackText(a.id).contains("ARGS:") })
             #expect(!(await rig.d.scrollbackText(a.id)).contains("--continue"))
             #expect(!rig.profile(a.id).contains(rig.docs.path))
+            // R25: no earlier conversation → plain relaunch (`--continue` would exit at once)
+            let cache = rig.f.home.appendingPathComponent(".cache")
+            try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+            let r0 = try await rig.grant(a.id, cache)
+            guard case .object(let o0)? = r0.result else { Issue.record("\(r0)"); return }
+            #expect(o0["restarted"] == .bool(true) && o0["resumed"] == .bool(false))
+            #expect(await waitFor(20) { await rig.d.scrollbackText(a.id).contains("ARGS:") })
+            #expect(!(await rig.d.scrollbackText(a.id)).contains("--continue"))
+            let conv = rig.f.home.appendingPathComponent(".claude/projects/" + String(rig.proj.path.map { $0.isLetter || $0.isNumber ? $0 : "-" }))
+            try FileManager.default.createDirectory(at: conv, withIntermediateDirectories: true)
+            try "{}".write(to: conv.appendingPathComponent("s.jsonl"), atomically: false, encoding: .utf8)
             await rig.d.router.raise(SandboxDenial(terminal: a.id, op: "read", path: rig.docs.path + "/x"))
             let r = try await rig.grant(a.id, rig.docs.appendingPathComponent("x"), folder: true)
             guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
@@ -378,6 +412,60 @@ private final class Rig {
             // removing the terminal drops its own grants
             #expect(try await rig.admin("admin.kill", ["target": .string("A")]).ok)
             #expect(try await rig.list().grants.isEmpty)
+        }
+    }
+}
+
+@Suite(.serialized) struct SandboxGrantFixTests {
+    /// R26: a grant is rendered literally; a symlink swapped in at its path afterwards opens nothing.
+    @Test func symlinkSwapAfterGrantOpensNothing() throws {
+        let f = try FakeHome()
+        let cache = f.base.appendingPathComponent("cache")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let g = SandboxGrant(path: cache.path, access: .write, scope: .terminal, owner: f.id)
+        try FileManager.default.removeItem(at: cache)
+        try FileManager.default.createSymbolicLink(at: cache, withDestinationURL: f.home.appendingPathComponent("Documents"))
+        let p = try f.profile(f.input(grants: [g]))
+        #expect(try String(contentsOf: p, encoding: .utf8).contains("(subpath \(SandboxProfile.q(cache.path)))"))
+        #expect(try !f.ok(p, "cat \(AgentLaunch.quote(cache.path))/x"))
+        #expect(try !f.ok(p, "echo y > \(AgentLaunch.quote(cache.path))/y"))
+    }
+
+    /// R27: a write grant never covers a git dir beneath it; the project's own git keeps working under a covering grant.
+    @Test func writeGrantNeverCoversGitDirs() throws {
+        let f = try FakeHome()
+        let fm = FileManager.default
+        for d in ["code/other/.git/modules/s/hooks", "code/other/.git/objects", "code/srv/bare.git/hooks"] {
+            try fm.createDirectory(at: f.home.appendingPathComponent(d), withIntermediateDirectories: true)
+        }
+        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.appendingPathComponent("code").path, access: .write, scope: .terminal, owner: f.id)]))
+        for bad in ["code/other/.git/modules/s/hooks/post-checkout", "code/other/.git/HEAD", "code/other/.git/objects/o",
+                    "code/srv/bare.git/hooks/update", "code/srv/bare.git/config"] {
+            #expect(try !f.ok(p, "echo x > \(f.h(bad))"), "\(bad)")
+        }
+        #expect(try f.ok(p, "echo x > \(f.h("code/other/y")) && echo x > \(f.h("code/other/.gitignore"))"))
+        #expect(try f.ok(p, "echo x > \(f.h("code/repo/.git/objects/o"))"))   // the project's own git dir
+        #expect(try !f.ok(p, "echo x > \(f.h("code/repo/.git/hooks/pre-commit"))"))
+    }
+
+    /// R29: an id reused on another project loses its terminal grants; relaunched free, its id is no longer known.
+    @Test func reusedIdOnOtherProjectDropsGrants() async throws {
+        try await Rig().run { rig in
+            let a = try await rig.spawn("A", token: false)
+            #expect(try await rig.grant(a.id, rig.docs).ok)
+            #expect(try await rig.list().grants.first?.project == rig.proj.path)
+            let other = rig.f.home.appendingPathComponent("code/other2")
+            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+            #expect(try await rig.admin("admin.update", ["name": .string("A"), "cwd": .string(other.path), "restart": .bool(true)]).ok)
+            #expect(!rig.profile(a.id).contains(rig.docs.path))
+            #expect(try await rig.list().grants.isEmpty)
+            // the shell exits; respawned free in place: no longer a known sandboxed terminal (forged lines raise nothing)
+            let pty = try #require(await rig.d.process(a.id))
+            try pty.write(Data("exit\n".utf8))
+            #expect(await waitFor(20) { await rig.d.process(a.id)?.isRunning != true })
+            #expect(try await rig.admin("admin.spawn", ["name": .string("A"), "preset": .string("shell"), "cwd": .string(rig.proj.path),
+                                                        "sandbox": .string("free")]).ok)
+            #expect(await !rig.d.router.sandboxKnown.contains(a.id))
         }
     }
 }

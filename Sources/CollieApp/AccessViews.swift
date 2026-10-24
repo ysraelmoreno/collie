@@ -10,8 +10,22 @@ enum AccessCopy {
     }
     static func resumeNote(_ t: TerminalRecord?) -> String {
         t?.resumesConversation == true
-            ? "Liberar reinicia o terminal e retoma a conversa (claude --continue)."
+            ? "Liberar reinicia o terminal e retoma a conversa anterior, se houver (claude --continue)."
             : "Liberar reinicia o terminal sem retomar a conversa (a retomada do Codex/Cursor não foi confirmada)."
+    }
+    /// R24: only this terminal restarts; the lot's other running members get it at their next start.
+    static let lotNote = "Vale para todos os terminais do lote, também os que entrarem depois (inclusive os que um Pastor puser no lote). Só este terminal reinicia agora; os outros que estão rodando recebem quando reiniciarem."
+    /// Agent-written text shown as is, but with control and bidi characters spelled out (`\u{202E}`), so a file name
+    /// can't lay out a misleading line (R29).
+    static func shown(_ s: String) -> String {
+        var o = ""
+        for u in s.unicodeScalars {
+            switch u.properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator: o += "\\u{" + String(u.value, radix: 16, uppercase: true) + "}"
+            default: o.unicodeScalars.append(u)
+            }
+        }
+        return o
     }
     static func grantLine(_ g: SandboxGrant) -> String {
         (g.access == .write ? "ler e escrever" : "ler") + " · " + g.createdAt.formatted(date: .abbreviated, time: .shortened)
@@ -54,7 +68,7 @@ struct AccessPopover: View {
         let mine = client.grants.filter { $0.scope == .terminal && $0.owner == id }
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(cards, id: \.folder) { AccessCard(card: $0, client: client) }
+                ForEach(cards, id: \.cardId) { AccessCard(card: $0, client: client) }
                 if !mine.isEmpty {
                     Text("LIBERADOS PARA ESTE TERMINAL").font(.collieMono(10)).kerning(1.2).foregroundStyle(Color.collieMuted)
                     ForEach(mine) { GrantRow(grant: $0, client: client) }
@@ -78,10 +92,10 @@ struct AccessCard: View {
         let t = client.terminals.first { $0.id == card.terminal }
         let lot = client.lot(of: card.terminal)
         VStack(alignment: .leading, spacing: 6) {
-            Text("Agente \(Text(verbatim: t?.name ?? "?").italic()) tentou \(Text(AccessCopy.verb(card.op)).bold()) \(Text(verbatim: card.path).font(.collieMono(11)))")
+            Text("Agente \(Text(verbatim: t?.name ?? "?").italic()) tentou \(Text(AccessCopy.verb(card.op)).bold()) \(Text(verbatim: AccessCopy.shown(card.path)).font(.collieMono(11)))")
                 .font(.collieUI(12)).foregroundStyle(Color.collieText).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             if card.count > 1 { Text("\(card.count) vezes nesta pasta").font(.collieUI(11)).foregroundStyle(Color.collieMuted) }
-            if let r = card.reason { Text("Motivo do agente: \(Text(verbatim: r))").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
+            if let r = card.reason { Text("Motivo do agente: \(Text(verbatim: AccessCopy.shown(r)))").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
             if let why = card.refusal {
                 Text(why).font(.collieUI(11)).foregroundStyle(Color.collieDanger).fixedSize(horizontal: false, vertical: true)
                 Button("Negar") { deny() }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
@@ -93,8 +107,12 @@ struct AccessCard: View {
                     Button("Negar") { deny() }.buttonStyle(CollieButtonStyle(.quiet))
                 }
                 .controlSize(.small).disabled(busy)
+                // R27: the folder a click opens is on the card, not only in a tooltip
+                Text("A pasta: \(Text(verbatim: AccessCopy.shown(card.folder)).font(.collieMono(11)))\(card.folderRefusal.map { " — \($0)" } ?? "")")
+                    .font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary).fixedSize(horizontal: false, vertical: true)
                 Toggle("para o lote", isOn: $forLot).toggleStyle(.checkbox).controlSize(.small).disabled(lot == nil)
-                    .help(lot.map { "Vale para todos os terminais do lote \($0.name), também os que entrarem depois" } ?? "Este terminal não está em um lote")
+                    .help(lot == nil ? "Este terminal não está em um lote" : AccessCopy.lotNote)
+                if forLot { Text(AccessCopy.lotNote).font(.collieUI(11)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true) }
                 Text(AccessCopy.resumeNote(t)).font(.collieUI(11)).foregroundStyle(Color.collieMuted)
             }
             if let error { Text(error).font(.collieUI(11)).foregroundStyle(Color.collieDanger).lineLimit(3) }
@@ -122,7 +140,7 @@ struct GrantRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Text(verbatim: grant.path).font(.collieMono(11)).foregroundStyle(Color.collieText).lineLimit(2).truncationMode(.middle)
+                Text(verbatim: AccessCopy.shown(grant.path)).font(.collieMono(11)).foregroundStyle(Color.collieText).lineLimit(2).truncationMode(.middle)
                 Spacer(minLength: 4)
                 Button("Revogar") { Task { do { try await client.revoke(grant) } catch { self.error = "\(error)" } } }
                     .buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
@@ -142,6 +160,7 @@ struct LotGrantsList: View {
         let gs = client.grants.filter { $0.scope == .lot && $0.owner == lot.id }
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
+                Text(AccessCopy.lotNote).font(.collieUI(11)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
                 if gs.isEmpty {
                     Text("Nada liberado para o lote. Um cartão de acesso com \"para o lote\" marcado aparece aqui.")
                         .font(.collieUI(12)).foregroundStyle(Color.collieMuted)
@@ -151,4 +170,9 @@ struct LotGrantsList: View {
             .padding(4).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+}
+
+extension SandboxDenial {
+    /// One card per (op, folder) of a terminal (R29: a read and a write card in one folder are two).
+    var cardId: String { op + "|" + folder }
 }

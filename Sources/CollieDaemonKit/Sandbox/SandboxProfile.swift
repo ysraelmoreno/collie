@@ -80,7 +80,9 @@ enum SandboxProfile {
             guard !filters.isEmpty else { return }
             out.append("(\(verb) \(op)\(tagged ? " " + tag : "")\n  " + filters.joined(separator: "\n  ") + ")")
         }
-        let grants = i.grants.map { (path: real(URL(fileURLWithPath: $0.path)), access: $0.access) }
+        // R26: a grant is rendered exactly as stored (the resolved path the card showed), never resolved again: a symlink
+        // swapped in later opens nothing (Seatbelt matches the resolved path)
+        let grants = i.grants.map { (path: $0.path, access: $0.access) }
 
         out.append(";; reads: the home is closed; tool essentials, the project and its git re-opened")
         rule("deny", "file-read*", tagged: true, [sub(home)])
@@ -109,17 +111,18 @@ enum SandboxProfile {
                 writes.append(sub(common))
             }
         }
+        // write grants, before the project's own allows (which re-open the project's git dir and the tools' caches):
+        // R27: a write grant never covers a git dir beneath it (`.git` or `*.git`: hooks, config, modules, worktrees, bare)
+        let writeGrants = grants.filter { $0.access == .write }.map(\.path)
+        rule("allow", "file-write*", writeGrants.map(sub))
+        rule("deny", "file-write*", tagged: true, writeGrants.map { rx("^" + re($0) + "/(.+/)?[^/]*\\.git(/|$)") })
         rule("allow", "file-write*", writes)
         // a pasture never writes its paddocks: their worktrees, nor any worktree's git dir in the common dir
         var closed = i.paddockWorktrees.map { sub(real($0)) }
         if let common, worktree == nil { closed.append(sub(common + "/worktrees")) }
         rule("deny", "file-write*", tagged: true, closed)
-        let writeGrants = grants.filter { $0.access == .write }.map(\.path)
-        rule("allow", "file-write*", writeGrants.map(sub))
-        // R23: what no grant re-opens (rendered after the grants): secrets, launchd agents, and in a granted folder the
-        // git files the user's own git runs (hooks, config, attributes, pointers; the `.git` entry itself)
-        rule("deny", "file-write*", tagged: true, (EssentialPaths.secrets + ["Library/LaunchAgents"]).map { entry(home, $0) }
-             + writeGrants.map { rx("^" + re($0) + "(/.*)?/\\.git(/(hooks(/.*)?|config(\\.worktree)?|info/attributes|commondir|worktrees/[^/]+/(commondir|gitdir|config\\.worktree)))?$") })
+        // R23: what no grant re-opens (rendered after every allow): secrets, launchd agents
+        rule("deny", "file-write*", tagged: true, (EssentialPaths.secrets + ["Library/LaunchAgents"]).map { entry(home, $0) })
         // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
         // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
         // R17: no nested `.git` (dir, file or link) anywhere in the project either: the user's git or IDE runs its config.

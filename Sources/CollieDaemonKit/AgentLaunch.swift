@@ -19,6 +19,16 @@ public enum AgentLaunch {
     }
     /// Env names the `collie mcp` child needs from the agent (names only: values never reach argv or files).
     static let mcpEnv = ["COLLIE_SOCKET", "COLLIE_TERMINAL_ID", "COLLIE_TOKEN", "COLLIE_TERMINAL_NAME", "COLLIE_WORKSPACE_ID", "COLLIE_SHEPHERD"]
+    /// Claude has an earlier conversation for `cwd` (R25): a session file in `~/.claude/projects/<cwd, every
+    /// non-alphanumeric character a dash>` (the unresolved or resolved cwd).
+    static func hasClaudeConversation(cwd: String, home: URL) -> Bool {
+        let dir = home.appendingPathComponent(".claude/projects")
+        return Set([cwd, SignedAppCheck.realPath(URL(fileURLWithPath: cwd))]).contains { c in
+            let enc = String(c.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+            let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent(enc).path)) ?? []
+            return files.contains { $0.hasSuffix(".jsonl") }
+        }
+    }
     /// JSON (and TOML-compatible) literal of a string or string array.
     static func literal(_ v: Any) -> String {
         String(decoding: (try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed, .withoutEscapingSlashes])) ?? Data(), as: UTF8.self)

@@ -27,7 +27,7 @@ extension CommandRouter {
             await raise(SandboxDenial(terminal: me.id, op: write ? "write" : "read", path: path, requested: true, reason: reason))
             return .object(["shown": .bool(true), "message": .string("Pedido mostrado ao usuário no app; nada é liberado sem o clique dele.")])
         case "access.list":
-            if let me = caller { return try isoJSON(SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, lot: ws.lot(of: me.id)?.id)) }
+            if let me = caller { return try isoJSON(SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)) }
             return .object(["grants": try isoJSON(sandboxGrants), "cards": try isoJSON(accessCards.all),
                             "detection": sandboxDetection.map(JSONValue.bool) ?? .null, "dropped": .number(Double(accessCards.dropped))])
         case "access.grant":
@@ -42,8 +42,12 @@ extension CommandRouter {
             }
             let raw = try need(r, "path")
             guard raw.hasPrefix("/") else { throw ProtocolError(code: .invalidArgs, message: "'path' must be absolute") }
-            var path = SignedAppCheck.realPath(URL(fileURLWithPath: raw))
-            if flag(r, "folder") { path = (path as NSString).deletingLastPathComponent }   // Liberar a pasta
+            // R26: exactly the card's path (the kernel's, already resolved), or its folder: never resolved here. One that
+            // no longer resolves to itself (a symlink swapped in since the card) is refused, not followed
+            let path = flag(r, "folder") ? (raw as NSString).deletingLastPathComponent : raw   // Liberar a pasta
+            guard SignedAppCheck.realPath(URL(fileURLWithPath: path)) == path else {
+                throw ProtocolError(code: .invalidArgs, message: "O caminho mudou desde o cartão (agora é um link): nada foi liberado.")
+            }
             if let why = SandboxGrantStore.refusal(path, op: access.rawValue, home: sandboxHomeDir, collie: config.paths.root) {
                 throw ProtocolError(code: .invalidArgs, message: why)
             }
@@ -53,8 +57,9 @@ extension CommandRouter {
                 owner = l.id
             } else { owner = t.id }
             try reserve(t.name); defer { launching.remove(t.name.lowercased()) }
-            let g = SandboxGrant(path: path, access: access, scope: scope, owner: owner)
-            if !sandboxGrants.contains(where: { $0.path == g.path && $0.scope == g.scope && $0.owner == g.owner && ($0.access == .write || g.access == .read) }) {
+            let g = SandboxGrant(path: path, access: access, scope: scope, owner: owner,
+                                 project: scope == .terminal ? try await projectRoot(of: t).path : nil)
+            if !sandboxGrants.contains(where: { $0.path == g.path && $0.scope == g.scope && $0.owner == g.owner && $0.project == g.project && ($0.access == .write || g.access == .read) }) {
                 let before = sandboxGrants
                 sandboxGrants.append(g)
                 do { try saveGrants() } catch { sandboxGrants = before; throw error }
@@ -64,7 +69,7 @@ extension CommandRouter {
             // ponytail: the lot's other running members get it at their next start (only the card's terminal restarts)
             let running = await registry.process(t.id)?.isRunning == true
             if running { _ = try await relaunch(t, resume: true) }
-            return .object(["grant": try isoJSON(g), "restarted": .bool(running), "resumed": .bool(running && t.resumesConversation)])
+            return .object(["grant": try isoJSON(g), "restarted": .bool(running), "resumed": .bool(running && t.resumesConversation && AgentLaunch.hasClaudeConversation(cwd: t.cwd, home: sandboxHomeDir))])
         case "access.deny":
             try appOnly()
             let t = try accessTerminal(r)

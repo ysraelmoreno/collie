@@ -34,29 +34,30 @@ struct SandboxGrantStore {
 
     /// The grants a terminal's profile gets: its own, and its lot's (current and future members). A summoned or herd
     /// terminal has a new id: nothing of its creator's own grants.
-    static func applicable(_ all: [SandboxGrant], terminal: UUID, lot: UUID?) -> [SandboxGrant] {
-        all.filter { ($0.scope == .terminal && $0.owner == terminal) || ($0.scope == .lot && $0.owner == lot) }
+    /// A terminal grant also needs the terminal's project to be the one it was clicked for (R29).
+    static func applicable(_ all: [SandboxGrant], terminal: UUID, project: String?, lot: UUID?) -> [SandboxGrant] {
+        all.filter { ($0.scope == .terminal && $0.owner == terminal && ($0.project == nil || $0.project == project))
+            || ($0.scope == .lot && $0.owner == lot) }
     }
 
-    /// Why `path` (resolved) can never be granted, in the app's words; nil: it can. Too wide (`/`, the home, above it),
-    /// or closed whatever the user clicks (R23): Collie's data and admin token, secrets, launchd agents, the git files
-    /// the user's own git runs. Global agent config is grantable (spec).
+    /// Why `path` (resolved) can never be granted, in the app's words; nil: it can. Too wide (`/`, the home, above it,
+    /// `~/Library`, `~/Library/Application Support`), or closed whatever the user clicks (R23, R27): Collie's data and
+    /// admin token, secrets, mail/messages/containers/keychains, launchd agents, and anything that is or is inside a git
+    /// dir (`.git`, `*.git`). Global agent config is grantable (spec).
     static func refusal(_ path: String, op: String, home: URL, collie: URL) -> String? {
         if op == "exec" { return "Executar este programa não pode ser liberado no sandbox." }
         let p = URL(fileURLWithPath: path).pathComponents
-        let h = URL(fileURLWithPath: SignedAppCheck.realPath(home)).pathComponents
-        if h.starts(with: p) { return "Amplo demais: o Collie não libera a pasta pessoal inteira, nem o que fica acima dela." }
-        func within(_ u: URL) -> Bool { p.starts(with: URL(fileURLWithPath: SignedAppCheck.realPath(u)).pathComponents) }
-        if within(collie) { return "Dados do Collie (e o token de admin) nunca são liberados para um agente." }
-        if (EssentialPaths.secrets + ["Library/LaunchAgents"]).contains(where: { within(home.appendingPathComponent($0)) }) {
-            return "Segredos (chaves SSH, credenciais, perfis de navegador) e agentes do launchd nunca são liberados."
+        func comps(_ u: URL) -> [String] { URL(fileURLWithPath: SignedAppCheck.realPath(u)).pathComponents }
+        if comps(home).starts(with: p) || EssentialPaths.tooWide.contains(where: { comps(home.appendingPathComponent($0)) == p }) {
+            return "Amplo demais: o Collie não libera a pasta pessoal, ~/Library ou ~/Library/Application Support inteiras, nem o que fica acima delas."
         }
-        if let i = p.lastIndex(of: ".git") {
-            let r = Array(p[(i + 1)...])
-            if let f = r.first, ["hooks", "config", "config.worktree", "info", "commondir"].contains(f)
-                || (f == "worktrees" && r.count >= 3 && ["commondir", "gitdir", "config.worktree"].contains(r[2])) {
-                return "Hooks e configuração do git nunca são liberados: o seu git os executa fora do sandbox."
-            }
+        func within(_ u: URL) -> Bool { p.starts(with: comps(u)) }
+        if within(collie) { return "Dados do Collie (e o token de admin) nunca são liberados para um agente." }
+        if (EssentialPaths.secrets + EssentialPaths.neverGranted).contains(where: { within(home.appendingPathComponent($0)) }) {
+            return "Segredos (chaves SSH, credenciais, chaves do sistema, e-mail, mensagens, perfis de navegador) e agentes do launchd nunca são liberados."
+        }
+        if p.contains(where: { $0.hasSuffix(".git") }) {
+            return "Pastas do git (.git) nunca são liberadas: o seu git executa hooks e configuração de lá fora do sandbox."
         }
         return nil
     }

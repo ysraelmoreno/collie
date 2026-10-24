@@ -369,7 +369,7 @@ final class FakeHome {
             #expect(try !f.ok(q, "mkdir -p \"$(dirname \(f.h(bad)))\" 2>/dev/null; echo x > \(f.h(bad))"), "\(bad)")
         }
         #expect(try !f.ok(q, "mv \(f.h("code/other/.git")) \(f.h("code/other/.gitold"))"))
-        #expect(try f.ok(q, "echo x > \(f.h("code/other/.git/objects/o"))"))
+        #expect(try !f.ok(q, "echo x > \(f.h("code/other/.git/objects/o"))"))   // R27: no git dir beneath a write grant
     }
 
     @Test func pathsWithSpacesAndUnicode() throws {

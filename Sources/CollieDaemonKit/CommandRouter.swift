@@ -80,7 +80,10 @@ actor CommandRouter {
          asks: AskCoordinator, hub: StreamHub, workspace: Workspace, userEnv: UserEnvironment) {
         self.config = config; self.auth = auth; self.registry = registry; self.store = store; self.userEnv = userEnv
         self.asks = asks; self.hub = hub; self.ws = workspace
-        self.sandboxGrants = SandboxGrantStore(root: config.paths.root).load()
+        // R26: every stored grant passes the refusals again (an edited grants.json, a rule added since): refused ones go
+        let home = config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()), root = config.paths.root
+        self.sandboxGrants = SandboxGrantStore(root: root).load()
+            .filter { SandboxGrantStore.refusal($0.path, op: $0.access.rawValue, home: home, collie: root) == nil }
         self.usage = UsageService(dir: config.paths.root.appendingPathComponent("usage/providers"))
         self.memory = MemoryService(globalDir: config.paths.root.appendingPathComponent("memory"))
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
@@ -568,6 +571,9 @@ actor CommandRouter {
         if existed, let fid = rec.paddockId, paddockDeleting.contains(fid) || !ws.paddocks.contains(where: { $0.id == fid }) {
             throw ProtocolError(code: .invalidArgs, message: "paddock of '\(rec.name)' is being deleted")
         }
+        if !sandboxed(rec) { sandboxKnown.remove(rec.id); accessCards.forget(terminal: rec.id) }   // R29: relaunched free
+        // R25: Claude resumes only a conversation it had (else `--continue` exits at once)
+        let resume = resume && AgentLaunch.hasClaudeConversation(cwd: rec.cwd, home: sandboxHomeDir)
         await memory.endSession(rec.id)   // a new process is a new session: memories may be injected again
         let token = await auth.issue(for: rec.id)
         let p: PTYProcess, sb: ScrollbackBuffer?
@@ -694,7 +700,10 @@ actor CommandRouter {
                                  ownFiles: [AgentLaunch.settingsFile(rec.id, in: hooksDir), AgentLaunch.mcpFile(rec.id, in: hooksDir)],
                                  terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
                                  agent: rec.preset, command: rec.command,
-                                 grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, lot: ws.lot(of: rec.id)?.id))
+                                 grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, project: project.path, lot: ws.lot(of: rec.id)?.id))
+        // R29: an id reused on another project (same-name respawn elsewhere) loses its terminal grants
+        let stale = sandboxGrants.filter { $0.scope == .terminal && $0.owner == rec.id && $0.project != nil && $0.project != project.path }
+        if !stale.isEmpty { sandboxGrants.removeAll { g in stale.contains { $0.id == g.id } }; try? saveGrants() }
         sandboxKnown.insert(rec.id)   // before its process exists: its first denial is its own (startup race)
         return try SandboxLaunch.prepare(input, root: config.paths.root, collie: config.collieExecutable)
     }

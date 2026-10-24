@@ -272,7 +272,7 @@ extension CommandRouter {
             if caller != nil, old.kind == .feedback { throw ProtocolError(code: .unauthorized, message: "a feedback memory is the user's: only the app can promote it") }
             let rec = MemoryRecord(kind: old.kind, scope: target === memory.global ? .global : .project, subject: old.subject,
                                    title: old.title, body: old.body, path: old.path, reviewed: caller == nil && old.reviewed, pinned: caller == nil && old.pinned,   // an agent's promotion is unreviewed and unpinned
-                                   supersedes: old.id, origin: old.origin)
+                                   supersedes: old.id, origin: old.origin, aliases: old.aliases)
             let saved = try await target.run { m in try m.store.save(rec).saved }   // replaces the project's active one of that subject
             try await src.run { m in
                 var o = old; o.status = .superseded; o.supersededBy = saved.id; o.updatedAt = saved.updatedAt

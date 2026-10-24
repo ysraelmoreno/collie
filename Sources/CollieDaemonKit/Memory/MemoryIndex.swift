@@ -34,18 +34,18 @@ final class MemoryIndex {
             sqlite3_result_double(ctx, pow(0.5, age / MemoryIndex.halfLife))
         }, nil, nil, nil)
         guard fn == SQLITE_OK else { throw fail("create function") }
-        // v1: docs rows say `paddock` (an index from before the herding vocabulary said `floor`); v2: `vecs`.
+        // v1: docs rows say `paddock` (an index from before the herding vocabulary said `floor`); v2: `vecs`; v3: fts `aliases`.
         // Older indexes are rebuilt from the files; `stats` (index-owned) is kept.
         var version = 0
         try query("PRAGMA user_version", []) { version = Int(sqlite3_column_int64($0, 0)) }
-        if version < 2 { try exec("DROP TABLE IF EXISTS docs; DROP TABLE IF EXISTS fts; DROP TABLE IF EXISTS vecs; PRAGMA user_version = 2;") }
+        if version < 3 { try exec("DROP TABLE IF EXISTS docs; DROP TABLE IF EXISTS fts; DROP TABLE IF EXISTS vecs; PRAGMA user_version = 3;") }
         try exec("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, file TEXT NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL,
               kind TEXT NOT NULL, scope TEXT NOT NULL, paddock TEXT, subject TEXT NOT NULL, status TEXT NOT NULL,
               pinned INTEGER NOT NULL, updatedAt REAL NOT NULL, path TEXT, json TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS docs_file ON docs(file);
-            CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, subject, body, path, tokenize='unicode61 remove_diacritics 2');
+            CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, subject, body, path, aliases, tokenize='unicode61 remove_diacritics 2');
             CREATE TABLE IF NOT EXISTS stats(id TEXT PRIMARY KEY, reads INTEGER NOT NULL DEFAULT 0, lastReadAt REAL, missingSince REAL);
             CREATE TABLE IF NOT EXISTS vecs(id TEXT PRIMARY KEY, lang TEXT NOT NULL, v BLOB NOT NULL);
             """)
@@ -134,8 +134,8 @@ final class MemoryIndex {
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, [key(r.id), file, mtime, size, r.kind.rawValue, r.scope.rawValue, r.paddock, r.subject, r.status.rawValue,
                   r.pinned, r.updatedAt.timeIntervalSince1970, r.path, json]) { _ in }
-        try query("INSERT INTO fts(rowid, title, subject, body, path) VALUES(?, ?, ?, ?, ?)",
-                  [Int(sqlite3_last_insert_rowid(db)), r.title, r.subject, r.body, r.path ?? ""]) { _ in }
+        try query("INSERT INTO fts(rowid, title, subject, body, path, aliases) VALUES(?, ?, ?, ?, ?, ?)",
+                  [Int(sqlite3_last_insert_rowid(db)), r.title, r.subject, r.body, r.path ?? "", r.aliases.joined(separator: " ")]) { _ in }
     }
 
     // MARK: vectors (filled after the words: search works at once, a record's vector arrives later)

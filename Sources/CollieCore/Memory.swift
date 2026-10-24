@@ -29,10 +29,17 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var origin: String          // "<terminal> (<preset>)" or "app"
     public var createdAt: Date
     public var updatedAt: Date
+    /// Search keywords the curator adds (FTS only, never injected): normalized like `subject`, ≤ 8 of ≤ 40 characters.
+    public var aliases: [String] { get { _aliases ?? [] } set { let n = Self.normalizeAliases(newValue); _aliases = n.isEmpty ? nil : n } }
+    private var _aliases: [String]?   // nil when none: Codable omits it (rows and entries from before aliases decode)
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, scope, paddock, lotId, unknownScope, subject, title, body, path, status, reviewed, pinned, supersedes,
+             supersededBy, origin, createdAt, updatedAt, _aliases = "aliases"
+    }
     public init(id: UUID = UUID(), kind: MemoryKind, scope: MemoryScope = .project, paddock: String? = nil, lotId: UUID? = nil, subject: String,
                 title: String, body: String = "", path: String? = nil, status: MemoryStatus = .active,
                 reviewed: Bool = false, pinned: Bool = false, supersedes: UUID? = nil, supersededBy: UUID? = nil,
-                origin: String = "app", createdAt: Date = Date(), updatedAt: Date? = nil) {
+                origin: String = "app", createdAt: Date = Date(), updatedAt: Date? = nil, aliases: [String] = []) {
         self.id = id; self.kind = kind; self.scope = scope; self.paddock = paddock; self.lotId = lotId
         self.subject = MemoryRecord.normalize(subject); self.title = title; self.body = body; self.path = path
         self.status = status; self.reviewed = reviewed; self.pinned = pinned
@@ -40,6 +47,22 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
         // ms precision: matches the on-disk format so a reloaded record == the in-memory one.
         func ms(_ d: Date) -> Date { Date(timeIntervalSince1970: (d.timeIntervalSince1970 * 1000).rounded() / 1000) }
         self.createdAt = ms(createdAt); self.updatedAt = ms(updatedAt ?? createdAt)
+        self.aliases = aliases
+    }
+    static let aliasesMax = 8, aliasMax = 40
+    /// Each `normalize`d with quotes, control and format characters gone, cut to 40 characters; empties and repeats
+    /// dropped (first kept); at most 8.
+    public static func normalizeAliases(_ xs: [String]) -> [String] {
+        var out: [String] = []
+        for x in xs {
+            let kept = String(String.UnicodeScalarView(x.unicodeScalars.filter {
+                $0 != "\"" && ($0.properties.generalCategory != .control || $0 == "\n" || $0 == "\t") && $0.properties.generalCategory != .format
+            }))
+            let a = String(normalize(kept).prefix(aliasMax)).trimmingCharacters(in: .whitespaces)
+            if !a.isEmpty, !out.contains(a) { out.append(a) }
+            if out.count == aliasesMax { break }
+        }
+        return out
     }
     /// Lowercase, whitespace runs collapsed to one space, trimmed.
     public static func normalize(_ s: String) -> String {
@@ -54,6 +77,7 @@ public enum MemoryFile {
         if let f = r.paddock { l.append("paddock: \(str(f))") }
         if let lot = r.lotId { l.append("lot: \(lot.uuidString.lowercased())") }
         l.append("subject: \(str(r.subject))"); l.append("title: \(str(r.title))")
+        if !r.aliases.isEmpty { l.append("aliases: \(json(r.aliases))") }
         if let p = r.path { l.append("path: \(str(p))") }
         l.append("status: \(r.status.rawValue)"); l.append("reviewed: \(r.reviewed)"); l.append("pinned: \(r.pinned)")
         if let s = r.supersedes { l.append("supersedes: \(s.uuidString.lowercased())") }
@@ -132,6 +156,10 @@ public enum MemoryFile {
             supersededBy: supersededBy,
             origin: try field("origin"), createdAt: created, updatedAt: try date("updated"))
         rec.unknownScope = unknownScope
+        if let v = kv["aliases"] {
+            guard let a = try? JSONDecoder().decode([String].self, from: Data(v.utf8)) else { throw bad("bad 'aliases'") }
+            rec.aliases = a
+        }
         return rec
     }
 
@@ -157,6 +185,10 @@ public enum MemoryFile {
         if plain { return s }
         let e = JSONEncoder(); e.outputFormatting = .withoutEscapingSlashes
         return (try? e.encode(s)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+    }
+    private static func json(_ v: [String]) -> String {
+        let e = JSONEncoder(); e.outputFormatting = .withoutEscapingSlashes
+        return (try? e.encode(v)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
     }
     private static func iso(_ d: Date) -> String {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

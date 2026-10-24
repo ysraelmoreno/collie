@@ -153,4 +153,43 @@ private func create(kind: String = "decision", scope: String = "project", title:
             #expect(r.ops.isEmpty && r.dropped >= 1, "\(g)")
         }
     }
+
+    @Test func aliasesBounded() {
+        let many: JSONValue = .array((0..<12).map { .string("a\($0)" + String(repeating: "x", count: 60)) } + [.string("q\"u\nx")])
+        var c = create(); c["aliases"] = many
+        let r = CuratorOps.validate(ops([c, ["op": s("merge"), "ids": .array([id(a)]), "into": id(b), "aliases": .array([.string("Suíte\n"), .string("\"x\"")]), "reason": s("r")]]), scope: job)
+        guard case .create(let n)? = r.ops.first, case .merge(_, _, _, _, let al, _)? = r.ops.last else { Issue.record("\(r)"); return }
+        #expect(n.aliases.count == 8 && n.aliases.allSatisfy { $0.count <= 40 && !$0.contains("\"") && !$0.contains("\n") } && n.aliases[0].hasPrefix("a0x"))
+        #expect(al == ["suíte", "x"])
+        // a wrong type drops just the aliases, never the op
+        c["aliases"] = .string("suíte")
+        guard case .create(let n2)? = CuratorOps.validate(ops([c]), scope: job).ops.first else { Issue.record("dropped"); return }
+        #expect(n2.aliases.isEmpty)
+        #expect(CuratorOps.schema.contains(#""aliases":{"items":{"type":"string"},"type":"array"}"#), "\(CuratorOps.schema)")
+    }
+}
+
+@Suite(.serialized) struct CuratorAliasTests {
+    /// The merged memory keeps every alias (the op's first, then the newest record's), at most 8.
+    @Test func mergeUnionsAliases() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, _ in
+            let store = await d.router.memory.repo(for: repo.path)
+            var into = MemoryRecord(kind: .decision, subject: "cache", title: "Cache no Redis", body: "ttl 60", updatedAt: Date().addingTimeInterval(-100))
+            into.aliases = ["redis", "ttl", "a1", "a2", "a3"]
+            var pr = MemoryRecord(kind: .decision, subject: "cache redis", title: "Cache Redis ttl", status: .proposed)
+            pr.aliases = ["cache", "redis", "b1", "b2"]
+            let recs = [into, pr]
+            try await store.run { m in for r in recs { try m.store.write(r) } }
+            let p = ProposalsPayload(family: store.key, lot: nil, lotName: nil, root: store.root?.path,
+                                     proposals: [.init(id: pr.id, kind: pr.kind, title: pr.title, body: pr.body)],
+                                     candidates: [.init(id: into.id, kind: into.kind, title: into.title, body: into.body)])
+            let j = CuratorJob(id: UUID(), kind: .proposals, store: store.key, payload: try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)),
+                               dedupe: UUID().uuidString, createdAt: Date(), attempts: 0)
+            let e = try await d.router.applyOps([.merge(ids: [pr.id], into: into.id, title: nil, body: nil, aliases: ["memória rápida"], reason: "igual")], job: j)
+            #expect(e.map(\.action) == ["mesclado"])
+            let got = try #require(try await store.run { $0.store.all().records }.first { $0.id == into.id })
+            #expect(got.aliases == ["memória rápida", "cache", "redis", "b1", "b2", "ttl", "a1", "a2"], "\(got.aliases)")
+        }
+    }
 }

@@ -345,4 +345,28 @@ private func tempRoot() throws -> URL {
         #expect(hits.count == 3)
         for h in hits { #expect(abs(h.score - expected[h.record.id]!) < 1e-9, "\(h.record.title): \(h.score) vs \(expected[h.record.id]!)") }
     }
+
+    /// Task 6: a curator alias widens what search finds (the text never says it); a v2 index is rebuilt for the column.
+    @Test func aliasMatches() throws {
+        let root = try tempRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let store = MemoryStore(dir: root.appendingPathComponent("memory")), db = root.appendingPathComponent("i.sqlite")
+        var m = rec("Rodar só o filtro", body: "swift test --filter X"); m.aliases = ["suíte"]
+        let other = rec("Cor do botão", body: "azul")
+        try store.write(m); try store.write(other)
+        do {
+            let v2 = try MemoryIndex(dbFile: db, store: store, repoRoot: nil)
+            try v2.refresh()
+            v2.noteRead([m.id])
+        }
+        // what a v2 index looks like: fts without `aliases`
+        var h: OpaquePointer?
+        #expect(sqlite3_open(db.path, &h) == SQLITE_OK)
+        #expect(sqlite3_exec(h, "DROP TABLE fts; CREATE VIRTUAL TABLE fts USING fts5(title, subject, body, path, tokenize='unicode61 remove_diacritics 2'); PRAGMA user_version = 2;", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(h)
+        let v3 = try MemoryIndex(dbFile: db, store: store, repoRoot: nil)
+        try v3.refresh()
+        #expect(v3.search("qual suíte?", limit: 10).map(\.record.id) == [m.id])
+        #expect(v3.search("suite", limit: 10).map(\.record.id) == [m.id])   // diacritics folded, like the other columns
+        #expect(v3.stats(m.id)?.reads == 1)   // stats kept
+    }
 }

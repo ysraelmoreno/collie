@@ -7,7 +7,8 @@ enum CuratorOp: Equatable, Sendable {
     case create(CuratorNew)
     /// `by == nil`: the record this job creates.
     case supersede(id: UUID, by: UUID?, reason: String)
-    case merge(ids: [UUID], into: UUID, title: String?, body: String?, reason: String)
+    /// `aliases`: added to `into`'s (the union is kept).
+    case merge(ids: [UUID], into: UUID, title: String?, body: String?, aliases: [String] = [], reason: String)
     case retire(id: UUID, reason: String)
     case activate(id: UUID, reason: String)
     case drop(id: UUID, reason: String)
@@ -23,6 +24,8 @@ struct CuratorNew: Equatable, Sendable {
     var body: String
     var why: String
     var howToApply: String
+    /// Search keywords (`MemoryRecord.normalizeAliases`: ≤ 8 of ≤ 40 characters).
+    var aliases: [String] = []
 }
 
 /// What one job may touch: the ids in its input, the scopes and kinds of its store family, and how many ops.
@@ -52,6 +55,7 @@ enum CuratorOps {
                 "scope": oneOf(["project", "paddock", "global", "lot"]),
                 "id": str, "ids": uuids, "into": str, "by": str,
                 "subject": str, "title": str, "body": str, "why": str, "howToApply": str,
+                "aliases": .object(["type": .string("array"), "items": str]),
                 "reason": str, "question": str, "delta": .object(["type": .string("number"), "minimum": .number(-1), "maximum": .number(1)]),
             ]),
         ])
@@ -106,6 +110,11 @@ enum CuratorOps {
             return us.count == xs.count ? us : nil   // one stranger drops the whole op
         }
         let reason = text("reason", lineMax) ?? ""
+        /// A wrong type: none (the op stays). Each one-line-cleaned before `normalizeAliases` bounds it.
+        var aliases: [String] {
+            guard case .array(let xs)? = o["aliases"] else { return [] }
+            return MemoryRecord.normalizeAliases(xs.compactMap { if case .string(let a) = $0 { clean(a, cap: 200, multiline: false) } else { nil } })
+        }
         guard case .string(let name)? = o["op"] else { return nil }
         switch name {
         case "create":
@@ -114,7 +123,7 @@ enum CuratorOps {
                   let title = filled("title", titleMax) else { return nil }
             return .create(CuratorNew(kind: kind, scope: sco, subject: filled("subject", titleMax) ?? title, title: title,
                                       body: text("body", bodyMax) ?? "", why: text("why", bodyMax) ?? "",
-                                      howToApply: text("howToApply", bodyMax) ?? ""))
+                                      howToApply: text("howToApply", bodyMax) ?? "", aliases: aliases))
         case "supersede":
             guard let target = id("id") else { return nil }
             if o["by"] == nil || o["by"] == .null { return .supersede(id: target, by: nil, reason: reason) }
@@ -122,7 +131,7 @@ enum CuratorOps {
             return .supersede(id: target, by: by, reason: reason)
         case "merge":
             guard let from = ids("ids"), !from.isEmpty, let into = id("into"), !from.contains(into) else { return nil }
-            return .merge(ids: from, into: into, title: filled("title", titleMax), body: filled("body", bodyMax), reason: reason)
+            return .merge(ids: from, into: into, title: filled("title", titleMax), body: filled("body", bodyMax), aliases: aliases, reason: reason)
         case "retire": return id("id").map { .retire(id: $0, reason: reason) }
         case "activate": return id("id").map { .activate(id: $0, reason: reason) }
         case "drop": return id("id").map { .drop(id: $0, reason: reason) }

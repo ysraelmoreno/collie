@@ -119,6 +119,7 @@ extension CommandRouter {
             try await r.store.run { try $0.store.write(rec) }
         }
         try digest.mark(group.map(\.id), undone: true, resolved: nil)
+        for id in back { await memory.scores.reset(id) }   // restored: its correction penalty goes too (starts over)
         await memory.restored(back)
         e.undone = true
         return e

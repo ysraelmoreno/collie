@@ -258,6 +258,7 @@ extension CommandRouter {
             let (saved, sup) = try await target.run { try $0.store.save(toSave) }
             // a correction beats the user's older pin; L1: the record as `save` left it (superseded), never `old`
             if var o = sup, o.pinned { o.pinned = false; try await write(target, o) }
+            if correction, let sup { await memory.scores.penalize(sup.id, ScoreStore.correction, reason: "substituída por correção do usuário") }
             created = saved
             touched.insert(saved.id)
             if let old { touched.insert(old.id) }
@@ -285,6 +286,7 @@ extension CommandRouter {
                 if by != nil { guard let b = await find(byId), b.rec.status == .active else { continue } }
                 var n = r; n.status = .superseded; n.supersededBy = byId; n.pinned = false; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id); supersedes += 1
+                if correction { await memory.scores.penalize(id, ScoreStore.correction, reason: "substituída por correção do usuário") }
                 entry("aposentado", r.title, reason, s, by: byId, before: [r])
             case .merge(let ids, let into, let title, let body, let reason):
                 guard !touched.contains(into), ids.allSatisfy({ !touched.contains($0) }), let (s, target) = await find(into),

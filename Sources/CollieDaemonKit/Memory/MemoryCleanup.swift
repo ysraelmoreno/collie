@@ -3,7 +3,7 @@ import CollieCore
 import CollieProtocol
 
 struct CleanupItem: Codable, Sendable, Equatable {
-    enum Action: String, Codable, Sendable { case archiveCold, archiveMissingPath, mergeDuplicate }
+    enum Action: String, Codable, Sendable { case archiveCold, archiveMissingPath, mergeDuplicate, archiveLowScore }
     var action: Action
     var id: UUID
     var into: UUID?      // the record kept in a merge
@@ -14,9 +14,11 @@ struct CleanupItem: Codable, Sendable, Equatable {
 enum MemoryCleanup {
     static let coldAge: TimeInterval = 60 * 86400, missingAge: TimeInterval = 7 * 86400
     static let halfLife: TimeInterval = 30 * 86400, coldScore = 0.25, jaccardMin = 0.9
+    /// An outcome score (`ScoreStore`) this low and unread this long: archived.
+    static let lowScore = 0.5, lowScoreAge: TimeInterval = 30 * 86400
 
-    static func plan(records: [MemoryRecord], stats: [UUID: MemoryStats], now: Date) -> [CleanupItem] {
-        func days(_ t: TimeInterval) -> Int { Int(t / 86400) }
+    static func plan(records: [MemoryRecord], stats: [UUID: MemoryStats], scores: [UUID: Double] = [:], now: Date) -> [CleanupItem] {
+        func days(_ t: TimeInterval) -> Int { Int((t / 86400).rounded()) }
         var items: [CleanupItem] = []
         var rest: [MemoryRecord] = []
         for r in records where r.status == .active && !r.pinned {
@@ -29,6 +31,11 @@ enum MemoryCleanup {
             let age = now.timeIntervalSince(s?.lastReadAt ?? r.createdAt)
             if age >= coldAge, pow(0.5, age / halfLife) <= coldScore {
                 items.append(CleanupItem(action: .archiveCold, id: r.id, into: nil, reason: "não lida há \(days(age)) dias"))
+                continue
+            }
+            if let score = scores[r.id], score <= lowScore, age >= lowScoreAge {
+                let shown = String(format: "%.1f", score).replacingOccurrences(of: ".", with: ",")
+                items.append(CleanupItem(action: .archiveLowScore, id: r.id, into: nil, reason: "nota baixa (\(shown)) e sem uso há \(days(age)) dias"))
                 continue
             }
             rest.append(r)
@@ -53,7 +60,7 @@ enum MemoryCleanup {
         for item in items {
             guard var r = byId[item.id], r.status == .active, !r.pinned else { continue }
             switch item.action {
-            case .archiveCold, .archiveMissingPath: r.status = .archived
+            case .archiveCold, .archiveMissingPath, .archiveLowScore: r.status = .archived
             case .mergeDuplicate:
                 guard let into = item.into, into != item.id, byId[into]?.status == .active else { continue }
                 r.status = .superseded; r.supersededBy = into

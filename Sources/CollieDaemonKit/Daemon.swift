@@ -74,6 +74,8 @@ public struct DaemonConfig: Sendable {
     var localModel: any LocalModel = FoundationLocalModel()
     /// The memory curator (`ClaudeCuratorRunner` in collied; tests pass a fake: they never spend tokens); nil: the live `ClaudeCuratorRunner`.
     var curatorRunner: (any CuratorRunner)? = nil
+    /// On-device sentence vectors for memory search (tests pass a fake).
+    var embedder: any MemoryEmbedder = NLMemoryEmbedder()
     public init(paths: Paths, collieExecutable: URL, workspaceId: UUID) {
         self.paths = paths; self.collieExecutable = collieExecutable; self.workspaceId = workspaceId
     }

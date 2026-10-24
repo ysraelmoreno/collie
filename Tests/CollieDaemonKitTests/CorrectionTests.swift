@@ -128,6 +128,8 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
             let digest = await d.router.digest.since(.distantPast)
             #expect(digest.filter { $0.action == "aprendido" }.map(\.created) == [[rule.id]])
             #expect(digest.filter { $0.action == "aposentado" }.map(\.before) == [[before]])
+            // track B: a memory superseded by the user's correction scores ScoreStore.correction
+            #expect(await d.router.memory.scores.factor(x.id) == 1 + ScoreStore.correction)
             // L2: the waiting quote the rule replaced leaves no row of its own
             #expect(!digest.contains { $0.action == "descartado" }, "\(digest.map(\.action))")
         }

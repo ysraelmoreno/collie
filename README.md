@@ -340,11 +340,8 @@ de admin vindo de dentro de um terminal do Collie (da sessão Unix do terminal o
 roda (hooks git, provedores de uso); um processo que não consegue identificar também é recusado. Dentro de um terminal, o
 `collie` nem lê o arquivo. Limite: isso não isola processos do mesmo usuário: um agente que consiga parar e reiniciar o
 daemon (ou rodar outro daemon sobre os mesmos dados, por exemplo o `collied` verdadeiro copiado num bundle falso) obtém
-admin. O sandbox dos terminais (plano 4S) estreita isso ao negar aos agentes sinais para o daemon, o LaunchAgent e o
-diretório de dados do Collie, mas um agente que use as saídas que ele deixa abertas ainda consegue: `osascript`; o
-`launchctl` e o `open` são bloqueados só pelo caminho (`/bin/launchctl`, `/usr/bin/open`), então uma cópia do binário
-roda (defesa em profundidade, não uma fronteira); e o Keychain fica acessível (o `security` roda, para o Claude manter o
-login), então um agente pode ler sem aviso itens guardados por ele (gh e parecidos). Isolamento de verdade exige os agentes sob outro usuário do macOS.
+admin. O sandbox dos terminais (veja a seção abaixo) estreita isso, mas deixa saídas abertas (`osascript`, `launchctl`/`open`
+bloqueados só pelo caminho, Keychain acessível): um agente decidido ainda consegue admin por elas. Isolamento de verdade exige os agentes sob outro usuário do macOS.
 
 ## Ferramentas do Collie no agente
 
@@ -358,11 +355,104 @@ login), então um agente pode ler sem aviso itens guardados por ele (gh e pareci
   pode haver conflito. Se tiver um, renomeie o seu.
 - **Orientação:** no SessionStart do Claude, e de novo depois de compactação, o agente recebe um texto curto: que está no
   Collie, o nome do terminal e do cercado, os peers e só os painéis que ele alcança. O Pastor também aprende
-  `collie panel open|close|move` e `collie leash`.
+  `collie panel open|close|move` e `collie leash`. Todo agente aprende `collie access request` e `collie open` e que um
+  acesso bloqueado mostra um cartão ao usuário: peça, não contorne.
 - **Codex:** não tem hook de SessionStart, então não recebe orientação. O MCP `collie` no Codex é opcional e vem desligado:
   com `COLLIE_CODEX_MCP=1` no ambiente do daemon, vai por `-c mcp_servers.collie.*` com `env_vars` (só nomes). Essa chave vem
   da doc atual do Codex e não foi verificada contra um `codex` instalado (uma chave desconhecida poderia impedir o Codex
   de abrir).
+
+## Sandbox dos terminais
+
+Todo terminal do Collie (agentes e shells) roda dentro de um sandbox do macOS (Seatbelt, `sandbox-exec`): um perfil por
+terminal, gerado pelo daemon, que cobre a árvore inteira de processos. Ele é uma fronteira de arquivos, **não** de rede
+(a rede continua aberta) e **não** protege você do que roda fora dele (um terminal livre, o Terminal.app, as suas
+ferramentas). O Seatbelt é uma API que a Apple marca como obsoleta mas que ainda é distribuída (é a que o Claude Code e o
+Codex usam); se um dia sair do macOS, o sandbox para de funcionar e o Collie terá de trocar de mecanismo.
+
+**O que fica fechado**
+
+- **Escrita fora do projeto.** O terminal escreve só na pasta do projeto (o primeiro ancestral do diretório com `.git`,
+  procurado sem rodar o git e nunca acima do seu `$HOME`; num cercado, a worktree do cercado) e nas pastas de trabalho
+  das ferramentas (temporários, caches de build e de pacotes, estado do próprio agente).
+- **Leitura fora do projeto.** Só o projeto, o sistema, as toolchains e o que as ferramentas precisam (Xcode, Homebrew,
+  nvm, caches, o estado do agente, os arquivos que o Collie gera para o terminal). Documentos, outros repositórios e o
+  resto do `$HOME` não são lidos. Limite: leituras fora do `$HOME` e de `/private/tmp` seguem abertas.
+- **Segredos.** Chaves de `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/.docker/config.json`, `~/.gnupg` (assinar
+  commits com gpg deixa de funcionar; assinatura por ssh com o agente funciona) e perfis de navegador. O git por SSH
+  continua funcionando pelo ssh-agent (`SSH_AUTH_SOCK`), sem ler as chaves. `~/.npmrc` segue legível (pode ter token de registry).
+- **Internos do Collie.** O app, o daemon, o LaunchAgent, a pasta de dados e o `admin.token` não são escritos nem lidos.
+  O agente fala com o Collie só pelo `collie`, com o token do próprio terminal.
+- **Configuração global dos agentes, só leitura** (`~/.claude/settings.json`, hooks, skills, comandos, plugins,
+  `CLAUDE.md`, `~/.codex/config.toml`…), com a exceção do `~/.claude.json` (veja os riscos). `~/.claude/shell-snapshots` e
+  `~/.claude/session-env` também são só leitura (o Claude pode avisar que não salvou o snapshot do shell). As pastas de
+  estado do agente aceitam escrita nos itens de dentro, mas a pasta em si não pode ser renomeada nem trocada.
+- **`.git` aninhado.** Nenhum `.git` (pasta, arquivo ou link) pode ser escrito em subpastas do projeto: o seu git e a sua
+  IDE, fora do sandbox, rodariam a configuração dele. Para clonar, clone em `/tmp`. Exceção: `.build/` e
+  `Carthage/Checkouts/` na raiz do projeto, onde o SwiftPM e o Carthage baixam dependências.
+- **Hooks e config do git.** `.git/hooks`, `.git/config`, `.git/info/attributes` e `commondir` não são escritos (um
+  `core.hooksPath` ou `core.fsmonitor` plantado rodaria no seu git). Commit, branch e as demais operações normais funcionam.
+- **Sinais.** O terminal só sinaliza processos do próprio sandbox: não dá `kill` no daemon nem no app. `launchctl` e `open` são bloqueados (veja abaixo).
+
+**O que continua aberto, e por quê (riscos aceitos)**
+
+Quem decidiu cada um foi você; nenhum é uma fronteira. Um agente mal-intencionado de propósito consegue rodar código fora do sandbox por qualquer um deles.
+
+- **`osascript` / Apple Events e o socket do Docker** seguem abertos: fazem parte de fluxos reais (automação, containers).
+  Um agente pode, por eles, pedir a outros apps que façam o que o sandbox nega.
+- **Keychain.** O `/usr/bin/security` roda e `~/Library/Keychains` é gravável, para o Claude manter o login e renovar tokens.
+  Qualquer agente pode ler, sem aviso, itens guardados pela CLI `security` (gh e parecidos).
+- **`~/.claude.json` é gravável** (o Claude o reescreve a cada partida). Um agente pode plantar nele um servidor MCP
+  global, que o seu Claude fora do sandbox executaria.
+- **`launchctl` e `open` são bloqueados só pelo caminho** (`/bin/launchctl`, `/usr/bin/open`): uma cópia do binário
+  roda. É defesa em profundidade. O `open` do terminal vira `collie open <url|app>` (veja abaixo).
+- **Os caches graváveis guardam código que roda fora** (`~/.npm`, `~/.cache`, `~/.cargo/registry`, `go/pkg`, DerivedData):
+  escrever neles pode virar execução fora do sandbox (`~/.npm/_npx`, ambientes do pre-commit).
+- **A memória em `~/.claude/projects` é compartilhada com terminais livres:** texto escrito por um agente com sandbox
+  pode chegar ao prompt do Claude de um terminal livre.
+- **A proteção do `.git` aninhado é defesa em profundidade.** Dentro de `.build/` e `Carthage/Checkouts/` um repositório
+  plantado vale; e um repositório preparado em `/tmp` e movido (rename) para dentro do projeto, com um gitlink no índice,
+  ainda faz o seu git rodar a configuração dele. **Revise o que o agente mudou, incluindo gitlinks novos em
+  `git diff --cached`, antes de rodar as suas próprias ferramentas no projeto.**
+- **Configuração e scripts do projeto** (`.claude/settings.json`, `.mcp.json`, `.codex/`, `.cursor/`, `.envrc`,
+  `.vscode/`, `package.json`, Makefile…) são graváveis, e rodam fora do sandbox quando você mesmo os executa.
+- **Sandbox do próprio agente desligado.** O Seatbelt não aninha: o Collie liga o Claude com `sandbox.enabled=false`, o
+  Codex com `--sandbox danger-full-access` e o cursor-agent com `--sandbox disabled`. Quem confina é o sandbox do Collie.
+- **Admin:** isolamento de verdade exige os agentes sob outro usuário do macOS (veja "Ambiente dos agentes").
+
+**Terminal livre.** Na folha de novo terminal, "Terminal livre (sem sandbox)" é para o seu trabalho: só você, só pelo app
+(agente, `summon` e rebanho nunca criam um), sem guias (nenhuma guia chega a ele), fora dos lotes, e com a marca "livre"
+no nó. Ele roda como o seu usuário, sem nenhuma proteção.
+
+**Liberar acesso.** Quando o agente é bloqueado, ele recebe o erro na hora e o Collie mostra no nó do terminal um cartão:
+"Agente *X* tentou **ler|escrever|apagar** `caminho`", com **Liberar este caminho**, **Liberar a pasta** e **Negar**, e a
+opção "para o lote" (vale para os terminais atuais e futuros do lote). Nada é liberado sem o seu clique. Liberar reinicia
+o terminal com o sandbox mais largo e, no Claude, retoma a conversa (`--continue`, só se já havia uma); no Codex e no
+Cursor é uma reabertura simples. O processo em andamento se perde, a conversa não. Com "para o lote" só o terminal do
+cartão reinicia; os outros membros recebem o acesso na próxima partida. Os liberados ficam salvos e aparecem no popover
+do terminal e na aba "Liberados" do lote; **Revogar** reinicia na hora os terminais que ele alcançava. Um aviso
+"detecção indisponível" no nó indica que o Collie não está vendo os bloqueios agora (os bloqueios continuam valendo).
+O que um clique **nunca** libera: a pasta de dados e o token do Collie, segredos, `.git/hooks`, `.git/config`,
+`.git/info/attributes`, `commondir` e qualquer `.git`/`*.git` (submódulos, worktrees, bare), `~/Library` e
+`~/Library/Application Support` inteiros, e `~/Library/{Keychains,Mail,Messages,Cookies,Safari,Containers,Group Containers}`.
+Cada liberado guarda exatamente o caminho mostrado no cartão (resolvido uma vez); trocar um link depois não o alarga.
+O agente também pode pedir: `collie access request <caminho> --read|--write --reason "…"` (o motivo é limpo de segredos
+e mostrado no mesmo cartão). Terminais livres não têm sandbox, então não pedem.
+
+**`collie open <url|app>`.** O `open` do terminal chama o daemon, que o executa fora do sandbox só para URLs http(s)/mailto e
+apps instalados (`/Applications`, `~/Applications`, os do Xcode: `open -a Simulator` funciona). Scripts, `.command`,
+executáveis, documentos, pastas e apps construídos pelo agente são recusados; abra esses pelo Xcode ou pelo Finder.
+
+**Ferramentas.** Há atalhos (shims) de `swift`, `swift-build`, `swift-test`, `xcrun swift` e `xcodebuild` no `PATH` do
+terminal, que acrescentam `--disable-sandbox` e `-IDEPackageSupportDisableManifestSandbox=YES` (o sandbox do SwiftPM e do
+Xcode não aninha). Chamar a ferramenta pelo caminho absoluto, ou usar um shell que não seja o zsh (o `path_helper` reordena
+o `PATH`), traz de volta o erro de aninhamento. O histórico do zsh fica no estado do próprio terminal.
+
+**Quem já tem terminais.** Os terminais existentes entram no sandbox na próxima partida; o app avisa uma vez ao abrir.
+
+**Para desenvolver o Collie.** `collied --no-terminal-sandbox` liga os terminais sem sandbox (os testes usam; a decisão é
+registrada no stderr na partida). Sem a flag o `collied` sempre sandboxa, em qualquer `--root` (`swift run collied --root
+<pasta>`; no root padrão sem bundle assinado o admin é sempre recusado).
 
 ## Registro de trabalho
 

@@ -14,6 +14,10 @@ struct DigestEntry: Codable, Sendable, Identifiable, Equatable {
     var before: [MemoryRecord]
     var undone: Bool
     var resolved: Bool
+    /// The correction job that wrote it: Desfazer on any row of a job undoes the whole job.
+    var job: UUID? = nil
+    /// A supersede's successor (not in `created`: undoing a retirement never discards a record it didn't create).
+    var by: UUID? = nil
 }
 
 /// `<root>/learning/digest.jsonl` (0600 in a 0700 dir), oldest first, the newest `cap` kept.
@@ -28,14 +32,17 @@ struct MemoryDigest {
         try save(Array((all() + e).suffix(Self.cap)))
     }
 
-    /// Entries at or after `d`, oldest first.
-    func since(_ d: Date) -> [DigestEntry] { all().filter { $0.at >= d } }
+    /// Entries at or after `d`, oldest first; `openAsks`: plus the asks still open, however old (L4: they wait for the user).
+    func since(_ d: Date, openAsks: Bool = false) -> [DigestEntry] {
+        all().filter { $0.at >= d || openAsks && $0.action == "ask" && !$0.resolved && !$0.undone }
+    }
 
-    func mark(_ id: UUID, undone: Bool?, resolved: Bool?) throws {
+    func mark(_ ids: [UUID], undone: Bool?, resolved: Bool?) throws {
         var es = all()
-        guard let i = es.firstIndex(where: { $0.id == id }) else { return }
-        if let undone { es[i].undone = undone }
-        if let resolved { es[i].resolved = resolved }
+        for i in es.indices where ids.contains(es[i].id) {
+            if let undone { es[i].undone = undone }
+            if let resolved { es[i].resolved = resolved }
+        }
         try save(es)
     }
 
@@ -76,30 +83,43 @@ extension CommandRouter {
     }
 
     /// Desfazer: the entry's `before` records are written back as they were, the ones it `created` become discarded.
-    /// Refused when any of them changed after the action (the user or a later job): that is undone from the history.
-    /// A second undo is a no-op.
+    /// M1: an entry of a correction job undoes the whole job (every row of it: the rule discarded, every retired memory
+    /// and pin restored), in one go. Refused when any record changed after the action (the user or a later job): that is
+    /// undone from the history. A second undo is a no-op. M2: what is active again is pushed to the sessions told it went.
     func undoDigest(_ id: UUID) async throws -> DigestEntry {
-        guard var e = digest.since(.distantPast).first(where: { $0.id == id }) else {
+        let es = digest.since(.distantPast)
+        guard var e = es.first(where: { $0.id == id }) else {
             throw ProtocolError(code: .notFound, message: "entrada \(id.uuidString.lowercased()) não encontrada")
         }
         if e.undone { return e }
         guard e.action != "ask" else { throw ProtocolError(code: .invalidArgs, message: "uma pergunta se resolve (memory.resolve), não se desfaz") }
-        let ids = e.before.map(\.id) + e.created.filter { c in !e.before.contains { $0.id == c } }
+        let group = e.job.map { j in es.filter { $0.job == j && !$0.undone && $0.action != "ask" } } ?? [e]
+        let before = group.flatMap(\.before)
+        let created = Set(group.flatMap(\.created)).subtracting(before.map(\.id))
         var now: [UUID: (store: RepoMemory, rec: MemoryRecord)] = [:]
-        for i in ids { if let c = await current(i, e) { now[i] = c } }
-        // ponytail: 1 s of slack — the action's own writes carry a timestamp a hair before the entry's
-        if now.values.contains(where: { $0.rec.updatedAt > e.at.addingTimeInterval(1) }) {
+        for g in group { for i in g.before.map(\.id) + g.created where now[i] == nil { if let c = await current(i, g) { now[i] = c } } }
+        // ponytail: 1 s of slack — the job's own writes carry a timestamp a hair before its last entry's
+        let last = group.map(\.at).max() ?? e.at
+        if now.values.contains(where: { $0.rec.updatedAt > last.addingTimeInterval(1) }) {
             throw ProtocolError(code: .invalidArgs, message: "a memória mudou depois; desfaça pelo histórico")
         }
-        let home = await memory.store(key: e.store) ?? memory.global
-        for b in e.before { let s = now[b.id]?.store ?? home; try await s.run { try $0.store.write(b) } }
-        for c in e.created where !e.before.contains(where: { $0.id == c }) {
+        var back: [UUID] = []
+        for g in group {
+            let home = await memory.store(key: g.store) ?? memory.global
+            for b in g.before {
+                let s = now[b.id]?.store ?? home
+                try await s.run { try $0.store.write(b) }
+                if b.status == .active, now[b.id]?.rec.status != .active { back.append(b.id) }
+            }
+        }
+        for c in created {
             guard var r = now[c] else { continue }
             r.rec.status = .discarded; r.rec.updatedAt = Date()
             let rec = r.rec
             try await r.store.run { try $0.store.write(rec) }
         }
-        try digest.mark(id, undone: true, resolved: nil)
+        try digest.mark(group.map(\.id), undone: true, resolved: nil)
+        await memory.restored(back)
         e.undone = true
         return e
     }
@@ -115,14 +135,17 @@ extension CommandRouter {
         if let keep = keepNewer ? order.last : order.first {
             for b in order {
                 guard var c = await current(b.id, e) else { continue }
-                if b.id == keep.id { c.rec.status = .active; c.rec.supersededBy = nil }
+                if b.id == keep.id {
+                    if c.rec.status != .active { await memory.restored([b.id]) }   // M2 (pushed once written: read at the next prompt)
+                    c.rec.status = .active; c.rec.supersededBy = nil
+                }
                 else { c.rec.status = .superseded; c.rec.supersededBy = keep.id }
                 c.rec.updatedAt = Date()
                 let rec = c.rec
                 try await c.store.run { try $0.store.write(rec) }
             }
         }
-        try digest.mark(id, undone: nil, resolved: true)
+        try digest.mark([id], undone: nil, resolved: true)
         e.resolved = true
         return e
     }

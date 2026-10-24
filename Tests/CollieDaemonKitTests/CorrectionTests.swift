@@ -110,7 +110,7 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
             let before = try await store.run { try $0.store.save(saved).saved }
             _ = try await call(p, a, "memory.hookContext")
             if !pinned { _ = try await relevant(p, a, "postgres pool sizing") }
-            let prompt = "não, use SQLite em vez do Postgres pool"
+            let prompt = "não, use SQLite em vez do Postgres pool no índice local da memória"
             _ = try await typed(d, p, a, prompt)
             #expect(await waitFor(10) { (try? await all(store))?.first { $0.id == x.id }?.status == .superseded })
             let recs = try await all(store)
@@ -128,6 +128,8 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
             let digest = await d.router.digest.since(.distantPast)
             #expect(digest.filter { $0.action == "aprendido" }.map(\.created) == [[rule.id]])
             #expect(digest.filter { $0.action == "aposentado" }.map(\.before) == [[before]])
+            // L2: the waiting quote the rule replaced leaves no row of its own
+            #expect(!digest.contains { $0.action == "descartado" }, "\(digest.map(\.action))")
         }
     }
 
@@ -176,13 +178,13 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
             func feedback(_ s: RepoMemory) async -> [MemoryRecord] { ((try? await all(s)) ?? []).filter { $0.kind == .feedback && $0.status == .active } }
             // about the user: stays global, untouched ("Logins" is not the lot's name as a whole word)
             fake.output = ops([createFeedback(scope: "global", title: "Sempre responda em português", body: "Vale para Logins e tudo mais.")])
-            _ = try await typed(d, p, a, "não, sempre responda em português")
+            _ = try await typed(d, p, a, "não, sempre responda em português nas mensagens deste projeto inteiro")
             #expect(await waitFor(10) { await !feedback(d.router.memory.global).isEmpty })
             #expect(await feedback(d.router.memory.global).first?.body.hasPrefix("Vale para Logins e tudo mais.") == true)
             // names the lot, its id or the repo: demoted to the lot, text intact
             for (i, leak) in ["o fluxo de login", "o lote \(lot.uuidString.lowercased())", "\(root)/Sources"].enumerated() {
                 fake.output = ops([createFeedback(scope: "global", title: "Regra \(i)", body: "Vale para \(leak).")])
-                _ = try await typed(d, p, a, "não, regra número \(i) agora")
+                _ = try await typed(d, p, a, "não, regra número \(i) agora vale para todo trabalho daqui")
                 #expect(await waitFor(10) { await feedback(lotStore).contains { $0.title == "Regra \(i)" } }, "\(leak)")
                 #expect(await feedback(lotStore).first { $0.title == "Regra \(i)" }?.body.hasPrefix("Vale para \(leak).") == true)
             }
@@ -226,7 +228,7 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
         try await withDaemon(configure: cfg) { d, p in
             let a = try await term(d, p, "A", cwd: repo)
             let store = await d.router.memory.repo(for: repo.path)
-            let prompt = "não, use SQLite"
+            let prompt = "não, use SQLite em vez do Postgres pool no índice local da memória"
             _ = try await typed(d, p, a, prompt)
             #expect(await waitFor(10) { (try? await all(store))?.contains { $0.status == .proposed } == true })
             let prop = try #require(try await all(store).first { $0.status == .proposed })
@@ -307,7 +309,7 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
             let a = try await term(d, p, "A", cwd: repo)
             let store = await d.router.memory.repo(for: repo.path)
             _ = try await store.run { m in for x in xs { _ = try m.store.save(x) } }
-            _ = try await typed(d, p, a, "não, nunca use o postgres pool")
+            _ = try await typed(d, p, a, "não, nunca use o postgres pool do banco local")
             #expect(await waitFor(10) { await d.router.curator.queued(kind: .correction).isEmpty && fake.calls == 1 })
             let recs = try await all(store)
             #expect(recs.filter { r in xs.contains { $0.id == r.id } && r.status == .superseded }.count == 3)
@@ -387,7 +389,7 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
             let a = try await term(d, p, "A", cwd: repo)
             let store = await d.router.memory.repo(for: repo.path)
             _ = try await store.run { try $0.store.save(x) }
-            let prompt = "não, use SQLite em vez do Postgres pool"
+            let prompt = "não, use SQLite em vez do Postgres pool no índice local da memória"
             #expect(try await admin(d, p, "work.chat.send", ["text": "@A \(prompt)"]).ok)
             let prov = await d.router.asks.provenance
             #expect(await waitFor(15) { prov.hasTyped(a.uuid) })
@@ -418,12 +420,12 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
         let repo = try await makeRepo()
         try await withDaemon { d, p in   // unavailable: the jobs stay queued
             let a = try await term(d, p, "A", cwd: repo)
-            await d.router.asks.provenance.typed(a.uuid, Data("não, use SQLite em tudo\r".utf8))
+            await d.router.asks.provenance.typed(a.uuid, Data("não, use SQLite em tudo no índice local agora\r".utf8))
             for i in 0..<6 { _ = try await relevant(p, a, "não, regra falsa \(i)") }   // the agent, with its own token
-            _ = try await relevant(p, a, "não, use SQLite em tudo")   // the user's Enter reaches the hook
+            _ = try await relevant(p, a, "não, use SQLite em tudo no índice local agora")   // the user's Enter reaches the hook
             try await Task.sleep(for: .milliseconds(500))
             let jobs = try await d.router.curator.queued(kind: .correction).map(payload)
-            #expect(jobs.filter { $0.user == true }.map(\.prompt) == ["não, use SQLite em tudo"], "\(jobs.map(\.prompt))")
+            #expect(jobs.filter { $0.user == true }.map(\.prompt) == ["não, use SQLite em tudo no índice local agora"], "\(jobs.map(\.prompt))")
             #expect(jobs.filter { $0.user != true }.count == 5)   // their own cap
         }
     }
@@ -449,9 +451,68 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
         let kept = digest.since(.distantPast)
         #expect(kept.count == 2_000 && kept.first?.title == "100" && kept.last?.title == "2099")
         #expect(digest.since(t0 + 2_098).map(\.title) == ["2098", "2099"])
-        try digest.mark(entries[2_099].id, undone: true, resolved: nil)
+        try digest.mark([entries[2_099].id], undone: true, resolved: nil)
         #expect(digest.since(t0 + 2_099).first?.undone == true)
         let attrs = { (p: String) in (try? FileManager.default.attributesOfItem(atPath: p))?[.posixPermissions] as? Int }
         #expect(attrs(dir.appendingPathComponent("learning/digest.jsonl").path) == 0o600 && attrs(dir.appendingPathComponent("learning").path) == 0o700)
+    }
+
+    /// M2: after Desfazer, a memory the session was told "Não vale mais" about is pushed to it again.
+    @Test func undoPushesRestoredMemory() async throws {
+        let repo = try await makeRepo()
+        let x = rec("Use Postgres pool", subject: "db", body: "postgres pool sizing", pinned: true)
+        let (fake, cfg) = curated(ops([createFeedback(), supersede(x.id)]))
+        try await withDaemon(configure: cfg) { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            let store = await d.router.memory.repo(for: repo.path)
+            _ = try await store.run { try $0.store.save(x) }
+            _ = try await call(p, a, "memory.hookContext")
+            _ = try await typed(d, p, a, "não, use SQLite em vez do Postgres pool no índice local da memória")
+            #expect(await waitFor(10) { (try? await all(store))?.first { $0.id == x.id }?.status == .superseded })
+            #expect(try await relevant(p, a, "ok").contains("Não vale mais: Use Postgres pool."))
+            let learned = try #require(await d.router.digest.since(.distantPast).first { $0.action == "aprendido" })
+            #expect(try await admin(d, p, "memory.undo", ["entry": learned.id.uuidString]).ok)
+            let next = try await relevant(p, a, "ok")
+            #expect(next.contains("Não vale mais: Use SQLite") && next.contains("Use Postgres pool")
+                    && !next.contains("Não vale mais: Use Postgres pool"), "\(next)")
+            _ = fake
+        }
+    }
+
+    /// R24: a correction with no rule of its own in the user's words (< 6 meaningful words, a bare "não") is proposed only.
+    @Test func ungroundedCorrectionIsProposed() async throws {
+        #expect(!CorrectionDetector.hasOwnRule("não"))
+        #expect(!CorrectionDetector.hasOwnRule("não, use SQLite"))
+        #expect(!CorrectionDetector.hasOwnRule("nope nope nope nope nope nope nope"))
+        #expect(CorrectionDetector.hasOwnRule("não, use SQLite em vez do Postgres pool no índice local"))
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in   // unavailable: the job stays queued
+            let a = try await term(d, p, "A", cwd: repo)
+            _ = try await typed(d, p, a, "não, use SQLite")
+            #expect(await waitFor(10) { await d.router.curator.queued(kind: .correction).count == 1 })
+            let job = try #require(await d.router.curator.queued(kind: .correction).first)
+            #expect(try payload(job).user != true)
+        }
+    }
+
+    /// L3: the user approving the waiting quote while its job is queued cancels the job: one active rule.
+    @Test func approvingQuoteCancelsJob() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in   // unavailable: the job stays queued
+            let a = try await term(d, p, "A", cwd: repo)
+            _ = try await typed(d, p, a, "não, use SQLite em vez do Postgres pool no índice local da memória")
+            #expect(await waitFor(10) { await d.router.curator.queued(kind: .correction).count == 1 })
+            let job = try #require(await d.router.curator.queued(kind: .correction).first)
+            let quote = try #require(try payload(job).proposal)
+            let r = try await admin(d, p, "memory.review", ["id": quote.uuidString, "action": "approve", "repo": repo.path])
+            #expect(r.ok, "\(r)")
+            #expect(await d.router.curator.queued(kind: .correction).isEmpty)
+            // a job already running when the user approved: writes nothing
+            let pl = try payload(job)
+            let op = try #require(CuratorOps.validate(ops([createFeedback()]).json, scope: CommandRouter.correctionScope(pl)).ops.first)
+            #expect(try await d.router.applyOps([op], job: job).isEmpty)
+            let active = try await all(d.router.memory.repo(for: repo.path)).filter { $0.kind == .feedback && $0.status == .active }
+            #expect(active.map(\.id) == [quote], "\(active)")
+        }
     }
 }

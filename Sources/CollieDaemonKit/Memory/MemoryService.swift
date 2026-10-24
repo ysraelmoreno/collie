@@ -111,6 +111,8 @@ actor MemoryService {
     func setProposalState(_ f: @escaping @Sendable () async -> (keep: Set<UUID>, asked: Set<UUID>)) { proposalState = f }
     /// Rules pushed to a terminal (its correction became one), emitted ahead of its next prompt's hits.
     private var pending: [UUID: [UUID]] = [:]
+    /// Ids each session was told "Não vale mais" about (M2: pushed again when an undo makes them active).
+    private var retracted: [UUID: Set<UUID>] = [:]
     static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código."
     static let relevantHeader = "Memória relacionada (Collie):"
     static let rulesHeader = "Regra nova do usuário (Collie):"
@@ -304,6 +306,7 @@ actor MemoryService {
         guard !said.isEmpty else { return "" }
         if said.count < gone.count { out += "\n… e mais \(gone.count - said.count)" }
         for id in said { injected[terminal]?.ids[id] = nil }
+        retracted[terminal, default: []].formUnion(said)
         return out
     }
 
@@ -339,7 +342,15 @@ actor MemoryService {
         return lines.joined(separator: "\n")
     }
 
-    func endSession(_ terminal: UUID) { injected[terminal] = nil; pending[terminal] = nil }
+    /// M2: `ids` are active again (an undo, a resolved ask): every session told they went gets them pushed back
+    /// (`pushedRules` checks the store, visibility and what the session already has).
+    func restored(_ ids: [UUID]) {
+        for (t, told) in retracted {
+            for id in ids where told.contains(id) { pushRule(id, to: t); retracted[t]?.remove(id) }
+        }
+    }
+
+    func endSession(_ terminal: UUID) { injected[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil }
 
     // MARK: text
 

@@ -201,6 +201,8 @@ extension CommandRouter {
             if title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true || subject?.isEmpty == true {
                 throw invalid("subject and title must not be blank")
             }
+            // L3: the user decided on a waiting quote: its correction job is moot (never a second rule)
+            await cancelCorrection(quote: id)
             return try await update(id) { rec, m in
                 let store = m.store
                 let edited = title != nil || body != nil || subject != nil
@@ -290,7 +292,7 @@ extension CommandRouter {
                 guard let d = ISO8601DateFormatter().date(from: s) else { throw invalid("since must be an ISO 8601 date") }
                 return d
             } ?? .distantPast
-            return .object(["entries": try isoJSON(digest.since(since)), "curator": try isoJSON(await curator.status())])
+            return .object(["entries": try isoJSON(digest.since(since, openAsks: true)), "curator": try isoJSON(await curator.status())])
 
         case "memory.undo", "memory.resolve":
             guard let e = UUID(uuidString: try need(r, "entry")) else { throw invalid("'entry' must be a digest entry id") }

@@ -72,7 +72,7 @@ public struct DaemonConfig: Sendable {
     var envRunner: UserEnvironment.Runner = UserEnvironment.live
     /// The on-device model for summary rewrites (tests pass a fake).
     var localModel: any LocalModel = FoundationLocalModel()
-    /// The memory curator (`ClaudeCuratorRunner` in collied; tests pass a fake: they never spend tokens); nil: off.
+    /// The memory curator (`ClaudeCuratorRunner` in collied; tests pass a fake: they never spend tokens); nil: the live `ClaudeCuratorRunner`.
     var curatorRunner: (any CuratorRunner)? = nil
     public init(paths: Paths, collieExecutable: URL, workspaceId: UUID) {
         self.paths = paths; self.collieExecutable = collieExecutable; self.workspaceId = workspaceId

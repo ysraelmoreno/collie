@@ -131,6 +131,13 @@ actor Curator {
 
     func queued(kind: CuratorJobKind) -> [CuratorJob] { jobs.filter { $0.kind == kind } }
 
+    /// Drops a queued job (a running one finishes; its handler sees the change).
+    func cancel(_ id: UUID) {
+        guard let j = jobs.first(where: { $0.id == id }) else { return }
+        remove(j)
+        recent[j.dedupe] = now()
+    }
+
     func setCap(_ n: Int) {
         config.cap = max(0, n)
         write(config, to: dir.appendingPathComponent("config.json"))

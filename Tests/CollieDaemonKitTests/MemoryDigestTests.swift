@@ -83,4 +83,57 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
             #expect(es.count == 1 && c["cap"] == .number(40))
         }
     }
+
+    /// M1: a correction that retires X and Y (Y pinned) is one job: Desfazer on any of its rows restores X and Y as they
+    /// were and discards the rule; every row of the job is marked undone.
+    @Test func undoJobRestoresAll() async throws {
+        for pick in ["aposentado", "aprendido"] {
+            let x = MemoryRecord(kind: .decision, subject: "db", title: "Use Postgres")
+            let y = MemoryRecord(kind: .decision, subject: "pool", title: "Pool de 20", pinned: true)
+            try await withRepo([x, y]) { d, p, store, job in
+                let entries = try await d.router.applyOps([.create(rule), .supersede(id: x.id, by: nil, reason: "corrigido"),
+                                                           .supersede(id: y.id, by: nil, reason: "corrigido")], job: job)
+                try await d.router.digest.append(entries)
+                let ruleId = try #require(entries.first { $0.action == "aprendido" }?.created.first)
+                #expect(entries.allSatisfy { $0.job == job.id })
+                #expect(entries.filter { $0.action == "aposentado" }.allSatisfy { $0.created.isEmpty && $0.by == ruleId })
+                let row = try #require(entries.first { $0.action == pick && ($0.before.first?.id == x.id || pick == "aprendido") })
+                let r = try await admin(d, p, "memory.undo", ["entry": row.id.uuidString])
+                #expect(r.ok, "\(pick): \(r)")
+                let recs = try await all(store)
+                #expect(recs.first { $0.id == x.id } == x, "\(pick)")
+                #expect(recs.first { $0.id == y.id } == y, "\(pick)")   // active and pinned again
+                #expect(recs.first { $0.id == ruleId }?.status == .discarded, "\(pick)")
+                #expect(await d.router.digest.since(.distantPast).allSatisfy(\.undone), "\(pick)")
+            }
+        }
+    }
+
+    /// L1: a correction's rule replacing a pinned same-subject rule leaves it superseded (never active again) and unpinned.
+    @Test func pinnedSameSubjectStaysSuperseded() async throws {
+        let old = MemoryRecord(kind: .feedback, subject: "banco", title: "Use Postgres", pinned: true)
+        try await withRepo([old]) { d, _, store, job in
+            _ = try await d.router.applyOps([.create(rule)], job: job)
+            let recs = try await all(store)
+            let o = try #require(recs.first { $0.id == old.id })
+            #expect(o.status == .superseded && !o.pinned && o.supersededBy == job.id, "\(o)")
+            #expect(recs.filter { $0.status == .active }.map(\.id) == [job.id])
+        }
+    }
+
+    /// L4: an open ask older than the panel's 7 days is still listed (its proposals expire at 14).
+    @Test func openAskOutlivesWindow() async throws {
+        try await withRepo([]) { d, p, store, _ in
+            let old = Date().addingTimeInterval(-10 * 86400)
+            try await d.router.digest.append([
+                DigestEntry(id: UUID(), at: old, action: "ask", title: "Tabs ou espaços?", reason: "", store: store.key, created: [], before: [],
+                            undone: false, resolved: false),
+                DigestEntry(id: UUID(), at: old, action: "aprendido", title: "velho", reason: "", store: store.key, created: [], before: [],
+                            undone: false, resolved: false)])
+            let since = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7 * 86400))
+            let dg = try await admin(d, p, "memory.digest", ["since": since])
+            guard case .object(let o)? = dg.result, case .array(let es)? = o["entries"] else { Issue.record("\(dg)"); return }
+            #expect(es.count == 1, "\(es)")
+        }
+    }
 }

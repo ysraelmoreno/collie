@@ -22,5 +22,13 @@ enum CorrectionDetector {
         return first.range(of: head, options: .regularExpression) != nil || first.range(of: anywhere, options: .regularExpression) != nil
     }
 
+    /// R24: the user's words carry a rule of their own (≥ 6 distinct meaningful words); else (a bare "não", "não, use X")
+    /// the rule's substance would come from the agent's last turn, so the result may only be proposed.
+    /// ponytail: a word count, not a semantic check; negation words count only once each, so "nope nope…" is one word.
+    static let minOwnWords = 6
+    static func hasOwnRule(_ prompt: String) -> Bool {
+        Set(MemoryService.significantTerms(prompt).map { fold($0) }).count >= minOwnWords
+    }
+
     private static func fold(_ s: String) -> String { s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
 }

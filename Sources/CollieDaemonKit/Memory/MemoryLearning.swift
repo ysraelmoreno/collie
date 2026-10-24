@@ -73,6 +73,7 @@ extension CommandRouter {
     /// waits for any reason — no login, the cap — is visible; the job replaces it when it runs. `user`: R12 provenance.
     /// Runs detached from the hook.
     func enqueueCorrection(terminal: UUID, prompt raw: String, user: Bool = false) async {
+        let user = user && CorrectionDetector.hasOwnRule(raw)   // R24: an active rule is grounded in the user's own words
         guard let me = ws.terminals.first(where: { $0.id == terminal }) else { return }
         // R21: the user's corrections and the unproven ones (an agent calling the hook) have separate hourly budgets
         let budget = "\(terminal.uuidString)|\(user)", hourAgo = Date().addingTimeInterval(-3600)
@@ -188,9 +189,11 @@ extension CommandRouter {
         let stores = family === memory.global ? [family] : [family, memory.global]
         let correction = job.kind == .correction
         var out: [DigestEntry] = [], touched: Set<UUID> = [], created: MemoryRecord?
-        func entry(_ action: String, _ title: String, _ reason: String, _ s: RepoMemory, created: [UUID] = [], before: [MemoryRecord]) {
+        func entry(_ action: String, _ title: String, _ reason: String, _ s: RepoMemory, created: [UUID] = [], by: UUID? = nil,
+                   before: [MemoryRecord]) {
+            // M1: a correction's rows are one job (undone together); a proposals job's rows stay independent
             out.append(DigestEntry(id: UUID(), at: Date(), action: action, title: title, reason: reason, store: s.key, created: created,
-                                   before: before, undone: false, resolved: false))
+                                   before: before, undone: false, resolved: false, job: correction ? job.id : nil, by: by))
         }
         func find(_ id: UUID) async -> (store: RepoMemory, rec: MemoryRecord)? {
             for s in stores {
@@ -224,6 +227,9 @@ extension CommandRouter {
                     && $0.paddock == r.paddock && MemoryRecord.normalize($0.subject) == key } }) ?? nil
         }
 
+        // L3: the user already approved the waiting quote (the job was running): it is the rule, nothing more to write
+        if correction, let pid = ctx.proposal, let q = await find(pid), q.rec.status != .proposed { return [] }
+
         for case .create(let n) in ops where created == nil {
             var target: RepoMemory, scope: MemoryScope
             let familyScope: MemoryScope = family.lotId != nil ? .lot : family === memory.global ? .global : .project
@@ -249,8 +255,9 @@ extension CommandRouter {
             let old = await replaced(rec, in: target)
             if let old, users(old), !correction { ask("substituir", "nova versão: \(rec.title)", [old], target); continue }
             let toSave = rec
-            let saved = try await target.run { try $0.store.save(toSave).saved }
-            if var o = old, o.pinned { o.pinned = false; try await write(target, o) }   // a correction beats the user's older pin
+            let (saved, sup) = try await target.run { try $0.store.save(toSave) }
+            // a correction beats the user's older pin; L1: the record as `save` left it (superseded), never `old`
+            if var o = sup, o.pinned { o.pinned = false; try await write(target, o) }
             created = saved
             touched.insert(saved.id)
             if let old { touched.insert(old.id) }
@@ -278,7 +285,7 @@ extension CommandRouter {
                 if by != nil { guard let b = await find(byId), b.rec.status == .active else { continue } }
                 var n = r; n.status = .superseded; n.supersededBy = byId; n.pinned = false; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id); supersedes += 1
-                entry("aposentado", r.title, reason, s, created: [byId], before: [r])
+                entry("aposentado", r.title, reason, s, by: byId, before: [r])
             case .merge(let ids, let into, let title, let body, let reason):
                 guard !touched.contains(into), ids.allSatisfy({ !touched.contains($0) }), let (s, target) = await find(into),
                       target.status == .active, !untouchable(target) else { continue }
@@ -327,11 +334,11 @@ extension CommandRouter {
                 entry("ask", question, "", about.first?.store ?? family, before: about.map(\.rec))
             }
         }
-        // the fallback proposal never outlives its job: replaced by the rule, or dropped when no rule came
+        // the fallback proposal never outlives its job: replaced by the rule (L2: no row of its own), or dropped when no rule came
         if let pid = ctx.proposal, let (s, r) = await find(pid), r.status == .proposed {
             var n = r; n.status = .discarded; n.updatedAt = Date()
             try await write(s, n)
-            entry("descartado", r.title, created != nil ? "substituída pela regra do curador" : "o curador não viu regra duradoura", s, before: [r])
+            if created == nil { entry("descartado", r.title, "o curador não viu regra duradoura", s, before: [r]) }
         }
         return out
     }
@@ -453,6 +460,11 @@ extension CommandRouter {
     func proposalState() async -> (keep: Set<UUID>, asked: Set<UUID>) {
         let asked = digest.since(.distantPast).filter { $0.action == "ask" && !$0.resolved && !$0.undone }.flatMap { $0.before.map(\.id) }
         return (await queuedProposalIds(), Set(asked))
+    }
+
+    /// The queued correction job whose waiting quote is `quote` is dropped (the user reviewed the quote themselves).
+    func cancelCorrection(quote: UUID) async {
+        for j in await curator.queued(kind: .correction) where (try? Self.payload(j))?.proposal == quote { await curator.cancel(j.id) }
     }
 
     /// Proposal ids in queued jobs (they don't expire while they wait for the curator).

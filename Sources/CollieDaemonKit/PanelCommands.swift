@@ -101,6 +101,7 @@ extension CommandRouter {
             let gone = canvas ? [] : ws.connections.filter { $0.a == p.id || $0.b == p.id }
             if !canvas { ws.connections.removeAll { $0.a == p.id || $0.b == p.id } }
             var added: Connection?
+            if canvas, let me = caller { try refuseFreeLeash(me.id) }
             if canvas, let me = caller, !ws.connections.contains(where: { Set([$0.a, $0.b]) == Set([me.id, p.id]) }) {
                 added = Connection(a: me.id, b: p.id); ws.connections.append(added!)
             }
@@ -162,6 +163,7 @@ extension CommandRouter {
             state["file"] = .string(id)
         }
         let canvas = placement == .canvas
+        if let me = caller, canvas || placement == .headless { try refuseFreeLeash(me.id) }   // before the panel exists
         let p = Panel(id: UUID(), name: name, pluginId: pluginId, placement: placement,
                       paddockId: canvas ? paddock : nil, state: state, createdBy: caller?.id)
         ws.panels.append(p)

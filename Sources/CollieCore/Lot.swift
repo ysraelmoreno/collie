@@ -31,8 +31,11 @@ public struct Lossy<T: Decodable>: Decodable {
 }
 
 extension Workspace {
-    /// The lot `terminal` belongs to (at most one).
-    public func lot(of terminal: UUID) -> Lot? { lots.first { $0.members.contains(terminal) } }
+    /// The lot `terminal` belongs to (at most one). A free terminal is in none (R6: old membership ignored).
+    public func lot(of terminal: UUID) -> Lot? {
+        if terminals.contains(where: { $0.id == terminal && $0.sandbox == .free }) { return nil }
+        return lots.first { $0.members.contains(terminal) }
+    }
 }
 
 /// One post on a lot's board (`lot.post`): agent-written, so untrusted text — shown and injected as data, never run.

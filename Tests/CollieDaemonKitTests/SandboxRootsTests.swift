@@ -205,4 +205,153 @@ private func terminals(_ d: Daemon, _ p: Paths) async throws -> [TerminalRecord]
         } catch { await d2.stop(); throw error }
         await d2.stop()
     }
+
+    // MARK: - fix round 1
+
+    /// R9: a planted `core.worktree` must not widen the project (no git process is asked).
+    @Test func plantedWorktreeDoesNotWiden() throws {
+        let tr = try Tree(); defer { tr.cleanup() }
+        let x = tr.repo.appendingPathComponent("x")
+        try FileManager.default.createDirectory(at: x, withIntermediateDirectories: true)
+        #expect(ProjectRootGit.initRepo(x))
+        try "[core]\n\tworktree = \(tr.home.path)\n".write(to: x.appendingPathComponent(".git/config"), atomically: true, encoding: .utf8)
+        #expect(ProjectRoot.resolve(cwd: x.appendingPathComponent("deep").path, paddock: nil).path == x.path)
+        // a worktree's `.git` file counts too
+        let wt = tr.home.appendingPathComponent("wt")
+        try FileManager.default.createDirectory(at: wt.appendingPathComponent("a"), withIntermediateDirectories: true)
+        try "gitdir: /nowhere\n".write(to: wt.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+        #expect(ProjectRoot.resolve(cwd: wt.appendingPathComponent("a").path, paddock: nil).path == wt.path)
+    }
+
+    /// R6: a free terminal is in no lot: join refused, old membership ignored and dropped on a free relaunch, no board `--to`.
+    @Test func freeNeverInLot() async throws {
+        let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))")), wsId = UUID()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let fid = UUID(), aid = UUID(), wid = UUID()
+        var ws = Workspace(id: wsId, name: "default", terminals: [
+            TerminalRecord(id: fid, name: "F", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false, sandbox: .free),
+            TerminalRecord(id: aid, name: "A", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false),
+            TerminalRecord(id: wid, name: "W", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false)])
+        ws.lots = [Lot(name: "l", members: [fid, aid, wid])]   // F's membership from before: ignored
+        let file = paths.workspaceDir(wsId).appendingPathComponent("workspace.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(ws).write(to: file)
+        let d = try Daemon(config: testConfig(paths, wsId))
+        try await d.start()
+        do {
+            for n in ["F", "A"] { #expect(try await admin(d, paths, "restart", ["name": .string(n)]).ok) }
+            let f = Term(id: fid.uuidString, token: try await tokenOf(d, fid.uuidString))
+            let a = Term(id: aid.uuidString, token: try await tokenOf(d, aid.uuidString))
+            let post = try await call(paths, a, "lot.post", ["kind": .string("handoff"), "text": .string("run this"), "to": .string("F")])
+            #expect(post.error?.code == .notFound, "\(post)")
+            #expect(try await call(paths, f, "lot.get").error?.code == .notFound)
+            #expect(try await call(paths, f, "lot.board").error?.code == .notFound)
+            let join = try await send(paths, Request(id: "j", token: d.adminToken, command: "lot.join",
+                                                     args: ["lot": .string("l"), "terminal": .string("F")]))
+            #expect(join.error?.code == .invalidArgs, "\(join)")
+            let create = try await send(paths, Request(id: "c", token: d.adminToken, command: "lot.create",
+                                                       args: ["name": .string("m"), "members": .string("F")]))
+            #expect(create.error?.code == .invalidArgs, "\(create)")
+            // the stopped W relaunched free leaves its lot
+            #expect(try await admin(d, paths, "spawn", ["name": .string("W"), "preset": .string("shell"), "cwd": .string("/tmp"),
+                                                        "sandbox": .string("free")]).ok)
+            let r = try await send(paths, Request(id: "s", token: d.adminToken, command: "ui.snapshot"))
+            let lots = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(r.result)).lots
+            #expect(lots.first { $0.name == "l" }.map { !$0.members.contains(wid) } == true, "\(lots)")
+        } catch { await d.stop(); throw error }
+        await d.stop()
+    }
+
+    /// I3: a free terminal holds no panel leash either.
+    @Test func freeNoPanelLeash() async throws {
+        try await withDaemon { d, p in
+            let f = try await spawnTerm(d, p, "F", cwd: "/tmp", shepherd: true, sandbox: "free")
+            for placement in ["canvas", "headless"] {
+                let r = try await call(p, f, "panel.open", ["plugin": .string("browser"), "placement": .string(placement), "name": .string("b-\(placement)")])
+                #expect(r.error?.code == .notConnected, "\(placement): \(r)")
+            }
+            let mv = try await call(p, f, "panel.open", ["plugin": .string("browser"), "placement": .string("dock.right"), "name": .string("mine")])
+            #expect(mv.ok, "\(mv)")   // docked: no leash
+            let r = try await call(p, f, "panel.move", ["name": .string("mine"), "placement": .string("canvas")])
+            #expect(r.error?.code == .notConnected, "\(r)")
+            let s = try await send(p, Request(id: "s", token: d.adminToken, command: "ui.snapshot"))
+            #expect(try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(s.result)).connections.isEmpty)
+        }
+    }
+
+    /// R8: a restart keeps the saved project; a paddock that is gone is refused, never widened to the pasture.
+    @Test func restartKeepsRootAndRefusesGonePaddock() async throws {
+        let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))")), wsId = UUID()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let gone = paths.root.appendingPathComponent(".collie/paddocks/gone").path
+        let kept = paths.root.appendingPathComponent("kept")
+        try FileManager.default.createDirectory(at: kept, withIntermediateDirectories: true)
+        let ws = Workspace(id: wsId, name: "default", terminals: [
+            TerminalRecord(id: UUID(), name: "P", preset: .shell, command: nil, cwd: gone, isShepherd: false, paddockId: UUID(), projectRoot: gone),
+            TerminalRecord(id: UUID(), name: "K", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false, projectRoot: kept.path)])
+        let file = paths.workspaceDir(wsId).appendingPathComponent("workspace.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(ws).write(to: file)
+        let d = try Daemon(config: testConfig(paths, wsId))
+        try await d.start()
+        do {
+            let r = try await admin(d, paths, "restart", ["name": .string("P")])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("não existe mais") == true, "\(r)")
+            #expect(try await admin(d, paths, "restart", ["name": .string("K")]).ok)
+            let ts = try await terminals(d, paths)
+            #expect(ts.first { $0.name == "P" }?.projectRoot == gone && ts.first { $0.name == "P" }?.cwd == gone)
+            #expect(ts.first { $0.name == "K" }?.projectRoot == kept.path)
+        } catch { await d.stop(); throw error }
+        await d.stop()
+    }
+
+    /// M1: the summoned terminal starts in the resolved cwd that was checked.
+    @Test func summonSpawnsResolvedCwd() async throws {
+        let tr = try Tree(); defer { tr.cleanup() }
+        try FileManager.default.createSymbolicLink(at: tr.repo.appendingPathComponent("lnk"), withDestinationURL: tr.repo.appendingPathComponent("sub"))
+        try await withDaemon { d, p in
+            let m = try await spawnTerm(d, p, "M", cwd: tr.repo.path, shepherd: true)
+            #expect(try await call(p, m, "summon", ["name": .string("W"), "preset": .string("shell"),
+                                                    "cwd": .string(tr.repo.appendingPathComponent("lnk").path)]).ok)
+            #expect(try await terminals(d, p).first { $0.name == "W" }?.cwd == tr.repo.appendingPathComponent("sub").path)
+        }
+    }
+
+    /// M2 + M4: a free Shepherd's summon is refused before anything launches; rerail of a free terminal by a Shepherd misses it.
+    @Test func freeShepherdAndRerail() async throws {
+        try await withDaemon { d, p in
+            let f = try await spawnTerm(d, p, "F", cwd: "/tmp", shepherd: true, sandbox: "free")
+            let r = try await call(p, f, "summon", ["name": .string("W"), "preset": .string("shell")])
+            #expect(r.error?.code == .notConnected && r.error?.message.contains("can't summon") == true, "\(r)")
+            let h = try await call(p, f, "herd.apply", ["id": .string("investigar-bug"), "name": .string("x")])
+            #expect(h.error?.code == .notConnected && h.error?.message.contains("can't summon") == true, "\(h)")
+            let m = try await spawnTerm(d, p, "M", cwd: "/tmp", shepherd: true)
+            #expect(try await call(p, m, "work.rerail", ["terminal": .string("F")]).error?.code == .notFound)
+            #expect(try await terminals(d, p).map(\.name).sorted() == ["F", "M"])
+        }
+    }
+
+    /// M5: a relaunch as free that fails keeps the old leashes.
+    @Test func failedFreeRelaunchKeepsLeashes() async throws {
+        let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))")), wsId = UUID()
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let wid = UUID(), mid = UUID()
+        var ws = Workspace(id: wsId, name: "default", terminals: [
+            TerminalRecord(id: mid, name: "M", preset: .shell, command: nil, cwd: "/tmp", isShepherd: true),
+            TerminalRecord(id: wid, name: "W", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false)])
+        ws.connections = [Connection(a: mid, b: wid)]
+        let file = paths.workspaceDir(wsId).appendingPathComponent("workspace.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(ws).write(to: file)
+        let d = try Daemon(config: testConfig(paths, wsId))
+        try await d.start()
+        do {
+            let r = try await admin(d, paths, "spawn", ["name": .string("W"), "preset": .string("shell"), "cwd": .string("/nonexistent-dir"),
+                                                        "sandbox": .string("free")])
+            #expect(!r.ok, "\(r)")
+            let s = try await send(paths, Request(id: "s", token: d.adminToken, command: "ui.snapshot"))
+            #expect(try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(s.result)).connections.count == 1)
+        } catch { await d.stop(); throw error }
+        await d.stop()
+    }
 }

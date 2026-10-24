@@ -56,6 +56,7 @@ extension CommandRouter {
     private func summon(_ r: Request, by me: TerminalRecord) async throws -> JSONValue {
         let name = try need(r, "name")
         try refuseFree(r)
+        try refuseFreeSummoner(me)
         try reserve(name); defer { launching.remove(name.lowercased()) }
         guard let preset = Preset(rawValue: try need(r, "preset")) else {
             throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
@@ -71,7 +72,7 @@ extension CommandRouter {
             }
             paddockId = fl.id; cwd = fl.path; allowed = ProjectRoot.resolve(cwd: fl.path, paddock: fl)
         }
-        cwd = str(r, "cwd") ?? cwd
+        cwd = SignedAppCheck.realPath(URL(fileURLWithPath: str(r, "cwd") ?? cwd))   // spawned as checked (no symlink swap)
         let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed)
         let rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: str(r, "command"),
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)

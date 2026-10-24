@@ -364,14 +364,17 @@ actor CommandRouter {
                     throw ProtocolError(code: .invalidArgs, message: "terminal '\(old.name)' is already running")
                 }
                 await discard(old.id)
-                // relaunched free in place: the old record's leashes go (no leash reaches a free terminal)
-                if sandbox == .free { for c in ws.connections where c.a == old.id || c.b == old.id { try await unlink(c.a, c.b) } }
             }
             let cwd = str(r, "cwd") ?? fl?.path ?? r.cwd ?? NSHomeDirectory()
             let rec = TerminalRecord(id: old?.id ?? UUID(), name: name, preset: preset, command: str(r, "command"),
                                      cwd: cwd, isShepherd: flag(r, "shepherd"), paddockId: fl?.id,
                                      sandbox: sandbox, projectRoot: ProjectRoot.resolve(cwd: cwd, paddock: fl).path)
             let result = try await launch(rec)
+            // relaunched free in place, once it runs: the old record's leashes and lot go (nothing reaches a free terminal)
+            if sandbox == .free, let old {
+                for c in ws.connections where c.a == old.id || c.b == old.id { try await unlink(c.a, c.b) }
+                if ws.lots.contains(where: { $0.members.contains(old.id) }) { try await place([old.id], in: nil) }
+            }
             try await ensurePaddock(of: rec)
             return .object(result)
         case "admin.restart":
@@ -475,15 +478,11 @@ actor CommandRouter {
 
     /// Relaunches `t` in place (same id, so leashes and asks keep pointing at it). The caller holds the name reservation.
     func relaunch(_ t: TerminalRecord) async throws -> [String: JSONValue] {
-        var t = t
         if let fid = t.paddockId {
             if paddockDeleting.contains(fid) { throw ProtocolError(code: .invalidArgs, message: "paddock of '\(t.name)' is being deleted") }
-            if !ws.paddocks.contains(where: { $0.id == fid }) {   // paddock gone: back to the pasture, never into a missing dir
-                t.paddockId = nil; t.projectRoot = nil   // computed again by launch
-                if !FileManager.default.fileExists(atPath: t.cwd) {
-                    let pasture = LegacyOrq.pasture(ofPaddockPath: t.cwd)
-                    t.cwd = pasture.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil } ?? NSHomeDirectory()
-                }
+            // R8: never widened to the pasture; the saved project stays
+            guard let fl = ws.paddocks.first(where: { $0.id == fid }), FileManager.default.fileExists(atPath: fl.path) else {
+                throw ProtocolError(code: .invalidArgs, message: "o cercado de \(t.name) não existe mais; crie o terminal de novo")
             }
         }
         await discard(t.id)
@@ -503,9 +502,7 @@ actor CommandRouter {
 
     /// Idempotent leash between two ids; persists, emits `.connected`. Never to a free terminal.
     func link(_ a: UUID, _ b: UUID) async throws {
-        if let f = ws.terminals.first(where: { ($0.id == a || $0.id == b) && $0.sandbox == .free }) {
-            throw ProtocolError(code: .notConnected, message: "'\(f.name)' is a free terminal (sem sandbox): no leash reaches it")
-        }
+        try refuseFreeLeash(a, b)
         guard !ws.connections.contains(where: { Set([$0.a, $0.b]) == Set([a, b]) }) else { return }
         let c = Connection(a: a, b: b)
         ws.connections.append(c)
@@ -608,6 +605,20 @@ actor CommandRouter {
         }
         let root = ProjectRoot.resolve(cwd: cwd, paddock: paddock)
         return ProjectRoot.contains(root.path, root: allowed) ? root : allowed
+    }
+
+    /// Every leash (terminal or panel, `link` and the panel paths' own) refuses a free end.
+    func refuseFreeLeash(_ ids: UUID...) throws(ProtocolError) {
+        if let f = ws.terminals.first(where: { ids.contains($0.id) && $0.sandbox == .free }) {
+            throw ProtocolError(code: .notConnected, message: "'\(f.name)' is a free terminal (sem sandbox): no leash reaches it")
+        }
+    }
+
+    /// A free terminal summons nothing (R7): refused before anything launches.
+    func refuseFreeSummoner(_ me: TerminalRecord) throws(ProtocolError) {
+        guard me.sandbox == .sandboxed else {
+            throw ProtocolError(code: .notConnected, message: "'\(me.name)' is a free terminal (sem sandbox): it can't summon")
+        }
     }
 
     /// Only the app's `admin.spawn` makes a free terminal: any other creation path asking for one is refused.

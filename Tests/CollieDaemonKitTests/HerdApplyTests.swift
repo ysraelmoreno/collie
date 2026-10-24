@@ -257,7 +257,7 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
             #expect(s.terminals.map(\.name).sorted() == ["M", "x-investigador", "x-testes"])
             #expect(s.terminals.filter(\.isShepherd).map(\.name) == ["M"])
             #expect(pairs(s) == [["M", "x-investigador"], ["M", "x-testes"]])
-            #expect(s.terminals.allSatisfy { $0.cwd == "/tmp" })
+            #expect(s.terminals.allSatisfy { $0.cwd == ($0.name == "M" ? "/tmp" : "/private/tmp") })   // a Shepherd's: resolved as checked
             let other = try await call(p, m, "herd.apply", ["id": .string("investigar-bug"), "name": .string("y"), "cwd": .string("/")])
             #expect(other.error?.code == .invalidArgs, "\(other)")
             #expect(try await state(d, p) == s)

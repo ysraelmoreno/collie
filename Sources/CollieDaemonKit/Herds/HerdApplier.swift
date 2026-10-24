@@ -20,6 +20,7 @@ extension CommandRouter {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let id = try need(r, "id"), applyName = try need(r, "name")
         try refuseFree(r)   // a herd's terminals are always sandboxed
+        if let me = caller { try refuseFreeSummoner(me) }
         guard let pt = await herds.get(id) else { throw ProtocolError(code: .notFound, message: "rebanho '\(id)' não existe") }
         // one application at a time per workspace: the next waits
         // ponytail: 100 ms polling; a continuation queue if many ever wait at once
@@ -171,7 +172,8 @@ extension CommandRouter {
             catch let e as ProtocolError { throw ProtocolError(code: e.code, message: "cercado \(paddock.name): \(e.message)") }
         }
 
-        let fl = j.paddock ?? ws.paddocks.first { $0.id == base }, at = j.paddock?.path ?? cwd
+        let fl = j.paddock ?? ws.paddocks.first { $0.id == base }
+        let at = caller == nil ? j.paddock?.path ?? cwd : SignedAppCheck.realPath(URL(fileURLWithPath: j.paddock?.path ?? cwd))   // a Shepherd's: as checked
         // a paddock this application made bounds its own terminals, like a Shepherd's `summon --paddock`
         let root = try allowed.map { a throws(ProtocolError) in
             try childProject(cwd: at, paddock: fl, allowed: j.paddock.map { ProjectRoot.resolve(cwd: $0.path, paddock: $0) } ?? a)

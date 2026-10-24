@@ -146,4 +146,67 @@ private func klass(_ title: String, subject: String, hits: Int, examples: [Strin
             #expect(CommandRouter.pitfallScope(pl).scopes == [.lot] && !CommandRouter.pitfallScope(pl).ids.contains(pc.id))
         }
     }
+
+    /// R6: a correction without the user's provenance writes a proposed pitfall; nothing activates or absorbs it.
+    @Test func proposedCorrectionPitfallStaysProposed() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, _ in
+            let store = await d.router.memory.repo(for: repo.path)
+            let c = klass("Claude real nos testes", subject: "claude real", hits: 2)
+            try await store.run { try $0.store.write(c) }
+            let cp = CorrectionPayload(terminal: UUID(), name: "T", family: store.key, lot: nil, lotName: nil, root: repo.path,
+                                       prompt: "não, nunca rode o claude real", lastTurn: nil, work: nil, candidates: [], proposal: nil, user: false)
+            let job = CuratorJob(id: UUID(), kind: .correction, store: store.key, payload: try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(cp)),
+                                 dedupe: UUID().uuidString, createdAt: Date(), attempts: 0)
+            let out = ops([["op": .string("create"), "kind": .string("pitfall"), "scope": .string("project"), "subject": .string("claude real"),
+                            "title": .string("Rodar o claude real")]])
+            try await d.router.runLearningJob(job, call: { _ throws(ProtocolError) in out })
+            await d.router.enqueuePitfall(job.id, store: store)
+            let recs = try await all(store)
+            #expect(recs.first { $0.id == job.id }?.status == .proposed)
+            #expect(recs.first { $0.id == c.id }?.hits == 2)
+            #expect(await d.router.curator.queued(kind: .pitfall).isEmpty)
+        }
+    }
+
+    /// R7: a pinned or user-edited pitfall is never absorbed or replaced: an ask instead.
+    @Test func usersPitfallNeverAbsorbed() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, _ in
+            let store = await d.router.memory.repo(for: repo.path)
+            let c = klass("Symlink seguido", subject: "symlink", hits: 2)
+            let mine = MemoryRecord(kind: .pitfall, subject: "symlink", title: "Minha nota fixada", pinned: true)
+            let edited = MemoryRecord(kind: .pitfall, subject: "corrida", title: "Editada por mim", reviewed: true)
+            try await store.run { try $0.store.write(c); try $0.store.write(mine); try $0.store.write(edited) }
+            await d.router.enqueuePitfall(mine.id, store: store)
+            // a curator create naming the edited one's subject
+            let p = PitfallPayload(family: store.key, scope: .project, instance: nil, review: .init(file: "r.md", excerpt: "x"), classes: [])
+            let j = CuratorJob(id: UUID(), kind: .pitfall, store: store.key, payload: .null, dedupe: "x", createdAt: Date(), attempts: 0)
+            let e = try await d.router.applyPitfallOps([.create(CuratorNew(kind: .pitfall, scope: .project, subject: "corrida", title: "Corrida",
+                                                                           body: "", why: "", howToApply: ""))], p, job: j, store: store)
+            #expect(e.map(\.action) == ["ask"], "\(e)")
+            let recs = try await all(store)
+            #expect(recs.first { $0.id == mine.id }?.status == .active && recs.first { $0.id == edited.id }?.status == .active)
+            #expect(recs.first { $0.id == c.id }?.hits == 2 && !recs.contains { $0.id == j.id })
+            #expect(await d.router.digest.since(.distantPast).map(\.action) == ["ask"])
+        }
+    }
+
+    /// R9: at most 10 bumps a job, one per class.
+    @Test func bumpsCapped() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, _ in
+            let store = await d.router.memory.repo(for: repo.path)
+            let cs = (0..<12).map { klass("Classe \($0)", subject: "c\($0)", hits: 1) }
+            try await store.run { m in for c in cs { try m.store.write(c) } }
+            let p = PitfallPayload(family: store.key, scope: .project, instance: nil, review: .init(file: "r.md", excerpt: "x"),
+                                   classes: PitfallClasses.summaries(cs))
+            let j = CuratorJob(id: UUID(), kind: .pitfall, store: store.key, payload: .null, dedupe: "x", createdAt: Date(), attempts: 0)
+            let bumps = [CuratorOp.bump(id: cs[0].id, example: "a"), .bump(id: cs[0].id, example: "b")] + cs.map { .bump(id: $0.id, example: "e") }
+            _ = try await d.router.applyPitfallOps(bumps, p, job: j, store: store)
+            let hits = try await all(store).compactMap(\.hits)
+            #expect(hits.reduce(0, +) - 12 == 10 && hits.max() == 2, "\(hits)")
+            #expect(CommandRouter.pitfallScope(p).maxOps >= 10)
+        }
+    }
 }

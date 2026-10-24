@@ -113,19 +113,33 @@ extension CommandRouter {
 
     /// Its store's classes and scope, pitfalls only (never a feedback: R19); a review may name a few findings.
     static func pitfallScope(_ p: PitfallPayload) -> CuratorScope {
-        CuratorScope(ids: Set(p.classes.map(\.id)), scopes: [p.scope], kinds: [.pitfall], maxOps: p.review != nil ? 6 : 2)
+        CuratorScope(ids: Set(p.classes.map(\.id)), scopes: [p.scope], kinds: [.pitfall], maxOps: p.review != nil ? 12 : 2)
     }
+    static let bumpsMax = 10
 
     private func record(_ id: UUID, _ s: RepoMemory) async -> MemoryRecord? {
         (try? await s.run { $0.store.all().records.first { $0.id == id } }) ?? nil
     }
 
+    /// R6: a proposal a correction wrote without the user's provenance (origin "curador …") waits for the user: no job
+    /// activates or absorbs it.
+    static func clusterable(_ r: MemoryRecord) -> Bool {
+        r.kind == .pitfall && r.hits == nil && (r.status == .active || r.status == .proposed && !r.origin.hasPrefix("curador"))
+    }
+    /// R7: the user's (pinned or edited by them): never superseded by an automatic job.
+    private static func users(_ r: MemoryRecord) -> Bool { r.pinned || r.reviewed }
+
+    /// "Precisa de você": the instance only (resolving it never touches the class).
+    private func ask(_ r: MemoryRecord, _ what: String, store: RepoMemory) -> DigestEntry {
+        DigestEntry(id: UUID(), at: Date(), action: "ask", title: "O curador quer \(what) \"\(MemoryLearning.oneLine(r.title, max: 60))\"",
+                    reason: "memória fixada ou editada pelo usuário", store: store.key, created: [], before: [r], undone: false, resolved: false)
+    }
+
     /// A new pitfall (saved by an agent, captured from an abandoned task, created by a correction) joins its store's
     /// classes: one of the same subject is bumped at once (no model); otherwise a `pitfall` job asks the curator.
-    /// A paddock-scoped pitfall stays as it is.
+    /// A paddock-scoped pitfall stays as it is; a user's one only gets an ask when a class has its subject.
     func enqueuePitfall(_ id: UUID, store: RepoMemory) async {
-        guard let r = await record(id, store), r.kind == .pitfall, r.hits == nil, [.active, .proposed].contains(r.status),
-              r.scope == store.scope else { return }
+        guard let r = await record(id, store), Self.clusterable(r), r.scope == store.scope else { return }
         let classes = await PitfallClasses.active(store)
         if let c = classes.first(where: { $0.subject == r.subject }) {
             do {
@@ -135,6 +149,7 @@ extension CommandRouter {
             } catch { memoryLog("pitfall bump: \(error)") }
             return
         }
+        guard !Self.users(r) else { return }
         let p = PitfallPayload(family: store.key, scope: store.scope, instance: .init(id: r.id, kind: r.kind, title: r.title,
                                body: String(String.UnicodeScalarView(r.body.unicodeScalars.prefix(MemoryLearning.candidateBodyMax)))),
                                classes: PitfallClasses.summaries(classes))
@@ -143,18 +158,20 @@ extension CommandRouter {
                                              dedupe: "pitfall|\(store.key)|\(id.uuidString)", createdAt: Date(), attempts: 0))
     }
 
-    /// Class `into` gets one more hit with `example`; `instance` (if still active or proposed) is superseded by it.
-    /// A pinned or user-edited class keeps its text: only `hits` moves. nil: the class is gone or no longer active.
+    /// Class `into` gets one more hit with `example`; `instance` (if still clusterable) is superseded by it. A user's
+    /// instance is never absorbed: an ask instead, the class unchanged. A pinned or user-edited class keeps its text: only
+    /// `hits` moves. nil: the class is gone or no longer active.
     func absorb(_ instance: UUID?, into: UUID, example: String, store: RepoMemory, reason: String) async throws -> DigestEntry? {
         guard var c = await record(into, store), c.status == .active, c.kind == .pitfall, c.hits != nil else { return nil }
         var inst: MemoryRecord?
-        if let instance { inst = await record(instance, store) }
+        if let instance { inst = await record(instance, store).flatMap { Self.clusterable($0) ? $0 : nil } }
+        if let i = inst, Self.users(i) { return ask(i, "juntar à classe \"\(MemoryLearning.oneLine(c.title, max: 60))\"", store: store) }
         var before = [c]
         let now = Date()
-        if c.pinned || c.reviewed { c.hits = (c.hits ?? 1) + 1; c.updatedAt = now } else { PitfallClasses.bump(&c, example: example, now: now) }
+        if Self.users(c) { c.hits = (c.hits ?? 1) + 1; c.updatedAt = now } else { PitfallClasses.bump(&c, example: example, now: now) }
         let cls = c
         try await store.run { try $0.store.write(cls) }
-        if var n = inst, [.active, .proposed].contains(n.status), n.kind == .pitfall {
+        if var n = inst {
             before.append(n)
             n.status = .superseded; n.supersededBy = c.id; n.updatedAt = now
             let rec = n
@@ -169,7 +186,7 @@ extension CommandRouter {
         guard let store = await memory.store(key: p.family) else { throw ProtocolError(code: .internal, message: "curator: store \(p.family) gone") }
         if let i = p.instance {
             // absorbed, dropped or edited away meanwhile: nothing to ask
-            guard let r = await record(i.id, store), [.active, .proposed].contains(r.status), r.kind == .pitfall else { return }
+            guard let r = await record(i.id, store), Self.clusterable(r), !Self.users(r) else { return }
         }
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let out = try await call(CuratorCall(instructions: p.review != nil ? PitfallClasses.reviewInstructions : PitfallClasses.instructions,
@@ -179,44 +196,57 @@ extension CommandRouter {
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
     }
 
-    /// `bump` and `create pitfall` only; the instance is absorbed by the first one that applies. A create whose subject
-    /// is an active class's bumps that class instead. The first created class takes the job's id (a retry writes no second).
+    /// `bump` (≤ 10 a job, one a class) and `create pitfall` only; the instance is absorbed by the first one that applies.
+    /// A create whose subject is an active class's bumps that class instead; one whose subject another active record has is
+    /// an ask (R7: written with `write`, never an implicit same-subject supersede). The first created class takes the
+    /// job's id (a retry writes no second).
     func applyPitfallOps(_ ops: [CuratorOp], _ p: PitfallPayload, job: CuratorJob, store: RepoMemory) async throws -> [DigestEntry] {
-        var out: [DigestEntry] = [], pending = p.instance?.id, created = 0
+        var out: [DigestEntry] = [], pending = p.instance?.id, created = 0, bumped = Set<UUID>()
         var caseText = p.review.map { "revisão \($0.file)" }
         if let i = p.instance { caseText = await record(i.id, store).map(PitfallClasses.example) }
         for op in ops {
+            var bump: (id: UUID, example: String, reason: String)?
             switch op {
             case .bump(let id, let ex):
-                if let e = try await absorb(pending, into: id, example: ex, store: store, reason: "nova ocorrência: \(ex)") { out.append(e); pending = nil }
+                bump = (id, ex, "nova ocorrência: \(ex)")
             case .create(let n) where n.kind == .pitfall && n.scope == p.scope:
                 let ex = caseText ?? ""
                 let subject = MemoryRecord.normalize(n.subject)
                 if let c = await PitfallClasses.active(store).first(where: { $0.subject == subject }) {
-                    if let e = try await absorb(pending, into: c.id, example: ex, store: store, reason: "mesmo assunto") { out.append(e); pending = nil }
-                    continue
+                    bump = (c.id, ex, "mesmo assunto"); break
                 }
                 let id = created == 0 ? job.id : UUID()
                 created += 1
                 if await record(id, store) != nil { pending = nil; continue }   // a retry: already written
+                var inst: MemoryRecord?
+                if let pending { inst = await record(pending, store).flatMap { Self.clusterable($0) && !Self.users($0) ? $0 : nil } }
+                let instId = inst?.id
+                let same = (try? await store.run { m in m.store.all().records.first {
+                    $0.status == .active && $0.kind == .pitfall && $0.id != instId && $0.scope == p.scope && $0.lotId == store.lotId
+                        && $0.paddock == nil && MemoryRecord.normalize($0.subject) == subject } }) ?? nil
+                if let same { out.append(ask(same, "substituir por \"\(MemoryLearning.oneLine(n.title, max: 60))\"", store: store)); continue }
                 let body = [n.body, n.why.isEmpty ? "" : "Por quê: \(n.why)", n.howToApply.isEmpty ? "" : "Como aplicar: \(n.howToApply)"]
                     .filter { !$0.isEmpty }.joined(separator: "\n\n")
                 let rec = MemoryRecord(id: id, kind: .pitfall, scope: p.scope, lotId: store.lotId, subject: subject, title: n.title,
                                        body: PitfallClasses.withExamples(body, ex.isEmpty ? [] : [ex]), hits: 1, origin: "curador")
-                var inst: MemoryRecord?
-                if let pending { inst = await record(pending, store) }
-                let (saved, sup) = try await store.run { try $0.store.save(rec) }   // an active instance of that subject is replaced
-                var before = sup.map { [$0] } ?? []
-                if var x = inst, [.active, .proposed].contains(x.status) {
-                    if sup?.id != x.id { before.append(x) } else { before = [x] }
-                    x.status = .superseded; x.supersededBy = saved.id; x.updatedAt = saved.updatedAt
+                try await store.run { try $0.store.write(rec) }
+                var before: [MemoryRecord] = []
+                if var x = inst {
+                    before = [x]
+                    x.status = .superseded; x.supersededBy = rec.id; x.updatedAt = rec.updatedAt
                     let r = x
                     try await store.run { try $0.store.write(r) }
+                    pending = nil
                 }
-                pending = nil
-                out.append(DigestEntry(id: UUID(), at: Date(), action: "aprendido", title: saved.title, reason: "nova classe de armadilha",
-                                       store: store.key, created: [saved.id], before: before, undone: false, resolved: false))
+                out.append(DigestEntry(id: UUID(), at: Date(), action: "aprendido", title: rec.title, reason: "nova classe de armadilha",
+                                       store: store.key, created: [rec.id], before: before, undone: false, resolved: false))
             default: continue
+            }
+            guard let b = bump, !bumped.contains(b.id), bumped.count < Self.bumpsMax else { continue }
+            bumped.insert(b.id)
+            if let e = try await absorb(pending, into: b.id, example: b.example, store: store, reason: b.reason) {
+                out.append(e)
+                if e.action != "ask" { pending = nil }
             }
         }
         return out

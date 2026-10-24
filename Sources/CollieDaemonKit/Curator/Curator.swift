@@ -202,21 +202,25 @@ actor Curator {
     }
     private func rollDay() { let d = day(); if usage.day != d { usage.day = d; usage.today = 0 } }
 
-    private func capReason() -> String? {
+    /// R8: the last quarter of the daily cap is the corrections' (40: the others stop at 30).
+    static func limit(_ cap: Int, for kind: CuratorJobKind) -> Int { kind == .correction ? cap : cap - cap / 4 }
+
+    private func capReason(_ kind: CuratorJobKind = .correction) -> String? {
         if config.cap == 0 { return "desligado" }
         rollDay()
-        return usage.today >= config.cap ? "limite diário atingido (\(config.cap))" : nil
+        if usage.today >= config.cap { return "limite diário atingido (\(config.cap))" }
+        return usage.today >= Self.limit(config.cap, for: kind) ? "resto do limite diário reservado às correções" : nil
     }
 
     /// By kind (`CuratorJobKind.priority`), then oldest; a failed job waits for the next tick.
     private func drain() async {
         while !Task.isCancelled, let handler {
-            let next = jobs.filter { backoff[$0.id].map { $0 < ticks } ?? true }
+            let next = jobs.filter { (backoff[$0.id].map { $0 < ticks } ?? true) && capReason($0.kind) == nil }
                 .min { ($0.kind.priority, $0.createdAt) < ($1.kind.priority, $1.createdAt) }
-            guard let job = next, capReason() == nil, await runner.availability() == .available else { return }
+            guard let job = next, await runner.availability() == .available else { return }
             count(job, +1)   // R9: on disk before the run (a crash still counts)
             do {
-                try await handler(job, { c throws(ProtocolError) in try await self.call(c) })
+                try await handler(job, { c throws(ProtocolError) in try await self.call(c, kind: job.kind) })
                 remove(job)
                 recent[job.dedupe] = now()
             } catch let e as ProtocolError where e.code == .unavailable {
@@ -254,8 +258,8 @@ actor Curator {
     /// One runner call: the input cut to `inputMax` unicode scalars (≤ 48 KB of argv), counted against today's cap,
     /// usage persisted. R7: only the cap waits; any failure of the run itself (nonzero exit, `is_error`, junk, timeout)
     /// is rethrown as `.internal`, so it spends an attempt — a poison job reaches `failed/` instead of heading the queue.
-    private func call(_ c: CuratorCall) async throws(ProtocolError) -> CuratorOutput {
-        if let why = capReason() { throw ProtocolError(code: .unavailable, message: why) }
+    private func call(_ c: CuratorCall, kind: CuratorJobKind) async throws(ProtocolError) -> CuratorOutput {
+        if let why = capReason(kind) { throw ProtocolError(code: .unavailable, message: why) }
         var c = c
         c.input = String(String.UnicodeScalarView(c.input.unicodeScalars.prefix(Self.inputMax)))
         usage.today += 1

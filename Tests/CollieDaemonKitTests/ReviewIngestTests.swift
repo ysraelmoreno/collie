@@ -125,4 +125,45 @@ private let review = """
             #expect(!fake.inputs[0].contains(g.id.uuidString))
         }
     }
+
+    /// R8: one job a run, five a project a day.
+    @Test func reviewBudget() async throws {
+        let repo = try await makeRepo()
+        for i in 0..<7 { try write(review, ".superpowers/sdd/t/task-\(i)-review.md", in: repo) }
+        try await withDaemon { d, _ in
+            let store = await d.router.memory.repo(for: repo.path)
+            await d.router.ingestReviews(repo: store)
+            #expect(await d.router.curator.queued(kind: .pitfall).count == 1)
+            for _ in 0..<6 { await d.router.ingestReviews(repo: store) }
+            #expect(await d.router.curator.queued(kind: .pitfall).count == 5)
+        }
+    }
+
+    /// R9: ≤ 200 files scanned.
+    @Test func scanCapped() async throws {
+        let repo = try await makeRepo()
+        for i in 0..<230 { try write("x", ".superpowers/sdd/t/\(i)-review.md", in: repo) }
+        #expect(ReviewIngest.files(in: repo).count == 200)
+    }
+
+    /// R9/M3: a lot member's work close never ingests the project's reviews.
+    @Test func lotCloseSkipsReviews() async throws {
+        let repo = try await makeRepo()
+        try write(review, ".superpowers/sdd/t/task-1-review.md", in: repo)
+        try await withDaemon { d, p in
+            let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn", args: [
+                "name": .string("A"), "preset": .string("shell"), "cwd": .string(repo.path)]), to: p.socket, timeoutSeconds: 60)
+            guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { Issue.record("\(r)"); return }
+            let tok = try await tokenOf(d, id)
+            #expect(try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "lot.create", args: ["name": .string("L"), "members": .string("A")]),
+                                                    to: p.socket, timeoutSeconds: 60).ok)
+            func call(_ c: String, _ a: [String: String]) async throws -> Response {
+                try await UnixSocketClient.send(Request(id: "m", terminalId: id, token: tok, command: c, args: a.mapValues { .string($0) }), to: p.socket, timeoutSeconds: 60)
+            }
+            #expect(try await call("work.task.add", ["title": "x"]).ok)
+            #expect(try await call("work.done", ["reason": "fim"]).ok)
+            try await Task.sleep(for: .milliseconds(800))
+            #expect(await d.router.curator.queued(kind: .pitfall).isEmpty)
+        }
+    }
 }

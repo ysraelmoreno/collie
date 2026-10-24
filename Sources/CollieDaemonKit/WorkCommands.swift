@@ -214,7 +214,10 @@ extension CommandRouter {
             Task {
                 await captureProposals(w.id)   // its learnings become proposals (the model may take seconds)
                 // and the repo's new review files feed its pitfall classes
-                if let t = ws.terminals.first(where: { $0.id == w.terminalId }) { await ingestReviews(repo: await memory.repo(for: t.cwd)) }
+                // (not a lot member's close: lot findings never reach the project but by promote)
+                if let t = ws.terminals.first(where: { $0.id == w.terminalId }), ws.lot(of: t.id) == nil {
+                    await ingestReviews(repo: await memory.repo(for: t.cwd))
+                }
             }
             return .object(["id": .string(w.id.uuidString.lowercased())])
 

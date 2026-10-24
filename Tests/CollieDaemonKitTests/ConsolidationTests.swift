@@ -147,4 +147,21 @@ private func status(_ s: RepoMemory, _ id: UUID) async throws -> MemoryStatus? {
             #expect(fake.calls == 1 && left.count == 1)
         }
     }
+
+    /// R9/M4: a merge into an older memory keeps the newest as the survivor.
+    @Test func mergeKeepsNewest() async throws {
+        let repo = try await makeRepo(), fake = FakeCurator()
+        let t = tailwind()
+        fake.output = ops([["op": .string("merge"), "ids": .array([.string(t[2].id.uuidString)]), "into": .string(t[0].id.uuidString),
+                            "body": .string("Tailwind v4, classes utilitárias."), "reason": .string("mesma coisa")]])
+        try await withDaemon(configure: { $0.curatorRunner = fake }) { d, _ in
+            let store = await d.router.memory.repo(for: repo.path)
+            try await put(store, t)
+            await d.router.consolidate(store)
+            #expect(await waitFor(10) { (try? await status(store, t[0].id)) == .superseded })
+            let recs = try await all(store)
+            #expect(recs.first { $0.id == t[0].id }?.supersededBy == t[2].id)
+            #expect(recs.first { $0.id == t[2].id }.map { ($0.status, $0.body) } ?? (.archived, "") == (.active, "Tailwind v4, classes utilitárias."))
+        }
+    }
 }

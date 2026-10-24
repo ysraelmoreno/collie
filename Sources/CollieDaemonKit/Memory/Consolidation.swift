@@ -194,6 +194,12 @@ extension CommandRouter {
                 guard let by else { return nil }
                 if let a = at[id], let b = at[by], a > b { return .ask(ids: [by, id], question: reason.isEmpty ? "Qual destas vale?" : reason) }
                 return op
+            case .merge(let ids, let into, let title, let body, let reason):
+                // the newest survives (its id stays; the curator's text goes on it)
+                let all = ids + [into]
+                guard let newest = all.max(by: { (at[$0] ?? .distantPast, $0.uuidString) < (at[$1] ?? .distantPast, $1.uuidString) }),
+                      newest != into else { return op }
+                return .merge(ids: all.filter { $0 != newest }, into: newest, title: title, body: body, reason: reason)
             default: return op
             }
         }

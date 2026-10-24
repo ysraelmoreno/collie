@@ -145,10 +145,10 @@ extension CommandRouter {
                                              schema: CuratorOps.schema))
         let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.correctionScope(p)).ops, job: j)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
-        // a pitfall it created (its id is the job's) goes to its store's classes
+        // an active pitfall it created (its id is the job's; R6: a proposed one waits for the user) joins its store's classes
         for key in Set([p.family, "global"]) {
             guard let s = await memory.store(key: key),
-                  (try? await s.run { $0.store.all().records.contains { $0.id == j.id && $0.kind == .pitfall } }) == true else { continue }
+                  (try? await s.run { $0.store.all().records.contains { $0.id == j.id && $0.kind == .pitfall && $0.status == .active } }) == true else { continue }
             await enqueuePitfall(j.id, store: s)
         }
         // only an active rule (the user's own correction) is pushed

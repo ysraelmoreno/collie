@@ -41,6 +41,9 @@ public struct DaemonConfig: Sendable {
     /// `collie-ctty` (next to collied): terminals start through it so the PTY is their controlling terminal
     /// (resizes reach them as SIGWINCH); nil: started directly (tests).
     public var cttyHelper: URL?
+    /// Who may present the admin token besides the session check: the bundled daemon checks the app's signature
+    /// (`SignedAppCheck`); nil: off (dev runs, tests).
+    public var adminPeerCheck: (any AdminPeerCheck)?
     /// How long a device video session outlives its last viewer.
     public var deviceGrace: Duration = .seconds(5)
     /// The bundled figcraft (`bin/figcraft-server`, `bin/figcraft-cli`, `web/`); nil/missing: design commands report it is not bundled.
@@ -109,8 +112,15 @@ public final class Daemon: Sendable {
         self.auth = auth; self.registry = registry; self.asks = asks; self.hub = hub; self.router = router
         self.root = config.paths.root; self.runDir = config.paths.runDir; self.spillDir = spillDir
         self.hooksDir = config.paths.root.appendingPathComponent("hooks")
-        self.server = UnixSocketServer(path: config.paths.socket, peerHandler: { await router.handle($0, peer: $1) },
-                                       streamHandler: { await router.stream($0, peer: $1, conn: $2) })
+        // the admin token alone is not enough: only from the app (when a check is configured), on every path
+        let check = config.adminPeerCheck, admin = auth.adminToken
+        @Sendable func notApp(_ r: Request, _ peer: Peer) -> Response? {
+            guard let check, let t = r.token, constantTimeEqual(t, admin), !check.allows(peer) else { return nil }
+            return Response(id: r.id, ok: false, error: ProtocolError(code: .unauthorized, message: "admin commands are only accepted from the Collie app"))
+        }
+        self.server = UnixSocketServer(path: config.paths.socket,
+                                       peerHandler: { r, p in if let no = notApp(r, p) { return no }; return await router.handle(r, peer: p.pid) },
+                                       streamHandler: { r, p, c in if let no = notApp(r, p) { return no }; return await router.stream(r, peer: p.pid, conn: c) })
     }
 
     // Test/diagnostic accessors (Task 8+ route through the registry directly).

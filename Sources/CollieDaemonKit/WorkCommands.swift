@@ -207,9 +207,10 @@ extension CommandRouter {
             let w = if let s = str(r, "id") { try await byId(s) } else { try await active(try target()) }
             guard w.closedAt == nil else { throw invalid("work \(w.id.uuidString.lowercased()) is already closed") }
             let reason = str(r, "reason") == nil ? nil : try text("reason")
+            let lot = ws.lot(of: w.terminalId)?.id
             try await work.update(w.id) {
                 if let reason { $0.notes.append(WorkNote(at: now, text: "Done: \(reason)")) }
-                $0.closedAt = now; $0.closedBy = by
+                $0.closedAt = now; $0.closedBy = by; $0.lotId = lot
             }
             Task {
                 await captureProposals(w.id)   // its learnings become proposals (the model may take seconds)
@@ -358,7 +359,8 @@ extension CommandRouter {
     func closeMerged(_ f: Paddock) async {
         do {
             for w in try await work.list(includeClosed: false) where w.paddockId.map({ $0 == f.id }) ?? (w.branch == f.branch) {
-                try await work.update(w.id) { if $0.closedAt == nil { $0.closedAt = Date(); $0.closedBy = "merge" } }
+                let lot = ws.lot(of: w.terminalId)?.id
+                try await work.update(w.id) { if $0.closedAt == nil { $0.closedAt = Date(); $0.closedBy = "merge"; $0.lotId = lot } }
             }
             workStoreBroken = false
         } catch { workFailed("land close", error) }
@@ -375,10 +377,11 @@ extension CommandRouter {
             let base = ws.paddocks.first { $0.id == w.paddockId }?.baseBranch
             let (commits, merged) = await Self.gitTurn(w, dir: URL(fileURLWithPath: me.cwd), base: base)
             guard !commits.isEmpty || merged else { return }
+            let lot = ws.lot(of: tid)?.id
             try await work.update(w.id) { x in
                 guard x.closedAt == nil else { return }
                 x.commits += commits.filter { !x.commits.contains($0) }   // a concurrent Stop may have added them
-                if merged { x.closedAt = Date(); x.closedBy = "merge" }
+                if merged { x.closedAt = Date(); x.closedBy = "merge"; x.lotId = lot }
             }
         } catch { workFailed("turn end", error) }
     }

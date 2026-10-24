@@ -112,4 +112,52 @@ private func spawn(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL) async thro
             #expect(await d.router.curator.queued(kind: .procedure).isEmpty)
         }
     }
+
+    /// F1: works that ran in a lot never feed the project's procedures (lot findings reach the project only by promote).
+    @Test func lotWorksIgnored() async throws {
+        let repo = try await makeRepo()
+        let f = FakeCurator(); f.output = createProcedure()
+        try await withDaemon(configure: { $0.curatorRunner = f }) { d, p in
+            let a = try await spawn(d, p, "A", cwd: repo)
+            let admin = { (cmd: String, args: [String: String]) in
+                try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args.mapValues { .string($0) }),
+                                                to: p.socket, timeoutSeconds: 60)
+            }
+            #expect(try await admin("lot.create", ["name": "LA", "members": "A"]).ok)
+            let lot = await d.router.ws.lots.first { $0.name == "LA" }!.id
+            // closed through `work.done` while in the lot: the work keeps its lot
+            for i in 0..<3 {
+                let w = try await d.router.work.start(title: "Trabalho \(i)", terminal: a, paddockId: nil, branch: nil)
+                try await d.router.work.update(w.id) { $0.tasks = work(i).enumerated().map { WorkTask(id: "t\($0.offset)", title: $0.element, state: .done) } }
+                #expect(try await admin("work.done", ["id": w.id.uuidString]).ok)
+                #expect(try await d.router.work.get(w.id)?.lotId == lot)
+            }
+            let store = await d.router.memory.repo(for: repo.path)
+            await d.router.consolidate(store)
+            // and after A leaves the lot, those works still don't count
+            _ = await d.router.dropFromLot(a)
+            #expect(await d.router.ws.lot(of: a) == nil)
+            await d.router.consolidate(store)
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(!f.inputs.contains { $0.contains("Passos repetidos") })
+        }
+    }
+
+    /// F3: a sequence that only extends one already sent (or is part of it) queues nothing new.
+    @Test func grownSequenceNotResent() async throws {
+        let repo = try await makeRepo()
+        let f = FakeCurator()
+        try await withDaemon(configure: { $0.curatorRunner = f }) { d, p in
+            let a = try await spawn(d, p, "A", cwd: repo)
+            let short = Array(flow.prefix(3))
+            for i in 0..<3 { try await closedWork(d, a, "Curto \(i)", [short[0], "x\(["alfa", "beta", "gama"][i])", short[1], short[2]]) }
+            let store = await d.router.memory.repo(for: repo.path)
+            await d.router.consolidate(store)
+            #expect(await waitFor(10) { f.inputs.contains { $0.contains("Passos repetidos") } })
+            for i in 0..<3 { try await closedWork(d, a, "Longo \(i)", work(i)) }
+            await d.router.consolidate(store)
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(f.inputs.filter { $0.contains("Passos repetidos") }.count == 1)
+        }
+    }
 }

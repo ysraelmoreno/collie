@@ -40,6 +40,8 @@ public struct Work: Codable, Sendable, Equatable {
     public var tasks: [WorkTask]; public var jobs: [WorkJob]; public var notes: [WorkNote]; public var commits: [String]
     public var capturedAt: Date?; public var capturedCommit: String?
     public var proposedAt: Date?; public var proposedCommit: String?
+    /// The lot its terminal was in when it closed (nil: none, or unknown): a lot's works never feed project learning.
+    public var lotId: UUID?
     public init(id: UUID = UUID(), title: String, terminalId: UUID, paddockId: UUID? = nil, branch: String? = nil, openedAt: Date = Date(),
                 closedAt: Date? = nil, closedBy: String? = nil, tasks: [WorkTask] = [], jobs: [WorkJob] = [], notes: [WorkNote] = [],
                 commits: [String] = []) {
@@ -47,7 +49,7 @@ public struct Work: Codable, Sendable, Equatable {
         self.openedAt = openedAt; self.closedAt = closedAt; self.closedBy = closedBy
         self.tasks = tasks; self.jobs = jobs; self.notes = notes; self.commits = commits
     }
-    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, proposedAt, proposedCommit }
+    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, proposedAt, proposedCommit, lotId }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -63,5 +65,6 @@ public struct Work: Codable, Sendable, Equatable {
         capturedCommit = (try? c.decodeIfPresent(String.self, forKey: .capturedCommit)) ?? nil
         proposedAt = (try? c.decodeIfPresent(Date.self, forKey: .proposedAt)) ?? nil
         proposedCommit = (try? c.decodeIfPresent(String.self, forKey: .proposedCommit)) ?? nil
+        lotId = (try? c.decodeIfPresent(UUID.self, forKey: .lotId)) ?? nil
     }
 }

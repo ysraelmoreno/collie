@@ -107,15 +107,16 @@ extension CommandRouter {
         } catch { try? FileManager.default.removeItem(at: tmp); memoryLog("procedures: \(error)") }
     }
 
-    /// A repo's closed works (their terminal's cwd, or the cwd `closeCwd` kept for a removed one, is in `store`): each new
-    /// recurring sequence becomes one `procedure` job. ponytail: works whose terminal is gone count only when `closeCwd`
-    /// knows their cwd.
+    /// A repo's closed works (their live terminal's cwd is in `store`, no lot then or now): each new recurring sequence
+    /// becomes one `procedure` job. ponytail: works whose terminal is gone don't count (their lot is unknown).
     func detectProcedures(_ store: RepoMemory) async {
         guard store.root != nil, let closed = try? await work.list(includeClosed: true) else { return }
         var works: [Work] = []
         for w in closed.filter({ $0.closedAt != nil }).sorted(by: { $0.closedAt! > $1.closedAt! }) where works.count < ProcedureDetector.worksMax {
-            guard let cwd = ws.terminals.first(where: { $0.id == w.terminalId })?.cwd ?? closeCwd[w.id],
-                  await memory.repo(for: cwd) === store else { continue }
+            // F1: a work closed in a lot (or whose terminal is in one now) never counts; nor one whose terminal is gone
+            // (removal leaves the lot before the close: its lot is unknown)
+            guard w.lotId == nil, let t = ws.terminals.first(where: { $0.id == w.terminalId }), ws.lot(of: t.id) == nil,
+                  await memory.repo(for: t.cwd) === store else { continue }
             works.append(w)
         }
         let secrets = await auth.secrets()
@@ -124,7 +125,13 @@ extension CommandRouter {
         var seen = proceduresSeen()
         for seq in ProcedureDetector.recurring(steps.map { $0.filter { !$0.isEmpty } }) {
             let key = store.key + "|" + seq.joined(separator: ">")
-            guard !seen.contains(key) else { continue }
+            // F3: nor one that only grows (or is part of) a sequence already sent for this store
+            let prefix = store.key + "|"
+            guard !seen.contains(where: { k in
+                guard k.hasPrefix(prefix) else { return false }
+                let old = k.dropFirst(prefix.count).components(separatedBy: ">")
+                return ProcedureDetector.isSubsequence(old, of: seq) || ProcedureDetector.isSubsequence(seq, of: old)
+            }) else { continue }
             let from = works.indices.filter { ProcedureDetector.isSubsequence(seq, of: steps[$0]) }.prefix(ProcedureDetector.minWorks)
             guard let first = from.first else { continue }
             // the first work's own titles for the steps

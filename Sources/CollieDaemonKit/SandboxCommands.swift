@@ -22,9 +22,14 @@ extension CommandRouter {
             guard read != write else { throw ProtocolError(code: .invalidArgs, message: "pass one of --read or --write") }
             let base = URL(fileURLWithPath: r.cwd ?? me.cwd, isDirectory: true)
             let path = SignedAppCheck.realPath(URL(fileURLWithPath: try need(r, "path"), relativeTo: base).absoluteURL)
+            if read {   // 2Q: reads are open but for what no click opens: no card, the answer says which
+                let why = SandboxGrantStore.readRefusal(path, home: sandboxHomeDir, collie: config.paths.root)
+                return .object(["shown": .bool(false), "message": .string(why.map { "Nunca liberado: \($0)" }
+                    ?? "Leitura fora do projeto já é livre no sandbox: nada a pedir. Se a leitura falhou, é um caminho que nunca é liberado (segredos, perfis de navegador, e-mail, dados do Collie).")])
+            }
             let secrets = await auth.secrets()
             let reason = str(r, "reason").map { LotBoards.clean(LotBoards.scrub($0, secrets: secrets), max: 300) }.flatMap { $0.isEmpty ? nil : $0 }
-            let d = SandboxDenial(terminal: me.id, op: write ? "write" : "read", path: path, requested: true, reason: reason)
+            let d = SandboxDenial(terminal: me.id, op: "write", path: path, requested: true, reason: reason)
             let absorbed = accessCards.cards[SandboxCards.key(d)] != nil
             await raise(d)
             return .object(["shown": .bool(!absorbed), "message": .string(absorbed
@@ -33,7 +38,8 @@ extension CommandRouter {
         case "access.list":
             if let me = caller { return try isoJSON(SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)) }
             return .object(["grants": try isoJSON(sandboxGrants), "cards": try isoJSON(accessCards.all),
-                            "detection": sandboxDetection.map(JSONValue.bool) ?? .null, "dropped": .number(Double(accessCards.dropped))])
+                            "detection": sandboxDetection.map(JSONValue.bool) ?? .null, "dropped": .number(Double(accessCards.dropped)),
+                            "silent": .object(Dictionary(uniqueKeysWithValues: accessCards.silent.map { ($0.key.uuidString, .number(Double($0.value))) }))])
         case "access.grant":
             try appOnly()
             let t = try accessTerminal(r)

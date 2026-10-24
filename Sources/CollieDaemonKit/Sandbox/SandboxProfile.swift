@@ -68,8 +68,8 @@ struct SandboxInput {
 }
 
 /// The per-terminal Seatbelt profile: `(allow default)`, then deny rules and allow-backs where the last matching rule
-/// wins (Task 1's shape). Every path is resolved and inlined as an escaped SBPL string; the ones inside regexes are
-/// regex-escaped too. Every deny that should raise a card carries `(with message "collie-term:<id>")` (Task 4).
+/// wins (Task 1's shape). Reads open but for a closed list; writes closed but for the project, caches and grants.
+/// Every path is resolved and inlined as an escaped SBPL string; the ones inside regexes are regex-escaped too. Every deny that should raise a card carries `(with message "collie-term:<id>")` (Task 4).
 enum SandboxProfile {
     static let tagPrefix = "collie-term:"
 
@@ -88,6 +88,15 @@ enum SandboxProfile {
             if e.hasSuffix("/") { return rx("^" + re(base + "/" + e) + ".+") }
             return sub(base + "/" + e)
         }
+        /// R-H1 (2Q review): a closed entry and, when it is a symlink (dotfiles, stow), its resolved target too: Seatbelt
+        /// matches the resolved path, so the target would stay open. ponytail: resolved at render (a link made later
+        /// takes effect at the terminal's next start)
+        func closing(_ es: [String]) -> [String] {
+            es.map { entry(home, $0) } + es.filter { !$0.hasSuffix("*") && !$0.hasSuffix("/") }.compactMap { e in
+                let r = real(URL(fileURLWithPath: home + "/" + e))
+                return r == home + "/" + e ? nil : sub(r)
+            }
+        }
         var out = ["(version 1)", "(allow default)"]
         func rule(_ verb: String, _ op: String, tagged: Bool = false, _ filters: [String]) {
             guard !filters.isEmpty else { return }
@@ -97,15 +106,11 @@ enum SandboxProfile {
         // swapped in later opens nothing (Seatbelt matches the resolved path)
         let grants = i.grants.map { (path: $0.path, access: $0.access) }
 
-        out.append(";; reads: the home is closed; tool essentials, the project and its git re-opened")
-        rule("deny", "file-read*", tagged: true, [sub(home)])
-        rule("deny", "file-read* (with no-log)", [lit(home), lit(home + "/Library")])   // benign listings: no card
-        rule("allow", "file-read-metadata", [sub(home)])   // stat/realpath of ancestors; contents and listings stay closed
-        rule("allow", "file-read*", [sub(project)] + [common, worktree].compactMap { $0.map(sub) }
-             + EssentialPaths.homeReads.map { entry(home, $0) })
-        rule("allow", "file-read*", grants.map { sub($0.path) })
-        // secrets stay closed whatever was re-opened or granted; ssh keeps what `git`/`ssh` need without the keys
-        rule("deny", "file-read*", tagged: true, EssentialPaths.secrets.map { entry(home, $0) })
+        // 2Q (user decision): reads are open, except what `readClosed` lists (secrets, browser profiles, mail, messages,
+        // containers) and Collie's data (below). No read grant is rendered (a stored one is moot): nothing re-opens them.
+        // ssh keeps what `git`/`ssh` need without the keys
+        out.append(";; reads: open; secrets, browser profiles, mail/messages/containers closed")
+        rule("deny", "file-read*", tagged: true, closing(EssentialPaths.readClosed))
         rule("allow", "file-read*", [lit(home + "/.ssh"), lit(home + "/.ssh/known_hosts"), lit(home + "/.ssh/config"),
                                      rx("^" + re(home + "/.ssh/") + "[^/]+\\.pub$")])
 
@@ -158,10 +163,10 @@ enum SandboxProfile {
         // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
         // launchd agents, ~/Applications, the app bundle (I3). R23: secrets. (N2: after the `.build/` re-allow above)
         rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
-        rule("deny", "file-write*", tagged: true, EssentialPaths.secrets.map { entry(home, $0) })
+        rule("deny", "file-write*", tagged: true, closing(EssentialPaths.readClosed))   // M1: what is never read, never moved away
         // R35: their parents themselves (never their other children): renaming `~/Library` or `~/.config` away, writing
         // inside and renaming back would get past the denies on the leaves. From the home down, computed from the lists
-        let protected = (EssentialPaths.neverWritable + EssentialPaths.agentConfig + EssentialPaths.secrets)
+        let protected = (EssentialPaths.neverWritable + EssentialPaths.agentConfig + EssentialPaths.readClosed)
             .map { home + "/" + ($0.hasSuffix("*") ? String($0.dropLast()) : $0) } + [collie]
         var parents: Set<String> = [home]
         for p in protected where under(p, home) {

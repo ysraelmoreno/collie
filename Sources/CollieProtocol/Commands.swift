@@ -326,7 +326,7 @@ public enum Commands {
         // Sandbox access: a terminal asks and reads its grants; only the app (admin from the signed app) grants/denies/revokes
         CommandSpec(name: "access.request", summary: "Ask the user to open a path to your sandbox (shown as a card in the app; nothing opens without their click)",
                     params: [ParamSpec("path", .string, positional: true, required: true, help: "File or folder"),
-                             ParamSpec("read", .flag, help: "Read access"), ParamSpec("write", .flag, help: "Write access"),
+                             ParamSpec("read", .flag, help: "Read access (already open outside secrets: no card)"), ParamSpec("write", .flag, help: "Write access"),
                              ParamSpec("reason", .string, help: "Why you need it (shown to the user; no secrets)")],
                     timeoutSeconds: 10),
         CommandSpec(name: "access.list", summary: "List the paths the user opened to your sandbox (yours and your lot's)", timeoutSeconds: 10),

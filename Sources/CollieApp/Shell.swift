@@ -50,7 +50,7 @@ struct Shell<Content: View>: View {
                 NSWorkspace.shared.open(URL(string: "https://github.com/ysraelmoreno/collie#sandbox-dos-terminais")!)
             }
         } message: {
-            Text("Os terminais agora rodam num sandbox: o agente só escreve no projeto e só lê o projeto e o que as ferramentas precisam. Quando ele tenta acessar outra coisa, aparece um cartão no terminal para você liberar ou negar. Terminais já abertos entram no sandbox na próxima vez que iniciarem. Para o seu trabalho, use \"Terminal livre (sem sandbox)\".")
+            Text("Os terminais agora rodam num sandbox: o agente só escreve no projeto e lê tudo, menos segredos, perfis de navegador, e-mail e os dados do Collie (esses nunca são liberados). Quando ele tenta escrever fora do projeto, aparece um cartão no terminal para você liberar ou negar. Terminais já abertos entram no sandbox na próxima vez que iniciarem. Para o seu trabalho, use \"Terminal livre (sem sandbox)\".")
         }
     }
 }

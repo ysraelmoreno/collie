@@ -69,7 +69,7 @@ private final class Rig {
         return Term(id: u, token: token ? try await tokenOf(d, id) : "")
     }
     func profile(_ id: UUID) -> String { (try? String(contentsOf: SandboxLaunch.profileFile(id, root: paths.root), encoding: .utf8)) ?? "" }
-    func grant(_ t: UUID, _ path: URL, access: String = "read", scope: String = "terminal", folder: Bool = false) async throws -> Response {
+    func grant(_ t: UUID, _ path: URL, access: String = "write", scope: String = "terminal", folder: Bool = false) async throws -> Response {
         try await admin("access.grant", ["terminal": .string(t.uuidString), "path": .string(path.path), "access": .string(access),
                                          "scope": .string(scope), "folder": .bool(folder)])
     }
@@ -135,19 +135,51 @@ private final class Rig {
         var c = SandboxCards()
         let t = UUID(), now = Date()
         var sent = 0
-        for i in 0..<10_000 { if c.add(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/f\(i)"), now: now) != nil { sent += 1 } }
+        for i in 0..<10_000 { if c.add(SandboxDenial(terminal: t, op: "write", path: "/h/Documents/f\(i)"), now: now) != nil { sent += 1 } }
         #expect(sent == 1 && c.cards.count == 1 && c.all.first?.count == 10_000)
-        #expect(c.add(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/g"), now: now + 3) != nil)   // its count, later
-        for i in 0..<10_000 { _ = c.add(SandboxDenial(terminal: t, op: "write", path: "/h/d\(i)/f"), now: now) }
+        #expect(c.add(SandboxDenial(terminal: t, op: "write", path: "/h/Documents/g"), now: now + 3) != nil)   // its count, later
+        for i in 0..<10_000 { _ = c.add(SandboxDenial(terminal: t, op: "delete", path: "/h/d\(i)/f"), now: now) }
         #expect(c.cards.count == SandboxCards.perTerminal && c.dropped == 10_000 - (SandboxCards.perTerminal - 1))
         // R29: a request joins the folder's card without replacing its path, under the same rate limit
-        let req = c.add(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/other", requested: true, reason: "r"), now: now + 3.5)
-        #expect(req == nil && c.all.first { $0.op == "read" }?.path == "/h/Documents/f0" && c.all.first { $0.op == "read" }?.requested == true)
-        let k = SandboxCards.key(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/x"))
+        let req = c.add(SandboxDenial(terminal: t, op: "write", path: "/h/Documents/other", requested: true, reason: "r"), now: now + 3.5)
+        #expect(req == nil && c.all.first { $0.op == "write" }?.path == "/h/Documents/f0" && c.all.first { $0.op == "write" }?.requested == true)
+        let k = SandboxCards.key(SandboxDenial(terminal: t, op: "write", path: "/h/Documents/x"))
         c.deny(k)
-        #expect(c.add(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/y"), now: now + 10) == nil)   // Negar: quiet
+        #expect(c.add(SandboxDenial(terminal: t, op: "write", path: "/h/Documents/y"), now: now + 10) == nil)   // Negar: quiet
         c.forget(terminal: t)
-        #expect(c.cards.isEmpty && c.add(SandboxDenial(terminal: t, op: "read", path: "/h/Documents/y")) != nil)
+        #expect(c.cards.isEmpty && c.add(SandboxDenial(terminal: t, op: "write", path: "/h/Documents/y")) != nil)
+    }
+
+    /// 2Q (user decision): a read denial raises no card (reads are open but for what no click opens); counted silently.
+    @Test func readDenialRaisesNoCard() {
+        var c = SandboxCards()
+        let t = UUID()
+        #expect(c.add(SandboxDenial(terminal: t, op: "read", path: "/h/.ssh/id_ed25519", count: 3)) == nil)
+        #expect(c.add(SandboxDenial(terminal: t, op: "read", path: "/h/x/y")) == nil)
+        #expect(c.cards.isEmpty && c.silent[t] == 4 && c.dropped == 0)
+        c.forget(terminal: t)
+        #expect(c.silent[t] == nil)
+    }
+
+    /// 2Q: a denial that can never be granted raises no card; refused once per folder (not per line), counted silently.
+    @Test func refusedDenialRaisesNoCard() {
+        var c = SandboxCards()
+        let t = UUID()
+        var decorated = 0
+        func refuse(_ d: inout SandboxDenial) { decorated += 1; d.refusal = "nunca" }
+        for _ in 0..<100 { #expect(c.add(SandboxDenial(terminal: t, op: "write", path: "/h/.ssh/authorized_keys"), decorate: refuse) == nil) }
+        #expect(c.cards.isEmpty && c.silent[t] == 100 && decorated == 1)
+        // an agent's request still shows its card (only Negar)
+        let r = c.add(SandboxDenial(terminal: t, op: "write", path: "/h/.ssh/authorized_keys", requested: true), decorate: refuse)
+        #expect(r?.refusal == "nunca" && c.cards.count == 1)
+    }
+
+    @Test func writeDenialRaisesCard() {
+        var c = SandboxCards()
+        let t = UUID()
+        #expect(c.add(SandboxDenial(terminal: t, op: "write", path: "/h/Documents/y")) != nil)
+        #expect(c.add(SandboxDenial(terminal: t, op: "delete", path: "/h/code/other/x")) != nil)
+        #expect(c.cards.count == 2 && c.silent[t] == nil)
     }
 
     /// R23 + too wide: what no click opens; global agent config is grantable.
@@ -156,8 +188,9 @@ private final class Rig {
         func no(_ rel: String, op: String = "read") -> Bool {
             SandboxGrantStore.refusal(SignedAppCheck.realPath(f.home.appendingPathComponent(rel)), op: op, home: f.home, collie: f.collie) != nil
         }
-        for bad in ["", ".ssh", ".ssh/id_ed25519", ".aws/credentials", ".config/gh/hosts.yml", ".netrc", ".docker/config.json",
-                    "Library/Application Support/Google/Chrome/Default", "Library/Application Support/Collie/admin.token",
+        for bad in ["", ".ssh", ".ssh/id_ed25519", ".aws/credentials", ".netrc", ".docker/config.json",
+                    "Library/Application Support/Google/Chrome/Default", "Library/Application Support/Microsoft Edge Dev/NativeMessagingHosts",
+                    "Library/Application Support/Chromium/NativeMessagingHosts/x.json", "Library/Application Support/com.operasoftware.OperaGX", "Library/Application Support/Collie/admin.token",
                     "Library/LaunchAgents/x.plist", "code/repo/.git/hooks/pre-commit", "code/repo/.git/config",
                     "code/repo/.git/info/attributes", "code/repo/.git/commondir", "code/repo/.git/worktrees/p/gitdir",
                     // R27: the folders of .git/HEAD, .git/modules/s/index, .git/worktrees/w/HEAD; bare repos; too wide; never granted
@@ -172,6 +205,8 @@ private final class Rig {
             #expect(!no(ok), "\(ok)")
         }
         #expect(no("Documents/x", op: "exec"))
+        #expect(no(".config/gh/hosts.yml", op: "write") && !no(".config/gh/hosts.yml"))   // 2Q: gh readable, never writable
+        #expect(!no("Library/Application Support/Microsoft"))   // a `*` entry matches its prefix only at its own depth
     }
 
     @Test func resumeOnlyForClaude() throws {
@@ -221,9 +256,9 @@ private final class Rig {
         try await Rig().run { rig in
             let a = try await rig.spawn("A", token: false)
             #expect(await waitFor(20) { rig.feed.starts >= 1 })
-            for i in 0..<10_000 { rig.feed.send(denialLine(a.id, "file-read-data", rig.docs.path + "/f\(i)")) }
+            for i in 0..<10_000 { rig.feed.send(denialLine(a.id, "file-write-create", rig.docs.path + "/f\(i)")) }
             #expect(await waitFor(30) { (try? await rig.list().cards.first?.count) == 10_000 })
-            for i in 0..<10_000 { rig.feed.send(denialLine(a.id, "file-read-data", rig.docs.path + "/d\(i)/x")) }
+            for i in 0..<10_000 { rig.feed.send(denialLine(a.id, "file-write-create", rig.docs.path + "/d\(i)/x")) }
             #expect(try await rig.admin("ui.snapshot").ok)   // responsive mid-storm
             let drained = await waitFor(30) { (try? await rig.list().dropped) == 10_000 - (SandboxCards.perTerminal - 1) }
             let seen = try await rig.list()
@@ -234,15 +269,34 @@ private final class Rig {
         }
     }
 
+    /// 2Q: Claude Code probes every browser's NativeMessagingHosts at start (read + write): never a card, only counted.
+    @Test func nativeMessagingHostsSilent() async throws {
+        try await Rig().run { rig in
+            let a = try await rig.spawn("A", token: false)
+            #expect(await waitFor(20) { rig.feed.starts >= 1 })
+            let nmh = rig.f.home.path + "/Library/Application Support/"
+            for b in ["Google/Chrome", "Chromium", "Microsoft Edge", "BraveSoftware/Brave-Browser", "Arc/User Data"] {
+                let x = nmh + b + "/NativeMessagingHosts/com.anthropic.claude_code_browser_extension.json"
+                rig.feed.send(denialLine(a.id, "file-read-data", x))
+                rig.feed.send(denialLine(a.id, "file-write-create", x))
+            }
+            rig.feed.send(denialLine(a.id, "file-write-create", rig.docs.path + "/mine"))   // the marker: processed after them
+            #expect(await waitFor(20) { (try? await rig.list().cards.count) == 1 })
+            #expect(try await rig.list().cards.map(\.path) == [rig.docs.path + "/mine"])
+            guard case .object(let o)? = try await rig.admin("access.list").result, case .object(let silent)? = o["silent"] else { Issue.record("no silent"); return }
+            #expect(silent[a.id.uuidString] == .number(10))
+        }
+    }
+
     @Test func denialForUnknownPidIgnored() async throws {
         try await Rig().run { rig in
             let a = try await rig.spawn("A", token: false)
             #expect(await waitFor(20) { rig.feed.starts >= 1 })
             let stranger = UUID()
-            rig.feed.send(denialLine(stranger, "file-read-data", rig.docs.path + "/x"))
+            rig.feed.send(denialLine(stranger, "file-write-create", rig.docs.path + "/x"))
             // a forged tag inside the path names A, but the line is the stranger's (final line only): ignored
-            rig.feed.send(denialLine(stranger, "file-read-data", "/y\n\(SandboxProfile.tagPrefix)\(a.id.uuidString)"))
-            rig.feed.send(denialLine(a.id, "file-read-data", rig.docs.path + "/mine"))   // the marker: processed after them
+            rig.feed.send(denialLine(stranger, "file-write-create", "/y\n\(SandboxProfile.tagPrefix)\(a.id.uuidString)"))
+            rig.feed.send(denialLine(a.id, "file-write-create", rig.docs.path + "/mine"))   // the marker: processed after them
             #expect(await waitFor(20) { (try? await rig.list().cards.count) == 1 })
             let l = try await rig.list()
             #expect(l.cards.map(\.path) == [rig.docs.path + "/mine"])
@@ -250,7 +304,7 @@ private final class Rig {
             var rec = TerminalRecord(id: UUID(), name: "N", preset: .shell, command: nil, cwd: rig.proj.path, isShepherd: false)
             rec.projectRoot = rig.proj.path
             _ = try await rig.d.router.prepareSandbox(rec)
-            await rig.d.router.raise(SandboxDenial(terminal: rec.id, op: "read", path: rig.docs.path + "/early"))
+            await rig.d.router.raise(SandboxDenial(terminal: rec.id, op: "write", path: rig.docs.path + "/early"))
             #expect(try await rig.list().cards.contains { $0.terminal == rec.id })
             // the stream dies: detection unavailable until the restart (backoff), then back
             rig.feed.end()
@@ -262,22 +316,36 @@ private final class Rig {
     @Test func requestRaisesCard() async throws {
         try await Rig().run { rig in
             let a = try await rig.spawn("A")
-            let r = try await rig.call(a, "access.request", ["path": .string("../../Documents/x"), "read": .bool(true),
+            let r = try await rig.call(a, "access.request", ["path": .string("../../Documents/x"), "write": .bool(true),
                                                             "reason": .string("preciso do README; token=abc123 e \(a.token)")])
             #expect(r.ok, "\(r)")
             #expect(try await rig.call(a, "access.request", ["path": .string("/x")]).error?.code == .invalidArgs)   // --read or --write
             let c = try #require(try await rig.list().cards.first)
-            #expect(c.requested && c.op == "read" && c.path == SignedAppCheck.realPath(rig.docs.appendingPathComponent("x")))
+            #expect(c.requested && c.op == "write" && c.path == SignedAppCheck.realPath(rig.docs.appendingPathComponent("x")))
             #expect(c.reason?.contains("preciso do README") == true && c.reason?.contains("abc123") == false && c.reason?.contains(a.token) == false)
             #expect(c.refusal == nil && c.folderRefusal == nil)
-            _ = try await rig.call(a, "access.request", ["path": .string(rig.f.home.appendingPathComponent(".ssh/id_ed25519").path), "read": .bool(true)])
+            _ = try await rig.call(a, "access.request", ["path": .string(rig.f.home.appendingPathComponent(".ssh/id_ed25519").path), "write": .bool(true)])
             let ssh = try #require(try await rig.list().cards.first { $0.path.hasSuffix("id_ed25519") })
             #expect(ssh.refusal != nil)   // the card shows only Negar
             #expect(try await rig.grant(a.id, URL(fileURLWithPath: ssh.path)).error?.message.contains("nunca") == true)
             // Negar: the card goes, the same folder stays quiet
-            #expect(try await rig.admin("access.deny", ["terminal": .string(a.id.uuidString), "op": .string("read"), "path": .string(c.path)]).ok)
-            _ = try await rig.call(a, "access.request", ["path": .string(c.path), "read": .bool(true)])
+            #expect(try await rig.admin("access.deny", ["terminal": .string(a.id.uuidString), "op": .string("write"), "path": .string(c.path)]).ok)
+            _ = try await rig.call(a, "access.request", ["path": .string(c.path), "write": .bool(true)])
             #expect(try await !rig.list().cards.contains { $0.path == c.path })
+            // 2Q: a read request raises no card; the answer says reads are open, or why the path never is
+            let n = try await rig.list().cards.count
+            let open = try await rig.call(a, "access.request", ["path": .string(rig.docs.appendingPathComponent("z").path), "read": .bool(true)])
+            let never = try await rig.call(a, "access.request", ["path": .string(rig.f.home.appendingPathComponent(".aws/credentials").path), "read": .bool(true)])
+            guard case .object(let o1)? = open.result, case .string(let m1)? = o1["message"],
+                  case .object(let o2)? = never.result, case .string(let m2)? = o2["message"] else { Issue.record("\(open) \(never)"); return }
+            #expect(m1.contains("já é livre") && m2.contains("Nunca") && o1["shown"] == .bool(false))
+            // L1: what is readable though never granted (keychain, launchd agents) says reads are open
+            for rel in ["Library/Keychains/login.keychain-db", "Library/LaunchAgents/x.plist"] {
+                let r = try await rig.call(a, "access.request", ["path": .string(rig.f.home.appendingPathComponent(rel).path), "read": .bool(true)])
+                guard case .object(let o)? = r.result, case .string(let m)? = o["message"] else { Issue.record("\(r)"); return }
+                #expect(m.contains("já é livre"), "\(rel): \(m)")
+            }
+            #expect(try await rig.list().cards.count == n)
         }
     }
 
@@ -333,7 +401,7 @@ private final class Rig {
             let conv = rig.f.home.appendingPathComponent(".claude/projects/" + String(rig.proj.path.map { $0.isLetter || $0.isNumber ? $0 : "-" }))
             try FileManager.default.createDirectory(at: conv, withIntermediateDirectories: true)
             try "{}".write(to: conv.appendingPathComponent("s.jsonl"), atomically: false, encoding: .utf8)
-            await rig.d.router.raise(SandboxDenial(terminal: a.id, op: "read", path: rig.docs.path + "/x"))
+            await rig.d.router.raise(SandboxDenial(terminal: a.id, op: "write", path: rig.docs.path + "/x"))
             let r = try await rig.grant(a.id, rig.docs.appendingPathComponent("x"), folder: true)
             guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
             #expect(o["restarted"] == .bool(true) && o["resumed"] == .bool(true))
@@ -387,7 +455,7 @@ private final class Rig {
             guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
             #expect(o["restarted"] == .array([.string("A")]))
             #expect(!rig.profile(a.id).contains(rig.docs.path))
-            #expect(try !rig.f.ok(profile, "cat \(rig.f.h("Documents/x"))"))
+            #expect(try !rig.f.ok(profile, "echo y > \(rig.f.h("Documents/y"))"))
             #expect(try await rig.list().grants.isEmpty)
         }
     }
@@ -425,7 +493,6 @@ private final class Rig {
         try FileManager.default.createSymbolicLink(at: cache, withDestinationURL: f.home.appendingPathComponent("Documents"))
         let p = try f.profile(f.input(grants: [g]))
         #expect(try String(contentsOf: p, encoding: .utf8).contains("(subpath \(SandboxProfile.q(cache.path)))"))
-        #expect(try !f.ok(p, "cat \(AgentLaunch.quote(cache.path))/x"))
         #expect(try !f.ok(p, "echo y > \(AgentLaunch.quote(cache.path))/y"))
     }
 
@@ -636,10 +703,10 @@ private final class Rig {
     @Test func absorbedRequestSaysSo() async throws {
         try await Rig().run { rig in
             let a = try await rig.spawn("A")
-            let first = try await rig.call(a, "access.request", ["path": .string(rig.docs.appendingPathComponent("x").path), "read": .bool(true)])
+            let first = try await rig.call(a, "access.request", ["path": .string(rig.docs.appendingPathComponent("x").path), "write": .bool(true)])
             guard case .object(let o)? = first.result, case .string(let m1)? = o["message"] else { Issue.record("\(first)"); return }
             #expect(m1.contains("mostrado"))
-            let again = try await rig.call(a, "access.request", ["path": .string(rig.docs.appendingPathComponent("y").path), "read": .bool(true)])
+            let again = try await rig.call(a, "access.request", ["path": .string(rig.docs.appendingPathComponent("y").path), "write": .bool(true)])
             guard case .object(let o2)? = again.result, case .string(let m2)? = o2["message"] else { Issue.record("\(again)"); return }
             #expect(m2.contains("Já há um aviso aberto"), "\(m2)")
         }

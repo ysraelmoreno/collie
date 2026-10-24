@@ -86,4 +86,30 @@ import CollieProtocol
         #expect(r.kind == .pitfall && r.body == "body")
         #expect([MemoryKind.decision, .map, .pitfall].map(\.rawValue) == ["decision", "map", "pitfall"])
     }
+
+    @Test func aliasesRoundTrip() throws {
+        let r = MemoryRecord(kind: .decision, subject: "testes", title: "Rodar só o filtro", body: "b", aliases: ["Suíte", "swift  test", "suíte"])
+        #expect(r.aliases == ["suíte", "swift test"])
+        let text = MemoryFile.render(r)
+        #expect(text.contains("\ntitle: Rodar só o filtro\naliases: [\"suíte\",\"swift test\"]\n"), "\(text)")
+        #expect(try MemoryFile.parse(text) == r)
+        #expect(try MemoryFile.parse(text.replacingOccurrences(of: "aliases: [", with: "aliases: [\"x\",")).aliases == ["x", "suíte", "swift test"])
+        #expect(throws: ProtocolError.self) { try MemoryFile.parse(text.replacingOccurrences(of: "aliases: [", with: "aliases: [1,")) }
+        // Codable without the key (an index row or digest entry from before aliases) decodes to none
+        let json = String(decoding: try JSONEncoder().encode(MemoryRecord(kind: .map, subject: "x", title: "t")), as: UTF8.self)
+        #expect(!json.contains("aliases"))
+        #expect(try JSONDecoder().decode(MemoryRecord.self, from: Data(json.utf8)).aliases.isEmpty)
+    }
+
+    @Test func noAliasesFileUnchanged() throws {
+        let old = "---\nid: abcdef12-0000-0000-0000-000000000000\nkind: pitfall\nscope: project\nsubject: git\ntitle: t\nstatus: active\nreviewed: false\npinned: false\norigin: app\ncreated: 2025-01-01T00:00:00.000Z\nupdated: 2025-01-01T00:00:00.000Z\n---\n\nbody\n"
+        #expect(MemoryFile.render(try MemoryFile.parse(old)) == old)
+    }
+
+    @Test func aliasesNormalized() {
+        let raw = (0..<12).map { "a\($0)" + String(repeating: "x", count: 60) } + ["dup\"x\ny", " "]
+        let n = MemoryRecord.normalizeAliases(raw)
+        #expect(n.count == 8 && n.allSatisfy { $0.count <= 40 } && n[0].hasPrefix("a0x"))
+        #expect(MemoryRecord.normalizeAliases(["dup\"x\ny", "", "\u{202E}z"]) == ["dupx y", "z"])
+    }
 }

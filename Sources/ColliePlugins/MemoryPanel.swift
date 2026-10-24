@@ -83,6 +83,7 @@ public enum MemoryDigestNotice {
     /// Every lot's active memories (R8): what an agent saved inside a lot, reviewable and promotable from here.
     @Published public private(set) var lotMemories: [MemoryRow] = []
     @Published public private(set) var decisions: [MemoryRow] = []
+    @Published public private(set) var procedures: [MemoryRow] = []
     @Published public private(set) var superseded: [MemoryRow] = []
     @Published public private(set) var maps: [MemoryRow] = []
     @Published public private(set) var archived: [MemoryRow] = []
@@ -127,6 +128,7 @@ public enum MemoryDigestNotice {
         if let l = await list("active") {
             active = l.records
             decisions = l.records.filter { $0.record.kind == .decision }
+            procedures = l.records.filter { $0.record.kind == .procedure }
             maps = l.records.filter { $0.record.kind == .map }
         }
         if let l = await list("superseded") { superseded = l.records }
@@ -400,9 +402,20 @@ struct MemoryPanelView: View {
             }
         }
         let groups = model.learningGroups()
-        if groups.isEmpty { empty("Nada aprendido nesta semana.") }
+        // procedures the curator noticed in the works: they wait for the user (approve → active → a skill)
+        let noticed = model.proposals.filter { $0.record.kind == .procedure }
+        if groups.isEmpty && noticed.isEmpty { empty("Nada aprendido nesta semana.") }
+        if !noticed.isEmpty {
+            section("Precisa de você")
+            ForEach(noticed) { r in
+                item(r, meta: meta(r), badge: "procedimento novo") {
+                    act("Aprovar", .primary) { Task { await model.approve(r.id, lot: r.lot) } }
+                    act("Descartar", .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
+                }
+            }
+        }
         ForEach(groups, id: \.title) { g in
-            section(g.title)
+            if !(g.title == "Precisa de você" && !noticed.isEmpty) { section(g.title) }
             ForEach(g.rows) { e in
                 digestItem(e) {
                     if e.isAsk {
@@ -483,6 +496,15 @@ struct MemoryPanelView: View {
                     }.font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary).padding(.horizontal, 8)
                 }
             }
+            if !model.procedures.isEmpty {
+                section("Procedimentos")
+                ForEach(shown(model.procedures)) { r in
+                    item(r, meta: meta(r)) {
+                        act(r.record.pinned ? "desafixar" : "fixar") { Task { await model.pin(r.id, !r.record.pinned) } }
+                        act("Arquivar") { Task { await model.archive(r.id) } }
+                    }
+                }
+            }
         case .map:
             if model.maps.isEmpty { empty("Nenhum mapa gravado.") }
             noMatch(model.maps)
@@ -551,7 +573,7 @@ struct MemoryPanelView: View {
 
 extension MemoryKind {
     /// The card tag's text.
-    var label: String { switch self { case .feedback: "regra"; case .decision: "decisão"; case .map: "mapa"; case .pitfall: "armadilha" } }
+    var label: String { switch self { case .feedback: "regra"; case .decision: "decisão"; case .map: "mapa"; case .pitfall: "armadilha"; case .procedure: "procedimento" } }
 }
 
 private struct EditSheet: View {

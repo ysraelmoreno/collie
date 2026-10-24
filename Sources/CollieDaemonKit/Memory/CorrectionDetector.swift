@@ -30,5 +30,15 @@ enum CorrectionDetector {
         Set(MemoryService.significantTerms(prompt).map { fold($0) }).count >= minOwnWords
     }
 
+    /// The user states a how-to: "sempre que X, faça Y", "toda vez que X, …", "whenever X, …" — the trigger starts in the
+    /// first 60 characters and a comma then a word follows it; "sempre que possível/puder/der" is not one. Same 600 cap.
+    private static let procedure = #"(^|[^\p{L}\p{N}])(sempre que|toda vez que|todas as vezes que|cada vez que|whenever|every time)\s+(?!(possivel|puder|der|possible|you can)([^\p{L}\p{N}]|$))[^,.!?\n]{2,160},\s*[\p{L}\p{N}]"#
+    static func isProcedure(_ prompt: String) -> Bool {
+        guard prompt.count <= maxPrompt else { return false }
+        let p = fold(prompt).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let r = p.range(of: procedure, options: .regularExpression) else { return false }
+        return p.distance(from: p.startIndex, to: r.lowerBound) < 60
+    }
+
     private static func fold(_ s: String) -> String { s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
 }

@@ -171,6 +171,18 @@ private func rec(_ title: String, scope: MemoryScope = .project, lot: UUID? = ni
         }
     }
 
+    /// R6: a procedure is the user's like a feedback: an agent never promotes it (it would replace the project's).
+    @Test func agentCantPromoteProcedure() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            #expect(try await admin(d, p, "lot.create", ["name": "LA", "members": "A"]).ok)
+            let r = try await admin(d, p, "memory.save", ["kind": "procedure", "lot": "LA", "subject": "x", "title": "Proc", "body": "Quando: x\n\n1. y"])
+            #expect(r.ok, "\(r)")
+            #expect(try await call(p, a, "memory.promote", ["id": s(obj(r)["id"])!]).error?.code == .unauthorized)
+        }
+    }
+
     @Test func proposedNotInjected() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

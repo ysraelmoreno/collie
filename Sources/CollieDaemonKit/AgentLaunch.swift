@@ -42,6 +42,12 @@ public enum AgentLaunch {
         String(decoding: (try? JSONSerialization.data(withJSONObject: v, options: [.fragmentsAllowed, .withoutEscapingSlashes])) ?? Data(), as: UTF8.self)
     }
 
+    /// `rec` launches Claude (with Collie's settings file): the preset, or a claude/custom command whose program is `claude`.
+    static func isClaude(_ rec: TerminalRecord) -> Bool {
+        guard let c = rec.command else { return rec.preset == .claude }
+        return (rec.preset == .claude || rec.preset == .custom) && EssentialPaths.commandAgent(c)?.name == "claude"
+    }
+
     /// `env` is used verbatim as the child environment; hooks are wired by flag only (no global config touched).
     /// `codexMCP`: also give Codex the collie MCP server (opt-in, `COLLIE_CODEX_MCP=1` in the daemon env: its `env_vars` key is
     /// unverified against an installed codex, and an unknown key could stop Codex from launching).
@@ -52,9 +58,10 @@ public enum AgentLaunch {
     /// `--sandbox danger-full-access`; a custom `cursor-agent` command `--sandbox disabled`). Collie's still applies.
     /// `filesDir`: the sandboxed terminal's handed-over files (`SandboxLaunch.handOver`); Claude gets it as a working
     /// directory (`permissions.additionalDirectories`, in Collie's settings file only), so reading one never prompts.
+    /// `pluginDir`: Claude only, `--plugin-dir` (the terminal's procedures as skills, `ProcedureSkills`).
     public static func launchSpec(for rec: TerminalRecord, env: [String: String], hooksDir: URL, collie: URL, shell: String,
                                   codexMCP: Bool = false, innerSandboxOff: Bool = false, resume: Bool = false,
-                                  filesDir: URL? = nil) throws -> LaunchSpec {
+                                  filesDir: URL? = nil, pluginDir: URL? = nil) throws -> LaunchSpec {
         func spec(_ args: [String]) -> LaunchSpec { LaunchSpec(executable: shell, arguments: args, environment: env, cwd: rec.cwd) }
         func claude(_ base: String) throws -> LaunchSpec {
             let f = settingsFile(rec.id, in: hooksDir)
@@ -90,12 +97,13 @@ public enum AgentLaunch {
             // Additive (no --strict-mcp-config): the user's own MCP servers stay.
             let m = mcpFile(rec.id, in: hooksDir)
             try write(["mcpServers": ["collie": ["type": "stdio", "command": collie.path, "args": ["mcp"]]]], m)
-            return spec(["-lc", base + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path) + (resume ? " --continue" : "")])
+            return spec(["-lc", base + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path)
+                         + (pluginDir.map { " --plugin-dir " + quote($0.path) } ?? "") + (resume ? " --continue" : "")])
         }
         if let c = rec.command {
             // M4: the program past `env VAR=…` and a path (R19/B3's detection): Claude gets Collie's settings file
             let agent = EssentialPaths.commandAgent(c)
-            if rec.preset == .claude || rec.preset == .custom, agent?.name == "claude" { return try claude(c) }
+            if isClaude(rec) { return try claude(c) }
             // a custom codex/cursor-agent command: the same inner-sandbox switch, unless it picks a sandbox itself
             if innerSandboxOff, let agent, !c.contains("--sandbox"),
                let flag = ["codex": " -c " + quote(#"sandbox_mode="danger-full-access""#), "cursor-agent": " --sandbox disabled"][agent.name] {

@@ -190,6 +190,12 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
                 #expect(await waitFor(10) { await feedback(lotStore).contains { $0.title == "Regra \(i)" } }, "\(leak)")
                 #expect(await feedback(lotStore).first { $0.title == "Regra \(i)" }?.body.hasPrefix("Vale para \(leak).") == true)
             }
+            // R6: an alias naming the lot leaks it too
+            var aliased = createFeedback(scope: "global", title: "Regra alias", body: "Vale para tudo.")
+            aliased["aliases"] = .array([.string("Login"), .string("auth")])
+            fake.output = ops([aliased])
+            _ = try await typed(d, p, a, "não, regra do alias agora vale para todo trabalho daqui mesmo")
+            #expect(await waitFor(10) { await feedback(lotStore).contains { $0.title == "Regra alias" } })
             #expect(await feedback(d.router.memory.global).count == 1)
         }
     }

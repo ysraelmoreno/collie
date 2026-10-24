@@ -43,6 +43,18 @@ import CollieCore
         #expect(c.arguments == ["-l"])
         #expect(throws: (any Error).self) { try AgentLaunch.launchSpec(for: rec(.custom), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh") }
     }
+    @Test func claudeGetsPluginDir() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let plugin = URL(fileURLWithPath: "/tmp/o rq/sandbox/x/plugin/collie-procedures")
+        for r in [rec(.claude), rec(.claude, "claude --model x"), rec(.custom, "env A=1 /usr/local/bin/claude")] {
+            let s = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", resume: true, pluginDir: plugin)
+            #expect(s.arguments[1].hasSuffix(" --plugin-dir '/tmp/o rq/sandbox/x/plugin/collie-procedures' --continue"), "\(s.arguments)")
+        }
+        for r in [rec(.codex), rec(.shell), rec(.custom, "cursor-agent"), rec(.custom, "codex"), rec(.claude, "echo hi")] {
+            let s = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", pluginDir: plugin)
+            #expect(!s.arguments.joined(separator: " ").contains("--plugin-dir"), "\(s.arguments)")
+        }
+    }
     @Test func codexSpecUsesNotifyOverride() throws {
         let s = try AgentLaunch.launchSpec(for: rec(.codex), env: [:], hooksDir: tmp(), collie: collie, shell: "/bin/zsh")
         #expect(s.arguments[1] == #"codex -c 'notify=["/opt/o rq/collie","hook","codex-notify"]'"#)   // MCP is opt-in

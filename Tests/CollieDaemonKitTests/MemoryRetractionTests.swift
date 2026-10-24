@@ -136,7 +136,7 @@ private func rec(_ title: String, kind: MemoryKind = .decision, subject: String?
             let a = try await term(d, p, "A", cwd: repo)
             let args = ["kind": "feedback", "subject": "idioma", "title": "Responda em português"]
             let r = try await call(p, a, "memory.save", args)
-            #expect(r.error?.code == .invalidArgs && r.error?.message == "kind must be decision|map|pitfall", "\(r)")
+            #expect(r.error?.code == .invalidArgs && r.error?.message == "kind must be decision|map|pitfall|procedure", "\(r)")
             #expect(try await admin(d, p, "memory.save", args.merging(["repo": repo.path]) { a, _ in a }).ok)
         }
     }

@@ -31,6 +31,8 @@ enum MemoryLearning {
         body, why e howToApply, e faça "supersede" (sem "by") de cada candidata que a correção contradiz. \
         Escopo: global só quando a regra é sobre como o usuário trabalha: idioma, testes, permissões, processo; projeto \
         quando é sobre o código (num lote, use "lot" no lugar de "project"). Uma regra global não cita lote, ids nem caminhos.
+        Se a correção aponta um erro do agente que pode se repetir no código (não uma regra de trabalho), crie kind "pitfall" \
+        no lugar de "feedback", com title (o erro, curto) e body (como evitar). \
         Se não for uma regra duradoura, responda {"ops":[]}. Use só ids que aparecem nos DADOS e responda só com operações do esquema.
         """
     static let quoteMax = 300, candidateBodyMax = 400, workMax = 1_500, maxCandidates = 10
@@ -62,10 +64,10 @@ enum MemoryLearning {
 extension CommandRouter {
     var digest: MemoryDigest { MemoryDigest(file: config.paths.root.appendingPathComponent("learning/digest.jsonl")) }
 
-    /// What a correction job may touch: its candidates and proposal, its family's scopes (+ global), feedback only.
+    /// What a correction job may touch: its candidates and proposal, its family's scopes (+ global), a feedback or a pitfall.
     static func correctionScope(_ p: CorrectionPayload) -> CuratorScope {
         CuratorScope(ids: Set(p.candidates.map(\.id) + (p.proposal.map { [$0] } ?? [])),
-                     scopes: p.lot != nil ? [.lot, .global] : [.project, .global], kinds: [.feedback], maxOps: 12)
+                     scopes: p.lot != nil ? [.lot, .global] : [.project, .global], kinds: [.feedback, .pitfall], maxOps: 12)
     }
 
     /// A flagged prompt → a queued curator job (deduped per family + prompt; ≤ 5 a terminal an hour). The quote waits as a
@@ -130,6 +132,7 @@ extension CommandRouter {
         switch job.kind {
         case .correction: try await runLearningJob(job, call: call)
         case .proposals: try await runProposalsJob(job, call: call)
+        case .pitfall: try await runPitfallJob(job, call: call)
         }
     }
 
@@ -141,6 +144,12 @@ extension CommandRouter {
                                              schema: CuratorOps.schema))
         let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.correctionScope(p)).ops, job: j)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
+        // a pitfall it created (its id is the job's) goes to its store's classes
+        for key in Set([p.family, "global"]) {
+            guard let s = await memory.store(key: key),
+                  (try? await s.run { $0.store.all().records.contains { $0.id == j.id && $0.kind == .pitfall } }) == true else { continue }
+            await enqueuePitfall(j.id, store: s)
+        }
         // only an active rule (the user's own correction) is pushed
         for e in entries where e.action == "aprendido" && p.user == true { for id in e.created { await memory.pushRule(id, to: p.terminal) } }
     }
@@ -169,6 +178,7 @@ extension CommandRouter {
         case .proposals:
             let p = try proposalsPayload(job)
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)
+        case .pitfall: throw ProtocolError(code: .internal, message: "curator: a pitfall job has its own ops (applyPitfallOps)")
         }
     }
 
@@ -278,7 +288,7 @@ extension CommandRouter {
                 }
             }
             switch op {
-            case .create, .score: continue
+            case .create, .score, .bump: continue
             case .supersede(let id, let by, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .active, !untouchable(r) else { continue }
                 if users(r), !correction { ask("aposentar", reason, [r], s); continue }   // an ask changes nothing: not touched

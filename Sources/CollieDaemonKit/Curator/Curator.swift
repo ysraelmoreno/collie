@@ -2,7 +2,11 @@ import Foundation
 import CollieCore
 import CollieProtocol
 
-enum CuratorJobKind: String, Codable, Sendable { case correction, proposals }
+/// In priority order: a correction runs first, then proposals, then pitfalls.
+enum CuratorJobKind: String, Codable, Sendable, CaseIterable {
+    case correction, proposals, pitfall
+    var priority: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+}
 
 /// A queued curator job; `store` is the store family's key (`RepoMemory.key`).
 struct CuratorJob: Codable, Sendable, Identifiable {
@@ -29,7 +33,7 @@ struct CuratorStatus: Codable, Sendable {
     var costUSD: Double
 }
 
-/// One job at a time from a durable queue (`<dir>/jobs/<createdAt ms>-<id>.json`, 0600 in 0700 dirs), corrections first.
+/// One job at a time from a durable queue (`<dir>/jobs/<createdAt ms>-<id>.json`, 0600 in 0700 dirs), by kind priority.
 /// Runs on an enqueue, a cap change or the 10-minute tick; stops while the daily cap is reached, the cap is 0 or the
 /// runner is unavailable (jobs wait). A job whose handler fails `maxAttempts` times goes to `failed/`.
 actor Curator {
@@ -204,11 +208,11 @@ actor Curator {
         return usage.today >= config.cap ? "limite diário atingido (\(config.cap))" : nil
     }
 
-    /// Corrections first, then oldest; a failed job waits for the next tick.
+    /// By kind (`CuratorJobKind.priority`), then oldest; a failed job waits for the next tick.
     private func drain() async {
         while !Task.isCancelled, let handler {
             let next = jobs.filter { backoff[$0.id].map { $0 < ticks } ?? true }
-                .min { ($0.kind == .correction ? 0 : 1, $0.createdAt) < ($1.kind == .correction ? 0 : 1, $1.createdAt) }
+                .min { ($0.kind.priority, $0.createdAt) < ($1.kind.priority, $1.createdAt) }
             guard let job = next, capReason() == nil, await runner.availability() == .available else { return }
             count(job, +1)   // R9: on disk before the run (a crash still counts)
             do {

@@ -71,6 +71,7 @@ extension CommandRouter {
             let (saved, target, old) = try await saveMemory(kind, scope: scope, subject: try need(r, "subject"), title: try need(r, "title"),
                                                             body: str(r, "body") ?? "", path: str(r, "path"), repo: project,
                                                             paddock: paddockName, lot: lot, origin: origin)
+            if kind == .pitfall { await enqueuePitfall(saved.id, store: target) }
             return try memJSON(saved, target, ["superseded": old.map { .string($0.id.uuidString) } ?? .null])
 
         case "memory.search":

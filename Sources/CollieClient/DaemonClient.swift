@@ -33,6 +33,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// Called (main actor) when a terminal starts waiting for the user: id and reason.
     @ObservationIgnored public var onAttention: ((UUID, String) -> Void)?
     /// Called (main actor) when a Shepherd runs `collie notify`: terminal id and message.
+    /// A new grantable access card (not an update of an open one, not a refused one).
+    @ObservationIgnored public var onAccessCard: ((SandboxDenial) -> Void)?
     @ObservationIgnored public var onNotify: ((UUID, String) -> Void)?
     /// Called (main actor) on `herd.applied`: applying terminal (nil = the app), anchor Shepherd, frames by node id,
     /// the paddock it created.
@@ -196,7 +198,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .lotRemoved(let id): lots.removeAll { $0.id == id }
         case .herdApplied(let by, let anchor, let frames, let paddock): onHerdApplied?(by, anchor, frames, paddock)
         case .sandboxDenied(let d):
-            if let i = accessCards.firstIndex(where: { Self.sameCard($0, d) }) { accessCards[i] = d } else { accessCards.append(d) }
+            if let i = accessCards.firstIndex(where: { Self.sameCard($0, d) }) { accessCards[i] = d }
+            else { accessCards.append(d); if d.refusal == nil { onAccessCard?(d) } }
         case .sandboxDetection(let ok): detection = ok
         }
     }
@@ -301,7 +304,12 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         _ = try await admin("access.deny", ["terminal": .string(card.terminal.uuidString), "op": .string(card.op), "path": .string(card.path)])
     }
     /// **Dispensar**: denies every card in `cards`.
-    public func denyAll(_ cards: [SandboxDenial]) async throws { for c in cards { try await deny(c) } }
+    /// Keeps going past a failure; throws at the end if any card could not be denied.
+    public func denyAll(_ cards: [SandboxDenial]) async throws {
+        var failed = 0
+        for c in cards { do { try await deny(c) } catch { failed += 1 } }
+        if failed > 0 { throw ProtocolError(code: .internal, message: "\(failed) de \(cards.count) acessos não foram dispensados") }
+    }
     /// Removes a grant; the running terminals it reached restart without it.
     public func revoke(_ grant: SandboxGrant) async throws {
         defer { Task { await refreshAccess() } }

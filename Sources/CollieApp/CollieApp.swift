@@ -324,7 +324,14 @@ struct ContentView: View {
                 notifier.notify(id, title: client.terminals.first { $0.id == id }?.name ?? "Pastor", body: message)
             }
             if let s = UserDefaults.standard.string(forKey: PaddockActions.currentKey), let id = UUID(uuidString: s) { client.currentPaddock = id }
+            client.onAccessCard = { [notifier, client, canvas] d in
+                // the strip is enough while the app is frontmost and the node is on screen
+                if NSApp.isActive, let t = client.terminals.first(where: { $0.id == d.terminal }), t.paddockId == client.currentPaddock,
+                   let f = canvas.frames[d.terminal], f.intersects(CGRect(origin: canvas.offset, size: CGSize(width: viewport.width / canvas.zoom, height: viewport.height / canvas.zoom))) { return }
+                notifier.notifyAccess(d, name: client.terminals.first { $0.id == d.terminal }?.name ?? "Terminal")
+            }
             notifier.onFocus = { [canvas, client, paddocks] id in
+                AccessPopoverState.shared.open.insert(id)   // no-op for a terminal without cards: the tag isn't there
                 // a node on another paddock: switch to its paddock first
                 if let t = client.terminals.first(where: { $0.id == id }), t.paddockId != client.currentPaddock {
                     paddocks.select(t.paddockId)

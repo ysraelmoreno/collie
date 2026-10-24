@@ -149,18 +149,28 @@ enum SandboxProfile {
         var closed = i.paddockWorktrees.map { sub(real($0)) }
         if let common, worktree == nil { closed.append(sub(common + "/worktrees")) }
         rule("deny", "file-write*", tagged: true, closed)
-        // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
-        // launchd agents, ~/Applications, the app bundle (I3). R23: secrets
-        rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
-        rule("deny", "file-write*", tagged: true, EssentialPaths.secrets.map { entry(home, $0) })
-        // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
-        // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
         // R17: no nested `.git` (dir, file or link) anywhere in the project either: the user's git or IDE runs its config.
         // ponytail: agents can't clone/init/submodule-add inside the project (clone into TMP instead)
         rule("deny", "file-write*", tagged: true, [rx("^" + re(project) + "/.+/\\.git(/|$)")])
         // R20: except the tools' own checkouts at the project root (SwiftPM `.build/`, Carthage), normally git-ignored.
         // Accepted: an IDE that scans nested repos there could run a planted config
         rule("allow", "file-write*", [rx("^" + re(project) + "/(\\.build|Carthage/Checkouts)/.+")])
+        // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
+        // launchd agents, ~/Applications, the app bundle (I3). R23: secrets. (N2: after the `.build/` re-allow above)
+        rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
+        rule("deny", "file-write*", tagged: true, EssentialPaths.secrets.map { entry(home, $0) })
+        // R35: their parents themselves (never their other children): renaming `~/Library` or `~/.config` away, writing
+        // inside and renaming back would get past the denies on the leaves. From the home down, computed from the lists
+        let protected = (EssentialPaths.neverWritable + EssentialPaths.agentConfig + EssentialPaths.secrets)
+            .map { home + "/" + ($0.hasSuffix("*") ? String($0.dropLast()) : $0) } + [collie]
+        var parents: Set<String> = [home]
+        for p in protected where under(p, home) {
+            var u = URL(fileURLWithPath: p).deletingLastPathComponent()
+            while u.pathComponents.count > URL(fileURLWithPath: home).pathComponents.count { parents.insert(u.path); u = u.deletingLastPathComponent() }
+        }
+        rule("deny", "file-write*", tagged: true, parents.sorted().map(lit))
+        // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
+        // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
         if let common {
             let c = re(common)
             rule("deny", "file-write*", tagged: true, [

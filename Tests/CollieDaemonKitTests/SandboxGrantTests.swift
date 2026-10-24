@@ -490,6 +490,25 @@ private final class Rig {
         #expect(try !f.ok(g, "echo a > \(f.h(".zshrc"))"))
     }
 
+    /// R35 (N1): the protected leaves' parents can't be renamed away (write inside, rename back) when the project is the
+    /// home, nor under a write grant on them; their other children stay writable.
+    @Test func protectedParentsNotRenamed() throws {
+        let f = try FakeHome(git: false)
+        try FileManager.default.createDirectory(at: f.home.appendingPathComponent(".config/git"), withIntermediateDirectories: true)
+        let p = try f.profile(f.input(project: f.home))
+        for (from, to) in [("Library", "Lx"), (".config", "cx"), (".ssh", "sx"), ("Library/Application Support", "ax")] {
+            #expect(try !f.ok(p, "mv \(f.h(from)) \(f.h(to))"), "\(from)")
+            #expect(FileManager.default.fileExists(atPath: f.home.appendingPathComponent(from).path), "\(from)")
+        }
+        #expect(try !f.ok(p, "mv \(AgentLaunch.quote(f.home.path)) \(AgentLaunch.quote(f.base.path))/hx"))
+        #expect(try f.ok(p, "echo a > \(f.h("Library/Caches/x")) && echo a > \(f.h(".config/other")) && mkdir -p \(f.h("code/new/d")) && mv \(f.h("code/new")) \(f.h("code/new2"))"))
+        // a write grant on ~/.config: not renamed into TMP either
+        let g = try f.profile(f.input(grants: [SandboxGrant(path: SignedAppCheck.realPath(f.home.appendingPathComponent(".config")), access: .write, scope: .terminal, owner: f.id)]))
+        #expect(try !f.ok(g, "mv \(f.h(".config")) /private/tmp/collie-cx-$$"))
+        #expect(FileManager.default.fileExists(atPath: f.home.appendingPathComponent(".config/git").path))
+        #expect(try f.ok(g, "echo a > \(f.h(".config/other2"))"))
+    }
+
     /// I3: the Collie app bundle is never writable, even under a write grant on its folder; the folder's other files are.
     @Test func appBundleNeverWritable() throws {
         let f = try FakeHome(git: false)

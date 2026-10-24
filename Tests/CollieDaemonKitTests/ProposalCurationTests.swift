@@ -112,11 +112,12 @@ private func withStore(_ recs: [MemoryRecord], _ body: (Daemon, RepoMemory) asyn
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = MemoryStore(dir: dir)
         let queued = rec("Na fila", status: .proposed, age: 15 * 86400), left = rec("Pergunta esquecida", status: .proposed, age: 15 * 86400)
-        let young = rec("Nova", status: .proposed, age: 86400)
-        for r in [queued, left, young] { try store.write(r) }
-        let gone = try MemoryCleanup.expireProposals(store: store, keep: [queued.id], now: Date())
+        let young = rec("Nova", status: .proposed, age: 86400), waiting = rec("Sem pergunta", status: .proposed, age: 15 * 86400)
+        for r in [queued, left, young, waiting] { try store.write(r) }
+        // R18: only "Precisa de você" items expire; one queued again is kept, one in no ask waits
+        let gone = try MemoryCleanup.expireProposals(store: store, keep: [queued.id], asked: [queued.id, left.id, young.id], now: Date())
         #expect(gone.map(\.id) == [left.id])
-        #expect(Set(store.all().records.filter { $0.status == .proposed }.map(\.id)) == [queued.id, young.id])
+        #expect(Set(store.all().records.filter { $0.status == .proposed }.map(\.id)) == [queued.id, young.id, waiting.id])
     }
 
     @Test func migrationOnce() async throws {

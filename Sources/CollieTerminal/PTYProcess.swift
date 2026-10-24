@@ -39,11 +39,19 @@ public final class PTYProcess: @unchecked Sendable {
     private var procSource: DispatchSourceProcess?
     private var _onOutput: (@Sendable (Data) -> Void)?
     private var _onExit: (@Sendable (Int32) -> Void)?
+    private var _onWrite: (@Sendable (WriteOrigin, Data) -> Void)?
     public let pid: pid_t
     private let writeStall: Duration
 
     public var isRunning: Bool { lock.withLock { running } }
     public var lastOutputAt: ContinuousClock.Instant? { lock.withLock { lastOutput } }
+    /// Who a write comes from. R16: `.user` only on the app's own paths (keyboard/paste, text the user sent from the app,
+    /// the user's approval click); everything else is `.collie` by default, so a new write path counts as not the user's.
+    public enum WriteOrigin: Sendable { case user, collie }
+    /// Every write, before its bytes reach the terminal (the provenance chokepoint).
+    public var onWrite: (@Sendable (WriteOrigin, Data) -> Void)? {
+        get { lock.withLock { _onWrite } } set { lock.withLock { _onWrite = newValue } }
+    }
     public var onOutput: (@Sendable (Data) -> Void)? {
         get { lock.withLock { _onOutput } } set { lock.withLock { _onOutput = newValue } }
     }
@@ -180,7 +188,8 @@ public final class PTYProcess: @unchecked Sendable {
         ioLock.withLock { closed = true; if replica >= 0 { close(replica) }; close(master) }
     }
 
-    public func write(_ data: Data) throws {
+    public func write(_ data: Data, origin: WriteOrigin = .collie) throws {
+        onWrite?(origin, data)
         var off = 0
         let deadline = ContinuousClock.now + writeStall
         try ioLock.withLock {

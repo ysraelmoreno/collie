@@ -19,6 +19,7 @@ final class InputProvenance: @unchecked Sendable {   // state under `lock`
 
     func taint(_ terminal: UUID) { _ = lock.withLock { tainted.insert(terminal) } }
     func isTainted(_ terminal: UUID) -> Bool { lock.withLock { tainted.contains(terminal) } }
+    func hasTyped(_ terminal: UUID) -> Bool { lock.withLock { !(typed[terminal]?.isEmpty ?? true) } }   // tests
 
     /// At a submit: whether `prompt` is what the app typed (and nothing else wrote) since the last one; starts over.
     func take(_ terminal: UUID, prompt: String) -> Bool {

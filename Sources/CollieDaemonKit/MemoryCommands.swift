@@ -105,12 +105,12 @@ extension CommandRouter {
             guard let status = MemoryStatus(rawValue: str(r, "status") ?? "active") else {
                 throw invalid("status must be active|proposed|superseded|archived|discarded")
             }
-            let unreviewed = flag(r, "unreviewed"), keep = await queuedProposalIds()
+            let unreviewed = flag(r, "unreviewed"), (keep, asked) = await proposalState()
             var rows: [JSONValue] = [], problems: [JSONValue] = []
             for s in stores {
                 let (recs, probs, missing) = try await s.run { m in
                     let idx = m.index()   // refresh first: resolves two actives a land (or a hand edit) left behind
-                    try? MemoryCleanup.expireProposals(store: m.store, keep: keep)
+                    try? MemoryCleanup.expireProposals(store: m.store, keep: keep, asked: asked)
                     let all = m.store.all()
                     let recs = all.records.filter {
                         $0.status == status && (kind == nil || $0.kind == kind) && (!unreviewed || !$0.reviewed)

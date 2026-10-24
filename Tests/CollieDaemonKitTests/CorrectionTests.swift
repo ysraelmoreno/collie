@@ -14,7 +14,9 @@ private func term(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL) async throw
     let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn", args: [
         "name": .string(name), "preset": .string("shell"), "cwd": .string(cwd.path)]), to: p.socket, timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
-    return Term(id: id, token: try await tokenOf(d, id))
+    let token = try await tokenOf(d, id)
+    _ = await d.router.asks.provenance.take(UUID(uuidString: id)!, prompt: "")   // tokenOf typed `echo` into the shell: start clean
+    return Term(id: id, token: token)
 }
 private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: String] = [:]) async throws -> Response {
     try await UnixSocketClient.send(Request(id: "m", terminalId: t.id, token: t.token, command: cmd, args: args.mapValues { .string($0) }),
@@ -358,6 +360,42 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
             _ = try await d.router.applyOps([op], job: job)
             let rules = try await all(d.router.memory.repo(for: repo.path)).filter { $0.kind == .feedback && $0.status != .proposed && $0.status != .discarded }
             #expect(rules.count == 1 && rules.first?.status == .active, "\(rules)")
+        }
+    }
+
+    /// R16: the PTY write is the chokepoint: any write not marked the app user's taints — a new path included.
+    @Test func newWritePathTaints() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: URL(fileURLWithPath: "/tmp"))
+            let proc = try #require(await d.process(a.uuid))
+            let prov = await d.router.asks.provenance
+            try proc.write(Data("não, use SQLite\r".utf8), origin: .user)   // the app's keyboard
+            #expect(!prov.isTainted(a.uuid) && prov.take(a.uuid, prompt: "não, use SQLite"))
+            try proc.write(Data("echo oi\r".utf8))   // any other write, by default
+            #expect(prov.isTainted(a.uuid))
+            try proc.write(Data("não, use SQLite\r".utf8), origin: .user)
+            #expect(!prov.take(a.uuid, prompt: "não, use SQLite"))
+        }
+    }
+
+    /// R17: a Work-panel chat message from the app is the user's own text: its correction is active.
+    @Test func chatMessageIsUser() async throws {
+        let repo = try await makeRepo()
+        let x = rec("Use Postgres pool", subject: "db", body: "postgres pool sizing")
+        let (fake, cfg) = curated(ops([createFeedback(), supersede(x.id)]))
+        try await withDaemon(configure: cfg) { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            let store = await d.router.memory.repo(for: repo.path)
+            _ = try await store.run { try $0.store.save(x) }
+            let prompt = "não, use SQLite em vez do Postgres pool"
+            #expect(try await admin(d, p, "work.chat.send", ["text": "@A \(prompt)"]).ok)
+            let prov = await d.router.asks.provenance
+            #expect(await waitFor(15) { prov.hasTyped(a.uuid) })
+            #expect(!prov.isTainted(a.uuid))
+            _ = try await relevant(p, a, prompt)
+            #expect(await waitFor(10) { (try? await all(store))?.first { $0.id == x.id }?.status == .superseded })
+            #expect(try await all(store).contains { $0.kind == .feedback && $0.status == .active })
+            _ = fake
         }
     }
 

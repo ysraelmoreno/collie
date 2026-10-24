@@ -280,6 +280,8 @@ public actor AskCoordinator {
         var guardsApproval = false
         /// Timed out after delivery: caller already failed; the turn still holds the slot until it ends.
         var held = false
+        /// R17: the app's work chat (`askAsUser`): the user's own text.
+        var user = false
         var cont: CheckedContinuation<Result<AskResult, ProtocolError>, Never>?
         var timer: Task<Void, Never>?
     }
@@ -315,6 +317,8 @@ public actor AskCoordinator {
         // ponytail: output read between spawn and this assignment isn't scanned; an agent enabling
         // bracketed paste within those microseconds would get plain input. Hook it in PTYProcess.init if seen.
         process.onOutput = { paste.feed($0); approval.feed($0) }
+        let prov = provenance, tid = rec.id
+        process.onWrite = { origin, d in if origin == .user { prov.typed(tid, d) } else { prov.taint(tid) } }   // R16
         // a prompt printed before the hook (a trust dialog at launch): scanned on the PTY queue, as the hub does
         process.serialized { approval.feed(Data(scrollback.snapshot().data.suffix(4096))) }
         targets[rec.id] = Target(name: rec.name, preset: rec.preset, process: process, scrollback: scrollback, paste: paste,
@@ -350,7 +354,7 @@ public actor AskCoordinator {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
         }
-        return try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, afterQuiet: true, guardsApproval: true, cont: nil),
+        return try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, afterQuiet: true, guardsApproval: true, user: true, cont: nil),
                                  timeout: timeout)
     }
 
@@ -616,7 +620,6 @@ public actor AskCoordinator {
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
         // off the cooperative pool, report failures back through finish.
         let data = PromptInjector.payload(w.prompt, raw: w.raw, bracketed: t.paste.enabled)
-        provenance.taint(to)   // before the write: the prompt it types is never the user's own
         let process = t.process, name = t.name, inject = w.inject, approval = t.approval, guards = w.guardsApproval
         DispatchQueue.global().async { [weak self] in
             // checked again at the write, in one step with counting the input: a prompt printed (or keys typed) since the
@@ -630,7 +633,7 @@ public actor AskCoordinator {
                 }
             } else { approval.input(echo: w.prompt) }
             do {
-                try process.write(data)
+                try process.write(data, origin: w.user ? .user : .collie)   // R17: the user's own chat text is theirs
                 if inject { Task { await self?.delivered(id) } }
             } catch {
                 let e = (error as? PTYError) == .stalled
@@ -705,7 +708,8 @@ public actor AskCoordinator {
                 guard let (tracker, a, inputs, process, sb) = hit else { return c.resume(returning: .stale) }
                 guard let keys = Self.keys(a.kind, allow: allow) else { return c.resume(returning: .dismissed(a)) }
                 let before = sb.mark()
-                do { try process.write(keys); c.resume(returning: .sent(a)) } catch { return c.resume(returning: .failed(a)) }
+                // the user's click in the app (approvals are answered only from the app's work chat)
+                do { try process.write(keys, origin: .user); c.resume(returning: .sent(a)) } catch { return c.resume(returning: .failed(a)) }
                 // R9: a dialog that took the key redraws (or echoes); no output at all means the key was ignored
                 DispatchQueue.global().asyncAfter(deadline: .now() + Self.answerReaction) { [weak self] in
                     guard sb.mark() == before else { return }

@@ -445,6 +445,12 @@ extension CommandRouter {
         FileManager.default.createFile(atPath: marker.path, contents: Data())
     }
 
+    /// Queued proposal ids (never expire while they wait) and the records of open asks (R18: the only ones that expire).
+    func proposalState() async -> (keep: Set<UUID>, asked: Set<UUID>) {
+        let asked = digest.since(.distantPast).filter { $0.action == "ask" && !$0.resolved && !$0.undone }.flatMap { $0.before.map(\.id) }
+        return (await queuedProposalIds(), Set(asked))
+    }
+
     /// Proposal ids in queued jobs (they don't expire while they wait for the curator).
     func queuedProposalIds() async -> Set<UUID> {
         var ids = Set<UUID>()

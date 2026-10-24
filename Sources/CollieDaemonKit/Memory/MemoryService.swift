@@ -15,9 +15,10 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     private var lastOpenAttempt: Date?
     private var idx: MemoryIndex?
     private(set) var indexError: String?
+    private let embedder: (any MemoryEmbedder)?
 
-    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil, secureRoot: URL? = nil) {
-        self.root = root; self.dbFile = dbFile; self.commonDir = commonDir; self.lotId = lotId
+    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil, secureRoot: URL? = nil, embedder: (any MemoryEmbedder)? = nil) {
+        self.root = root; self.dbFile = dbFile; self.commonDir = commonDir; self.lotId = lotId; self.embedder = embedder
         store = MemoryStore(dir: storeDir, secureRoot: secureRoot)
         queue = DispatchQueue(label: "collie.memory.\(storeDir.path)")
     }
@@ -59,7 +60,7 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
         }
         if idx == nil, lastOpenAttempt.map({ Date().timeIntervalSince($0) >= Self.reopenDelay }) ?? true {
             lastOpenAttempt = Date()
-            do { idx = try MemoryIndex(dbFile: dbFile, store: store, repoRoot: root); indexError = nil } catch {
+            do { idx = try MemoryIndex(dbFile: dbFile, store: store, repoRoot: root, embedder: embedder); indexError = nil } catch {
                 indexError = (error as? ProtocolError)?.message ?? "\(error)"
                 memoryLog(indexError ?? "")
             }
@@ -106,12 +107,18 @@ actor MemoryService {
     static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código."
     static let relevantHeader = "Memória relacionada (Collie):"
 
-    init(globalDir: URL) {
-        self.globalDir = globalDir
+    nonisolated let embedder: (any MemoryEmbedder)?
+
+    init(globalDir: URL, embedder: (any MemoryEmbedder)? = nil) {
+        self.globalDir = globalDir; self.embedder = embedder
         lotsDir = globalDir.deletingLastPathComponent().appendingPathComponent("lots")   // beside `work/`
         global = RepoMemory(root: nil, storeDir: globalDir,
-                            dbFile: globalDir.deletingLastPathComponent().appendingPathComponent("cache/memory.sqlite"), commonDir: nil)
+                            dbFile: globalDir.deletingLastPathComponent().appendingPathComponent("cache/memory.sqlite"), commonDir: nil,
+                            embedder: embedder)
     }
+
+    /// A query's vector: its first 1 000 characters (the prompt hook's 5 s budget); nil without a model for its language.
+    nonisolated func embed(_ text: String) -> (lang: String, vector: [Float])? { embedder?.embed(String(text.prefix(1_000))) }
 
     func repo(for cwd: String) async -> RepoMemory {
         if let r = byCwd[cwd] { return r }
@@ -127,7 +134,7 @@ actor MemoryService {
         let dir = LegacyOrq.repoDirName(repoRoot: common.lastPathComponent == ".git" ? common.deletingLastPathComponent() : top)
         let r = byRoot[top.path] ?? RepoMemory(root: top, storeDir: top.appendingPathComponent("\(dir)/memory"),
                                                dbFile: top.appendingPathComponent("\(dir)/cache/memory.sqlite"),
-                                               commonDir: common)
+                                               commonDir: common, embedder: embedder)
         byRoot[top.path] = r
         byCwd[cwd] = r
         return r
@@ -139,7 +146,8 @@ actor MemoryService {
         if let r = byLot[id] { return r }
         let dir = lotsDir.appendingPathComponent(id.uuidString.lowercased())
         let r = RepoMemory(root: nil, storeDir: dir.appendingPathComponent("memory"),
-                           dbFile: dir.appendingPathComponent("cache/memory.sqlite"), commonDir: nil, lotId: id, secureRoot: lotsDir)
+                           dbFile: dir.appendingPathComponent("cache/memory.sqlite"), commonDir: nil, lotId: id, secureRoot: lotsDir,
+                           embedder: embedder)
         byLot[id] = r
         return r
     }
@@ -199,8 +207,9 @@ actor MemoryService {
         let q = Self.significantTerms(prompt).joined(separator: " ")
         guard !q.isEmpty, max > 0 else { return "" }
         var hits: [(hit: MemoryHit, store: RepoMemory)] = []
+        let vector = embed(prompt)   // once per prompt, for every store
         for s in await readable(cwd, lot: lot) {
-            let found = (try? await s.run { m in (m.index()?.search(q, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
+            let found = (try? await s.run { m in (m.index()?.search(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
             hits += found.filter { Self.visible($0.record, paddock: paddock, lot: s.lotId) }
                 .map { (MemoryHit(record: $0.record, score: $0.score * (s.lotId != nil ? Self.lotBoost : 1)), s) }
         }

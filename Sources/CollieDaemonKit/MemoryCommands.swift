@@ -77,12 +77,13 @@ extension CommandRouter {
                 for l in ws.lots where l.id != myLot?.id && enterable(l) { stores.insert(await memory.lotStore(l.id), at: 0) }
             }
             var hits: [(hit: MemoryHit, store: RepoMemory)] = []
+            let vector = memory.embed(query)
             for s in stores {
                 // over-fetch: paddock memories of other paddocks are filtered out below
                 // the picked repo's index must work; a broken global one only drops its hits
                 let required = s === repo && s.exists   // a lot with no memories yet has no index: no hits
                 let found = try await s.run { m in
-                    (required ? try m.requireIndex() : m.index())?.search(query, limit: limit * 2 + 10, includeInactive: inactive) ?? []
+                    (required ? try m.requireIndex() : m.index())?.search(query, vector: vector, limit: limit * 2 + 10, includeInactive: inactive) ?? []
                 }
                 hits += found.filter { caller == nil || MemoryService.visible($0.record, paddock: paddockName, lot: s.lotId) }.map { ($0, s) }
             }

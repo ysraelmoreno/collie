@@ -86,7 +86,7 @@ actor CommandRouter {
             .filter { SandboxGrantStore.refusal($0.path, op: $0.access.rawValue, home: home, collie: root,
                                                 app: SandboxInput.appBundle(of: config.collieExecutable)) == nil }
         self.usage = UsageService(dir: config.paths.root.appendingPathComponent("usage/providers"))
-        self.memory = MemoryService(globalDir: config.paths.root.appendingPathComponent("memory"))
+        self.memory = MemoryService(globalDir: config.paths.root.appendingPathComponent("memory"), embedder: config.embedder)
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
         let adbPath = config.adbPath, axePath = config.axePath, emulatorPath = config.emulatorPath
         self.devices = DeviceService(root: config.paths.root, runDir: config.paths.runDir, pollInterval: config.devicePollInterval,

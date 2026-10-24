@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import Accelerate
 import CollieCore
 import CollieProtocol
 
@@ -13,10 +14,11 @@ final class MemoryIndex {
     private let db: OpaquePointer
     private let store: MemoryStore
     private let repoRoot: URL?
+    private let embedder: (any MemoryEmbedder)?
     static let maxTerms = 32, maxTermLength = 64, halfLife: Double = 30 * 86400
 
-    init(dbFile: URL, store: MemoryStore, repoRoot: URL?) throws {
-        self.store = store; self.repoRoot = repoRoot
+    init(dbFile: URL, store: MemoryStore, repoRoot: URL?, embedder: (any MemoryEmbedder)? = nil) throws {
+        self.store = store; self.repoRoot = repoRoot; self.embedder = embedder
         try? FileManager.default.createDirectory(at: dbFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         var h: OpaquePointer?
         let rc = sqlite3_open_v2(dbFile.path, &h, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nil)
@@ -32,10 +34,11 @@ final class MemoryIndex {
             sqlite3_result_double(ctx, pow(0.5, age / MemoryIndex.halfLife))
         }, nil, nil, nil)
         guard fn == SQLITE_OK else { throw fail("create function") }
-        // v1: docs rows say `paddock` (an index from before the herding vocabulary said `floor`): rebuilt from the files
+        // v1: docs rows say `paddock` (an index from before the herding vocabulary said `floor`); v2: `vecs`.
+        // Older indexes are rebuilt from the files; `stats` (index-owned) is kept.
         var version = 0
         try query("PRAGMA user_version", []) { version = Int(sqlite3_column_int64($0, 0)) }
-        if version < 1 { try exec("DROP TABLE IF EXISTS docs; DROP TABLE IF EXISTS fts; PRAGMA user_version = 1;") }
+        if version < 2 { try exec("DROP TABLE IF EXISTS docs; DROP TABLE IF EXISTS fts; DROP TABLE IF EXISTS vecs; PRAGMA user_version = 2;") }
         try exec("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS docs(id TEXT PRIMARY KEY, file TEXT NOT NULL, mtime REAL NOT NULL, size INTEGER NOT NULL,
@@ -44,6 +47,7 @@ final class MemoryIndex {
             CREATE INDEX IF NOT EXISTS docs_file ON docs(file);
             CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, subject, body, path, tokenize='unicode61 remove_diacritics 2');
             CREATE TABLE IF NOT EXISTS stats(id TEXT PRIMARY KEY, reads INTEGER NOT NULL DEFAULT 0, lastReadAt REAL, missingSince REAL);
+            CREATE TABLE IF NOT EXISTS vecs(id TEXT PRIMARY KEY, lang TEXT NOT NULL, v BLOB NOT NULL);
             """)
     }
 
@@ -56,7 +60,7 @@ final class MemoryIndex {
         var problems: [(file: String, error: String)] = []
         try exec("BEGIN IMMEDIATE")
         do {
-            if force { try exec("DELETE FROM docs; DELETE FROM fts;") }
+            if force { try exec("DELETE FROM docs; DELETE FROM fts; DELETE FROM vecs;") }
             var known: [String: (mtime: Double, size: Int)] = [:]
             try query("SELECT file, mtime, size FROM docs", []) { known[text($0, 0)] = (sqlite3_column_double($0, 1), Int(sqlite3_column_int64($0, 2))) }
             let onDisk = files()
@@ -122,6 +126,7 @@ final class MemoryIndex {
 
     private func put(_ r: MemoryRecord, file: String, mtime: Double, size: Int) throws {
         try query("DELETE FROM fts WHERE rowid IN (SELECT rowid FROM docs WHERE id = ? OR file = ?)", [key(r.id), file]) { _ in }
+        try query("DELETE FROM vecs WHERE id IN (SELECT id FROM docs WHERE id = ? OR file = ?)", [key(r.id), file]) { _ in }
         try query("DELETE FROM docs WHERE id = ? OR file = ?", [key(r.id), file]) { _ in }
         let json = String(decoding: try JSONEncoder().encode(r), as: UTF8.self)
         try query("""
@@ -131,9 +136,18 @@ final class MemoryIndex {
                   r.pinned, r.updatedAt.timeIntervalSince1970, r.path, json]) { _ in }
         try query("INSERT INTO fts(rowid, title, subject, body, path) VALUES(?, ?, ?, ?, ?)",
                   [Int(sqlite3_last_insert_rowid(db)), r.title, r.subject, r.body, r.path ?? ""]) { _ in }
+        // ponytail: a model that appears later (asset downloaded) reaches unchanged files only on a rebuild
+        if let e = embedder?.embed(Self.vectorText(r)) {
+            try query("INSERT OR REPLACE INTO vecs(id, lang, v) VALUES(?, ?, ?)",
+                      [key(r.id), e.lang, e.vector.withUnsafeBufferPointer { Data(buffer: $0) }]) { _ in }
+        }
     }
 
+    /// What a record's vector embeds: title + the first 500 characters of the body.
+    static func vectorText(_ r: MemoryRecord) -> String { r.title + "\n" + r.body.prefix(500) }
+
     private func removeFile(_ file: String) throws {
+        try query("DELETE FROM vecs WHERE id IN (SELECT id FROM docs WHERE file = ?)", [file]) { _ in }
         try query("DELETE FROM fts WHERE rowid IN (SELECT rowid FROM docs WHERE file = ?)", [file]) { _ in }
         try query("DELETE FROM docs WHERE file = ?", [file]) { _ in }
     }
@@ -187,25 +201,77 @@ final class MemoryIndex {
         }.joined(separator: " OR ")
     }
 
-    func search(_ query: String, limit: Int, kinds: Set<MemoryKind>? = nil, includeInactive: Bool = false) -> [MemoryHit] {
-        guard limit > 0, let match = MemoryIndex.ftsQuery(query) else { return [] }
+    /// Reads (up to ×2) × recency, or ×1.5 pinned (pinned memories don't decay). Its one `?` is now.
+    private static let multiplier = "(1 + 0.1 * min(coalesce(s.reads, 0), 10)) * (CASE WHEN d.pinned THEN 1.5 ELSE collie_recency(? - d.updatedAt) END)"
+    static let vectorMin = 0.55
+
+    /// bm25 × multiplier; with a query `vector`, blended: `m × (0.6 × b / bTop + 0.4 × max(cos, 0))` over the word hits
+    /// plus the records of the same language whose cosine is ≥ `vectorMin`.
+    func search(_ query: String, vector: (lang: String, vector: [Float])? = nil, limit: Int, kinds: Set<MemoryKind>? = nil,
+                includeInactive: Bool = false) -> [MemoryHit] {
+        let match = MemoryIndex.ftsQuery(query)
+        guard limit > 0, match != nil || vector != nil else { return [] }
         if let kinds, kinds.isEmpty { return [] }
         let kindList = kinds.map { $0.map(\.rawValue).sorted() } ?? []
         let kindFilter = kindList.isEmpty ? "" : "AND d.kind IN (\(kindList.map { _ in "?" }.joined(separator: ", ")))"
-        // Pinned memories don't decay: ×1.5 instead of the recency factor. Rank and LIMIT in the inner query on small columns; bodies (json) are read only for the winners.
-        let sql = """
-            SELECT d.json, t.score FROM (
-              SELECT fts.rowid AS rid,
-                -bm25(fts) * (1 + 0.1 * min(coalesce(s.reads, 0), 10)) * (CASE WHEN d.pinned THEN 1.5 ELSE collie_recency(? - d.updatedAt) END) AS score
-              FROM fts JOIN docs d ON d.rowid = fts.rowid LEFT JOIN stats s ON s.id = d.id
-              WHERE fts MATCH ? AND (? OR d.status = 'active') \(kindFilter)
-              ORDER BY score DESC LIMIT ?
-            ) t JOIN docs d ON d.rowid = t.rid ORDER BY t.score DESC
-            """
+        let kindArgs = kindList.map { $0 as Any? }
+        let now = Date().timeIntervalSince1970
         var hits: [MemoryHit] = []
-        let args: [Any?] = [Date().timeIntervalSince1970, match, includeInactive] + kindList.map { $0 as Any? } + [limit]
-        try? self.query(sql, args) { row in
-            if let r = decode(text(row, 0)) { hits.append(MemoryHit(record: r, score: sqlite3_column_double(row, 1))) }
+        guard let vector else {
+            // Rank and LIMIT in the inner query on small columns; bodies (json) are read only for the winners.
+            let sql = """
+                SELECT d.json, t.score FROM (
+                  SELECT fts.rowid AS rid, -bm25(fts) * \(Self.multiplier) AS score
+                  FROM fts JOIN docs d ON d.rowid = fts.rowid LEFT JOIN stats s ON s.id = d.id
+                  WHERE fts MATCH ? AND (? OR d.status = 'active') \(kindFilter)
+                  ORDER BY score DESC LIMIT ?
+                ) t JOIN docs d ON d.rowid = t.rid ORDER BY t.score DESC
+                """
+            try? self.query(sql, [now, match, includeInactive] + kindArgs + [limit]) { row in
+                if let r = decode(text(row, 0)) { hits.append(MemoryHit(record: r, score: sqlite3_column_double(row, 1))) }
+            }
+            return hits
+        }
+        var cand: [String: (b: Double, m: Double, cos: Double)] = [:]
+        if let match {
+            let sql = """
+                SELECT d.id, -bm25(fts) AS b, \(Self.multiplier) AS m
+                FROM fts JOIN docs d ON d.rowid = fts.rowid LEFT JOIN stats s ON s.id = d.id
+                WHERE fts MATCH ? AND (? OR d.status = 'active') \(kindFilter)
+                ORDER BY b * m DESC LIMIT ?
+                """
+            try? self.query(sql, [now, match, includeInactive] + kindArgs + [limit]) { row in
+                cand[text(row, 0)] = (sqlite3_column_double(row, 1), sqlite3_column_double(row, 2), 0)
+            }
+        }
+        // ponytail: brute-force cosine over the store's vecs; an ANN index if a store passes ~20 000
+        let q = vector.vector.map(Double.init)
+        let qn = q.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        let sql = """
+            SELECT d.id, v.v, \(Self.multiplier) AS m
+            FROM vecs v JOIN docs d ON d.id = v.id LEFT JOIN stats s ON s.id = d.id
+            WHERE v.lang = ? AND (? OR d.status = 'active') \(kindFilter)
+            """
+        var x = [Double](repeating: 0, count: q.count)
+        try? self.query(sql, [now, vector.lang, includeInactive] + kindArgs) { row in
+            guard qn > 0, let p = sqlite3_column_blob(row, 1) else { return }
+            let n = Int(sqlite3_column_bytes(row, 1)) / MemoryLayout<Float>.size
+            guard n == q.count else { return }   // another model's dimension
+            vDSP_vspdp(p.assumingMemoryBound(to: Float.self), 1, &x, 1, vDSP_Length(n))
+            var dot = 0.0, vn = 0.0
+            vDSP_dotprD(q, 1, x, 1, &dot, vDSP_Length(n))
+            vDSP_svesqD(x, 1, &vn, vDSP_Length(n))
+            guard vn > 0 else { return }
+            let cos = dot / (qn * vn.squareRoot()), id = text(row, 0)
+            if cand[id] != nil { cand[id]!.cos = cos } else if cos >= Self.vectorMin { cand[id] = (0, sqlite3_column_double(row, 2), cos) }
+        }
+        let bTop = cand.values.map(\.b).max() ?? 0
+        let ranked = cand.map { id, c in (id, c.m * (0.6 * (bTop > 0 ? c.b / bTop : 0) + 0.4 * max(c.cos, 0))) }
+            .sorted { ($0.1, $1.0) > ($1.1, $0.0) }.prefix(limit)
+        for (id, score) in ranked {
+            try? self.query("SELECT json FROM docs WHERE id = ?", [id]) { row in
+                if let r = decode(text(row, 0)) { hits.append(MemoryHit(record: r, score: score)) }
+            }
         }
         return hits
     }
@@ -266,6 +332,7 @@ final class MemoryIndex {
             case let v as Bool: sqlite3_bind_int(st, n, v ? 1 : 0)
             case let v as Int: sqlite3_bind_int64(st, n, Int64(v))
             case let v as Double: sqlite3_bind_double(st, n, v)
+            case let v as Data: _ = v.withUnsafeBytes { sqlite3_bind_blob(st, n, $0.baseAddress, Int32($0.count), transient) }
             default: throw ProtocolError(code: .internal, message: "memory index: unsupported bind \(type(of: a))")
             }
         }

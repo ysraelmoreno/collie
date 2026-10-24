@@ -72,6 +72,8 @@ public struct DaemonConfig: Sendable {
     var envRunner: UserEnvironment.Runner = UserEnvironment.live
     /// The on-device model for summary rewrites (tests pass a fake).
     var localModel: any LocalModel = FoundationLocalModel()
+    /// On-device sentence vectors for memory search (tests pass a fake).
+    var embedder: any MemoryEmbedder = NLMemoryEmbedder()
     public init(paths: Paths, collieExecutable: URL, workspaceId: UUID) {
         self.paths = paths; self.collieExecutable = collieExecutable; self.workspaceId = workspaceId
     }

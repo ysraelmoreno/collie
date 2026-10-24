@@ -21,10 +21,11 @@ private struct Fake {
         try ("#!/bin/sh\n" + script).write(to: claude, atomically: false, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
     }
-    func runner(path: String? = nil) -> ClaudeCuratorRunner {
+    func runner(path: String? = nil, retryAfter: Duration = .seconds(30)) -> ClaudeCuratorRunner {
         let env = ["PATH": path ?? (bin.path + ":/usr/bin:/bin"), "HOME": f.home.path,
-                   "COLLIE_SOCKET": "/x.sock", "COLLIE_TOKEN": "t", "COLLIE_TERMINAL_ID": "i"]
-        return ClaudeCuratorRunner(root: f.collie, home: f.home, env: { env })
+                   "COLLIE_SOCKET": "/x.sock", "COLLIE_TOKEN": "t", "COLLIE_TERMINAL_ID": "i",
+                   "ANTHROPIC_API_KEY": "sk-x", "ANTHROPIC_AUTH_TOKEN": "tok-x"]
+        return ClaudeCuratorRunner(root: f.collie, home: f.home, env: { env }, retryAfter: retryAfter)
     }
 }
 
@@ -87,6 +88,7 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         #expect(parts[0].contains("--strict-mcp-config\n") && parts[0].hasSuffix("--\n\(call.input)\n"))
         #expect(!parts[1].contains("COLLIE_SOCKET") && !parts[1].contains("COLLIE_TOKEN") && !parts[1].contains("COLLIE_TERMINAL_ID"))
         #expect(parts[1].contains("HOME=\(fake.f.home.path)\n"))
+        #expect(!parts[1].contains("ANTHROPIC_API_KEY") && !parts[1].contains("ANTHROPIC_AUTH_TOKEN"), "R5: the plan login, never a key")
         #expect(!FileManager.default.fileExists(atPath: fake.f.home.appendingPathComponent("outside").path))
         #expect(try Data(contentsOf: settings) == before)
         let cwd = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -112,12 +114,48 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
     }
 
     @Test func timeoutKills() async throws {
-        let fake = try Fake("sleep 5\n")
+        let fake = try Fake { rec in "echo $$ > '\(rec.path)'; sleep 5 & echo $! >> '\(rec.path)'; wait\n" }
         let start = ContinuousClock.now
-        await #expect(throws: ProtocolError.self) {
+        await #expect(throws: ProtocolError(code: .timeout, message: "claude não respondeu")) {
             try await fake.runner().run(call, model: "haiku", timeout: .seconds(1))
         }
         #expect(ContinuousClock.now - start < .seconds(4))
-        #expect(BoundedProcess.livePids().isEmpty)
+        // its own pids only (other suites may run a BoundedProcess meanwhile)
+        let pids = try String(contentsOf: fake.rec, encoding: .utf8).split(separator: "\n").compactMap { pid_t($0) }
+        #expect(pids.count == 2)
+        for p in pids { #expect(kill(p, 0) != 0 && !BoundedProcess.livePids().contains(p), "\(p) survived") }
+    }
+
+    /// A banner line before the JSON (an update notice) and a fenced `result` still parse.
+    @Test func parseTolerant() throws {
+        #expect(try ClaudeCuratorRunner.parse("Update available: 2.2.0\n" + fixture + "\n").inputTokens == 812)
+        let fenced = #"{"type":"result","is_error":false,"result":"```json\n{\"ops\":[]}\n```","usage":{"input_tokens":1,"output_tokens":2},"total_cost_usd":0}"#
+        #expect(try ClaudeCuratorRunner.parse(fenced).json == .object(["ops": .array([])]))
+        #expect(try ClaudeCuratorRunner.parse("[{\"type\":\"system\"}," + fixture + "]").outputTokens == 40)
+    }
+
+    @Test func parseGarbageUnavailable() {
+        for junk in ["", "oops", "{\"type\":\"result\",\"is_error\":false,\"result\":\"não é json\"}"] {
+            #expect(throws: ProtocolError(code: .unavailable, message: ClaudeCuratorRunner.unreadable), "\(junk)") {
+                try ClaudeCuratorRunner.parse(junk)
+            }
+        }
+    }
+
+    /// An auth-status that fails (junk, timeout) is not "sem login" for 10 min: retried soon; it runs in an empty temp cwd.
+    @Test func authErrorRetried() async throws {
+        let fake = try Fake { rec in """
+            pwd >> '\(rec.path)'
+            [ -f '\(rec.path).n' ] && { echo '{"loggedIn": true}'; exit 0; }
+            touch '\(rec.path).n'; echo 'boom'; exit 3
+
+            """ }
+        let r = fake.runner(retryAfter: .zero)
+        #expect(await r.availability() == .unavailable("claude não respondeu"))
+        #expect(await r.availability() == .available)
+        #expect(await r.availability() == .available)   // cached: no third run
+        let cwds = try String(contentsOf: fake.rec, encoding: .utf8).split(separator: "\n").map(String.init)
+        #expect(cwds.count == 2)
+        for d in cwds { #expect(d != SignedAppCheck.realPath(fake.f.home) && d.contains("collie-curator-") && !FileManager.default.fileExists(atPath: d)) }
     }
 }

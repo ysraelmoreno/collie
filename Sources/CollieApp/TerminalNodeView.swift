@@ -468,6 +468,7 @@ struct NodeTitleBar: View {
             }
             Text(t?.preset.rawValue ?? "").foregroundStyle(Color.collieMuted).lineLimit(1)
             if t?.sandbox == .free { CollieTag("livre", tone: .danger).help("Terminal livre: sem sandbox, nenhuma guia chega a ele") }
+            else if t != nil { AccessBadge(id: id, client: client) }
             if let l = client.lot(of: id) { CollieTag(l.name, tone: .secondary).help(l.goal.isEmpty ? "Lote \(l.name)" : "Lote \(l.name): \(l.goal)") }
             if case .disconnected = client.state { Text("desconectado").foregroundStyle(Color.collieDanger) }
             if let text = status.text { Text(text).foregroundStyle(color(status)).lineLimit(1) }

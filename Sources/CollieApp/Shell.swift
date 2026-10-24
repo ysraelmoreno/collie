@@ -424,6 +424,7 @@ private struct LotView: View {
             }
             TabView {
                 board.tabItem { Text("Quadro") }
+                LotGrantsList(lot: lot, client: client).tabItem { Text("Liberados") }
             }
         }
         .padding(12).frame(minWidth: 480, minHeight: 360)

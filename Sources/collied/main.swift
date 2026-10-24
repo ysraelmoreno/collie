@@ -79,7 +79,7 @@ do {
     let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
     config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil
     // every non-free terminal starts sandboxed (R15), whatever the root
-    if terminalSandbox { config.sandboxHome = URL(fileURLWithPath: NSHomeDirectory()) }
+    if terminalSandbox { config.sandboxHome = URL(fileURLWithPath: NSHomeDirectory()); config.watchDenials = true }
     FileHandle.standardError.write(Data("collied: terminal sandbox \(terminalSandbox ? "on (home \(NSHomeDirectory()))" : "OFF (--no-terminal-sandbox)")\n".utf8))
     // admin only from the app this daemon ships with (Contents/Helpers/collied -> Contents/MacOS/Collie); see forDaemon
     if let me = selfPath() {

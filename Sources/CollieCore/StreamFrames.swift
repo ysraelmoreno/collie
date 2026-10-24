@@ -137,9 +137,13 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
          /// A herd was applied: `by` the applying terminal (nil = the app), `anchor` the Shepherd whose frame the
          /// layout is relative to (nil: none), `frames` by terminal/panel id, `paddock` the paddock it created (nil: none).
          /// The app places the nodes.
-         herdApplied(by: UUID?, anchor: UUID?, frames: [String: HerdFrame], paddock: UUID?)
+         herdApplied(by: UUID?, anchor: UUID?, frames: [String: HerdFrame], paddock: UUID?),
+         /// An access card for the app (new, or its count updated): a sandbox denial or an agent's request.
+         sandboxDenied(SandboxDenial),
+         /// Whether the daemon sees sandbox denials (its `log stream` runs); false: "detecção indisponível".
+         sandboxDetection(available: Bool)
 
-    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l }
+    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l, d, ok }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -165,6 +169,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
             self = .herdApplied(by: try c.decodeIfPresent(UUID.self, forKey: .by), anchor: try c.decodeIfPresent(UUID.self, forKey: .anchor),
                                      frames: try c.decode([String: HerdFrame].self, forKey: .frames),
                                      paddock: try c.decodeIfPresent(UUID.self, forKey: .paddock))
+        case "sandboxDenied": self = .sandboxDenied(try c.decode(SandboxDenial.self, forKey: .d))
+        case "sandboxDetection": self = .sandboxDetection(available: try c.decode(Bool.self, forKey: .ok))
         case let t: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "unknown event '\(t)'")
         }
     }
@@ -192,6 +198,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .herdApplied(let by, let anchor, let frames, let paddock):
             try c.encode("herdApplied", forKey: .t); try c.encodeIfPresent(by, forKey: .by)
             try c.encodeIfPresent(anchor, forKey: .anchor); try c.encode(frames, forKey: .frames); try c.encodeIfPresent(paddock, forKey: .paddock)
+        case .sandboxDenied(let x): try c.encode("sandboxDenied", forKey: .t); try c.encode(x, forKey: .d)
+        case .sandboxDetection(let ok): try c.encode("sandboxDetection", forKey: .t); try c.encode(ok, forKey: .ok)
         }
     }
 }

@@ -60,6 +60,12 @@ public struct DaemonConfig: Sendable {
     /// The home a sandboxed terminal's profile closes (collied: the user's); nil: terminals start unsandboxed (tests,
     /// which pass a fake home in a temp dir when they test the sandbox, R2).
     public var sandboxHome: URL?
+    /// Watch sandbox denials with `log stream` (collied, with the sandbox on): the app's access cards.
+    public var watchDenials = false
+    /// The denial lines (ndjson) in place of `log stream` (tests); nil: `watchDenials` decides.
+    var denialSource: (@Sendable () -> AsyncStream<String>)?
+    /// First restart delay of a `log stream` that ended (doubles to 60 s).
+    var denialBackoff: Duration = .seconds(1)
     /// Runs `/usr/bin/open` for `collie open` (tests record instead).
     var opener: @Sendable ([String]) async throws(ProtocolError) -> Void = OpenCommand.live
     /// Captures the user's interactive environment for agent launches (unit tests replace it).
@@ -86,7 +92,10 @@ public final class Daemon: Sendable {
     /// The refusal of the admin token from anything but the app.
     static let notAppMessage = "admin commands are only accepted from the Collie app: use the app (comandos de admin só pelo app Collie)"
 
+    private let config: DaemonConfig
+
     public init(config: DaemonConfig) throws {
+        self.config = config
         let auth = AuthRegistry(adminTokenFile: config.paths.adminTokenFile)
         let store = WorkspaceStore(paths: config.paths)
         let wsDir = config.paths.workspaceDir(config.workspaceId)
@@ -161,6 +170,10 @@ public final class Daemon: Sendable {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         chmod(root.path, 0o700)      // even if it pre-existed with a looser mode
         try server.start()           // refuses if another daemon owns the socket; only then touch admin.token
+        // denials: before any terminal can launch (`log stream` takes 1-2 s to attach; SandboxWatcher)
+        if let src = config.denialSource ?? (config.watchDenials ? SandboxWatcher.logStream : nil) {
+            await router.startSandboxWatch(src, base: config.denialBackoff)
+        }
         // The admin token is still the in-memory one no client has seen (admin.token is rewritten below), so
         // nothing can authenticate until the reap and sweeps are done. A failed bind never gets here.
         let runDir = runDir
@@ -187,6 +200,7 @@ public final class Daemon: Sendable {
 
     public func stop() async {
         server.stop()
+        await router.stopSandboxWatch()
         await router.stopJobSweep()
         await router.host.stop()
         await router.devices.stop()

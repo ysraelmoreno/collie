@@ -1,19 +1,6 @@
 import Foundation
 import CollieCore
 
-/// A path the user opened to one terminal (or its lot) by an explicit click (Task 4 stores and offers them).
-public struct SandboxGrant: Codable, Sendable, Equatable {
-    public enum Access: String, Codable, Sendable { case read, write }
-    public enum Scope: String, Codable, Sendable { case terminal, lot }
-    public var path: String
-    public var access: Access
-    public var scope: Scope
-    public var createdAt: Date
-    public init(path: String, access: Access, scope: Scope, createdAt: Date = Date()) {
-        self.path = path; self.access = access; self.scope = scope; self.createdAt = createdAt
-    }
-}
-
 /// Everything one terminal's profile depends on. Paths may be unresolved: `render` resolves each one (Seatbelt
 /// matches the vnode path, `/private/tmp`, never `/tmp`).
 struct SandboxInput {
@@ -127,7 +114,12 @@ enum SandboxProfile {
         var closed = i.paddockWorktrees.map { sub(real($0)) }
         if let common, worktree == nil { closed.append(sub(common + "/worktrees")) }
         rule("deny", "file-write*", tagged: true, closed)
-        rule("allow", "file-write*", grants.filter { $0.access == .write }.map { sub($0.path) })
+        let writeGrants = grants.filter { $0.access == .write }.map(\.path)
+        rule("allow", "file-write*", writeGrants.map(sub))
+        // R23: what no grant re-opens (rendered after the grants): secrets, launchd agents, and in a granted folder the
+        // git files the user's own git runs (hooks, config, attributes, pointers; the `.git` entry itself)
+        rule("deny", "file-write*", tagged: true, (EssentialPaths.secrets + ["Library/LaunchAgents"]).map { entry(home, $0) }
+             + writeGrants.map { rx("^" + re($0) + "(/.*)?/\\.git(/(hooks(/.*)?|config(\\.worktree)?|info/attributes|commondir|worktrees/[^/]+/(commondir|gitdir|config\\.worktree)))?$") })
         // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
         // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
         // R17: no nested `.git` (dir, file or link) anywhere in the project either: the user's git or IDE runs its config.

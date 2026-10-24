@@ -67,12 +67,20 @@ actor CommandRouter {
     var importingArtifacts: Set<UUID> = []
     /// A `herd.apply` in flight: one at a time, the next waits.
     var applyingHerd = false
+    /// The user's sandbox grants (`<root>/sandbox/grants.json`), the pending access cards, the terminals whose profile
+    /// this daemon rendered (a denial's tag must name one), whether denials are seen (nil: no watcher), the watcher.
+    var sandboxGrants: [SandboxGrant]
+    var accessCards = SandboxCards()
+    var sandboxKnown: Set<UUID> = []
+    var sandboxDetection: Bool?
+    var sandboxWatch: Task<Void, Never>?
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
     init(config: DaemonConfig, auth: AuthRegistry, registry: TerminalRegistry, store: WorkspaceStore,
          asks: AskCoordinator, hub: StreamHub, workspace: Workspace, userEnv: UserEnvironment) {
         self.config = config; self.auth = auth; self.registry = registry; self.store = store; self.userEnv = userEnv
         self.asks = asks; self.hub = hub; self.ws = workspace
+        self.sandboxGrants = SandboxGrantStore(root: config.paths.root).load()
         self.usage = UsageService(dir: config.paths.root.appendingPathComponent("usage/providers"))
         self.memory = MemoryService(globalDir: config.paths.root.appendingPathComponent("memory"))
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
@@ -204,6 +212,9 @@ actor CommandRouter {
             }
             if req.command.hasPrefix("lot.") {   // admin or terminal; reach rules in lotCommand
                 return Response(id: req.id, ok: true, result: try await lotCommand(req, peer: peer))
+            }
+            if req.command.hasPrefix("access.") {   // request/list: a terminal; grant/deny/revoke: the app alone
+                return Response(id: req.id, ok: true, result: try await accessCommand(req, peer: peer))
             }
             if req.command.hasPrefix("herd.") {   // admin or Shepherd; app-only ones checked in herdCommand
                 return Response(id: req.id, ok: true, result: try await herdCommand(req, peer: peer))
@@ -481,7 +492,8 @@ actor CommandRouter {
     }
 
     /// Relaunches `t` in place (same id, so leashes and asks keep pointing at it). The caller holds the name reservation.
-    func relaunch(_ t: TerminalRecord) async throws -> [String: JSONValue] {
+    /// `resume`: the agent picks its conversation up again (Claude `--continue`), after a sandbox grant or revoke.
+    func relaunch(_ t: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
         if let fid = t.paddockId {
             if paddockDeleting.contains(fid) { throw ProtocolError(code: .invalidArgs, message: "paddock of '\(t.name)' is being deleted") }
             // R8: never widened to the pasture; the saved project stays
@@ -490,7 +502,7 @@ actor CommandRouter {
             }
         }
         await discard(t.id)
-        let result = try await launch(t)
+        let result = try await launch(t, resume: resume)
         try await ensurePaddock(of: t)
         return result
     }
@@ -529,6 +541,7 @@ actor CommandRouter {
     func remove(_ t: TerminalRecord) async throws {
         await discard(t.id)
         SandboxLaunch.remove(t.id, root: config.paths.root)
+        await sandboxGone(t.id)
         ws.terminals.removeAll { $0.id == t.id }
         let gone = ws.connections.filter { $0.a == t.id || $0.b == t.id }
         ws.connections.removeAll { $0.a == t.id || $0.b == t.id }
@@ -542,7 +555,7 @@ actor CommandRouter {
     }
 
     /// Launches `rec` (new or relaunched in place): credentials, process, record, persist, `.spawned`.
-    func launch(_ rec: TerminalRecord) async throws -> [String: JSONValue] {
+    func launch(_ rec: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
         var rec = rec
         if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }).path }
         // the capture can take seconds: a relaunched record killed meanwhile stays gone
@@ -559,7 +572,7 @@ actor CommandRouter {
         let token = await auth.issue(for: rec.id)
         let p: PTYProcess, sb: ScrollbackBuffer?
         do {
-            let spec = try launchSpec(rec, token: token, user: user)
+            let spec = try launchSpec(rec, token: token, user: user, resume: resume)
             p = try await registry.spawn(rec, launch: spec, sandbox: sandboxed(rec) ? try prepareSandbox(rec) : nil)
             sb = await registry.scrollback(rec.id)
             if let sb { await asks.attach(rec, process: p, scrollback: sb) }
@@ -640,7 +653,7 @@ actor CommandRouter {
     func agentEnv(_ rec: TerminalRecord) async -> [String: String] { rec.preset == .shell ? [:] : await userEnv.current() }
 
     /// `user` (from `agentEnv`) under Collie's keys.
-    func launchSpec(_ rec: TerminalRecord, token: String, user: [String: String]) throws -> LaunchSpec {
+    func launchSpec(_ rec: TerminalRecord, token: String, user: [String: String], resume: Bool = false) throws -> LaunchSpec {
         let env = ProcessInfo.processInfo.environment
         var e: [String: String] = [
             "COLLIE_SOCKET": config.paths.socket.path, "COLLIE_TERMINAL_ID": rec.id.uuidString, "COLLIE_TOKEN": token,
@@ -660,7 +673,8 @@ actor CommandRouter {
             e = SandboxLaunch.environment(e, id: rec.id, root: config.paths.root, shell: config.shell, home: home)
         }
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
-                                          shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec))
+                                          shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec),
+                                          resume: resume)
     }
 
     /// Every terminal but a free one runs in its sandbox (a record from before the sandbox too, on its next start).
@@ -679,7 +693,9 @@ actor CommandRouter {
                                  collieRoot: config.paths.root,
                                  ownFiles: [AgentLaunch.settingsFile(rec.id, in: hooksDir), AgentLaunch.mcpFile(rec.id, in: hooksDir)],
                                  terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
-                                 agent: rec.preset, command: rec.command)
+                                 agent: rec.preset, command: rec.command,
+                                 grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, lot: ws.lot(of: rec.id)?.id))
+        sandboxKnown.insert(rec.id)   // before its process exists: its first denial is its own (startup race)
         return try SandboxLaunch.prepare(input, root: config.paths.root, collie: config.collieExecutable)
     }
 }

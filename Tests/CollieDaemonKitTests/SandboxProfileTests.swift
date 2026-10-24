@@ -132,7 +132,7 @@ final class FakeHome {
     @Test func secretsDenied() throws {
         let f = try FakeHome()
         // even a grant of the whole home doesn't reopen them
-        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.path, access: .read, scope: .terminal)]))
+        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.path, access: .read, scope: .terminal, owner: f.id)]))
         for s in [".ssh/id_ed25519", ".aws/credentials", ".netrc", ".config/gh/hosts.yml"] {
             #expect(try !f.ok(p, "cat \(f.h(s))"), "\(s)")
         }
@@ -343,7 +343,7 @@ final class FakeHome {
 
     @Test func grantReadOpensPath() throws {
         let f = try FakeHome()
-        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.appendingPathComponent("Documents").path, access: .read, scope: .terminal)]))
+        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.appendingPathComponent("Documents").path, access: .read, scope: .terminal, owner: f.id)]))
         #expect(try f.ok(p, "cat \(f.h("Documents/x"))"))
         #expect(try !f.ok(p, "echo y > \(f.h("Documents/x"))"))
         #expect(try !f.ok(p, "cat \(f.h("code/other/x"))"))
@@ -351,15 +351,25 @@ final class FakeHome {
 
     @Test func grantWriteOpensPath() throws {
         let f = try FakeHome()
-        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.other.path, access: .write, scope: .lot)]))
+        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.other.path, access: .write, scope: .lot, owner: f.id)]))
         #expect(try f.ok(p, "cat \(f.h("code/other/x")) && echo y > \(f.h("code/other/y"))"))
         #expect(try !f.ok(p, "echo y > \(f.h("Documents/y"))"))
         // a grant never reopens Collie's data or git internals
-        let q = try f.profile(f.input(grants: [SandboxGrant(path: f.home.path, access: .write, scope: .terminal)]))
+        let q = try f.profile(f.input(grants: [SandboxGrant(path: f.home.path, access: .write, scope: .terminal, owner: f.id)]))
         #expect(try f.ok(q, "echo y > \(f.h("Documents/y"))"))
         #expect(try !f.ok(q, "echo x > \(AgentLaunch.quote(f.collie.appendingPathComponent("admin.token").path))"))
         #expect(try !f.ok(q, "echo x > \(AgentLaunch.quote(f.repo.path))/.git/hooks/pre-commit"))
         #expect(try !f.ok(q, "cat \(f.h(".ssh/id_ed25519"))"))
+        // R23: nor writes to secrets, launchd agents, or a granted repo's git files (its objects stay writable)
+        for d in ["code/other/.git/hooks", "code/other/.git/objects", ".ssh"] {
+            try FileManager.default.createDirectory(at: f.home.appendingPathComponent(d), withIntermediateDirectories: true)
+        }
+        for bad in [".ssh/authorized_keys", ".aws/credentials", "Library/LaunchAgents/x.plist", "code/other/.git/hooks/pre-commit",
+                    "code/other/.git/config", "code/other/.git/info/attributes"] {
+            #expect(try !f.ok(q, "mkdir -p \"$(dirname \(f.h(bad)))\" 2>/dev/null; echo x > \(f.h(bad))"), "\(bad)")
+        }
+        #expect(try !f.ok(q, "mv \(f.h("code/other/.git")) \(f.h("code/other/.gitold"))"))
+        #expect(try f.ok(q, "echo x > \(f.h("code/other/.git/objects/o"))"))
     }
 
     @Test func pathsWithSpacesAndUnicode() throws {

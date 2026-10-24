@@ -27,11 +27,13 @@ public enum AgentLaunch {
     /// `env` is used verbatim as the child environment; hooks are wired by flag only (no global config touched).
     /// `codexMCP`: also give Codex the collie MCP server (opt-in, `COLLIE_CODEX_MCP=1` in the daemon env: its `env_vars` key is
     /// unverified against an installed codex, and an unknown key could stop Codex from launching).
+    /// `resume`: restarted after a sandbox grant/revoke, the conversation goes on: Claude `--continue`. Codex and Cursor
+    /// relaunch plain (their resume flags weren't confirmed by the spike; the app's card says so).
     /// `innerSandboxOff`: the terminal runs in Collie's sandbox, where Seatbelt can't nest (Task 1): agents start with
     /// their own sandbox off (Claude `sandbox.enabled false` in Collie's settings file, never the user's; Codex
     /// `--sandbox danger-full-access`; a custom `cursor-agent` command `--sandbox disabled`). Collie's still applies.
     public static func launchSpec(for rec: TerminalRecord, env: [String: String], hooksDir: URL, collie: URL, shell: String,
-                                  codexMCP: Bool = false, innerSandboxOff: Bool = false) throws -> LaunchSpec {
+                                  codexMCP: Bool = false, innerSandboxOff: Bool = false, resume: Bool = false) throws -> LaunchSpec {
         func spec(_ args: [String]) -> LaunchSpec { LaunchSpec(executable: shell, arguments: args, environment: env, cwd: rec.cwd) }
         func claude(_ base: String) throws -> LaunchSpec {
             let f = settingsFile(rec.id, in: hooksDir)
@@ -66,7 +68,7 @@ public enum AgentLaunch {
             // Additive (no --strict-mcp-config): the user's own MCP servers stay.
             let m = mcpFile(rec.id, in: hooksDir)
             try write(["mcpServers": ["collie": ["type": "stdio", "command": collie.path, "args": ["mcp"]]]], m)
-            return spec(["-lc", base + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path)])
+            return spec(["-lc", base + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path) + (resume ? " --continue" : "")])
         }
         if let c = rec.command {
             let first = c.split(whereSeparator: \.isWhitespace).first

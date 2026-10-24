@@ -15,6 +15,12 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var paddocks: [Paddock] = []
     public private(set) var panels: [Panel] = []
     public private(set) var lots: [Lot] = []
+    /// Open access cards (sandbox denials and agents' requests), one per (terminal, op, folder).
+    public private(set) var accessCards: [SandboxDenial] = []
+    /// The user's sandbox grants (per terminal and per lot).
+    public private(set) var grants: [SandboxGrant] = []
+    /// Whether the daemon sees sandbox denials; false: "detecção indisponível"; nil: no watcher (sandbox off).
+    public private(set) var detection: Bool?
     /// `BuildID` of the connected daemon (nil: not connected yet, or a daemon that predates it).
     public private(set) var daemonBuild: String?
     /// The `ui.host` role: `.replaced` when another Collie window took it (see `resumeHost()`).
@@ -134,6 +140,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             badges = Dictionary(uniqueKeysWithValues: snap.badges.compactMap { k, v in UUID(uuidString: k).map { ($0, v) } })
             state = .connected
             onConnected()
+            await refreshAccess()
             for await f in Self.frames(of: ev) {
                 guard live(gen) else { return "stopped" }
                 if case .event(let e) = f { apply(e) }
@@ -188,6 +195,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             if let i = lots.firstIndex(where: { $0.id == l.id }) { lots[i] = l } else { lots.append(l) }
         case .lotRemoved(let id): lots.removeAll { $0.id == id }
         case .herdApplied(let by, let anchor, let frames, let paddock): onHerdApplied?(by, anchor, frames, paddock)
+        case .sandboxDenied(let d):
+            if let i = accessCards.firstIndex(where: { Self.sameCard($0, d) }) { accessCards[i] = d } else { accessCards.append(d) }
+        case .sandboxDetection(let ok): detection = ok
         }
     }
     private func same(_ x: Connection, _ y: Connection) -> Bool { Set([x.a, x.b]) == Set([y.a, y.b]) }
@@ -260,6 +270,42 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
         return try d.decode([LotPost].self, from: JSONEncoder().encode(r))
     }
+    // MARK: sandbox access (the user's click only)
+
+    nonisolated static func sameCard(_ a: SandboxDenial, _ b: SandboxDenial) -> Bool {
+        a.terminal == b.terminal && a.op == b.op && a.folder == b.folder
+    }
+    /// Cards, grants and the detection state, read again (on connect and after each access action).
+    public func refreshAccess() async {
+        guard case .object(let o)? = try? await admin("access.list", [:]) else { return }
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        func decode<T: Decodable>(_ v: JSONValue?) -> T? { v.flatMap { try? d.decode(T.self, from: JSONEncoder().encode($0)) } }
+        accessCards = decode(o["cards"]) ?? []
+        grants = decode(o["grants"]) ?? []
+        if case .bool(let b)? = o["detection"] { detection = b } else { detection = nil }
+    }
+    /// **Liberar este caminho** / **Liberar a pasta** (`folder`), for the terminal or its lot. Restarts the terminal
+    /// (resuming the conversation where its agent can). Returns whether it restarted.
+    @discardableResult
+    public func grant(_ card: SandboxDenial, folder: Bool, lot: Bool) async throws -> Bool {
+        let args: [String: JSONValue] = ["terminal": .string(card.terminal.uuidString), "path": .string(card.path),
+                                         "access": .string(card.access.rawValue), "scope": .string(lot ? "lot" : "terminal"),
+                                         "folder": .bool(folder)]
+        defer { Task { await refreshAccess() } }
+        guard case .object(let o)? = try await admin("access.grant", args, timeout: 60), case .bool(let r)? = o["restarted"] else { return false }
+        return r
+    }
+    /// **Negar**: the card goes; the same (terminal, op, folder) raises none again while the terminal lives.
+    public func deny(_ card: SandboxDenial) async throws {
+        accessCards.removeAll { Self.sameCard($0, card) }
+        _ = try await admin("access.deny", ["terminal": .string(card.terminal.uuidString), "op": .string(card.op), "path": .string(card.path)])
+    }
+    /// Removes a grant; the running terminals it reached restart without it.
+    public func revoke(_ grant: SandboxGrant) async throws {
+        defer { Task { await refreshAccess() } }
+        _ = try await admin("access.revoke", ["id": .string(grant.id.uuidString)], timeout: 120)
+    }
+
     /// The lot `terminal` is in (at most one).
     public func lot(of terminal: UUID) -> Lot? { lots.first { $0.members.contains(terminal) } }
     /// Lots the user may delete: none of their members is still a terminal.

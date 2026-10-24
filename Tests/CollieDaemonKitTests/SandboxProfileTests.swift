@@ -222,6 +222,10 @@ final class FakeHome {
         #expect(try !f.ok(p, "cat \(c("hooks/other.claude.json"))"))
         #expect(try !f.ok(p, "ls \(c(""))"))
         #expect(try f.ok(p, "cat \(c("hooks/\(f.id.uuidString).claude.json"))"))   // its own generated files
+        // Claude vets every component of its --settings path (lstat/realpath): the dirs above its own files can be
+        // examined, never listed
+        #expect(try f.ok(p, "stat \(c("")) \(c("hooks")) >/dev/null && /bin/realpath \(c("hooks/\(f.id.uuidString).claude.json")) >/dev/null"))
+        #expect(try !f.ok(p, "ls \(c("hooks"))"))
         #expect(try f.ok(p, "cat \(c("sandbox/\(f.id.uuidString)/bin/swift")) >/dev/null"))
         #expect(try f.ok(p, "echo x > \(c("sandbox/\(f.id.uuidString)/state/history"))"))   // its own history
         #expect(try f.ok(p, "/usr/bin/nc -w 1 -U \(AgentLaunch.quote(f.socket.path)) </dev/null"))   // the daemon socket: connect OK

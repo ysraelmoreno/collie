@@ -113,7 +113,7 @@ extension PluginRegistry {
         placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
         commands: [
             dcmd("list", "Android devices and iOS Simulators [{serial,state,model,product,platform,panels}]; Android AVDs that are off: state off, serial avd:<name> (panel open boots it) (ignores --panel)", timeout: 15, panelFree: true),
-            dcmd("screenshot", "Screenshot to a PNG file; returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", timeout: 30),
+            dcmd("screenshot", "Screenshot to a PNG file; returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", [out], timeout: 30),
             dcmd("ui", "Compact UI tree with element refs (e1, e2, ...); returns {tree,truncated}", timeout: 30),
             dcmd("tap", "Tap at x y (Android (pixels) or iOS Simulator (points)), or on an element from device.ui",
                  [coord("x"), coord("y"), ParamSpec("ref", .string, help: "Element ref from device.ui")], timeout: 15),
@@ -141,6 +141,8 @@ extension PluginRegistry {
         CommandSpec(name: "design.\(n)", summary: summary, params: params, timeoutSeconds: timeout, exposedToMCP: exposedToMCP, panelFree: panelFree)
     }
     private static let node = ParamSpec("node", .string, help: "Layer id (as design.inspect shows it)")
+    /// `--out` of a command in `Commands.outputFile`: the collie process copies the reply's file (`OutFile`).
+    private static let out = ParamSpec("out", .string, help: "Copy the file here (relative to the current directory; dirs created, overwritten); returns that path")
     private static let ids = ParamSpec("ids", .string, required: true, help: "Layer ids, comma-separated (as design.inspect shows them)")
     private static let reason = ParamSpec("reason", .string, required: true, help: "Why (kept in the history and as a project decision)")
 
@@ -163,9 +165,9 @@ extension PluginRegistry {
                   ParamSpec("label", .string, help: "Undo history label")], timeout: 120),
             gcmd("inspect", "The document (pages and layers), or one layer with --node",
                  [node, ParamSpec("depth", .int, help: "Levels of children (1-64)")], timeout: 30),
-            gcmd("screenshot", "Render a layer (default: the current page) to a PNG file; returns {path,width,height}", [node], timeout: 60),
+            gcmd("screenshot", "Render a layer (default: the current page) to a PNG file; returns {path,width,height}", [node, out], timeout: 60),
             gcmd("export", "Export code (html|css|react, of --node or the page's top layers) or the whole file (figcraft); returns {path}",
-                 [ParamSpec("format", .string, required: true, help: "html|css|react|figcraft"), node], timeout: 60),
+                 [ParamSpec("format", .string, required: true, help: "html|css|react|figcraft"), node, out], timeout: 60),
             gcmd("help", "figcraft command ids and their parameters [{id,help}]",
                  [ParamSpec("query", .rest, positional: true, help: "Keep commands whose id or docs contain this text")], timeout: 30, panelFree: true),
             gcmd("link", "The panel file's edit link (the app only)", timeout: 30, exposedToMCP: false),

@@ -1,6 +1,7 @@
 import Foundation
 
-/// `--out PATH` of `browser screenshot`: the caller's process copies the daemon's file (the daemon writes only under its root).
+/// `--out PATH` of every command in `Commands.outputFile` (screenshots, design exports): the caller's process copies the
+/// daemon's file (the daemon writes only under its root; a sandboxed caller gets its readable clone, `SandboxLaunch.handOver`).
 public enum OutFile {
     /// Copies `result.path` to `dest` (relative to `cwd`; parent dirs created, existing file replaced) and returns the result with `path` = the new absolute path.
     public static func copyPath(of result: JSONValue, to dest: String, cwd: String) throws(ProtocolError) -> JSONValue {

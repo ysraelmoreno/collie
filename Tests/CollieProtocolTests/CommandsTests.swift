@@ -123,4 +123,27 @@ import Testing
         #expect(try ArgvParser.parse(["summon", "w", "echo", "hi", "--preset", "shell", "--", "--x"]).args
                 == ["name": .string("w"), "preset": .string("shell"), "prompt": .string("echo hi --x")])
     }
+
+    // plan 2O Task 2: `--out` on every command whose reply is a file (`Commands.outputFile`), nowhere else
+    @Test func outAcceptedForDesignScreenshot() throws {
+        let r = try ArgvParser.parse(["design", "screenshot", "--panel", "d", "--out", "shot.png"])
+        #expect(r.command == "design.screenshot" && r.args["out"] == .string("shot.png"))
+    }
+
+    @Test func outAcceptedForDesignExport() throws {
+        let r = try ArgvParser.parse(["design", "export", "--format", "css", "--out", "x.css"])
+        #expect(r.command == "design.export" && r.args["out"] == .string("x.css"))
+        for c in Commands.outputFile {   // the set and the specs agree
+            #expect(Commands.spec(c)?.params.contains { $0.name == "out" && $0.kind == .string } == true, "\(c)")
+        }
+    }
+
+    @Test func outRejectedForOtherCommands() {
+        for argv in [["design", "inspect", "--out", "x"], ["memory", "get", "--out", "x"]] {
+            let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(argv) }
+            #expect(e?.message == "unknown flag --out", "\(argv)")
+        }
+        #expect(Commands.all.filter { $0.params.contains { $0.name == "out" } }.map(\.name).filter { !Commands.outputFile.contains($0) }
+                == ["admin.data.export"])   // its own --out: the daemon writes the backup
+    }
 }

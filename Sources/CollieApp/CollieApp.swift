@@ -331,7 +331,7 @@ struct ContentView: View {
                 notifier.notifyAccess(d, name: client.terminals.first { $0.id == d.terminal }?.name ?? "Terminal")
             }
             notifier.onFocus = { [canvas, client, paddocks] id in
-                AccessPopoverState.shared.open.insert(id)   // no-op for a terminal without cards: the tag isn't there
+                if client.accessCards.contains(where: { $0.terminal == id }) { AccessPopoverState.shared.open.insert(id) }   // only with cards: a stale id would pop open later
                 // a node on another paddock: switch to its paddock first
                 if let t = client.terminals.first(where: { $0.id == id }), t.paddockId != client.currentPaddock {
                     paddocks.select(t.paddockId)

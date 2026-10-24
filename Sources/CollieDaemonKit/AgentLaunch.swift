@@ -27,8 +27,11 @@ public enum AgentLaunch {
     /// `env` is used verbatim as the child environment; hooks are wired by flag only (no global config touched).
     /// `codexMCP`: also give Codex the collie MCP server (opt-in, `COLLIE_CODEX_MCP=1` in the daemon env: its `env_vars` key is
     /// unverified against an installed codex, and an unknown key could stop Codex from launching).
+    /// `innerSandboxOff`: the terminal runs in Collie's sandbox, where Seatbelt can't nest (Task 1): agents start with
+    /// their own sandbox off (Claude `sandbox.enabled false` in Collie's settings file, never the user's; Codex
+    /// `--sandbox danger-full-access`; a custom `cursor-agent` command `--sandbox disabled`). Collie's still applies.
     public static func launchSpec(for rec: TerminalRecord, env: [String: String], hooksDir: URL, collie: URL, shell: String,
-                                  codexMCP: Bool = false) throws -> LaunchSpec {
+                                  codexMCP: Bool = false, innerSandboxOff: Bool = false) throws -> LaunchSpec {
         func spec(_ args: [String]) -> LaunchSpec { LaunchSpec(executable: shell, arguments: args, environment: env, cwd: rec.cwd) }
         func claude(_ base: String) throws -> LaunchSpec {
             let f = settingsFile(rec.id, in: hooksDir)
@@ -38,7 +41,7 @@ public enum AgentLaunch {
                 if let matcher { e["matcher"] = matcher }
                 return [e]
             }
-            let json: [String: Any] = [
+            var json: [String: Any] = [
                 // plan usage (ClaudeRateLimits): the hook records rate_limits, then runs the user's own statusLine
                 "statusLine": ["type": "command", "command": quote(collie.path) + " hook claude-statusline", "padding": 0],
                 "hooks": ["Stop": hook("claude-stop", 10),
@@ -51,6 +54,7 @@ public enum AgentLaunch {
                                                  "SessionEnd": hook("claude-session-end", 5),
                                                  // permission dialogs: a pending approval (ApprovalTracker)
                                                  "Notification": hook("claude-notification", 5)]]
+            if innerSandboxOff { json["sandbox"] = ["enabled": false] }
             func write(_ o: [String: Any], _ to: URL) throws {
                 let data = try JSONSerialization.data(withJSONObject: o, options: [.withoutEscapingSlashes])
                 guard FileManager.default.createFile(atPath: to.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
@@ -65,7 +69,13 @@ public enum AgentLaunch {
             return spec(["-lc", base + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path)])
         }
         if let c = rec.command {
-            if rec.preset == .claude, c.split(whereSeparator: \.isWhitespace).first == "claude" { return try claude(c) }
+            let first = c.split(whereSeparator: \.isWhitespace).first
+            if rec.preset == .claude, first == "claude" { return try claude(c) }
+            // a custom codex/cursor-agent command: the same inner-sandbox switch, unless it picks a sandbox itself
+            if innerSandboxOff, let first, !c.contains("--sandbox"),
+               let flag = ["codex": " -c " + quote(#"sandbox_mode="danger-full-access""#), "cursor-agent": " --sandbox disabled"][String(first)] {
+                return spec(["-lc", String(first) + flag + c[first.endIndex...]])
+            }
             return spec(["-lc", c])
         }
         switch rec.preset {
@@ -78,7 +88,7 @@ public enum AgentLaunch {
                 o += ["mcp_servers.collie.command=" + literal(collie.path), "mcp_servers.collie.args=" + literal(["mcp"]),
                       "mcp_servers.collie.env_vars=" + literal(mcpEnv)]
             }
-            return spec(["-lc", "codex" + o.map { " -c " + quote($0) }.joined()])
+            return spec(["-lc", "codex" + (innerSandboxOff ? " --sandbox danger-full-access" : "") + o.map { " -c " + quote($0) }.joined()])
         case .custom: throw ProtocolError(code: .invalidArgs, message: "custom preset needs a command")
         }
     }

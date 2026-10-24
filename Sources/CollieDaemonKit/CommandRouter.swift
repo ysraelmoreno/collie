@@ -221,6 +221,10 @@ actor CommandRouter {
             }
             switch req.command {
             case "list": return Response(id: req.id, ok: true, result: await list(from: tid))
+            case "open":   // the sandbox's `open` shim (R4): URLs and installed apps only, opened outside the sandbox
+                let home = config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory())
+                try await config.opener(try OpenCommand.arguments(target: str(req, "target"), app: str(req, "app"), cwd: req.cwd, home: home))
+                return Response(id: req.id, ok: true, result: .object([:]))
             case "ask":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
                 guard await registry.process(t.id)?.isRunning == true else {   // also covers records reloaded after restart
@@ -524,6 +528,7 @@ actor CommandRouter {
     /// Kills `t` and forgets its record and leashes; emits `.disconnected` per leash, then `.removed`.
     func remove(_ t: TerminalRecord) async throws {
         await discard(t.id)
+        SandboxLaunch.remove(t.id, root: config.paths.root)
         ws.terminals.removeAll { $0.id == t.id }
         let gone = ws.connections.filter { $0.a == t.id || $0.b == t.id }
         ws.connections.removeAll { $0.a == t.id || $0.b == t.id }
@@ -554,7 +559,8 @@ actor CommandRouter {
         let token = await auth.issue(for: rec.id)
         let p: PTYProcess, sb: ScrollbackBuffer?
         do {
-            p = try await registry.spawn(rec, launch: try launchSpec(rec, token: token, user: user))
+            let spec = try launchSpec(rec, token: token, user: user)
+            p = try await registry.spawn(rec, launch: spec, sandbox: sandboxed(rec) ? try prepareSandbox(rec) : nil)
             sb = await registry.scrollback(rec.id)
             if let sb { await asks.attach(rec, process: p, scrollback: sb) }
             // natural exit ends the memory session too, unless a newer launch already replaced this process
@@ -650,8 +656,31 @@ actor CommandRouter {
             e["COLLIE_PADDOCK_NAME"] = f.name; e["COLLIE_PADDOCK_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.branch
         }
         e = UserEnvironment.merge(user: user, collie: e, collieBin: config.collieExecutable.deletingLastPathComponent().path)
+        if sandboxed(rec), let home = config.sandboxHome {
+            e = SandboxLaunch.environment(e, id: rec.id, root: config.paths.root, shell: config.shell, home: home)
+        }
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
-                                          shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1")
+                                          shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec))
+    }
+
+    /// Every terminal but a free one runs in its sandbox (a record from before the sandbox too, on its next start).
+    func sandboxed(_ rec: TerminalRecord) -> Bool { rec.sandbox == .sandboxed && config.sandboxHome != nil }
+
+    /// Renders `rec`'s profile and files (`launch` filled its project first); returns the profile.
+    func prepareSandbox(_ rec: TerminalRecord) throws -> URL {
+        let project = URL(fileURLWithPath: rec.projectRoot ?? ProjectRoot.resolve(cwd: rec.cwd, paddock: nil).path)
+        let git = SandboxInput.gitDirs(of: project)
+        // a pasture never writes its paddocks: the ones there are, and the folder new ones go into
+        let paddocks = ws.paddocks.map { URL(fileURLWithPath: $0.path) }
+            .filter { ProjectRoot.contains($0.path, root: project) && !ProjectRoot.contains(project.path, root: $0) }
+            + [project.appendingPathComponent(LegacyOrq.repoDirName(repoRoot: project)).appendingPathComponent("paddocks")]
+        let input = SandboxInput(terminal: rec.id, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
+                                 paddockWorktrees: paddocks, home: config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()),
+                                 collieRoot: config.paths.root,
+                                 ownFiles: [AgentLaunch.settingsFile(rec.id, in: hooksDir), AgentLaunch.mcpFile(rec.id, in: hooksDir)],
+                                 terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
+                                 agent: rec.preset)
+        return try SandboxLaunch.prepare(input, root: config.paths.root, collie: config.collieExecutable)
     }
 }
 

@@ -17,15 +17,23 @@ public actor TerminalRegistry {
         self.cttyHelper = cttyHelper
     }
 
-    public func spawn(_ rec: TerminalRecord, launch: LaunchSpec) throws -> PTYProcess {
+    /// `sandbox`: the terminal's Seatbelt profile; it runs through `sandbox-exec` (via the helper, or directly
+    /// without one), never unsandboxed.
+    public func spawn(_ rec: TerminalRecord, launch: LaunchSpec, sandbox: URL? = nil) throws -> PTYProcess {
         let ms = Int(Date().timeIntervalSince1970 * 1000)
         let sb = ScrollbackBuffer(memoryCapBytes: memoryCapBytes,
                                   spillURL: spillDir.appendingPathComponent("\(rec.id.uuidString)-\(ms).log"))
         do {
             // checked per spawn: an app update can replace Helpers/ under a running daemon
             let helper = cttyHelper.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
-            let p = try PTYProcess(spec: helper.map(launch.throughControllingTerminal) ?? launch, scrollback: sb,
-                                   writeStall: writeStall)
+            var spec = launch
+            if let helper {
+                spec = launch.throughControllingTerminal(helper)
+                if let sandbox { spec.arguments = ["--sandbox", sandbox.path] + spec.arguments }
+            } else if let sandbox {
+                spec.executable = "/usr/bin/sandbox-exec"; spec.arguments = ["-f", sandbox.path, launch.executable] + launch.arguments
+            }
+            let p = try PTYProcess(spec: spec, scrollback: sb, writeStall: writeStall)
             do { try OrphanReaper.record(pid: p.pid, terminal: rec.id, in: runDir) } catch {
                 p.terminate()
                 throw ProtocolError(code: .internal, message: "cannot record terminal pid: \(error)")

@@ -57,6 +57,11 @@ public struct DaemonConfig: Sendable {
     public var captureUserEnv = true
     /// How long `herd.apply` waits for each new terminal to be ready (tests shorten it).
     public var herdReady: Duration = .seconds(60)
+    /// The home a sandboxed terminal's profile closes (collied: the user's); nil: terminals start unsandboxed (tests,
+    /// which pass a fake home in a temp dir when they test the sandbox, R2).
+    public var sandboxHome: URL?
+    /// Runs `/usr/bin/open` for `collie open` (tests record instead).
+    var opener: @Sendable ([String]) async throws(ProtocolError) -> Void = OpenCommand.live
     /// Captures the user's interactive environment for agent launches (unit tests replace it).
     var envRunner: UserEnvironment.Runner = UserEnvironment.live
     /// The on-device model for summary rewrites (tests pass a fake).

@@ -34,6 +34,7 @@ actor UsageService {
     private var inflight: [String: Task<UsageReport, Never>] = [:]
 
     func reports(maxAge: Duration = .seconds(300)) async -> [UsageReport] {
+        collectSandboxed()
         let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasSuffix(".json") }.sorted()
         // each slot is either a ready report or a provider to fetch; everything is keyed by the provider's id (== file stem)
         var slots: [(id: String, ready: UsageReport?, provider: UsageProvider?)] = []
@@ -68,6 +69,23 @@ actor UsageService {
             out.append(r)
         }
         return out
+    }
+
+    /// A sandboxed terminal can't write `<root>/usage` (Collie data): its statusline hook writes into its own
+    /// `<root>/sandbox/<id>/state/usage`. The newest of those (a regular file, JSON, small) is copied here first.
+    func collectSandboxed() {
+        let fm = FileManager.default, name = ClaudeRateLimits.fileName
+        let sandbox = usageDir.deletingLastPathComponent().appendingPathComponent("sandbox")
+        func regular(_ p: String) -> Date? {
+            guard let a = try? fm.attributesOfItem(atPath: p), a[.type] as? FileAttributeType == .typeRegular else { return nil }
+            return a[.modificationDate] as? Date
+        }
+        let newest = ((try? fm.contentsOfDirectory(atPath: sandbox.path)) ?? [])
+            .map { sandbox.appendingPathComponent("\($0)/state/usage/\(name)").path }
+            .compactMap { p in regular(p).map { (p, $0) } }.max { $0.1 < $1.1 }
+        guard let (p, t) = newest, t > (regular(usageDir.appendingPathComponent(name).path) ?? .distantPast),
+              let d = fm.contents(atPath: p), d.count < 64 << 10, (try? JSONSerialization.jsonObject(with: d)) is [String: Any] else { return }
+        try? ClaudeRateLimits.write(d, to: usageDir)
     }
 
     private static func fetch(_ p: UsageProvider, usageDir: URL) async -> UsageReport {

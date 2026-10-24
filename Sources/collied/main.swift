@@ -76,6 +76,11 @@ do {
     config.figcraftDir = figcraft
     let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
     config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil
+    // every non-free terminal starts sandboxed; only on the real root: a test's `--root /tmp/…` daemon never closes the
+    // developer's real home (R2). ponytail: a custom --root runs unsandboxed; a sandboxed agent can't start one outside its sandbox
+    if root.standardizedFileURL.path == Paths.defaultRoot.standardizedFileURL.path {
+        config.sandboxHome = URL(fileURLWithPath: NSHomeDirectory())
+    }
     // admin only from the app this daemon ships with (Contents/Helpers/collied -> Contents/MacOS/Collie); see forDaemon
     if let me = selfPath() {
         let (check, note) = SignedAppCheck.forDaemon(executable: me, root: root, defaultRoot: Paths.defaultRoot)

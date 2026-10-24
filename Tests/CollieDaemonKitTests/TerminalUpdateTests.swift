@@ -104,7 +104,7 @@ private func flags(_ r: Response) -> (needed: Bool?, restarted: Bool?) {
     @Test func updateFromManagedTerminalIsRefused() async throws {
         try await withDaemon { d, p in
             _ = try await spawn(d, p, "b")
-            let cmd = "COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin update b --shepherd true; echo RC=$?; exec sleep 300"
+            let cmd = "env -u COLLIE_TERMINAL_ID COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin update b --shepherd true; echo RC=$?; exec sleep 300"
             let a = try await spawn(d, p, "a", preset: "custom", command: cmd)
             let id = try #require(UUID(uuidString: a.id))
             #expect(await waitFor(10) { await d.scrollbackText(id).contains("RC=") })

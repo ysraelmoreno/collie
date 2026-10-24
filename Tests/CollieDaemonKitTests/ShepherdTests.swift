@@ -273,7 +273,7 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
     @Test func adminTokenFromShepherdStillRefused() async throws {
         try await withDaemon { d, p in
             _ = try await spawn(d, p, "B")
-            let cmd = "echo M=$COLLIE_SHEPHERD; COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin leash M B; echo RC=$?; exec sleep 300"
+            let cmd = "echo M=$COLLIE_SHEPHERD; env -u COLLIE_TERMINAL_ID COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin leash M B; echo RC=$?; exec sleep 300"
             let r = try await admin(d, p, "spawn", ["name": .string("M"), "preset": .string("custom"), "cwd": .string("/tmp"),
                                                     "command": .string(cmd), "shepherd": .bool(true)])
             guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { Issue.record("\(r)"); return }

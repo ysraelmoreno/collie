@@ -119,7 +119,7 @@ private func kill(_ d: Daemon, _ p: Paths, _ name: String) async throws -> Respo
     @Test func adminFromManagedTerminalIsRefused() async throws {
         try await withDaemon { d, p in
             _ = try await spawn(d, p, "B")
-            let cmd = "COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin leash A B; echo RC=$?; exec sleep 300"
+            let cmd = "env -u COLLIE_TERMINAL_ID COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)' '\(collieBin)' admin leash A B; echo RC=$?; exec sleep 300"
             let a = try await spawn(d, p, "A", preset: "custom", command: cmd)
             let id = UUID(uuidString: a.id)!
             #expect(await waitFor(10) { await d.scrollbackText(id).contains("RC=") })
@@ -139,9 +139,10 @@ private func kill(_ d: Daemon, _ p: Paths, _ name: String) async throws -> Respo
             let script = p.root.appendingPathComponent("agent.sh")
             try """
             A='\(collieBin)'; export COLLIE_ADMIN_TOKEN_FILE='\(p.adminTokenFile.path)'
+            T=$COLLIE_TERMINAL_ID; unset COLLIE_TERMINAL_ID   # past the CLI's own guard: the daemon is the gate under test
             /bin/sh -c '"$0" admin leash A B; echo RC1=$?' "$A"
             ( ( sleep 1; "$A" admin leash A B; echo RC2=$? ) & )
-            sleep 4; "$A" list; echo RC3=$?
+            sleep 4; COLLIE_TERMINAL_ID=$T "$A" list; echo RC3=$?
             """.write(to: script, atomically: true, encoding: .utf8)
             let a = try await spawn(d, p, "A", preset: "custom", command: "/bin/sh '\(script.path)'; exec sleep 300")
             let id = UUID(uuidString: a.id)!
@@ -167,15 +168,18 @@ private func kill(_ d: Daemon, _ p: Paths, _ name: String) async throws -> Respo
         }
     }
 
-    /// The CLI inside a Collie terminal without its own token never falls back to the admin token file.
-    @Test func cliInsideTerminalDoesNotReadAdminFile() throws {
+    /// The CLI inside a Collie terminal never sends the admin token file: not for admin.*/ui.*, and not as the
+    /// fallback for paddock.*/memory.*/work.*/lot.* without its own token.
+    @Test(arguments: [(["admin", "leash", "A", "B"], false), (["admin", "leash", "A", "B"], true), (["paddock", "list"], false)])
+    func cliInsideTerminalDoesNotReadAdminFile(_ argv: [String], withToken: Bool) throws {
         let tok = FileManager.default.temporaryDirectory.appendingPathComponent("tok-\(UUID().uuidString)")
         try "x".write(to: tok, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: tok) }
         let pr = Process(), err = Pipe()
-        pr.executableURL = URL(fileURLWithPath: collieBin); pr.arguments = ["admin", "leash", "A", "B"]
+        pr.executableURL = URL(fileURLWithPath: collieBin); pr.arguments = argv
         pr.environment = ["COLLIE_TERMINAL_ID": UUID().uuidString, "COLLIE_SOCKET": "/nonexistent/collie.sock",
                           "COLLIE_ADMIN_TOKEN_FILE": tok.path]
+        if withToken { pr.environment?["COLLIE_TOKEN"] = "t" }
         pr.standardError = err; pr.standardOutput = Pipe()
         try pr.run(); pr.waitUntilExit()
         let text = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)

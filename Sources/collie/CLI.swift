@@ -35,8 +35,8 @@ enum Client {
         // paddock.* / memory.* / work.* / lot.* outside a terminal (no COLLIE_TOKEN) is the user: admin token
         if command.hasPrefix("admin.") || command.hasPrefix("ui.")
             || ((command.hasPrefix("paddock.") || command.hasPrefix("memory.") || command.hasPrefix("work.") || command.hasPrefix("lot.")) && token == nil) {
-            // inside a Collie terminal without its own token: never the admin file (the daemon refuses it from there anyway)
-            if env["COLLIE_TERMINAL_ID"] != nil && env["COLLIE_TOKEN"] == nil {
+            // inside a Collie terminal: never the admin file (the daemon refuses it from there anyway)
+            if env["COLLIE_TERMINAL_ID"] != nil {
                 throw ProtocolError(code: .unauthorized, message: "the admin token can't be used from inside a Collie terminal")
             }
             let file = env["COLLIE_ADMIN_TOKEN_FILE"].map { URL(fileURLWithPath: $0) } ?? Paths().adminTokenFile

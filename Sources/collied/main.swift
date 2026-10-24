@@ -76,17 +76,13 @@ do {
     config.figcraftDir = figcraft
     let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
     config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil
-    // admin only from the app this daemon ships with (Contents/Helpers/collied -> Contents/MacOS/Collie). Outside a
-    // bundle (swift run, tests) it is off, except on the default root: there an unbundled daemon has no app to trust
-    // and refuses every admin request.
-    let helpers = collie.deletingLastPathComponent()
-    let bundled = helpers.lastPathComponent == "Helpers" && helpers.deletingLastPathComponent().deletingLastPathComponent().pathExtension == "app"
-    if bundled || root.standardizedFileURL.path == Paths.defaultRoot.standardizedFileURL.path {
-        let app = helpers.deletingLastPathComponent().appendingPathComponent("MacOS/Collie")
-        config.adminPeerCheck = SignedAppCheck(app: bundled ? app : URL(fileURLWithPath: "/nonexistent/Collie"))
-        if !bundled { FileHandle.standardError.write(Data("collied: not inside Collie.app on the default root: admin requests are refused\n".utf8)) }
-    } else {
-        FileHandle.standardError.write(Data("collied: not inside Collie.app: the app signature check for admin is off\n".utf8))
+    // admin only from the app this daemon ships with (Contents/Helpers/collied -> Contents/MacOS/Collie); see forDaemon
+    if let me = selfPath() {
+        let (check, note) = SignedAppCheck.forDaemon(executable: me, root: root, defaultRoot: Paths.defaultRoot)
+        config.adminPeerCheck = check
+        FileHandle.standardError.write(Data("collied: \(note)\n".utf8))
+    } else {   // can't tell where we run from: as unbundled on the default root
+        config.adminPeerCheck = SignedAppCheck(app: URL(fileURLWithPath: "/nonexistent/Collie"))
     }
     config.captureUserEnv = ProcessInfo.processInfo.environment["COLLIE_USER_ENV"] != "off"   // tests: never the developer's rc files
     // hash of the file this process started from; read off the cooperative pool

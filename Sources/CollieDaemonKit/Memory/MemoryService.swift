@@ -106,6 +106,9 @@ actor MemoryService {
     /// Ids injected in a terminal's session (→ the `key` of their store), and the lot they were injected for: a change of
     /// lot starts over. ponytail: in the actor only — lost on a daemon restart, when the terminals restart too.
     private var injected: [UUID: (lot: UUID?, ids: [UUID: String])] = [:]
+    /// Proposal ids still queued for the curator (they don't expire meanwhile); set by the router.
+    private var queuedProposals: (@Sendable () async -> Set<UUID>)?
+    func setQueuedProposals(_ f: @escaping @Sendable () async -> Set<UUID>) { queuedProposals = f }
     /// Rules pushed to a terminal (its correction became one), emitted ahead of its next prompt's hits.
     private var pending: [UUID: [UUID]] = [:]
     static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código."
@@ -201,10 +204,11 @@ actor MemoryService {
     /// `contextText`, with each injected id's store key.
     private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int) async -> (text: String, ids: [UUID: String]) {
         var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = [], owner: [UUID: String] = [:]
+        let keep = await queuedProposals?() ?? []
         for s in await readable(cwd, lot: lot) {
             let recs = (try? await s.run { m -> [MemoryRecord] in
                 _ = m.index()   // refresh first: resolves two actives a land (or a hand edit) left behind
-                try? MemoryCleanup.expireProposals(store: m.store)
+                try? MemoryCleanup.expireProposals(store: m.store, keep: keep)
                 // a map whose path is gone from disk stays out
                 return m.store.all().records.filter { $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId) && m.present($0) }
             }) ?? []

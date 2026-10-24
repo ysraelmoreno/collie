@@ -155,24 +155,31 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
         }
     }
 
-    /// Review Focus 4: a global rule from a lot member names neither the lot nor the repo.
+    /// Review Focus 4 (R11): a global rule from a lot member that names the lot (whole word), its id or the repo's path is
+    /// demoted to the lot's store, text intact; one that doesn't stays global — and a common-word lot name mangles nothing.
     @Test func globalFeedbackStripsLot() async throws {
         let repo = try await makeRepo()
         let (fake, cfg) = curated()
         try await withDaemon(configure: cfg) { d, p in
             let a = try await term(d, p, "A", cwd: repo)
-            #expect(try await admin(d, p, "lot.create", ["name": "Atlas", "members": "A"]).ok)
-            let lot = await d.router.ws.lots.first { $0.name == "Atlas" }!.id
+            #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "A"]).ok)
+            let lot = await d.router.ws.lots.first { $0.name == "Login" }!.id
             let root = await d.router.memory.repo(for: repo.path).root!.path
-            fake.output = ops([createFeedback(scope: "global", title: "Sempre responda em português no Atlas",
-                                              body: "Vale no lote \(lot.uuidString.lowercased()) e em \(root)/Sources e \(lot.uuidString).")])
-            _ = try await relevant(p, a, "não, sempre responda em português, inclusive no Atlas")
-            #expect(await waitFor(10) { (try? await all(d.router.memory.global))?.contains { $0.kind == .feedback } == true })
-            let r = try #require(try await all(d.router.memory.global).first { $0.kind == .feedback })
-            for leak in ["Atlas", "atlas", lot.uuidString, lot.uuidString.lowercased(), root] {
-                #expect(!r.title.contains(leak) && !r.body.contains(leak) && !r.subject.contains(leak), "\(leak): \(r)")
+            let lotStore = await d.router.memory.lotStore(lot)
+            func feedback(_ s: RepoMemory) async -> [MemoryRecord] { ((try? await all(s)) ?? []).filter { $0.kind == .feedback && $0.status == .active } }
+            // about the user: stays global, untouched ("Logins" is not the lot's name as a whole word)
+            fake.output = ops([createFeedback(scope: "global", title: "Sempre responda em português", body: "Vale para Logins e tudo mais.")])
+            _ = try await relevant(p, a, "não, sempre responda em português")
+            #expect(await waitFor(10) { await !feedback(d.router.memory.global).isEmpty })
+            #expect(await feedback(d.router.memory.global).first?.body.hasPrefix("Vale para Logins e tudo mais.") == true)
+            // names the lot, its id or the repo: demoted to the lot, text intact
+            for (i, leak) in ["o fluxo de login", "o lote \(lot.uuidString.lowercased())", "\(root)/Sources"].enumerated() {
+                fake.output = ops([createFeedback(scope: "global", title: "Regra \(i)", body: "Vale para \(leak).")])
+                _ = try await relevant(p, a, "não, regra número \(i) agora")
+                #expect(await waitFor(10) { await feedback(lotStore).contains { $0.title == "Regra \(i)" } }, "\(leak)")
+                #expect(await feedback(lotStore).first { $0.title == "Regra \(i)" }?.body.hasPrefix("Vale para \(leak).") == true)
             }
-            #expect(r.title.contains("Sempre responda em português"))
+            #expect(await feedback(d.router.memory.global).count == 1)
         }
     }
 

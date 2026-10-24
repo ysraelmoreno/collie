@@ -193,6 +193,8 @@ public final class Daemon: Sendable {
         await router.watchDevices()
         await router.userEnv.warm()
         await router.startJobSweep()
+        await router.memory.setQueuedProposals { [weak router] in await router?.queuedProposalIds() ?? [] }
+        await router.migrateProposals()   // once: the proposals already waiting go through the curator
         await router.curator.start { [router] job, call in try await router.curate(job, call) }
     }
 

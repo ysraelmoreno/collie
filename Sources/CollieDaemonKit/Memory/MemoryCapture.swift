@@ -132,6 +132,7 @@ extension CommandRouter {
             // `write`, not `save`: a proposal replaces nothing until it is approved
             let out = recs
             try await store.run { m in for r in out { try m.store.write(r) } }
+            await enqueueProposals(out.map(\.id), store: store)   // the curator activates, merges or drops them
             let last = w.commits.last
             try await work.update(w.id) { $0.proposedAt = readAt; $0.proposedCommit = last }
         } catch { workLog("capture: \((error as? ProtocolError)?.message ?? "\(error)")") }

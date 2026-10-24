@@ -27,6 +27,8 @@ enum EssentialPaths {
         // agents: binaries, state and (read-only) config
         ".local/share/claude", ".local/state/claude", ".claude",
         ".codex", ".cursor", ".config/cursor",
+        // R12: Claude reads its login from the Keychain (the Security framework opens the keychain file in-process)
+        "Library/Keychains",
     ]
 
     /// Writable. Never config another unsandboxed program executes from (rc files, `~/.claude/settings.json`, hooks,
@@ -50,7 +52,7 @@ enum EssentialPaths {
         // agent state (sessions, history, todos); their config stays read-only. A trailing `/`: the dir's children only,
         // never the dir itself (no rename, unlink or symlink swap, R18). Claude's shell-snapshots and session-env stay
         // read-only: other (unsandboxed) Claude sessions source them (R18)
-        ".claude/history.jsonl", ".codex/history.jsonl", ".codex/auth.json", ".codex/version.json",
+        ".claude/history.jsonl", ".claude/.credentials.json*", ".codex/history.jsonl", ".codex/auth.json", ".codex/version.json",
     ] + agentStateDirs.values.flatMap { $0 }.map { $0 + "/" }
 
     /// Each agent's state dirs, writable to their children (R18); the daemon makes the terminal's own agent's ones
@@ -127,5 +129,6 @@ enum EssentialPaths {
 
     /// The per-user cache dir (`DARWIN_USER_CACHE_DIR`) holds every app's caches: only the build tools' names are writable.
     static let userCacheWrites = ["clang", "org.llvm.clang*", "org.swift.*", "swift*", "com.apple.DeveloperTools",
-                                  "com.apple.dt.*", "com.apple.CoreSimulator.*", "com.apple.metal*", "com.apple.xcrun*", "node*"]
+                                  "com.apple.dt.*", "com.apple.CoreSimulator.*", "com.apple.metal*", "com.apple.xcrun*", "node*",
+                                  "mds"]   // the Security framework's lock (Claude's Keychain login)
 }

@@ -330,6 +330,40 @@ final class FakeHome {
         #expect(try f.ok(p, "mkdir -p \(f.h("Library/Keychains")) && echo x > \(f.h("Library/Keychains/probe-db"))"))
     }
 
+    /// Plan 2N: Claude Code reads and saves its login. Only a temp keychain in the fake home, always by explicit path
+    /// (never the user's search list); `security` runs under the rendered profile.
+    @Test func keychainReadableAndWritable() throws {
+        let f = try FakeHome(), p = try f.profile(f.input())
+        let kc = f.home.appendingPathComponent("Library/Keychains/test.keychain-db").path
+        func security(_ args: [String]) throws -> Int32 {
+            let t = Process()
+            t.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+            t.arguments = args
+            t.environment = ["HOME": f.home.path]
+            try t.run(); t.waitUntilExit()
+            return t.terminationStatus
+        }
+        #expect(try security(["create-keychain", "-p", "pw", kc]) == 0)
+        let q = AgentLaunch.quote(kc)
+        let alarm = "/usr/bin/perl -e 'alarm 20; exec @ARGV'"   // a denied securityd lookup can hang instead of failing
+        let w = try f.run(p, "\(alarm) security add-generic-password -a x -s collie-test -w y \(q)")
+        #expect(w.status == 0, "\(w.out)")
+        let r = try f.run(p, "\(alarm) security find-generic-password -s collie-test -w \(q)")
+        #expect(r.status == 0 && r.out.trimmingCharacters(in: .whitespacesAndNewlines) == "y", "\(r.out)")
+        _ = try security(["delete-keychain", kc])
+    }
+
+    @Test func claudeCredentialsFileWritable() throws {
+        let f = try FakeHome(), p = try f.profile(f.input())
+        let c = f.h(".claude/.credentials.json"), t = f.h(".claude/.credentials.json.tmp")
+        #expect(try f.ok(p, "echo x > \(t) && mv \(t) \(c) && echo y > \(c)"))
+    }
+
+    @Test func claudeSettingsStillReadOnly() throws {
+        let f = try FakeHome(), p = try f.profile(f.input())
+        #expect(try !f.ok(p, "echo x > \(f.h(".claude/settings.json"))"))
+    }
+
     @Test func signalOthersDenied() throws {
         let f = try FakeHome(), p = try f.profile(f.input())
         let outside = Process()

@@ -141,6 +141,57 @@ private func rec(_ title: String, kind: MemoryKind = .decision, subject: String?
         }
     }
 
+    /// Moved from lot A to lot B: a lot A memory superseded afterwards never reaches the session (its set started over).
+    @Test func lotMoveNoForeignRetraction() async throws {
+        let repo = try await makeRepo(), root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let mem = MemoryService(globalDir: root.appendingPathComponent("memory"))
+        let la = UUID(), lb = UUID(), t = UUID()
+        let store = await mem.lotStore(la)
+        _ = try await store.run { try $0.store.save(MemoryRecord(kind: .decision, scope: .lot, lotId: la, subject: "s", title: "Segredo do lote A", pinned: true)) }
+        #expect(await mem.context(for: t, cwd: repo.path, lot: la).contains("Segredo do lote A"))
+        _ = try await store.run { try $0.store.save(MemoryRecord(kind: .decision, scope: .lot, lotId: la, subject: "s", title: "Novo do lote A")) }
+        #expect(await mem.retractions(for: t, lot: lb, limit: 2048).isEmpty)
+        #expect(await mem.retractions(for: t, lot: la, limit: 2048).isEmpty)   // the set started over at the move
+    }
+
+    /// "Use:" names only a successor the receiving session may see (another paddock's is omitted).
+    @Test func successorMustBeVisible() async throws {
+        let repo = try await makeRepo(), root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let mem = MemoryService(globalDir: root.appendingPathComponent("memory"))
+        let store = await mem.repo(for: repo.path)
+        var x = MemoryRecord(kind: .decision, scope: .paddock, paddock: "p1", subject: "s", title: "Regra do p1", pinned: true)
+        let y = MemoryRecord(kind: .decision, scope: .paddock, paddock: "p2", subject: "s", title: "Segredo do p2")
+        let x0 = x
+        _ = try await store.run { try $0.store.save(x0) }
+        let t = UUID()
+        #expect(await mem.context(for: t, cwd: repo.path, paddock: "p1").contains("Regra do p1"))
+        x.status = .superseded; x.supersededBy = y.id
+        let gone = x
+        try await store.run { try $0.store.write(y); try $0.store.write(gone) }
+        #expect(await mem.retractions(for: t, paddock: "p1", limit: 2048) == "Memória retirada (Collie):\nNão vale mais: Regra do p1.")
+    }
+
+    /// A feedback is the user's rule: no agent path archives, edits, supersedes or moves it.
+    @Test func agentCannotChangeFeedback() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            #expect(try await admin(d, p, "lot.create", ["name": "L", "members": "A"]).ok)
+            let lot = await d.router.ws.lots.first { $0.name == "L" }!.id
+            let store = await d.router.memory.lotStore(lot)
+            let f = MemoryRecord(kind: .feedback, scope: .lot, lotId: lot, subject: "idioma", title: "Responda em português")
+            _ = try await store.run { try $0.store.save(f) }
+            #expect(try await call(p, a, "memory.promote", ["id": f.id.uuidString]).error?.code == .unauthorized)
+            for cmd in ["memory.review", "memory.pin", "memory.restore"] {
+                #expect(try await call(p, a, cmd, ["id": f.id.uuidString, "action": "archive"]).error?.code == .unauthorized, "\(cmd)")
+            }
+            #expect(try await call(p, a, "memory.save", ["kind": "decision", "subject": "idioma", "title": "Responda em inglês"]).ok)
+            #expect(try await store.run { $0.store.all().records.first { $0.id == f.id } } == f)
+        }
+    }
+
     @Test func feedbackSectionAndLabel() {
         let (text, _) = MemoryService.renderContext([rec("D", pinned: true), rec("F", kind: .feedback, pinned: true)], limit: 4096)
         let f = try! #require(text.range(of: "Regras do usuário:\n- F")), dd = try! #require(text.range(of: "Decisões:\n- D"))

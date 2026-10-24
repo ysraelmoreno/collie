@@ -265,7 +265,9 @@ actor MemoryService {
     /// The ids injected in `terminal`'s session that are no longer active (superseded, archived — a curator's change or a
     /// hand edit, the index sees both), one line each, removed from the set once said; over `limit`, `… e mais <n>` and
     /// the rest wait for the next prompt. "" when there is none.
-    func retractions(for terminal: UUID, limit: Int) async -> String {
+    /// `paddock`/`lot`: the session's now (a lot change starts its set over first; "Use:" only for a successor it may see).
+    func retractions(for terminal: UUID, paddock: String? = nil, lot: UUID? = nil, limit: Int) async -> String {
+        sync(terminal, lot: lot)
         guard let cur = injected[terminal], !cur.ids.isEmpty else { return "" }
         var byKey: [String: [UUID]] = [:]
         for (id, k) in cur.ids { byKey[k, default: []].append(id) }
@@ -282,8 +284,10 @@ actor MemoryService {
         let wanted = Array(Set(gone.compactMap(\.supersededBy)))
         var next: [UUID: MemoryRecord] = [:]
         for s in stores where !wanted.isEmpty {
-            let recs = (try? await s.run { m in m.index()?.records(wanted) ?? [:] }) ?? [:]
-            next.merge(recs.filter { $0.value.status == .active }) { a, _ in a }
+            let recs = (try? await s.run { m in
+                (m.index()?.records(wanted) ?? [:]).filter { $0.value.status == .active && Self.visible($0.value, paddock: paddock, lot: m.lotId) && m.present($0.value) }
+            }) ?? [:]
+            next.merge(recs) { a, _ in a }
         }
         var out = Self.retractedHeader, said: [UUID] = []
         for (i, r) in gone.enumerated() {

@@ -179,7 +179,7 @@ extension CommandRouter {
                 }
                 var left = 2048, parts: [String] = []
                 func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
-                let ret = await memory.retractions(for: me.id, limit: left)
+                let ret = await memory.retractions(for: me.id, paddock: paddockName, lot: myLot?.id, limit: left)
                 add(ret)
                 // ponytail: retractions that overflowed hold the rest for the next prompt (titles are one line: no "\n…" inside)
                 if ret.contains("\n… e mais ") { left = 0 }
@@ -249,6 +249,8 @@ extension CommandRouter {
                 }
                 return rec
             }
+            // a feedback is the user's rule: only the app (or the curator) moves it
+            if caller != nil, old.kind == .feedback { throw ProtocolError(code: .unauthorized, message: "a feedback memory is the user's: only the app can promote it") }
             let rec = MemoryRecord(kind: old.kind, scope: target === memory.global ? .global : .project, subject: old.subject,
                                    title: old.title, body: old.body, path: old.path, reviewed: caller == nil && old.reviewed, pinned: caller == nil && old.pinned,   // an agent's promotion is unreviewed and unpinned
                                    supersedes: old.id, origin: old.origin)

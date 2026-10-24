@@ -16,6 +16,12 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     private var idx: MemoryIndex?
     private(set) var indexError: String?
     private let embedder: (any MemoryEmbedder)?
+    private(set) var refreshes = 0   // tests
+    private var lastRefresh: Date?, lastSignature: [String] = []
+    private var backfilling = false
+    /// The longest a prompt trusts an unchanged store folder (an in-place edit or a map's repo path don't touch it).
+    static let refreshEvery: TimeInterval = 5
+    static let vectorBatch = 16
 
     init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil, secureRoot: URL? = nil, embedder: (any MemoryEmbedder)? = nil) {
         self.root = root; self.dbFile = dbFile; self.commonDir = commonDir; self.lotId = lotId; self.embedder = embedder
@@ -66,15 +72,52 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
             }
         }
         guard let idx else { return nil }
-        do { try idx.refresh() } catch { memoryLog("refresh \(path): \(error)") }   // stale but usable
+        // a write through the store renames into a kind folder: its mtime moves; anything else waits ≤ refreshEvery
+        let sig = signature(), now = Date()
+        if sig != lastSignature || lastRefresh.map({ now.timeIntervalSince($0) >= Self.refreshEvery }) ?? true {
+            lastSignature = sig; lastRefresh = now; refreshes += 1
+            do { try idx.refresh() } catch { memoryLog("refresh \(path): \(error)") }   // stale but usable
+            startBackfill(idx)
+        }
         return idx
+    }
+
+    /// mtimes (ns) of the store folder and its kind folders.
+    private func signature() -> [String] {
+        func m(_ p: String) -> String {
+            var st = Darwin.stat()
+            return lstat(p, &st) == 0 ? "\(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec)" : "-"
+        }
+        let dirs = ((try? FileManager.default.contentsOfDirectory(atPath: store.dir.path)) ?? []).filter { !$0.hasSuffix(".md") }.sorted()
+        return [m(store.dir.path)] + dirs.map { "\($0):" + m(store.dir.appendingPathComponent($0).path) }
+    }
+
+    /// Queue only: vectors for new/changed records are embedded in the background, never in the caller's call.
+    private func startBackfill(_ idx: MemoryIndex) {
+        guard embedder != nil, !backfilling, !idx.missingVectors(limit: 1).isEmpty else { return }
+        backfilling = true
+        Task.detached(priority: .utility) {
+            await self.fillVectors()
+            self.queue.async { self.backfilling = false }
+        }
+    }
+
+    /// Embeds every record with no vector, `vectorBatch` at a time: the queue is held only to read or write a batch, the
+    /// model only per text (`NLMemoryEmbedder`'s lock), never across batches.
+    func fillVectors() async {
+        guard let embedder else { return }
+        while true {
+            guard let jobs = try? await run({ m in m.index()?.missingVectors(limit: Self.vectorBatch) ?? [] }), !jobs.isEmpty else { return }
+            let done = jobs.map { (job: $0, vector: embedder.embed($0.text)) }
+            guard let n = try? await run({ m in m.idx?.storeVectors(done) ?? 0 }), n > 0 else { return }
+        }
     }
 
     /// A lot's store exists once its first memory is written (repo/global stores: always).
     var exists: Bool { lotId == nil || FileManager.default.fileExists(atPath: store.dir.path) }
 
     /// Queue only: closes the SQLite handle (reopened on next use).
-    func closeIndex() { idx = nil; lastOpenAttempt = nil }
+    func closeIndex() { idx = nil; lastOpenAttempt = nil; lastRefresh = nil }
 
     /// Queue only: the index or a clear error.
     func requireIndex() throws(ProtocolError) -> MemoryIndex {
@@ -121,7 +164,8 @@ actor MemoryService {
     }
 
     /// A query's vector: its first 1 000 characters (the prompt hook's 5 s budget); nil without a model for its language.
-    nonisolated func embed(_ text: String) -> (lang: String, vector: [Float])? { embedder?.embed(String(text.prefix(1_000))) }
+    /// Async and nonisolated: runs off this actor (a model load or another embed never blocks the other terminals).
+    nonisolated func embed(_ text: String) async -> (lang: String, vector: [Float])? { embedder?.embed(String(text.prefix(1_000))) }
 
     func repo(for cwd: String) async -> RepoMemory {
         if let r = byCwd[cwd] { return r }
@@ -214,7 +258,7 @@ actor MemoryService {
         let q = Self.significantTerms(prompt).joined(separator: " ")
         guard !q.isEmpty, max > 0 else { return "" }
         var hits: [(hit: MemoryHit, store: RepoMemory)] = []
-        let vector = embed(prompt)   // once per prompt, for every store
+        let vector = await embed(prompt)   // once per prompt, for every store
         let factors = await scores.all()
         for s in await readable(cwd, lot: lot) {
             let found = (try? await s.run { m in (m.index()?.search(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []

@@ -18,7 +18,7 @@ enum MemoryCleanup {
     static let lowScore = 0.5, lowScoreAge: TimeInterval = 30 * 86400
 
     static func plan(records: [MemoryRecord], stats: [UUID: MemoryStats], scores: [UUID: Double] = [:], now: Date) -> [CleanupItem] {
-        func days(_ t: TimeInterval) -> Int { Int(t / 86400) }
+        func days(_ t: TimeInterval) -> Int { Int((t / 86400).rounded()) }
         var items: [CleanupItem] = []
         var rest: [MemoryRecord] = []
         for r in records where r.status == .active && !r.pinned {

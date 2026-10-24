@@ -246,7 +246,12 @@ extension CommandRouter {
         await emitToWorkPanels("work.changed", .object(["workId": .string(id.uuidString.lowercased())]))
         await keepSummary(id)
         // every close (done, removed, merge/land) passes here: its injected memories get the outcome
-        if let w = try? await work.get(id), w.closedAt != nil { await memory.scores.outcome(work: id, merged: w.closedBy == "merge") }
+        // a work gone from the store drops its injections too
+        do {
+            if let w = try await work.get(id) {
+                if w.closedAt != nil { await memory.scores.outcome(work: id, merged: w.closedBy == "merge") }
+            } else { await memory.scores.outcome(work: id, merged: false) }
+        } catch {}   // unreadable store: decided on its next change
     }
 
     /// A work that just closed keeps its deterministic summary in its repo's Memory as an unreviewed decision

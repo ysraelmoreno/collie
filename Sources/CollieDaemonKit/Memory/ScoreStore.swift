@@ -53,18 +53,24 @@ actor ScoreStore {
         return s
     }
 
-    /// ponytail: the whole file rewritten per change, on the actor; fine for thousands of ids
+    /// ponytail: the whole file rewritten per change, on the actor; fine for thousands of ids.
+    /// Written 0600 from the start, fsynced, renamed over; a failed write leaves no tmp and the old file as it was.
     private func mutate(_ change: (inout State) -> Void) {
         var s = load()
         change(&s)
         state = s
+        let dir = file.deletingLastPathComponent(), tmp = dir.appendingPathComponent(".scores-\(UUID().uuidString).tmp")
         do {
-            let dir = file.deletingLastPathComponent()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let tmp = dir.appendingPathComponent(".scores-\(UUID().uuidString).tmp")
-            try JSONEncoder().encode(s).write(to: tmp)
-            chmod(tmp.path, 0o600)
-            if rename(tmp.path, file.path) != 0 { try? FileManager.default.removeItem(at: tmp); throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        } catch { memoryLog("scores: \(error)") }
+            let data = try JSONEncoder().encode(s)
+            let fd = open(tmp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+            guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            let ok = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) == $0.count } && fsync(fd) == 0
+            close(fd)
+            guard ok, rename(tmp.path, file.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        } catch {
+            unlink(tmp.path)
+            memoryLog("scores: \(error)")
+        }
     }
 }

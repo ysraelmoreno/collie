@@ -92,6 +92,28 @@ private func tempFile() -> URL {
         }
     }
 
+    /// R9: a work gone from the store (or closed before a late injection landed) leaves no injected entry behind.
+    @Test func goneWorkPruned() async throws {
+        try await withDaemon { d, p in
+            let gone = UUID(), id = UUID()
+            await d.router.memory.scores.noteInjected([id], work: gone)
+            await d.router.workChanged(gone)
+            #expect(await d.router.memory.scores.pending(gone).isEmpty)
+        }
+    }
+
+    /// R9: a write that fails leaves no tmp file and the old scores intact.
+    @Test func failedWriteLeavesNoTmp() async throws {
+        let file = tempFile(), id = UUID()
+        let s = ScoreStore(file: file)
+        await s.penalize(id, -0.5, reason: "x")
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)   // rename onto a dir fails
+        await s.penalize(id, -0.1, reason: "y")
+        let left = try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path)
+        #expect(left == ["scores.json"], "\(left)")
+    }
+
     @Test func clamped() async throws {
         let s = ScoreStore(file: tempFile()), id = UUID()
         for _ in 0..<5 { await s.penalize(id, ScoreStore.correction, reason: "x") }
@@ -124,7 +146,7 @@ private func tempFile() -> URL {
     }
 
     @Test func lowScoreColdArchived() async throws {
-        let now = Date(), old = now.addingTimeInterval(-31 * 86400)
+        let now = Date(), old = now.addingTimeInterval(-31 * 86400 + 60)   // 30.999 days: shown rounded, 31
         let cold = rec("Cold", created: old), pinned = rec("Pinned", pinned: true, created: old)
         let recent = rec("Recent", created: old), okScore = rec("Fine", created: old)
         let stats: [UUID: MemoryStats] = [recent.id: MemoryStats(reads: 1, lastReadAt: now.addingTimeInterval(-5 * 86400), missingSince: nil)]

@@ -136,10 +136,42 @@ final class MemoryIndex {
                   r.pinned, r.updatedAt.timeIntervalSince1970, r.path, json]) { _ in }
         try query("INSERT INTO fts(rowid, title, subject, body, path) VALUES(?, ?, ?, ?, ?)",
                   [Int(sqlite3_last_insert_rowid(db)), r.title, r.subject, r.body, r.path ?? ""]) { _ in }
-        // ponytail: a model that appears later (asset downloaded) reaches unchanged files only on a rebuild
-        if let e = embedder?.embed(Self.vectorText(r)) {
-            try query("INSERT OR REPLACE INTO vecs(id, lang, v) VALUES(?, ?, ?)",
-                      [key(r.id), e.lang, e.vector.withUnsafeBufferPointer { Data(buffer: $0) }]) { _ in }
+    }
+
+    // MARK: vectors (filled after the words: search works at once, a record's vector arrives later)
+
+    struct VectorJob: Sendable { let id: String; let mtime: Double; let text: String }
+
+    /// Records with no `vecs` row yet (a text no model embeds gets a `-` row, so it is asked once).
+    /// ponytail: a model that appears later (asset downloaded) reaches those only on a rebuild
+    func missingVectors(limit: Int) -> [VectorJob] {
+        var out: [VectorJob] = []
+        try? query("SELECT d.id, d.mtime, d.json FROM docs d LEFT JOIN vecs v ON v.id = d.id WHERE v.id IS NULL LIMIT ?", [limit]) { row in
+            if let r = decode(text(row, 2)) { out.append(VectorJob(id: text(row, 0), mtime: sqlite3_column_double(row, 1), text: Self.vectorText(r))) }
+        }
+        return out
+    }
+
+    /// Stores what was embedded, only for records unchanged since `missingVectors` (same mtime). Returns how many.
+    @discardableResult
+    func storeVectors(_ done: [(job: VectorJob, vector: (lang: String, vector: [Float])?)]) -> Int {
+        var n = 0
+        guard (try? exec("BEGIN IMMEDIATE")) != nil else { return 0 }
+        for (job, v) in done {
+            let blob = v.map { e in e.vector.withUnsafeBufferPointer { Data(buffer: $0) } } ?? Data()
+            try? query("INSERT OR REPLACE INTO vecs(id, lang, v) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM docs WHERE id = ? AND mtime = ?)",
+                       [job.id, v?.lang ?? "-", blob, job.id, job.mtime]) { _ in }
+            n += Int(sqlite3_changes(db))
+        }
+        if (try? exec("COMMIT")) == nil { try? exec("ROLLBACK"); return 0 }
+        return n
+    }
+
+    /// Fills every missing vector with this index's embedder, inline (tests; the daemon embeds off the queue: `RepoMemory`).
+    func fillVectors() {
+        guard let embedder else { return }
+        while case let jobs = missingVectors(limit: 32), !jobs.isEmpty {
+            if storeVectors(jobs.map { ($0, embedder.embed($0.text)) }) == 0 { return }
         }
     }
 
@@ -208,8 +240,13 @@ final class MemoryIndex {
     /// unrelated text alike (0.66–0.76), so its vectors only re-rank word hits (R3; meaning in pt comes from aliases).
     static let vectorOnlyLangs: Set<String> = ["en"]
 
-    /// bm25 × multiplier; with a query `vector`, blended: `m × (0.6 × b / bTop + 0.4 × max(cos, 0))` over the word hits
-    /// plus (for `vectorOnlyLangs`) the records of the same language whose cosine is ≥ `vectorMin`.
+    /// A re-rank-only language's cosine moves a word hit by at most this share of its word score (R8).
+    static let rerankMax = 0.15
+
+    /// bm25 × multiplier. With a query `vector` of a `vectorOnlyLangs` language, blended:
+    /// `m × (0.6 × b / bTop + 0.4 × max(cos, 0))` over the word hits plus the records whose cosine is ≥ `vectorMin`.
+    /// Any other language only re-ranks the word hits, on the bm25 × m scale: `b × m × (1 + rerankMax × ĉ)`, ĉ the cosine
+    /// min-max normalized over the hits with a comparable vector (0 without one).
     func search(_ query: String, vector: (lang: String, vector: [Float])? = nil, limit: Int, kinds: Set<MemoryKind>? = nil,
                 includeInactive: Bool = false) -> [MemoryHit] {
         let match = MemoryIndex.ftsQuery(query)
@@ -235,7 +272,7 @@ final class MemoryIndex {
             }
             return hits
         }
-        var cand: [String: (b: Double, m: Double, cos: Double)] = [:]
+        var cand: [String: (b: Double, m: Double, cos: Double?)] = [:]
         if let match {
             let sql = """
                 SELECT d.id, -bm25(fts) AS b, \(Self.multiplier) AS m
@@ -244,19 +281,23 @@ final class MemoryIndex {
                 ORDER BY b * m DESC LIMIT ?
                 """
             try? self.query(sql, [now, match, includeInactive] + kindArgs + [limit]) { row in
-                cand[text(row, 0)] = (sqlite3_column_double(row, 1), sqlite3_column_double(row, 2), 0)
+                cand[text(row, 0)] = (sqlite3_column_double(row, 1), sqlite3_column_double(row, 2), nil)
             }
         }
+        let vectorOnly = Self.vectorOnlyLangs.contains(vector.lang)
+        if !vectorOnly, cand.isEmpty { return [] }
         // ponytail: brute-force cosine over the store's vecs; an ANN index if a store passes ~20 000
-        let q = vector.vector.map(Double.init), vectorOnly = Self.vectorOnlyLangs.contains(vector.lang)
+        let q = vector.vector.map(Double.init)
         let qn = q.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        let only = vectorOnly ? [] : Array(cand.keys)   // re-rank only: just the word hits' vectors
+        let idFilter = only.isEmpty ? "" : "AND v.id IN (\(only.map { _ in "?" }.joined(separator: ", ")))"
         let sql = """
             SELECT d.id, v.v, \(Self.multiplier) AS m
             FROM vecs v JOIN docs d ON d.id = v.id LEFT JOIN stats s ON s.id = d.id
-            WHERE v.lang = ? AND (? OR d.status = 'active') \(kindFilter)
+            WHERE v.lang = ? AND (? OR d.status = 'active') \(kindFilter) \(idFilter)
             """
         var x = [Double](repeating: 0, count: q.count)
-        try? self.query(sql, [now, vector.lang, includeInactive] + kindArgs) { row in
+        try? self.query(sql, [now, vector.lang, includeInactive] + kindArgs + only.map { $0 as Any? }) { row in
             guard qn > 0, let p = sqlite3_column_blob(row, 1) else { return }
             let n = Int(sqlite3_column_bytes(row, 1)) / MemoryLayout<Float>.size
             guard n == q.count else { return }   // another model's dimension
@@ -268,15 +309,21 @@ final class MemoryIndex {
             let cos = dot / (qn * vn.squareRoot()), id = text(row, 0)
             if cand[id] != nil { cand[id]!.cos = cos } else if vectorOnly, cos >= Self.vectorMin { cand[id] = (0, sqlite3_column_double(row, 2), cos) }
         }
-        let bTop = cand.values.map(\.b).max() ?? 0
-        let ranked = cand.map { id, c in (id, c.m * (0.6 * (bTop > 0 ? c.b / bTop : 0) + 0.4 * max(c.cos, 0))) }
-            .sorted { ($0.1, $1.0) > ($1.1, $0.0) }.prefix(limit)
-        for (id, score) in ranked {
-            try? self.query("SELECT json FROM docs WHERE id = ?", [id]) { row in
-                if let r = decode(text(row, 0)) { hits.append(MemoryHit(record: r, score: score)) }
-            }
+        let scored: [(String, Double)]
+        if vectorOnly {
+            let bTop = cand.values.map(\.b).max() ?? 0
+            scored = cand.map { id, c in (id, c.m * (0.6 * (bTop > 0 ? c.b / bTop : 0) + 0.4 * max(c.cos ?? 0, 0))) }
+        } else {
+            let coss = cand.values.compactMap(\.cos), lo = coss.min() ?? 0, hi = coss.max() ?? 0
+            scored = cand.map { id, c in (id, c.b * c.m * (1 + Self.rerankMax * (c.cos.map { hi > lo ? ($0 - lo) / (hi - lo) : 0 } ?? 0))) }
         }
-        return hits
+        let ranked = scored.sorted { ($0.1, $1.0) > ($1.1, $0.0) }.prefix(limit)
+        guard !ranked.isEmpty else { return [] }
+        var recs: [String: MemoryRecord] = [:]
+        try? self.query("SELECT id, json FROM docs WHERE id IN (\(ranked.map { _ in "?" }.joined(separator: ", ")))", ranked.map { $0.0 }) { row in
+            recs[text(row, 0)] = decode(text(row, 1))
+        }
+        return ranked.compactMap { id, score in recs[id].map { MemoryHit(record: $0, score: score) } }
     }
 
     func noteRead(_ ids: [UUID]) {
@@ -335,6 +382,7 @@ final class MemoryIndex {
             case let v as Bool: sqlite3_bind_int(st, n, v ? 1 : 0)
             case let v as Int: sqlite3_bind_int64(st, n, Int64(v))
             case let v as Double: sqlite3_bind_double(st, n, v)
+            case let v as Data where v.isEmpty: sqlite3_bind_zeroblob(st, n, 0)   // a blob, not NULL
             case let v as Data: _ = v.withUnsafeBytes { sqlite3_bind_blob(st, n, $0.baseAddress, Int32($0.count), transient) }
             default: throw ProtocolError(code: .internal, message: "memory index: unsupported bind \(type(of: a))")
             }

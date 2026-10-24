@@ -77,7 +77,7 @@ extension CommandRouter {
                 for l in ws.lots where l.id != myLot?.id && enterable(l) { stores.insert(await memory.lotStore(l.id), at: 0) }
             }
             var hits: [(hit: MemoryHit, store: RepoMemory)] = []
-            let vector = memory.embed(query), factors = await memory.scores.all()
+            let vector = await memory.embed(query), factors = await memory.scores.all()
             for s in stores {
                 // over-fetch: paddock memories of other paddocks are filtered out below
                 // the picked repo's index must work; a broken global one only drops its hits
@@ -227,7 +227,7 @@ extension CommandRouter {
                     try store.write(rec)
                 }
             }
-            if edited { await memory.scores.penalize(id, ScoreStore.userEdit, reason: "editada pelo usuário") }
+            if edited, caller == nil { await memory.scores.penalize(id, ScoreStore.userEdit, reason: "editada pelo usuário") }
             return out
 
         case "memory.promote":

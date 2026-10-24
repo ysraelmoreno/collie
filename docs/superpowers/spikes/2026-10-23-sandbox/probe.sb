@@ -1,0 +1,63 @@
+;; Plan 4S spike: draft per-terminal profile (scratch, not product code).
+;; sandbox-exec -f probe.sb -D HOME=<real path> -D PROJECT=<real path> -D TMP=<DARWIN_USER_TEMP_DIR> \
+;;   -D CACHE=<DARWIN_USER_CACHE_DIR> -D GITCOMMON=<main repo .git, or PROJECT/.git> -D SOCK=<daemon socket> \
+;;   -D COLLIE=<Collie support dir> -D TAG=collie-term:<id> <cmd>
+;; Every path param must be the resolved path (/private/tmp, not /tmp): Seatbelt matches the vnode path.
+;; HOME goes into regexes below; Task 3 must regex-escape it (here only the fake temp home is used).
+(version 1)
+(allow default)
+
+(define home (param "HOME"))
+(define project (param "PROJECT"))
+(define gitcommon (param "GITCOMMON"))
+(define tag (param "TAG"))
+(define (h p) (string-append home p))
+
+;; ---- reads: the user's home is closed; tool essentials re-opened (last matching rule wins)
+(deny file-read* (with message tag) (subpath home))
+(allow file-read-metadata (subpath home))            ; stat/realpath of ancestors; contents and listings stay closed
+(allow file-read*
+  (subpath project) (subpath gitcommon)
+  (subpath (h "/.nvm")) (subpath (h "/.npm")) (subpath (h "/.cache")) (subpath (h "/.swiftpm"))
+  (subpath (h "/Library/Caches")) (subpath (h "/Library/Developer")) (subpath (h "/Library/org.swift.swiftpm"))
+  (literal (h "/.gitconfig")) (subpath (h "/.config/git"))
+  (literal (h "/.zshenv")) (literal (h "/.zprofile")) (literal (h "/.zshrc")) (literal (h "/.zlogin"))
+  (literal (h "/.CFUserTextEncoding")) (literal (h "/Library/Preferences/.GlobalPreferences.plist"))
+  (literal (h "/.ssh")) (literal (h "/.ssh/known_hosts")) (literal (h "/.ssh/config")))
+;; secrets stay closed even inside re-opened trees
+(deny file-read* (with message tag)
+  (regex (string-append "^" home "/\\.ssh/id_"))
+  (subpath (h "/.aws")) (subpath (h "/.config/gh")) (literal (h "/.netrc")) (literal (h "/.docker/config.json")))
+
+;; ---- writes: temp + devices, then the home closed again (the project usually lives in it), then project + caches
+(deny file-write* (with message tag))
+(allow file-write*
+  (subpath "/private/tmp") (subpath (param "TMP")) (subpath (param "CACHE"))
+  (literal "/dev/null") (literal "/dev/zero") (literal "/dev/dtracehelper") (literal "/dev/tty")
+  (regex #"^/dev/ttys[0-9]+$") (regex #"^/dev/fd/"))
+(deny file-write* (with message tag) (subpath home))
+(allow file-write*
+  (subpath project)
+  (subpath (string-append gitcommon "/objects")) (subpath (string-append gitcommon "/refs"))
+  (subpath (string-append gitcommon "/logs")) (subpath (string-append gitcommon "/worktrees"))
+  (literal (string-append gitcommon "/packed-refs"))
+  (subpath (h "/.npm")) (subpath (h "/.cache")) (subpath (h "/Library/Caches")) (subpath (h "/Library/Developer"))
+  (subpath (h "/Library/org.swift.swiftpm")))
+;; git files the user's own unsandboxed git executes from, and the pointers that pick them
+;; (renaming .git, rewriting a worktree's .git file or its commondir/gitdir would swap in a planted config)
+(deny file-write* (with message tag)
+  (literal gitcommon) (literal (string-append project "/.git"))
+  (subpath (string-append gitcommon "/hooks")) (literal (string-append gitcommon "/config"))
+  (literal (string-append gitcommon "/info/attributes"))
+  (regex (string-append "^" gitcommon "/worktrees/[^/]+/(commondir|gitdir|config\\.worktree)$")))
+
+;; ---- daemon socket: connect only to it inside the Collie dir
+(deny file-read* (with message tag) (subpath (param "COLLIE")))
+(deny network-outbound (with message tag) (remote unix-socket (subpath (param "COLLIE"))))
+(allow network-outbound (remote unix-socket (path-literal (param "SOCK"))))
+
+;; ---- process control
+(deny process-exec (with message tag) (literal "/usr/bin/security"))
+(allow process-exec (literal "/bin/ps") (with no-sandbox))   ; setuid: a sandboxed exec of it fails otherwise
+(deny signal (with message tag))
+(allow signal (target same-sandbox))

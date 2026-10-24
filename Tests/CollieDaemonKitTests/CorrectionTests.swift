@@ -399,6 +399,35 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
         }
     }
 
+    /// R22: the whole buffer must equal the prompt (a fragment doesn't count); Ctrl-U/Ctrl-W/Ctrl-C edit the line;
+    /// DCS/OSC payloads aren't text. R21: a prompt that doesn't match consumes nothing.
+    @Test func typedLineEditing() {
+        let p = InputProvenance(), t = UUID()
+        p.typed(t, Data("não… nunca use X só aqui".utf8))
+        #expect(!p.take(t, prompt: "nunca use X"))   // a fragment
+        p.typed(t, Data("\r".utf8))
+        #expect(p.take(t, prompt: "não… nunca use X só aqui"))   // the failed take above consumed nothing
+        p.typed(t, Data("lixo\u{15}não, use o MySQL\u{17}SQLite\r".utf8))
+        #expect(p.take(t, prompt: "não, use o SQLite"))
+        p.typed(t, Data("abandonado\u{03}\u{1B}]11;rgb:0000/0000/0000\u{07}\u{1B}P1$r0m\u{1B}\\não, use o SQLite\r".utf8))
+        #expect(p.take(t, prompt: "não, use o SQLite"))
+    }
+
+    /// R21: an agent's own hook calls neither eat the user's typed prompt nor the user's hourly budget.
+    @Test func agentCallsDontStarveUser() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in   // unavailable: the jobs stay queued
+            let a = try await term(d, p, "A", cwd: repo)
+            await d.router.asks.provenance.typed(a.uuid, Data("não, use SQLite em tudo\r".utf8))
+            for i in 0..<6 { _ = try await relevant(p, a, "não, regra falsa \(i)") }   // the agent, with its own token
+            _ = try await relevant(p, a, "não, use SQLite em tudo")   // the user's Enter reaches the hook
+            try await Task.sleep(for: .milliseconds(500))
+            let jobs = try await d.router.curator.queued(kind: .correction).map(payload)
+            #expect(jobs.filter { $0.user == true }.map(\.prompt) == ["não, use SQLite em tudo"], "\(jobs.map(\.prompt))")
+            #expect(jobs.filter { $0.user != true }.count == 5)   // their own cap
+        }
+    }
+
     @Test func typedTextNormalized() {
         let p = InputProvenance(), t = UUID()
         p.typed(t, Data("não, usx\u{7F}e \u{1B}[200~o SQLite\u{1B}[201~\u{1B}[D\r".utf8))

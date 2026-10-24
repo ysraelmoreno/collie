@@ -74,13 +74,14 @@ extension CommandRouter {
     /// Runs detached from the hook.
     func enqueueCorrection(terminal: UUID, prompt raw: String, user: Bool = false) async {
         guard let me = ws.terminals.first(where: { $0.id == terminal }) else { return }
-        let hourAgo = Date().addingTimeInterval(-3600)
-        correctionsAt[terminal] = (correctionsAt[terminal] ?? []).filter { $0 > hourAgo }
-        guard (correctionsAt[terminal]?.count ?? 0) < MemoryLearning.correctionsPerHour else { return }
+        // R21: the user's corrections and the unproven ones (an agent calling the hook) have separate hourly budgets
+        let budget = "\(terminal.uuidString)|\(user)", hourAgo = Date().addingTimeInterval(-3600)
+        correctionsAt[budget] = (correctionsAt[budget] ?? []).filter { $0 > hourAgo }
+        guard (correctionsAt[budget]?.count ?? 0) < MemoryLearning.correctionsPerHour else { return }
         // reserved now (concurrent prompts interleave at the awaits below), given back if the job is refused
         let slot = Date()
-        correctionsAt[terminal, default: []].append(slot)
-        func release() { correctionsAt[terminal]?.removeAll { $0 == slot } }
+        correctionsAt[budget, default: []].append(slot)
+        func release() { correctionsAt[budget]?.removeAll { $0 == slot } }
         let secrets = await auth.secrets()
         func clean(_ s: String) -> String { LotBoards.scrub(s, secrets: secrets) }
         let lot = ws.lot(of: terminal)
@@ -176,8 +177,8 @@ extension CommandRouter {
     /// beats the user's older pin: it is unpinned); anything else touching a pinned or user-reviewed record becomes an
     /// `ask` and changes nothing. R11: a global create naming the lot (whole word), its id or a repo/lot path is written to
     /// the family's store instead (no stripping: text stays intact); a merge into a global record with such text is
-    /// skipped. An `ask` over 2+ active records keeps the newest active and supersedes the others meanwhile (not a pinned
-    /// or reviewed one). `score` is ignored until scores exist.
+    /// skipped. An `ask` changes nothing (R20): the user resolves it. A feedback is touched only by a correction with the
+    /// user's provenance (R19). `score` is ignored until scores exist.
     /// Corrections: R12 without the user's provenance only the create is written, as `proposed` (nothing else changes);
     /// R13 with it, at most 3 supersedes, no merge/retire, activate/drop only of its own waiting quote.
     /// R15 L4: the created record's id is the job's, so a retry after a half-applied attempt doesn't write a second rule.
@@ -200,6 +201,8 @@ extension CommandRouter {
         func write(_ s: RepoMemory, _ r: MemoryRecord) async throws { try await s.run { try $0.store.write(r) } }
         /// The user's: pinned, or reviewed/edited by them. Only a correction's supersede may change it.
         func users(_ r: MemoryRecord) -> Bool { r.pinned || r.reviewed }
+        /// R19: a feedback (active or proposed) is changed only by a correction with the user's provenance.
+        func untouchable(_ r: MemoryRecord) -> Bool { r.kind == .feedback && !(correction && ctx.user) }
         func ask(_ what: String, _ reason: String, _ recs: [MemoryRecord], _ s: RepoMemory) {
             entry("ask", "O curador quer \(what) \"\(MemoryLearning.oneLine(recs.first?.title ?? "", max: 60))\"" + (reason.isEmpty ? "" : ": \(reason)"),
                   reason, s, before: recs)
@@ -269,7 +272,7 @@ extension CommandRouter {
             switch op {
             case .create, .score: continue
             case .supersede(let id, let by, let reason):
-                guard !touched.contains(id), let (s, r) = await find(id), r.status == .active else { continue }
+                guard !touched.contains(id), let (s, r) = await find(id), r.status == .active, !untouchable(r) else { continue }
                 if users(r), !correction { ask("aposentar", reason, [r], s); continue }   // an ask changes nothing: not touched
                 guard let byId = by ?? created?.id, byId != id else { continue }
                 if by != nil { guard let b = await find(byId), b.rec.status == .active else { continue } }
@@ -278,9 +281,9 @@ extension CommandRouter {
                 entry("aposentado", r.title, reason, s, created: [byId], before: [r])
             case .merge(let ids, let into, let title, let body, let reason):
                 guard !touched.contains(into), ids.allSatisfy({ !touched.contains($0) }), let (s, target) = await find(into),
-                      target.status == .active else { continue }
+                      target.status == .active, !untouchable(target) else { continue }
                 var from: [(store: RepoMemory, rec: MemoryRecord)] = []
-                for id in ids { if let f = await find(id), [.active, .proposed].contains(f.rec.status) { from.append(f) } }
+                for id in ids { if let f = await find(id), [.active, .proposed].contains(f.rec.status), !untouchable(f.rec) { from.append(f) } }
                 guard from.count == ids.count else { continue }
                 if users(target) && (title != nil || body != nil) || from.contains(where: { users($0.rec) }) {
                     ask("mesclar em", reason, [target] + from.map(\.rec), s); continue
@@ -297,13 +300,13 @@ extension CommandRouter {
                 touched.formUnion(ids + [into])
                 entry("mesclado", t.title, reason, s, before: [target] + from.map(\.rec))
             case .retire(let id, let reason):
-                guard !touched.contains(id), let (s, r) = await find(id), r.status == .active else { continue }
+                guard !touched.contains(id), let (s, r) = await find(id), r.status == .active, !untouchable(r) else { continue }
                 if users(r) { ask("aposentar", reason, [r], s); continue }
                 var n = r; n.status = .archived; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id)
                 entry("aposentado", r.title, reason, s, before: [r])
             case .activate(let id, let reason):
-                guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed else { continue }
+                guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed, !untouchable(r) else { continue }
                 var n = r; n.status = .active; n.updatedAt = Date()
                 let old = await replaced(n, in: s)
                 if let old, users(old), !correction { ask("ativar", reason, [r, old], s); continue }
@@ -312,22 +315,16 @@ extension CommandRouter {
                 touched.insert(id); if let old { touched.insert(old.id) }
                 entry("ativado", r.title, reason, s, before: [r] + (old.map { [$0] } ?? []))
             case .drop(let id, let reason):
-                guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed else { continue }
+                guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed, !untouchable(r) || id == ctx.proposal else { continue }
                 var n = r; n.status = .discarded; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id)
                 entry("descartado", r.title, reason, s, before: [r])
             case .ask(let ids, let question):
                 var about: [(store: RepoMemory, rec: MemoryRecord)] = []
                 for id in ids { if let f = await find(id) { about.append(f) } }
-                // meanwhile the newest active one wins; the others are superseded provisionally (Desfazer restores them)
-                let active = about.filter { $0.rec.status == .active && !touched.contains($0.rec.id) }
-                if active.count > 1, let newest = active.max(by: { ($0.rec.updatedAt, $0.rec.id.uuidString) < ($1.rec.updatedAt, $1.rec.id.uuidString) }) {
-                    for f in active where f.rec.id != newest.rec.id && !users(f.rec) {
-                        var n = f.rec; n.status = .superseded; n.supersededBy = newest.rec.id; n.updatedAt = Date()
-                        try await write(f.store, n); touched.insert(f.rec.id)
-                    }
-                }
-                entry("ask", question, "", family, before: about.map(\.rec))
+                guard !about.contains(where: { untouchable($0.rec) }) else { continue }
+                // R20: changes nothing (both stay as they are until the user resolves it); filed where its records live (R22)
+                entry("ask", question, "", about.first?.store ?? family, before: about.map(\.rec))
             }
         }
         // the fallback proposal never outlives its job: replaced by the rule, or dropped when no rule came
@@ -390,9 +387,12 @@ extension CommandRouter {
 
     /// The proposals in `store` (ids; the ones still proposed) go to the curator, 10 a job, each with its family's active
     /// look-alikes. `lot`: the store's lot (its family is that lot only: lot proposals never reach the project or global).
-    func enqueueProposals(_ ids: [UUID], store: RepoMemory) async {
+    /// R19: never a feedback (the user's), as a proposal or a candidate. false: a job was refused (full, a duplicate).
+    @discardableResult
+    func enqueueProposals(_ ids: [UUID], store: RepoMemory) async -> Bool {
         let lot = store.lotId.flatMap { id in ws.lots.first { $0.id == id } }
-        let recs = (try? await store.run { m in m.store.all().records.filter { ids.contains($0.id) && $0.status == .proposed } }) ?? []
+        let recs = (try? await store.run { m in m.store.all().records.filter { ids.contains($0.id) && $0.status == .proposed && $0.kind != .feedback } }) ?? []
+        var all = true
         let family = store.lotId != nil || store === memory.global ? [store] : [store, memory.global]
         func cand(_ r: MemoryRecord) -> CorrectionPayload.Candidate {
             .init(id: r.id, kind: r.kind, title: r.title, body: String(String.UnicodeScalarView(r.body.unicodeScalars.prefix(MemoryLearning.candidateBodyMax))))
@@ -404,16 +404,18 @@ extension CommandRouter {
             if !q.isEmpty {
                 for s in family {
                     let hits = (try? await s.run { m in m.index()?.search(q, limit: MemoryLearning.maxCandidates) ?? [] }) ?? []
-                    cands += hits.filter { MemoryService.visible($0.record, paddock: nil, lot: s.lotId) }.map { cand($0.record) }   // no paddock's
+                    cands += hits.filter { MemoryService.visible($0.record, paddock: nil, lot: s.lotId) && $0.record.kind != .feedback }
+                        .map { cand($0.record) }   // no paddock's, no feedback
                 }
             }
             let p = ProposalsPayload(family: store.key, lot: lot?.id, lotName: lot?.name, root: store.root?.path,
                                      proposals: chunk.map(cand), candidates: cands)
-            guard let payload = try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)) else { continue }
+            guard let payload = try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)) else { all = false; continue }
             let dedupe = store.key + "|" + chunk.map { $0.id.uuidString }.sorted().joined(separator: ",")
-            _ = await curator.enqueue(CuratorJob(id: UUID(), kind: .proposals, store: store.key, payload: payload, dedupe: dedupe,
-                                                 createdAt: Date(), attempts: 0))
+            if await !curator.enqueue(CuratorJob(id: UUID(), kind: .proposals, store: store.key, payload: payload, dedupe: dedupe,
+                                                 createdAt: Date(), attempts: 0)) { all = false }
         }
+        return all
     }
 
     func runProposalsJob(_ j: CuratorJob, call: Curator.Call) async throws {
@@ -438,11 +440,13 @@ extension CommandRouter {
         }
         if !stores.contains(where: { $0 === memory.global }) { stores.append(memory.global) }
         for l in ws.lots { stores.append(await memory.lotStore(l.id)) }
+        var done = true
         for s in stores where s.exists {
-            let ids = (try? await s.run { m in m.store.all().records.filter { $0.status == .proposed }.map(\.id) }) ?? []
-            if !ids.isEmpty { await enqueueProposals(ids, store: s) }
+            let ids = (try? await s.run { m in m.store.all().records.filter { $0.status == .proposed && $0.kind != .feedback }.map(\.id) }) ?? []
+            if !ids.isEmpty, await !enqueueProposals(ids, store: s) { done = false }
         }
-        FileManager.default.createFile(atPath: marker.path, contents: Data())
+        // R22: only when every job was queued (else the next start tries again)
+        if done { FileManager.default.createFile(atPath: marker.path, contents: Data()) }
     }
 
     /// Queued proposal ids (never expire while they wait) and the records of open asks (R18: the only ones that expire).

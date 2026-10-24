@@ -93,17 +93,45 @@ private func withStore(_ recs: [MemoryRecord], _ body: (Daemon, RepoMemory) asyn
         }
     }
 
+    /// R20: an ask never supersedes: both stay as they are until the user resolves it.
     @Test func askKeepsNewerActive() async throws {
         let old = rec("Tabs", subject: "indent", age: 100), new = rec("Espaços", subject: "indentação", age: 10)
         try await withStore([old, new]) { d, store in
             let e = try await d.router.applyOps([.ask(ids: [old.id, new.id], question: "Tabs ou espaços?")], job: job(store, [], [old, new]))
             try await d.router.digest.append(e)
             let recs = try await all(store)
-            #expect(recs.first { $0.id == new.id }?.status == .active)
-            let o = try #require(recs.first { $0.id == old.id })
-            #expect(o.status == .superseded && o.supersededBy == new.id)
+            #expect(recs.first { $0.id == new.id }?.status == .active && recs.first { $0.id == old.id }?.status == .active)
             let pending = await d.router.digest.since(.distantPast).filter { $0.action == "ask" && !$0.resolved }
             #expect(pending.count == 1 && pending.first?.title == "Tabs ou espaços?" && pending.first?.before.map(\.id) == [old.id, new.id])
+        }
+    }
+
+    /// R19: a feedback (the user's rule, active or proposed) is never a proposals job's candidate, target or migration item.
+    @Test func proposalsNeverTouchFeedback() async throws {
+        let rule = MemoryRecord(kind: .feedback, subject: "pnpm", title: "Sempre use pnpm", body: "pnpm install sempre")
+        let waiting = MemoryRecord(kind: .feedback, subject: "c", title: "Correção: nunca npm", status: .proposed)
+        let pr = rec("Use npm install", status: .proposed, body: "pnpm install npm")
+        try await withStore([rule, waiting, pr]) { d, store in
+            await d.router.enqueueProposals([pr.id, waiting.id], store: store)
+            let j = try #require(await d.router.curator.queued(kind: .proposals).first)
+            let p = try CommandRouter.proposalsPayload(j)
+            #expect(p.proposals.map(\.id) == [pr.id] && !p.candidates.contains { $0.id == rule.id }, "\(p)")
+            // even if one slipped in: no op on a feedback outside a user's correction
+            let e = try await d.router.applyOps([.retire(id: rule.id, reason: "x"), .merge(ids: [pr.id], into: rule.id, title: nil, body: "npm", reason: "x"),
+                                                 .activate(id: waiting.id, reason: "x")], job: job(store, [pr, waiting], [rule]))
+            #expect(e.isEmpty, "\(e)")
+            #expect(try await all(store).first { $0.id == rule.id } == rule)
+            #expect(try await all(store).first { $0.id == waiting.id }?.status == .proposed)
+        }
+    }
+
+    /// R22: the ask entry is filed under the store its records live in.
+    @Test func askFiledUnderRecordStore() async throws {
+        let g = MemoryRecord(kind: .decision, scope: .global, subject: "g", title: "Global A"), h = MemoryRecord(kind: .decision, scope: .global, subject: "h", title: "Global B")
+        try await withStore([]) { d, store in
+            try await d.router.memory.global.run { m in try m.store.write(g); try m.store.write(h) }
+            let e = try await d.router.applyOps([.ask(ids: [g.id, h.id], question: "Qual?")], job: job(store, [], [g, h]))
+            #expect(e.first?.store == "global")
         }
     }
 
@@ -134,6 +162,12 @@ private func withStore(_ recs: [MemoryRecord], _ body: (Daemon, RepoMemory) asyn
             #expect(jobs.count == 1 && jobs.first?.store == store.key)
             #expect(try jobs.first.map { try CommandRouter.proposalsPayload($0).proposals.count } == 5)
             await d.router.migrateProposals()   // marker written: never again
+            #expect(await d.router.curator.queued(kind: .proposals).count == 1)
+            // R22: a refused enqueue leaves no marker (the migration runs again next start); proposed feedback is skipped
+            try FileManager.default.removeItem(at: marker)
+            try await store.run { m in try m.store.write(MemoryRecord(kind: .feedback, subject: "f", title: "Correção", status: .proposed)) }
+            await d.router.migrateProposals()   // the same 5 are queued already: refused
+            #expect(!FileManager.default.fileExists(atPath: marker.path))
             #expect(await d.router.curator.queued(kind: .proposals).count == 1)
         }
     }

@@ -17,20 +17,31 @@ final class InputProvenance: @unchecked Sendable {   // state under `lock`
         }
     }
 
-    func taint(_ terminal: UUID) { _ = lock.withLock { tainted.insert(terminal) } }
+    /// What the user typed before a Collie write can't be told apart from it: the buffer starts over too.
+    func taint(_ terminal: UUID) { lock.withLock { _ = tainted.insert(terminal); typed[terminal] = nil } }
     func isTainted(_ terminal: UUID) -> Bool { lock.withLock { tainted.contains(terminal) } }
     func hasTyped(_ terminal: UUID) -> Bool { lock.withLock { !(typed[terminal]?.isEmpty ?? true) } }   // tests
 
-    /// At a submit: whether `prompt` is what the app typed (and nothing else wrote) since the last one; starts over.
+    /// At a submit: whether `prompt` is what the app typed (and nothing else wrote) since the last one. R22: equal, after
+    /// line editing, to the whole buffer or to its last lines (stale lines a mismatched submit left before them); a
+    /// fragment of a line never counts. R21: only a match consumes the buffer — another caller's prompt (an agent calling
+    /// the hook itself) leaves the user's keystrokes alone. Any submit clears the taint.
     func take(_ terminal: UUID, prompt: String) -> Bool {
-        let (d, t) = lock.withLock { (typed.removeValue(forKey: terminal) ?? Data(), tainted.remove(terminal) != nil) }
-        let p = Self.collapse(prompt)
-        return !t && !p.isEmpty && Self.collapse(Self.text(d)).contains(p)
+        lock.withLock {
+            let wasTainted = tainted.remove(terminal) != nil
+            let p = Self.collapse(prompt)
+            guard !wasTainted, !p.isEmpty, let d = typed[terminal] else { return false }
+            let lines = Self.text(d).split(separator: "\n").map { Self.collapse(String($0)) }.filter { !$0.isEmpty }
+            guard (1...max(1, lines.count)).contains(where: { k in lines.count >= k && lines.suffix(k).joined(separator: " ") == p }) else { return false }
+            typed[terminal] = nil
+            return true
+        }
     }
 
-    /// Keyboard bytes as the line editor would see them: escape sequences (arrows, bracketed-paste marks) dropped,
-    /// backspace/DEL erase, other controls dropped, Enter is a line break. ponytail: a prompt edited with the cursor
-    /// keys doesn't match — it is then only a proposal (the safe side).
+    /// Keyboard bytes as the line editor would see them: escape sequences dropped (CSI/SS3; DCS, OSC, APC, PM and SOS
+    /// with their payloads up to BEL or ST), backspace/DEL erase a character, Ctrl-W a word, Ctrl-U/Ctrl-C the line,
+    /// other controls dropped, Enter is a line break. ponytail: a prompt edited with the cursor keys doesn't match — it
+    /// is then only a proposal (the safe side).
     static func text(_ d: Data) -> String {
         var out = String.UnicodeScalarView()
         let s = Array(String(decoding: d, as: UTF8.self).unicodeScalars)
@@ -42,11 +53,21 @@ final class InputProvenance: @unchecked Sendable {   // state under `lock`
                 if i < s.count, s[i] == "[" {   // CSI: parameters, then a final byte @…~
                     i += 1
                     while i < s.count, !(0x40...0x7E).contains(s[i].value) { i += 1 }
+                } else if i < s.count, "P]_^X".unicodeScalars.contains(s[i]) {   // a string: up to BEL or ESC \
+                    i += 1
+                    while i < s.count, s[i] != "\u{07}", !(s[i] == "\u{1B}" && i + 1 < s.count && s[i + 1] == "\\") { i += 1 }
+                    if i < s.count, s[i] == "\u{1B}" { i += 1 }
                 } else if i < s.count, s[i] == "O" { i += 1 }   // SS3: one more byte
                 i += 1
                 continue
             }
-            if u == "\u{7F}" || u == "\u{08}" { if !out.isEmpty { out.removeLast() } }
+            func eraseLine() { while let c = out.last, c != "\n" { out.removeLast() } }
+            if u == "\u{15}" || u == "\u{03}" { eraseLine() }
+            else if u == "\u{17}" {
+                while let c = out.last, c == " " || c == "\t" { out.removeLast() }
+                while let c = out.last, c != " ", c != "\t", c != "\n" { out.removeLast() }
+            }
+            else if u == "\u{7F}" || u == "\u{08}" { if !out.isEmpty { out.removeLast() } }
             else if u == "\r" || u == "\n" { out.append("\n") }
             else if u == "\t" || u.properties.generalCategory != .control { out.append(u) }
             i += 1

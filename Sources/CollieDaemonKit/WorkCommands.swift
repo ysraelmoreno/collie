@@ -211,7 +211,14 @@ extension CommandRouter {
                 if let reason { $0.notes.append(WorkNote(at: now, text: "Done: \(reason)")) }
                 $0.closedAt = now; $0.closedBy = by
             }
-            Task { await captureProposals(w.id) }   // its learnings become proposals (the model may take seconds)
+            Task {
+                await captureProposals(w.id)   // its learnings become proposals (the model may take seconds)
+                // and the repo's new review files feed its pitfall classes
+                // (not a lot member's close: lot findings never reach the project but by promote)
+                if let t = ws.terminals.first(where: { $0.id == w.terminalId }), ws.lot(of: t.id) == nil {
+                    await ingestReviews(repo: await memory.repo(for: t.cwd))
+                }
+            }
             return .object(["id": .string(w.id.uuidString.lowercased())])
 
         case "work.reopen":

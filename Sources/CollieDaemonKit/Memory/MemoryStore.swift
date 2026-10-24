@@ -47,6 +47,7 @@ struct MemoryStore {
         let olds = all().records.filter {
             $0.status == .active && $0.id != new.id && $0.kind == new.kind && $0.scope == new.scope
                 && $0.paddock == new.paddock && $0.lotId == new.lotId && MemoryRecord.normalize($0.subject) == MemoryRecord.normalize(new.subject)
+                && !($0.hits != nil && new.hits == nil)   // a pitfall instance never replaces its class: it bumps it (`enqueuePitfall`)
         }
         new.subject = MemoryRecord.normalize(new.subject)
         if let o = olds.first { new.supersedes = o.id }

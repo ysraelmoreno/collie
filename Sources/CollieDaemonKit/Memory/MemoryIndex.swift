@@ -83,7 +83,8 @@ final class MemoryIndex {
         return problems
     }
 
-    /// 2+ active with the same kind+subject+scope/paddock: newest `updatedAt` stays, the rest are written as superseded.
+    /// 2+ active with the same kind+subject+scope/paddock: newest `updatedAt` stays (a pitfall class over its instances),
+    /// the rest are written as superseded.
     private func resolveConflicts() throws {
         var keys: [[String]] = []
         try query("""
@@ -96,8 +97,9 @@ final class MemoryIndex {
                 SELECT json FROM docs WHERE status = 'active' AND kind = ? AND subject = ? AND scope = ? AND coalesce(paddock, '') = ?
                 ORDER BY updatedAt DESC, id
                 """, k) { if let r = decode(text($0, 0)) { recs.append(r) } }
-            guard let keep = recs.first else { continue }
-            for var r in recs.dropFirst() {
+            // ponytail: an instance resolved here before `enqueuePitfall` saw it loses its bump (a window of one store call)
+            guard let keep = recs.first(where: { $0.hits != nil }) ?? recs.first else { continue }
+            for var r in recs where r.id != keep.id {
                 r.status = .superseded; r.supersededBy = keep.id
                 try store.write(r)
                 let file = MemoryFile.fileName(r)

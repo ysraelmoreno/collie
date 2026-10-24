@@ -55,22 +55,26 @@ extension CommandRouter {
 
     private func summon(_ r: Request, by me: TerminalRecord) async throws -> JSONValue {
         let name = try need(r, "name")
+        try refuseFree(r)
         try reserve(name); defer { launching.remove(name.lowercased()) }
         guard let preset = Preset(rawValue: try need(r, "preset")) else {
             throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
         }
         if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists") }
         var paddockId = me.paddockId, cwd = me.cwd
+        var allowed = try await projectRoot(of: me)   // the new terminal's project stays within it
         if let f = str(r, "paddock") {
             let fl = try findPaddock(f)
             // user-created paddocks (createdBy nil) are open only to a Shepherd standing in them
             guard fl.createdBy == me.id || fl.id == me.paddockId else {
                 throw ProtocolError(code: .notShepherd, message: "paddock '\(fl.name)' belongs to another Shepherd")
             }
-            paddockId = fl.id; cwd = fl.path
+            paddockId = fl.id; cwd = fl.path; allowed = ProjectRoot.resolve(cwd: fl.path, paddock: fl)
         }
+        cwd = str(r, "cwd") ?? cwd
+        let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed)
         let rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: str(r, "command"),
-                                 cwd: str(r, "cwd") ?? cwd, isShepherd: false, paddockId: paddockId)
+                                 cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
         var result = try await launch(rec)
         try await ensurePaddock(of: rec)
         do {

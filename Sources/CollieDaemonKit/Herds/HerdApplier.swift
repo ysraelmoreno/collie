@@ -19,6 +19,7 @@ extension CommandRouter {
     func applyHerd(_ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let id = try need(r, "id"), applyName = try need(r, "name")
+        try refuseFree(r)   // a herd's terminals are always sandboxed
         guard let pt = await herds.get(id) else { throw ProtocolError(code: .notFound, message: "rebanho '\(id)' não existe") }
         // one application at a time per workspace: the next waits
         // ponytail: 100 ms polling; a continuation queue if many ever wait at once
@@ -51,6 +52,7 @@ extension CommandRouter {
             }
             cwd = me.cwd
         } else if let c = str(r, "cwd") { cwd = c } else if let f = onPaddock { cwd = f.path } else { cwd = try need(r, "cwd") }
+        let allowed: URL? = if let me = caller { try await projectRoot(of: me) } else { nil }   // the applier's project bounds the herd's
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDir), isDir.boolValue else { throw invalid("pasta \(cwd) não existe") }
 
@@ -115,7 +117,7 @@ extension CommandRouter {
         var warnings: [String] = []
         do {
             try await runApply(pt, made: made, played: played, member: member, cwd: cwd, paddock: claimed.map { ($0, repo!) },
-                               onPaddock: caller == nil ? onPaddock?.name : nil, caller: caller, journal: &j, warnings: &warnings)
+                               onPaddock: caller == nil ? onPaddock?.name : nil, caller: caller, allowed: allowed, journal: &j, warnings: &warnings)
         } catch {
             let e = error as? ProtocolError ?? ProtocolError(code: .internal, message: error is CancellationError ? "aplicação cancelada" : "\(error)")
             // detached: runs to the end even when the request was cancelled
@@ -160,7 +162,7 @@ extension CommandRouter {
 
     /// Steps 1–6, each journaled as it succeeds: paddock, terminals, readiness, terminal leashes, panels (and their leashes), roles.
     private func runApply(_ pt: Herd, made: [HerdTerminal], played: String?, member: (String) -> String, cwd: String,
-                          paddock: (name: String, repo: URL)?, onPaddock: String?, caller: TerminalRecord?,
+                          paddock: (name: String, repo: URL)?, onPaddock: String?, caller: TerminalRecord?, allowed: URL?,
                           journal j: inout ApplyJournal, warnings: inout [String]) async throws {
         // the app's apply on a paddock: that paddock (re-found by name: it may have gone meanwhile)
         let base: UUID? = try caller?.paddockId ?? onPaddock.map { n throws(ProtocolError) in try findPaddock(n).id }
@@ -169,10 +171,15 @@ extension CommandRouter {
             catch let e as ProtocolError { throw ProtocolError(code: e.code, message: "cercado \(paddock.name): \(e.message)") }
         }
 
+        let fl = j.paddock ?? ws.paddocks.first { $0.id == base }, at = j.paddock?.path ?? cwd
+        // a paddock this application made bounds its own terminals, like a Shepherd's `summon --paddock`
+        let root = try allowed.map { a throws(ProtocolError) in
+            try childProject(cwd: at, paddock: fl, allowed: j.paddock.map { ProjectRoot.resolve(cwd: $0.path, paddock: $0) } ?? a)
+        } ?? ProjectRoot.resolve(cwd: at, paddock: fl)
         for t in made {
             try Task.checkCancellation()
-            let rec = TerminalRecord(id: UUID(), name: member(t.key), preset: t.preset, command: t.command, cwd: j.paddock?.path ?? cwd,
-                                     isShepherd: t.isShepherd, paddockId: j.paddock?.id ?? base)
+            let rec = TerminalRecord(id: UUID(), name: member(t.key), preset: t.preset, command: t.command, cwd: at,
+                                     isShepherd: t.isShepherd, paddockId: j.paddock?.id ?? base, projectRoot: root.path)
             j.terminals.append((t.key, rec))   // before the launch: a launch that fails halfway is undone too
             _ = try await launch(rec)
             try await ensurePaddock(of: rec)

@@ -351,6 +351,12 @@ actor CommandRouter {
             }
             var fl: Paddock?
             if let f = str(r, "paddock") { fl = try findPaddock(f) }
+            let sandbox: TerminalSandbox   // the only path to a free terminal: the user, in the app
+            switch r.args["sandbox"] {
+            case nil, .string("sandboxed")?: sandbox = .sandboxed
+            case .string("free")?: sandbox = .free
+            default: throw ProtocolError(code: .invalidArgs, message: "sandbox must be sandboxed or free")
+            }
             // same name: a dead record is relaunched in place (keeps id + connections); a live one is refused
             let old = try lookup(name)
             if let old {
@@ -358,10 +364,13 @@ actor CommandRouter {
                     throw ProtocolError(code: .invalidArgs, message: "terminal '\(old.name)' is already running")
                 }
                 await discard(old.id)
+                // relaunched free in place: the old record's leashes go (no leash reaches a free terminal)
+                if sandbox == .free { for c in ws.connections where c.a == old.id || c.b == old.id { try await unlink(c.a, c.b) } }
             }
+            let cwd = str(r, "cwd") ?? fl?.path ?? r.cwd ?? NSHomeDirectory()
             let rec = TerminalRecord(id: old?.id ?? UUID(), name: name, preset: preset, command: str(r, "command"),
-                                     cwd: str(r, "cwd") ?? fl?.path ?? r.cwd ?? NSHomeDirectory(), isShepherd: flag(r, "shepherd"),
-                                     paddockId: fl?.id)
+                                     cwd: cwd, isShepherd: flag(r, "shepherd"), paddockId: fl?.id,
+                                     sandbox: sandbox, projectRoot: ProjectRoot.resolve(cwd: cwd, paddock: fl).path)
             let result = try await launch(rec)
             try await ensurePaddock(of: rec)
             return .object(result)
@@ -406,7 +415,7 @@ actor CommandRouter {
                 guard t.paddockId == nil else {
                     throw ProtocolError(code: .invalidArgs, message: "cwd of a paddock terminal follows its paddock")
                 }
-                t.cwd = c
+                if c != t.cwd { t.cwd = c; t.projectRoot = nil }   // computed again at its next launch
             }
             if t.preset == .custom && (t.command ?? "").isEmpty {
                 throw ProtocolError(code: .invalidArgs, message: "preset custom needs a command")
@@ -470,7 +479,7 @@ actor CommandRouter {
         if let fid = t.paddockId {
             if paddockDeleting.contains(fid) { throw ProtocolError(code: .invalidArgs, message: "paddock of '\(t.name)' is being deleted") }
             if !ws.paddocks.contains(where: { $0.id == fid }) {   // paddock gone: back to the pasture, never into a missing dir
-                t.paddockId = nil
+                t.paddockId = nil; t.projectRoot = nil   // computed again by launch
                 if !FileManager.default.fileExists(atPath: t.cwd) {
                     let pasture = LegacyOrq.pasture(ofPaddockPath: t.cwd)
                     t.cwd = pasture.flatMap { FileManager.default.fileExists(atPath: $0) ? $0 : nil } ?? NSHomeDirectory()
@@ -492,8 +501,11 @@ actor CommandRouter {
         try await link(a.id, b.id)
     }
 
-    /// Idempotent leash between two ids; persists, emits `.connected`.
+    /// Idempotent leash between two ids; persists, emits `.connected`. Never to a free terminal.
     func link(_ a: UUID, _ b: UUID) async throws {
+        if let f = ws.terminals.first(where: { ($0.id == a || $0.id == b) && $0.sandbox == .free }) {
+            throw ProtocolError(code: .notConnected, message: "'\(f.name)' is a free terminal (sem sandbox): no leash reaches it")
+        }
         guard !ws.connections.contains(where: { Set([$0.a, $0.b]) == Set([a, b]) }) else { return }
         let c = Connection(a: a, b: b)
         ws.connections.append(c)
@@ -529,6 +541,8 @@ actor CommandRouter {
 
     /// Launches `rec` (new or relaunched in place): credentials, process, record, persist, `.spawned`.
     func launch(_ rec: TerminalRecord) async throws -> [String: JSONValue] {
+        var rec = rec
+        if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }).path }
         // the capture can take seconds: a relaunched record killed meanwhile stays gone
         let existed = ws.terminals.contains { $0.id == rec.id }
         let user = await agentEnv(rec)
@@ -569,6 +583,37 @@ actor CommandRouter {
             await memory.endSession(id); await jobsGone(terminal: id); await closeHeadless(of: id)
             // the session's end for agents without a SessionEnd hook (Codex): its learnings become proposals
             if let w = try? await work.active(terminal: id) { Task { await captureProposals(w.id) } }
+        }
+    }
+
+    /// The project of `t`; a record from before the sandbox gets it computed now, and saved.
+    func projectRoot(of t: TerminalRecord) async throws -> URL {
+        if let r = t.projectRoot { return URL(fileURLWithPath: r) }
+        let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
+        if let i = ws.terminals.firstIndex(where: { $0.id == t.id }) { ws.terminals[i].projectRoot = root.path; try await persist() }
+        return root
+    }
+
+    /// The project of a terminal an agent creates at `cwd`: `cwd` must lie within `allowed` (the creator's project, or a
+    /// paddock it owns), and outside the paddock worktrees nested there unless it goes into that paddock. Never wider than `allowed`.
+    func childProject(cwd: String, paddock: Paddock?, allowed: URL) throws(ProtocolError) -> URL {
+        guard ProjectRoot.contains(cwd, root: allowed) else {
+            throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is outside your project \(allowed.path)")
+        }
+        if paddock == nil, let p = ws.paddocks.first(where: { p in
+            let w = URL(fileURLWithPath: p.path)
+            return ProjectRoot.contains(cwd, root: w) && !ProjectRoot.contains(allowed.path, root: w)
+        }) {
+            throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is inside paddock '\(p.name)'; use --paddock")
+        }
+        let root = ProjectRoot.resolve(cwd: cwd, paddock: paddock)
+        return ProjectRoot.contains(root.path, root: allowed) ? root : allowed
+    }
+
+    /// Only the app's `admin.spawn` makes a free terminal: any other creation path asking for one is refused.
+    func refuseFree(_ r: Request) throws(ProtocolError) {
+        if flag(r, "free") || (r.args["sandbox"] != nil && str(r, "sandbox") != TerminalSandbox.sandboxed.rawValue) {
+            throw ProtocolError(code: .unauthorized, message: "a free terminal (sem sandbox) is created only by the user in the app")
         }
     }
 

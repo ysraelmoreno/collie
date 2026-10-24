@@ -194,9 +194,10 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
 
     // MARK: commands
 
-    public func spawn(name: String, preset: Preset, command: String?, cwd: String, shepherd: Bool, paddock: String? = nil) async throws -> UUID {
+    public func spawn(name: String, preset: Preset, command: String?, cwd: String, shepherd: Bool, paddock: String? = nil,
+                      sandbox: TerminalSandbox = .sandboxed) async throws -> UUID {
         var args: [String: JSONValue] = ["name": .string(name), "preset": .string(preset.rawValue),
-                                         "cwd": .string(cwd), "shepherd": .bool(shepherd)]
+                                         "cwd": .string(cwd), "shepherd": .bool(shepherd), "sandbox": .string(sandbox.rawValue)]
         if let command { args["command"] = .string(command) }
         if let paddock { args["paddock"] = .string(paddock) }
         guard case .object(let o)? = try await admin("admin.spawn", args),

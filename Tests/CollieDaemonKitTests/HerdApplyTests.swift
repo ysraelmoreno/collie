@@ -9,7 +9,7 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 
 /// A fake `claude` on the agents' PATH (never the real one): `prelude` runs first (by `$COLLIE_TERMINAL_NAME`), then the
 /// fake agent. The launch shell skips the login profile, so path_helper can't put a real claude ahead of it.
-private struct FakeAgents {
+struct FakeAgents {   // also SandboxRootsTests
     let dir = URL(fileURLWithPath: "/tmp/collie-pt-\(UUID().uuidString.prefix(8))")
     init(_ prelude: String = "") throws {
         let bin = dir.appendingPathComponent("bin")

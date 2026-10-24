@@ -68,7 +68,7 @@ extension View {
 }
 
 public struct CollieTag: View {
-    public enum Tone { case neutral, accent, attention, secondary }
+    public enum Tone { case neutral, accent, attention, secondary, danger }
     let text: String, tone: Tone
     public init(_ text: String, tone: Tone) { self.text = text; self.tone = tone }
     public var body: some View {
@@ -82,6 +82,7 @@ public struct CollieTag: View {
         case .accent: .collieAccent
         case .attention: .collieAttention
         case .secondary: .collieSecondary
+        case .danger: .collieDanger
         }
     }
 }

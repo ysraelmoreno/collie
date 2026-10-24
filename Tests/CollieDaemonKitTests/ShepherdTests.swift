@@ -80,11 +80,12 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
             #expect(try await admin(d, paths, "restart", ["name": .string("M")]).ok)
             let m = Term(id: mid.uuidString, token: try await tokenOf(d, mid.uuidString))
             #expect(try await call(paths, m, "summon", ["name": "A", "preset": "shell", "paddock": "feat"]).ok)
-            #expect(try await call(paths, m, "summon", ["name": "B", "preset": "shell", "cwd": "/"]).ok)
+            #expect(try await call(paths, m, "summon", ["name": "B", "preset": "shell", "cwd": "/"]).error?.code == .invalidArgs)   // outside its paddock
+            #expect(try await call(paths, m, "summon", ["name": "B", "preset": "shell", "cwd": paddockDir.path]).ok)
             let ts = try await snapshot(d, paths).terminals
             let a = try #require(ts.first { $0.name == "A" }), b = try #require(ts.first { $0.name == "B" })
             #expect(a.paddockId == fl.id && a.cwd == paddockDir.path)
-            #expect(b.paddockId == fl.id && b.cwd == "/")   // inherits the Shepherd's paddock
+            #expect(b.paddockId == fl.id && b.cwd == paddockDir.path)   // inherits the Shepherd's paddock
         } catch { await d.stop(); throw error }
         await d.stop()
     }

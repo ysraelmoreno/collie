@@ -481,19 +481,21 @@ actor MemoryService {
         guard !out.isEmpty else { return (out, ids) }
         var started = false
         for r in index.sorted(by: { $0.updatedAt > $1.updatedAt }) {
-            let add = (started ? "" : "\n\n\(indexTitle)") + "\n- " + (r.kind == .map ? r.path.map { "\(oneLine($0, max: 200)) — " } ?? "" : "") + oneLine(r.title, max: 200)
+            let add = (started ? "" : "\n\n\(indexTitle)") + "\n- " + (r.kind == .procedure ? "[procedimento] " : "") + (r.kind == .map ? r.path.map { "\(oneLine($0, max: 200)) — " } ?? "" : "") + oneLine(r.title, max: 200)
             guard out.utf8.count + add.utf8.count <= limit else { break }
             out += add; started = true
         }
         return (out, ids)
     }
 
-    /// Header, then active user rules (feedback), decisions (title + first line), the map (`path — title`), pitfalls; pinned first, then newest.
+    /// Header, then active user rules (feedback), decisions (title + first line), the map (`path — title`), pitfalls,
+    /// procedures; pinned first, then newest.
     /// At most `limit` UTF-8 bytes, whole items only (one that doesn't fit is skipped).
     static func renderContext(_ recs: [MemoryRecord], limit: Int) -> (text: String, ids: Set<UUID>) {
         var out = header, ids = Set<UUID>()
         guard out.utf8.count <= limit else { return ("", []) }
-        let sections: [(MemoryKind, String)] = [(.feedback, "Regras do usuário:"), (.decision, "Decisões:"), (.map, "Mapa:"), (.pitfall, "Armadilhas:")]
+        let sections: [(MemoryKind, String)] = [(.feedback, "Regras do usuário:"), (.decision, "Decisões:"), (.map, "Mapa:"), (.pitfall, "Armadilhas:"),
+                                                (.procedure, "Procedimentos:")]
         for (kind, title) in sections {
             let items = recs.filter { $0.kind == kind }.sorted { ($0.pinned ? 1 : 0, $0.updatedAt) > ($1.pinned ? 1 : 0, $1.updatedAt) }
             var started = false
@@ -515,7 +517,7 @@ actor MemoryService {
     }
 
     private static func relevantLine(_ r: MemoryRecord) -> String {
-        let label = ["feedback": "regra", "decision": "decisão", "map": "mapa", "pitfall": "armadilha"][r.kind.rawValue] ?? r.kind.rawValue
+        let label = ["feedback": "regra", "decision": "decisão", "map": "mapa", "pitfall": "armadilha", "procedure": "procedimento"][r.kind.rawValue] ?? r.kind.rawValue
         let head = r.kind == .map ? (r.path.map { "\(oneLine($0, max: 200)) — " } ?? "") + oneLine(r.title, max: 200) : oneLine(r.title, max: 200)
         let body = oneLine(r.body, max: 300)
         return "- [\(label)] \(head)" + (body.isEmpty ? "" : ": \(body)") + mark(r)

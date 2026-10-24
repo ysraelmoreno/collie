@@ -61,7 +61,7 @@ extension CommandRouter {
         case "memory.save":
             // feedback is the user's (a correction, the app): an agent can't save one
             guard let kind = MemoryKind(rawValue: try need(r, "kind")), caller == nil || kind != .feedback else {
-                throw invalid("kind must be decision|map|pitfall")
+                throw invalid("kind must be decision|map|pitfall|procedure")
             }
             let lot = lotArg ?? myLot
             guard let scope = MemoryScope(rawValue: str(r, "scope") ?? (lot != nil ? "lot" : "project")) else {
@@ -70,7 +70,8 @@ extension CommandRouter {
             let origin = caller.map { "\($0.name) (\($0.preset.rawValue))" } ?? "app"
             let (saved, target, old) = try await saveMemory(kind, scope: scope, subject: try need(r, "subject"), title: try need(r, "title"),
                                                             body: str(r, "body") ?? "", path: str(r, "path"), repo: project,
-                                                            paddock: paddockName, lot: lot, origin: origin)
+                                                            paddock: paddockName, lot: lot, origin: origin,
+                                                            proposed: caller != nil && kind == .procedure)
             return try memJSON(saved, target, ["superseded": old.map { .string($0.id.uuidString) } ?? .null])
 
         case "memory.search":
@@ -103,7 +104,7 @@ extension CommandRouter {
 
         case "memory.list":
             let kind = try str(r, "kind").map { k throws(ProtocolError) -> MemoryKind in
-                guard let v = MemoryKind(rawValue: k) else { throw invalid("kind must be feedback|decision|map|pitfall") }
+                guard let v = MemoryKind(rawValue: k) else { throw invalid("kind must be feedback|decision|map|pitfall|procedure") }
                 return v
             }
             guard let status = MemoryStatus(rawValue: str(r, "status") ?? "active") else {
@@ -181,7 +182,7 @@ extension CommandRouter {
                 // a likely correction goes to the curator detached: the hook never waits for it
                 // R12: taken at every submit (it starts over); the user's own keystrokes, or a proposal at most
                 let user = asks.provenance.take(me.id, prompt: prompt)
-                if CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id]) {
+                if CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id]) || CorrectionDetector.isProcedure(prompt) {
                     Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt, user: user) }
                 }
                 var left = 2048, parts: [String] = []
@@ -343,9 +344,10 @@ extension CommandRouter {
 
     /// `memory.save`'s validation and store choice: `repo` is the caller's (its cwd's), `paddock` its paddock's name.
     /// Returns the saved record, the store it went to and the record it replaced (same subject).
+    /// `proposed`: written as a proposal (R12: an agent's procedure waits for the user), replacing nothing.
     func saveMemory(_ kind: MemoryKind, scope: MemoryScope, subject rawSubject: String, title rawTitle: String, body: String,
                     path rawPath: String?, repo: RepoMemory, paddock paddockName: String?, lot: Lot? = nil,
-                    origin: String) async throws -> (MemoryRecord, RepoMemory, MemoryRecord?) {
+                    origin: String, proposed: Bool = false) async throws -> (MemoryRecord, RepoMemory, MemoryRecord?) {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         // memory is never secret-bearing: a live token pasted in is hidden
         let secrets = await auth.secrets()
@@ -372,8 +374,11 @@ extension CommandRouter {
         if let p = path, let root = target.root?.path, p.hasPrefix(root + "/") { path = String(p.dropFirst(root.count + 1)) }
         if let p = path, !isRepoRelative(p) { throw invalid("path must be relative to the repo root (no '..')") }
         let rec = MemoryRecord(kind: kind, scope: effective, paddock: paddock, lotId: lotId, subject: subject, title: title, body: body,
-                               path: path, origin: origin)
-        let (saved, old) = try await target.run { m in try m.store.save(rec) }
+                               path: path, status: proposed ? .proposed : .active, origin: origin)
+        let (saved, old) = try await target.run { m -> (saved: MemoryRecord, superseded: MemoryRecord?) in
+            if proposed { try m.store.write(rec); return (rec, nil) }
+            return try m.store.save(rec)
+        }
         return (saved, target, old)
     }
 

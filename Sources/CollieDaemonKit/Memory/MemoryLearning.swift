@@ -31,11 +31,27 @@ enum MemoryLearning {
         body, why e howToApply, e faça "supersede" (sem "by") de cada candidata que a correção contradiz. \
         Escopo: global só quando a regra é sobre como o usuário trabalha: idioma, testes, permissões, processo; projeto \
         quando é sobre o código (num lote, use "lot" no lugar de "project"). Uma regra global não cita lote, ids nem caminhos.
+        Se o usuário declara um procedimento ("sempre que X, faça Y", "toda vez que X, …", "whenever X, …"), crie uma memória \
+        kind "procedure": title (o nome do procedimento, curto), howToApply (o gatilho: quando usar) e body (os passos, um \
+        por linha, até 12, na ordem); nada além do que o usuário disse.
         Se não for uma regra duradoura, responda {"ops":[]}. Use só ids que aparecem nos DADOS e responda só com operações do esquema.
         """
     static let quoteMax = 300, candidateBodyMax = 400, workMax = 1_500, maxCandidates = 10
     /// R13: a correction supersedes at most this many memories. R14: correction jobs a terminal may queue an hour.
     static let maxSupersedes = 3, correctionsPerHour = 5
+    static let procedureSteps = 12, procedureStepMax = 200
+
+    /// A procedure's body: `Quando: <when>`, a blank line, then `1. …` per step (list marks stripped, empty lines dropped;
+    /// at most 12 steps of 200 scalars each). nil without a step.
+    static func procedureBody(when: String, steps: String) -> String? {
+        let list = steps.split(separator: "\n").map { line in
+            let t = line.replacingOccurrences(of: #"^\s*([-*•]|\d{1,2}[.)])\s*"#, with: "", options: .regularExpression)
+            return CuratorOps.clean(t, cap: procedureStepMax, multiline: false)
+        }.filter { !$0.isEmpty }.prefix(procedureSteps)
+        guard !list.isEmpty else { return nil }
+        let w = CuratorOps.clean(when, cap: CuratorOps.lineMax, multiline: false)
+        return "Quando: \(w)\n\n" + list.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+    }
 
     /// The fenced input: `DADOS-<nonce>` marks (a random 32-hex nonce per job); any `DADOS-` in the data is defused
     /// to `DADOS_`, so the data can neither guess nor close the fence.
@@ -62,10 +78,11 @@ enum MemoryLearning {
 extension CommandRouter {
     var digest: MemoryDigest { MemoryDigest(file: config.paths.root.appendingPathComponent("learning/digest.jsonl")) }
 
-    /// What a correction job may touch: its candidates and proposal, its family's scopes (+ global), feedback only.
+    /// What a correction job may touch: its candidates and proposal, its family's scopes (+ global); it creates a feedback
+    /// or (a stated how-to) a procedure.
     static func correctionScope(_ p: CorrectionPayload) -> CuratorScope {
         CuratorScope(ids: Set(p.candidates.map(\.id) + (p.proposal.map { [$0] } ?? [])),
-                     scopes: p.lot != nil ? [.lot, .global] : [.project, .global], kinds: [.feedback], maxOps: 12)
+                     scopes: p.lot != nil ? [.lot, .global] : [.project, .global], kinds: [.feedback, .procedure], maxOps: 12)
     }
 
     /// A flagged prompt → a queued curator job (deduped per family + prompt; ≤ 5 a terminal an hour). The quote waits as a
@@ -111,9 +128,10 @@ extension CommandRouter {
         let job = CuratorJob(id: UUID(), kind: .correction, store: family.key, payload: payload,
                              dedupe: family.key + "|" + MemoryRecord.normalize(prompt), createdAt: Date(), attempts: 0)
         let quote = MemoryLearning.oneLine(prompt, max: MemoryLearning.quoteMax)
+        let what = CorrectionDetector.isProcedure(prompt) ? "Procedimento" : "Correção"
         let rec = MemoryRecord(id: pid, kind: .feedback, scope: lot != nil ? .lot : family === memory.global ? .global : .project,
-                               lotId: lot?.id, subject: "correção: " + MemoryLearning.oneLine(prompt, max: 60),
-                               title: "Correção: " + MemoryLearning.oneLine(prompt, max: 110), body: "Citação: \"\(quote)\"",
+                               lotId: lot?.id, subject: what.lowercased() + ": " + MemoryLearning.oneLine(prompt, max: 60),
+                               title: what + ": " + MemoryLearning.oneLine(prompt, max: 110), body: "Citação: \"\(quote)\"",
                                status: .proposed, origin: "correção (\(me.name))")
         do { try await family.run { try $0.store.write(rec) } } catch { memoryLog("correction proposal: \(error)") }
         guard await curator.enqueue(job) else {
@@ -238,11 +256,16 @@ extension CommandRouter {
             case .global: target = memory.global; scope = .global
             case .project, .paddock: guard family.lotId == nil else { continue }; target = family; scope = familyScope
             }
-            let body = [n.body, [n.why.isEmpty ? nil : "Por quê: \(n.why)", n.howToApply.isEmpty ? nil : "Como aplicar: \(n.howToApply)",
+            var subject = n.subject, body = [n.body, [n.why.isEmpty ? nil : "Por quê: \(n.why)", n.howToApply.isEmpty ? nil : "Como aplicar: \(n.howToApply)",
                                  ctx.quote.map { "Citação: \"\($0)\"" }].compactMap { $0 }.joined(separator: "\n")]
                 .filter { !$0.isEmpty }.joined(separator: "\n\n")
+            if n.kind == .procedure {
+                // a procedure is its trigger and steps only (they become a skill): no why, no quote
+                guard let b = MemoryLearning.procedureBody(when: n.howToApply.isEmpty ? n.title : n.howToApply, steps: n.body) else { continue }
+                body = b; subject = MemoryFile.slug(n.title)
+            }
             if scope == .global, family !== memory.global, leaks([n.title, n.subject, body]) { target = family; scope = familyScope }
-            var rec = MemoryRecord(id: job.id, kind: n.kind, scope: scope, lotId: target.lotId, subject: n.subject, title: n.title, body: body,
+            var rec = MemoryRecord(id: job.id, kind: n.kind, scope: scope, lotId: target.lotId, subject: subject, title: n.title, body: body,
                                    origin: ctx.name.map { "curador (\($0))" } ?? "curador")
             if let done = await find(job.id) { created = done.rec; touched.insert(done.rec.id); continue }   // a retry: already written
             if correction, !ctx.user {
@@ -396,11 +419,11 @@ extension CommandRouter {
 
     /// The proposals in `store` (ids; the ones still proposed) go to the curator, 10 a job, each with its family's active
     /// look-alikes. `lot`: the store's lot (its family is that lot only: lot proposals never reach the project or global).
-    /// R19: never a feedback (the user's), as a proposal or a candidate. false: a job was refused (full, a duplicate).
+    /// R19: never a feedback (the user's) nor a procedure (stated by the user), as a proposal or a candidate. false: a job was refused (full, a duplicate).
     @discardableResult
     func enqueueProposals(_ ids: [UUID], store: RepoMemory) async -> Bool {
         let lot = store.lotId.flatMap { id in ws.lots.first { $0.id == id } }
-        let recs = (try? await store.run { m in m.store.all().records.filter { ids.contains($0.id) && $0.status == .proposed && $0.kind != .feedback } }) ?? []
+        let recs = (try? await store.run { m in m.store.all().records.filter { ids.contains($0.id) && $0.status == .proposed && !Self.usersKind($0.kind) } }) ?? []
         var all = true
         let family = store.lotId != nil || store === memory.global ? [store] : [store, memory.global]
         func cand(_ r: MemoryRecord) -> CorrectionPayload.Candidate {
@@ -413,7 +436,7 @@ extension CommandRouter {
             if !q.isEmpty {
                 for s in family {
                     let hits = (try? await s.run { m in m.index()?.search(q, limit: MemoryLearning.maxCandidates) ?? [] }) ?? []
-                    cands += hits.filter { MemoryService.visible($0.record, paddock: nil, lot: s.lotId) && $0.record.kind != .feedback }
+                    cands += hits.filter { MemoryService.visible($0.record, paddock: nil, lot: s.lotId) && !Self.usersKind($0.record.kind) }
                         .map { cand($0.record) }   // no paddock's, no feedback
                 }
             }
@@ -426,6 +449,9 @@ extension CommandRouter {
         }
         return all
     }
+
+    /// Kinds only the user's own word makes active: proposals jobs never see them.
+    static func usersKind(_ k: MemoryKind) -> Bool { k == .feedback || k == .procedure }
 
     func runProposalsJob(_ j: CuratorJob, call: Curator.Call) async throws {
         let p = try Self.proposalsPayload(j)
@@ -451,7 +477,7 @@ extension CommandRouter {
         for l in ws.lots { stores.append(await memory.lotStore(l.id)) }
         var done = true
         for s in stores where s.exists {
-            let ids = (try? await s.run { m in m.store.all().records.filter { $0.status == .proposed && $0.kind != .feedback }.map(\.id) }) ?? []
+            let ids = (try? await s.run { m in m.store.all().records.filter { $0.status == .proposed && !Self.usersKind($0.kind) }.map(\.id) }) ?? []
             if !ids.isEmpty, await !enqueueProposals(ids, store: s) { done = false }
         }
         // R22: only when every job was queued (else the next start tries again)

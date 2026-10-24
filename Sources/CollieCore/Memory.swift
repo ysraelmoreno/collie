@@ -1,8 +1,9 @@
 import Foundation
 import CollieProtocol
 
-/// `feedback`: a rule the user gave (from a correction); agents never save one.
-public enum MemoryKind: String, Codable, Sendable { case feedback, decision, map, pitfall }
+/// `feedback`: a rule the user gave (from a correction); agents never save one. `procedure`: a named how-to (body
+/// `Quando: <trigger>` then numbered steps), stated by the user.
+public enum MemoryKind: String, Codable, Sendable { case feedback, decision, map, pitfall, procedure }
 public enum MemoryScope: String, Codable, Sendable { case project, paddock, global, lot }
 /// `proposed`: captured, not yet reviewed — never injected until approved.
 public enum MemoryStatus: String, Codable, Sendable { case active, superseded, archived, discarded, proposed }
@@ -136,13 +137,17 @@ public enum MemoryFile {
 
     /// "<kind>/<slug(subject) up to 48>-<id 8 hex>.md"; slug is [a-z0-9-] only.
     public static func fileName(_ r: MemoryRecord) -> String {
+        "\(r.kind.rawValue)/\(slug(r.subject))-\(r.id.uuidString.lowercased().prefix(8)).md"
+    }
+
+    /// `[a-z0-9-]`, at most 48, no leading/trailing `-`; "memory" when nothing is left.
+    public static func slug(_ s: String) -> String {
         var slug = ""
-        for ch in r.subject.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased() {
+        for ch in s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased() {
             if ch.isASCII, ch.isLetter || ch.isNumber { slug.append(ch) } else if slug.last != "-" { slug.append("-") }
         }
         slug = String(slug.prefix(48)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        if slug.isEmpty { slug = "memory" }
-        return "\(r.kind.rawValue)/\(slug)-\(r.id.uuidString.lowercased().prefix(8)).md"
+        return slug.isEmpty ? "memory" : slug
     }
 
     // Plain when safe, otherwise a JSON string.

@@ -48,7 +48,7 @@ enum CuratorOps {
             "type": .string("object"), "additionalProperties": .bool(false), "required": .array([.string("op")]),
             "properties": .object([
                 "op": oneOf(["create", "supersede", "merge", "retire", "activate", "drop", "score", "ask"]),
-                "kind": oneOf(["feedback", "decision", "map", "pitfall"]),
+                "kind": oneOf(["feedback", "decision", "map", "pitfall", "procedure"]),
                 "scope": oneOf(["project", "paddock", "global", "lot"]),
                 "id": str, "ids": uuids, "into": str, "by": str,
                 "subject": str, "title": str, "body": str, "why": str, "howToApply": str,

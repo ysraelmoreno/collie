@@ -79,9 +79,9 @@ enum CollieOrientation {
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")
         }
-        // sandbox: a blocked path shows the user a card; ask, don't work around it
-        lines.append(tight ? "- Sandboxed: blocked path = user card; ask: collie access request <path> --read|--write --reason \"…\"; collie open <url|app>."
-            : "- Sandboxed: you write only in the project. A blocked path shows the user a card; don't work around it, ask: collie access request <path> --read|--write --reason \"…\". Open URLs/apps with collie open <url|app>.")
+        // sandbox: reads are open (secrets never); a blocked write shows the user a card; ask, don't work around it
+        lines.append(tight ? "- Sandboxed: blocked write = user card; ask: collie access request <path> --write --reason \"…\"; collie open <url|app>."
+            : "- Sandboxed: reads open (not secrets); writes only in project. A blocked write = user card; don't work around it, ask: collie access request <path> --write --reason \"…\". Open URLs/apps: collie open <url|app>.")
         if !tight { lines.append("Run `collie <group> --help` for details.") }
         return lines.joined(separator: "\n")
     }

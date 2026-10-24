@@ -100,7 +100,9 @@ enum SandboxWatcher {
 
 /// The pending cards: one per (terminal, op, folder), bounded — at most `perTerminal` open cards a terminal (more new
 /// folders are counted in `dropped`, not shown), an open card re-sent at most every `updateEvery` with its count.
-/// Denied keys stay quiet until that terminal goes (bounded too).
+/// Denied keys stay quiet until that terminal goes (bounded too). 2Q (user decision): a denial that raises no card —
+/// a read (reads are open but for what no click opens), or one that can never be granted (`refusal`) — stays silent,
+/// counted per terminal in `silent`; an agent's request still raises its card.
 struct SandboxCards {
     static let perTerminal = 20, updateEvery: TimeInterval = 2, deniedCap = 2000
     struct Key: Hashable { var terminal: UUID; var op: String; var folder: String }
@@ -108,16 +110,19 @@ struct SandboxCards {
     private var lastSent: [Key: Date] = [:]
     private var open: [UUID: Int] = [:]
     private var denied: Set<Key> = []
+    private var silenced: Set<Key> = []
     private(set) var dropped = 0
+    private(set) var silent: [UUID: Int] = [:]
 
     static func key(_ d: SandboxDenial) -> Key { Key(terminal: d.terminal, op: d.op, folder: d.folder) }
 
     /// Records `d`; returns the card to send to the app, nil when quiet (deduped, rate-limited, over the cap, denied).
-    /// `decorate` fills a new card that will be shown: it runs only then, never per storm line.
+    /// `decorate` fills a new card (its refusal): it runs once per new folder, never per storm line.
     mutating func add(_ d: SandboxDenial, now: Date = Date(), decorate: (inout SandboxDenial) -> Void = { _ in }) -> SandboxDenial? {
         var d = d
         let k = Self.key(d)
         guard !denied.contains(k) else { return nil }
+        if !d.requested && (d.op == "read" || silenced.contains(k)) { silent[d.terminal, default: 0] += d.count; return nil }
         if var c = cards[k] {
             c.count += d.count; c.at = d.at
             // R29: a request never replaces the card's path (what Liberar opens), and shares the rate limit
@@ -129,6 +134,11 @@ struct SandboxCards {
         }
         guard open[d.terminal, default: 0] < Self.perTerminal else { dropped += 1; return nil }
         decorate(&d)
+        if !d.requested && d.refusal != nil {
+            if silenced.count >= Self.deniedCap { silenced.removeAll() }   // ponytail: forgotten ones decorate again
+            silenced.insert(k); silent[d.terminal, default: 0] += d.count
+            return nil
+        }
         cards[k] = d; lastSent[k] = now; open[d.terminal, default: 0] += 1
         return d
     }
@@ -154,7 +164,8 @@ struct SandboxCards {
     mutating func forget(terminal: UUID) {
         for k in cards.keys where k.terminal == terminal { remove(k) }
         denied = denied.filter { $0.terminal != terminal }
-        open[terminal] = nil
+        silenced = silenced.filter { $0.terminal != terminal }
+        open[terminal] = nil; silent[terminal] = nil
     }
 
     var all: [SandboxDenial] { cards.values.sorted { $0.at < $1.at } }

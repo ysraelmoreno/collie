@@ -1,36 +1,10 @@
 import Foundation
 import CollieCore
 
-/// What tools need under the user's home inside a sandboxed terminal (Task 1's list, narrowed per R5). Entries are
+/// What a sandboxed terminal may write under the user's home, and what it never reads or writes. Entries are
 /// home-relative: a plain entry is that path and everything below it; a trailing `*` matches any name with that prefix
-/// (and below). Outside the home, reads stay open (`/usr`, `/opt/homebrew`, `/Applications/Xcode.app`, …): accepted,
-/// the rules there are about writes. A missing tool's entry costs nothing.
+/// (and below). Reads are open everywhere (plan 2Q, user decision) except `readClosed`. A missing tool's entry costs nothing.
 enum EssentialPaths {
-    /// Read-only (writes come only from `homeWrites`).
-    static let homeReads = [
-        // shells
-        ".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zcompdump*", ".oh-my-zsh", ".p10k.zsh", ".config/zsh",
-        ".bashrc", ".bash_profile", ".profile", ".inputrc", ".config/starship.toml",
-        ".CFUserTextEncoding", "Library/Preferences/.GlobalPreferences.plist", "Library/Preferences/com.apple.dt.*",
-        // git (ssh: only known_hosts/config/*.pub, see `SandboxProfile`)
-        ".gitconfig", ".gitignore_global", ".config/git",
-        // node, python, ruby, rust, go, bun, deno
-        ".nvm", ".npm", ".npmrc", ".yarnrc", ".yarn", ".pnpm-store", ".bun", ".deno", ".volta", ".fnm",
-        ".pyenv", ".cache", ".rbenv", ".gem", ".cargo", ".rustup", "go", ".local/bin", ".local/share/pnpm",
-        // swift / xcode
-        ".swiftpm", ".swiftly", "Library/org.swift.swiftpm", "Library/Developer",
-        "Library/Caches/org.swift.swiftpm", "Library/Caches/com.apple.dt.*", "Library/Caches/CocoaPods",
-        "Library/Caches/Homebrew", "Library/Caches/claude-cli-nodejs", "Library/Caches/node-gyp", "Library/Caches/pip",
-        "Library/Caches/pnpm", "Library/Caches/Yarn", "Library/Caches/ms-playwright", "Library/Caches/bun",
-        "Library/Caches/typescript", "Library/Caches/go-build", "Library/Caches/deno", "Library/Caches/com.apple.python",
-        "Library/Caches/org.carthage.CarthageKit",
-        // agents: binaries, state and (read-only) config
-        ".local/share/claude", ".local/state/claude", ".claude",
-        ".codex", ".cursor", ".config/cursor",
-        // R12: Claude reads its login from the Keychain (the Security framework opens the keychain file in-process)
-        "Library/Keychains",
-    ]
-
     /// Writable. Never config another unsandboxed program executes from (rc files, `~/.claude/settings.json`, hooks,
     /// `~/.codex/config.toml`, SwiftPM `configuration/` mirrors and registries, Xcode `UserData`/`Templates`/`Toolchains`).
     /// ponytail: shared caches stay writable (an agent could poison a cache another build reads): accepted, documented.
@@ -102,6 +76,9 @@ enum EssentialPaths {
         ".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout", ".zcompdump*", ".oh-my-zsh", ".p10k.zsh", ".config/zsh",
         ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".inputrc", ".config/fish", ".config/starship.toml",
         ".gitconfig", ".gitignore_global", ".config/git", ".npmrc", ".yarnrc", ".yarnrc.yml",
+        // 2Q (user decision): `gh` is git's HTTPS credential helper, readable (agents can use the user's GitHub login,
+        // like R12's Keychain) but never writable
+        ".config/gh",
         "Library/Preferences", "Library/LaunchAgents", "Applications",
     ]
     /// R34: the global agent config (`~/.claude.json` aside, R13): closed after the project, the home as project too, but a
@@ -112,16 +89,22 @@ enum EssentialPaths {
         homeWrites.filter { e in [".claude/", ".codex/", ".cursor/"].contains { e.hasPrefix($0) } }
     }
 
-    /// Closed even when a grant covers them.
+    /// Closed even when a grant covers them: never read, never written. Browser profiles: every Chromium-family and
+    /// Firefox dir (Claude Code probes their `NativeMessagingHosts`: refused, so silent).
     static let secrets = [
-        ".ssh", ".aws", ".config/gh", ".netrc", ".gem/credentials", ".cargo/credentials", ".cargo/credentials.toml", ".docker/config.json", ".gnupg", ".kube", ".config/gcloud", ".azure",
-        "Library/Application Support/Google/Chrome", "Library/Application Support/BraveSoftware",
-        "Library/Application Support/Microsoft Edge", "Library/Application Support/Arc", "Library/Application Support/Firefox",
+        ".ssh", ".aws", ".netrc", ".gem/credentials", ".cargo/credentials", ".cargo/credentials.toml", ".docker/config.json", ".gnupg", ".kube", ".config/gcloud", ".azure",
+        "Library/Application Support/Google", "Library/Application Support/Chromium", "Library/Application Support/BraveSoftware",
+        "Library/Application Support/Microsoft Edge*", "Library/Application Support/Vivaldi", "Library/Application Support/Arc",
+        "Library/Application Support/Opera*", "Library/Application Support/com.operasoftware.Opera*",
+        "Library/Application Support/Firefox", "Library/Application Support/Mozilla",
         "Library/Safari", "Library/Cookies",
     ]
+    /// Never read (2Q: reads are open otherwise): secrets, and the user's mail, messages and app containers. Not the
+    /// keychain files (Claude reads its login, R12). Collie's data is closed by the profile itself (its own files aside).
+    static let readClosed = secrets + ["Library/Mail", "Library/Messages", "Library/Containers", "Library/Group Containers"]
 
-    /// Never granted (R27), on top of `secrets`: the user's mail, messages, app containers and keychain files. Not
-    /// read-denied (Claude reads its Keychain login, R12): only refused as grants (`SandboxGrantStore.refusal`).
+    /// Never granted (R27), on top of `secrets`: the user's mail, messages, app containers and keychain files (the
+    /// keychain stays readable, R12): refused as grants (`SandboxGrantStore.refusal`).
     static let neverGranted = ["Library/LaunchAgents", "Library/Keychains", "Library/Mail", "Library/Messages", "Library/Cookies",
                                "Library/Safari", "Library/Containers", "Library/Group Containers"]
     /// Too wide to grant as a whole (R27), like the home itself.

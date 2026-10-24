@@ -44,7 +44,7 @@ struct SandboxGrantStore {
     /// `~/Library`, `~/Library/Application Support`), or closed whatever the user clicks (R23, R27): Collie's data and
     /// admin token, secrets, mail/messages/containers/keychains, launchd agents, and anything that is or is inside a git
     /// dir (`.git`, `*.git`). The Collie app bundle and its folders (I3). For writes, also what the profile closes after
-    /// every grant (R32: config run outside, preferences, `~/Applications`; R34: global agent config is grantable) and `closed`: a pasture's
+    /// every grant (R32: config run outside (`~/.config/gh` too), preferences, `~/Applications`; R34: global agent config is grantable) and `closed`: a pasture's
     /// paddock worktrees (M3). A refused card shows only Negar.
     static func refusal(_ path: String, op: String, home: URL, collie: URL, app: URL? = nil, closed: [URL] = []) -> String? {
         if op == "exec" { return "Executar este programa não pode ser liberado no sandbox." }
@@ -54,8 +54,13 @@ struct SandboxGrantStore {
             return "Amplo demais: o Collie não libera a pasta pessoal, ~/Library ou ~/Library/Application Support inteiras, nem o que fica acima delas."
         }
         func within(_ u: URL) -> Bool { p.starts(with: comps(u)) }
+        func closes(_ e: String) -> Bool {   // a `x*` entry: any name starting with x at that depth (and below)
+            guard e.hasSuffix("*") else { return within(home.appendingPathComponent(e)) }
+            let c = comps(home.appendingPathComponent(String(e.dropLast()))), n = c.count
+            return p.count >= n && p.prefix(n - 1).elementsEqual(c.prefix(n - 1)) && p[n - 1].hasPrefix(c[n - 1])
+        }
         if within(collie) { return "Dados do Collie (e o token de admin) nunca são liberados para um agente." }
-        if (EssentialPaths.secrets + EssentialPaths.neverGranted).contains(where: { within(home.appendingPathComponent($0)) }) {
+        if (EssentialPaths.secrets + EssentialPaths.neverGranted).contains(where: closes) {
             return "Segredos (chaves SSH, credenciais, chaves do sistema, e-mail, mensagens, perfis de navegador) e agentes do launchd nunca são liberados."
         }
         if let app, within(app) || comps(app).starts(with: p) {
@@ -65,13 +70,8 @@ struct SandboxGrantStore {
             return "Pastas do git (.git) nunca são liberadas: o seu git executa hooks e configuração de lá fora do sandbox."
         }
         guard op != "read" else { return nil }
-        let h = comps(home)
-        func closes(_ e: String) -> Bool {   // a `name*` entry: a home child starting with name
-            guard e.hasSuffix("*") else { return within(home.appendingPathComponent(e)) }
-            return p.count > h.count && p.starts(with: h) && p[h.count].hasPrefix(e.dropLast())
-        }
         if EssentialPaths.neverWritable.contains(where: closes) {
-            return "Configuração que roda fora do sandbox (rc do shell, git, npm, preferências, ~/Applications) nunca é liberada para escrita."
+            return "Configuração que roda fora do sandbox (rc do shell, git, gh, npm, preferências, ~/Applications) nunca é liberada para escrita."
         }
         if closed.contains(where: within) {
             return "Os cercados deste pasto nunca são graváveis daqui: abra um terminal no cercado."

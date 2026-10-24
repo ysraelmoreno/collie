@@ -119,24 +119,64 @@ final class FakeHome {
         #expect(try !f.ok(p, "echo a > /usr/local/collie-sp-probe"))
     }
 
-    @Test func readsDeniedOutsideProject() throws {
+    /// 2Q (user decision): reads outside the project are open.
+    @Test func readsOutsideProjectAllowed() throws {
         let f = try FakeHome(), p = try f.profile(f.input())
         #expect(try f.ok(p, "cat \(AgentLaunch.quote(f.repo.path))/README"))
-        #expect(try !f.ok(p, "cat \(f.h("Documents/x"))"))
-        #expect(try !f.ok(p, "ls \(f.h("Documents"))"))
-        #expect(try !f.ok(p, "cat \(f.h("code/other/x"))"))   // another repo
-        #expect(try !f.ok(p, "ls \(AgentLaunch.quote(f.home.path))"))
-        #expect(try f.ok(p, "test -d \(f.h("Documents"))"))   // metadata only (stat/realpath)
+        #expect(try f.ok(p, "cat \(f.h("Documents/x")) && ls \(f.h("Documents")) >/dev/null"))
+        #expect(try f.ok(p, "cat \(f.h("code/other/x"))"))   // another repo
+        #expect(try f.ok(p, "ls \(AgentLaunch.quote(f.home.path)) \(f.h("Library")) >/dev/null"))
     }
 
-    @Test func secretsDenied() throws {
+    @Test func secretsStillDenied() throws {
         let f = try FakeHome()
-        // even a grant of the whole home doesn't reopen them
-        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.path, access: .read, scope: .terminal, owner: f.id)]))
-        for s in [".ssh/id_ed25519", ".aws/credentials", ".netrc", ".config/gh/hosts.yml"] {
+        // even a write grant of the whole home (or a stored read grant) doesn't reopen them
+        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.path, access: .write, scope: .terminal, owner: f.id),
+                                               SandboxGrant(path: f.home.path, access: .read, scope: .terminal, owner: f.id)]))
+        for s in [".ssh/id_ed25519", ".aws/credentials", ".netrc"] {
             #expect(try !f.ok(p, "cat \(f.h(s))"), "\(s)")
         }
         for r in [".ssh/known_hosts", ".ssh/config", ".ssh/id_ed25519.pub"] { #expect(try f.ok(p, "cat \(f.h(r))"), "\(r)") }
+        #expect(try !f.ok(p, "ln \(f.h(".ssh/id_ed25519")) \(AgentLaunch.quote(f.repo.path))/k"))   // no hard link into a readable place
+        #expect(try !f.ok(p, "cat \(AgentLaunch.quote(f.repo.path))/k"))
+    }
+
+    /// 2Q (user decision): `git push` over HTTPS runs gh as its credential helper: readable, never writable.
+    @Test func ghConfigReadableNotWritable() throws {
+        let f = try FakeHome()
+        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.appendingPathComponent(".config/gh").path, access: .write, scope: .terminal, owner: f.id)]))
+        #expect(try f.ok(p, "cat \(f.h(".config/gh/hosts.yml"))"))
+        #expect(try !f.ok(p, "echo x > \(f.h(".config/gh/hosts.yml"))"))
+        #expect(try !f.ok(p, "echo x > \(f.h(".config/gh/config.yml"))"))
+        let h = try f.profile(f.input(project: f.home))
+        #expect(try !f.ok(h, "echo x > \(f.h(".config/gh/hosts.yml"))"))
+    }
+
+    /// Every Chromium-family and Firefox profile (Claude Code probes their NativeMessagingHosts), mail, messages, containers.
+    @Test func browserProfilesDenied() throws {
+        let f = try FakeHome()
+        let closed = ["Library/Application Support/Chromium/NativeMessagingHosts/x.json",
+                      "Library/Application Support/Microsoft Edge/NativeMessagingHosts/x.json",
+                      "Library/Application Support/Microsoft Edge Beta/NativeMessagingHosts/x.json",
+                      "Library/Application Support/Google/Chrome/NativeMessagingHosts/x.json",
+                      "Library/Application Support/Google/Chrome Canary/Default/Cookies",
+                      "Library/Application Support/BraveSoftware/Brave-Browser/NativeMessagingHosts/x.json",
+                      "Library/Application Support/Vivaldi/NativeMessagingHosts/x.json",
+                      "Library/Application Support/Arc/User Data/NativeMessagingHosts/x.json",
+                      "Library/Application Support/com.operasoftware.Opera/NativeMessagingHosts/x.json",
+                      "Library/Application Support/Mozilla/NativeMessagingHosts/x.json",
+                      "Library/Application Support/Firefox/Profiles/p/cookies.sqlite",
+                      "Library/Safari/History.db", "Library/Cookies/Cookies.binarycookies",
+                      "Library/Mail/V10/x", "Library/Messages/chat.db", "Library/Containers/com.x/Data/x", "Library/Group Containers/g/x"]
+        for c in closed {
+            let u = f.home.appendingPathComponent(c)
+            try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "x".write(to: u, atomically: false, encoding: .utf8)
+        }
+        let p = try f.profile(f.input(project: f.home))   // the home as project: still closed
+        for c in closed { #expect(try !f.ok(p, "cat \(f.h(c))"), "\(c)") }
+        for c in closed.prefix(11) { #expect(try !f.ok(p, "echo y > \(f.h(c))"), "\(c)") }
+        #expect(try f.ok(p, "mkdir -p \(f.h("Library/Application Support/Foo")) && echo y > \(f.h("Library/Application Support/Foo/x")) && cat \(f.h("Library/Application Support/Foo/x"))"))
     }
 
     @Test func collieDataDenied() throws {
@@ -375,12 +415,14 @@ final class FakeHome {
         #expect(try f.ok(p, "sleep 5 & kill $!"))   // its own children
     }
 
-    @Test func grantReadOpensPath() throws {
+    /// A stored read grant (before 2Q) decodes and renders nothing: reads are open anyway, never writes.
+    @Test func storedReadGrantHarmless() throws {
         let f = try FakeHome()
-        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.appendingPathComponent("Documents").path, access: .read, scope: .terminal, owner: f.id)]))
+        let p = try f.profile(f.input(grants: [SandboxGrant(path: f.home.appendingPathComponent("Documents").path, access: .read, scope: .terminal, owner: f.id),
+                                               SandboxGrant(path: f.home.appendingPathComponent(".ssh").path, access: .read, scope: .terminal, owner: f.id)]))
         #expect(try f.ok(p, "cat \(f.h("Documents/x"))"))
         #expect(try !f.ok(p, "echo y > \(f.h("Documents/x"))"))
-        #expect(try !f.ok(p, "cat \(f.h("code/other/x"))"))
+        #expect(try !f.ok(p, "cat \(f.h(".ssh/id_ed25519"))"))
     }
 
     @Test func grantWriteOpensPath() throws {
@@ -413,7 +455,7 @@ final class FakeHome {
         let p = try f.profile(f.input(project: proj))
         #expect(try f.ok(p, "echo x > 'new file é' && git add . && git commit -qm t", cwd: proj))
         #expect(try !f.ok(p, "echo x > .git/hooks/pre-commit", cwd: proj))
-        #expect(try !f.ok(p, "cat \(f.h("Documents/x"))", cwd: proj))
+        #expect(try !f.ok(p, "cat \(f.h(".ssh/id_ed25519"))", cwd: proj))
         let sib = f.home.appendingPathComponent("code/proj \"é\" ünï ✓ (2)")
         try FileManager.default.createDirectory(at: sib, withIntermediateDirectories: true)
         #expect(try !f.ok(p, "echo x > \(AgentLaunch.quote(sib.path))/y", cwd: proj))   // regex-escaped, not a prefix match
@@ -425,16 +467,16 @@ final class FakeHome {
         try fm.createSymbolicLink(at: f.repo.appendingPathComponent("docs"), withDestinationURL: f.home.appendingPathComponent("Documents"))
         try fm.createSymbolicLink(at: f.repo.appendingPathComponent("key"), withDestinationURL: f.home.appendingPathComponent(".ssh/id_ed25519"))
         let p = try f.profile(f.input())
-        #expect(try !f.ok(p, "cat docs/x"))
+        #expect(try f.ok(p, "cat docs/x"))   // 2Q: reads are open
         #expect(try !f.ok(p, "echo y > docs/y"))
         #expect(try !f.ok(p, "cat key"))
-        #expect(try !f.ok(p, "ln \(f.h("Documents/x")) hard"))   // a hard link to a closed file
+        #expect(try !f.ok(p, "ln \(f.h(".aws/credentials")) hard"))   // a hard link to a closed file
         // a project reached through a symlink (and /tmp -> /private/tmp) still confines to the resolved path
         let link = URL(fileURLWithPath: "/tmp/\(f.base.lastPathComponent)-link")
         try fm.createSymbolicLink(at: link, withDestinationURL: f.repo); defer { try? fm.removeItem(at: link) }
         let q = try f.profile(f.input(project: link))
         #expect(try f.ok(q, "echo x > \(link.path)/viaLink", cwd: link))
-        #expect(try !f.ok(q, "cat \(f.h("Documents/x"))", cwd: link))
+        #expect(try !f.ok(q, "echo y > \(f.h("Documents/y"))", cwd: link))
     }
 
     @Test func toolEssentialsReadable() throws {
@@ -691,7 +733,7 @@ final class OSAllocatedUnfairLockBox: @unchecked Sendable {
         let profile = try f.profile(f.input(project: proj))
         let reg = TerminalRegistry(spillDir: f.base, memoryCapBytes: 1 << 16, runDir: f.base, cttyHelper: helper)
         let rec = TerminalRecord(id: UUID(), name: "A", preset: .shell, command: nil, cwd: f.base.path, isShepherd: false)
-        let doc = AgentLaunch.quote(f.home.appendingPathComponent("Documents/x").path)
+        let doc = AgentLaunch.quote(f.home.appendingPathComponent(".ssh/id_ed25519").path)
         let p = try await reg.spawn(rec, launch: LaunchSpec(executable: "/bin/zsh", arguments: ["-fc", "echo tty=$(ps -o tty= -p $$); cat \(doc) || echo DENIED; sleep 5"],
                                                             cwd: f.base.path), sandbox: profile)
         defer { p.terminate() }

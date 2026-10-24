@@ -68,8 +68,8 @@ struct SandboxInput {
 }
 
 /// The per-terminal Seatbelt profile: `(allow default)`, then deny rules and allow-backs where the last matching rule
-/// wins (Task 1's shape). Every path is resolved and inlined as an escaped SBPL string; the ones inside regexes are
-/// regex-escaped too. Every deny that should raise a card carries `(with message "collie-term:<id>")` (Task 4).
+/// wins (Task 1's shape). Reads open but for a closed list; writes closed but for the project, caches and grants.
+/// Every path is resolved and inlined as an escaped SBPL string; the ones inside regexes are regex-escaped too. Every deny that should raise a card carries `(with message "collie-term:<id>")` (Task 4).
 enum SandboxProfile {
     static let tagPrefix = "collie-term:"
 
@@ -97,15 +97,11 @@ enum SandboxProfile {
         // swapped in later opens nothing (Seatbelt matches the resolved path)
         let grants = i.grants.map { (path: $0.path, access: $0.access) }
 
-        out.append(";; reads: the home is closed; tool essentials, the project and its git re-opened")
-        rule("deny", "file-read*", tagged: true, [sub(home)])
-        rule("deny", "file-read* (with no-log)", [lit(home), lit(home + "/Library")])   // benign listings: no card
-        rule("allow", "file-read-metadata", [sub(home)])   // stat/realpath of ancestors; contents and listings stay closed
-        rule("allow", "file-read*", [sub(project)] + [common, worktree].compactMap { $0.map(sub) }
-             + EssentialPaths.homeReads.map { entry(home, $0) })
-        rule("allow", "file-read*", grants.map { sub($0.path) })
-        // secrets stay closed whatever was re-opened or granted; ssh keeps what `git`/`ssh` need without the keys
-        rule("deny", "file-read*", tagged: true, EssentialPaths.secrets.map { entry(home, $0) })
+        // 2Q (user decision): reads are open, except what `readClosed` lists (secrets, browser profiles, mail, messages,
+        // containers) and Collie's data (below). No read grant is rendered (a stored one is moot): nothing re-opens them.
+        // ssh keeps what `git`/`ssh` need without the keys
+        out.append(";; reads: open; secrets, browser profiles, mail/messages/containers closed")
+        rule("deny", "file-read*", tagged: true, EssentialPaths.readClosed.map { entry(home, $0) })
         rule("allow", "file-read*", [lit(home + "/.ssh"), lit(home + "/.ssh/known_hosts"), lit(home + "/.ssh/config"),
                                      rx("^" + re(home + "/.ssh/") + "[^/]+\\.pub$")])
 

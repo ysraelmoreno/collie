@@ -378,16 +378,18 @@ Codex usam); se um dia sair do macOS, o sandbox para de funcionar e o Collie ter
   o próprio `~`, o projeto é toda a sua pasta pessoal** (a folha de novo terminal avisa): o agente lê e altera tudo nela,
   menos os segredos e o que nunca é gravável (abaixo).
 - **Nunca gravável, qualquer que seja o projeto ou o liberado.** Os rc do shell (`.zshrc`, `.zprofile`, `.bashrc`…),
-  `~/.gitconfig` e `~/.config/git`, `~/.npmrc`/`.yarnrc`, `~/Library/Preferences`, `~/Library/LaunchAgents`,
+  `~/.gitconfig` e `~/.config/git`, `~/.config/gh` (legível, veja os riscos), `~/.npmrc`/`.yarnrc`, `~/Library/Preferences`, `~/Library/LaunchAgents`,
   `~/Applications`, o app do Collie e a pasta de dados dele. Isso vale também para um projeto dentro delas.
 - **Configuração global dos agentes** (`~/.claude`, `~/.codex`, `~/.cursor`, menos as pastas de estado deles e o
   `~/.claude.json`) fica só leitura mesmo com o projeto em `~` ou dentro dela; uma escrita ali gera o cartão normal, e
   só o seu clique em Liberar a abre.
-- **Leitura fora do projeto.** Só o projeto, o sistema, as toolchains e o que as ferramentas precisam (Xcode, Homebrew,
-  nvm, caches, o estado do agente, os arquivos que o Collie gera para o terminal). Documentos, outros repositórios e o
-  resto do `$HOME` não são lidos. Limite: leituras fora do `$HOME` e de `/private/tmp` seguem abertas.
-- **Segredos.** Chaves de `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/.docker/config.json`, `~/.gnupg` (assinar
-  commits com gpg deixa de funcionar; assinatura por ssh com o agente funciona) e perfis de navegador. O git por SSH
+- **Leitura: livre, menos o que nunca é liberado.** O terminal lê qualquer arquivo fora do projeto (documentos, outros
+  repositórios, o resto do `$HOME`), menos os segredos, os perfis de navegador, `~/Library/{Mail,Messages,Containers,Group
+  Containers}` e a pasta de dados do Collie (só os arquivos que ele gera para o próprio terminal são legíveis). Nenhum
+  clique abre esses; um bloqueio de leitura nunca vira cartão.
+- **Segredos (nem leitura nem escrita).** Chaves de `~/.ssh`, `~/.aws`, `~/.netrc`, `~/.docker/config.json`, `~/.gnupg`
+  (assinar commits com gpg deixa de funcionar; assinatura por ssh com o agente funciona) e os perfis de navegador (Chrome
+  e toda a pasta `Google`, Chromium, Edge, Brave, Vivaldi, Arc, Opera, Firefox/Mozilla, Safari, Cookies). O git por SSH
   continua funcionando pelo ssh-agent (`SSH_AUTH_SOCK`), sem ler as chaves. `~/.npmrc` segue legível (pode ter token de registry).
 - **Internos do Collie.** O app (o bundle `Collie.app` inteiro), o daemon, o LaunchAgent, a pasta de dados e o `admin.token` não são escritos nem lidos.
   O agente fala com o Collie só pelo `collie`, com o token do próprio terminal.
@@ -410,6 +412,8 @@ Quem decidiu cada um foi você; nenhum é uma fronteira. Um agente mal-intencion
   Um agente pode, por eles, pedir a outros apps que façam o que o sandbox nega.
 - **Keychain.** O `/usr/bin/security` roda e `~/Library/Keychains` é gravável, para o Claude manter o login e renovar tokens.
   Qualquer agente pode ler, sem aviso, itens guardados pela CLI `security` (gh e parecidos).
+- **`~/.config/gh` é legível** (não gravável): o `git push` por HTTPS usa o `gh` como credential helper. Qualquer agente
+  pode usar o seu login do GitHub, como no Keychain acima.
 - **`~/.claude.json` é gravável** (o Claude o reescreve a cada partida). Um agente pode plantar nele um servidor MCP
   global, que o seu Claude fora do sandbox executaria.
 - **`launchctl` e `open` são bloqueados só pelo caminho** (`/bin/launchctl`, `/usr/bin/open`): uma cópia do binário
@@ -434,8 +438,8 @@ Quem decidiu cada um foi você; nenhum é uma fronteira. Um agente mal-intencion
 (agente, `summon` e rebanho nunca criam um), sem guias (nenhuma guia chega a ele), fora dos lotes, e com a marca "livre"
 no nó. Ele roda como o seu usuário, sem nenhuma proteção.
 
-**Liberar acesso.** Quando o agente é bloqueado, ele recebe o erro na hora e o Collie mostra no nó do terminal um cartão:
-"Agente *X* tentou **ler|escrever|apagar** `caminho`", com **Liberar este caminho**, **Liberar a pasta** e **Negar**, e a
+**Liberar acesso.** Quando o agente é bloqueado numa escrita fora do projeto que pode ser liberada, ele recebe o erro na
+hora e o Collie mostra no nó do terminal um cartão: "Agente *X* tentou **escrever|apagar** `caminho`", com **Liberar este caminho**, **Liberar a pasta** e **Negar**, e a
 opção "para o lote" (vale para os terminais atuais e futuros do lote). Nada é liberado sem o seu clique. Liberar reinicia
 o terminal com o sandbox mais largo e, no Claude, retoma a conversa (`--continue`, só se já havia uma); no Codex e no
 Cursor é uma reabertura simples. O processo em andamento se perde, a conversa não. Com "para o lote" só o terminal do
@@ -447,12 +451,16 @@ O que um clique **nunca** libera: a pasta de dados e o token do Collie, segredos
 `~/Library/Application Support` inteiros, `~/Library/{Keychains,Mail,Messages,Cookies,Safari,Containers,Group Containers}`,
 o app do Collie e as pastas que o contêm (como `/Applications`), a escrita no que é "nunca gravável" (acima; a
 configuração global dos agentes é liberável) e, num
-terminal do pasto, a escrita nos cercados dele (abra um terminal no cercado). Esses cartões mostram só **Negar**.
+terminal do pasto, a escrita nos cercados dele (abra um terminal no cercado). Esses bloqueios não geram cartão: são
+silenciosos (o daemon conta, por terminal, os "bloqueios silenciosos" em `access.list`), como as leituras negadas. O
+Claude Code sonda a pasta `NativeMessagingHosts` de cada navegador ao iniciar: isso também fica em silêncio. Só um pedido
+do agente para um desses caminhos mostra um cartão, com só **Negar**.
 Liberar escrita numa pasta dentro de `/tmp` não bloqueia o git ali (os temporários já são graváveis; clonar lá funciona).
 Cada liberado guarda exatamente o caminho mostrado no cartão (resolvido uma vez); trocar um link depois não o alarga.
-O agente também pode pedir: `collie access request <caminho> --read|--write --reason "…"` (o motivo é limpo de segredos
+O agente também pode pedir: `collie access request <caminho> --write --reason "…"` (o motivo é limpo de segredos
 e mostrado no mesmo cartão; se já houver um cartão aberto para aquela pasta, o pedido soma-se a ele e a resposta diz
-isso). Terminais livres não têm sandbox, então não pedem.
+isso). Um pedido `--read` não mostra cartão: a resposta diz que a leitura já é livre, ou por que aquele caminho nunca é
+liberado. Liberados de leitura antigos continuam salvos e não fazem nada. Terminais livres não têm sandbox, então não pedem.
 
 **`collie open <url|app>`.** O `open` do terminal chama o daemon, que o executa fora do sandbox só para URLs http(s)/mailto e
 apps instalados (`/Applications`, `~/Applications`, os do Xcode: `open -a Simulator` funciona). Scripts, `.command`,

@@ -31,7 +31,7 @@ import CollieCore
 
     @Test func orientationTeachesSandboxAccess() {
         for t in [text(), text(shepherd: true, peers: ["Bob"], panels: [("Home", "design")])] {
-            #expect(t.contains("collie access request <path> --read|--write --reason") && t.contains("collie open <url|app>"))
+            #expect(t.contains("collie access request <path> --write --reason") && t.contains("collie open <url|app>"))
         }
     }
 

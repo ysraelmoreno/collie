@@ -46,7 +46,9 @@ struct ClaudeCuratorRunner: CuratorRunner {
     static let unreadable = "resposta ilegível do claude"
     static let noAnswer = "claude não respondeu"
     /// R5 (user decision): the plan login, never an API key from the shell (no silent token billing).
-    static let strippedKeys: Set = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+    /// Review T2: nor another provider or endpoint (Bedrock, Vertex, a proxy URL).
+    static let strippedKeys: Set = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+                                    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"]
 
     init(root: URL, home: URL, env: @escaping @Sendable () async -> [String: String], retryAfter: Duration = .seconds(30)) {
         self.root = root; self.home = home; self.env = env; self.retryAfter = retryAfter
@@ -77,7 +79,8 @@ struct ClaudeCuratorRunner: CuratorRunner {
         func decode(_ t: some StringProtocol) -> JSONValue? { try? JSONDecoder().decode(JSONValue.self, from: Data(t.utf8)) }
         func resultObject(_ v: JSONValue?) -> [String: JSONValue]? {
             switch v {
-            case .object(let o)?: return o
+            case .object(let o)? where o["type"] == .string("result") || o["result"] != nil || o["structured_output"] != nil
+                || o["is_error"] != nil: return o   // a result's shape: an unrelated JSON line never shadows it
             case .array(let xs)?: return xs.reversed().lazy.compactMap { x -> [String: JSONValue]? in
                 if case .object(let o) = x, o["type"] == .string("result") { o } else { nil } }.first
             default: return nil

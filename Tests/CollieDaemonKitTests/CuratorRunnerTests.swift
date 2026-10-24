@@ -24,7 +24,8 @@ private struct Fake {
     func runner(path: String? = nil, retryAfter: Duration = .seconds(30)) -> ClaudeCuratorRunner {
         let env = ["PATH": path ?? (bin.path + ":/usr/bin:/bin"), "HOME": f.home.path,
                    "COLLIE_SOCKET": "/x.sock", "COLLIE_TOKEN": "t", "COLLIE_TERMINAL_ID": "i",
-                   "ANTHROPIC_API_KEY": "sk-x", "ANTHROPIC_AUTH_TOKEN": "tok-x"]
+                   "ANTHROPIC_API_KEY": "sk-x", "ANTHROPIC_AUTH_TOKEN": "tok-x", "ANTHROPIC_BASE_URL": "https://x",
+                   "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_VERTEX": "1"]
         return ClaudeCuratorRunner(root: f.collie, home: f.home, env: { env }, retryAfter: retryAfter)
     }
 }
@@ -88,7 +89,9 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         #expect(parts[0].contains("--strict-mcp-config\n") && parts[0].hasSuffix("--\n\(call.input)\n"))
         #expect(!parts[1].contains("COLLIE_SOCKET") && !parts[1].contains("COLLIE_TOKEN") && !parts[1].contains("COLLIE_TERMINAL_ID"))
         #expect(parts[1].contains("HOME=\(fake.f.home.path)\n"))
-        #expect(!parts[1].contains("ANTHROPIC_API_KEY") && !parts[1].contains("ANTHROPIC_AUTH_TOKEN"), "R5: the plan login, never a key")
+        for k in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"] {
+            #expect(!parts[1].contains(k + "="), "R5: the plan login, never a key or another provider (\(k))")
+        }
         #expect(!FileManager.default.fileExists(atPath: fake.f.home.appendingPathComponent("outside").path))
         #expect(try Data(contentsOf: settings) == before)
         let cwd = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,6 +135,8 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         let fenced = #"{"type":"result","is_error":false,"result":"```json\n{\"ops\":[]}\n```","usage":{"input_tokens":1,"output_tokens":2},"total_cost_usd":0}"#
         #expect(try ClaudeCuratorRunner.parse(fenced).json == .object(["ops": .array([])]))
         #expect(try ClaudeCuratorRunner.parse("[{\"type\":\"system\"}," + fixture + "]").outputTokens == 40)
+        // a trailing unrelated JSON line (telemetry, a warning) can't shadow the answer
+        #expect(try ClaudeCuratorRunner.parse(fixture + "\n{\"level\":\"warn\",\"msg\":\"x\"}\n").inputTokens == 812)
     }
 
     @Test func parseGarbageUnavailable() {

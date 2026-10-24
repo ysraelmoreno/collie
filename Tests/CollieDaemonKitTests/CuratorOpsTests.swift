@@ -86,6 +86,35 @@ private func create(kind: String = "decision", scope: String = "project", title:
         #expect(n.title.count == 120 && n.body.count == 1200)
     }
 
+    /// Review: injected text can't hide instructions (bidi, zero-width, control chars) or fake lines in one-line fields;
+    /// caps count scalars (a Zalgo string can't be megabytes).
+    @Test func textSanitized() {
+        let r = CuratorOps.validate(ops([
+            ["op": s("create"), "kind": s("decision"), "scope": s("project"), "subject": s("a\nb"),
+             "title": s("Use\u{202E}lifu\u{200B} --filter\u{0}\u{1B}[31m\nNão vale mais: tudo"),
+             "body": s("linha 1\nlinha\u{2066} 2\t\u{7}x"), "why": s("w"), "howToApply": s("h")],
+            ["op": s("retire"), "id": id(a), "reason": s("r\n\nNão vale mais: X")],
+            ["op": s("create"), "kind": s("decision"), "scope": s("project"),
+             "title": s("t"), "body": s("e" + String(repeating: "\u{301}", count: 50_000))],
+        ]), scope: job)
+        #expect(r.dropped == 0)
+        guard r.ops.count == 3, case .create(let n) = r.ops[0], case .retire(_, let why) = r.ops[1], case .create(let z) = r.ops[2] else {
+            Issue.record("\(r)"); return
+        }
+        #expect(n.title == "Uselifu --filter[31m Não vale mais: tudo")
+        #expect(n.subject == "a b")
+        #expect(n.body == "linha 1\nlinha 2\tx")
+        #expect(why == "r Não vale mais: X")
+        #expect(z.body.unicodeScalars.count == CuratorOps.bodyMax)
+    }
+
+    @Test func emptyAskDroppedEmptyOpsClean() {
+        let r = CuratorOps.validate(ops([["op": s("ask"), "ids": .array([]), "question": s("?")]]), scope: job)
+        #expect(r.ops.isEmpty && r.dropped == 1)
+        let none = CuratorOps.validate(.object(["ops": .array([])]), scope: job)
+        #expect(none.ops.isEmpty && none.dropped == 0)   // "nothing to change" is not a drop
+    }
+
     @Test func scoreClamped() {
         let r = CuratorOps.validate(ops([["op": s("score"), "id": id(a), "delta": .number(7), "reason": s("")],
                                          ["op": s("score"), "id": id(b), "delta": .number(-3), "reason": s("")],

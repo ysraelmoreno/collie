@@ -66,18 +66,37 @@ enum CuratorOps {
 
     /// Hand-decoded (unknown keys ignored, a wrong type drops the op): ops naming an id, scope or kind outside `scope`
     /// are dropped, text is trimmed to its cap, `delta` clamped to [-1, 1], at most `maxOps` kept. Never throws: output
-    /// that isn't `{"ops":[…]}` is `([], 1)`.
+    /// that isn't `{"ops":[…]}` is `([], 1)`; `{"ops":[]}` (nothing to change) is `([], 0)`.
     static func validate(_ json: JSONValue, scope: CuratorScope) -> (ops: [CuratorOp], dropped: Int) {
-        guard case .object(let root) = json, case .array(let raw)? = root["ops"], !raw.isEmpty else { return ([], 1) }
+        guard case .object(let root) = json, case .array(let raw)? = root["ops"] else { return ([], 1) }
         let valid = raw.compactMap { v -> CuratorOp? in if case .object(let o) = v { op(o, scope) } else { nil } }
         let kept = Array(valid.prefix(max(0, scope.maxOps)))
         return (kept, raw.count - kept.count)
     }
 
+    /// Injected text can't hide anything: control (Cc) and format (Cf: bidi overrides/isolates, zero-width) scalars go;
+    /// a one-line field's line breaks and tabs become one space (no fake "Não vale mais:" line); a multi-line one keeps
+    /// `\n` and `\t`. Capped in scalars, not Characters (a combining-mark pile is one Character).
+    static func clean(_ s: String, cap: Int, multiline: Bool) -> String {
+        var out = String.UnicodeScalarView(), gap = false
+        for u in s.unicodeScalars {
+            let breaks = u == "\n" || u == "\r" || u == "\t" || u == "\u{2028}" || u == "\u{2029}"
+            if !multiline, breaks || u.properties.isWhitespace { gap = true; continue }
+            if multiline, u == "\n" || u == "\t" { out.append(u); continue }
+            if u.properties.generalCategory == .control || u.properties.generalCategory == .format
+                || u.properties.generalCategory == .lineSeparator || u.properties.generalCategory == .paragraphSeparator { continue }
+            if gap, !out.isEmpty { out.append(" ") }
+            gap = false
+            out.append(u)
+        }
+        let t = String(out).trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(String.UnicodeScalarView(t.unicodeScalars.prefix(cap)))
+    }
+
     private static func op(_ o: [String: JSONValue], _ scope: CuratorScope) -> CuratorOp? {
         func text(_ k: String, _ cap: Int) -> String? {
             guard case .string(let s)? = o[k] else { return nil }
-            return String(s.trimmingCharacters(in: .whitespacesAndNewlines).prefix(cap))
+            return clean(s, cap: cap, multiline: cap == bodyMax)   // body, why, howToApply: multi-line
         }
         func filled(_ k: String, _ cap: Int) -> String? { text(k, cap).flatMap { $0.isEmpty ? nil : $0 } }
         func known(_ s: String) -> UUID? { UUID(uuidString: s).flatMap { scope.ids.contains($0) ? $0 : nil } }
@@ -112,7 +131,7 @@ enum CuratorOps {
             guard let target = id("id"), case .number(let d)? = o["delta"], d.isFinite else { return nil }
             return .score(id: target, delta: min(1, max(-1, d)), reason: reason)
         case "ask":
-            guard let about = ids("ids"), let q = filled("question", lineMax) else { return nil }
+            guard let about = ids("ids"), !about.isEmpty, let q = filled("question", lineMax) else { return nil }
             return .ask(ids: about, question: q)
         default: return nil
         }

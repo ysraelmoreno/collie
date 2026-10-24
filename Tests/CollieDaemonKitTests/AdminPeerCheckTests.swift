@@ -222,6 +222,7 @@ static ssize_t answer(int fd, char *buf, size_t cap) {
 }
 int main(int argc, char **argv) {
     if (argc < 3) return 2;
+    alarm(30);   // a wedged daemon must not leave this client behind
     static char buf[65536];
     if (argc > 4 && strcmp(argv[3], "flood") == 0) {   // `flood N`: N connections open at once, then all answers
         int n = atoi(argv[4]), refused = 0, ok = 0;

@@ -58,7 +58,9 @@ public final class SignedAppCheck: AdminPeerCheck {
         let ok = expected != nil && Self.isRunning(tok, cdhash: expected!)
         state.withLock { s in
             if ok { if s.accepted.count >= 64 { s.accepted = [] }; s.accepted.insert(key) }
-            else { if s.refused.count >= Self.refusedCap { s.refused = [] }; s.refused.insert(key) }
+            else if expected != nil {   // an unreadable app is retried, not held against this process
+                if s.refused.count >= Self.refusedCap { s.refused = [] }; s.refused.insert(key)
+            }
         }
         return ok
     }

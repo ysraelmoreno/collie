@@ -77,7 +77,7 @@ extension CommandRouter {
                 for l in ws.lots where l.id != myLot?.id && enterable(l) { stores.insert(await memory.lotStore(l.id), at: 0) }
             }
             var hits: [(hit: MemoryHit, store: RepoMemory)] = []
-            let vector = memory.embed(query)
+            let vector = memory.embed(query), factors = await memory.scores.all()
             for s in stores {
                 // over-fetch: paddock memories of other paddocks are filtered out below
                 // the picked repo's index must work; a broken global one only drops its hits
@@ -85,7 +85,8 @@ extension CommandRouter {
                 let found = try await s.run { m in
                     (required ? try m.requireIndex() : m.index())?.search(query, vector: vector, limit: limit * 2 + 10, includeInactive: inactive) ?? []
                 }
-                hits += found.filter { caller == nil || MemoryService.visible($0.record, paddock: paddockName, lot: s.lotId) }.map { ($0, s) }
+                hits += found.filter { caller == nil || MemoryService.visible($0.record, paddock: paddockName, lot: s.lotId) }
+                    .map { (MemoryHit(record: $0.record, score: $0.score * (factors[$0.record.id] ?? 1)), s) }
             }
             hits.sort { $0.hit.score > $1.hit.score }
             hits = Array(hits.prefix(limit))
@@ -132,7 +133,7 @@ extension CommandRouter {
                     return (rec, m.index()?.stats(id))
                 }
                 guard let (rec, st) = found, caller == nil || MemoryService.visible(rec, paddock: paddockName, lot: s.lotId) else { continue }
-                var extra: [String: JSONValue] = ["reads": .number(Double(st?.reads ?? 0))]
+                var extra: [String: JSONValue] = ["reads": .number(Double(st?.reads ?? 0)), "score": .number(await memory.scores.factor(id))]
                 if let d = st?.lastReadAt { extra["lastReadAt"] = .string(isoString(d)) }
                 if let d = st?.missingSince { extra["missingSince"] = .string(isoString(d)) }
                 _ = try? await s.run { m in m.index()?.noteRead([id]) }
@@ -157,7 +158,8 @@ extension CommandRouter {
                     head = head.filter { !$0.isEmpty }
                 }
                 let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
-                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, limit: 4096 - used)
+                let w = try? await work.active(terminal: me.id)
+                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used)
                 let mem = (head + [rest == MemoryService.header ? "" : rest]).filter { !$0.isEmpty }.joined(separator: "\n\n")
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
@@ -172,7 +174,8 @@ extension CommandRouter {
                 let limit = 2048, prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
                 let posts = if let myLot { await boards.inject(to: me.id, lot: myLot, limit: limit) } else { "" }
                 let left = posts.isEmpty ? limit : limit - posts.utf8.count - 2
-                let mem = await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, prompt: prompt, limit: left)
+                let w = try? await work.active(terminal: me.id)
+                let mem = await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, prompt: prompt, limit: left)
                 text = [posts, mem].filter { !$0.isEmpty }.joined(separator: "\n\n")
             }
             return .object(["output": .string(text)])
@@ -185,9 +188,9 @@ extension CommandRouter {
             if title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true || subject?.isEmpty == true {
                 throw invalid("subject and title must not be blank")
             }
-            return try await update(id) { rec, m in
+            let edited = title != nil || body != nil || subject != nil
+            let out = try await update(id) { rec, m in
                 let store = m.store
-                let edited = title != nil || body != nil || subject != nil
                 if let title { rec.title = title }
                 if let body { rec.body = body }
                 let resubject = subject.map { $0 != rec.subject } ?? false
@@ -224,6 +227,8 @@ extension CommandRouter {
                     try store.write(rec)
                 }
             }
+            if edited { await memory.scores.penalize(id, ScoreStore.userEdit, reason: "editada pelo usuário") }
+            return out
 
         case "memory.promote":
             let id = try id()
@@ -249,6 +254,7 @@ extension CommandRouter {
         case "memory.restore":
             let id = try id()
             let rec = try await repo.run { m in try MemoryCleanup.restore(id, store: m.store, index: m.index()) }
+            await memory.scores.reset(id)   // a restored memory starts over
             return try memJSON(rec, repo)
 
         case "memory.pin", "memory.unpin":
@@ -256,13 +262,13 @@ extension CommandRouter {
             return try await update(try id()) { rec, m in rec.pinned = pinned; try m.store.write(rec) }
 
         case "memory.cleanup":
-            let apply = flag(r, "apply")
+            let apply = flag(r, "apply"), scores = await memory.scores.all()
             let (items, changed) = try await repo.run { m -> ([CleanupItem], [UUID]) in
                 let index = try m.requireIndex()
                 let records = m.store.all().records
                 var stats: [UUID: MemoryStats] = [:]
                 for rec in records { if let s = index.stats(rec.id) { stats[rec.id] = s } }
-                let items = MemoryCleanup.plan(records: records, stats: stats, now: Date())
+                let items = MemoryCleanup.plan(records: records, stats: stats, scores: scores, now: Date())
                 return (items, apply ? try MemoryCleanup.apply(items, store: m.store).map(\.id) : [])
             }
             return .object(["items": try isoJSON(items), "applied": .array(changed.map { .string($0.uuidString) })])

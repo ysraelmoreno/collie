@@ -108,9 +108,12 @@ actor MemoryService {
     static let relevantHeader = "Memória relacionada (Collie):"
 
     nonisolated let embedder: (any MemoryEmbedder)?
+    /// Outcome scores (`<root>/learning/scores.json`, beside `memory/`): multiply relevance, feed cleanup.
+    nonisolated let scores: ScoreStore
 
     init(globalDir: URL, embedder: (any MemoryEmbedder)? = nil) {
         self.globalDir = globalDir; self.embedder = embedder
+        scores = ScoreStore(file: globalDir.deletingLastPathComponent().appendingPathComponent("learning/scores.json"))
         lotsDir = globalDir.deletingLastPathComponent().appendingPathComponent("lots")   // beside `work/`
         global = RepoMemory(root: nil, storeDir: globalDir,
                             dbFile: globalDir.deletingLastPathComponent().appendingPathComponent("cache/memory.sqlite"), commonDir: nil,
@@ -174,10 +177,12 @@ actor MemoryService {
         return (lot.map { [lotStore($0)] } ?? []) + (r === global ? [r] : [r, global])
     }
 
-    /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set).
-    func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, limit: Int = 4096) async -> String {
+    /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set) and,
+    /// for scoring, for its open `work`.
+    func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, limit: Int = 4096) async -> String {
         let (text, ids) = await contextText(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
         injected[terminal] = (lot, ids)
+        if let work { await scores.noteInjected(ids, work: work) }
         return text
     }
 
@@ -201,17 +206,20 @@ actor MemoryService {
     /// Lot hits weigh ×1.5 over project/global ones.
     static let lotBoost = 1.5
 
-    /// Memories relevant to `prompt` not yet injected in this session; "" when nothing is.
-    func relevant(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, prompt: String, limit: Int = 2048, max: Int = 5) async -> String {
+    /// Memories relevant to `prompt` not yet injected in this session; "" when nothing is. Scores × each memory's outcome
+    /// factor; what is injected counts for `work` (scoring).
+    func relevant(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, prompt: String,
+                  limit: Int = 2048, max: Int = 5) async -> String {
         if let cur = injected[terminal], cur.lot != lot { injected[terminal] = nil }   // moved to another lot: start over
         let q = Self.significantTerms(prompt).joined(separator: " ")
         guard !q.isEmpty, max > 0 else { return "" }
         var hits: [(hit: MemoryHit, store: RepoMemory)] = []
         let vector = embed(prompt)   // once per prompt, for every store
+        let factors = await scores.all()
         for s in await readable(cwd, lot: lot) {
             let found = (try? await s.run { m in (m.index()?.search(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
             hits += found.filter { Self.visible($0.record, paddock: paddock, lot: s.lotId) }
-                .map { (MemoryHit(record: $0.record, score: $0.score * (s.lotId != nil ? Self.lotBoost : 1)), s) }
+                .map { (MemoryHit(record: $0.record, score: $0.score * (s.lotId != nil ? Self.lotBoost : 1) * (factors[$0.record.id] ?? 1)), s) }
         }
         hits.sort { $0.hit.score > $1.hit.score }
         guard let top = hits.first?.hit.score, top > 0 else { return "" }
@@ -226,6 +234,7 @@ actor MemoryService {
         }
         guard !chosen.isEmpty else { return "" }
         injected[terminal, default: (lot, [])].ids.formUnion(chosen.map(\.hit.record.id))
+        if let work { await scores.noteInjected(Set(chosen.map(\.hit.record.id)), work: work) }
         var stores: [RepoMemory] = []
         for h in chosen where !stores.contains(where: { $0 === h.store }) { stores.append(h.store) }
         for s in stores {

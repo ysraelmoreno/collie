@@ -354,4 +354,19 @@ private func terminals(_ d: Daemon, _ p: Paths) async throws -> [TerminalRecord]
         } catch { await d.stop(); throw error }
         await d.stop()
     }
+
+    /// R11: a dotfiles repo at `~/.git` never makes `~` (or above) the project of a folder under it.
+    @Test func dotfilesHomeRepoDoesNotWidenRoot() throws {
+        let tr = try Tree(); defer { tr.cleanup() }
+        #expect(ProjectRootGit.initRepo(tr.home))   // the fake home is itself a repo
+        let plain = tr.home.appendingPathComponent("Documents/notes")
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        #expect(ProjectRoot.resolve(cwd: plain.path, paddock: nil, home: tr.home).path == plain.path)
+        #expect(ProjectRoot.resolve(cwd: tr.home.path, paddock: nil, home: tr.home).path == tr.home.path)
+        #expect(ProjectRoot.resolve(cwd: tr.repo.appendingPathComponent("sub").path, paddock: nil, home: tr.home).path == tr.repo.path)
+        // a `.git` above home counts no more than one at home
+        let fakeHome = tr.home.appendingPathComponent("Users/me/w")
+        try FileManager.default.createDirectory(at: fakeHome, withIntermediateDirectories: true)
+        #expect(ProjectRoot.resolve(cwd: fakeHome.path, paddock: nil, home: tr.home.appendingPathComponent("Users/me")).path == fakeHome.path)
+    }
 }

@@ -282,7 +282,7 @@ actor MemoryService {
         return (c.text, Set(c.ids.keys))
     }
 
-    /// `contextText`, with each injected id's store key.
+    /// `contextText`, with each injected id's store key: header, pinned, the pitfall checklist (≤ 1 200 B), the index.
     private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int) async -> (text: String, ids: [UUID: String]) {
         var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = [], owner: [UUID: String] = [:]
         let (keep, asked) = await proposalState?() ?? ([], [])
@@ -297,8 +297,50 @@ actor MemoryService {
             for r in recs where r.pinned { owner[r.id] = s.key }
             if lot == nil || s.lotId != nil { rest += recs.filter { !$0.pinned } }
         }
-        let (text, ids) = Self.renderContext(pinned, index: rest, limit: limit)
-        return (text, owner.filter { ids.contains($0.key) })
+        var (text, ids) = Self.renderContext(pinned, limit: limit)
+        var owned = owner.filter { ids.contains($0.key) }
+        guard !text.isEmpty else { return ("", [:]) }
+        let room = Swift.min(Self.checklistMax, limit - text.utf8.count - 2)
+        let cl: (text: String, ids: [UUID: String]) = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: Set(pinned.map(\.id))) : ("", [:])
+        if !cl.text.isEmpty { text += "\n\n" + cl.text; owned.merge(cl.ids) { a, _ in a } }
+        Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil }, limit: limit)
+        return (text, owned)
+    }
+
+    static let checklistHeader = "Armadilhas deste projeto:", lotChecklistHeader = "Armadilhas deste lote:"
+    static let checklistMax = 1_200
+
+    /// The project's pitfall classes, then (a lot member) its lot's own: ranked by hits × recency (half-life 30 days) ×
+    /// outcome score, active and visible only, one line each `- <título> (<hits>×): <primeiro exemplo>`, at most `max`
+    /// lines in `limit` UTF-8 bytes (whole lines). "" when there is none.
+    func checklist(cwd: String, lot: UUID?, limit: Int = 1_200, max: Int = 7) async -> (text: String, ids: Set<UUID>) {
+        let c = await checklistParts(cwd: cwd, lot: lot, limit: limit, max: max)
+        return (c.text, Set(c.ids.keys))
+    }
+
+    private func checklistParts(cwd: String, lot: UUID?, limit: Int, max: Int = 7, exclude: Set<UUID> = []) async -> (text: String, ids: [UUID: String]) {
+        var sections = [(Self.checklistHeader, await repo(for: cwd))]
+        if let lot { sections.append((Self.lotChecklistHeader, lotStore(lot))) }
+        let factors = await scores.all(), now = Date()
+        func rank(_ r: MemoryRecord) -> Double {
+            Double(r.hits ?? 0) * pow(0.5, Swift.max(0, now.timeIntervalSince(r.updatedAt)) / MemoryIndex.halfLife) * (factors[r.id] ?? 1)
+        }
+        var out = "", ids: [UUID: String] = [:]
+        for (title, s) in sections where ids.count < max {
+            let recs = (try? await s.run { m in
+                m.store.all().records.filter { $0.status == .active && $0.kind == .pitfall && $0.hits != nil && !exclude.contains($0.id)
+                    && Self.visible($0, paddock: nil, lot: m.lotId) }
+            }) ?? []
+            var started = false
+            for r in recs.sorted(by: { (rank($0), $0.updatedAt) > (rank($1), $1.updatedAt) }) where ids.count < max {
+                let ex = PitfallClasses.examples(r.body).first.map { ": " + Self.oneLine($0, max: 120) } ?? ""
+                let line = "- \(Self.oneLine(r.title, max: 200)) (\(r.hits ?? 0)×)\(ex)"
+                let add = (started ? "\n" : (out.isEmpty ? "" : "\n\n") + title + "\n") + line
+                guard out.utf8.count + add.utf8.count <= limit else { continue }
+                out += add; started = true; ids[r.id] = s.key
+            }
+        }
+        return (out, ids)
     }
 
     /// Lot hits weigh ×1.5 over project/global ones.
@@ -479,13 +521,17 @@ actor MemoryService {
     static func renderContext(_ full: [MemoryRecord], index: [MemoryRecord], limit: Int) -> (text: String, ids: Set<UUID>) {
         var (out, ids) = renderContext(full, limit: limit)
         guard !out.isEmpty else { return (out, ids) }
+        appendIndex(&out, index, limit: limit)
+        return (out, ids)
+    }
+
+    static func appendIndex(_ out: inout String, _ index: [MemoryRecord], limit: Int) {
         var started = false
         for r in index.sorted(by: { $0.updatedAt > $1.updatedAt }) {
             let add = (started ? "" : "\n\n\(indexTitle)") + "\n- " + (r.kind == .map ? r.path.map { "\(oneLine($0, max: 200)) — " } ?? "" : "") + oneLine(r.title, max: 200)
             guard out.utf8.count + add.utf8.count <= limit else { break }
             out += add; started = true
         }
-        return (out, ids)
     }
 
     /// Header, then active user rules (feedback), decisions (title + first line), the map (`path — title`), pitfalls; pinned first, then newest.

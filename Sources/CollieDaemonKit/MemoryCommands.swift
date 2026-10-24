@@ -151,6 +151,11 @@ extension CommandRouter {
             let cwd = caller?.cwd ?? project.root?.path ?? memory.global.path
             return .object(["output": .string(await memory.contextText(cwd: cwd, paddock: paddockName, lot: (lotArg ?? myLot)?.id).text)])
 
+        case "memory.checklist":
+            let cwd = caller?.cwd ?? project.root?.path ?? memory.global.path
+            let text = await memory.checklist(cwd: cwd, lot: (lotArg ?? myLot)?.id).text
+            return .object(["output": .string(text.isEmpty ? "Nenhuma armadilha registrada neste projeto." : text)])
+
         case "memory.hookContext", "memory.hookRelevant":
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
             let text: String

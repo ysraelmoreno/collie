@@ -33,6 +33,8 @@ struct SandboxInput {
     var terminalDir: URL
     var socket: URL
     var agent: Preset
+    /// The custom command (a `cursor-agent` one gets `~/.cursor`, R19).
+    var command: String? = nil
     var grants: [SandboxGrant] = []
     var userTemp = SandboxInput.darwinDir(_CS_DARWIN_USER_TEMP_DIR)
     var userCache = SandboxInput.darwinDir(_CS_DARWIN_USER_CACHE_DIR)
@@ -79,9 +81,12 @@ enum SandboxProfile {
         func sub(_ p: String) -> String { "(subpath \(q(p)))" }
         func lit(_ p: String) -> String { "(literal \(q(p)))" }
         func rx(_ p: String) -> String { "(regex \(q(p)))" }
-        /// An `EssentialPaths` entry under `base`: `x*` → any name starting with x (and below), else the subpath.
+        /// An `EssentialPaths` entry under `base`: `x*` → any name starting with x (and below); `x/` → below x only
+        /// (never x itself); else the subpath.
         func entry(_ base: String, _ e: String) -> String {
-            e.hasSuffix("*") ? rx("^" + re(base + "/" + e.dropLast()) + "[^/]*(/|$)") : sub(base + "/" + e)
+            if e.hasSuffix("*") { return rx("^" + re(base + "/" + e.dropLast()) + "[^/]*(/|$)") }
+            if e.hasSuffix("/") { return rx("^" + re(base + "/" + e) + ".+") }
+            return sub(base + "/" + e)
         }
         var out = ["(version 1)", "(allow default)"]
         func rule(_ verb: String, _ op: String, tagged: Bool = false, _ filters: [String]) {
@@ -124,7 +129,10 @@ enum SandboxProfile {
         rule("deny", "file-write*", tagged: true, closed)
         rule("allow", "file-write*", grants.filter { $0.access == .write }.map { sub($0.path) })
         // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
-        // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included
+        // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
+        // R17: no nested `.git` (dir, file or link) anywhere in the project either: the user's git or IDE runs its config.
+        // ponytail: agents can't clone/init/submodule-add inside the project (clone into TMP instead)
+        rule("deny", "file-write*", tagged: true, [rx("^" + re(project) + "/.+/\\.git(/|$)")])
         if let common {
             let c = re(common)
             rule("deny", "file-write*", tagged: true, [

@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 
 /// What tools need under the user's home inside a sandboxed terminal (Task 1's list, narrowed per R5). Entries are
 /// home-relative: a plain entry is that path and everything below it; a trailing `*` matches any name with that prefix
@@ -46,19 +47,33 @@ enum EssentialPaths {
         "Library/Keychains",
         // R13 (user decision): ~/.claude.json (+ its atomic-write temp and backup); an agent can plant a global MCP server: accepted
         ".claude.json*",
-        // agent state (sessions, history, todos, caches); their config stays read-only
-        ".claude/projects", ".claude/todos", ".claude/shell-snapshots", ".claude/statsig", ".claude/session-env",
-        ".claude/ide", ".claude/debug", ".claude/file-history", ".claude/plans", ".claude/paste-cache", ".claude/logs",
-        ".claude/telemetry", ".claude/history.jsonl", ".local/state/claude",
-        ".codex/sessions", ".codex/archived_sessions", ".codex/log", ".codex/logs", ".codex/history.jsonl",
-        ".codex/auth.json", ".codex/version.json", ".codex/tmp",
-        ".cursor/chats", ".cursor/projects",
+        // agent state (sessions, history, todos); their config stays read-only. A trailing `/`: the dir's children only,
+        // never the dir itself (no rename, unlink or symlink swap, R18). Claude's shell-snapshots and session-env stay
+        // read-only: other (unsandboxed) Claude sessions source them (R18)
+        ".claude/history.jsonl", ".local/state/claude/", ".codex/history.jsonl", ".codex/auth.json", ".codex/version.json",
+    ] + agentStateDirs.values.flatMap { $0 }.map { $0 + "/" }
+
+    /// Each agent's state dirs, writable to their children (R18); the daemon makes the terminal's own agent's ones
+    /// (with its home dir) before launch (R19).
+    static let agentStateDirs: [String: [String]] = [
+        ".claude": [".claude/projects", ".claude/todos", ".claude/statsig", ".claude/ide", ".claude/debug",
+                    ".claude/file-history", ".claude/plans", ".claude/paste-cache", ".claude/logs", ".claude/telemetry"],
+        ".codex": [".codex/sessions", ".codex/archived_sessions", ".codex/log", ".codex/logs", ".codex/tmp"],
+        ".cursor": [".cursor/chats", ".cursor/projects"],
     ]
 
-    /// Parents of `homeWrites` a tool may need: the daemon makes the missing ones real directories before launch
-    /// (never through a symlink). The profile never lets the agent create them: it could plant a symlink instead (I1).
-    static let homeCreates = [".swiftpm", "Library/org.swift.swiftpm", "Library/Developer", "Library/Developer/Xcode", "Library/Keychains",
-                              ".claude", ".codex", ".cursor", ".local", ".local/state", ".bun", ".bun/install", ".cargo", "go"]
+    /// R19: the home dirs the daemon makes for a terminal: only its agent's (none for a shell). A missing one is made
+    /// a real directory, never through a symlink (I1); any other missing dir stays missing (a tool creating it hits a denial).
+    static func agentHome(_ preset: Preset, command: String?) -> [String] {
+        let first = command?.split(whereSeparator: \.isWhitespace).first.map(String.init)
+        let home: String? = switch preset {
+        case .claude: ".claude"
+        case .codex: ".codex"
+        case .custom: ["claude": ".claude", "codex": ".codex", "cursor-agent": ".cursor"][first ?? ""]
+        case .shell: nil
+        }
+        return home.map { [$0] + (agentStateDirs[$0] ?? []) } ?? []
+    }
 
     /// Closed even when a grant covers them.
     static let secrets = [

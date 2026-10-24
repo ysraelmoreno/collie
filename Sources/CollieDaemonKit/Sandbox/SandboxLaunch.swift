@@ -27,7 +27,7 @@ enum SandboxLaunch {
                 throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: to.path])
             }
         }
-        makeHomeDirs(EssentialPaths.homeCreates, in: input.home)
+        makeHomeDirs(EssentialPaths.agentHome(input.agent, command: input.command), in: input.home)
         let bin = d.appendingPathComponent("bin")
         let shim = toolShim(shims: bin.path)
         for t in toolShims { try write(shim, bin.appendingPathComponent(t), 0o755) }

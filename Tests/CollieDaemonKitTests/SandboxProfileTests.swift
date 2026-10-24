@@ -35,7 +35,10 @@ final class FakeHome {
                   "Library/Application Support/Collie/hooks/\(id.uuidString).claude.json", "Library/Application Support/Collie/hooks/other.claude.json"] {
             try file(f, f == ".gitconfig" ? "[core]\n" : "x\n")
         }
-        for d in ["Library/Caches", "Library/Preferences", ".claude/projects", ".codex/sessions", "Library/Application Support/Collie/run"] {
+        // what a developer's home already has (R19: the daemon makes only the agent's own dirs)
+        for d in ["Library/Caches", "Library/Preferences", "Library/Keychains", "Library/Developer/Xcode", ".swiftpm",
+                  ".claude/projects", ".codex/sessions",
+                  "Library/Application Support/Collie/run"] {
             try fm.createDirectory(at: home.appendingPathComponent(d), withIntermediateDirectories: true)
         }
         if git {
@@ -70,13 +73,14 @@ final class FakeHome {
     }
 
     /// A pasture terminal on the repo by default.
-    func input(project: URL? = nil, paddockTerminal: Bool = false, grants: [SandboxGrant] = []) -> SandboxInput {
+    func input(project: URL? = nil, paddockTerminal: Bool = false, grants: [SandboxGrant] = [], agent: Preset = .claude,
+               command: String? = nil) -> SandboxInput {
         let proj = project ?? (paddockTerminal ? paddock : repo)
         let g = SandboxInput.gitDirs(of: proj)
         return SandboxInput(terminal: id, project: proj, mainGitDir: g.common, worktreeGitDir: g.worktree,
                             paddockWorktrees: paddockTerminal ? [] : [repo.appendingPathComponent(".collie/paddocks")],
                             home: home, collieRoot: collie, ownFiles: [collie.appendingPathComponent("hooks/\(id.uuidString).claude.json")],
-                            terminalDir: SandboxLaunch.dir(id, root: collie), socket: socket, agent: .claude, grants: grants)
+                            terminalDir: SandboxLaunch.dir(id, root: collie), socket: socket, agent: agent, command: command, grants: grants)
     }
     func profile(_ i: SandboxInput) throws -> URL {
         try SandboxLaunch.prepare(i, root: collie, collie: URL(fileURLWithPath: "/usr/bin/true"))
@@ -165,6 +169,11 @@ final class FakeHome {
         // C1: commondir in any git dir redirects config + hooks for the user's own git
         #expect(try !f.ok(p, "echo /private/tmp/evil.git > \(g)/commondir"))
         #expect(try !f.ok(p, "mkdir -p \(g)/modules/sub && echo x > \(g)/modules/sub/commondir"))
+        // N1/R17: no nested repo (its config runs in the user's git status), no nested gitfile or link
+        #expect(try !f.ok(p, "git init -q sub && git -C sub config core.fsmonitor 'touch /private/tmp/collie-sp-marker'"))
+        #expect(try !f.ok(p, "mkdir -p sub2 && echo 'gitdir: /private/tmp/x' > sub2/.git"))
+        #expect(try !f.ok(p, "mkdir -p sub3 && ln -s /private/tmp sub3/.git"))
+        #expect(try !f.ok(p, "mkdir -p a/b && mkdir a/b/.git"))
         let common = try f.run(p, "git rev-parse --git-common-dir").out
         #expect(common.trimmingCharacters(in: .whitespacesAndNewlines) == ".git", "\(common)")
         #expect(try f.ok(p, "echo x >> README && git add README && git commit -qm t"))   // a plain commit still works
@@ -173,6 +182,8 @@ final class FakeHome {
         try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
         let q = try f.profile(f.input(project: plain))
         #expect(try !f.ok(q, "echo 'gitdir: /tmp' > .git", cwd: plain))
+        #expect(try !f.ok(q, "ln -s /private/tmp .git", cwd: plain))
+        #expect(try !f.ok(q, "git init -q", cwd: plain))
         #expect(try f.ok(q, "echo x > a", cwd: plain))
     }
 
@@ -193,6 +204,8 @@ final class FakeHome {
         #expect(try !f.ok(p, "echo x >> \(g)/config"))
         #expect(try !f.ok(p, "echo x > \(g)/worktrees/p/commondir"))
         #expect(try !f.ok(p, "echo 'gitdir: /tmp' > .git", cwd: f.paddock))
+        #expect(try !f.ok(p, "rm .git && ln -s /private/tmp .git", cwd: f.paddock))
+        #expect(try !f.ok(p, "git init -q nested", cwd: f.paddock))
         #expect(try !f.ok(p, "echo x > \(g)/HEAD"))   // the pasture's HEAD
         // a sibling worktree's git dir stays closed
         try FakeHome.git(["worktree", "add", "-q", "-b", "collie/q", f.repo.appendingPathComponent(".collie/paddocks/q").path], in: f.repo)
@@ -223,25 +236,46 @@ final class FakeHome {
         #expect(try f.ok(p, "mkdir -p \(f.h(".swiftpm/cache/x"))"))
     }
 
-    /// I1: missing parents are made real dirs by the daemon; the agent can't plant a symlink there instead.
-    @Test func missingHomeDirsAreRealDirs() throws {
-        let f = try FakeHome()
-        let local = f.home.appendingPathComponent(".local")
-        #expect(!FileManager.default.fileExists(atPath: local.path))
-        let p = try f.profile(f.input())
+    /// I1 + R19: only the agent preset's own home dirs are made, as real dirs, by the daemon; never through a symlink.
+    @Test func agentHomeDirsMadeForItsPresetOnly() throws {
+        let f = try FakeHome(), fm = FileManager.default
+        try fm.removeItem(at: f.home.appendingPathComponent(".claude/projects"))
+        let before = Set(try fm.contentsOfDirectory(atPath: f.home.path))
+        _ = try f.profile(f.input(agent: .shell))
+        #expect(Set(try fm.contentsOfDirectory(atPath: f.home.path)) == before)   // a shell terminal makes none
+        #expect(!fm.fileExists(atPath: f.home.appendingPathComponent(".claude/projects").path))
+        let p = try f.profile(f.input())   // claude
         var st = stat()
-        #expect(lstat(local.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
-        #expect(lstat(f.home.appendingPathComponent("Library/Developer/Xcode").path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
-        #expect(try !f.ok(p, "rmdir \(f.h(".local/state")) 2>/dev/null; rmdir \(f.h(".local")) && ln -s /private/tmp \(f.h(".local"))"))
-        #expect(try !f.ok(p, "ln -s /private/tmp \(f.h(".cargo2"))"))
-        #expect(lstat(local.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        #expect(lstat(f.home.appendingPathComponent(".claude/projects").path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        for none in [".local", "go", ".cargo", ".bun", ".cursor", "Library/org.swift.swiftpm"] {
+            #expect(!fm.fileExists(atPath: f.home.appendingPathComponent(none).path), "\(none)")
+        }
+        #expect(try !f.ok(p, "ln -s /private/tmp \(f.h(".cargo"))"))   // the agent can't make one (a symlink) itself
+        _ = try f.profile(f.input(agent: .custom, command: "cursor-agent"))
+        #expect(lstat(f.home.appendingPathComponent(".cursor").path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
         // a symlink already there is never followed by the daemon's mkdir
         let g = try FakeHome()
         let out = g.base.appendingPathComponent("elsewhere")
-        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(at: g.home.appendingPathComponent(".cargo"), withDestinationURL: out)
-        _ = try g.profile(g.input())
-        #expect((try? FileManager.default.contentsOfDirectory(atPath: out.path))?.isEmpty == true)
+        try fm.createDirectory(at: out, withIntermediateDirectories: true)
+        try fm.removeItem(at: g.home.appendingPathComponent(".codex"))
+        try fm.createSymbolicLink(at: g.home.appendingPathComponent(".codex"), withDestinationURL: out)
+        _ = try g.profile(g.input(agent: .codex))
+        #expect((try? fm.contentsOfDirectory(atPath: out.path))?.isEmpty == true)
+    }
+
+    /// R18: agent-state dirs take writes to their children only; Claude's sourced shell state stays read-only.
+    @Test func agentStateDirsCantBeSwapped() throws {
+        let f = try FakeHome(), p = try f.profile(f.input())
+        let todos = f.h(".claude/todos")
+        #expect(try f.ok(p, "echo x > \(todos)/t.json && rm \(todos)/t.json"))
+        #expect(try !f.ok(p, "mv \(todos) /private/tmp/collie-sp-todos-$$"))
+        #expect(try !f.ok(p, "rmdir \(todos)"))
+        #expect(try !f.ok(p, "rm -rf \(todos) && ln -s \(f.h(".claude/hooks")) \(todos)"))
+        var st = stat()
+        #expect(lstat(f.home.appendingPathComponent(".claude/todos").path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        for ro in [".claude/shell-snapshots/snapshot-zsh.sh", ".claude/session-env/x/env"] {
+            #expect(try !f.ok(p, "mkdir -p \"$(dirname \(f.h(ro)))\"; echo 'echo pwned' >> \(f.h(ro))"), "\(ro)")
+        }
     }
 
     @Test func projectAgentConfigWritable() throws {
@@ -663,6 +697,29 @@ struct SandboxToolchainTests {
         let s = try setup(); try swiftPackage(s.1)
         try check(s, "swift build && swift run Hello | grep -q 'hello from the sandbox'")
     }
+    /// R17 probe: SwiftPM checks a git dependency out under `.build/checkouts/<dep>` (a nested `.git`), which R17 denies:
+    /// a known tools-break pending a ruling (it passes with the nested-.git rule removed).
+    @Test func swiftGitDependency() throws {
+        let s = try setup()
+        let dep = s.0.base.appendingPathComponent("dep")
+        try FileManager.default.createDirectory(at: dep.appendingPathComponent("Sources/Dep"), withIntermediateDirectories: true)
+        try "// swift-tools-version:5.9\nimport PackageDescription\nlet package = Package(name: \"Dep\", products: [.library(name: \"Dep\", targets: [\"Dep\"])], targets: [.target(name: \"Dep\")])\n"
+            .write(to: dep.appendingPathComponent("Package.swift"), atomically: false, encoding: .utf8)
+        try "public let dep = 1\n".write(to: dep.appendingPathComponent("Sources/Dep/Dep.swift"), atomically: false, encoding: .utf8)
+        try FakeHome.git(["init", "-q"], in: dep); try FakeHome.git(["add", "."], in: dep)
+        try FakeHome.git(["commit", "-qm", "d"], in: dep); try FakeHome.git(["tag", "1.0.0"], in: dep)
+        try FileManager.default.createDirectory(at: s.1.appendingPathComponent("Sources/Hello"), withIntermediateDirectories: true)
+        try """
+        // swift-tools-version:5.9
+        import PackageDescription
+        let package = Package(name: "Hello", platforms: [.macOS(.v13)],
+            dependencies: [.package(url: "file://\(dep.path)", from: "1.0.0")],
+            targets: [.executableTarget(name: "Hello", dependencies: [.product(name: "Dep", package: "dep")])])
+        """.write(to: s.1.appendingPathComponent("Package.swift"), atomically: false, encoding: .utf8)
+        try "import Dep\nprint(dep)\n".write(to: s.1.appendingPathComponent("Sources/Hello/main.swift"), atomically: false, encoding: .utf8)
+        try withKnownIssue("R17: nested .git under .build/checkouts is denied") { try check(s, "swift build") }
+    }
+
     @Test func xcodebuildPackage() throws {
         let s = try setup(); try swiftPackage(s.1)
         try check(s, "xcodebuild -scheme Hello -destination 'platform=macOS' build -quiet")

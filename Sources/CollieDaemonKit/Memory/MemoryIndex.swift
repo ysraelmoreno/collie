@@ -243,12 +243,39 @@ final class MemoryIndex {
     /// A re-rank-only language's cosine moves a word hit by at most this share of its word score (R8).
     static let rerankMax = 0.15
 
-    /// bm25 × multiplier. With a query `vector` of a `vectorOnlyLangs` language, blended:
-    /// `m × (0.6 × b / bTop + 0.4 × max(cos, 0))` over the word hits plus the records whose cosine is ≥ `vectorMin`.
-    /// Any other language only re-ranks the word hits, on the bm25 × m scale: `b × m × (1 + rerankMax × ĉ)`, ĉ the cosine
-    /// min-max normalized over the hits with a comparable vector (0 without one).
+    /// A word or meaning hit before ranking: raw bm25 `b` (0: meaning only), multiplier `m` (callers may multiply in their
+    /// store's boost and outcome score), cosine to the query (nil: no comparable vector).
+    struct Candidate: Sendable { var record: MemoryRecord; var b: Double; var m: Double; var cos: Double? }
+
+    /// One scale for every store of a query (R10). No vector: `b × m`. A `vectorOnlyLangs` vector: blended,
+    /// `m × (0.6 × b / bTop + 0.4 × max(cos, 0))`, bTop the strongest word hit of all `c`. Any other language only
+    /// re-ranks: `b × m × (1 + rerankMax × ĉ)`, ĉ the cosine min-max normalized over all `c` with one (0 without).
+    static func rank(_ c: [Candidate], lang: String?) -> [MemoryHit] {
+        let scored: [(Candidate, Double)]
+        if lang == nil {
+            scored = c.map { ($0, $0.b * $0.m) }
+        } else if vectorOnlyLangs.contains(lang!) {
+            let bTop = c.map(\.b).max() ?? 0
+            scored = c.map { ($0, $0.m * (0.6 * (bTop > 0 ? $0.b / bTop : 0) + 0.4 * max($0.cos ?? 0, 0))) }
+        } else {
+            let coss = c.compactMap(\.cos), lo = coss.min() ?? 0, hi = coss.max() ?? 0
+            scored = c.map { x in (x, x.b * x.m * (1 + rerankMax * (x.cos.map { hi > lo ? ($0 - lo) / (hi - lo) : 0 } ?? 0))) }
+        }
+        return scored.sorted { ($0.1, $1.0.record.id.uuidString) > ($1.1, $0.0.record.id.uuidString) }
+            .map { MemoryHit(record: $0.0.record, score: $0.1) }
+    }
+
+    /// `candidates` of this store alone, ranked.
     func search(_ query: String, vector: (lang: String, vector: [Float])? = nil, limit: Int, kinds: Set<MemoryKind>? = nil,
                 includeInactive: Bool = false) -> [MemoryHit] {
+        Array(Self.rank(candidates(query, vector: vector, limit: limit, kinds: kinds, includeInactive: includeInactive), lang: vector?.lang).prefix(limit))
+    }
+
+    /// Word hits (top `limit` by b × m) plus, for a `vectorOnlyLangs` vector, the records whose cosine is ≥ `vectorMin`;
+    /// cut to this store's best `limit` before the bodies are read.
+    /// ponytail: the cut ranks with this store's own bTop/cosine range; a merge across stores re-ranks on one scale.
+    func candidates(_ query: String, vector: (lang: String, vector: [Float])? = nil, limit: Int, kinds: Set<MemoryKind>? = nil,
+                    includeInactive: Bool = false) -> [Candidate] {
         let match = MemoryIndex.ftsQuery(query)
         guard limit > 0, match != nil || vector != nil else { return [] }
         if let kinds, kinds.isEmpty { return [] }
@@ -256,22 +283,6 @@ final class MemoryIndex {
         let kindFilter = kindList.isEmpty ? "" : "AND d.kind IN (\(kindList.map { _ in "?" }.joined(separator: ", ")))"
         let kindArgs = kindList.map { $0 as Any? }
         let now = Date().timeIntervalSince1970
-        var hits: [MemoryHit] = []
-        guard let vector else {
-            // Rank and LIMIT in the inner query on small columns; bodies (json) are read only for the winners.
-            let sql = """
-                SELECT d.json, t.score FROM (
-                  SELECT fts.rowid AS rid, -bm25(fts) * \(Self.multiplier) AS score
-                  FROM fts JOIN docs d ON d.rowid = fts.rowid LEFT JOIN stats s ON s.id = d.id
-                  WHERE fts MATCH ? AND (? OR d.status = 'active') \(kindFilter)
-                  ORDER BY score DESC LIMIT ?
-                ) t JOIN docs d ON d.rowid = t.rid ORDER BY t.score DESC
-                """
-            try? self.query(sql, [now, match, includeInactive] + kindArgs + [limit]) { row in
-                if let r = decode(text(row, 0)) { hits.append(MemoryHit(record: r, score: sqlite3_column_double(row, 1))) }
-            }
-            return hits
-        }
         var cand: [String: (b: Double, m: Double, cos: Double?)] = [:]
         if let match {
             let sql = """
@@ -284,6 +295,7 @@ final class MemoryIndex {
                 cand[text(row, 0)] = (sqlite3_column_double(row, 1), sqlite3_column_double(row, 2), nil)
             }
         }
+        guard let vector else { return records(cand, limit: limit, lang: nil) }
         let vectorOnly = Self.vectorOnlyLangs.contains(vector.lang)
         if !vectorOnly, cand.isEmpty { return [] }
         // ponytail: brute-force cosine over the store's vecs; an ANN index if a store passes ~20 000
@@ -309,21 +321,20 @@ final class MemoryIndex {
             let cos = dot / (qn * vn.squareRoot()), id = text(row, 0)
             if cand[id] != nil { cand[id]!.cos = cos } else if vectorOnly, cos >= Self.vectorMin { cand[id] = (0, sqlite3_column_double(row, 2), cos) }
         }
-        let scored: [(String, Double)]
-        if vectorOnly {
-            let bTop = cand.values.map(\.b).max() ?? 0
-            scored = cand.map { id, c in (id, c.m * (0.6 * (bTop > 0 ? c.b / bTop : 0) + 0.4 * max(c.cos ?? 0, 0))) }
-        } else {
-            let coss = cand.values.compactMap(\.cos), lo = coss.min() ?? 0, hi = coss.max() ?? 0
-            scored = cand.map { id, c in (id, c.b * c.m * (1 + Self.rerankMax * (c.cos.map { hi > lo ? ($0 - lo) / (hi - lo) : 0 } ?? 0))) }
-        }
-        let ranked = scored.sorted { ($0.1, $1.0) > ($1.1, $0.0) }.prefix(limit)
-        guard !ranked.isEmpty else { return [] }
+        return records(cand, limit: limit, lang: vector.lang)
+    }
+
+    /// This store's best `limit` of `cand` (ranked alone), with their records read in one query.
+    private func records(_ cand: [String: (b: Double, m: Double, cos: Double?)], limit: Int, lang: String?) -> [Candidate] {
+        guard !cand.isEmpty else { return [] }
+        let stub = cand.map { id, c in Candidate(record: MemoryRecord(id: UUID(uuidString: id) ?? UUID(), kind: .decision, subject: "", title: ""),
+                                                 b: c.b, m: c.m, cos: c.cos) }
+        let best = Self.rank(stub, lang: lang).prefix(limit).map { key($0.record.id) }
         var recs: [String: MemoryRecord] = [:]
-        try? self.query("SELECT id, json FROM docs WHERE id IN (\(ranked.map { _ in "?" }.joined(separator: ", ")))", ranked.map { $0.0 }) { row in
+        try? self.query("SELECT id, json FROM docs WHERE id IN (\(best.map { _ in "?" }.joined(separator: ", ")))", best) { row in
             recs[text(row, 0)] = decode(text(row, 1))
         }
-        return ranked.compactMap { id, score in recs[id].map { MemoryHit(record: $0, score: score) } }
+        return best.compactMap { id in recs[id].map { r in Candidate(record: r, b: cand[id]!.b, m: cand[id]!.m, cos: cand[id]!.cos) } }
     }
 
     func noteRead(_ ids: [UUID]) {

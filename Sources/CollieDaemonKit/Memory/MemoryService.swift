@@ -97,17 +97,21 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
         guard embedder != nil, !backfilling, !idx.missingVectors(limit: 1).isEmpty else { return }
         backfilling = true
         Task.detached(priority: .utility) {
-            await self.fillVectors()
+            await self.fillVectors(opening: false)
             self.queue.async { self.backfilling = false }
         }
     }
 
     /// Embeds every record with no vector, `vectorBatch` at a time: the queue is held only to read or write a batch, the
     /// model only per text (`NLMemoryEmbedder`'s lock), never across batches.
-    func fillVectors() async {
+    /// `opening`: the first batch may open the index (a direct call); the background fill never does, so a store closed
+    /// (evicted) meanwhile stays closed.
+    func fillVectors(opening: Bool = true) async {
         guard let embedder else { return }
+        var open = opening
         while true {
-            guard let jobs = try? await run({ m in m.index()?.missingVectors(limit: Self.vectorBatch) ?? [] }), !jobs.isEmpty else { return }
+            let first = open; open = false
+            guard let jobs = try? await run({ m in (first ? m.index() : m.idx)?.missingVectors(limit: Self.vectorBatch) ?? [] }), !jobs.isEmpty else { return }
             let done = jobs.map { (job: $0, vector: embedder.embed($0.text)) }
             guard let n = try? await run({ m in m.idx?.storeVectors(done) ?? 0 }), n > 0 else { return }
         }
@@ -115,6 +119,8 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
 
     /// A lot's store exists once its first memory is written (repo/global stores: always).
     var exists: Bool { lotId == nil || FileManager.default.fileExists(atPath: store.dir.path) }
+
+    var isOpen: Bool { idx != nil }   // tests
 
     /// Queue only: closes the SQLite handle (reopened on next use).
     func closeIndex() { idx = nil; lastOpenAttempt = nil; lastRefresh = nil }
@@ -165,7 +171,23 @@ actor MemoryService {
 
     /// A query's vector: its first 1 000 characters (the prompt hook's 5 s budget); nil without a model for its language.
     /// Async and nonisolated: runs off this actor (a model load or another embed never blocks the other terminals).
-    nonisolated func embed(_ text: String) async -> (lang: String, vector: [Float])? { embedder?.embed(String(text.prefix(1_000))) }
+    nonisolated func embed(_ text: String, wait: Duration? = nil) async -> (lang: String, vector: [Float])? {
+        guard let embedder else { return nil }
+        let t = String(text.prefix(1_000))
+        guard let wait else { return embedder.embed(t) }
+        // a cold model (seconds to load) must not hold the prompt: words only past `wait`; the embed finishes anyway (warms it)
+        final class Once: @unchecked Sendable {   // `lock` guards `c`
+            let lock = NSLock(); var c: CheckedContinuation<(lang: String, vector: [Float])?, Never>?
+            func resume(_ v: (lang: String, vector: [Float])?) { lock.withLock { c.take() }?.resume(returning: v) }
+        }
+        let once = Once()
+        return await withCheckedContinuation { c in
+            once.c = c
+            Task.detached { once.resume(embedder.embed(t)) }
+            Task.detached { try? await Task.sleep(for: wait); once.resume(nil) }
+        }
+    }
+    static let promptEmbedWait: Duration = .milliseconds(150)
 
     func repo(for cwd: String) async -> RepoMemory {
         if let r = byCwd[cwd] { return r }
@@ -257,15 +279,18 @@ actor MemoryService {
         if let cur = injected[terminal], cur.lot != lot { injected[terminal] = nil }   // moved to another lot: start over
         let q = Self.significantTerms(prompt).joined(separator: " ")
         guard !q.isEmpty, max > 0 else { return "" }
-        var hits: [(hit: MemoryHit, store: RepoMemory)] = []
-        let vector = await embed(prompt)   // once per prompt, for every store
+        let vector = await embed(prompt, wait: Self.promptEmbedWait)   // once per prompt, for every store
         let factors = await scores.all()
+        var cands: [MemoryIndex.Candidate] = [], from: [UUID: RepoMemory] = [:]
         for s in await readable(cwd, lot: lot) {
-            let found = (try? await s.run { m in (m.index()?.search(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
-            hits += found.filter { Self.visible($0.record, paddock: paddock, lot: s.lotId) }
-                .map { (MemoryHit(record: $0.record, score: $0.score * (s.lotId != nil ? Self.lotBoost : 1) * (factors[$0.record.id] ?? 1)), s) }
+            let found = (try? await s.run { m in (m.index()?.candidates(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
+            for var c in found where Self.visible(c.record, paddock: paddock, lot: s.lotId) {
+                c.m *= (s.lotId != nil ? Self.lotBoost : 1) * (factors[c.record.id] ?? 1)
+                cands.append(c); from[c.record.id] = s
+            }
         }
-        hits.sort { $0.hit.score > $1.hit.score }
+        // ranked across the stores together: one scale (R10)
+        let hits = MemoryIndex.rank(cands, lang: vector?.lang).map { (hit: $0, store: from[$0.record.id]!) }
         guard let top = hits.first?.hit.score, top > 0 else { return "" }
         let seen = injected[terminal]?.ids ?? []
         // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor

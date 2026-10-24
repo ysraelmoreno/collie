@@ -262,6 +262,60 @@ private func tempRoot() throws -> URL {
         #expect(hits.contains(target.id))   // its vector is in: found with no word
     }
 
+    /// R10: stores merge on one scale: bTop is the strongest word hit across every store read, not each store's own.
+    @Test func storesOnOneScale() async throws {
+        struct Mixed: MemoryEmbedder {
+            func embed(_ text: String) -> (lang: String, vector: [Float])? {
+                let t = text.lowercased()
+                return t.contains("lote") ? ("en", [0.3, 0.95, 0]) : t.contains("global") ? ("pt", [1, 0, 0]) : ("en", [1, 0, 0])
+            }
+        }
+        let root = try tempRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("memory"), lot = UUID()
+        let mem = MemoryService(globalDir: dir, embedder: Mixed())
+        // strong word hit in the global store (a pt record: no comparable vector), a weak one in the lot (an en record)
+        let strong = rec("Webhook retries webhook retries global"), weak = rec("Webhook do lote", body: String(repeating: "texto longo ", count: 40),
+                                                                             scope: .lot, lot: lot)
+        try await mem.global.run { m in try m.store.write(strong) }
+        try await mem.lotStore(lot).run { m in try m.store.write(weak) }
+        await mem.global.fillVectors(); await mem.lotStore(lot).fillVectors()
+        let text = await mem.relevant(for: UUID(), cwd: dir.path, lot: lot, prompt: "webhook retries")
+        let a = try #require(text.range(of: strong.title)), b = try #require(text.range(of: "Webhook do lote"))
+        #expect(a.lowerBound < b.lowerBound, "\(text)")
+    }
+
+    /// R10: a cold model (seconds to load) never holds the prompt: after 150 ms it is words only.
+    @Test func promptEmbedWaitBounded() async throws {
+        struct Cold: MemoryEmbedder {
+            func embed(_ text: String) -> (lang: String, vector: [Float])? {
+                if text.contains("rodar") { return ConceptEmbedder().embed(text) }   // records: at once
+                Thread.sleep(forTimeInterval: 1); return ConceptEmbedder().embed(text)
+            }
+        }
+        let root = try tempRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("memory")
+        let mem = MemoryService(globalDir: dir, embedder: Cold())
+        try await mem.global.run { m in try m.store.write(rec("Testes: rodar só o filtro")) }
+        await mem.global.fillVectors()
+        var text = ""
+        let t = await ContinuousClock().measure { text = await mem.relevant(for: UUID(), cwd: dir.path, prompt: "testes lentos") }
+        #expect(t < .milliseconds(700), "\(t)")
+        #expect(text.contains("Testes: rodar só o filtro"))
+    }
+
+    /// R10: a store closed (evicted) during a background fill is not reopened by it.
+    @Test func fillSkipsClosedStore() async throws {
+        struct Slow: MemoryEmbedder {
+            func embed(_ text: String) -> (lang: String, vector: [Float])? { Thread.sleep(forTimeInterval: 0.02); return ConceptEmbedder().embed(text) }
+        }
+        let root = try tempRoot(); defer { try? FileManager.default.removeItem(at: root) }
+        let mem = MemoryService(globalDir: root.appendingPathComponent("memory"), embedder: Slow())
+        try await mem.global.run { m in for i in 0..<60 { try m.store.write(rec("Item \(i)")) } }
+        try await mem.global.run { m in _ = m.index(); m.closeIndex() }   // the refresh starts the fill; then evicted
+        try await Task.sleep(for: .seconds(2))
+        #expect(try await mem.global.run { $0.isOpen } == false)
+    }
+
     /// R8: a pt cosine (bunched, re-rank only) is min-max normalized over the candidates and moves a hit by at most 15%
     /// of its word score; a hit with no comparable vector keeps its word score. Scores stay on the bm25 × m scale.
     @Test func ptRerankBounded() throws {

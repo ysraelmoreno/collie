@@ -76,20 +76,21 @@ extension CommandRouter {
                 guard lotArg == nil else { throw invalid("--lot and --all are exclusive") }
                 for l in ws.lots where l.id != myLot?.id && enterable(l) { stores.insert(await memory.lotStore(l.id), at: 0) }
             }
-            var hits: [(hit: MemoryHit, store: RepoMemory)] = []
             let vector = await memory.embed(query), factors = await memory.scores.all()
+            var cands: [MemoryIndex.Candidate] = [], from: [UUID: RepoMemory] = [:]
             for s in stores {
                 // over-fetch: paddock memories of other paddocks are filtered out below
                 // the picked repo's index must work; a broken global one only drops its hits
                 let required = s === repo && s.exists   // a lot with no memories yet has no index: no hits
                 let found = try await s.run { m in
-                    (required ? try m.requireIndex() : m.index())?.search(query, vector: vector, limit: limit * 2 + 10, includeInactive: inactive) ?? []
+                    (required ? try m.requireIndex() : m.index())?.candidates(query, vector: vector, limit: limit * 2 + 10, includeInactive: inactive) ?? []
                 }
-                hits += found.filter { caller == nil || MemoryService.visible($0.record, paddock: paddockName, lot: s.lotId) }
-                    .map { (MemoryHit(record: $0.record, score: $0.score * (factors[$0.record.id] ?? 1)), s) }
+                for var c in found where caller == nil || MemoryService.visible(c.record, paddock: paddockName, lot: s.lotId) {
+                    c.m *= factors[c.record.id] ?? 1
+                    cands.append(c); from[c.record.id] = s
+                }
             }
-            hits.sort { $0.hit.score > $1.hit.score }
-            hits = Array(hits.prefix(limit))
+            let hits = MemoryIndex.rank(cands, lang: vector?.lang).prefix(limit).map { (hit: $0, store: from[$0.record.id]!) }   // one scale (R10)
             for s in stores {
                 let ids = hits.filter { $0.store === s }.map(\.hit.record.id)
                 if !ids.isEmpty { _ = try? await s.run { m in m.index()?.noteRead(ids) } }

@@ -215,7 +215,9 @@ actor CommandRouter {
                 return Response(id: req.id, ok: true, result: try await panelCommand(req, peer: peer))
             }
             if req.command.hasPrefix("memory.") {   // admin or terminal; admin-only ones checked in memoryCommand
-                return Response(id: req.id, ok: true, result: try await memoryCommand(req, peer: peer))
+                let out = try await memoryCommand(req, peer: peer)
+                if !Self.memoryReads.contains(req.command) { await refreshSkills() }   // a procedure may have changed
+                return Response(id: req.id, ok: true, result: out)
             }
             if req.command.hasPrefix("work.chat.") || req.command == "work.approvals" || req.command == "work.approve" || req.command == "work.approval.dismiss" {   // the app's alone
                 try await adminOnly(req, peer: peer)
@@ -598,10 +600,11 @@ actor CommandRouter {
         // R25: Claude resumes only a conversation it had (else `--continue` exits at once)
         let resume = resume && AgentLaunch.hasClaudeConversation(cwd: rec.cwd, home: sandboxHomeDir, env: user)
         await memory.endSession(rec.id)   // a new process is a new session: memories may be injected again
+        let pluginDir = await skillsDir(rec, user: user)   // after endSession: what it delivers counts for the new session
         let token = await auth.issue(for: rec.id)
         let p: PTYProcess, sb: ScrollbackBuffer?
         do {
-            let spec = try launchSpec(rec, token: token, user: user, resume: resume)
+            let spec = try launchSpec(rec, token: token, user: user, resume: resume, pluginDir: pluginDir)
             p = try await registry.spawn(rec, launch: spec, sandbox: sandboxed(rec) ? try prepareSandbox(rec) : nil)
             sb = await registry.scrollback(rec.id)
             if let sb { await asks.attach(rec, process: p, scrollback: sb) }
@@ -682,7 +685,7 @@ actor CommandRouter {
     func agentEnv(_ rec: TerminalRecord) async -> [String: String] { rec.preset == .shell ? [:] : await userEnv.current() }
 
     /// `user` (from `agentEnv`) under Collie's keys.
-    func launchSpec(_ rec: TerminalRecord, token: String, user: [String: String], resume: Bool = false) throws -> LaunchSpec {
+    func launchSpec(_ rec: TerminalRecord, token: String, user: [String: String], resume: Bool = false, pluginDir: URL? = nil) throws -> LaunchSpec {
         let env = ProcessInfo.processInfo.environment
         var e: [String: String] = [
             "COLLIE_SOCKET": config.paths.socket.path, "COLLIE_TERMINAL_ID": rec.id.uuidString, "COLLIE_TOKEN": token,
@@ -703,7 +706,8 @@ actor CommandRouter {
         }
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
                                           shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec),
-                                          resume: resume, filesDir: sandboxed(rec) ? SandboxLaunch.filesDir(rec.id, root: config.paths.root) : nil)
+                                          resume: resume, filesDir: sandboxed(rec) ? SandboxLaunch.filesDir(rec.id, root: config.paths.root) : nil,
+                                          pluginDir: pluginDir)
     }
 
     static let outputFileCommands = Commands.outputFile

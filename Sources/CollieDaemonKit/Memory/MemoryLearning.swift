@@ -149,6 +149,7 @@ extension CommandRouter {
         case .correction: try await runLearningJob(job, call: call)
         case .proposals: try await runProposalsJob(job, call: call)
         }
+        await refreshSkills()   // a procedure may have been created or retired
     }
 
     func runLearningJob(_ j: CuratorJob, call: Curator.Call) async throws {

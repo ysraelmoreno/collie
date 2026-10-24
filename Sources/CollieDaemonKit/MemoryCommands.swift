@@ -8,6 +8,10 @@ import CollieProtocol
 /// A terminal in a lot also reads/writes that lot's store, never another lot's: `--lot`/`--all` reach another lot only for
 /// the admin, or a Shepherd over lots whose every live member it reaches (`mayEnter`, as `lot.join`); else `notFound`.
 extension CommandRouter {
+    /// `memory.*` commands that change no record (the rest re-render the skills dirs).
+    static let memoryReads: Set<String> = ["memory.search", "memory.list", "memory.get", "memory.context", "memory.hookContext",
+                                           "memory.hookRelevant", "memory.digest", "memory.repos", "memory.curator"]
+
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -164,6 +168,7 @@ extension CommandRouter {
                     head = head.filter { !$0.isEmpty }
                 }
                 let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
+                await refreshSkills(me.id)   // a session (re)starts: its skills as the stores are now (a hand edit, a pull)
                 let w = try? await work.active(terminal: me.id)
                 let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used)
                 let mem = (head + [rest == MemoryService.header ? "" : rest]).filter { !$0.isEmpty }.joined(separator: "\n\n")
@@ -189,6 +194,7 @@ extension CommandRouter {
                 func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
                 let ret = await memory.retractions(for: me.id, paddock: paddockName, lot: myLot?.id, limit: left)
                 add(ret)
+                await refreshSkills(me.id, force: !ret.isEmpty)   // a retracted procedure leaves its dir; a new lot, its set
                 // ponytail: retractions that overflowed hold the rest for the next prompt (titles are one line: no "\n…" inside)
                 if ret.contains("\n… e mais ") { left = 0 }
                 add(await memory.pushedRules(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, limit: left))

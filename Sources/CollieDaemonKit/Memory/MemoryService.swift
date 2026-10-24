@@ -163,6 +163,9 @@ actor MemoryService {
     private var pending: [UUID: [UUID]] = [:]
     /// Ids each session was told "Não vale mais" about (M2: pushed again when an undo makes them active).
     private var retracted: [UUID: Set<UUID>] = [:]
+    /// A Claude terminal's skills dir (`ProcedureSkills`): where, the lot it was rendered for, and the procedures its
+    /// session got at launch that are still in it (→ store key): they count as injected, so retractions cover them.
+    private var skills: [UUID: (dir: URL, lot: UUID?, ids: [UUID: String])] = [:]
     static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código."
     static let relevantHeader = "Memória relacionada (Collie):"
     static let rulesHeader = "Regra nova do usuário (Collie):"
@@ -270,7 +273,7 @@ actor MemoryService {
     /// for scoring, for its open `work`.
     func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, limit: Int = 4096) async -> String {
         let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
-        injected[terminal] = (lot, c.ids)
+        injected[terminal] = (lot, c.ids.merging(skills[terminal]?.ids ?? [:]) { a, _ in a })
         if let work { await scores.noteInjected(Set(c.ids.keys), work: work) }
         return c.text
     }
@@ -436,7 +439,49 @@ actor MemoryService {
         }
     }
 
-    func endSession(_ terminal: UUID) { injected[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil }
+    func endSession(_ terminal: UUID) { injected[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil; skills[terminal] = nil }
+
+    // MARK: procedures as skills
+
+    /// Renders `terminal`'s skills dir from the active procedures it may read (its lot's, its repo's, the global ones;
+    /// never another lot's), at launch: the procedures delivered count as injected for its session. false: not rendered
+    /// (logged), the terminal launches without the flag.
+    func deliverSkills(_ terminal: UUID, cwd: String, paddock: String?, lot: UUID?, into dir: URL) async -> Bool {
+        guard let ids = await renderSkills(cwd: cwd, paddock: paddock, lot: lot, into: dir) else { return false }
+        skills[terminal] = (dir, lot, ids)
+        injected[terminal, default: (lot, [:])].ids.merge(ids) { a, _ in a }
+        return true
+    }
+
+    /// Renders again a terminal that has a skills dir: always when `force` (a memory changed, a session hook), else only
+    /// when its lot changed. Only procedures still rendered keep counting as injected; a new one doesn't (the live
+    /// session may not load it: prompt relevance can still bring it).
+    func refreshSkills(_ terminal: UUID, cwd: String, paddock: String?, lot: UUID?, force: Bool) async {
+        guard let cur = skills[terminal], force || cur.lot != lot,
+              let ids = await renderSkills(cwd: cwd, paddock: paddock, lot: lot, into: cur.dir) else { return }
+        skills[terminal] = (cur.dir, lot, cur.ids.filter { ids[$0.key] != nil })
+    }
+
+    func hasSkills(_ terminal: UUID) -> Bool { skills[terminal] != nil }
+
+    private func renderSkills(cwd: String, paddock: String?, lot: UUID?, into dir: URL) async -> [UUID: String]? {
+        var procs: [MemoryRecord] = [], owner: [UUID: String] = [:]
+        for s in await readable(cwd, lot: lot) {
+            let recs = (try? await s.run { m in
+                m.store.all().records.filter { $0.kind == .procedure && $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId) }
+            }) ?? []
+            procs += recs
+            for r in recs { owner[r.id] = s.key }
+        }
+        let all = procs
+        do {
+            let ids = try await UnixSocketClient.offPool { try ProcedureSkills.render(all, into: dir) }
+            return owner.filter { ids.contains($0.key) }
+        } catch {
+            memoryLog("skills \(dir.path): \(error.message)")
+            return nil
+        }
+    }
 
     // MARK: text
 

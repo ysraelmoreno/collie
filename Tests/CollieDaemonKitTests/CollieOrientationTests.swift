@@ -29,10 +29,16 @@ import CollieCore
         #expect(!text().contains("herd"))
     }
 
+    @Test func orientationTeachesSandboxAccess() {
+        for t in [text(), text(shepherd: true, peers: ["Bob"], panels: [("Home", "design")])] {
+            #expect(t.contains("collie access request <path> --read|--write --reason") && t.contains("collie open <url|app>"))
+        }
+    }
+
     @Test func orientationIsBounded() {
         let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
         let t = text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: ps)
-        #expect(t.count <= 1300, "\(t.count)")
+        #expect(t.count <= 1500, "\(t.count)")
         #expect(t.contains("more"))
         #expect(text(panels: (1...5).map { (name: "W\($0)", pluginId: "browser") }).contains("\"W3\" +2 more"))
         #expect(!t.contains(String(repeating: "x", count: 41)))
@@ -80,7 +86,7 @@ import CollieCore
         let both = text(shepherd: true, paddock: "F1", panels: [("Home", "design")], paddockPanels: [("Draft", "design")])
         #expect(both.contains("use design panel \"Home\" first") && !both.contains("Draft"))
         let long = (1...20).map { (name: String(repeating: "y", count: 60) + "\($0)", pluginId: "design") }
-        #expect(text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, paddockPanels: long).count <= 1300)
+        #expect(text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, paddockPanels: long).count <= 1500)
     }
     @Test func nonShepherdNoDesignFirstLine() {
         #expect(!text(pref: .always).contains("UI work") && !text(panels: [("Home", "design")]).contains("UI work"))
@@ -90,7 +96,7 @@ import CollieCore
         for pref in DesignFirst.allCases {
             for withDesign in [true, false] {
                 let t = text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: withDesign ? ps : ps.filter { $0.pluginId != "design" }, pref: pref)
-                #expect(t.count <= 1300, "\(pref) \(t.count)")
+                #expect(t.count <= 1500, "\(pref) \(t.count)")
                 if withDesign || pref != .never { #expect(t.contains("UI work")) }
             }
         }
@@ -103,7 +109,7 @@ import CollieCore
         let t = text(lot: ("L", "a\nb\"c «d»"))
         #expect(t.contains("(a bc d)") && t.split(separator: "\n").count == text().split(separator: "\n").count + 1)
     }
-    /// R4: the lot line fits the 1300 limit with 2L's Shepherd design line in the worst case (T1 adds no other line).
+    /// R4: the lot line fits the 1500 limit with 2L's Shepherd design line in the worst case (T1 adds no other line).
     @Test func worstCaseWithLotFitsLimit() {
         let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
         let loose = (1...20).map { (name: String(repeating: "y", count: 60) + "\($0)", pluginId: "design") }
@@ -113,7 +119,7 @@ import CollieCore
                 for shepherd in [true, false] {
                     let t = text(shepherd: shepherd, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" },
                                  panels: panels, paddockPanels: paddockPanels, pref: pref, lot: lot)
-                    #expect(t.count <= 1300, "\(pref) \(shepherd) \(t.count)")
+                    #expect(t.count <= 1500, "\(pref) \(shepherd) \(t.count)")
                     #expect(t.contains("collie herd list") == shepherd && t.contains("collie panel open"))
                     #expect(t.contains("collie lot board"))
                     if shepherd && (pref != .never || !paddockPanels.isEmpty || panels.contains { $0.pluginId == "design" }) { #expect(t.contains("UI work")) }

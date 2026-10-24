@@ -29,6 +29,8 @@ struct Shell<Content: View>: View {
     let structure: WindowStructure
     let ctx: ShellContext
     @ViewBuilder let content: Content
+    /// One-time sandbox notice (UserDefaults via @AppStorage, like the other UI state).
+    @AppStorage("sandbox.noticeSeen") private var noticeSeen = false
 
     var body: some View {
         let full = structure == .full
@@ -41,6 +43,15 @@ struct Shell<Content: View>: View {
             }
         }
         .background(Color.collieBackground)
+        .alert("Terminais com sandbox", isPresented: Binding(get: { !noticeSeen }, set: { if !$0 { noticeSeen = true } })) {
+            Button("Entendi") { noticeSeen = true }
+            Button("Ler no README") {
+                noticeSeen = true
+                NSWorkspace.shared.open(URL(string: "https://github.com/ysraelmoreno/collie#sandbox-dos-terminais")!)
+            }
+        } message: {
+            Text("Os terminais agora rodam num sandbox: o agente só escreve no projeto e só lê o projeto e o que as ferramentas precisam. Quando ele tenta acessar outra coisa, aparece um cartão no terminal para você liberar ou negar. Terminais já abertos entram no sandbox na próxima vez que iniciarem. Para o seu trabalho, use \"Terminal livre (sem sandbox)\".")
+        }
     }
 }
 

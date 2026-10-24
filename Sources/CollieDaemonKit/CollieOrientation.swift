@@ -4,7 +4,7 @@ import CollieCore
 
 /// The "you are running inside Collie" text injected at session start: only what the terminal reaches (English, short, no secrets).
 enum CollieOrientation {
-    private static let maxName = 40, limit = 1300
+    private static let maxName = 40, limit = 1500
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {
@@ -79,6 +79,9 @@ enum CollieOrientation {
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")
         }
+        // sandbox: a blocked path shows the user a card; ask, don't work around it
+        lines.append(tight ? "- Sandboxed: blocked path = user card; ask: collie access request <path> --read|--write --reason \"…\"; collie open <url|app>."
+            : "- Sandboxed: you write only in the project. A blocked path shows the user a card; don't work around it, ask: collie access request <path> --read|--write --reason \"…\". Open URLs/apps with collie open <url|app>.")
         if !tight { lines.append("Run `collie <group> --help` for details.") }
         return lines.joined(separator: "\n")
     }

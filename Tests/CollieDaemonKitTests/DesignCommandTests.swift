@@ -10,6 +10,8 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
     .appendingPathComponent("Fixtures")
 let vendorFigcraft = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().appendingPathComponent("vendor/figcraft")
+let vendorEngineSrc = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().appendingPathComponent("vendor/figcraft-src/crates/engine/src")
 let realBuilt = FileManager.default.isExecutableFile(atPath: vendorFigcraft.appendingPathComponent("bin/figcraft-cli").path)
     && FileManager.default.isExecutableFile(atPath: vendorFigcraft.appendingPathComponent("bin/figcraft-server").path)
 
@@ -491,6 +493,60 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
             // text.preview's inner command too
             #expect(try await run("text.preview", #"{"command":"text.style","params":{"fontSize":12}}"#).error == needs("text.style"))
         }
+    }
+
+    // re-review N1/N2: a target must be one the engine takes; `$step` objects only inside a batch
+    @Test func targetsMustBeRealTargets() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            func needs(_ cmd: String, _ what: String = "ids") -> ProtocolError {
+                ProtocolError(code: .invalidArgs, message: "\(cmd) needs \(what): agents never act on the user's selection")
+            }
+            for params in [#"{"ids":{}}"#, #"{"id":{}}"#, #"{"ids":{"x":1}}"#, #"{"ids":{"$step":0}}"#, #"{"id":{"$step":0}}"#,
+                           #"{"id":true}"#, #"{"id":[1]}"#] {
+                #expect(try await call(p, m, "design.run", ["command": "fill.set", "params": params]).error == needs("fill.set"), "\(params)")
+            }
+            for (cmd, params, what) in [("proto.flow.add", #"{"start":{}}"#, "start"), ("guide.remove", #"{"index":"x"}"#, "index"),
+                                        ("text.onPath", #"{"text":{"$step":0},"path":2}"#, "text"), ("style.create", #"{"type":"paint","name":"a","from":{}}"#, "from or value")] {
+                #expect(try await call(p, m, "design.run", ["command": cmd, "params": params]).error == needs(cmd, what), "\(cmd) \(params)")
+            }
+            let ref = try await call(p, m, "design.batch", ["commands": #"[{"command":"node.create"},{"command":"fill.set","params":{"id":{"$step":0}}},{"command":"text.onPath","params":{"text":{"$step":0},"path":{"$step":0,"field":"id"}}},{"command":"fill.set","params":{"ids":{"$step":0,"field":"ids"}}}]"#])
+            #expect(ref.error?.code != .invalidArgs, "\(ref)")
+            let bad = try await call(p, m, "design.batch", ["commands": #"[{"command":"node.create"},{"command":"fill.set","params":{"ids":{}}}]"#])
+            #expect(bad.error == needs("fill.set"), "\(bad)")
+        }
+    }
+
+    /// re-review (b): `targetCommands` is the engine's own list, derived here from the vendored spec params docs the way
+    /// it was generated: every permitted command whose params doc takes `ids?`/`id?`, minus `proto.evaluate` (its `id?`
+    /// is the document's modes), `vector.edit.*` and `selectionOnly` (refused outright). A figcraft upgrade that adds one
+    /// fails this test until the table is regenerated.
+    @Test(.enabled(if: FileManager.default.fileExists(atPath: vendorEngineSrc.path)))
+    func targetCommandsMatchTheEngine() throws {
+        let str = #""((?:[^"\\]|\\.)*)""#
+        let constRx = try NSRegularExpression(pattern: #"const\s+([A-Z_]+)\s*:\s*&str\s*=\s*"# + str)
+        let specRx = try NSRegularExpression(pattern: #"spec!\(\s*"# + str + #"\s*,\s*"# + str + #"\s*,\s*(?:"# + str + #"|([A-Z_]+))"#)
+        let targetRx = try NSRegularExpression(pattern: #"(?<![A-Za-z])ids?\?"#)
+        var texts: [String] = []
+        let files = (FileManager.default.enumerator(at: vendorEngineSrc, includingPropertiesForKeys: nil)?.allObjects as? [URL]) ?? []
+        for u in files where u.pathExtension == "rs" { texts.append(try String(contentsOf: u, encoding: .utf8)) }
+        func groups(_ rx: NSRegularExpression, _ t: String) -> [[String?]] {
+            rx.matches(in: t, range: NSRange(t.startIndex..., in: t)).map { m in
+                (1..<m.numberOfRanges).map { Range(m.range(at: $0), in: t).map { String(t[$0]) } }
+            }
+        }
+        var consts: [String: String] = [:]
+        for t in texts { for g in groups(constRx, t) { consts[g[0]!] = g[1]! } }
+        var specs: [String: String] = [:]
+        for t in texts { for g in groups(specRx, t) { specs[g[0]!] = g[2] ?? g[3].flatMap { consts[$0] } ?? "" } }
+        #expect(specs.count > 500, "\(specs.count)")   // the parser still finds the table
+        let derived = Set(specs.filter { id, params in
+            DesignService.permitted(id) && id != "proto.evaluate" && !id.hasPrefix("vector.edit.") && !DesignService.selectionOnly.contains(id)
+                && targetRx.firstMatch(in: params, range: NSRange(params.startIndex..., in: params)) != nil
+        }.keys)
+        #expect(derived.subtracting(DesignService.targetCommands).sorted() == [], "missing from targetCommands")
+        #expect(DesignService.targetCommands.subtracting(derived).sorted() == [], "no longer in the engine")
     }
 
     @Test func deleteWithoutIdsRefused() async throws {

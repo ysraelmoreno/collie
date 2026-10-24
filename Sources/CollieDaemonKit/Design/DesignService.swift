@@ -797,10 +797,10 @@ actor DesignService {
     }
 
     /// Allowed commands that can also name a file: only their in-memory forms (the client's write root confines the rest).
-    private static func checkParams(_ cmd: String, _ p: [String: JSONValue]) throws(ProtocolError) {
+    private static func checkParams(_ cmd: String, _ p: [String: JSONValue], inBatch: Bool = false) throws(ProtocolError) {
         // a batch's `{"$step": n}` references resolve in the engine, after these checks: none where a check looks
         if p["$step"] != nil { throw ProtocolError(code: .invalidArgs, message: "step references are not allowed in 'params'") }
-        try needsTargets(cmd, p)
+        try needsTargets(cmd, p, inBatch: inBatch)
         if cmd == "variable.import" { try noStepRef(p["variables"], "variables") }
         if cmd == "text.preview" { try noStepRef(p["command"], "command"); try noStepRef(p["params"], "params") }
         let refused: Bool = switch cmd {
@@ -816,8 +816,8 @@ actor DesignService {
         // text.preview runs its inner command (text.style) with the inner params
         if cmd == "text.preview", case .string(let c)? = p["command"] {
             switch p["params"] {
-            case nil, .null?: try needsTargets(c, [:])
-            case .object(let ip)?: try checkLinks(c, ip); try needsTargets(c, ip)
+            case nil, .null?: try needsTargets(c, [:], inBatch: inBatch)
+            case .object(let ip)?: try checkLinks(c, ip); try needsTargets(c, ip, inBatch: inBatch)
             default: throw ProtocolError(code: .invalidArgs, message: "text.preview params must be an object")
             }
         }
@@ -911,7 +911,7 @@ actor DesignService {
             switch o["params"] { case nil, .null?: params = [:]; case .object(let p)?: params = p
             default: throw ProtocolError(code: .invalidArgs, message: "batch step \(i + 1): 'params' must be an object") }
             let ok = try allowed(cmd)
-            try checkParams(cmd, params)
+            try checkParams(cmd, params, inBatch: true)
             return (ok, params, step)
         }
     }
@@ -987,15 +987,20 @@ actor DesignService {
         "transform.nudge", "transform.nudgeSize", "transform.rotationOrigin", "transform.setRotationOrigin",
         "object.hideOthers", "text.listIndent", "text.listOutdent", "vector.deleteHeal",
     ]
-    private static func needsTargets(_ cmd: String, _ p: [String: JSONValue]) throws(ProtocolError) {
+    /// `inBatch`: a `{"$step": n}` object stands for an earlier step's result (design.run has none).
+    private static func needsTargets(_ cmd: String, _ p: [String: JSONValue], inBatch: Bool) throws(ProtocolError) {
         if selectionOnly.contains(cmd) || cmd.hasPrefix("vector.edit.") {
             throw ProtocolError(code: .invalidArgs, message: "\(cmd) acts only on the user's selection: not available to agents")
         }
+        // only what the engine takes as a target; anything else falls through to the selection (`params.rs` `targets()`)
         func given(_ k: String) -> Bool {
+            if k == "value", let v = p[k] { return v != .null }   // style.create's own style JSON, not a target
             switch p[k] {
-            case nil, .null?: false
-            case .array?, .object?: true            // an object: a `$step` reference
-            default: k != "ids"                     // a non-array `ids` is ignored by the engine: the selection
+            case .object(let o)?: return inBatch && o["$step"] != nil
+            case .array?: return k == "ids"                // `[]`: skipped or refused by the engine, never the selection
+            case .number?: return k != "ids"               // a layer id, or the guide's `index`
+            case .string?: return k != "ids" && k != "index"   // a layer id
+            default: return false
             }
         }
         var groups = selectionDefaults[cmd] ?? []

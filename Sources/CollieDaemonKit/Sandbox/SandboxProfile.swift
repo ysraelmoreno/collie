@@ -133,6 +133,9 @@ enum SandboxProfile {
         // R17: no nested `.git` (dir, file or link) anywhere in the project either: the user's git or IDE runs its config.
         // ponytail: agents can't clone/init/submodule-add inside the project (clone into TMP instead)
         rule("deny", "file-write*", tagged: true, [rx("^" + re(project) + "/.+/\\.git(/|$)")])
+        // R20: except the tools' own checkouts at the project root (SwiftPM `.build/`, Carthage), normally git-ignored.
+        // Accepted: an IDE that scans nested repos there could run a planted config
+        rule("allow", "file-write*", [rx("^" + re(project) + "/(\\.build|Carthage/Checkouts)/.+")])
         if let common {
             let c = re(common)
             rule("deny", "file-write*", tagged: true, [

@@ -174,6 +174,10 @@ final class FakeHome {
         #expect(try !f.ok(p, "mkdir -p sub2 && echo 'gitdir: /private/tmp/x' > sub2/.git"))
         #expect(try !f.ok(p, "mkdir -p sub3 && ln -s /private/tmp sub3/.git"))
         #expect(try !f.ok(p, "mkdir -p a/b && mkdir a/b/.git"))
+        // R20: tool checkouts at the project root stay possible; the same names anywhere else don't
+        #expect(try f.ok(p, "git init -q .build/checkouts/dep && git init -q Carthage/Checkouts/dep"))
+        #expect(try !f.ok(p, "git init -q a/.build/checkouts/dep"))
+        #expect(try !f.ok(p, "git init -q build/checkouts/dep"))
         let common = try f.run(p, "git rev-parse --git-common-dir").out
         #expect(common.trimmingCharacters(in: .whitespacesAndNewlines) == ".git", "\(common)")
         #expect(try f.ok(p, "echo x >> README && git add README && git commit -qm t"))   // a plain commit still works
@@ -697,8 +701,7 @@ struct SandboxToolchainTests {
         let s = try setup(); try swiftPackage(s.1)
         try check(s, "swift build && swift run Hello | grep -q 'hello from the sandbox'")
     }
-    /// R17 probe: SwiftPM checks a git dependency out under `.build/checkouts/<dep>` (a nested `.git`), which R17 denies:
-    /// a known tools-break pending a ruling (it passes with the nested-.git rule removed).
+    /// SwiftPM checks a git dependency out under `.build/checkouts/<dep>` (a nested `.git`): exempt from R17 (R20).
     @Test func swiftGitDependency() throws {
         let s = try setup()
         let dep = s.0.base.appendingPathComponent("dep")
@@ -717,7 +720,7 @@ struct SandboxToolchainTests {
             targets: [.executableTarget(name: "Hello", dependencies: [.product(name: "Dep", package: "dep")])])
         """.write(to: s.1.appendingPathComponent("Package.swift"), atomically: false, encoding: .utf8)
         try "import Dep\nprint(dep)\n".write(to: s.1.appendingPathComponent("Sources/Hello/main.swift"), atomically: false, encoding: .utf8)
-        try withKnownIssue("R17: nested .git under .build/checkouts is denied") { try check(s, "swift build") }
+        try check(s, "swift build")
     }
 
     @Test func xcodebuildPackage() throws {

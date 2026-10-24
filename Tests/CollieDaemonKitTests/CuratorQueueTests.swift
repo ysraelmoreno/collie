@@ -4,10 +4,13 @@ import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
 
-/// Counts calls; `gate` holds a call until opened; `avail` switches availability (tests never spend tokens).
+/// Counts calls; `gate` holds a call until opened; `avail` switches availability; an input containing `failOn` fails the
+/// run the way a real claude exit does (tests never spend tokens).
 final class FakeCurator: CuratorRunner, @unchecked Sendable {
     private let lock = NSLock()
     private var _avail = CuratorAvailability.available, _inputs: [String] = [], _gated = false, waiters: [CheckedContinuation<Void, Never>] = []
+    var failOn: String? { get { lock.withLock { _failOn } } set { lock.withLock { _failOn = newValue } } }
+    private var _failOn: String?
     var output = CuratorOutput(json: .object(["ops": .array([])]), inputTokens: 812, outputTokens: 40, costUSD: 0.0011)
     var avail: CuratorAvailability { get { lock.withLock { _avail } } set { lock.withLock { _avail = newValue } } }
     var inputs: [String] { lock.withLock { _inputs } }
@@ -18,6 +21,7 @@ final class FakeCurator: CuratorRunner, @unchecked Sendable {
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput {
         lock.withLock { _inputs.append(c.input) }
         if gated { await withCheckedContinuation { c in lock.withLock { if _gated { waiters.append(c) } else { c.resume() } } } }
+        if let f = failOn, c.input.contains(f) { throw ProtocolError(code: .unavailable, message: "claude saiu com 1") }
         return output
     }
 }
@@ -36,8 +40,9 @@ actor Trace {
     func add(_ e: String) { events.append(e) }
 }
 
-private func job(_ kind: CuratorJobKind = .correction, dedupe: String = UUID().uuidString, at: Date = Date()) -> CuratorJob {
-    CuratorJob(id: UUID(), kind: kind, store: "repo:/x", payload: .object(["prompt": .string("não, use --filter")]), dedupe: dedupe,
+private func job(_ kind: CuratorJobKind = .correction, dedupe: String = UUID().uuidString, at: Date = Date(),
+                 prompt: String = "não, use --filter") -> CuratorJob {
+    CuratorJob(id: UUID(), kind: kind, store: "repo:/x", payload: .object(["prompt": .string(prompt)]), dedupe: dedupe,
                createdAt: at, attempts: 0)
 }
 private func tempDir() -> URL {
@@ -167,7 +172,11 @@ private let oneCall: Curator.Handler = { j, call in
             let ok = await waitFor(10) { await tries.events.count == n }
             let seen = await tries.events.count
             #expect(ok, "\(seen) at \(n)")
-            if n < 3 { await clock.waitForSleepers(1); clock.advance(by: Curator.tick) }
+            if n < 3 {
+                // the attempt is on record before the tick (a tick during the run doesn't count)
+                #expect(await waitFor(10) { await c.queued(kind: .correction).first?.attempts == n })
+                await clock.waitForSleepers(1); clock.advance(by: Curator.tick)
+            }
         }
         #expect(await waitFor(10) { await c.queued(kind: .correction).isEmpty })
         #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("failed").path).count == 1)
@@ -212,6 +221,66 @@ private let oneCall: Curator.Handler = { j, call in
         await c.start { _, call in _ = try await call(CuratorCall(instructions: "", input: String(repeating: "é", count: 20_000), schema: "{}")) }
         #expect(await waitFor(10) { fake.calls == 1 })
         #expect(fake.inputs.first?.count == Curator.inputMax && Curator.inputMax == 12_000)
+        await c.stop()
+        // combining marks: capped by unicode scalars, not characters (the input goes in argv)
+        let z = FakeCurator(), c2 = Curator(dir: tempDir(), runner: z, clock: ManualClock())
+        _ = await c2.enqueue(job())
+        await c2.start { _, call in _ = try await call(CuratorCall(instructions: "", input: String(repeating: "e\u{301}\u{302}", count: 20_000), schema: "{}")) }
+        #expect(await waitFor(10) { z.calls == 1 })
+        #expect(z.inputs.first?.unicodeScalars.count == Curator.inputMax)
+        await c2.stop()
+    }
+
+    /// R7: a run that fails (nonzero exit, is_error, junk) spends an attempt; the next job still runs; 3 → failed/.
+    @Test func poisonJobDoesNotBlock() async throws {
+        let fake = FakeCurator(), clock = ManualClock(), dir = tempDir(), t0 = Date()
+        fake.failOn = "poison"
+        let c = Curator(dir: dir, runner: fake, clock: clock)
+        let bad = job(at: t0, prompt: "poison"), good = job(at: t0 + 1)
+        _ = await c.enqueue(bad); _ = await c.enqueue(good)
+        await c.start(handler: oneCall)
+        #expect(await waitFor(10) { await c.queued(kind: .correction).map(\.id) == [bad.id] })
+        #expect(await c.queued(kind: .correction).first?.attempts == 1 && fake.calls == 2)
+        await clock.waitForSleepers(1); clock.advance(by: Curator.tick)
+        #expect(await waitFor(10) { await c.queued(kind: .correction).first?.attempts == 2 })
+        await clock.waitForSleepers(1); clock.advance(by: Curator.tick)
+        #expect(await waitFor(10) { await c.queued(kind: .correction).isEmpty })
+        #expect(fake.calls == 4)
+        #expect(await c.status().failed == 1)
+        await c.stop()
+    }
+
+    /// A reloaded job removes the file it was loaded from, whatever its name.
+    @Test func jobFileStableAcrossReload() async throws {
+        let dir = tempDir(), fake = FakeCurator(), j = job()
+        _ = await Curator(dir: dir, runner: fake, clock: ManualClock()).enqueue(j)
+        let jobs = dir.appendingPathComponent("jobs")
+        let name = try #require(try FileManager.default.contentsOfDirectory(atPath: jobs.path).first)
+        try FileManager.default.moveItem(at: jobs.appendingPathComponent(name), to: jobs.appendingPathComponent("0-\(j.id.uuidString).json"))
+        let c = Curator(dir: dir, runner: fake, clock: ManualClock())
+        await c.start(handler: oneCall)
+        #expect(await waitFor(10) { await c.queued(kind: .correction).isEmpty })
+        #expect(try FileManager.default.contentsOfDirectory(atPath: jobs.path).isEmpty)
+        await c.stop()
+    }
+
+    /// A tick during a run doesn't count for the job that fails in it: the retry waits for the next tick.
+    @Test func tickMidRunKeepsBackoff() async throws {
+        let fake = FakeCurator(), clock = ManualClock()
+        fake.gated = true
+        let c = Curator(dir: tempDir(), runner: fake, clock: clock)
+        _ = await c.enqueue(job())
+        await c.start { j, call in
+            _ = try await call(CuratorCall(instructions: "", input: "x", schema: "{}"))
+            throw ProtocolError(code: .internal, message: "boom")
+        }
+        #expect(await waitFor(10) { fake.calls == 1 })
+        await clock.waitForSleepers(1); clock.advance(by: Curator.tick)   // mid-run
+        fake.open()
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(fake.calls == 1)
+        await clock.waitForSleepers(1); clock.advance(by: Curator.tick)
+        #expect(await waitFor(10) { fake.calls == 2 })
         await c.stop()
     }
 

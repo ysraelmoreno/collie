@@ -22,6 +22,8 @@ struct CuratorStatus: Codable, Sendable {
     var today: Int
     var cap: Int
     var queued: Int
+    /// Jobs parked in `failed/` (3 failed attempts, or an unreadable file).
+    var failed: Int
     var inputTokens: Int
     var outputTokens: Int
     var costUSD: Double
@@ -52,8 +54,11 @@ actor Curator {
     private var handler: Handler?
     private var loop: Task<Void, Never>?, ticker: Task<Void, Never>?
     private var waiter: CheckedContinuation<Void, Never>?, woken = false
-    /// Jobs whose last attempt failed: retried on the next tick, not on every enqueue.
-    private var backoff: Set<UUID> = [], ticked = false
+    /// Jobs whose last attempt failed → the tick count at that failure: retried after a later tick, not on every enqueue
+    /// (a tick that came during the failing run doesn't count).
+    private var backoff: [UUID: Int] = [:], ticks = 0
+    /// The file each job was loaded from or written to (a name recomputed from a decoded date could miss it).
+    private var names: [UUID: String] = [:]
 
     init(dir: URL, runner: any CuratorRunner, clock: any Clock<Duration> = ContinuousClock(), now: @escaping @Sendable () -> Date = Date.init) {
         self.dir = dir; self.runner = runner; self.clock = clock; self.now = now
@@ -70,7 +75,9 @@ actor Curator {
         let names = (try? fm.contentsOfDirectory(atPath: dir.appendingPathComponent("jobs").path)) ?? []
         for n in names.sorted() where n.hasSuffix(".json") {
             let u = dir.appendingPathComponent("jobs/\(n)")
-            if let j = (try? Data(contentsOf: u)).flatMap({ try? Self.decoder.decode(CuratorJob.self, from: $0) }) { jobs.append(j); continue }
+            if let j = (try? Data(contentsOf: u)).flatMap({ try? Self.decoder.decode(CuratorJob.self, from: $0) }) {
+                jobs.append(j); self.names[j.id] = n; continue
+            }
             // an unknown kind (a later Collie's) or a damaged file: kept aside, never run
             FileHandle.standardError.write(Data("collied: curator: unreadable job \(n) moved to failed/\n".utf8))
             _ = rename(u.path, dir.appendingPathComponent("failed/\(n)").path)
@@ -81,7 +88,8 @@ actor Curator {
     static let decoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .millisecondsSince1970; return d }()
 
     private func file(_ j: CuratorJob) -> URL {
-        dir.appendingPathComponent("jobs/\(Int64(j.createdAt.timeIntervalSince1970 * 1000))-\(j.id.uuidString).json")
+        if names[j.id] == nil { names[j.id] = "\(Int64(j.createdAt.timeIntervalSince1970 * 1000))-\(j.id.uuidString).json" }
+        return dir.appendingPathComponent("jobs/\(names[j.id]!)")
     }
 
     /// Temp + rename (like `MemoryStore.write`), 0600.
@@ -129,6 +137,8 @@ actor Curator {
         if reason == nil, case .unavailable(let why) = await runner.availability() { reason = why }
         rollDay()
         return CuratorStatus(available: reason == nil, reason: reason, today: usage.today, cap: config.cap, queued: jobs.count,
+                             failed: ((try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("failed").path)) ?? [])
+                                 .filter { $0.hasSuffix(".json") }.count,
                              inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUSD: usage.costUSD)
     }
 
@@ -150,8 +160,7 @@ actor Curator {
         waiter?.resume(); waiter = nil
     }
 
-    /// Clears `backoff` at the next pass, not now (a drain in progress may still be adding the job it just failed).
-    private func tickWake() { ticked = true; wake() }
+    private func tickWake() { ticks += 1; wake() }
 
     private func wake() {
         if let w = waiter { waiter = nil; w.resume() } else { woken = true }
@@ -164,7 +173,6 @@ actor Curator {
 
     private func run() async {
         while !Task.isCancelled {
-            if ticked { ticked = false; backoff = [] }
             await drain()
             await sleepUntilWoken()
         }
@@ -186,7 +194,7 @@ actor Curator {
     /// Corrections first, then oldest; a failed job waits for the next tick.
     private func drain() async {
         while !Task.isCancelled, let handler {
-            let next = jobs.filter { !backoff.contains($0.id) }
+            let next = jobs.filter { backoff[$0.id].map { $0 < ticks } ?? true }
                 .min { ($0.kind == .correction ? 0 : 1, $0.createdAt) < ($1.kind == .correction ? 0 : 1, $1.createdAt) }
             guard let job = next, capReason() == nil, await runner.availability() == .available else { return }
             do {
@@ -194,9 +202,9 @@ actor Curator {
                 remove(job)
                 recent[job.dedupe] = now()
             } catch let e as ProtocolError where e.code == .unavailable {
-                return   // logged out / cap mid-run: the job waits, no attempt spent
+                return   // logged out / cap mid-run (before any run): the job waits, no attempt spent
             } catch {
-                backoff.insert(job.id)
+                backoff[job.id] = ticks
                 fail(job)
             }
         }
@@ -217,16 +225,22 @@ actor Curator {
     private func remove(_ job: CuratorJob) {
         jobs.removeAll { $0.id == job.id }
         try? FileManager.default.removeItem(at: file(job))
+        names[job.id] = nil; backoff[job.id] = nil
     }
 
-    /// One runner call: the input cut to `inputMax` characters, counted against today's cap, usage persisted.
+    /// One runner call: the input cut to `inputMax` unicode scalars (≤ 48 KB of argv), counted against today's cap,
+    /// usage persisted. R7: only the cap waits; any failure of the run itself (nonzero exit, `is_error`, junk, timeout)
+    /// is rethrown as `.internal`, so it spends an attempt — a poison job reaches `failed/` instead of heading the queue.
     private func call(_ c: CuratorCall) async throws(ProtocolError) -> CuratorOutput {
         if let why = capReason() { throw ProtocolError(code: .unavailable, message: why) }
         var c = c
-        c.input = String(c.input.prefix(Self.inputMax))
+        c.input = String(String.UnicodeScalarView(c.input.unicodeScalars.prefix(Self.inputMax)))
         usage.today += 1
         write(usage, to: dir.appendingPathComponent("usage.json"))
-        let out = try await runner.run(c, model: config.model, timeout: Self.timeout)
+        let out: CuratorOutput
+        do { out = try await runner.run(c, model: config.model, timeout: Self.timeout) } catch {
+            throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error
+        }
         usage.inputTokens += out.inputTokens; usage.outputTokens += out.outputTokens; usage.costUSD += out.costUSD
         write(usage, to: dir.appendingPathComponent("usage.json"))
         return out

@@ -404,22 +404,29 @@ actor DesignService {
                 let params = try str("params").map { try Self.json($0, "params") } ?? .object([:])
                 guard case .object(let p) = params else { throw ProtocolError(code: .invalidArgs, message: "'params' must be a JSON object") }
                 try Self.checkParams(cmd, p)
+                if Self.noIds(cmd, p) { return Self.skipped }
                 return try await use { c throws(ProtocolError) in
                     do throws(ProtocolError) { return try await c.command(cmd, p, timeout: try Self.left(deadline)) }
                     catch { throw Self.unsure(error) }
                 }
             case "design.batch":
                 let steps = try Self.steps(text: try await Self.batchText(commands: str("commands"), file: str("file"), cwd: cwd))
-                var a: [String: JSONValue] = ["commands": .array(steps.map(\.raw))]
+                // an agent's filter that found nothing: `[]`, or edits with `ids: []`, are skipped (never sent)
+                let skip = Set(steps.indices.filter { Self.noIds(steps[$0].command, steps[$0].params) })
+                guard skip.count < steps.count else { return .object(["results": .array(steps.map { _ in Self.skipped })]) }
+                var a: [String: JSONValue] = ["commands": .array(try Self.withoutSkipped(steps.map(\.raw), skip: skip))]
                 if let l = str("label") { a["label"] = .string(l) }
-                let ids = steps.map(\.command)
-                return try await use { c throws(ProtocolError) in
+                let ids = steps.indices.map { skip.contains($0) ? "" : steps[$0].command }   // the caller's step numbers
+                let r = try await use { c throws(ProtocolError) in
                     let r: MCPResult
                     do throws(ProtocolError) { r = try await c.result("batch", a, timeout: try Self.left(deadline)) }
                     catch { throw Self.unsure(error) }
                     if r.isError { throw Self.located(r.texts.joined(separator: "\n"), ids) }   // the engine refused it
                     return Self.decoded(r)
                 }
+                guard !skip.isEmpty, case .array(var done) = r else { return r }
+                for i in skip.sorted() where i <= done.count { done.insert(Self.skipped, at: i) }   // each in its own place
+                return .array(done)
             case "design.inspect":
                 let depth = try DeviceService.int(args, "depth", 1...64)
                 return try await use { c throws(ProtocolError) in
@@ -790,6 +797,9 @@ actor DesignService {
     private static func checkParams(_ cmd: String, _ p: [String: JSONValue]) throws(ProtocolError) {
         // a batch's `{"$step": n}` references resolve in the engine, after these checks: none where a check looks
         if p["$step"] != nil { throw ProtocolError(code: .invalidArgs, message: "step references are not allowed in 'params'") }
+        if selectionEdits.contains(cmd), p["ids"] == nil || p["ids"] == .null {
+            throw ProtocolError(code: .invalidArgs, message: "\(cmd) needs ids: agents never act on the user's selection")
+        }
         if cmd == "variable.import" { try noStepRef(p["variables"], "variables") }
         if cmd == "text.preview" { try noStepRef(p["command"], "command"); try noStepRef(p["params"], "params") }
         let refused: Bool = switch cmd {
@@ -887,10 +897,10 @@ actor DesignService {
         }
     }
 
-    /// The batch's steps: `[{command, params?}]`, each allowed.
-    private static func steps(text: String) throws(ProtocolError) -> [(command: String, raw: JSONValue)] {
-        guard case .array(let a) = try json(text, "commands"), !a.isEmpty else {
-            throw ProtocolError(code: .invalidArgs, message: "the batch must be a non-empty JSON array of {command, params}")
+    /// The batch's steps: `[{command, params?}]`, each allowed (`[]`: none).
+    private static func steps(text: String) throws(ProtocolError) -> [(command: String, params: [String: JSONValue], raw: JSONValue)] {
+        guard case .array(let a) = try json(text, "commands") else {
+            throw ProtocolError(code: .invalidArgs, message: "the batch must be a JSON array of {command, params}")
         }
         return try a.enumerated().map { (i, step) throws(ProtocolError) in
             guard case .object(let o) = step, case .string(let cmd)? = o["command"] else {
@@ -901,8 +911,39 @@ actor DesignService {
             default: throw ProtocolError(code: .invalidArgs, message: "batch step \(i + 1): 'params' must be an object") }
             let ok = try allowed(cmd)
             try checkParams(cmd, params)
-            return (ok, step)
+            return (ok, params, step)
         }
+    }
+
+    static let skipped = JSONValue.object(["skipped": .string("no ids")])
+    /// Engine commands that act on the current selection when `ids` is missing (edit.rs, structure.rs). An agent names
+    /// its layers: never the user's selection. ponytail: these three; the engine's other `{ids?}` commands still fall
+    /// back (agents select with select.set first).
+    static let selectionEdits: Set<String> = ["edit.delete", "edit.duplicate", "object.group"]
+    static func noIds(_ cmd: String, _ p: [String: JSONValue]) -> Bool { selectionEdits.contains(cmd) && p["ids"] == .array([]) }
+
+    /// `steps` without the `skip` indices; `{"$step": n}` renumbered to the steps sent. A reference to a skipped step
+    /// is refused (it has no result).
+    static func withoutSkipped(_ steps: [JSONValue], skip: Set<Int>) throws(ProtocolError) -> [JSONValue] {
+        var to: [Int: Int] = [:]
+        for i in steps.indices where !skip.contains(i) { to[i] = to.count }
+        func walk(_ v: JSONValue) throws(ProtocolError) -> JSONValue {
+            switch v {
+            case .object(let o):
+                if o.count == 1, case .number(let n)? = o["$step"] {
+                    guard let m = to[Int(n)] else {
+                        throw ProtocolError(code: .invalidArgs, message: "{\"$step\": \(Int(n))} refers to a step skipped for having no ids")
+                    }
+                    return .object(["$step": .number(Double(m))])
+                }
+                var out: [String: JSONValue] = [:]
+                for (k, x) in o { out[k] = try walk(x) }
+                return .object(out)
+            case .array(let a): return .array(try a.map { x throws(ProtocolError) in try walk(x) })
+            default: return v
+            }
+        }
+        return try steps.indices.filter { !skip.contains($0) }.map { i throws(ProtocolError) in try walk(steps[i]) }
     }
 
     /// The engine's refusal of a batch (an `isError` answer: it applied nothing), with the step it names: engine errors

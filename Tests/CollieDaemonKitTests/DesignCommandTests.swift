@@ -380,6 +380,72 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         }
     }
 
+    // plan 2O Task 3: an agent's empty filter result is a no-op; selection edits never fall back to the user's selection
+    @Test func emptyBatchIsNoOp() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "design.batch", ["commands": "[]"])
+            #expect(r.ok && r.result == .object(["results": .array([])]), "\(r)")
+            #expect(!fx.calls.contains { $0.hasPrefix("tools/call batch") }, "\(fx.calls)")
+        }
+    }
+
+    @Test func deleteWithEmptyIdsIsNoOp() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let skipped = JSONValue.object(["skipped": .string("no ids")])
+            let one = try await call(p, m, "design.run", ["command": "edit.delete", "params": #"{"ids": []}"#])
+            #expect(one.ok && one.result == skipped, "\(one)")
+            let alone = try await call(p, m, "design.batch", ["commands": #"[{"command":"edit.delete","params":{"ids":[]}}]"#])
+            #expect(alone.ok && alone.result == .object(["results": .array([skipped])]), "\(alone)")
+            #expect(!fx.calls.contains { $0.contains("edit.delete") || $0.hasPrefix("tools/call batch") }, "\(fx.calls)")
+            // among other steps: dropped from the engine's batch, its place kept in the results
+            let mixed = try await call(p, m, "design.batch", ["commands": #"[{"command":"node.create"},{"command":"edit.delete","params":{"ids":[]}},{"command":"node.create"}]"#])
+            #expect(mixed.result == .array([.object(["id": .number(4294967297)]), skipped, .object(["id": .number(4294967298)])]), "\(mixed)")
+        }
+    }
+
+    @Test func stepRefsRenumberedPastSkippedSteps() throws {
+        let steps: [JSONValue] = [
+            .object(["command": .string("node.create")]),
+            .object(["command": .string("edit.delete"), "params": .object(["ids": .array([])])]),
+            .object(["command": .string("node.set"), "params": .object(["ids": .array([.object(["$step": .number(0)])])])]),
+            .object(["command": .string("node.set"), "params": .object(["ids": .array([.object(["$step": .number(2)])])])]),
+        ]
+        let out = try DesignService.withoutSkipped(steps, skip: [1])
+        #expect(out == [steps[0], steps[2], .object(["command": .string("node.set"), "params": .object(["ids": .array([.object(["$step": .number(1)])])])])])
+        let toSkipped: [JSONValue] = [steps[1], .object(["command": .string("node.set"), "params": .object(["ids": .array([.object(["$step": .number(0)])])])])]
+        #expect(throws: ProtocolError.self) { try DesignService.withoutSkipped(toSkipped, skip: [0]) }
+    }
+
+    @Test func deleteWithoutIdsRefused() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            for cmd in ["edit.delete", "edit.duplicate", "object.group"] {
+                let msg = "\(cmd) needs ids: agents never act on the user's selection"
+                for params in ["{}", #"{"ids": null}"#] {
+                    let r = try await call(p, m, "design.run", ["command": cmd, "params": params])
+                    #expect(r.error == ProtocolError(code: .invalidArgs, message: msg), "\(cmd) \(params): \(r)")
+                }
+                let b = try await call(p, m, "design.batch", ["commands": #"[{"command":"node.create"},{"command":"\#(cmd)"}]"#])
+                #expect(b.error == ProtocolError(code: .invalidArgs, message: msg), "\(cmd): \(b)")
+                #expect(!fx.calls.contains { $0.contains(cmd) || $0.hasPrefix("tools/call batch") }, "\(fx.calls)")
+            }
+        }
+    }
+
+    @Test func nonArrayBatchStillRefused() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "design.batch", ["commands": "{}"])
+            #expect(r.error == ProtocolError(code: .invalidArgs, message: "the batch must be a JSON array of {command, params}"), "\(r)")
+        }
+    }
+
     @Test func batchFileStaysInCwd() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in

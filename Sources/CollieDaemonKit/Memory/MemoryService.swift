@@ -15,9 +15,16 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     private var lastOpenAttempt: Date?
     private var idx: MemoryIndex?
     private(set) var indexError: String?
+    private let embedder: (any MemoryEmbedder)?
+    private(set) var refreshes = 0   // tests
+    private var lastRefresh: Date?, lastSignature: [String] = []
+    private var backfilling = false
+    /// The longest a prompt trusts an unchanged store folder (an in-place edit or a map's repo path don't touch it).
+    static let refreshEvery: TimeInterval = 5
+    static let vectorBatch = 16
 
-    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil, secureRoot: URL? = nil) {
-        self.root = root; self.dbFile = dbFile; self.commonDir = commonDir; self.lotId = lotId
+    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil, secureRoot: URL? = nil, embedder: (any MemoryEmbedder)? = nil) {
+        self.root = root; self.dbFile = dbFile; self.commonDir = commonDir; self.lotId = lotId; self.embedder = embedder
         store = MemoryStore(dir: storeDir, secureRoot: secureRoot)
         queue = DispatchQueue(label: "collie.memory.\(storeDir.path)")
     }
@@ -59,21 +66,64 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
         }
         if idx == nil, lastOpenAttempt.map({ Date().timeIntervalSince($0) >= Self.reopenDelay }) ?? true {
             lastOpenAttempt = Date()
-            do { idx = try MemoryIndex(dbFile: dbFile, store: store, repoRoot: root); indexError = nil } catch {
+            do { idx = try MemoryIndex(dbFile: dbFile, store: store, repoRoot: root, embedder: embedder); indexError = nil } catch {
                 indexError = (error as? ProtocolError)?.message ?? "\(error)"
                 memoryLog(indexError ?? "")
             }
         }
         guard let idx else { return nil }
-        do { try idx.refresh() } catch { memoryLog("refresh \(path): \(error)") }   // stale but usable
+        // a write through the store renames into a kind folder: its mtime moves; anything else waits ≤ refreshEvery
+        let sig = signature(), now = Date()
+        if sig != lastSignature || lastRefresh.map({ now.timeIntervalSince($0) >= Self.refreshEvery }) ?? true {
+            lastSignature = sig; lastRefresh = now; refreshes += 1
+            do { try idx.refresh() } catch { memoryLog("refresh \(path): \(error)") }   // stale but usable
+            startBackfill(idx)
+        }
         return idx
+    }
+
+    /// mtimes (ns) of the store folder and its kind folders.
+    private func signature() -> [String] {
+        func m(_ p: String) -> String {
+            var st = Darwin.stat()
+            return lstat(p, &st) == 0 ? "\(st.st_mtimespec.tv_sec).\(st.st_mtimespec.tv_nsec)" : "-"
+        }
+        let dirs = ((try? FileManager.default.contentsOfDirectory(atPath: store.dir.path)) ?? []).filter { !$0.hasSuffix(".md") }.sorted()
+        return [m(store.dir.path)] + dirs.map { "\($0):" + m(store.dir.appendingPathComponent($0).path) }
+    }
+
+    /// Queue only: vectors for new/changed records are embedded in the background, never in the caller's call.
+    private func startBackfill(_ idx: MemoryIndex) {
+        guard embedder != nil, !backfilling, !idx.missingVectors(limit: 1).isEmpty else { return }
+        backfilling = true
+        Task.detached(priority: .utility) {
+            await self.fillVectors(opening: false)
+            self.queue.async { self.backfilling = false }
+        }
+    }
+
+    /// Embeds every record with no vector, `vectorBatch` at a time: the queue is held only to read or write a batch, the
+    /// model only per text (`NLMemoryEmbedder`'s lock), never across batches.
+    /// `opening`: the first batch may open the index (a direct call); the background fill never does, so a store closed
+    /// (evicted) meanwhile stays closed.
+    func fillVectors(opening: Bool = true) async {
+        guard let embedder else { return }
+        var open = opening
+        while true {
+            let first = open; open = false
+            guard let jobs = try? await run({ m in (first ? m.index() : m.idx)?.missingVectors(limit: Self.vectorBatch) ?? [] }), !jobs.isEmpty else { return }
+            let done = jobs.map { (job: $0, vector: embedder.embed($0.text)) }
+            guard let n = try? await run({ m in m.idx?.storeVectors(done) ?? 0 }), n > 0 else { return }
+        }
     }
 
     /// A lot's store exists once its first memory is written (repo/global stores: always).
     var exists: Bool { lotId == nil || FileManager.default.fileExists(atPath: store.dir.path) }
 
+    var isOpen: Bool { idx != nil }   // tests
+
     /// Queue only: closes the SQLite handle (reopened on next use).
-    func closeIndex() { idx = nil; lastOpenAttempt = nil }
+    func closeIndex() { idx = nil; lastOpenAttempt = nil; lastRefresh = nil }
 
     /// Queue only: the index or a clear error.
     func requireIndex() throws(ProtocolError) -> MemoryIndex {
@@ -106,12 +156,38 @@ actor MemoryService {
     static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código."
     static let relevantHeader = "Memória relacionada (Collie):"
 
-    init(globalDir: URL) {
-        self.globalDir = globalDir
+    nonisolated let embedder: (any MemoryEmbedder)?
+    /// Outcome scores (`<root>/learning/scores.json`, beside `memory/`): multiply relevance, feed cleanup.
+    nonisolated let scores: ScoreStore
+
+    init(globalDir: URL, embedder: (any MemoryEmbedder)? = nil) {
+        self.globalDir = globalDir; self.embedder = embedder
+        scores = ScoreStore(file: globalDir.deletingLastPathComponent().appendingPathComponent("learning/scores.json"))
         lotsDir = globalDir.deletingLastPathComponent().appendingPathComponent("lots")   // beside `work/`
         global = RepoMemory(root: nil, storeDir: globalDir,
-                            dbFile: globalDir.deletingLastPathComponent().appendingPathComponent("cache/memory.sqlite"), commonDir: nil)
+                            dbFile: globalDir.deletingLastPathComponent().appendingPathComponent("cache/memory.sqlite"), commonDir: nil,
+                            embedder: embedder)
     }
+
+    /// A query's vector: its first 1 000 characters (the prompt hook's 5 s budget); nil without a model for its language.
+    /// Async and nonisolated: runs off this actor (a model load or another embed never blocks the other terminals).
+    nonisolated func embed(_ text: String, wait: Duration? = nil) async -> (lang: String, vector: [Float])? {
+        guard let embedder else { return nil }
+        let t = String(text.prefix(1_000))
+        guard let wait else { return embedder.embed(t) }
+        // a cold model (seconds to load) must not hold the prompt: words only past `wait`; the embed finishes anyway (warms it)
+        final class Once: @unchecked Sendable {   // `lock` guards `c`
+            let lock = NSLock(); var c: CheckedContinuation<(lang: String, vector: [Float])?, Never>?
+            func resume(_ v: (lang: String, vector: [Float])?) { lock.withLock { c.take() }?.resume(returning: v) }
+        }
+        let once = Once()
+        return await withCheckedContinuation { c in
+            once.c = c
+            Task.detached { once.resume(embedder.embed(t)) }
+            Task.detached { try? await Task.sleep(for: wait); once.resume(nil) }
+        }
+    }
+    static let promptEmbedWait: Duration = .milliseconds(150)
 
     func repo(for cwd: String) async -> RepoMemory {
         if let r = byCwd[cwd] { return r }
@@ -127,7 +203,7 @@ actor MemoryService {
         let dir = LegacyOrq.repoDirName(repoRoot: common.lastPathComponent == ".git" ? common.deletingLastPathComponent() : top)
         let r = byRoot[top.path] ?? RepoMemory(root: top, storeDir: top.appendingPathComponent("\(dir)/memory"),
                                                dbFile: top.appendingPathComponent("\(dir)/cache/memory.sqlite"),
-                                               commonDir: common)
+                                               commonDir: common, embedder: embedder)
         byRoot[top.path] = r
         byCwd[cwd] = r
         return r
@@ -139,7 +215,8 @@ actor MemoryService {
         if let r = byLot[id] { return r }
         let dir = lotsDir.appendingPathComponent(id.uuidString.lowercased())
         let r = RepoMemory(root: nil, storeDir: dir.appendingPathComponent("memory"),
-                           dbFile: dir.appendingPathComponent("cache/memory.sqlite"), commonDir: nil, lotId: id, secureRoot: lotsDir)
+                           dbFile: dir.appendingPathComponent("cache/memory.sqlite"), commonDir: nil, lotId: id, secureRoot: lotsDir,
+                           embedder: embedder)
         byLot[id] = r
         return r
     }
@@ -166,10 +243,12 @@ actor MemoryService {
         return (lot.map { [lotStore($0)] } ?? []) + (r === global ? [r] : [r, global])
     }
 
-    /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set).
-    func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, limit: Int = 4096) async -> String {
+    /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set) and,
+    /// for scoring, for its open `work`.
+    func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, limit: Int = 4096) async -> String {
         let (text, ids) = await contextText(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
         injected[terminal] = (lot, ids)
+        if let work { await scores.noteInjected(ids, work: work) }
         return text
     }
 
@@ -193,18 +272,25 @@ actor MemoryService {
     /// Lot hits weigh ×1.5 over project/global ones.
     static let lotBoost = 1.5
 
-    /// Memories relevant to `prompt` not yet injected in this session; "" when nothing is.
-    func relevant(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, prompt: String, limit: Int = 2048, max: Int = 5) async -> String {
+    /// Memories relevant to `prompt` not yet injected in this session; "" when nothing is. Scores × each memory's outcome
+    /// factor; what is injected counts for `work` (scoring).
+    func relevant(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, prompt: String,
+                  limit: Int = 2048, max: Int = 5) async -> String {
         if let cur = injected[terminal], cur.lot != lot { injected[terminal] = nil }   // moved to another lot: start over
         let q = Self.significantTerms(prompt).joined(separator: " ")
         guard !q.isEmpty, max > 0 else { return "" }
-        var hits: [(hit: MemoryHit, store: RepoMemory)] = []
+        let vector = await embed(prompt, wait: Self.promptEmbedWait)   // once per prompt, for every store
+        let factors = await scores.all()
+        var cands: [MemoryIndex.Candidate] = [], from: [UUID: RepoMemory] = [:]
         for s in await readable(cwd, lot: lot) {
-            let found = (try? await s.run { m in (m.index()?.search(q, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
-            hits += found.filter { Self.visible($0.record, paddock: paddock, lot: s.lotId) }
-                .map { (MemoryHit(record: $0.record, score: $0.score * (s.lotId != nil ? Self.lotBoost : 1)), s) }
+            let found = (try? await s.run { m in (m.index()?.candidates(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
+            for var c in found where Self.visible(c.record, paddock: paddock, lot: s.lotId) {
+                c.m *= (s.lotId != nil ? Self.lotBoost : 1) * (factors[c.record.id] ?? 1)
+                cands.append(c); from[c.record.id] = s
+            }
         }
-        hits.sort { $0.hit.score > $1.hit.score }
+        // ranked across the stores together: one scale (R10)
+        let hits = MemoryIndex.rank(cands, lang: vector?.lang).map { (hit: $0, store: from[$0.record.id]!) }
         guard let top = hits.first?.hit.score, top > 0 else { return "" }
         let seen = injected[terminal]?.ids ?? []
         // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor
@@ -217,6 +303,7 @@ actor MemoryService {
         }
         guard !chosen.isEmpty else { return "" }
         injected[terminal, default: (lot, [])].ids.formUnion(chosen.map(\.hit.record.id))
+        if let work { await scores.noteInjected(Set(chosen.map(\.hit.record.id)), work: work) }
         var stores: [RepoMemory] = []
         for h in chosen where !stores.contains(where: { $0 === h.store }) { stores.append(h.store) }
         for s in stores {

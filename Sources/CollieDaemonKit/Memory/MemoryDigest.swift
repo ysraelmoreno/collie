@@ -136,14 +136,13 @@ extension CommandRouter {
         if let keep = keepNewer ? order.last : order.first {
             for b in order {
                 guard var c = await current(b.id, e) else { continue }
-                if b.id == keep.id {
-                    if c.rec.status != .active { await memory.restored([b.id]) }   // M2 (pushed once written: read at the next prompt)
-                    c.rec.status = .active; c.rec.supersededBy = nil
-                }
+                let wasInactive = c.rec.status != .active
+                if b.id == keep.id { c.rec.status = .active; c.rec.supersededBy = nil }
                 else { c.rec.status = .superseded; c.rec.supersededBy = keep.id }
                 c.rec.updatedAt = Date()
                 let rec = c.rec
                 try await c.store.run { try $0.store.write(rec) }
+                if b.id == keep.id, wasInactive { await memory.restored([b.id]) }   // M2: pushed only once on disk
             }
         }
         try digest.mark([id], undone: nil, resolved: true)

@@ -27,6 +27,7 @@ enum SandboxLaunch {
                 throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: to.path])
             }
         }
+        makeHomeDirs(EssentialPaths.homeCreates, in: input.home)
         let bin = d.appendingPathComponent("bin")
         let shim = toolShim(shims: bin.path)
         for t in toolShims { try write(shim, bin.appendingPathComponent(t), 0o755) }
@@ -35,6 +36,20 @@ enum SandboxLaunch {
         let profile = profileFile(input.terminal, root: root)
         try write(SandboxProfile.render(input), profile, 0o600)
         return profile
+    }
+
+    /// Each missing `rels` component under `home` made a real dir (0700), one `mkdir` at a time: `mkdir` never follows a
+    /// symlink, and a component that exists but isn't a directory (a planted link) stops that path.
+    static func makeHomeDirs(_ rels: [String], in home: URL) {
+        let base = SignedAppCheck.realPath(home)
+        for rel in rels {
+            var p = base, st = stat()
+            for c in rel.split(separator: "/") {
+                p += "/" + c
+                if lstat(p, &st) == 0 { if (st.st_mode & S_IFMT) != S_IFDIR { break } else { continue } }
+                guard mkdir(p, 0o700) == 0 else { break }
+            }
+        }
     }
 
     /// `env` for a sandboxed launch: the shims first on PATH, history in the terminal's own file, and for zsh the
@@ -139,6 +154,13 @@ enum SandboxLaunch {
         [[ -r $ZDOTDIR/.zshrc ]] && source $ZDOTDIR/.zshrc
         ZDOTDIR=$_collie_zd
         (( $+functions[_collie_done] )) && _collie_done
+
+        """),
+        (".zlogout", """
+        _collie_zd=$ZDOTDIR
+        ZDOTDIR=${COLLIE_USER_ZDOTDIR:-$HOME}
+        [[ -r $ZDOTDIR/.zlogout ]] && source $ZDOTDIR/.zlogout
+        ZDOTDIR=$_collie_zd
 
         """),
         (".zlogin", """

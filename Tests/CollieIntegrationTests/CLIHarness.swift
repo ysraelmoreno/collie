@@ -53,7 +53,7 @@ struct Rig {
 func withRig(_ body: (Rig) async throws -> Void) async throws {
     let root = URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))")
     defer { try? FileManager.default.removeItem(at: root) }
-    let proc = Process(); proc.executableURL = colliedURL; proc.arguments = ["--root", root.path]
+    let proc = Process(); proc.executableURL = colliedURL; proc.arguments = ["--root", root.path, "--no-terminal-sandbox"]
     proc.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"]) { $1 }
     try proc.run()
     defer { if proc.isRunning { kill(proc.processIdentifier, SIGTERM); proc.waitUntilExit() } }

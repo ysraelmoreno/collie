@@ -28,7 +28,7 @@ struct SoakTests {
     /// Per-scrollback memoryBytes is not visible outside the daemon: see AskTests.scrollbackMemoryStaysBounded.
     @Test func soakTwentyAgents() async throws {
         let root = URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))")
-        let proc = Process(); proc.executableURL = soakCollied; proc.arguments = ["--root", root.path]
+        let proc = Process(); proc.executableURL = soakCollied; proc.arguments = ["--root", root.path, "--no-terminal-sandbox"]
         proc.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"]) { $1 }
         try proc.run()
         defer {

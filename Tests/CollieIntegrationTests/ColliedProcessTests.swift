@@ -14,7 +14,7 @@ private func mode(_ u: URL) -> mode_t { var st = stat(); stat(u.path, &st); retu
 private func launch(_ root: URL) throws -> Process {
     let p = Process()
     p.executableURL = colliedURL
-    p.arguments = ["--root", root.path]
+    p.arguments = ["--root", root.path, "--no-terminal-sandbox"]
     p.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"]) { $1 }
     try p.run()
     return p
@@ -228,7 +228,7 @@ private func launch(_ root: URL) throws -> Process {
         chmod(shell.path, 0o755)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = ["collied", "--root", root.path]
+        p.arguments = ["collied", "--root", root.path, "--no-terminal-sandbox"]
         p.environment = ["PATH": colliedURL.deletingLastPathComponent().path + ":/usr/bin:/bin", "SHELL": shell.path, "HOME": NSHomeDirectory(),
                          "COLLIE_USER_ENV": "off"]
         p.currentDirectoryURL = cwd
@@ -267,7 +267,7 @@ private func launch(_ root: URL) throws -> Process {
         try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
         let fd = makeSocket(); defer { close(fd) }
         #expect(try withAddr(run.appendingPathComponent("orqd.sock").path, { bind(fd, $0, $1) }) == 0 && listen(fd, 4) == 0)
-        let p = Process(); p.executableURL = colliedURL; p.arguments = ["--root", root.path]
+        let p = Process(); p.executableURL = colliedURL; p.arguments = ["--root", root.path, "--no-terminal-sandbox"]
         p.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"]) { $1 }
         let err = Pipe(); p.standardError = err
         try p.run()
@@ -279,13 +279,28 @@ private func launch(_ root: URL) throws -> Process {
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("default-workspace").path))
     }
 
+    /// R15: any root sandboxes terminals unless `--no-terminal-sandbox`; the decision is logged. No terminal is spawned.
+    @Test func terminalSandboxOnByDefaultOnAnyRoot() async throws {
+        for (extra, want) in [([String](), "terminal sandbox on"), (["--no-terminal-sandbox"], "terminal sandbox OFF")] {
+            let root = tmpRoot(); defer { try? FileManager.default.removeItem(at: root) }
+            let p = Process(); p.executableURL = colliedURL; p.arguments = ["--root", root.path] + extra
+            p.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"]) { $1 }
+            let err = Pipe(); p.standardError = err
+            try p.run()
+            defer { if p.isRunning { kill(p.processIdentifier, SIGKILL) } }
+            #expect(await waitFor(5) { FileManager.default.fileExists(atPath: root.appendingPathComponent("run/collied.sock").path) })
+            kill(p.processIdentifier, SIGTERM); p.waitUntilExit()
+            #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).contains(want), "\(extra)")
+        }
+    }
+
     /// C1: collied without a sibling `collie` refuses to start.
     @Test func colliedFailsFastWithoutCollie() async throws {
         let dir = tmpRoot(); defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let lone = dir.appendingPathComponent("collied")
         try FileManager.default.copyItem(at: colliedURL, to: lone)
-        let p = Process(); p.executableURL = lone; p.arguments = ["--root", dir.appendingPathComponent("root").path]
+        let p = Process(); p.executableURL = lone; p.arguments = ["--root", dir.appendingPathComponent("root").path, "--no-terminal-sandbox"]
         let err = Pipe(); p.standardError = err
         try p.run()
         let done = await waitFor(5) { !p.isRunning }

@@ -84,8 +84,21 @@ actor UsageService {
             .map { sandbox.appendingPathComponent("\($0)/state/usage/\(name)").path }
             .compactMap { p in regular(p).map { (p, $0) } }.max { $0.1 < $1.1 }
         guard let (p, t) = newest, t > (regular(usageDir.appendingPathComponent(name).path) ?? .distantPast),
-              let d = fm.contents(atPath: p), d.count < 64 << 10, (try? JSONSerialization.jsonObject(with: d)) is [String: Any] else { return }
-        try? ClaudeRateLimits.write(d, to: usageDir)
+              let d = Self.readSmallRegular(p), (try? JSONSerialization.jsonObject(with: d)) is [String: Any] else { return }
+        try? ClaudeRateLimits.write(d, to: usageDir)   // ponytail: an agent can still fake its own numbers (R16, accepted)
+    }
+
+    /// M1: the agent can swap the file between the check and the read: one fd, never a link, never blocking (a FIFO),
+    /// regular by fstat, at most 64 KiB.
+    static func readSmallRegular(_ path: String, cap: Int = 64 << 10) -> Data? {
+        let fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, st.st_size < cap else { return nil }
+        var buf = [UInt8](repeating: 0, count: cap)
+        let n = read(fd, &buf, cap)
+        return n >= 0 && n < cap ? Data(buf[0..<n]) : nil
     }
 
     private static func fetch(_ p: UsageProvider, usageDir: URL) async -> UsageReport {

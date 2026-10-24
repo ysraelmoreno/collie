@@ -341,8 +341,10 @@ roda (hooks git, provedores de uso); um processo que não consegue identificar t
 `collie` nem lê o arquivo. Limite: isso não isola processos do mesmo usuário: um agente que consiga parar e reiniciar o
 daemon (ou rodar outro daemon sobre os mesmos dados, por exemplo o `collied` verdadeiro copiado num bundle falso) obtém
 admin. O sandbox dos terminais (plano 4S) estreita isso ao negar aos agentes sinais para o daemon, o LaunchAgent e o
-diretório de dados do Collie, mas um agente que use as saídas que ele deixa abertas (`launchctl submit`, `open`,
-`osascript`) ainda consegue. Isolamento de verdade exige os agentes sob outro usuário do macOS.
+diretório de dados do Collie, mas um agente que use as saídas que ele deixa abertas ainda consegue: `osascript`; o
+`launchctl` e o `open` são bloqueados só pelo caminho (`/bin/launchctl`, `/usr/bin/open`), então uma cópia do binário
+roda (defesa em profundidade, não uma fronteira); e o Keychain fica acessível (o `security` roda, para o Claude manter o
+login), então um agente pode ler sem aviso itens guardados por ele (gh e parecidos). Isolamento de verdade exige os agentes sob outro usuário do macOS.
 
 ## Ferramentas do Collie no agente
 

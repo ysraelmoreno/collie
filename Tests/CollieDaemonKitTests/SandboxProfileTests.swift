@@ -33,7 +33,7 @@ final class FakeHome {
                   "code/other/x", "Library/Application Support/Collie/admin.token",
                   "Library/Application Support/Collie/workspaces/w/workspace.json",
                   "Library/Application Support/Collie/hooks/\(id.uuidString).claude.json", "Library/Application Support/Collie/hooks/other.claude.json"] {
-            try file(f)
+            try file(f, f == ".gitconfig" ? "[core]\n" : "x\n")
         }
         for d in ["Library/Caches", "Library/Preferences", ".claude/projects", ".codex/sessions", "Library/Application Support/Collie/run"] {
             try fm.createDirectory(at: home.appendingPathComponent(d), withIntermediateDirectories: true)
@@ -162,6 +162,11 @@ final class FakeHome {
         #expect(try !f.ok(p, "mkdir -p \(g)/info; echo '* filter=x' > \(g)/info/attributes"))
         #expect(try !f.ok(p, "mv \(g) \(g)old"))
         #expect(try !f.ok(p, "echo x > \(g)/worktrees/p/commondir"))
+        // C1: commondir in any git dir redirects config + hooks for the user's own git
+        #expect(try !f.ok(p, "echo /private/tmp/evil.git > \(g)/commondir"))
+        #expect(try !f.ok(p, "mkdir -p \(g)/modules/sub && echo x > \(g)/modules/sub/commondir"))
+        let common = try f.run(p, "git rev-parse --git-common-dir").out
+        #expect(common.trimmingCharacters(in: .whitespacesAndNewlines) == ".git", "\(common)")
         #expect(try f.ok(p, "echo x >> README && git add README && git commit -qm t"))   // a plain commit still works
         // a non-git project can't get a planted .git pointer either
         let plain = f.home.appendingPathComponent("code/plain")
@@ -196,7 +201,9 @@ final class FakeHome {
 
     @Test func globalAgentConfigReadOnlyAndAgentStateWritable() throws {
         let f = try FakeHome(), p = try f.profile(f.input())
-        for r in [".claude/settings.json", ".claude/CLAUDE.md", ".claude.json", ".codex/config.toml"] {
+        // R13 (user decision): ~/.claude.json is writable (Claude rewrites it atomically on every start)
+        #expect(try f.ok(p, "echo '{}' > \(f.h(".claude.json.tmp.1")) && mv \(f.h(".claude.json.tmp.1")) \(f.h(".claude.json"))"))
+        for r in [".claude/settings.json", ".claude/CLAUDE.md", ".codex/config.toml"] {
             #expect(try f.ok(p, "cat \(f.h(r))"), "\(r)")
             #expect(try !f.ok(p, "echo x >> \(f.h(r))"), "\(r)")
         }
@@ -216,21 +223,49 @@ final class FakeHome {
         #expect(try f.ok(p, "mkdir -p \(f.h(".swiftpm/cache/x"))"))
     }
 
+    /// I1: missing parents are made real dirs by the daemon; the agent can't plant a symlink there instead.
+    @Test func missingHomeDirsAreRealDirs() throws {
+        let f = try FakeHome()
+        let local = f.home.appendingPathComponent(".local")
+        #expect(!FileManager.default.fileExists(atPath: local.path))
+        let p = try f.profile(f.input())
+        var st = stat()
+        #expect(lstat(local.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        #expect(lstat(f.home.appendingPathComponent("Library/Developer/Xcode").path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        #expect(try !f.ok(p, "rmdir \(f.h(".local/state")) 2>/dev/null; rmdir \(f.h(".local")) && ln -s /private/tmp \(f.h(".local"))"))
+        #expect(try !f.ok(p, "ln -s /private/tmp \(f.h(".cargo2"))"))
+        #expect(lstat(local.path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
+        // a symlink already there is never followed by the daemon's mkdir
+        let g = try FakeHome()
+        let out = g.base.appendingPathComponent("elsewhere")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: g.home.appendingPathComponent(".cargo"), withDestinationURL: out)
+        _ = try g.profile(g.input())
+        #expect((try? FileManager.default.contentsOfDirectory(atPath: out.path))?.isEmpty == true)
+    }
+
     @Test func projectAgentConfigWritable() throws {
         let f = try FakeHome(), p = try f.profile(f.input())
         #expect(try f.ok(p, "mkdir -p .claude .codex .cursor .vscode && echo '{}' > .claude/settings.json && echo '{}' > .mcp.json && echo x > .envrc && echo x > .vscode/settings.json"))
     }
 
-    @Test func securityLaunchctlAndOpenExecDenied() throws {
+    @Test func launchctlAndOpenExecDenied() throws {
         let f = try FakeHome(), p = try f.profile(f.input())
         let text = try String(contentsOf: p, encoding: .utf8)
-        #expect(text.contains(#"(literal "/usr/bin/security")"#) && text.contains(#"(literal "/bin/launchctl")"#) && text.contains(#"(literal "/usr/bin/open")"#))
-        // the kernel refuses the exec itself: none of these runs (exit 126)
-        #expect(try f.run(p, "/usr/bin/security help").status == 126)
+        #expect(text.contains(#"(literal "/bin/launchctl")"#) && text.contains(#"(literal "/usr/bin/open")"#))
+        // the kernel refuses the exec itself: neither runs (exit 126). R14: by path only, defence in depth
         #expect(try f.run(p, "/bin/launchctl help").status == 126)
         #expect(try f.run(p, "/usr/bin/open -h").status == 126)
         #expect(try f.ok(p, "/usr/bin/osascript -e 'return 1' >/dev/null"))   // accepted, stays open
         #expect(try f.ok(p, "/bin/ps -p $$ >/dev/null"))   // setuid ps runs (no-sandbox)
+    }
+
+    /// R12 (user decision): Claude keeps its Keychain login: the security CLI runs, the keychain files are writable.
+    @Test func securityExecAllowed() throws {
+        let f = try FakeHome(), p = try f.profile(f.input())
+        #expect(try f.run(p, "/usr/bin/security help >/dev/null 2>&1").status != 126)
+        #expect(!(try String(contentsOf: p, encoding: .utf8)).contains(#"(literal "/usr/bin/security")"#))
+        #expect(try f.ok(p, "mkdir -p \(f.h("Library/Keychains")) && echo x > \(f.h("Library/Keychains/probe-db"))"))
     }
 
     @Test func signalOthersDenied() throws {
@@ -360,6 +395,25 @@ final class FakeHome {
         #expect(try run(s, "command -v open") == s.2.appendingPathComponent("open").path)
     }
 
+    /// M4: the user's own .zlogout still runs at logout.
+    @Test func userZlogoutRuns() throws {
+        let f = try FakeHome(git: false)
+        _ = try SandboxLaunch.prepare(f.input(project: f.base), root: f.collie, collie: URL(fileURLWithPath: "/usr/bin/true"))
+        try "echo ZLOGOUT-RAN\n".write(to: f.home.appendingPathComponent(".zlogout"), atomically: false, encoding: .utf8)
+        var e = SandboxLaunch.environment(["PATH": "/usr/bin:/bin"], id: f.id, root: f.collie, shell: "/bin/zsh", home: f.home)
+        e["COLLIE_SHIMS"] = "/nonexistent"
+        let p = Process(), pipe = Pipe()
+        // an interactive login shell whose ZDOTDIR is still Collie's at exit (zsh reads .zlogout from the current one)
+        let input = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/bin/zsh"); p.arguments = ["-il"]
+        p.environment = e.merging(["COLLIE_ZD_PROBE": e["ZDOTDIR"]!]) { $1 }
+        p.standardInput = input; p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
+        try p.run()
+        input.fileHandleForWriting.write(Data("ZDOTDIR=$COLLIE_ZD_PROBE; exit\n".utf8)); try input.fileHandleForWriting.close()
+        let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+        #expect(String(decoding: d, as: UTF8.self).contains("ZLOGOUT-RAN"))
+    }
+
     @Test func shimDirIsReadOnlyAndFirstOnPath() throws {
         let f = try FakeHome(git: false)
         let e = SandboxLaunch.environment(["PATH": "/usr/bin:/bin", "ZDOTDIR": "/z"], id: f.id, root: f.collie, shell: "/bin/zsh", home: f.home)
@@ -390,9 +444,14 @@ final class FakeHome {
         let secret = root.appendingPathComponent("secret.json"); try #"{"auth":"x"}"#.write(to: secret, atomically: false, encoding: .utf8)
         let c = root.appendingPathComponent("sandbox/c/state/usage"); try fm.createDirectory(at: c, withIntermediateDirectories: true)
         try fm.createSymbolicLink(at: c.appendingPathComponent(ClaudeRateLimits.fileName), withDestinationURL: secret)   // never followed
+        // M1: a FIFO (newer than all) is skipped without blocking the actor
+        let fifo = root.appendingPathComponent("sandbox/d/state/usage"); try fm.createDirectory(at: fifo, withIntermediateDirectories: true)
+        #expect(mkfifo(fifo.appendingPathComponent(ClaudeRateLimits.fileName).path, 0o600) == 0)
         await svc.collectSandboxed()
         let got = try String(contentsOf: root.appendingPathComponent("usage/\(ClaudeRateLimits.fileName)"), encoding: .utf8)
         #expect(got.contains("\"used_percentage\":2"))
+        #expect(UsageService.readSmallRegular(fifo.appendingPathComponent(ClaudeRateLimits.fileName).path) == nil)   // never blocks
+        #expect(UsageService.readSmallRegular(c.appendingPathComponent(ClaudeRateLimits.fileName).path) == nil)   // never a link
     }
 }
 

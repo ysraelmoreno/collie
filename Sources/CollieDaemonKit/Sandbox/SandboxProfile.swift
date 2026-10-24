@@ -89,7 +89,6 @@ enum SandboxProfile {
             out.append("(\(verb) \(op)\(tagged ? " " + tag : "")\n  " + filters.joined(separator: "\n  ") + ")")
         }
         let grants = i.grants.map { (path: real(URL(fileURLWithPath: $0.path)), access: $0.access) }
-        let fm = FileManager.default
 
         out.append(";; reads: the home is closed; tool essentials, the project and its git re-opened")
         rule("deny", "file-read*", tagged: true, [sub(home)])
@@ -110,7 +109,6 @@ enum SandboxProfile {
              + ["/dev/null", "/dev/zero", "/dev/dtracehelper", "/dev/tty", "/dev/ptmx"].map(lit) + [rx("^/dev/ttys[0-9]+$"), rx("^/dev/fd/")])
         rule("deny", "file-write*", tagged: true, [sub(home)] + [common].compactMap { $0.map(sub) })
         var writes = [sub(project)] + EssentialPaths.homeWrites.map { entry(home, $0) }
-        writes += EssentialPaths.homeCreates.map { home + "/" + $0 }.filter { !fm.fileExists(atPath: $0) }.map(lit)
         if let common {
             if let worktree {   // a worktree commits through the common dir; its own git dir is its index/HEAD
                 writes += ["objects", "refs", "logs"].map { sub(common + "/" + $0) }
@@ -131,9 +129,9 @@ enum SandboxProfile {
             let c = re(common)
             rule("deny", "file-write*", tagged: true, [
                 lit(common), lit(project + "/.git"), sub(common + "/hooks"), lit(common + "/config"),
-                lit(common + "/config.worktree"), lit(common + "/info/attributes"),
+                lit(common + "/config.worktree"), lit(common + "/info/attributes"), lit(common + "/commondir"),
                 rx("^" + c + "/worktrees/[^/]+/(commondir|gitdir|config\\.worktree)$"),
-                rx("^" + c + "/modules/.+/(hooks(/|$)|config$|config\\.worktree$|info/attributes$)"),
+                rx("^" + c + "/modules/.+/(hooks(/|$)|config$|config\\.worktree$|commondir$|info/attributes$)"),
             ])
         } else {
             rule("deny", "file-write*", tagged: true, [lit(project + "/.git")])   // no planting a pointer in a non-git project
@@ -146,8 +144,9 @@ enum SandboxProfile {
         rule("deny", "network-outbound", tagged: true, ["(remote unix-socket \(sub(collie)))"])
         rule("allow", "network-outbound", ["(remote unix-socket (path-literal \(q(real(i.socket)))))"])
 
-        out.append(";; processes: no keychain CLI, no launchd, no LaunchServices `open` (the shim asks the daemon); no signals out")
-        rule("deny", "process-exec", tagged: true, [lit("/usr/bin/security"), lit("/bin/launchctl"), lit("/usr/bin/open")])
+        // R14: by path only (a copy of the binary runs): defence in depth, not a boundary. R12: `security` stays (Keychain logins)
+        out.append(";; processes: no launchd, no LaunchServices `open` (the shim asks the daemon); no signals out")
+        rule("deny", "process-exec", tagged: true, [lit("/bin/launchctl"), lit("/usr/bin/open")])
         out.append("(allow process-exec (literal \"/bin/ps\") (with no-sandbox))   ; setuid: a sandboxed exec of it fails otherwise")
         out.append("(deny signal \(tag))")
         out.append("(allow signal (target same-sandbox))")

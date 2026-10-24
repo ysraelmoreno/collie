@@ -17,14 +17,14 @@ enum EssentialPaths {
         ".nvm", ".npm", ".npmrc", ".yarnrc", ".yarn", ".pnpm-store", ".bun", ".deno", ".volta", ".fnm",
         ".pyenv", ".cache", ".rbenv", ".gem", ".cargo", ".rustup", "go", ".local/bin", ".local/share/pnpm",
         // swift / xcode
-        ".swiftpm", ".swiftly", "Library/org.swift.swiftpm", "Library/Developer", "Library/Keychains",
+        ".swiftpm", ".swiftly", "Library/org.swift.swiftpm", "Library/Developer",
         "Library/Caches/org.swift.swiftpm", "Library/Caches/com.apple.dt.*", "Library/Caches/CocoaPods",
         "Library/Caches/Homebrew", "Library/Caches/claude-cli-nodejs", "Library/Caches/node-gyp", "Library/Caches/pip",
         "Library/Caches/pnpm", "Library/Caches/Yarn", "Library/Caches/ms-playwright", "Library/Caches/bun",
         "Library/Caches/typescript", "Library/Caches/go-build", "Library/Caches/deno", "Library/Caches/com.apple.python",
         "Library/Caches/org.carthage.CarthageKit",
         // agents: binaries, state and (read-only) config
-        ".local/share/claude", ".local/state/claude", ".claude", ".claude.json", ".claude.json.backup",
+        ".local/share/claude", ".local/state/claude", ".claude",
         ".codex", ".cursor", ".config/cursor",
     ]
 
@@ -42,6 +42,10 @@ enum EssentialPaths {
         "Library/Caches/pnpm", "Library/Caches/Yarn", "Library/Caches/ms-playwright", "Library/Caches/bun",
         "Library/Caches/typescript", "Library/Caches/go-build", "Library/Caches/deno", "Library/Caches/com.apple.python",
         "Library/Caches/org.carthage.CarthageKit",
+        // R12 (user decision): the keychain files, so tokens refresh (any agent can read keychain items: accepted)
+        "Library/Keychains",
+        // R13 (user decision): ~/.claude.json (+ its atomic-write temp and backup); an agent can plant a global MCP server: accepted
+        ".claude.json*",
         // agent state (sessions, history, todos, caches); their config stays read-only
         ".claude/projects", ".claude/todos", ".claude/shell-snapshots", ".claude/statsig", ".claude/session-env",
         ".claude/ide", ".claude/debug", ".claude/file-history", ".claude/plans", ".claude/paste-cache", ".claude/logs",
@@ -51,9 +55,9 @@ enum EssentialPaths {
         ".cursor/chats", ".cursor/projects",
     ]
 
-    /// Parents of `homeWrites` a tool may have to create (`mkdir`): allowed only while missing at launch, so an
-    /// existing one (the user's config) can't be renamed away.
-    static let homeCreates = [".swiftpm", "Library/org.swift.swiftpm", "Library/Developer", "Library/Developer/Xcode",
+    /// Parents of `homeWrites` a tool may need: the daemon makes the missing ones real directories before launch
+    /// (never through a symlink). The profile never lets the agent create them: it could plant a symlink instead (I1).
+    static let homeCreates = [".swiftpm", "Library/org.swift.swiftpm", "Library/Developer", "Library/Developer/Xcode", "Library/Keychains",
                               ".claude", ".codex", ".cursor", ".local", ".local/state", ".bun", ".bun/install", ".cargo", "go"]
 
     /// Closed even when a grant covers them.

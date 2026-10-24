@@ -19,7 +19,7 @@
 - Secrets closed: `~/.ssh` key files (`id_*`, other private keys; `known_hosts`/`config` readable), `~/.aws`, `~/.config/gh`, `~/.netrc`, `~/.docker/config.json`, browser profiles; exec of `/usr/bin/security` denied. `SSH_AUTH_SOCK` usable.
 - Collie internals never writable: app bundle, `~/Library/Application Support/Collie` (and the `Orq` symlink) except that terminal's generated files (read) and the daemon socket (connect), `~/Library/LaunchAgents/dev.collie.daemon.plist`; no signals to processes outside the terminal's sandbox.
 - Global agent config read-only (`~/.claude/settings.json`, `~/.claude/hooks`, skills, commands, plugins, `~/.claude/CLAUDE.md`, `~/.claude.json`, `~/.codex/config.toml`); agent state dirs writable (`~/.claude/projects`, todos, shell-snapshots, statsig, session files; `~/.codex/sessions`, logs). Project agent config writable (user decision).
-- System-service escapes (`open`, `osascript`, `launchctl submit`, Docker socket) stay open — accepted risk, documented (user decision).
+- `launchctl` closed (exec of `/bin/launchctl` denied); `open` of scripts/executables closed: `/usr/bin/open` exec denied, an `open` PATH shim calls `collie open <url|app>` which the daemon performs only for http(s)/mailto URLs and `.app` bundles (user decision, revised). `osascript` and the Docker socket stay open — accepted risk, documented.
 - Grants: explicit user click only; per terminal by default, optional "para o lote"; persisted; summoned/herd terminals don't inherit terminal-level grants. Widening = restart with resume (no private SPI).
 - Free terminal ("Terminal livre (sem sandbox)"): created only by the app; never by agents, `summon` or herds; no leash may reach it; marked on the canvas.
 - Leashes stay the only permission; no change to reach. Nothing deleted automatically. UI copy pt-BR in the Collie vocabulary. Never launch the real app or real agents in tests; tests use temp dirs and `sandbox-exec` with small probe commands.
@@ -57,7 +57,7 @@
 
 ### Task 3: Profile rendering + launch
 
-**Files:** Create `Sources/CollieDaemonKit/Sandbox/SandboxProfile.swift`, `Sources/CollieDaemonKit/Sandbox/EssentialPaths.swift`; modify `Sources/collie-ctty/main.swift` (optional `--sandbox <profile-path>` before the command), `TerminalRegistry.swift` / `CommandRouter.swift` (render to `<root>/sandbox/<terminal-id>.sb` 0600, pass to ctty), `AgentLaunch.swift` (inner-sandbox flags per Task 1). Test: `Tests/CollieDaemonKitTests/SandboxProfileTests.swift` (renders + runs probes through `sandbox-exec`).
+**Files:** Create `Sources/CollieDaemonKit/Sandbox/OpenCommand.swift` (`open` shim target: `collie open` → daemon validates URL scheme / `.app` bundle and opens it outside the sandbox; scripts, executables, `.command`/`.tool`, documents → refused), `Sources/CollieDaemonKit/Sandbox/SandboxProfile.swift`, `Sources/CollieDaemonKit/Sandbox/EssentialPaths.swift`; modify `Sources/collie-ctty/main.swift` (optional `--sandbox <profile-path>` before the command), `TerminalRegistry.swift` / `CommandRouter.swift` (render to `<root>/sandbox/<terminal-id>.sb` 0600, pass to ctty), `AgentLaunch.swift` (inner-sandbox flags per Task 1). Test: `Tests/CollieDaemonKitTests/SandboxProfileTests.swift` (renders + runs probes through `sandbox-exec`).
 
 **Interfaces:**
 - Consumes: `ProjectRoot` (Task 2), Task 1's essential-path list and nesting decision.

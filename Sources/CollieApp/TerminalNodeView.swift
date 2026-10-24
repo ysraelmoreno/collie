@@ -23,6 +23,8 @@ import CollieTheme
     private let model = NodeModel()
     private var title: TitleHost<NodeTitleBar>!
     private let corner = DragHandle()
+    /// Overlay on the body's bottom edge (never part of the terminal's frame: no PTY resize when it shows).
+    private let strip: NSHostingView<AccessStrip>
     private let leash = LeashHandle()
     /// Leash drag from this node's handle: window-space point, and whether the mouse was released.
     var onLeashDrag: ((UUID, CGPoint, Bool) -> Void)?
@@ -37,6 +39,7 @@ import CollieTheme
 
     init(id: UUID, client: DaemonClient, canvas: CanvasState, node: NodeController) {
         self.id = id; self.client = client; self.canvas = canvas; self.node = node
+        strip = NSHostingView(rootView: AccessStrip(id: id, client: client))
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 14
@@ -55,6 +58,8 @@ import CollieTheme
         corner.onMouseUp = { [weak self] in self?.bringToFront() }
         corner.onDrag = { [weak self] d in self?.resize(d) }
         addSubview(title)
+        addSubview(strip)
+        strip.isHidden = true
         addSubview(corner)
         leash.onDrag = { [weak self] p, done in if let self { self.onLeashDrag?(self.id, p, done) } }
         addSubview(leash)
@@ -72,9 +77,16 @@ import CollieTheme
 
     /// Re-runs `applyChrome` whenever this node's badge changes (the attention border).
     private func observeChrome() {
-        withObservationTracking { applyChrome() } onChange: { [weak self] in
+        withObservationTracking { applyChrome(); updateStrip() } onChange: { [weak self] in
             Task { @MainActor in self?.observeChrome() }
         }
+    }
+
+    /// Shown only for a sandboxed terminal with open cards and the live terminal mounted (zoom >= 0.5).
+    private func updateStrip() {
+        let sandboxed = client.terminals.first { $0.id == id }.map { $0.sandbox != .free } ?? false
+        let show = sandboxed && term != nil && AccessStrip.Model(cards: client.accessCards.filter { $0.terminal == id }).kind != .none
+        if strip.isHidden == show { strip.isHidden = !show; needsLayout = true }
     }
 
     /// Layer colors are fixed `cgColor`s: resolved here under the view's appearance, again on every theme change.
@@ -157,7 +169,7 @@ import CollieTheme
             t.terminalDelegate = self
             t.onClick = { [weak self] in self?.focus() }
             t.onMouseUp = { [weak self] in self?.bringToFront() }
-            addSubview(t, positioned: .below, relativeTo: corner)
+            addSubview(t, positioned: .below, relativeTo: strip)
             term = t
             startReader()
         } else if !on, label == nil {
@@ -168,9 +180,10 @@ import CollieTheme
             l.textColor = CollieColor.muted
             l.lineBreakMode = .byTruncatingTail
             l.font = CollieFont.ui(13 / canvas.zoom, .semibold)   // counter-scaled: 13 screen pt at any zoom
-            addSubview(l, positioned: .below, relativeTo: corner)
+            addSubview(l, positioned: .below, relativeTo: strip)
             label = l
         }
+        updateStrip()
         needsLayout = true
     }
 
@@ -261,6 +274,7 @@ import CollieTheme
             t.frame = bodyFrame
             Log.canvas.debug("grid \(self.id) frame \(self.bodyFrame.size.debugDescription, privacy: .public) dims \(t.terminalDimensions.cols)x\(t.terminalDimensions.rows) live \(self.inLiveResize)")
         }
+        strip.frame = CGRect(x: 0, y: bounds.height - AccessStrip.height, width: bounds.width, height: AccessStrip.height)
         label?.frame = bodyFrame.insetBy(dx: 4, dy: max(bodyFrame.height / 2 - 10 / canvas.zoom, 0))
         leash.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = Self.cornerFrame(bounds)

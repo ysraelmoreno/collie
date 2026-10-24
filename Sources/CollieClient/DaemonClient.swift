@@ -300,6 +300,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         accessCards.removeAll { Self.sameCard($0, card) }
         _ = try await admin("access.deny", ["terminal": .string(card.terminal.uuidString), "op": .string(card.op), "path": .string(card.path)])
     }
+    /// **Dispensar**: denies every card in `cards`.
+    public func denyAll(_ cards: [SandboxDenial]) async throws { for c in cards { try await deny(c) } }
     /// Removes a grant; the running terminals it reached restart without it.
     public func revoke(_ grant: SandboxGrant) async throws {
         defer { Task { await refreshAccess() } }

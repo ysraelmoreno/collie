@@ -34,10 +34,21 @@ enum AccessCopy {
 
 /// The title-bar entry of a sandboxed terminal's access: its open cards (attention) or its grants, and the
 /// "detecção indisponível" state. Opens `AccessPopover`.
+/// Which terminals' access popovers are open: the tag, the node's strip (and a notification click) share it.
+@MainActor @Observable final class AccessPopoverState {
+    static let shared = AccessPopoverState()
+    var open: Set<UUID> = []
+    /// Called when the tag or the terminal goes away: SwiftUI never runs the binding setter on teardown.
+    func close(_ id: UUID) { open.remove(id) }
+    func binding(_ id: UUID) -> Binding<Bool> {
+        Binding(get: { self.open.contains(id) }, set: { if $0 { self.open.insert(id) } else { self.open.remove(id) } })
+    }
+}
+
 struct AccessBadge: View {
     let id: UUID
     let client: DaemonClient
-    @State private var open = false
+    @State private var hover = false
 
     var body: some View {
         let cards = client.accessCards.filter { $0.terminal == id }
@@ -48,14 +59,67 @@ struct AccessBadge: View {
                     .help("O Collie não está vendo os bloqueios do sandbox agora (log stream parado; tentando de novo). Os bloqueios continuam valendo.")
             }
             if !cards.isEmpty || !mine.isEmpty {
-                Button { open = true } label: {
-                    CollieTag(cards.isEmpty ? "liberados \(mine.count)" : "acesso \(cards.count)", tone: cards.isEmpty ? .secondary : .attention)
+                let open = AccessPopoverState.shared.binding(id)
+                Button { open.wrappedValue = true } label: {
+                    HStack(spacing: 3) {
+                        CollieTag(cards.isEmpty ? "liberados \(mine.count)" : "acesso \(cards.count)", tone: cards.isEmpty ? .secondary : .attention)
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.collieMuted)
+                    }
+                    .padding(.horizontal, 2).padding(.vertical, 1)
+                    .background(hover ? Color.collieText.opacity(0.1) : .clear, in: .rect(cornerRadius: 6))
                 }
-                .buttonStyle(.plain).help(cards.isEmpty ? "Caminhos liberados para este terminal" : "O agente tentou acessar fora do sandbox")
-                .popover(isPresented: $open, arrowEdge: .bottom) { AccessPopover(id: id, client: client) }
+                .buttonStyle(.plain).onHover { hover = $0 }
+                .onDisappear { AccessPopoverState.shared.close(id) }
+                .help(cards.isEmpty ? "Caminhos liberados para este terminal" : "O agente tentou acessar fora do sandbox")
+                .popover(isPresented: open, arrowEdge: .bottom) { AccessPopover(id: id, client: client) }
             }
         }
     }
+}
+
+/// The 28 pt strip over the bottom of a sandboxed node's terminal while it has open cards.
+struct AccessStrip: View {
+    struct Model: Equatable {
+        enum Kind: Equatable { case none, pending(Int), refusedOnly(Int) }
+        let kind: Kind
+        init(cards: [SandboxDenial]) {
+            let grantable = cards.filter { $0.refusal == nil }.count
+            kind = grantable > 0 ? .pending(grantable) : cards.isEmpty ? .none : .refusedOnly(cards.count)
+        }
+        var text: String {
+            switch kind {
+            case .none: ""
+            case .pending(1): "O agente pediu acesso — ver"
+            case .pending(let n): "\(n) pedidos de acesso — ver"
+            case .refusedOnly(1): "1 acesso bloqueado de propósito"
+            case .refusedOnly(let n): "\(n) acessos bloqueados de propósito"
+            }
+        }
+    }
+    static let height: CGFloat = 28
+    let id: UUID
+    let client: DaemonClient
+
+    var body: some View {
+        let cards = client.accessCards.filter { $0.terminal == id }
+        let m = Model(cards: cards)
+        HStack(spacing: 8) {
+            Text(m.text).font(.collieUI(12, .medium)).lineLimit(1)
+            Spacer(minLength: 0)
+            switch m.kind {
+            case .none: EmptyView()
+            case .pending: Button("Ver") { AccessPopoverState.shared.open.insert(id) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small)
+            case .refusedOnly:
+                Button("Dispensar") { Task { do { try await client.denyAll(cards) } catch { Log.canvas.error("dispensar: \(error)") } } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+            }
+        }
+        .foregroundStyle(m.kind == .none || isPending(m.kind) ? Color.collieText : Color.collieTextSecondary)
+        .padding(.leading, 10).padding(.trailing, 26)   // clear of the node's resize corner (14 pt at 4 pt from the edge)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(isPending(m.kind) ? Color.collieAttention.opacity(0.9) : Color.collieSidebar)
+        .help(isPending(m.kind) ? "" : "Pastas do próprio Collie e segredos nunca são liberadas")
+    }
+    private func isPending(_ k: Model.Kind) -> Bool { if case .pending = k { true } else { false } }
 }
 
 /// The node's cards (newest last) and the terminal's own grants with **Revogar**.
@@ -66,15 +130,18 @@ struct AccessPopover: View {
     var body: some View {
         let cards = client.accessCards.filter { $0.terminal == id }
         let mine = client.grants.filter { $0.scope == .terminal && $0.owner == id }
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(cards, id: \.cardId) { AccessCard(card: $0, client: client) }
+                ForEach(cards, id: \.cardId) { AccessCard(card: $0, client: client).id($0.cardId) }
                 if !mine.isEmpty {
                     Text("LIBERADOS PARA ESTE TERMINAL").font(.collieMono(10)).kerning(1.2).foregroundStyle(Color.collieMuted)
                     ForEach(mine) { GrantRow(grant: $0, client: client) }
                 }
             }
             .padding(12)
+        }
+        .onAppear { if let last = cards.last { proxy.scrollTo(last.cardId, anchor: .bottom) } }
         }
         .frame(width: 440).frame(maxHeight: 520)
     }

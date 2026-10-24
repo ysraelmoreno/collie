@@ -1,6 +1,18 @@
 import AppKit
 @preconcurrency import UserNotifications
 import os
+import CollieCore
+
+/// At most one access notification per terminal per 30 s (a denial storm becomes one, then the strip's count).
+struct AccessNotifyGate {
+    static let window: TimeInterval = 30
+    private var last: [UUID: Date] = [:]
+    mutating func shouldPost(terminal: UUID, at now: Date = Date()) -> Bool {
+        if let t = last[terminal], now.timeIntervalSince(t) < Self.window { return false }
+        last[terminal] = now
+        return true
+    }
+}
 
 /// macOS notification when a terminal needs attention; clicking it calls `onFocus` with the terminal id.
 /// Never throws or blocks: an unbundled run, a denied permission or a failed post is only logged.
@@ -15,6 +27,14 @@ import os
     override init() {
         super.init()
         center?.delegate = self   // set at launch so a click that relaunches the app is delivered
+    }
+
+    private var accessGate = AccessNotifyGate()
+    /// One per new card, throttled per terminal. Body: the verb and the path's last two components only.
+    func notifyAccess(_ d: SandboxDenial, name: String) {
+        guard accessGate.shouldPost(terminal: d.terminal) else { return }
+        let tail = d.path.split(separator: "/").suffix(2).joined(separator: "/")
+        notify(d.terminal, title: "\(AccessCopy.shown(name)) pediu acesso", body: "Quer \(AccessCopy.verb(d.op)) …/\(AccessCopy.shown(tail))")
     }
 
     func notify(_ id: UUID, name: String, reason: String) { notify(id, title: "\(name) precisa de atenção", body: reason) }

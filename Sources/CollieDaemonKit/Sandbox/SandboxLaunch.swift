@@ -1,11 +1,53 @@
 import Foundation
 
 /// The files a sandboxed terminal starts with, under `<root>/sandbox/`: `<id>.sb` (its profile, 0600) and `<id>/`
-/// (readable inside the sandbox): `bin/` tool shims (R3, R4), `zsh/` startup files, `state/` (the only writable part:
-/// shell history).
+/// (readable inside the sandbox): `bin/` tool shims (R3, R4), `zsh/` startup files, `files/` (`handOver`), `state/` (the only
+/// writable part: shell history).
 enum SandboxLaunch {
     static func dir(_ id: UUID, root: URL) -> URL { root.appendingPathComponent("sandbox").appendingPathComponent(id.uuidString) }
     static func profileFile(_ id: UUID, root: URL) -> URL { root.appendingPathComponent("sandbox").appendingPathComponent("\(id.uuidString).sb") }
+    /// Files the daemon made for the terminal (`handOver`): readable inside its sandbox (under `dir`), not writable.
+    static func filesDir(_ id: UUID, root: URL) -> URL { dir(id, root: root).appendingPathComponent("files") }
+    static let filesKept = 100
+
+    /// `src` cloned into the terminal's `files/` (0700, made if missing) under its own name (`-2`, `-3`… on a collision),
+    /// the dir pruned to the newest `filesKept`; returns the clone. `src` must be a regular file, not a symlink, whose
+    /// resolved path is under `root`: it is opened once (O_NOFOLLOW) and cloned from that descriptor.
+    static func handOver(_ src: URL, terminal: UUID, root: URL) throws -> URL {
+        let refused = CocoaError(.fileReadNoPermission, userInfo: [NSFilePathErrorKey: src.path])
+        let fd = open(src.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw refused }
+        defer { close(fd) }
+        var st = stat(), buf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, fcntl(fd, F_GETPATH, &buf) == 0,
+              String(cString: buf).hasPrefix(SignedAppCheck.realPath(root) + "/") else { throw refused }
+        let fm = FileManager.default, dir = filesDir(terminal, root: root)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let stem = src.deletingPathExtension().lastPathComponent, ext = src.pathExtension
+        var out = dir.appendingPathComponent(src.lastPathComponent), n = 1
+        while true {   // EEXIST: the name is taken, try the next suffix (never overwrites)
+            if fclonefileat(fd, AT_FDCWD, out.path, 0) == 0 { break }
+            if errno == ENOTSUP || errno == EXDEV {   // another volume: a plain copy
+                let o = open(out.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+                if o >= 0 {
+                    defer { close(o) }
+                    guard fcopyfile(fd, o, nil, copyfile_flags_t(COPYFILE_DATA)) == 0 else { try? fm.removeItem(at: out); throw refused }
+                    break
+                }
+            }
+            guard errno == EEXIST, n < 10_000 else { throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: out.path]) }
+            n += 1
+            out = dir.appendingPathComponent(ext.isEmpty ? "\(stem)-\(n)" : "\(stem)-\(n).\(ext)")
+        }
+        try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: out.path)   // a clone keeps the source's: prune by hand-over time
+        let all = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        let dated = all.map { ($0, (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+        for (u, _) in dated.sorted(by: { $0.1 > $1.1 }).dropFirst(filesKept) where u.lastPathComponent != out.lastPathComponent {
+            try? fm.removeItem(at: u)
+        }
+        return out
+    }
+
     static func remove(_ id: UUID, root: URL) {
         try? FileManager.default.removeItem(at: profileFile(id, root: root))
         try? FileManager.default.removeItem(at: dir(id, root: root))
@@ -18,7 +60,7 @@ enum SandboxLaunch {
     static func prepare(_ input: SandboxInput, root: URL, collie: URL) throws -> URL {
         let fm = FileManager.default, d = dir(input.terminal, root: root)
         let sandboxDir = root.appendingPathComponent("sandbox")
-        for x in [sandboxDir, d, d.appendingPathComponent("bin"), d.appendingPathComponent("zsh"), d.appendingPathComponent("state")] {
+        for x in [sandboxDir, d, d.appendingPathComponent("bin"), d.appendingPathComponent("zsh"), d.appendingPathComponent("state"), filesDir(input.terminal, root: root)] {
             try fm.createDirectory(at: x, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         }
         func write(_ text: String, _ to: URL, _ mode: Int) throws {

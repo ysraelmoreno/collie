@@ -10,9 +10,22 @@ enum SandboxLaunch {
     static func filesDir(_ id: UUID, root: URL) -> URL { dir(id, root: root).appendingPathComponent("files") }
     static let filesKept = 100
 
+    /// The dirs output-file commands write to (R5): screenshots (design, browser, device: `screens/`), design exports, and
+    /// an html export's artifact folder (R4). Never `admin.token`, `sandbox/` or anything else under the root.
+    /// ponytail: a new output command must add its dir here.
+    static func isOutput(_ realPath: String, root: URL) -> Bool {
+        let r = SignedAppCheck.realPath(root) + "/"
+        guard realPath.hasPrefix(r) else { return false }
+        let rel = realPath.dropFirst(r.count).split(separator: "/")
+        guard !rel.contains(where: { $0.hasPrefix(".") }) else { return false }
+        if rel.count == 2, rel[0] == "screens" { return true }
+        if rel.count >= 4, rel[0] == "design", rel[1] == "exports" { return true }
+        return rel.count >= 3 && rel[0] == "artifacts"   // a file in an artifact's folder, not artifacts.json
+    }
+
     /// `src` cloned into the terminal's `files/` (0700, made if missing) under its own name (`-2`, `-3`… on a collision),
     /// the dir pruned to the newest `filesKept`; returns the clone. `src` must be a regular file, not a symlink, whose
-    /// resolved path is under `root`: it is opened once (O_NOFOLLOW) and cloned from that descriptor.
+    /// resolved path is an output (`isOutput`): it is opened once (O_NOFOLLOW) and cloned from that descriptor.
     static func handOver(_ src: URL, terminal: UUID, root: URL) throws -> URL {
         let refused = CocoaError(.fileReadNoPermission, userInfo: [NSFilePathErrorKey: src.path])
         let fd = open(src.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
@@ -20,7 +33,7 @@ enum SandboxLaunch {
         defer { close(fd) }
         var st = stat(), buf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG, fcntl(fd, F_GETPATH, &buf) == 0,
-              String(cString: buf).hasPrefix(SignedAppCheck.realPath(root) + "/") else { throw refused }
+              isOutput(String(cString: buf), root: root) else { throw refused }
         let fm = FileManager.default, dir = filesDir(terminal, root: root)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let stem = src.deletingPathExtension().lastPathComponent, ext = src.pathExtension

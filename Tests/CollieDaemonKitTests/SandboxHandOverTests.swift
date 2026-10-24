@@ -116,6 +116,27 @@ import CollieProtocol
         #expect(try FileManager.default.attributesOfItem(atPath: a.deletingLastPathComponent().path)[.posixPermissions] as? Int == 0o700)   // made when missing
     }
 
+    /// R5: only the output dirs; never admin.token, sandbox/ or other root data.
+    @Test func onlyOutputDirsHandedOver() throws {
+        let root = URL(fileURLWithPath: SignedAppCheck.realPath(FileManager.default.temporaryDirectory.appendingPathComponent("ho-\(UUID().uuidString)")))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID()
+        func put(_ rel: String) throws -> URL {
+            let u = root.appendingPathComponent(rel)
+            try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(rel.utf8).write(to: u)
+            return u
+        }
+        for rel in ["screens/p-1.png", "design/exports/f1/2.css", "artifacts/a1/v1/index.html"] {
+            #expect((try? SandboxLaunch.handOver(try put(rel), terminal: id, root: root)) != nil, "\(rel)")
+        }
+        for rel in ["admin.token", "sandbox/\(UUID().uuidString).sb", "sandbox/x/state/history", "memory/m.md", "screens/.x/p.png",
+                    "artifacts/artifacts.json", "artifacts/.removed/a/v1/index.html", "design/files.json", "hooks/x.claude.json"] {
+            #expect(throws: (any Error).self, "\(rel)") { try SandboxLaunch.handOver(try put(rel), terminal: id, root: root) }
+        }
+        #expect(files(id, root).count == 3)
+    }
+
     @Test func claudeSettingsAddFilesDir() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ho-\(UUID().uuidString)"); defer { try? FileManager.default.removeItem(at: dir) }
         let r = TerminalRecord(id: UUID(), name: "A", preset: .claude, command: nil, cwd: "/tmp", isShepherd: false)

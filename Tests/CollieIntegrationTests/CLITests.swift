@@ -51,9 +51,11 @@ import Foundation
         try await withRig { rig in
             let r = try await runCollie(["ask", "B", "hi", "there"], env: rig.env)
             #expect(r.status == 0 && r.out.contains("answer:hi there") && r.out.hasSuffix("\n"))
-            let s = try await runCollie(["admin", "spawn", "C", "--preset", "shell", "--cwd", "/tmp"], env: rig.env)
+            // admin is the user's shell, outside any terminal: the CLI refuses it with COLLIE_TERMINAL_ID set
+            let user = rig.env.filter { $0.key != "COLLIE_TERMINAL_ID" && $0.key != "COLLIE_TOKEN" }
+            let s = try await runCollie(["admin", "spawn", "C", "--preset", "shell", "--cwd", "/tmp"], env: user)
             #expect(s.status == 0 && UUID(uuidString: s.out.trimmingCharacters(in: .whitespacesAndNewlines)) != nil)
-            let k = try await runCollie(["admin", "kill", "C"], env: rig.env)
+            let k = try await runCollie(["admin", "kill", "C"], env: user)
             #expect(k.status == 0)
         }
     }

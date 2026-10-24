@@ -37,7 +37,7 @@ extension CommandRouter {
         }
         let adminCommands: Set<String> = ["memory.review", "memory.restore", "memory.pin", "memory.unpin",
                                           "memory.cleanup", "memory.purge", "memory.repos", "memory.curator",
-                                          "memory.digest", "memory.undo", "memory.resolve"]
+                                          "memory.digest", "memory.undo", "memory.resolve", "memory.consolidate"]
         if caller != nil, adminCommands.contains(r.command) {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is admin-only")
         }
@@ -314,6 +314,10 @@ extension CommandRouter {
             let keep = try need(r, "keep")
             guard ["newer", "older"].contains(keep) else { throw invalid("keep must be newer|older") }
             return try isoJSON(try await resolveAsk(e, keepNewer: keep == "newer"))
+
+        case "memory.consolidate":   // run now: the store's cleanup (in the digest) and its cluster job queued
+            await consolidate(repo)
+            return .object(["queued": .number(Double(await curator.queued(kind: .consolidate).filter { $0.store == repo.key }.count))])
 
         case "memory.curator":
             if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }

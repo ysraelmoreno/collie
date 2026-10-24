@@ -2,9 +2,9 @@ import Foundation
 import CollieCore
 import CollieProtocol
 
-/// In priority order: a correction runs first, then proposals, then pitfalls.
+/// In priority order: a correction runs first, then proposals, pitfalls, consolidation.
 enum CuratorJobKind: String, Codable, Sendable, CaseIterable {
-    case correction, proposals, pitfall
+    case correction, proposals, pitfall, consolidate
     var priority: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 }
 

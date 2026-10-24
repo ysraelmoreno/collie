@@ -195,6 +195,8 @@ public enum Commands {
         CommandSpec(name: "memory.resolve", summary: "Answer a \"Precisa de você\" item: keep the newer or the older memory",
                     params: [ParamSpec("entry", .string, positional: true, required: true, help: "Digest entry id"),
                              ParamSpec("keep", .string, required: true, help: "newer|older")], timeoutSeconds: 30, exposedToMCP: false),
+        CommandSpec(name: "memory.consolidate", summary: "Consolidate a memory store now (cleanup, then the curator over similar memories)",
+                    params: [ParamSpec("lot", .string), ParamSpec("repo", .string)], timeoutSeconds: 60, exposedToMCP: false),
         CommandSpec(name: "memory.repos", summary: "Repositories with memory known from terminals and paddocks",
                     timeoutSeconds: 60, exposedToMCP: false),
         // Work log: a terminal acts on its own work; a Shepherd also on the works of terminals leashed to it (--terminal);

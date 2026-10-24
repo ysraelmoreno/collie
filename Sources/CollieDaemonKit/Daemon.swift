@@ -198,6 +198,7 @@ public final class Daemon: Sendable {
         await router.memory.setProposalState { [weak router] in await router?.proposalState() ?? ([], []) }
         await router.migrateProposals()   // once: the proposals already waiting go through the curator
         await router.curator.start { [router] job, call in try await router.curate(job, call) }
+        await router.startConsolidation()
     }
 
     private func sweep(_ dir: URL, _ match: (String) -> Bool) {
@@ -209,6 +210,7 @@ public final class Daemon: Sendable {
         server.stop()
         await router.stopSandboxWatch()
         await router.stopJobSweep()
+        await router.stopConsolidation()
         await router.curator.stop()
         await router.host.stop()
         await router.devices.stop()

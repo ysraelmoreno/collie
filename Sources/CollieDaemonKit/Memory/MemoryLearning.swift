@@ -133,6 +133,7 @@ extension CommandRouter {
         case .correction: try await runLearningJob(job, call: call)
         case .proposals: try await runProposalsJob(job, call: call)
         case .pitfall: try await runPitfallJob(job, call: call)
+        case .consolidate: try await runConsolidateJob(job, call: call)
         }
     }
 
@@ -179,6 +180,9 @@ extension CommandRouter {
             let p = try proposalsPayload(job)
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)
         case .pitfall: throw ProtocolError(code: .internal, message: "curator: a pitfall job has its own ops (applyPitfallOps)")
+        case .consolidate:
+            let p = try consolidatePayload(job)
+            return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)
         }
     }
 
@@ -452,15 +456,8 @@ extension CommandRouter {
     func migrateProposals() async {
         let marker = config.paths.root.appendingPathComponent("curator/migrated")
         guard !FileManager.default.fileExists(atPath: marker.path) else { return }
-        var stores: [RepoMemory] = []
-        for cwd in ws.terminals.map(\.cwd) + ws.paddocks.flatMap({ [$0.repoRoot, $0.path] }) {
-            let m = await memory.repo(for: cwd)
-            if !stores.contains(where: { $0 === m }) { stores.append(m) }
-        }
-        if !stores.contains(where: { $0 === memory.global }) { stores.append(memory.global) }
-        for l in ws.lots { stores.append(await memory.lotStore(l.id)) }
         var done = true
-        for s in stores where s.exists {
+        for s in await knownStores() where s.exists {
             let ids = (try? await s.run { m in m.store.all().records.filter { $0.status == .proposed && $0.kind != .feedback }.map(\.id) }) ?? []
             if !ids.isEmpty, await !enqueueProposals(ids, store: s) { done = false }
         }

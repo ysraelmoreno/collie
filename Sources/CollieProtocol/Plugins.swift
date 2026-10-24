@@ -113,7 +113,7 @@ extension PluginRegistry {
         placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
         commands: [
             dcmd("list", "Android devices and iOS Simulators [{serial,state,model,product,platform,panels}]; Android AVDs that are off: state off, serial avd:<name> (panel open boots it) (ignores --panel)", timeout: 15, panelFree: true),
-            dcmd("screenshot", "Screenshot to a PNG file; returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", timeout: 30),
+            dcmd("screenshot", "Screenshot to a PNG file; returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", [out], timeout: 30),
             dcmd("ui", "Compact UI tree with element refs (e1, e2, ...); returns {tree,truncated}", timeout: 30),
             dcmd("tap", "Tap at x y (Android (pixels) or iOS Simulator (points)), or on an element from device.ui",
                  [coord("x"), coord("y"), ParamSpec("ref", .string, help: "Element ref from device.ui")], timeout: 15),
@@ -141,6 +141,8 @@ extension PluginRegistry {
         CommandSpec(name: "design.\(n)", summary: summary, params: params, timeoutSeconds: timeout, exposedToMCP: exposedToMCP, panelFree: panelFree)
     }
     private static let node = ParamSpec("node", .string, help: "Layer id (as design.inspect shows it)")
+    /// `--out` of a command in `Commands.outputFile`: the collie process copies the reply's file (`OutFile`).
+    private static let out = ParamSpec("out", .string, help: "Copy the file here (relative to the current directory; dirs created, overwritten); returns that path")
     private static let ids = ParamSpec("ids", .string, required: true, help: "Layer ids, comma-separated (as design.inspect shows them)")
     private static let reason = ParamSpec("reason", .string, required: true, help: "Why (kept in the history and as a project decision)")
 
@@ -154,18 +156,18 @@ extension PluginRegistry {
             gcmd("new", "Create an empty design file on the caller's paddock, with the active design system's library (ignores --panel); returns {name}",
                  [ParamSpec("name", .string, positional: true, required: true, help: "File name (1-80 of A-Z a-z 0-9 space . _ -)"),
                   ParamSpec("paddock", .string, help: "Paddock of the file (app only; default pasture)")], timeout: 60, panelFree: true),
-            gcmd("run", "Run one figcraft command (ids and params: design.help); returns its result",
+            gcmd("run", "Run one figcraft command (ids and params: design.help); returns its result. Commands never act on the user's selection: pass the layers as ids (or id), don't select them first (commands that work only on the selection are refused); edit.delete, edit.duplicate and object.group with ids [] do nothing and return {\"skipped\": \"no ids\"}",
                  [ParamSpec("command", .string, positional: true, required: true, help: "Command id, e.g. node.create"),
                   ParamSpec("params", .string, help: "JSON object of parameters")], timeout: 60),
-            gcmd("batch", "Run figcraft commands as one undo step, all or nothing ({\"$step\": n} names step n's result id, from 0); returns the results",
+            gcmd("batch", "Run figcraft commands as one undo step, all or nothing ({\"$step\": n} names step n's result id, from 0); returns the results. [] does nothing ({\"results\": []}); each step names its layers with ids (or id), as design.run; edit.delete, edit.duplicate and object.group with ids [] are skipped ({\"skipped\": \"no ids\"} in its place)",
                  [ParamSpec("commands", .string, help: "JSON array of {command, params}"),
                   ParamSpec("file", .string, help: "A .json file with that array (relative to the current directory)"),
                   ParamSpec("label", .string, help: "Undo history label")], timeout: 120),
             gcmd("inspect", "The document (pages and layers), or one layer with --node",
                  [node, ParamSpec("depth", .int, help: "Levels of children (1-64)")], timeout: 30),
-            gcmd("screenshot", "Render a layer (default: the current page) to a PNG file; returns {path,width,height}", [node], timeout: 60),
+            gcmd("screenshot", "Render a layer (default: the current page) to a PNG file; returns {path,width,height}", [node, out], timeout: 60),
             gcmd("export", "Export code (html|css|react, of --node or the page's top layers) or the whole file (figcraft); returns {path}",
-                 [ParamSpec("format", .string, required: true, help: "html|css|react|figcraft"), node], timeout: 60),
+                 [ParamSpec("format", .string, required: true, help: "html|css|react|figcraft"), node, out], timeout: 60),
             gcmd("help", "figcraft command ids and their parameters [{id,help}]",
                  [ParamSpec("query", .rest, positional: true, help: "Keep commands whose id or docs contain this text")], timeout: 30, panelFree: true),
             gcmd("link", "The panel file's edit link (the app only)", timeout: 30, exposedToMCP: false),

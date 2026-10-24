@@ -67,15 +67,21 @@ enum ProcedureSkills {
 
     /// SKILL.md of `r`, or nil when it has no step.
     static func skill(_ r: MemoryRecord, name: String) -> String? {
-        var lines = r.body.components(separatedBy: "\n")[...], when = ""
+        var lines = defused(r.body).components(separatedBy: "\n")[...], when = ""
         if let f = lines.first, f.hasPrefix("Quando:") { when = String(f.dropFirst("Quando:".count)); lines = lines.dropFirst() }
-        let title = CuratorOps.clean(r.title, cap: CuratorOps.titleMax, multiline: false)
+        let title = CuratorOps.clean(defused(r.title), cap: CuratorOps.titleMax, multiline: false)
         guard let body = MemoryLearning.procedureBody(when: when.isEmpty ? title : when, steps: lines.joined(separator: "\n")) else { return nil }
         let trigger = body.prefix { $0 != "\n" }
         let desc = CuratorOps.clean("\(title). \(trigger)".replacingOccurrences(of: "---", with: "—"), cap: descriptionMax, multiline: false)
         let enc = JSONEncoder(); enc.outputFormatting = .withoutEscapingSlashes
         let quoted = (try? enc.encode(desc)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
         return "---\nname: \(name)\ndescription: \(quoted)\n---\n\n# \(title)\n\n\(body)\n"
+    }
+
+    /// R5: Claude runs inline shell in a skill's text (`!`cmd``, ```!cmd```): every backtick goes, and a `!` beside one
+    /// first. With each step a numbered item (and the title a `#` line), no line starts with `!`. Code formatting is lost.
+    static func defused(_ s: String) -> String {
+        s.replacingOccurrences(of: #"!+(?=`)|(?<=`)!+"#, with: "", options: .regularExpression).replacingOccurrences(of: "`", with: "")
     }
 
     private final class Cache: @unchecked Sendable {   // `lock` guards `value`

@@ -42,6 +42,8 @@ enum MemoryLearning {
     /// R13: a correction supersedes at most this many memories. R14: correction jobs a terminal may queue an hour.
     static let maxSupersedes = 3, correctionsPerHour = 5
     static let procedureSteps = 12, procedureStepMax = 200
+    /// Kinds only the user's own word makes active: proposals jobs never see them, agents never promote them.
+    static func usersKind(_ k: MemoryKind) -> Bool { k == .feedback || k == .procedure }
 
     /// A procedure's body: `Quando: <when>`, a blank line, then `1. …` per step (list marks stripped, empty lines dropped;
     /// at most 12 steps of 200 scalars each). nil without a step.
@@ -267,7 +269,7 @@ extension CommandRouter {
                 guard let b = MemoryLearning.procedureBody(when: n.howToApply.isEmpty ? n.title : n.howToApply, steps: n.body) else { continue }
                 body = b; subject = MemoryFile.slug(n.title)
             }
-            if scope == .global, family !== memory.global, leaks([n.title, n.subject, body]) { target = family; scope = familyScope }
+            if scope == .global, family !== memory.global, leaks([n.title, n.subject, body] + n.aliases) { target = family; scope = familyScope }
             var rec = MemoryRecord(id: job.id, kind: n.kind, scope: scope, lotId: target.lotId, subject: subject, title: n.title, body: body,
                                    origin: ctx.name.map { "curador (\($0))" } ?? "curador", aliases: n.aliases)
             if let done = await find(job.id) { created = done.rec; touched.insert(done.rec.id); continue }   // a retry: already written
@@ -329,7 +331,8 @@ extension CommandRouter {
                 if let body { t.body = body }
                 // the union: the op's, then each merged record's, newest first (≤ 8)
                 t.aliases = aliases + ([target] + from.map(\.rec)).sorted { $0.updatedAt > $1.updatedAt }.flatMap(\.aliases)
-                if title != nil || body != nil || t.aliases != target.aliases { t.updatedAt = Date(); try await write(s, t) }
+                if title != nil || body != nil { t.updatedAt = Date() }   // aliases only: search-only, recency unchanged
+                if t != target { try await write(s, t) }
                 for f in from {
                     var n = f.rec; n.status = .superseded; n.supersededBy = into; n.updatedAt = Date()
                     try await write(f.store, n)
@@ -430,7 +433,7 @@ extension CommandRouter {
     @discardableResult
     func enqueueProposals(_ ids: [UUID], store: RepoMemory) async -> Bool {
         let lot = store.lotId.flatMap { id in ws.lots.first { $0.id == id } }
-        let recs = (try? await store.run { m in m.store.all().records.filter { ids.contains($0.id) && $0.status == .proposed && !Self.usersKind($0.kind) } }) ?? []
+        let recs = (try? await store.run { m in m.store.all().records.filter { ids.contains($0.id) && $0.status == .proposed && !MemoryLearning.usersKind($0.kind) } }) ?? []
         var all = true
         let family = store.lotId != nil || store === memory.global ? [store] : [store, memory.global]
         func cand(_ r: MemoryRecord) -> CorrectionPayload.Candidate {
@@ -443,7 +446,7 @@ extension CommandRouter {
             if !q.isEmpty {
                 for s in family {
                     let hits = (try? await s.run { m in m.index()?.search(q, limit: MemoryLearning.maxCandidates) ?? [] }) ?? []
-                    cands += hits.filter { MemoryService.visible($0.record, paddock: nil, lot: s.lotId) && !Self.usersKind($0.record.kind) }
+                    cands += hits.filter { MemoryService.visible($0.record, paddock: nil, lot: s.lotId) && !MemoryLearning.usersKind($0.record.kind) }
                         .map { cand($0.record) }   // no paddock's, no feedback
                 }
             }
@@ -456,9 +459,6 @@ extension CommandRouter {
         }
         return all
     }
-
-    /// Kinds only the user's own word makes active: proposals jobs never see them.
-    static func usersKind(_ k: MemoryKind) -> Bool { k == .feedback || k == .procedure }
 
     func runProposalsJob(_ j: CuratorJob, call: Curator.Call) async throws {
         let p = try Self.proposalsPayload(j)
@@ -484,7 +484,7 @@ extension CommandRouter {
         for l in ws.lots { stores.append(await memory.lotStore(l.id)) }
         var done = true
         for s in stores where s.exists {
-            let ids = (try? await s.run { m in m.store.all().records.filter { $0.status == .proposed && !Self.usersKind($0.kind) }.map(\.id) }) ?? []
+            let ids = (try? await s.run { m in m.store.all().records.filter { $0.status == .proposed && !MemoryLearning.usersKind($0.kind) }.map(\.id) }) ?? []
             if !ids.isEmpty, await !enqueueProposals(ids, store: s) { done = false }
         }
         // R22: only when every job was queued (else the next start tries again)

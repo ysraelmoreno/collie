@@ -269,7 +269,9 @@ extension CommandRouter {
                 return rec
             }
             // a feedback is the user's rule: only the app (or the curator) moves it
-            if caller != nil, old.kind == .feedback { throw ProtocolError(code: .unauthorized, message: "a feedback memory is the user's: only the app can promote it") }
+            if caller != nil, MemoryLearning.usersKind(old.kind) {
+                throw ProtocolError(code: .unauthorized, message: "a \(old.kind.rawValue) memory is the user's: only the app can promote it")
+            }
             let rec = MemoryRecord(kind: old.kind, scope: target === memory.global ? .global : .project, subject: old.subject,
                                    title: old.title, body: old.body, path: old.path, reviewed: caller == nil && old.reviewed, pinned: caller == nil && old.pinned,   // an agent's promotion is unreviewed and unpinned
                                    supersedes: old.id, origin: old.origin, aliases: old.aliases)

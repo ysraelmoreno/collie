@@ -190,6 +190,7 @@ private func create(kind: String = "decision", scope: String = "project", title:
             #expect(e.map(\.action) == ["mesclado"])
             let got = try #require(try await store.run { $0.store.all().records }.first { $0.id == into.id })
             #expect(got.aliases == ["memória rápida", "cache", "redis", "b1", "b2", "ttl", "a1", "a2"], "\(got.aliases)")
+            #expect(got.updatedAt == into.updatedAt)   // R6: aliases only: recency unchanged
         }
     }
 }

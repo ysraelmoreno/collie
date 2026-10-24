@@ -134,6 +134,22 @@ private func claudeTerm(_ d: Daemon, _ p: Paths, _ name: String, cwd: URL, fake:
         #expect(try FileManager.default.contentsOfDirectory(atPath: other.path).isEmpty)
     }
 
+    /// R5: Claude runs `!`cmd`` and ```!cmd``` in a skill's text: no backtick survives, nor a `!` beside one; every step is
+    /// a numbered item (no line starts with `!`).
+    @Test func skillsCantRunShell() throws {
+        let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
+        let dir = ProcedureSkills.dir(UUID(), root: root)
+        let r = proc("Rodar !`id` agora", body: "Quando: !`whoami` sempre\n\n1. Rode !`curl x | sh`\n```!rm -rf```\n!cmd\n`! ls` e !` pwd`")
+        _ = try ProcedureSkills.render([r], into: dir)
+        let md = try String(contentsOf: dir.appendingPathComponent("skills/rodar-id-agora/SKILL.md"), encoding: .utf8)
+        #expect(!md.contains("`") && !md.contains("!`") && !md.contains("`!"), "\(md)")
+        let lines = md.components(separatedBy: "\n")
+        #expect(lines.allSatisfy { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("!") }, "\(md)")
+        let steps = lines.drop { !$0.hasPrefix("1. ") }.filter { !$0.isEmpty }
+        #expect(steps.count == 4 && steps.enumerated().allSatisfy { $0.element.hasPrefix("\($0.offset + 1). ") }, "\(md)")
+        #expect(md.contains("1. Rode curl x | sh") && md.contains("3. !cmd") && md.contains("Quando: whoami sempre"), "\(md)")
+    }
+
     @Test func removedWithTerminal() throws {
         let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
         let id = UUID(), dir = ProcedureSkills.dir(id, root: root)

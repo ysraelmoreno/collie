@@ -191,6 +191,14 @@ enum SandboxProfile {
         out.append(";; Collie: closed (data, tokens, grants, workspace.json); this terminal's files readable; only the socket")
         rule("deny", "file-read* file-write*", tagged: true, [sub(collie)])
         rule("allow", "file-read*", i.ownFiles.map { lit(real($0)) } + [sub(tdir)])
+        // Claude vets each component of its --settings path: the dirs from the root down to its own files can be
+        // examined (stat/readlink), not listed
+        var vetted: Set<String> = []
+        for f in i.ownFiles.map({ real($0) }) + [tdir] where under(f, collie) {
+            var u = URL(fileURLWithPath: f).deletingLastPathComponent()
+            while u.path.count >= collie.count { vetted.insert(u.path); u = u.deletingLastPathComponent() }
+        }
+        rule("allow", "file-read-metadata", vetted.sorted().map(lit))
         rule("allow", "file-write*", [sub(tdir + "/state")])
         rule("deny", "network-outbound", tagged: true, ["(remote unix-socket \(sub(collie)))"])
         rule("allow", "network-outbound", ["(remote unix-socket (path-literal \(q(real(i.socket)))))"])

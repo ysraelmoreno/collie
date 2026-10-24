@@ -291,6 +291,8 @@ public actor AskCoordinator {
     static let readyPoll: Duration = .milliseconds(50)
 
     private let idleQuiet: Duration
+    /// R12: what the app typed into each terminal, tainted by every write made here (asks, injects, the chat).
+    nonisolated let provenance = InputProvenance()
     private var targets: [UUID: Target] = [:]
     private var waiters: [UUID: Waiter] = [:]   // queued + in-flight asks; also the deadlock graph (from -> to)
 
@@ -614,6 +616,7 @@ public actor AskCoordinator {
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
         // off the cooperative pool, report failures back through finish.
         let data = PromptInjector.payload(w.prompt, raw: w.raw, bracketed: t.paste.enabled)
+        provenance.taint(to)   // before the write: the prompt it types is never the user's own
         let process = t.process, name = t.name, inject = w.inject, approval = t.approval, guards = w.guardsApproval
         DispatchQueue.global().async { [weak self] in
             // checked again at the write, in one step with counting the input: a prompt printed (or keys typed) since the

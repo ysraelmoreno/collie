@@ -22,8 +22,10 @@ final class Fanout: @unchecked Sendable {
     /// The user's keys, told at once (ApprovalTracker.input): a hop through the hub would let a dialog drawn meanwhile
     /// be raised and then cleared by the late input.
     private let onInput: @Sendable () -> Void
-    init(_ process: PTYProcess, preset: Preset, onInput: @escaping @Sendable () -> Void = {}) {
-        self.process = process; self.onInput = onInput; quiet = QuietDetector(preset: preset)
+    /// R12: the app's keyboard bytes (focus reports excluded), for `InputProvenance`.
+    private let onTyped: @Sendable (Data) -> Void
+    init(_ process: PTYProcess, preset: Preset, onInput: @escaping @Sendable () -> Void = {}, onTyped: @escaping @Sendable (Data) -> Void = { _ in }) {
+        self.process = process; self.onInput = onInput; self.onTyped = onTyped; quiet = QuietDetector(preset: preset)
         (signals, signalSink) = AsyncStream.makeStream(of: Signal.self, bufferingPolicy: .unbounded)
     }
     func finishSignals() { signalSink.finish() }
@@ -86,7 +88,7 @@ final class Fanout: @unchecked Sendable {
         let p = process
         switch f {
         case .in(let d):
-            if !Self.isFocusReport(d) { noteInput() }
+            if !Self.isFocusReport(d) { noteInput(); onTyped(d) }
             c.inputQueued(d.count)
             input.async {
                 defer { c.inputDone(d.count) }
@@ -136,7 +138,8 @@ actor StreamHub {
     /// `onInput`: the terminal's ApprovalTracker, told of the user's keys synchronously.
     func track(_ rec: TerminalRecord, process: PTYProcess, scrollback: ScrollbackBuffer, onInput: @escaping @Sendable () -> Void = {}) {
         let id = rec.id
-        let fan = Fanout(process, preset: rec.preset, onInput: onInput)
+        let prov = asks.provenance
+        let fan = Fanout(process, preset: rec.preset, onInput: onInput, onTyped: { prov.typed(id, $0) })
         Task { [weak self] in
             for await sig in fan.signals {
                 switch sig {

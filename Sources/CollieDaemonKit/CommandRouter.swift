@@ -68,6 +68,8 @@ actor CommandRouter {
     /// The last 500 characters of each terminal's last turn (`turn.completed`): a bare "não" answering a question is a
     /// correction. ponytail: one string per terminal, never pruned (tiny).
     var lastTurn: [UUID: String] = [:]
+    /// R14: when each terminal's correction jobs were queued (the last hour's).
+    var correctionsAt: [UUID: [Date]] = [:]
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
     var importingArtifacts: Set<UUID> = []
     /// A `herd.apply` in flight: one at a time, the next waits.

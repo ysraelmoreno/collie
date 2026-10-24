@@ -174,8 +174,10 @@ extension CommandRouter {
                 // first), then memories
                 let prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
                 // a likely correction goes to the curator detached: the hook never waits for it
+                // R12: taken at every submit (it starts over); the user's own keystrokes, or a proposal at most
+                let user = asks.provenance.take(me.id, prompt: prompt)
                 if CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id]) {
-                    Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt) }
+                    Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt, user: user) }
                 }
                 var left = 2048, parts: [String] = []
                 func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }

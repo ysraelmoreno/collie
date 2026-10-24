@@ -16,8 +16,11 @@ struct CorrectionPayload: Codable, Sendable {
     var lastTurn: String?
     var work: String?
     var candidates: [Candidate]
-    /// The `proposed` feedback written while the curator was unavailable (replaced when the job runs).
+    /// The `proposed` feedback holding the quote while the job waits (discarded or replaced when it runs).
     var proposal: UUID?
+    /// R12: the prompt is the user's own keystrokes (nothing else wrote into the terminal). nil/false: the result is a
+    /// proposal only — never active, never supersedes or unpins.
+    var user: Bool?
 }
 
 enum MemoryLearning {
@@ -31,6 +34,8 @@ enum MemoryLearning {
         Se não for uma regra duradoura, responda {"ops":[]}. Use só ids que aparecem nos DADOS e responda só com operações do esquema.
         """
     static let quoteMax = 300, candidateBodyMax = 400, workMax = 1_500, maxCandidates = 10
+    /// R13: a correction supersedes at most this many memories. R14: correction jobs a terminal may queue an hour.
+    static let maxSupersedes = 3, correctionsPerHour = 5
 
     /// The fenced input: `DADOS-<nonce>` marks (a random 32-hex nonce per job); any `DADOS-` in the data is defused
     /// to `DADOS_`, so the data can neither guess nor close the fence.
@@ -63,10 +68,19 @@ extension CommandRouter {
                      scopes: p.lot != nil ? [.lot, .global] : [.project, .global], kinds: [.feedback], maxOps: 12)
     }
 
-    /// A flagged prompt → a queued curator job (deduped per family + prompt). With the curator unavailable the quote also
-    /// becomes a `proposed` feedback (never active until the curator runs). Runs detached from the hook.
-    func enqueueCorrection(terminal: UUID, prompt raw: String) async {
+    /// A flagged prompt → a queued curator job (deduped per family + prompt; ≤ 5 a terminal an hour). The quote waits as a
+    /// `proposed` feedback, written before the job is queued (R15: dropped again if the job is refused), so a job that
+    /// waits for any reason — no login, the cap — is visible; the job replaces it when it runs. `user`: R12 provenance.
+    /// Runs detached from the hook.
+    func enqueueCorrection(terminal: UUID, prompt raw: String, user: Bool = false) async {
         guard let me = ws.terminals.first(where: { $0.id == terminal }) else { return }
+        let hourAgo = Date().addingTimeInterval(-3600)
+        correctionsAt[terminal] = (correctionsAt[terminal] ?? []).filter { $0 > hourAgo }
+        guard (correctionsAt[terminal]?.count ?? 0) < MemoryLearning.correctionsPerHour else { return }
+        // reserved now (concurrent prompts interleave at the awaits below), given back if the job is refused
+        let slot = Date()
+        correctionsAt[terminal, default: []].append(slot)
+        func release() { correctionsAt[terminal]?.removeAll { $0 == slot } }
         let secrets = await auth.secrets()
         func clean(_ s: String) -> String { LotBoards.scrub(s, secrets: secrets) }
         let lot = ws.lot(of: terminal)
@@ -88,21 +102,24 @@ extension CommandRouter {
             CorrectionPayload.Candidate(id: $0.record.id, kind: $0.record.kind, title: $0.record.title,
                                         body: String(String.UnicodeScalarView($0.record.body.unicodeScalars.prefix(MemoryLearning.candidateBodyMax))))
         }
-        let available = await curator.status().available
         let p = CorrectionPayload(terminal: terminal, name: me.name, family: family.key, lot: lot?.id, lotName: lot?.name,
                                   root: project.root?.path, prompt: prompt, lastTurn: lastTurn[terminal].map(clean), work: work,
-                                  candidates: Array(candidates), proposal: available ? nil : UUID())
-        guard let payload = try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)) else { return }
+                                  candidates: Array(candidates), proposal: UUID(), user: user)
+        guard let payload = try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)), let pid = p.proposal else { release(); return }
         let job = CuratorJob(id: UUID(), kind: .correction, store: family.key, payload: payload,
                              dedupe: family.key + "|" + MemoryRecord.normalize(prompt), createdAt: Date(), attempts: 0)
-        guard await curator.enqueue(job), let pid = p.proposal else { return }
-        // fallback: the quote, visible in the panel as a proposal; the job replaces it when it runs
         let quote = MemoryLearning.oneLine(prompt, max: MemoryLearning.quoteMax)
         let rec = MemoryRecord(id: pid, kind: .feedback, scope: lot != nil ? .lot : family === memory.global ? .global : .project,
                                lotId: lot?.id, subject: "correção: " + MemoryLearning.oneLine(prompt, max: 60),
                                title: "Correção: " + MemoryLearning.oneLine(prompt, max: 110), body: "Citação: \"\(quote)\"",
                                status: .proposed, origin: "correção (\(me.name))")
         do { try await family.run { try $0.store.write(rec) } } catch { memoryLog("correction proposal: \(error)") }
+        guard await curator.enqueue(job) else {
+            // ponytail: the one delete outside purge — a quote written a moment ago for a job that was refused (a duplicate)
+            _ = try? await family.run { try $0.store.delete(pid) }
+            release()
+            return
+        }
     }
 
     /// The curator's work: one call (input fenced), then the validated ops applied, the digest written, the new rule
@@ -122,7 +139,8 @@ extension CommandRouter {
                                              schema: CuratorOps.schema))
         let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.correctionScope(p)).ops, job: j)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
-        for e in entries where e.action == "aprendido" { for id in e.created { await memory.pushRule(id, to: p.terminal) } }
+        // only an active rule (the user's own correction) is pushed
+        for e in entries where e.action == "aprendido" && p.user == true { for id in e.created { await memory.pushRule(id, to: p.terminal) } }
     }
 
     static func payload(_ j: CuratorJob) throws(ProtocolError) -> CorrectionPayload {
@@ -135,6 +153,8 @@ extension CommandRouter {
     /// What `applyOps` needs from either payload.
     private struct LearningContext {
         var family: String, lot: UUID?, lotName: String?, root: String?, name: String?, quote: String?, proposal: UUID?
+        /// A correction with the user's provenance (R12); proposals jobs: n/a.
+        var user = false
     }
 
     private static func context(_ job: CuratorJob) throws(ProtocolError) -> LearningContext {
@@ -142,7 +162,8 @@ extension CommandRouter {
         case .correction:
             let p = try payload(job)
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: p.name,
-                                   quote: MemoryLearning.oneLine(p.prompt, max: MemoryLearning.quoteMax), proposal: p.proposal)
+                                   quote: MemoryLearning.oneLine(p.prompt, max: MemoryLearning.quoteMax), proposal: p.proposal,
+                                   user: p.user == true)
         case .proposals:
             let p = try proposalsPayload(job)
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)
@@ -157,6 +178,9 @@ extension CommandRouter {
     /// the family's store instead (no stripping: text stays intact); a merge into a global record with such text is
     /// skipped. An `ask` over 2+ active records keeps the newest active and supersedes the others meanwhile (not a pinned
     /// or reviewed one). `score` is ignored until scores exist.
+    /// Corrections: R12 without the user's provenance only the create is written, as `proposed` (nothing else changes);
+    /// R13 with it, at most 3 supersedes, no merge/retire, activate/drop only of its own waiting quote.
+    /// R15 L4: the created record's id is the job's, so a retry after a half-applied attempt doesn't write a second rule.
     func applyOps(_ ops: [CuratorOp], job: CuratorJob) async throws -> [DigestEntry] {
         let ctx = try Self.context(job)
         guard let family = await memory.store(key: ctx.family) else { throw ProtocolError(code: .internal, message: "curator: store \(ctx.family) gone") }
@@ -209,11 +233,20 @@ extension CommandRouter {
                                  ctx.quote.map { "Citação: \"\($0)\"" }].compactMap { $0 }.joined(separator: "\n")]
                 .filter { !$0.isEmpty }.joined(separator: "\n\n")
             if scope == .global, family !== memory.global, leaks([n.title, n.subject, body]) { target = family; scope = familyScope }
-            let rec = MemoryRecord(kind: n.kind, scope: scope, lotId: target.lotId, subject: n.subject, title: n.title, body: body,
+            var rec = MemoryRecord(id: job.id, kind: n.kind, scope: scope, lotId: target.lotId, subject: n.subject, title: n.title, body: body,
                                    origin: ctx.name.map { "curador (\($0))" } ?? "curador")
+            if let done = await find(job.id) { created = done.rec; touched.insert(done.rec.id); continue }   // a retry: already written
+            if correction, !ctx.user {
+                rec.status = .proposed   // R12: not proven the user's: the user approves it in the panel
+                let r = rec
+                try await target.run { try $0.store.write(r) }
+                created = rec; touched.insert(rec.id)
+                continue
+            }
             let old = await replaced(rec, in: target)
             if let old, users(old), !correction { ask("substituir", "nova versão: \(rec.title)", [old], target); continue }
-            let saved = try await target.run { try $0.store.save(rec).saved }
+            let toSave = rec
+            let saved = try await target.run { try $0.store.save(toSave).saved }
             if var o = old, o.pinned { o.pinned = false; try await write(target, o) }   // a correction beats the user's older pin
             created = saved
             touched.insert(saved.id)
@@ -223,7 +256,16 @@ extension CommandRouter {
         }
         if created != nil, let pid = ctx.proposal { touched.insert(pid) }   // the rule replaces the proposal: never two
 
-        for op in ops {
+        var supersedes = 0
+        for op in ops where !correction || ctx.user {
+            if correction {
+                switch op {
+                case .merge, .retire: continue   // R13: a correction only supersedes what it contradicts
+                case .activate(let id, _), .drop(let id, _): if id != ctx.proposal { continue }
+                case .supersede: if supersedes >= MemoryLearning.maxSupersedes { continue }
+                default: break
+                }
+            }
             switch op {
             case .create, .score: continue
             case .supersede(let id, let by, let reason):
@@ -232,7 +274,7 @@ extension CommandRouter {
                 guard let byId = by ?? created?.id, byId != id else { continue }
                 if by != nil { guard let b = await find(byId), b.rec.status == .active else { continue } }
                 var n = r; n.status = .superseded; n.supersededBy = byId; n.pinned = false; n.updatedAt = Date()
-                try await write(s, n); touched.insert(id)
+                try await write(s, n); touched.insert(id); supersedes += 1
                 entry("aposentado", r.title, reason, s, created: [byId], before: [r])
             case .merge(let ids, let into, let title, let body, let reason):
                 guard !touched.contains(into), ids.allSatisfy({ !touched.contains($0) }), let (s, target) = await find(into),

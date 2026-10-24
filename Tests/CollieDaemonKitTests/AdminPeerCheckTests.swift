@@ -74,43 +74,39 @@ private func selfExecutable() -> URL {
         }
     }
 
-    /// A flood of refused admin requests (one process, and many distinct ones) neither wedges the daemon nor delays a
-    /// terminal-token request sent in the middle of it.
+    /// A flood of refused admin requests (500 connections open at once from one process, and 20 distinct processes)
+    /// neither wedges the daemon nor delays a terminal-token request sent in the middle of it. The flood comes from a
+    /// child process: 500 client threads in this process would starve the other suites running alongside.
     @Test func refusedFloodDoesNotStarveTheDaemon() async throws {
+        let dir = URL(fileURLWithPath: "/tmp/collie-app-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let client = try makeApp(in: dir, name: "X").appendingPathComponent("Contents/MacOS/Collie").path
         let check = Gate(SignedAppCheck(app: URL(fileURLWithPath: "/bin/ls")))
         try await withDaemon(configure: { $0.adminPeerCheck = check }) { d, p in
             let a = try await spawn(d, p, "A", preset: "custom", command: "exec sleep 300")
             check.open.withLock { $0 = false }
             let tid = try #require(UUID(uuidString: a.id)), tok = await d.router.auth.issue(for: tid)
             let start = ContinuousClock.now
-            var refused = 0
-            try await withThrowingTaskGroup(of: Bool?.self) { g in
-                for i in 0..<500 {
-                    g.addTask {   // nil: never answered. A connect past the listen backlog (128) is retried
-                        for _ in 0..<50 {
-                            if let r = try? await send(p, Request(id: "f\(i)", token: d.adminToken, command: "ui.snapshot"), timeoutSeconds: 30) {
-                                return r.ok || r.error?.message != Daemon.notAppMessage
-                            }
-                            try? await Task.sleep(for: .milliseconds(20))
-                        }
-                        return nil
-                    }
-                }
+            try await withThrowingTaskGroup(of: String.self) { g in
+                g.addTask { try await runOffPool(client, [p.socket.path, d.adminToken, "flood", "500"]) }
                 for _ in 0..<20 {   // distinct processes: one Security check each, all on the check's own queue
-                    g.addTask {
-                        let pr = Process(); pr.executableURL = URL(fileURLWithPath: collieBin); pr.arguments = ["admin", "list"]
-                        pr.environment = ["COLLIE_SOCKET": p.socket.path, "COLLIE_ADMIN_TOKEN_FILE": p.adminTokenFile.path]
-                        pr.standardOutput = Pipe(); pr.standardError = Pipe()
-                        try pr.run(); pr.waitUntilExit()
-                        return pr.terminationStatus == 0 ? true : false
-                    }
+                    g.addTask { try await runOffPool(client, [p.socket.path, d.adminToken]) }
                 }
-                let t0 = ContinuousClock.now
-                let r = try await send(p, Request(id: "t", terminalId: a.id, token: tok, command: "list"))
-                #expect(r.ok && ContinuousClock.now - t0 < .seconds(2), "\(r) after \(ContinuousClock.now - t0)")
-                for try await accepted in g { #expect(accepted != true); if accepted == false { refused += 1 } }
+                try await Task.sleep(for: .milliseconds(100))
+                // a connect can still meet a full listen backlog (128): retried; timed from the attempt that got through
+                var r: Response?, took = Duration.zero
+                for _ in 0..<50 where r == nil {
+                    let t0 = ContinuousClock.now
+                    r = try? await send(p, Request(id: "t", terminalId: a.id, token: tok, command: "list"))
+                    took = ContinuousClock.now - t0
+                    if r == nil { try? await Task.sleep(for: .milliseconds(20)) }
+                }
+                #expect(r?.ok == true && took < .seconds(2), "\(String(describing: r)) after \(took)")
+                var outs: [String] = []
+                for try await o in g { outs.append(o) }
+                #expect(outs.contains("refused=500 ok=0\n"), "\(outs.filter { $0.hasPrefix("refused=") })")
+                #expect(outs.filter { $0.contains(Daemon.notAppMessage) }.count == 20)
             }
-            #expect(refused >= 500, "\(refused) refused")
             #expect(ContinuousClock.now - start < .seconds(20), "flood took \(ContinuousClock.now - start)")
         }
     }
@@ -122,11 +118,11 @@ private func selfExecutable() -> URL {
         defer { try? FileManager.default.removeItem(at: dir) }
         let x = try makeApp(in: dir, name: "X")
         try await withDaemon(configure: { $0.adminPeerCheck = SignedAppCheck(app: x.appendingPathComponent("Contents/MacOS/Collie")) }) { d, p in
-            let ok = try run(x.appendingPathComponent("Contents/MacOS/Collie").path, [p.socket.path, d.adminToken])
+            let ok = try await runOffPool(x.appendingPathComponent("Contents/MacOS/Collie").path, [p.socket.path, d.adminToken])
             #expect(ok.contains("\"ok\":true"), "\(ok)")
             let loose = dir.appendingPathComponent("Collie")
             try FileManager.default.copyItem(at: x.appendingPathComponent("Contents/MacOS/Collie"), to: loose)
-            let out = try run(loose.path, [p.socket.path, d.adminToken])
+            let out = try await runOffPool(loose.path, [p.socket.path, d.adminToken])
             #expect(!out.contains("\"ok\":true"), "\(out)")
             let y = dir.appendingPathComponent("Y.app"), exe = y.appendingPathComponent("Contents/MacOS/Collie")
             try FileManager.default.copyItem(at: x, to: y)
@@ -134,9 +130,30 @@ private func selfExecutable() -> URL {
             let r = try #require(bin.range(of: Data("COLLIE-TEST-MARK".utf8)))
             bin[r.upperBound - 1] = UInt8(ascii: "X")
             try bin.write(to: exe)
-            _ = try run("/usr/bin/codesign", ["--force", "--deep", "-s", "-", "--options", "runtime", y.path])
-            let mod = try run(exe.path, [p.socket.path, d.adminToken])
+            _ = try await runOffPool("/usr/bin/codesign", ["--force", "--deep", "-s", "-", "--options", "runtime", y.path])
+            let mod = try await runOffPool(exe.path, [p.socket.path, d.adminToken])
             #expect(mod.contains(Daemon.notAppMessage), "\(mod)")
+        }
+    }
+
+    /// An app not valid yet (mid-copy of an update: executable in place, seal still missing) is not remembered as
+    /// unreadable under its final stat: read again a second later.
+    @Test func unreadableAppIsReadAgain() async throws {
+        let dir = URL(fileURLWithPath: "/tmp/collie-app-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let x = try makeApp(in: dir, name: "X"), z = dir.appendingPathComponent("Z.app")
+        let exe = z.appendingPathComponent("Contents/MacOS/Collie")
+        try await withDaemon(configure: { $0.adminPeerCheck = SignedAppCheck(app: exe) }) { d, p in
+            // the executable is in place (its final stat) but the bundle seal isn't copied yet
+            let seal = dir.appendingPathComponent("seal")
+            try FileManager.default.copyItem(at: x, to: z)
+            try FileManager.default.moveItem(at: z.appendingPathComponent("Contents/_CodeSignature"), to: seal)
+            let before = try await runOffPool(x.appendingPathComponent("Contents/MacOS/Collie").path, [p.socket.path, d.adminToken])
+            #expect(before.contains(Daemon.notAppMessage), "\(before)")
+            try FileManager.default.moveItem(at: seal, to: z.appendingPathComponent("Contents/_CodeSignature"))
+            try await Task.sleep(for: .milliseconds(1100))
+            let after = try await runOffPool(exe.path, [p.socket.path, d.adminToken])
+            #expect(after.contains("\"ok\":true"), "\(after)")
         }
     }
 
@@ -154,7 +171,8 @@ private func selfExecutable() -> URL {
         let loose = URL(fileURLWithPath: collieBin)
         #expect(SignedAppCheck.forDaemon(executable: loose, root: other, defaultRoot: def).check == nil)
         let viaPrivate = URL(fileURLWithPath: "/private" + def.path)
-        for root in [def, link, viaPrivate] {
+        let viaFirmlink = URL(fileURLWithPath: "/System/Volumes/Data" + SignedAppCheck.realPath(def))
+        for root in [def, link, viaPrivate, viaFirmlink] {
             let (check, note) = SignedAppCheck.forDaemon(executable: loose, root: root, defaultRoot: def)
             #expect(check != nil && note.contains("refused"), "\(root.path): \(note)")
         }
@@ -179,21 +197,55 @@ private final class Gate: AdminPeerCheck {
 private let clientSource = """
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/resource.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 static const char mark[] = "COLLIE-TEST-MARK";
-int main(int argc, char **argv) {
-    if (argc < 3) return 2;
+static int dial(const char *path) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un a; memset(&a, 0, sizeof a); a.sun_family = AF_UNIX;
-    strncpy(a.sun_path, argv[1], sizeof a.sun_path - 1);
-    if (connect(fd, (struct sockaddr *)&a, sizeof a) != 0) { perror("connect"); return 2; }
+    strncpy(a.sun_path, path, sizeof a.sun_path - 1);
+    if (connect(fd, (struct sockaddr *)&a, sizeof a) != 0) { close(fd); return -1; }
+    return fd;
+}
+static int ask(int fd, const char *token) {
     char req[512];
-    int n = snprintf(req, sizeof req, "{\\"v\\":1,\\"id\\":\\"%s\\",\\"token\\":\\"%s\\",\\"command\\":\\"ui.snapshot\\",\\"args\\":{}}\\n", mark, argv[2]);
-    if (write(fd, req, n) != n) return 2;
-    char buf[65536]; ssize_t r;
-    while ((r = read(fd, buf, sizeof buf)) > 0) fwrite(buf, 1, r, stdout);
+    int n = snprintf(req, sizeof req, "{\\"v\\":1,\\"id\\":\\"%s\\",\\"token\\":\\"%s\\",\\"command\\":\\"ui.snapshot\\",\\"args\\":{}}\\n", mark, token);
+    return write(fd, req, n) == n;
+}
+static ssize_t answer(int fd, char *buf, size_t cap) {
+    size_t got = 0; ssize_t r;
+    while (got < cap - 1 && (r = read(fd, buf + got, cap - 1 - got)) > 0) got += r;
+    buf[got] = 0; return got;
+}
+int main(int argc, char **argv) {
+    if (argc < 3) return 2;
+    static char buf[65536];
+    if (argc > 4 && strcmp(argv[3], "flood") == 0) {   // `flood N`: N connections open at once, then all answers
+        int n = atoi(argv[4]), refused = 0, ok = 0;
+        struct rlimit rl = { 4096, 4096 }; setrlimit(RLIMIT_NOFILE, &rl);
+        int *fds = calloc(n, sizeof(int));
+        for (int i = 0; i < n; i++) {
+            for (int t = 0; t < 500 && (fds[i] = dial(argv[1])) < 0; t++) usleep(10000);   // full backlog: retry
+            if (fds[i] < 0 || !ask(fds[i], argv[2])) { perror("flood"); return 3; }
+        }
+        for (int i = 0; i < n; i++) {
+            answer(fds[i], buf, sizeof buf);
+            if (strstr(buf, "\\"ok\\":true")) ok++;
+            else if (strstr(buf, "only accepted from the Collie app")) refused++;
+            close(fds[i]);
+        }
+        printf("refused=%d ok=%d\\n", refused, ok);
+        return 0;
+    }
+    int fd = -1;
+    for (int t = 0; t < 500 && (fd = dial(argv[1])) < 0; t++) usleep(10000);   // full backlog: retry
+    if (fd < 0) { perror("connect"); return 2; }
+    if (!ask(fd, argv[2])) return 2;
+    answer(fd, buf, sizeof buf);
+    fputs(buf, stdout);
     return 0;
 }
 """
@@ -236,4 +288,11 @@ private func makeApp(in dir: URL, name: String, helper: Bool = false) throws -> 
     let data = out.fileHandleForReading.readDataToEndOfFile()
     pr.waitUntilExit()
     return String(decoding: data, as: UTF8.self)
+}
+
+/// `run` on its own thread: a child waited on from the cooperative pool would starve the in-process daemon.
+private func runOffPool(_ exe: String, _ args: [String]) async throws -> String {
+    try await withCheckedThrowingContinuation { c in
+        Thread { c.resume(with: Result { try run(exe, args) }) }.start()
+    }
 }

@@ -339,8 +339,10 @@ atualizar o app no lugar, a instância antiga ainda aberta é recusada até ser 
 de admin vindo de dentro de um terminal do Collie (da sessão Unix do terminal ou descendente dele) e de processos que ele
 roda (hooks git, provedores de uso); um processo que não consegue identificar também é recusado. Dentro de um terminal, o
 `collie` nem lê o arquivo. Limite: isso não isola processos do mesmo usuário: um agente que consiga parar e reiniciar o
-daemon (ou rodar outro daemon sobre os mesmos dados) obtém admin; o sandbox dos terminais (plano 4S) fecha isso ao negar
-aos agentes sinais para o daemon, o LaunchAgent e o diretório de dados do Collie.
+daemon (ou rodar outro daemon sobre os mesmos dados, por exemplo o `collied` verdadeiro copiado num bundle falso) obtém
+admin. O sandbox dos terminais (plano 4S) estreita isso ao negar aos agentes sinais para o daemon, o LaunchAgent e o
+diretório de dados do Collie, mas um agente que use as saídas que ele deixa abertas (`launchctl submit`, `open`,
+`osascript`) ainda consegue. Isolamento de verdade exige os agentes sob outro usuário do macOS.
 
 ## Ferramentas do Collie no agente
 

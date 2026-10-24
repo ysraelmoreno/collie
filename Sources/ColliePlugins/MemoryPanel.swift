@@ -402,9 +402,20 @@ struct MemoryPanelView: View {
             }
         }
         let groups = model.learningGroups()
-        if groups.isEmpty { empty("Nada aprendido nesta semana.") }
+        // procedures the curator noticed in the works: they wait for the user (approve → active → a skill)
+        let noticed = model.proposals.filter { $0.record.kind == .procedure }
+        if groups.isEmpty && noticed.isEmpty { empty("Nada aprendido nesta semana.") }
+        if !noticed.isEmpty {
+            section("Precisa de você")
+            ForEach(noticed) { r in
+                item(r, meta: meta(r), badge: "procedimento novo") {
+                    act("Aprovar", .primary) { Task { await model.approve(r.id, lot: r.lot) } }
+                    act("Descartar", .quiet) { Task { await model.discard(r.id, lot: r.lot) } }
+                }
+            }
+        }
         ForEach(groups, id: \.title) { g in
-            section(g.title)
+            if !(g.title == "Precisa de você" && !noticed.isEmpty) { section(g.title) }
             ForEach(g.rows) { e in
                 digestItem(e) {
                     if e.isAsk {

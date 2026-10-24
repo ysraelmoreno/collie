@@ -35,7 +35,7 @@ enum Consolidation {
     /// A pinned or user-edited member stays in: `applyOps` turns any change to it into an ask.
     static func clusters(_ recs: [MemoryRecord], max: Int) -> [[MemoryRecord]] {
         // ponytail: pitfall classes stay out (a merge would lose their hits; their instances are absorbed by Task 1)
-        let rs = recs.filter { $0.status == .active && $0.kind != .feedback && $0.hits == nil }
+        let rs = recs.filter { $0.status == .active && !MemoryLearning.usersKind($0.kind) && $0.hits == nil }
             .sorted { ($0.updatedAt, $0.id.uuidString) > ($1.updatedAt, $1.id.uuidString) }
         let words = rs.map(MemoryCleanup.words)
         func near(_ i: Int, _ j: Int) -> Bool {
@@ -129,12 +129,13 @@ extension CommandRouter {
     /// feedback: R19), then one `consolidate` job over ≤ 6 clusters inside the curator's input cap. Never fails.
     func consolidate(_ store: RepoMemory, now: Date = Date()) async {
         markConsolidated(store, at: now)
-        if store.root != nil { await ingestReviews(repo: store) }
+        if store.root != nil { await ingestReviews(repo: store); await detectProcedures(store) }
         let scores = await memory.scores.all()
         do {
             let (before, changed, items) = try await store.run { m -> ([MemoryRecord], [MemoryRecord], [CleanupItem]) in
                 let index = m.index()
-                let records = m.store.all().records.filter { $0.kind != .feedback }
+                // nor a procedure: delivered as a skill, it is never "read", so it would look cold
+                let records = m.store.all().records.filter { !MemoryLearning.usersKind($0.kind) }
                 var stats: [UUID: MemoryStats] = [:]
                 for r in records { if let s = index?.stats(r.id) { stats[r.id] = s } }
                 let items = MemoryCleanup.plan(records: records, stats: stats, scores: scores, now: now)

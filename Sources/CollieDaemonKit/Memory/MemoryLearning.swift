@@ -156,6 +156,7 @@ extension CommandRouter {
         case .proposals: try await runProposalsJob(job, call: call)
         case .pitfall: try await runPitfallJob(job, call: call)
         case .consolidate: try await runConsolidateJob(job, call: call)
+        case .procedure: try await runProcedureJob(job, call: call)
         }
         await refreshSkills()   // a procedure may have been created or retired
     }
@@ -203,6 +204,7 @@ extension CommandRouter {
             let p = try proposalsPayload(job)
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)
         case .pitfall: throw ProtocolError(code: .internal, message: "curator: a pitfall job has its own ops (applyPitfallOps)")
+        case .procedure: throw ProtocolError(code: .internal, message: "curator: a procedure job writes a proposal itself")
         case .consolidate:
             let p = try consolidatePayload(job)
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)
@@ -241,8 +243,8 @@ extension CommandRouter {
         func write(_ s: RepoMemory, _ r: MemoryRecord) async throws { try await s.run { try $0.store.write(r) } }
         /// The user's: pinned, or reviewed/edited by them. Only a correction's supersede may change it.
         func users(_ r: MemoryRecord) -> Bool { r.pinned || r.reviewed }
-        /// R19: a feedback (active or proposed) is changed only by a correction with the user's provenance.
-        func untouchable(_ r: MemoryRecord) -> Bool { r.kind == .feedback && !(correction && ctx.user) }
+        /// R19: a feedback or a procedure (the user's kinds, active or proposed) is changed only by a correction with the user's provenance.
+        func untouchable(_ r: MemoryRecord) -> Bool { MemoryLearning.usersKind(r.kind) && !(correction && ctx.user) }
         func ask(_ what: String, _ reason: String, _ recs: [MemoryRecord], _ s: RepoMemory) {
             entry("ask", "O curador quer \(what) \"\(MemoryLearning.oneLine(recs.first?.title ?? "", max: 60))\"" + (reason.isEmpty ? "" : ": \(reason)"),
                   reason, s, before: recs)

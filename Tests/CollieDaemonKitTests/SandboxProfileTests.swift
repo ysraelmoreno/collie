@@ -251,7 +251,9 @@ final class FakeHome {
         let p = try f.profile(f.input())   // claude
         var st = stat()
         #expect(lstat(f.home.appendingPathComponent(".claude/projects").path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
-        for none in [".local", "go", ".cargo", ".bun", ".cursor", "Library/org.swift.swiftpm"] {
+        #expect(lstat(f.home.appendingPathComponent(".local/state/claude").path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)   // B2
+        #expect(!fm.fileExists(atPath: f.home.appendingPathComponent(".local/bin").path))
+        for none in ["go", ".cargo", ".bun", ".cursor", "Library/org.swift.swiftpm"] {
             #expect(!fm.fileExists(atPath: f.home.appendingPathComponent(none).path), "\(none)")
         }
         #expect(try !f.ok(p, "ln -s /private/tmp \(f.h(".cargo"))"))   // the agent can't make one (a symlink) itself
@@ -265,6 +267,28 @@ final class FakeHome {
         try fm.createSymbolicLink(at: g.home.appendingPathComponent(".codex"), withDestinationURL: out)
         _ = try g.profile(g.input(agent: .codex))
         #expect((try? fm.contentsOfDirectory(atPath: out.path))?.isEmpty == true)
+    }
+
+    /// B2/B3: the agent is found by the executable's basename, past a leading `env VAR=val…`; Claude's state dir included.
+    @Test func agentHomeDetection() {
+        #expect(EssentialPaths.agentHome(.claude, command: nil).contains(".local/state/claude"))
+        #expect(EssentialPaths.agentHome(.custom, command: "/opt/bin/claude --x").first == ".claude")
+        #expect(EssentialPaths.agentHome(.custom, command: "env FOO=1 BAR=2 codex exec hi").first == ".codex")
+        #expect(EssentialPaths.agentHome(.custom, command: "/usr/bin/env cursor-agent").first == ".cursor")
+        #expect(EssentialPaths.agentHome(.custom, command: "npm test").isEmpty)
+        #expect(EssentialPaths.agentHome(.shell, command: nil).isEmpty)
+    }
+
+    /// R19: the router hands the custom command over, so a custom cursor-agent terminal gets ~/.cursor.
+    @Test func routerPassesCustomCommand() async throws {
+        let f = try FakeHome(git: false, socket: false)
+        var c = testConfig(Paths(root: f.collie)); c.sandboxHome = f.home
+        let d = try Daemon(config: c)
+        var rec = TerminalRecord(id: UUID(), name: "C", preset: .custom, command: "/x/cursor-agent --model m", cwd: f.base.path, isShepherd: false)
+        rec.projectRoot = f.base.appendingPathComponent("proj").path
+        _ = try await d.router.prepareSandbox(rec)
+        var st = stat()
+        #expect(lstat(f.home.appendingPathComponent(".cursor/chats").path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR)
     }
 
     /// R18: agent-state dirs take writes to their children only; Claude's sourced shell state stays read-only.

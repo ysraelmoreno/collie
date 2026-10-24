@@ -50,14 +50,15 @@ enum EssentialPaths {
         // agent state (sessions, history, todos); their config stays read-only. A trailing `/`: the dir's children only,
         // never the dir itself (no rename, unlink or symlink swap, R18). Claude's shell-snapshots and session-env stay
         // read-only: other (unsandboxed) Claude sessions source them (R18)
-        ".claude/history.jsonl", ".local/state/claude/", ".codex/history.jsonl", ".codex/auth.json", ".codex/version.json",
+        ".claude/history.jsonl", ".codex/history.jsonl", ".codex/auth.json", ".codex/version.json",
     ] + agentStateDirs.values.flatMap { $0 }.map { $0 + "/" }
 
     /// Each agent's state dirs, writable to their children (R18); the daemon makes the terminal's own agent's ones
     /// (with its home dir) before launch (R19).
     static let agentStateDirs: [String: [String]] = [
         ".claude": [".claude/projects", ".claude/todos", ".claude/statsig", ".claude/ide", ".claude/debug",
-                    ".claude/file-history", ".claude/plans", ".claude/paste-cache", ".claude/logs", ".claude/telemetry"],
+                    ".claude/file-history", ".claude/plans", ".claude/paste-cache", ".claude/logs", ".claude/telemetry",
+                    ".local/state/claude"],
         ".codex": [".codex/sessions", ".codex/archived_sessions", ".codex/log", ".codex/logs", ".codex/tmp"],
         ".cursor": [".cursor/chats", ".cursor/projects"],
     ]
@@ -65,7 +66,10 @@ enum EssentialPaths {
     /// R19: the home dirs the daemon makes for a terminal: only its agent's (none for a shell). A missing one is made
     /// a real directory, never through a symlink (I1); any other missing dir stays missing (a tool creating it hits a denial).
     static func agentHome(_ preset: Preset, command: String?) -> [String] {
-        let first = command?.split(whereSeparator: \.isWhitespace).first.map(String.init)
+        // B3: the executable's basename, past a leading `env [VAR=val…]`
+        var words = (command ?? "").split(whereSeparator: \.isWhitespace).map { String($0.split(separator: "/").last ?? $0) }
+        if words.first == "env" { words = Array(words.dropFirst().drop { $0.contains("=") }) }
+        let first = words.first
         let home: String? = switch preset {
         case .claude: ".claude"
         case .codex: ".codex"

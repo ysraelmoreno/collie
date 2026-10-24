@@ -679,7 +679,7 @@ actor CommandRouter {
                                  collieRoot: config.paths.root,
                                  ownFiles: [AgentLaunch.settingsFile(rec.id, in: hooksDir), AgentLaunch.mcpFile(rec.id, in: hooksDir)],
                                  terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
-                                 agent: rec.preset)
+                                 agent: rec.preset, command: rec.command)
         return try SandboxLaunch.prepare(input, root: config.paths.root, collie: config.collieExecutable)
     }
 }

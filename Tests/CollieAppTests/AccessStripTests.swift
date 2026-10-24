@@ -28,3 +28,18 @@ private func card(_ i: Int, refused: Bool = false) -> SandboxDenial {
     let m = AccessStrip.Model(cards: (0..<2).map { card($0) } + (2..<7).map { card($0, refused: true) })
     #expect(m.kind == .pending(2))
 }
+
+@Test func singularRefusedText() {
+    #expect(AccessStrip.Model(cards: [card(0, refused: true)]).text == "1 acesso bloqueado de propósito")
+}
+
+@Test func mixedText() {
+    #expect(AccessStrip.Model(cards: [card(0), card(1), card(2, refused: true)]).text == "2 pedidos de acesso — ver")
+}
+
+@Test @MainActor func popoverStateClose() {
+    let s = AccessPopoverState(), id = UUID()
+    s.open.insert(id)
+    s.close(id)
+    #expect(!s.open.contains(id))
+}

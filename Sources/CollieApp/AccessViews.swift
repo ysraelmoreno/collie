@@ -38,6 +38,8 @@ enum AccessCopy {
 @MainActor @Observable final class AccessPopoverState {
     static let shared = AccessPopoverState()
     var open: Set<UUID> = []
+    /// Called when the tag or the terminal goes away: SwiftUI never runs the binding setter on teardown.
+    func close(_ id: UUID) { open.remove(id) }
     func binding(_ id: UUID) -> Binding<Bool> {
         Binding(get: { self.open.contains(id) }, set: { if $0 { self.open.insert(id) } else { self.open.remove(id) } })
     }
@@ -67,6 +69,7 @@ struct AccessBadge: View {
                     .background(hover ? Color.collieText.opacity(0.1) : .clear, in: .rect(cornerRadius: 6))
                 }
                 .buttonStyle(.plain).onHover { hover = $0 }
+                .onDisappear { AccessPopoverState.shared.close(id) }
                 .help(cards.isEmpty ? "Caminhos liberados para este terminal" : "O agente tentou acessar fora do sandbox")
                 .popover(isPresented: open, arrowEdge: .bottom) { AccessPopover(id: id, client: client) }
             }
@@ -107,11 +110,11 @@ struct AccessStrip: View {
             case .none: EmptyView()
             case .pending: Button("Ver") { AccessPopoverState.shared.open.insert(id) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small)
             case .refusedOnly:
-                Button("Dispensar") { Task { try? await client.denyAll(cards) } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
+                Button("Dispensar") { Task { do { try await client.denyAll(cards) } catch { Log.canvas.error("dispensar: \(error)") } } }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
             }
         }
         .foregroundStyle(m.kind == .none || isPending(m.kind) ? Color.collieText : Color.collieTextSecondary)
-        .padding(.horizontal, 10)
+        .padding(.leading, 10).padding(.trailing, 26)   // clear of the node's resize corner (14 pt at 4 pt from the edge)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(isPending(m.kind) ? Color.collieAttention.opacity(0.9) : Color.collieSidebar)
         .help(isPending(m.kind) ? "" : "Pastas do próprio Collie e segredos nunca são liberadas")

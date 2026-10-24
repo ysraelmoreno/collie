@@ -189,6 +189,7 @@ import CollieTheme
 
     /// Before removal: stop reading and forget the controller's callback (the controller outlives this view).
     func unmount() {
+        AccessPopoverState.shared.close(id)
         stopReader()
         node.onStreamChange = nil
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }

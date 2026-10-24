@@ -369,4 +369,37 @@ private func terminals(_ d: Daemon, _ p: Paths) async throws -> [TerminalRecord]
         try FileManager.default.createDirectory(at: fakeHome, withIntermediateDirectories: true)
         #expect(ProjectRoot.resolve(cwd: fakeHome.path, paddock: nil, home: tr.home.appendingPathComponent("Users/me")).path == fakeHome.path)
     }
+
+    /// Re-review N1/N2: a refused panel leash changes nothing (no move in memory or on disk, no design file first).
+    @Test func refusedPanelLeashChangesNothing() async throws {
+        try await withDaemon { d, p in
+            let f = try await spawnTerm(d, p, "F", cwd: "/tmp", shepherd: true, sandbox: "free")
+            #expect(try await call(p, f, "panel.open", ["plugin": .string("browser"), "placement": .string("dock.right"), "name": .string("mine")]).ok)
+            let r = try await call(p, f, "panel.move", ["name": .string("mine"), "placement": .string("canvas")])
+            #expect(r.error?.code == .notConnected, "\(r)")
+            _ = try await spawnTerm(d, p, "Other", cwd: "/tmp")   // any later persist
+            let s = try await send(p, Request(id: "s", token: d.adminToken, command: "ui.snapshot"))
+            let panel = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(s.result)).panels.first { $0.name == "mine" }
+            #expect(panel?.placement == .dockRight && panel?.paddockId == nil, "\(String(describing: panel))")
+            let file = try #require((FileManager.default.enumerator(at: p.root, includingPropertiesForKeys: nil)?.allObjects as? [URL])?
+                .first { $0.lastPathComponent == "workspace.json" })
+            let disk = try JSONDecoder().decode(Workspace.self, from: Data(contentsOf: file)).panels.first { $0.name == "mine" }
+            #expect(disk?.placement == .dockRight, "\(String(describing: disk))")
+            // design: refused before any design file is made (figcraft isn't even reached)
+            let des = try await call(p, f, "panel.open", ["plugin": .string("design"), "placement": .string("canvas"), "name": .string("dz"),
+                                                          "file": .string("dz")])
+            #expect(des.error?.code == .notConnected, "\(des)")
+        }
+    }
+
+    /// M4: there is no `inject` command; the injecting paths into a live terminal (ask, raw ask) miss a free one.
+    @Test func injectIntoFreeRefused() async throws {
+        try await withDaemon { d, p in
+            let m = try await spawnTerm(d, p, "M", cwd: "/tmp", shepherd: true)
+            _ = try await spawnTerm(d, p, "F", cwd: "/tmp", sandbox: "free")
+            #expect(try await call(p, m, "inject", ["target": .string("F"), "prompt": .string("x")]).error?.code == .invalidArgs)   // unknown
+            let raw = try await call(p, m, "ask", ["target": .string("F"), "prompt": .string("echo hi"), "raw": .bool(true)])
+            #expect(raw.error?.code == .notConnected, "\(raw)")
+        }
+    }
 }

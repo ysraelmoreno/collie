@@ -1,5 +1,6 @@
 import Foundation
 import CollieCore
+import CollieProtocol
 
 /// One automatic action of the curator, with what it changed (`before`: the records as they were, for Desfazer).
 struct DigestEntry: Codable, Sendable, Identifiable, Equatable {
@@ -60,5 +61,69 @@ struct MemoryDigest {
             try? FileManager.default.removeItem(at: tmp)
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
+    }
+}
+
+extension CommandRouter {
+    /// The record `id` now, in the entry's store or the global one (where a job's records live).
+    private func current(_ id: UUID, _ e: DigestEntry) async -> (store: RepoMemory, rec: MemoryRecord)? {
+        var stores = [memory.global]
+        if let s = await memory.store(key: e.store), s !== memory.global { stores.insert(s, at: 0) }
+        for s in stores {
+            if let r = (try? await s.run { $0.store.all().records.first { $0.id == id } }) ?? nil { return (s, r) }
+        }
+        return nil
+    }
+
+    /// Desfazer: the entry's `before` records are written back as they were, the ones it `created` become discarded.
+    /// Refused when any of them changed after the action (the user or a later job): that is undone from the history.
+    /// A second undo is a no-op.
+    func undoDigest(_ id: UUID) async throws -> DigestEntry {
+        guard var e = digest.since(.distantPast).first(where: { $0.id == id }) else {
+            throw ProtocolError(code: .notFound, message: "entrada \(id.uuidString.lowercased()) não encontrada")
+        }
+        if e.undone { return e }
+        guard e.action != "ask" else { throw ProtocolError(code: .invalidArgs, message: "uma pergunta se resolve (memory.resolve), não se desfaz") }
+        let ids = e.before.map(\.id) + e.created.filter { c in !e.before.contains { $0.id == c } }
+        var now: [UUID: (store: RepoMemory, rec: MemoryRecord)] = [:]
+        for i in ids { if let c = await current(i, e) { now[i] = c } }
+        // ponytail: 1 s of slack — the action's own writes carry a timestamp a hair before the entry's
+        if now.values.contains(where: { $0.rec.updatedAt > e.at.addingTimeInterval(1) }) {
+            throw ProtocolError(code: .invalidArgs, message: "a memória mudou depois; desfaça pelo histórico")
+        }
+        let home = await memory.store(key: e.store) ?? memory.global
+        for b in e.before { let s = now[b.id]?.store ?? home; try await s.run { try $0.store.write(b) } }
+        for c in e.created where !e.before.contains(where: { $0.id == c }) {
+            guard var r = now[c] else { continue }
+            r.rec.status = .discarded; r.rec.updatedAt = Date()
+            let rec = r.rec
+            try await r.store.run { try $0.store.write(rec) }
+        }
+        try digest.mark(id, undone: true, resolved: nil)
+        e.undone = true
+        return e
+    }
+
+    /// "Precisa de você": the user keeps the newer or the older of the records the ask names (by when each was last
+    /// changed before it); the kept one is active, the others superseded by it.
+    func resolveAsk(_ id: UUID, keepNewer: Bool) async throws -> DigestEntry {
+        guard var e = digest.since(.distantPast).first(where: { $0.id == id }), e.action == "ask" else {
+            throw ProtocolError(code: .notFound, message: "pergunta \(id.uuidString.lowercased()) não encontrada")
+        }
+        if e.resolved { return e }
+        let order = e.before.sorted { ($0.updatedAt, $0.id.uuidString) < ($1.updatedAt, $1.id.uuidString) }
+        if let keep = keepNewer ? order.last : order.first {
+            for b in order {
+                guard var c = await current(b.id, e) else { continue }
+                if b.id == keep.id { c.rec.status = .active; c.rec.supersededBy = nil }
+                else { c.rec.status = .superseded; c.rec.supersededBy = keep.id }
+                c.rec.updatedAt = Date()
+                let rec = c.rec
+                try await c.store.run { try $0.store.write(rec) }
+            }
+        }
+        try digest.mark(id, undone: nil, resolved: true)
+        e.resolved = true
+        return e
     }
 }

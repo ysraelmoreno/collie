@@ -36,7 +36,8 @@ extension CommandRouter {
             if let myLot { stores.insert(await memory.lotStore(myLot.id), at: 0) }
         }
         let adminCommands: Set<String> = ["memory.review", "memory.restore", "memory.pin", "memory.unpin",
-                                          "memory.cleanup", "memory.purge", "memory.repos", "memory.curator"]
+                                          "memory.cleanup", "memory.purge", "memory.repos", "memory.curator",
+                                          "memory.digest", "memory.undo", "memory.resolve"]
         if caller != nil, adminCommands.contains(r.command) {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is admin-only")
         }
@@ -283,6 +284,20 @@ extension CommandRouter {
                 return (items, apply ? try MemoryCleanup.apply(items, store: m.store).map(\.id) : [])
             }
             return .object(["items": try isoJSON(items), "applied": .array(changed.map { .string($0.uuidString) })])
+
+        case "memory.digest":
+            let since = try str(r, "since").map { s throws(ProtocolError) -> Date in
+                guard let d = ISO8601DateFormatter().date(from: s) else { throw invalid("since must be an ISO 8601 date") }
+                return d
+            } ?? .distantPast
+            return .object(["entries": try isoJSON(digest.since(since)), "curator": try isoJSON(await curator.status())])
+
+        case "memory.undo", "memory.resolve":
+            guard let e = UUID(uuidString: try need(r, "entry")) else { throw invalid("'entry' must be a digest entry id") }
+            if r.command == "memory.undo" { return try isoJSON(try await undoDigest(e)) }
+            let keep = try need(r, "keep")
+            guard ["newer", "older"].contains(keep) else { throw invalid("keep must be newer|older") }
+            return try isoJSON(try await resolveAsk(e, keepNewer: keep == "newer"))
 
         case "memory.curator":
             if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }

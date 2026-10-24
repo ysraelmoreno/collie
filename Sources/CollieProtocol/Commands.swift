@@ -185,6 +185,13 @@ public enum Commands {
                     params: [ParamSpec("lot", .string), ParamSpec("repo", .string)], timeoutSeconds: 60, exposedToMCP: false),
         CommandSpec(name: "memory.curator", summary: "The memory curator: availability, today's jobs, tokens (and its daily cap)",
                     params: [ParamSpec("cap", .int, help: "Daily job cap (0 = off, default 40)")], timeoutSeconds: 30, exposedToMCP: false),
+        CommandSpec(name: "memory.digest", summary: "What the curator did (and asks), with the curator's status",
+                    params: [ParamSpec("since", .string, help: "ISO 8601 date (default: everything kept)")], timeoutSeconds: 30, exposedToMCP: false),
+        CommandSpec(name: "memory.undo", summary: "Undo one digest entry (the records go back to how they were)",
+                    params: [ParamSpec("entry", .string, positional: true, required: true, help: "Digest entry id")], timeoutSeconds: 30, exposedToMCP: false),
+        CommandSpec(name: "memory.resolve", summary: "Answer a \"Precisa de você\" item: keep the newer or the older memory",
+                    params: [ParamSpec("entry", .string, positional: true, required: true, help: "Digest entry id"),
+                             ParamSpec("keep", .string, required: true, help: "newer|older")], timeoutSeconds: 30, exposedToMCP: false),
         CommandSpec(name: "memory.repos", summary: "Repositories with memory known from terminals and paddocks",
                     timeoutSeconds: 60, exposedToMCP: false),
         // Work log: a terminal acts on its own work; a Shepherd also on the works of terminals leashed to it (--terminal);

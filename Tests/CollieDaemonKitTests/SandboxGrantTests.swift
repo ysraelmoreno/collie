@@ -481,9 +481,13 @@ private final class Rig {
             #expect(try !f.ok(p, "mkdir -p \"$(dirname \(f.h(bad)))\" 2>/dev/null; echo a > \(f.h(bad))"), "\(bad)")
         }
         #expect(try !f.ok(p, "mv \(f.h(".claude")) \(f.h("c2"))"))   // nor the agent's dir swapped out
-        // a grant doesn't reopen them either
-        let g = try f.profile(f.input(grants: [SandboxGrant(path: f.home.appendingPathComponent(".claude").path, access: .write, scope: .terminal, owner: f.id)]))
-        #expect(try !f.ok(g, "echo a > \(f.h(".claude/settings.json"))"))
+        // R34: a write grant (the user's click) re-opens global agent config, never the rc files
+        let g = try f.profile(f.input(project: f.home, grants: [
+            SandboxGrant(path: SignedAppCheck.realPath(f.home.appendingPathComponent(".claude/settings.json")), access: .write, scope: .terminal, owner: f.id),
+            SandboxGrant(path: SignedAppCheck.realPath(f.home.appendingPathComponent(".zshrc")), access: .write, scope: .terminal, owner: f.id)]))
+        #expect(try f.ok(g, "echo a > \(f.h(".claude/settings.json"))"))
+        #expect(try !f.ok(g, "echo a > \(f.h(".claude/CLAUDE.md"))"))
+        #expect(try !f.ok(g, "echo a > \(f.h(".zshrc"))"))
     }
 
     /// I3: the Collie app bundle is never writable, even under a write grant on its folder; the folder's other files are.
@@ -517,11 +521,11 @@ private final class Rig {
         #expect(no("/Applications/Collie.app/Contents", "read"))
         #expect(!no("/Applications/Other.app"))
         let h = SignedAppCheck.realPath(f.home)
-        for rel in [".zshrc", ".gitconfig", ".claude/settings.json", ".claude/skills", ".codex/config.toml", "Library/Preferences", "Applications/X.app"] {
+        for rel in [".zshrc", ".gitconfig", "Library/Preferences", "Applications/X.app"] {
             #expect(no(h + "/" + rel), "\(rel)")
             #expect(!no(h + "/" + rel, "read"), "\(rel)")
         }
-        #expect(!no(h + "/.claude.json") && !no(h + "/Documents"))
+        for rel in [".claude.json", "Documents", ".claude/settings.json", ".claude/skills", ".codex/config.toml"] { #expect(!no(h + "/" + rel), "\(rel)") }   // R34
         let paddocks = [f.repo.appendingPathComponent(".collie/paddocks")]
         #expect(no(f.repo.path + "/.collie/paddocks/p/src", closed: paddocks))
         #expect(!no(f.repo.path + "/.collie/paddocks/p/src", "read", closed: paddocks))

@@ -131,17 +131,27 @@ enum SandboxProfile {
         // except a grant under TMP outside the home: TMP is writable anyway, and clones go there (R17)
         func under(_ p: String, _ root: String) -> Bool { URL(fileURLWithPath: p).pathComponents.starts(with: URL(fileURLWithPath: root).pathComponents) }
         let temps = ["/private/tmp", real(i.userTemp)]
-        rule("deny", "file-write*", tagged: true, writeGrants.filter { g in under(g, home) || !temps.contains { under(g, $0) } }
-             .map { rx("^" + re($0) + "/(.+/)?[^/]*\\.git(/|$)") })
+        func gitDeny(_ gs: [String]) {
+            rule("deny", "file-write*", tagged: true, gs.filter { g in under(g, home) || !temps.contains { under(g, $0) } }
+                 .map { rx("^" + re($0) + "/(.+/)?[^/]*\\.git(/|$)") })
+        }
+        gitDeny(writeGrants)
         rule("allow", "file-write*", writes)
+        // R34: global agent config closed after the project (the home as project too), then the agents' own state, then
+        // re-opened by a write grant on (or above) it: the user's click (user decision)
+        let agentConfig = EssentialPaths.agentConfig.map { home + "/" + $0 }
+        rule("deny", "file-write*", tagged: true, agentConfig.map(sub))
+        rule("allow", "file-write*", EssentialPaths.agentStateWrites.map { entry(home, $0) })
+        let reopened = writeGrants.filter { g in agentConfig.contains { under(g, $0) || under($0, g) } }
+        rule("allow", "file-write*", reopened.map(sub))
+        gitDeny(reopened)
         // a pasture never writes its paddocks: their worktrees, nor any worktree's git dir in the common dir
         var closed = i.paddockWorktrees.map { sub(real($0)) }
         if let common, worktree == nil { closed.append(sub(common + "/worktrees")) }
         rule("deny", "file-write*", tagged: true, closed)
         // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
-        // launchd agents, ~/Applications, the app bundle (I3); then the agents' own state again. R23: secrets
+        // launchd agents, ~/Applications, the app bundle (I3). R23: secrets
         rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
-        rule("allow", "file-write*", EssentialPaths.agentStateWrites.map { entry(home, $0) })
         rule("deny", "file-write*", tagged: true, EssentialPaths.secrets.map { entry(home, $0) })
         // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
         // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.

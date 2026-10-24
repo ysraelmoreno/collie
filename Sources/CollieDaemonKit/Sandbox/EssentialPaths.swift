@@ -95,16 +95,17 @@ enum EssentialPaths {
 
     /// R32: never writable, rendered after the project and every grant, so no project root (the home itself included)
     /// and no click reopens them: config another unsandboxed program executes from (shell rc, git and package-manager
-    /// config, the global agent config except `~/.claude.json`), preferences, launchd agents, `~/Applications` (`collie
-    /// open` launches apps from there). The agents' state is re-opened after (`agentStateWrites`).
+    /// config), preferences, launchd agents, `~/Applications` (`collie open` launches apps from there).
     static let neverWritable = [
         ".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout", ".zcompdump*", ".oh-my-zsh", ".p10k.zsh", ".config/zsh",
         ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".inputrc", ".config/fish", ".config/starship.toml",
         ".gitconfig", ".gitignore_global", ".config/git", ".npmrc", ".yarnrc", ".yarnrc.yml",
-        ".claude", ".codex", ".cursor", ".config/cursor",
         "Library/Preferences", "Library/LaunchAgents", "Applications",
     ]
-    /// What `neverWritable` closes that the agents write: their state (R18: dirs' children only) and history files.
+    /// R34: the global agent config (`~/.claude.json` aside, R13): closed after the project, the home as project too, but a
+    /// write grant (the user's click) re-opens it (user decision). Their state is re-opened after (`agentStateWrites`).
+    static let agentConfig = [".claude", ".codex", ".cursor", ".config/cursor"]
+    /// What `agentConfig` closes that the agents write: their state (R18: dirs' children only) and history files.
     static var agentStateWrites: [String] {
         homeWrites.filter { e in [".claude/", ".codex/", ".cursor/"].contains { e.hasPrefix($0) } }
     }

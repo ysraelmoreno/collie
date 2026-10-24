@@ -44,7 +44,7 @@ struct SandboxGrantStore {
     /// `~/Library`, `~/Library/Application Support`), or closed whatever the user clicks (R23, R27): Collie's data and
     /// admin token, secrets, mail/messages/containers/keychains, launchd agents, and anything that is or is inside a git
     /// dir (`.git`, `*.git`). The Collie app bundle and its folders (I3). For writes, also what the profile closes after
-    /// every grant (R32: config run outside, global agent config, preferences, `~/Applications`) and `closed`: a pasture's
+    /// every grant (R32: config run outside, preferences, `~/Applications`; R34: global agent config is grantable) and `closed`: a pasture's
     /// paddock worktrees (M3). A refused card shows only Negar.
     static func refusal(_ path: String, op: String, home: URL, collie: URL, app: URL? = nil, closed: [URL] = []) -> String? {
         if op == "exec" { return "Executar este programa não pode ser liberado no sandbox." }
@@ -71,7 +71,7 @@ struct SandboxGrantStore {
             return p.count > h.count && p.starts(with: h) && p[h.count].hasPrefix(e.dropLast())
         }
         if EssentialPaths.neverWritable.contains(where: closes) {
-            return "Configuração que roda fora do sandbox (rc do shell, git, configuração global dos agentes, preferências, ~/Applications) nunca é liberada para escrita."
+            return "Configuração que roda fora do sandbox (rc do shell, git, npm, preferências, ~/Applications) nunca é liberada para escrita."
         }
         if closed.contains(where: within) {
             return "Os cercados deste pasto nunca são graváveis daqui: abra um terminal no cercado."

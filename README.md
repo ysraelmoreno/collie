@@ -378,10 +378,11 @@ Codex usam); se um dia sair do macOS, o sandbox para de funcionar e o Collie ter
   o próprio `~`, o projeto é toda a sua pasta pessoal** (a folha de novo terminal avisa): o agente lê e altera tudo nela,
   menos os segredos e o que nunca é gravável (abaixo).
 - **Nunca gravável, qualquer que seja o projeto ou o liberado.** Os rc do shell (`.zshrc`, `.zprofile`, `.bashrc`…),
-  `~/.gitconfig` e `~/.config/git`, `~/.npmrc`/`.yarnrc`, a configuração global dos agentes (`~/.claude`, `~/.codex`,
-  `~/.cursor`, menos as pastas de estado deles e o `~/.claude.json`), `~/Library/Preferences`, `~/Library/LaunchAgents`,
-  `~/Applications`, o app do Collie e a pasta de dados dele. Isso vale também para um projeto dentro delas (um terminal
-  em `~/.claude` não edita as suas skills: faça isso fora do Collie ou num terminal livre).
+  `~/.gitconfig` e `~/.config/git`, `~/.npmrc`/`.yarnrc`, `~/Library/Preferences`, `~/Library/LaunchAgents`,
+  `~/Applications`, o app do Collie e a pasta de dados dele. Isso vale também para um projeto dentro delas.
+- **Configuração global dos agentes** (`~/.claude`, `~/.codex`, `~/.cursor`, menos as pastas de estado deles e o
+  `~/.claude.json`) fica só leitura mesmo com o projeto em `~` ou dentro dela; uma escrita ali gera o cartão normal, e
+  só o seu clique em Liberar a abre.
 - **Leitura fora do projeto.** Só o projeto, o sistema, as toolchains e o que as ferramentas precisam (Xcode, Homebrew,
   nvm, caches, o estado do agente, os arquivos que o Collie gera para o terminal). Documentos, outros repositórios e o
   resto do `$HOME` não são lidos. Limite: leituras fora do `$HOME` e de `/private/tmp` seguem abertas.
@@ -444,7 +445,8 @@ do terminal e na aba "Liberados" do lote; **Revogar** reinicia na hora os termin
 O que um clique **nunca** libera: a pasta de dados e o token do Collie, segredos, `.git/hooks`, `.git/config`,
 `.git/info/attributes`, `commondir` e qualquer `.git`/`*.git` (submódulos, worktrees, bare), `~/Library` e
 `~/Library/Application Support` inteiros, `~/Library/{Keychains,Mail,Messages,Cookies,Safari,Containers,Group Containers}`,
-o app do Collie e as pastas que o contêm (como `/Applications`), a escrita no que é "nunca gravável" (acima) e, num
+o app do Collie e as pastas que o contêm (como `/Applications`), a escrita no que é "nunca gravável" (acima; a
+configuração global dos agentes é liberável) e, num
 terminal do pasto, a escrita nos cercados dele (abra um terminal no cercado). Esses cartões mostram só **Negar**.
 Liberar escrita numa pasta dentro de `/tmp` não bloqueia o git ali (os temporários já são graváveis; clonar lá funciona).
 Cada liberado guarda exatamente o caminho mostrado no cartão (resolvido uma vez); trocar um link depois não o alarga.

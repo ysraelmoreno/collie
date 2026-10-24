@@ -193,6 +193,7 @@ public final class Daemon: Sendable {
         await router.watchDevices()
         await router.userEnv.warm()
         await router.startJobSweep()
+        await router.curator.start { [router] job, call in try await router.curate(job, call) }
     }
 
     private func sweep(_ dir: URL, _ match: (String) -> Bool) {
@@ -204,6 +205,7 @@ public final class Daemon: Sendable {
         server.stop()
         await router.stopSandboxWatch()
         await router.stopJobSweep()
+        await router.curator.stop()
         await router.host.stop()
         await router.devices.stop()
         await router.design.stop()

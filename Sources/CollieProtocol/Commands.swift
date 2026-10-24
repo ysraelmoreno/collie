@@ -183,6 +183,8 @@ public enum Commands {
                     timeoutSeconds: 60, exposedToMCP: false),
         CommandSpec(name: "memory.purge", summary: "Delete the files of discarded memories",
                     params: [ParamSpec("lot", .string), ParamSpec("repo", .string)], timeoutSeconds: 60, exposedToMCP: false),
+        CommandSpec(name: "memory.curator", summary: "The memory curator: availability, today's jobs, tokens (and its daily cap)",
+                    params: [ParamSpec("cap", .int, help: "Daily job cap (0 = off, default 40)")], timeoutSeconds: 30, exposedToMCP: false),
         CommandSpec(name: "memory.repos", summary: "Repositories with memory known from terminals and paddocks",
                     timeoutSeconds: 60, exposedToMCP: false),
         // Work log: a terminal acts on its own work; a Shepherd also on the works of terminals leashed to it (--terminal);

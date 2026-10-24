@@ -36,7 +36,7 @@ extension CommandRouter {
             if let myLot { stores.insert(await memory.lotStore(myLot.id), at: 0) }
         }
         let adminCommands: Set<String> = ["memory.review", "memory.restore", "memory.pin", "memory.unpin",
-                                          "memory.cleanup", "memory.purge", "memory.repos"]
+                                          "memory.cleanup", "memory.purge", "memory.repos", "memory.curator"]
         if caller != nil, adminCommands.contains(r.command) {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is admin-only")
         }
@@ -265,6 +265,10 @@ extension CommandRouter {
                 return (items, apply ? try MemoryCleanup.apply(items, store: m.store).map(\.id) : [])
             }
             return .object(["items": try isoJSON(items), "applied": .array(changed.map { .string($0.uuidString) })])
+
+        case "memory.curator":
+            if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }
+            return try isoJSON(await curator.status())
 
         case "memory.purge":
             let n = try await repo.run { m -> Int in

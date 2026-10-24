@@ -17,6 +17,8 @@ func testConfig(_ paths: Paths, _ ws: UUID = UUID()) -> DaemonConfig {
     c.axePath = fixtures.appendingPathComponent("fake-axe.sh")
     c.captureUserEnv = false   // never the developer's rc files
     c.localModel = FakeModel(.unavailable)   // never the real on-device model (tests that want one set it)
+    let curator = FakeCurator(); curator.avail = .unavailable("claude não encontrado")
+    c.curatorRunner = curator   // never the real claude (tests that want a curator set one)
     return c
 }
 private func makeDaemon(_ configure: (inout DaemonConfig) -> Void = { _ in }) throws -> (Daemon, Paths) {

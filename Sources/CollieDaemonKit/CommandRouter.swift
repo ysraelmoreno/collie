@@ -63,6 +63,8 @@ actor CommandRouter {
     var selfRerails: Set<UUID> = []
     /// The user's interactive-shell environment, for agent launches.
     nonisolated let userEnv: UserEnvironment
+    /// The memory curator's queue (`<root>/curator`), run by `config.curatorRunner` or the headless `claude`.
+    nonisolated let curator: Curator
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
     var importingArtifacts: Set<UUID> = []
     /// A `herd.apply` in flight: one at a time, the next waits.
@@ -111,6 +113,9 @@ actor CommandRouter {
         self.boards = LotBoards(lotsDir: config.paths.root.appendingPathComponent("lots"))
         self.herds = HerdStore(dir: config.paths.root.appendingPathComponent("herds"))
         self.assistant = WorkAssistant(model: config.localModel)
+        let curatorDir = config.paths.root.appendingPathComponent("curator")
+        self.curator = Curator(dir: curatorDir, runner: config.curatorRunner ?? ClaudeCuratorRunner(
+            root: config.paths.root, home: home, env: { await userEnv.current() }))
         me.router = self
         let approvals = asks.approvalEvents
         Task { for await e in approvals { await me.router?.approvalChanged(e) } }

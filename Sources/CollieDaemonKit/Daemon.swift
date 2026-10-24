@@ -72,6 +72,8 @@ public struct DaemonConfig: Sendable {
     var envRunner: UserEnvironment.Runner = UserEnvironment.live
     /// The on-device model for summary rewrites (tests pass a fake).
     var localModel: any LocalModel = FoundationLocalModel()
+    /// The memory curator (`ClaudeCuratorRunner` in collied; tests pass a fake: they never spend tokens); nil: the live `ClaudeCuratorRunner`.
+    var curatorRunner: (any CuratorRunner)? = nil
     /// On-device sentence vectors for memory search (tests pass a fake).
     var embedder: any MemoryEmbedder = NLMemoryEmbedder()
     public init(paths: Paths, collieExecutable: URL, workspaceId: UUID) {
@@ -193,6 +195,9 @@ public final class Daemon: Sendable {
         await router.watchDevices()
         await router.userEnv.warm()
         await router.startJobSweep()
+        await router.memory.setProposalState { [weak router] in await router?.proposalState() ?? ([], []) }
+        await router.migrateProposals()   // once: the proposals already waiting go through the curator
+        await router.curator.start { [router] job, call in try await router.curate(job, call) }
     }
 
     private func sweep(_ dir: URL, _ match: (String) -> Bool) {
@@ -204,6 +209,7 @@ public final class Daemon: Sendable {
         server.stop()
         await router.stopSandboxWatch()
         await router.stopJobSweep()
+        await router.curator.stop()
         await router.host.stop()
         await router.devices.stop()
         await router.design.stop()

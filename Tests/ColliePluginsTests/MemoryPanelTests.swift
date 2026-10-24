@@ -11,6 +11,7 @@ private actor FakeDaemon {
     var plan: [JSONValue] = []
     var failing: Set<String> = []
     var lots: [String: UUID] = [:]
+    var digest: JSONValue = .object(["entries": .array([]), "curator": .null])
     init(_ r: [MemoryRecord]) { records = r }
 
     func handle(_ cmd: String, _ a: [String: JSONValue]) throws(ProtocolError) -> JSONValue {
@@ -25,7 +26,8 @@ private actor FakeDaemon {
         }
         switch cmd {
         case "memory.repos": return .array([.object(["path": .string("/r"), "scope": .string("project")])])
-        case "lot.list": return .array(lots.keys.sorted().map { .object(["name": .string($0)]) })
+        case "lot.list": return .array(lots.keys.sorted().map { .object(["name": .string($0), "id": .string(lots[$0]!.uuidString)]) })
+        case "memory.digest": return digest
         case "memory.list":
             let st = s("status") ?? "active", un = a["unreviewed"] == .bool(true), lot = s("lot").flatMap { lots[$0] }
             return .object(["records": .array(records.filter { $0.status.rawValue == st && (!un || !$0.reviewed) && $0.lotId == lot }
@@ -203,6 +205,92 @@ private actor FakeDaemon {
         #expect(m.proposals.isEmpty && lastReview?["lot"] == nil)
     }
 
+    private func entry(_ action: String, _ title: String, at: Date, store: String = "/r", resolved: Bool = false,
+                       before: [UUID] = []) -> JSONValue {
+        let f = ISO8601DateFormatter()
+        return .object(["id": .string(UUID().uuidString), "at": .string(f.string(from: at)), "action": .string(action), "title": .string(title),
+                        "reason": .string("porque sim"), "store": .string(store), "created": .array([]),
+                        "before": .array(before.map { id in
+                            let r = MemoryRecord(id: id, kind: .decision, subject: "s", title: "t")
+                            let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
+                            return try! JSONDecoder().decode(JSONValue.self, from: e.encode(r))
+                        }), "undone": .bool(false), "resolved": .bool(resolved)])
+    }
+    private func curator(available: Bool = true, reason: String? = nil) -> JSONValue {
+        .object(["available": .bool(available), "reason": reason.map(JSONValue.string) ?? .null, "today": .number(12), "cap": .number(40),
+                 "queued": .number(0), "failed": .number(0), "inputTokens": .number(17_000), "outputTokens": .number(1_200), "costUSD": .number(0.0412)])
+    }
+
+    @Test func learningTabGroupsTodayAndWeek() async {
+        let (m, d) = make([])
+        let now = Date()
+        await d.setDigest(.object(["entries": .array([
+            entry("aprendido", "Regra de hoje", at: now.addingTimeInterval(-60)),
+            entry("aposentado", "Velha da semana", at: now.addingTimeInterval(-3 * 86400)),
+            entry("ask", "Tabs ou espaços?", at: now.addingTimeInterval(-5 * 86400)),
+            entry("ask", "Já resolvida", at: now.addingTimeInterval(-60), resolved: true),
+        ]), "curator": curator()]))
+        await m.load()
+        #expect(MemoryPanelModel.Tab.allCases.first == .learning && m.tab == .learning && MemoryPanelModel.Tab.learning.rawValue == "Aprendizado")
+        let g = m.learningGroups(now: now)
+        #expect(g.map(\.title) == ["Precisa de você", "Hoje", "Esta semana"])
+        #expect(g.map { $0.rows.map(\.title) } == [["Tabs ou espaços?"], ["Regra de hoje"], ["Velha da semana"]])
+        #expect(g[1].rows.first?.reason == "porque sim")
+        let undo = g[1].rows[0]
+        await m.undo(undo)
+        #expect(await d.last("memory.undo")?["entry"] == .string(undo.id.uuidString))
+        await m.resolve(g[0].rows[0], keepNewer: false)
+        #expect(await d.last("memory.resolve")?["keep"] == .string("older"))
+    }
+
+    @Test func curatorLine() async {
+        let (m, d) = make([])
+        await d.setDigest(.object(["entries": .array([]), "curator": curator()]))
+        await m.load()
+        #expect(m.curatorLine == "Curador: 12/40 hoje · 18 mil tokens · US$ 0,04")
+        await d.setDigest(.object(["entries": .array([]), "curator": curator(available: false, reason: "claude sem login")]))
+        await m.load()
+        #expect(m.curatorLine == "curador indisponível: claude sem login")
+    }
+
+    @Test func capEditable() async {
+        let (m, d) = make([])
+        await m.setCap(25)
+        #expect(await d.last("memory.curator")?["cap"] == .number(25))
+    }
+
+    @Test func promoteSuggestion() async {
+        let la = UUID(), rid = UUID()
+        let (m, d) = make([])
+        await d.setLots(["Login": la])
+        await d.setDigest(.object(["entries": .array([
+            entry("ask", "Vale para o projeto todo? Promover ao projeto", at: Date(), store: "lot:\(la.uuidString.lowercased())", before: [rid]),
+            entry("ask", "Qual vale?", at: Date(), store: "lot:\(la.uuidString.lowercased())", before: [rid]),
+        ]), "curator": curator()]))
+        await m.load()
+        let asks = m.learningGroups(now: Date())[0].rows
+        #expect(m.promoteSuggestion(asks[0])?.lot == "Login" && m.promoteSuggestion(asks[0])?.id == rid)
+        #expect(m.promoteSuggestion(asks[1]) == nil)
+        await m.promoteSuggested(asks[0])
+        let a = await d.last("memory.promote")
+        #expect(a?["id"] == .string(rid.uuidString) && a?["lot"] == .string("Login"))
+    }
+
+    @Test func dailyNotificationOffByDefault() {
+        #expect(MemoryDigestNotice.defaultsKey == "memory.dailyNotification" && MemoryDigestNotice.defaultOn == false)
+        let cal = Calendar.current
+        let at18 = cal.date(bySettingHour: 18, minute: 5, second: 0, of: Date())!, at17 = cal.date(bySettingHour: 17, minute: 0, second: 0, of: Date())!
+        let today: [MemoryDigestNotice.Item] = [.init(at: at17, ask: false), .init(at: at17, ask: false), .init(at: at17, ask: true)]
+        #expect(MemoryDigestNotice.message(enabled: false, items: today, now: at18, lastPosted: nil) == nil)
+        #expect(MemoryDigestNotice.message(enabled: true, items: today, now: at17, lastPosted: nil) == nil)   // before 18:00
+        #expect(MemoryDigestNotice.message(enabled: true, items: today, now: at18, lastPosted: nil) == "Collie aprendeu 2 coisas, 1 precisa de você")
+        #expect(MemoryDigestNotice.message(enabled: true, items: Array(today.prefix(2)), now: at18, lastPosted: nil) == "Collie aprendeu 2 coisas")
+        #expect(MemoryDigestNotice.message(enabled: true, items: today, now: at18, lastPosted: at18.addingTimeInterval(-60)) == nil)   // once a day
+        #expect(MemoryDigestNotice.message(enabled: true, items: [], now: at18, lastPosted: nil) == nil)
+        let two: [MemoryDigestNotice.Item] = [.init(at: at17, ask: true), .init(at: at17, ask: true), .init(at: at17, ask: false)]
+        #expect(MemoryDigestNotice.message(enabled: true, items: two, now: at18, lastPosted: nil) == "Collie aprendeu 1 coisa, 2 precisam de você")
+    }
+
     @Test func lotMemoriesGroupedAndActionsCarryTheLot() async {
         let la = UUID(), lb = UUID()
         var a = rec("jwt", reviewed: true); a.lotId = la
@@ -220,6 +308,7 @@ private actor FakeDaemon {
 }
 
 extension FakeDaemon {
+    func setDigest(_ v: JSONValue) { digest = v }
     func setPlan(_ p: [JSONValue]) { plan = p }
     func fail(_ c: String) { failing.insert(c) }
 }

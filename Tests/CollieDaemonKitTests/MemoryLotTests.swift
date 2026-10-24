@@ -257,7 +257,7 @@ private func rec(_ title: String, scope: MemoryScope = .project, lot: UUID? = ni
         let old = rec("Old proposal", status: .proposed, age: 15 * 86400), young = rec("Young proposal", status: .proposed, age: 13 * 86400)
         let active = rec("Old active", age: 30 * 86400)
         for r in [old, young, active] { try store.write(r) }
-        #expect(try MemoryCleanup.expireProposals(store: store).map(\.id) == [old.id])
+        #expect(try MemoryCleanup.expireProposals(store: store, asked: [old.id, young.id, active.id]).map(\.id) == [old.id])   // R18: in an ask
         let by = Dictionary(uniqueKeysWithValues: store.all().records.map { ($0.id, $0.status) })
         #expect(by == [old.id: .discarded, young.id: .proposed, active.id: .active])   // never deleted
         #expect(try MemoryCleanup.restore(old.id, store: store).status == .active)

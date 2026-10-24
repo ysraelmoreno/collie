@@ -91,7 +91,7 @@ final class Fanout: @unchecked Sendable {
             input.async {
                 defer { c.inputDone(d.count) }
                 guard !c.isCut else { return }   // earlier input was lost and reported: drop the rest
-                do { try p.write(d) } catch {
+                do { try p.write(d, origin: .user) } catch {   // the app's keyboard/paste: the user's own (R16 allowlist)
                     // exited: the exit path sends `.exited`; stalled: tell the client input was lost (it reattaches)
                     if p.isRunning { c.abort() }
                 }

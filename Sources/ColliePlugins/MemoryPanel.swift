@@ -35,13 +35,48 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
     public let action: String, id: UUID, into: UUID?, reason: String
 }
 
+/// One automatic action of the curator (`memory.digest`): `before` is what Desfazer writes back.
+public struct DigestRow: Decodable, Identifiable, Equatable, Sendable {
+    public let id: UUID, at: Date, action: String, title: String, reason: String, store: String
+    public let created: [UUID], before: [MemoryRecord], undone: Bool, resolved: Bool
+    public var isAsk: Bool { action == "ask" }
+}
+/// The curator's availability and today's usage (`memory.digest`'s `curator`).
+public struct CuratorInfo: Decodable, Equatable, Sendable {
+    public let available: Bool, reason: String?, today: Int, cap: Int, inputTokens: Int, outputTokens: Int, costUSD: Double
+}
+
+/// The opt-in daily notification (off by default): at 18:00 local, once a day, when today's digest has something.
+public enum MemoryDigestNotice {
+    public static let defaultsKey = "memory.dailyNotification", lastPostedKey = "memory.dailyNotification.lastPosted"
+    public static let defaultOn = false, hour = 18
+    public struct Item: Sendable { public var at: Date, ask: Bool; public init(at: Date, ask: Bool) { self.at = at; self.ask = ask } }
+    public static func items(_ rows: [DigestRow]) -> [Item] { rows.filter { !$0.undone && !($0.isAsk && $0.resolved) }.map { Item(at: $0.at, ask: $0.isAsk) } }
+    /// nil: nothing to post now. "Collie aprendeu <n> coisas, <m> precisa(m) de você" (the `m` part only when > 0).
+    public static func message(enabled: Bool, items: [Item], now: Date, lastPosted: Date?, calendar: Calendar = .current) -> String? {
+        guard enabled, calendar.component(.hour, from: now) >= hour, lastPosted.map({ !calendar.isDate($0, inSameDayAs: now) }) ?? true else { return nil }
+        let today = items.filter { calendar.isDate($0.at, inSameDayAs: now) }
+        let n = today.filter { !$0.ask }.count, m = today.filter(\.ask).count
+        guard n + m > 0 else { return nil }
+        let learned = "Collie aprendeu \(n) \(n == 1 ? "coisa" : "coisas")"
+        return m == 0 ? learned : learned + ", \(m) \(m == 1 ? "precisa" : "precisam") de você"
+    }
+}
+
 /// State and daemon calls of the Memory panel (all async; the daemon does the work). The admin picks the store with `repo`.
 @MainActor public final class MemoryPanelModel: ObservableObject {
-    public enum Tab: String, CaseIterable, Sendable { case review = "Revisar", decisions = "Decisões", map = "Mapa", cleanup = "Limpeza" }
+    public enum Tab: String, CaseIterable, Sendable {
+        case learning = "Aprendizado", review = "Revisar", decisions = "Decisões", map = "Mapa", cleanup = "Limpeza"
+    }
 
     @Published public private(set) var repos: [MemoryRepo] = []
     @Published public var repo: String?
-    @Published public var tab: Tab = .review
+    @Published public var tab: Tab = .learning
+    /// The last 7 days of the curator's digest (Aprendizado), and its status line.
+    @Published public private(set) var digest: [DigestRow] = []
+    @Published public private(set) var curator: CuratorInfo?
+    /// Lot store key ("lot:<id>") → the lot's name, for "Promover ao projeto".
+    private var lotNames: [String: String] = [:]
     @Published public private(set) var unreviewed: [MemoryRow] = []
     /// Captured, not yet reviewed (MemoryCapture): the picked repo's and every lot's, never injected until approved.
     @Published public private(set) var proposals: [MemoryRow] = []
@@ -98,13 +133,54 @@ public struct CleanupEntry: Decodable, Identifiable, Equatable, Sendable {
         if let l = await list("archived") { archived = l.records }
         if let l = await list("discarded") { discarded = l.records }
         var props = await list("proposed")?.records ?? []
-        struct LotName: Decodable { var name: String }
+        struct LotName: Decodable { var name: String; var id: UUID? }
         let lots: [LotName] = decode(await send("lot.list")) ?? []
+        lotNames = Dictionary(lots.compactMap { l in l.id.map { ("lot:\($0.uuidString.lowercased())", l.name) } }, uniquingKeysWith: { a, _ in a })
+        struct Digest: Decodable { var entries: [DigestRow]; var curator: CuratorInfo? }
+        let since = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7 * 86400))
+        if let dg: Digest = decode(await send("memory.digest", ["since": .string(since)])) { digest = dg.entries; curator = dg.curator }
         for l in lots { props += await list("proposed", lot: l.name)?.records ?? [] }
         proposals = props
         var mem: [MemoryRow] = []
         for l in lots { mem += await list("active", lot: l.name)?.records ?? [] }
         lotMemories = mem
+    }
+
+    /// "Precisa de você" (open asks) first, then "Hoje" and "Esta semana" (the rest of the 7 days), newest first; empty
+    /// groups left out.
+    public func learningGroups(now: Date = Date(), calendar: Calendar = .current) -> [(title: String, rows: [DigestRow])] {
+        let rows = digest.sorted { $0.at > $1.at }
+        let groups: [(String, [DigestRow])] = [
+            ("Precisa de você", rows.filter { $0.isAsk && !$0.resolved && !$0.undone }),
+            ("Hoje", rows.filter { !$0.isAsk && calendar.isDate($0.at, inSameDayAs: now) }),
+            ("Esta semana", rows.filter { !$0.isAsk && !calendar.isDate($0.at, inSameDayAs: now) && now.timeIntervalSince($0.at) <= 7 * 86400 }),
+        ]
+        return groups.filter { !$0.1.isEmpty }.map { (title: $0.0, rows: $0.1) }
+    }
+    /// "Curador: 12/40 hoje · 18 mil tokens · US$ 0,04", or "curador indisponível: <motivo>".
+    public var curatorLine: String? {
+        guard let c = curator else { return nil }
+        if !c.available { return "curador indisponível: \(c.reason ?? "desconhecido")" }
+        let t = c.inputTokens + c.outputTokens
+        let tokens = t < 1_000 ? "\(t)" : t < 1_000_000 ? "\(Int((Double(t) / 1_000).rounded())) mil"
+            : (Double(t) / 1_000_000).formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "pt_BR"))) + " mi"
+        let cost = c.costUSD.formatted(.number.precision(.fractionLength(2)).locale(Locale(identifier: "pt_BR")))
+        return "Curador: \(c.today)/\(c.cap) hoje · \(tokens) tokens · US$ \(cost)"
+    }
+    public func undo(_ e: DigestRow) async { await change("memory.undo", ["entry": .string(e.id.uuidString)]) }
+    public func resolve(_ e: DigestRow, keepNewer: Bool) async {
+        await change("memory.resolve", ["entry": .string(e.id.uuidString), "keep": .string(keepNewer ? "newer" : "older")])
+    }
+    /// The curator's daily job cap (0 = off).
+    public func setCap(_ n: Int) async { await change("memory.curator", ["cap": .number(Double(max(0, n)))]) }
+    /// An ask from a lot's job that suggests the project: its memory and lot, for "Promover ao projeto".
+    public func promoteSuggestion(_ e: DigestRow) -> (id: UUID, lot: String)? {
+        guard e.isAsk, let lot = lotNames[e.store], e.title.localizedCaseInsensitiveContains("projeto"), let id = e.before.first?.id else { return nil }
+        return (id, lot)
+    }
+    public func promoteSuggested(_ e: DigestRow) async {
+        guard let s = promoteSuggestion(e) else { return }
+        await promote(s.id, lot: s.lot)
     }
 
     /// Lot memories by lot name, each group newest first.
@@ -296,8 +372,54 @@ struct MemoryPanelView: View {
         }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading).background(Color.collieAttentionTint)
     }
 
+    /// One digest row: title, reason, its actions.
+    private func digestItem(_ e: DigestRow, @ViewBuilder actions: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                CollieTag(e.isAsk ? "pergunta" : e.action, tone: e.isAsk ? .attention : .neutral)
+                Text(relative.localizedString(for: e.at, relativeTo: Date())).font(.collieMono(11)).foregroundStyle(Color.collieMuted)
+                if e.undone { CollieTag("desfeito", tone: .neutral) }
+            }
+            Text(e.title).font(.collieUI(15, .semibold)).foregroundStyle(Color.collieText)
+            if !e.reason.isEmpty { Text(e.reason).font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary) }
+            HStack(spacing: 6) { actions() }.padding(.top, 2)
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .collieCard(highlight: e.isAsk ? Color.collieAttention.opacity(0.5) : nil)
+    }
+
+    @ViewBuilder private var learning: some View {
+        if let line = model.curatorLine {
+            HStack {
+                Text(line).font(.collieMono(12)).foregroundStyle(model.curator?.available == false ? Color.collieAttention : .collieTextSecondary)
+                Spacer()
+                if let c = model.curator {
+                    Stepper("Limite diário: \(c.cap)", value: Binding(get: { c.cap }, set: { n in Task { await model.setCap(n) } }), in: 0...1_000)
+                        .font(.collieUI(12)).fixedSize()
+                }
+            }
+        }
+        let groups = model.learningGroups()
+        if groups.isEmpty { empty("Nada aprendido nesta semana.") }
+        ForEach(groups, id: \.title) { g in
+            section(g.title)
+            ForEach(g.rows) { e in
+                digestItem(e) {
+                    if e.isAsk {
+                        act("Manter a nova", .primary) { Task { await model.resolve(e, keepNewer: true) } }
+                        act("Manter a antiga") { Task { await model.resolve(e, keepNewer: false) } }
+                        if model.promoteSuggestion(e) != nil { act("Promover ao projeto") { Task { await model.promoteSuggested(e) } } }
+                    } else if !e.undone {
+                        act("Desfazer") { Task { await model.undo(e) } }
+                    }
+                }
+            }
+        }
+    }
+
     @ViewBuilder private var content: some View {
         switch model.tab {
+        case .learning: learning
         case .review:
             if !model.proposals.isEmpty {
                 section("Propostas")
@@ -429,7 +551,7 @@ struct MemoryPanelView: View {
 
 extension MemoryKind {
     /// The card tag's text.
-    var label: String { switch self { case .decision: "decisão"; case .map: "mapa"; case .pitfall: "armadilha" } }
+    var label: String { switch self { case .feedback: "regra"; case .decision: "decisão"; case .map: "mapa"; case .pitfall: "armadilha" } }
 }
 
 private struct EditSheet: View {

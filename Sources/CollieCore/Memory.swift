@@ -1,7 +1,8 @@
 import Foundation
 import CollieProtocol
 
-public enum MemoryKind: String, Codable, Sendable { case decision, map, pitfall }
+/// `feedback`: a rule the user gave (from a correction); agents never save one.
+public enum MemoryKind: String, Codable, Sendable { case feedback, decision, map, pitfall }
 public enum MemoryScope: String, Codable, Sendable { case project, paddock, global, lot }
 /// `proposed`: captured, not yet reviewed — never injected until approved.
 public enum MemoryStatus: String, Codable, Sendable { case active, superseded, archived, discarded, proposed }

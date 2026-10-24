@@ -337,6 +337,16 @@ final class MemoryIndex {
         return best.compactMap { id in recs[id].map { r in Candidate(record: r, b: cand[id]!.b, m: cand[id]!.m, cos: cand[id]!.cos) } }
     }
 
+    /// The indexed records among `ids`, any status (a hand-edited or deleted file shows here after `refresh`).
+    func records(_ ids: [UUID]) -> [UUID: MemoryRecord] {
+        guard !ids.isEmpty else { return [:] }
+        var out: [UUID: MemoryRecord] = [:]
+        try? query("SELECT json FROM docs WHERE id IN (\(ids.map { _ in "?" }.joined(separator: ", ")))", ids.map { key($0) as Any? }) { row in
+            if let r = decode(text(row, 0)) { out[r.id] = r }
+        }
+        return out
+    }
+
     func noteRead(_ ids: [UUID]) {
         let now = Date().timeIntervalSince1970
         for id in ids {

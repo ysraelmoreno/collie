@@ -93,11 +93,14 @@ enum MemoryCleanup {
 
     static let proposalAge: TimeInterval = 14 * 86400
 
-    /// Proposals unreviewed for 14 days become discarded (restorable; only an explicit purge deletes). Returns those changed.
+    /// R18: the 14-day expiry is only for "Precisa de você": a proposal named in an open ask (`asked`) and untouched
+    /// for 14 days becomes discarded (restorable; only an explicit purge deletes), unless it is queued for the curator
+    /// again (`keep`). Any other proposal waits for the curator or the user. Returns those changed.
     @discardableResult
-    static func expireProposals(store: MemoryStore, now: Date = Date()) throws -> [MemoryRecord] {
+    static func expireProposals(store: MemoryStore, keep: Set<UUID> = [], asked: Set<UUID>, now: Date = Date()) throws -> [MemoryRecord] {
         var changed: [MemoryRecord] = []
-        for var r in store.all().records where r.status == .proposed && !r.reviewed && now.timeIntervalSince(r.createdAt) >= proposalAge {
+        for var r in store.all().records where r.status == .proposed && !r.reviewed && asked.contains(r.id) && !keep.contains(r.id)
+            && now.timeIntervalSince(r.createdAt) >= proposalAge {
             r.status = .discarded; r.updatedAt = now
             try store.write(r)
             changed.append(r)

@@ -3,6 +3,7 @@ import CollieTheme
 import CollieCore
 import CollieClient
 import CollieProtocol
+import ColliePlugins
 
 /// Single page (Aparência); a section bar comes with the second page.
 extension DesignFirst {
@@ -21,6 +22,7 @@ struct PreferencesView: View {
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
     @AppStorage(AppearanceKeys.terminalSize) private var size = Double(TerminalFontChoice.default.size)
+    @AppStorage(MemoryDigestNotice.defaultsKey) private var dailyNotification = MemoryDigestNotice.defaultOn
 
     private let themes: [(ThemeChoice, String, String, Palette?)] = [
         (.dark, "Escuro", "fundo índigo, menta", .dark), (.light, "Claro", "papel, cobalto", .light),
@@ -73,6 +75,11 @@ struct PreferencesView: View {
                         .labelsHidden().pickerStyle(.segmented).fixedSize()
                         .disabled(client.state != .connected)
                         Text("Em trabalho de interface, o Pastor desenha antes no FigCraft: pergunta, sempre ou nunca. Vale para o workspace.")
+                            .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                    }
+                    section("Memória") {
+                        Toggle("Avisar uma vez por dia o que o Collie aprendeu", isOn: $dailyNotification)
+                        Text("Às 18h, se houver algo no Aprendizado de hoje. O resumo fica sempre no painel Memória.")
                             .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                     }
                 }

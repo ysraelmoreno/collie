@@ -221,6 +221,27 @@ struct ContentView: View {
 
     private var structure: WindowStructure { WindowStructure(rawValue: structureRaw) ?? .compact }
 
+    /// The opt-in daily notification: every 10 minutes, at most one a day (`MemoryDigestNotice`); never throws.
+    private func dailyDigestLoop() async {
+        let d = UserDefaults.standard
+        while !Task.isCancelled {
+            if d.bool(forKey: MemoryDigestNotice.defaultsKey), Calendar.current.component(.hour, from: Date()) >= MemoryDigestNotice.hour {
+                let start = ISO8601DateFormatter().string(from: Calendar.current.startOfDay(for: Date()))
+                struct Digest: Decodable { var entries: [DigestRow] }
+                if let v = try? await client.adminCall("memory.digest", ["since": .string(start)]), let data = try? JSONEncoder().encode(v) {
+                    let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+                    let last = d.object(forKey: MemoryDigestNotice.lastPostedKey) as? Date
+                    if let dg = try? dec.decode(Digest.self, from: data),
+                       let text = MemoryDigestNotice.message(enabled: true, items: MemoryDigestNotice.items(dg.entries), now: Date(), lastPosted: last) {
+                        notifier.notify(UUID(), title: "Memória", body: text)
+                        d.set(Date(), forKey: MemoryDigestNotice.lastPostedKey)
+                    }
+                }
+            }
+            try? await Task.sleep(for: .seconds(600))
+        }
+    }
+
     private var shell: ShellContext {
         ShellContext(client: client, canvas: canvas, paddocks: paddocks, usage: usage, workspaceName: workspaceName,
                      usageOpen: $usageOpen, newTerminal: { sheet = .newTerminal(nil) }, openPanel: { sheet = .openPanel(nil) },
@@ -274,6 +295,7 @@ struct ContentView: View {
             workspaceName = try? await WorkspaceStore(paths: Paths(root: Config.root)).load(id).name
         }
         .task { bundledBuild = await Task.detached { BuildID.of(URL(fileURLWithPath: Config.collied)) }.value }
+        .task(id: client.state == .connected) { if client.state == .connected { await dailyDigestLoop() } }
         .onChange(of: client.paddocks) { _, fs in   // the current paddock was deleted (here or by a Shepherd)
             if client.state == .connected, let c = client.currentPaddock, !fs.contains(where: { $0.id == c }) {
                 client.currentPaddock = nil

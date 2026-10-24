@@ -63,6 +63,13 @@ actor CommandRouter {
     var selfRerails: Set<UUID> = []
     /// The user's interactive-shell environment, for agent launches.
     nonisolated let userEnv: UserEnvironment
+    /// The memory curator's queue (`<root>/curator`), run by `config.curatorRunner` or the headless `claude`.
+    nonisolated let curator: Curator
+    /// The last 500 characters of each terminal's last turn (`turn.completed`): a bare "não" answering a question is a
+    /// correction. ponytail: one string per terminal, never pruned (tiny).
+    var lastTurn: [UUID: String] = [:]
+    /// R14: when each terminal's correction jobs were queued (the last hour's).
+    var correctionsAt: [String: [Date]] = [:]   // "<terminal>|<user>"
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
     var importingArtifacts: Set<UUID> = []
     /// A `herd.apply` in flight: one at a time, the next waits.
@@ -111,6 +118,9 @@ actor CommandRouter {
         self.boards = LotBoards(lotsDir: config.paths.root.appendingPathComponent("lots"))
         self.herds = HerdStore(dir: config.paths.root.appendingPathComponent("herds"))
         self.assistant = WorkAssistant(model: config.localModel)
+        let curatorDir = config.paths.root.appendingPathComponent("curator")
+        self.curator = Curator(dir: curatorDir, runner: config.curatorRunner ?? ClaudeCuratorRunner(
+            root: config.paths.root, home: home, env: { await userEnv.current() }))
         me.router = self
         let approvals = asks.approvalEvents
         Task { for await e in approvals { await me.router?.approvalChanged(e) } }
@@ -261,7 +271,10 @@ actor CommandRouter {
                 if continued {
                     await asks.turnContinued(terminal: tid)
                     await captureContinued(tid)
-                } else { await asks.turnCompleted(terminal: tid, message: str(req, "message")) }
+                } else {
+                    if let m = str(req, "message") { lastTurn[tid] = String(m.suffix(500)) }
+                    await asks.turnCompleted(terminal: tid, message: str(req, "message"))
+                }
                 guard capture else {
                     Task { await workTurnEnded(tid) }   // git runs detached: never delays or fails the hook
                     return Response(id: req.id, ok: true, result: .object([:]))

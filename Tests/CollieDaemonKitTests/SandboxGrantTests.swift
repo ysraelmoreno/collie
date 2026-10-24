@@ -313,6 +313,18 @@ private final class Rig {
         }
     }
 
+    /// 2R: the curator's denials are its sandbox working (it never asks for more): no card.
+    @Test func curatorDenialRaisesNoCard() async throws {
+        try await Rig().run { rig in
+            let a = try await rig.spawn("A", token: false)
+            #expect(await waitFor(20) { rig.feed.starts >= 1 })
+            rig.feed.send(denialLine(ClaudeCuratorRunner.sandboxId, "file-write-create", rig.docs.path + "/x"))
+            rig.feed.send(denialLine(a.id, "file-write-create", rig.docs.path + "/mine"))   // the marker: processed after it
+            #expect(await waitFor(20) { (try? await rig.list().cards.count) == 1 })
+            #expect(try await rig.list().cards.map(\.path) == [rig.docs.path + "/mine"])
+        }
+    }
+
     @Test func requestRaisesCard() async throws {
         try await Rig().run { rig in
             let a = try await rig.spawn("A")

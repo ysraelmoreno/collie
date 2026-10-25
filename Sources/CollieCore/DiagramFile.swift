@@ -39,9 +39,20 @@ public enum DiagramFile {
     }
 
     /// Well-formed XML whose root is `mxfile` or `mxGraphModel`, within the size limit; the error names the line.
+    /// R13: no DTD at all (draw.io never writes one): an external entity would make the app read any file (XXE), internal
+    /// ones can expand without end. Checked on the text before any parser sees it, so the bytes must also read as that
+    /// text: UTF-8 (no other declared encoding) and no NUL (which a parser could take for UTF-16).
     public static func validate(xml: String) throws(ProtocolError) {
         let data = Data(xml.utf8)
         guard data.count <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
+        guard !xml.contains("\0") else { throw bad("XML inválido: contém um caractere nulo") }
+        if let m = xml.prefix(256).firstMatch(of: /^\s*<\?xml[^>]*encoding\s*=\s*["']([^"']*)["']/),
+           !["utf-8", "utf8"].contains(m.1.lowercased()) {
+            throw bad("o diagrama precisa ser UTF-8 (declarado: \(m.1))")
+        }
+        guard !xml.contains("<!DOCTYPE"), !xml.contains("<!ENTITY") else {
+            throw bad("diagrama recusado: <!DOCTYPE>/<!ENTITY> não são aceitos (o draw.io não os usa)")
+        }
         let p = XMLParser(data: data), root = RootName()
         p.delegate = root
         guard p.parse() else {
@@ -109,20 +120,33 @@ public enum DiagramFile {
         if fd < 0, errno == ENOENT { return nil }
         guard fd >= 0 else { throw posix(url.lastPathComponent) }
         defer { close(fd) }
+        return try readOpened(fd, url.lastPathComponent)
+    }
+
+    /// `diagram.set --from`: the caller's own file (links followed: it is the caller's path, in its own sandbox), with the
+    /// same rules: a regular file of at most 8 MiB, never blocking on a FIFO or a device.
+    public static func readLocal(_ url: URL) throws(ProtocolError) -> String {
+        let fd = open(url.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { throw posix(url.lastPathComponent) }
+        defer { close(fd) }
+        return try readOpened(fd, url.lastPathComponent)
+    }
+
+    static func readOpened(_ fd: Int32, _ name: String) throws(ProtocolError) -> String {
         var st = stat()
-        guard fstat(fd, &st) == 0 else { throw posix(url.lastPathComponent) }
-        guard (st.st_mode & S_IFMT) == S_IFREG else { throw bad("\(url.lastPathComponent) não é um arquivo comum") }
+        guard fstat(fd, &st) == 0 else { throw posix(name) }
+        guard (st.st_mode & S_IFMT) == S_IFREG else { throw bad("\(name) não é um arquivo comum") }
         guard st.st_size <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
         var data = Data(), buf = [UInt8](repeating: 0, count: 64 << 10)
         while data.count <= maxBytes {
             let n = Darwin.read(fd, &buf, buf.count)
             if n < 0, errno == EINTR { continue }
-            guard n >= 0 else { throw posix(url.lastPathComponent) }
+            guard n >= 0 else { throw posix(name) }
             if n == 0 { break }
             data.append(buf, count: n)
         }
         guard data.count <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
-        guard let s = String(data: data, encoding: .utf8) else { throw bad("\(url.lastPathComponent) não é UTF-8") }
+        guard let s = String(data: data, encoding: .utf8) else { throw bad("\(name) não é UTF-8") }
         return s
     }
 

@@ -36,10 +36,8 @@ enum Client {
         guard case .string(let path) = from else { throw ProtocolError(code: .invalidArgs, message: "--from must be a path") }
         guard args["xml"] == nil else { throw ProtocolError(code: .invalidArgs, message: "give --xml or --from, not both") }
         let url = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/"))
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size <= DiagramFile.maxBytes else { throw ProtocolError(code: .invalidArgs, message: "--from: grande demais (máximo 8 MiB)") }
-        guard let xml = try? String(contentsOf: url, encoding: .utf8) else { throw ProtocolError(code: .invalidArgs, message: "--from: não consegui ler \(path)") }
-        return xml
+        do throws(ProtocolError) { return try DiagramFile.readLocal(url) }   // regular file ≤ 8 MiB, never blocks
+        catch { throw ProtocolError(code: .invalidArgs, message: "--from \(path): \(error.message)") }
     }
 
     private static func send(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {

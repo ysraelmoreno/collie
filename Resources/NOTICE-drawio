@@ -10,6 +10,8 @@ Only the files embed mode needs are included (no Confluence/viewer bundles, serv
 templates, math typesetting, or the Azure and Microsoft cloud icon sets).
 
 Changes made by Collie (patches/drawio/ in the Collie source):
-- 0001-collie-branding.patch: the page title is "Diagrama", the splash logo is removed, the GitHub
-  link in the page bar is removed, and the offline Help menu shows only the version (the keyboard
-  shortcut sheet it opened carries third-party branding).
+- 0001-collie-branding.patch: the page title is "Diagrama", the page's description, keywords, share
+  image and canonical link are replaced or removed, the no-JavaScript text is "Diagrama", the splash
+  logo is removed, the GitHub link in the page bar is no longer built, the About dialog shows only
+  "Diagrama" and the draw.io version (no logo or jgraph.com link), and the offline Help menu shows only
+  the version (the keyboard shortcut sheet it opened carries third-party branding).

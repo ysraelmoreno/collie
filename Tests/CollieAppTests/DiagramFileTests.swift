@@ -119,4 +119,46 @@ import CollieProtocol
         try DiagramFile.write("<mxfile/>", to: f, root: root)   // creates docs/diagrams/
         #expect(try DiagramFile.read(f, root: root) == "<mxfile/>")
     }
+
+    /// R13/C1+H1: no DTD at all (external entities: XXE; internal ones: billion laughs), refused fast with a clear message;
+    /// nor a byte trick that would make the parser see one where the text has none (a declared encoding, NUL bytes).
+    @Test func validateRefusesDoctypeAndEntities() throws {
+        let secret = try project().appendingPathComponent("secret.txt")
+        try Data("SEGREDO".utf8).write(to: secret)
+        let xxe = "<?xml version=\"1.0\"?><!DOCTYPE mxfile [<!ENTITY x SYSTEM \"\(secret.absoluteString)\">]><mxfile><diagram name=\"&x;\"/></mxfile>"
+        var bomb = "<!DOCTYPE mxfile [<!ENTITY a0 \"ha\">"
+        for i in 1...9 { bomb += "<!ENTITY a\(i) \"" + String(repeating: "&a\(i - 1);", count: 10) + "\">" }
+        bomb += "]><mxfile><diagram name=\"&a9;\"/></mxfile>"
+        let t0 = Date()
+        for (label, xml) in [("xxe", xxe), ("bomb", bomb), ("entity only", "<mxfile><!ENTITY x \"y\"></mxfile>"),
+                             ("utf-7", "<?xml version=\"1.0\" encoding=\"UTF-7\"?><mxfile/>"),
+                             ("utf-16 bytes", "<\0?\0x\0m\0l\0 \0?\0>\0<\0m\0x\0f\0i\0l\0e\0/\0>\0")] {
+            do { try DiagramFile.validate(xml: xml); Issue.record("\(label) accepted") } catch {
+                #expect(error.code == .invalidArgs, "\(label)")
+                #expect(!error.message.contains("SEGREDO"), "\(label)")
+            }
+        }
+        do { try DiagramFile.validate(xml: xxe) } catch { #expect(error.message.contains("DOCTYPE"), "\(error.message)") }
+        #expect(Date().timeIntervalSince(t0) < 1)
+        try DiagramFile.validate(xml: "<?xml version=\"1.0\" encoding=\"UTF-8\"?><mxfile/>")
+        try DiagramFile.validate(xml: "<mxfile><diagram name=\"&lt;!DOCTYPE&gt;\"/></mxfile>")   // escaped text is fine
+    }
+
+    /// R13/L2: `diagram.set --from`: a regular file of at most 8 MiB, read without blocking on a FIFO or a device.
+    @Test func readLocalOnlyRegularFiles() throws {
+        let dir = try project()
+        let f = dir.appendingPathComponent("a.drawio")
+        try Data("<mxfile/>".utf8).write(to: f)
+        #expect(try DiagramFile.readLocal(f) == "<mxfile/>")
+        let t0 = Date()
+        #expect(throws: ProtocolError.self) { _ = try DiagramFile.readLocal(URL(fileURLWithPath: "/dev/zero")) }
+        let fifo = dir.appendingPathComponent("p.drawio")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        #expect(throws: ProtocolError.self) { _ = try DiagramFile.readLocal(fifo) }
+        #expect(throws: ProtocolError.self) { _ = try DiagramFile.readLocal(dir) }
+        #expect(Date().timeIntervalSince(t0) < 1)
+        let big = dir.appendingPathComponent("big.drawio")
+        try Data(String(repeating: "x", count: DiagramFile.maxBytes + 1).utf8).write(to: big)
+        #expect(throws: ProtocolError.self) { _ = try DiagramFile.readLocal(big) }
+    }
 }

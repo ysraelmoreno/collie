@@ -83,7 +83,7 @@ import CollieProtocol
         let before = try r.text()
         r.panel.lastUserEditAt = Date()
         do { _ = try await r.call("diagram.set", ["xml": .string(two)]); Issue.record("accepted") }
-        catch { #expect(error.message == "o usuário está editando; tente de novo") }
+        catch { #expect(error.code == .conflict && error.message == "o usuário está editando; tente de novo", "\(error)") }
         #expect(try r.text() == before)
         r.panel.lastUserEditAt = Date().addingTimeInterval(-3)
         _ = try await r.call("diagram.set", ["xml": .string(two)])
@@ -160,5 +160,74 @@ import CollieProtocol
             "const w = document.getElementById('f').contentWindow; try { await w.fetch('https://example.com/', {mode: 'no-cors'}); return 'open' } catch (e) { return 'blocked' }",
             arguments: [:], in: nil, contentWorld: .page) as? String
         #expect(res == "blocked")
+    }
+
+    /// R13/C1+H1: a file on disk with a DTD (XXE to a file outside the project, an entity bomb) is refused by every
+    /// command that reads it, fast, without expanding anything; the file is left as it was.
+    @Test func doctypeOnDiskRefused() async throws {
+        guard Self.built else { return }
+        let r = try await rig(shown: false); defer { r.done() }
+        let secret = FileManager.default.temporaryDirectory.appendingPathComponent("segredo-\(UUID().uuidString).txt")
+        try Data("SEGREDO".utf8).write(to: secret)
+        let xxe = #"<?xml version="1.0"?><!DOCTYPE mxfile [<!ENTITY x SYSTEM ""# + "\"\(secret.absoluteString)\"" + #">]><mxfile><diagram id="p1" name="Um"><mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/><mxCell id="a" value="&x;" vertex="1" parent="1"><mxGeometry width="80" height="40" as="geometry"/></mxCell></root></mxGraphModel></diagram></mxfile>"#
+        var bomb = "<!DOCTYPE mxfile [<!ENTITY a0 \"ha\">"
+        for i in 1...9 { bomb += "<!ENTITY a\(i) \"" + String(repeating: "&a\(i - 1);", count: 10) + "\">" }
+        bomb += #"]><mxfile><diagram id="p1" name="&a9;"/></mxfile>"#
+        try FileManager.default.createDirectory(at: r.file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        for doc in [xxe, bomb] {
+            try Data(doc.utf8).write(to: r.file)
+            let t0 = Date()
+            for (c, a) in [("diagram.get", [:]), ("diagram.mermaid", ["text": JSONValue.string("graph TD; A-->B")]),
+                           ("diagram.export", ["format": .string("png"), "page": .string("Um")])] as [(String, [String: JSONValue])] {
+                do { let v = try await r.call(c, a); Issue.record("\(c) answered \(v)") } catch {
+                    #expect(error.code == .invalidArgs && error.message.contains("DOCTYPE"), "\(c): \(error)")
+                    #expect(!error.message.contains("SEGREDO"))
+                }
+            }
+            #expect(Date().timeIntervalSince(t0) < 2)
+            #expect(try r.text() == doc)
+        }
+        do { _ = try await r.call("diagram.set", ["xml": .string(xxe)]); Issue.record("set accepted a DOCTYPE") }
+        catch { #expect(error.code == .invalidArgs) }
+        _ = try await r.call("diagram.set", ["xml": .string(two)])   // an agent can still fix the file
+        #expect(try r.text() == two)
+    }
+
+    /// R13/M2: the Mermaid text is capped (64 KiB).
+    @Test func mermaidTextCapped() async throws {
+        let r = try await rig(shown: false); defer { r.done() }
+        do { _ = try await r.call("diagram.mermaid", ["text": .string("graph TD; " + String(repeating: "A-->B;", count: 12_000))]); Issue.record("accepted") }
+        catch { #expect(error.code == .invalidArgs && error.message.contains("64"), "\(error)") }
+    }
+
+    /// R13/M2: a JS call that never settles (a promise, or a synchronous loop) times out, and the next command runs.
+    @Test func hungMermaidDoesNotBlockLaterCommands() async throws {
+        guard Self.built else { return }
+        let r = try await rig(); defer { r.done() }
+        r.panel.jsTimeout = 1
+        for hang in ["() => new Promise(() => {})", "() => { for (;;) {} }"] {
+            let web = try #require(r.panel.webView)
+            _ = try await web.callAsyncJavaScript("document.getElementById('f').contentWindow.mxMermaidToDrawio.parseText = \(hang); return 1",
+                                                  arguments: [:], in: nil, contentWorld: .page)
+            do { _ = try await r.call("diagram.mermaid", ["text": .string("graph TD; A-->B")]); Issue.record("answered") }
+            catch { #expect(error.code == .timeout, "\(error)") }
+            let t0 = Date()
+            _ = try await r.call("diagram.get")
+            #expect(Date().timeIntervalSince(t0) < 1)
+            let end = Date().addingTimeInterval(30)   // a fresh editor comes up
+            while !r.panel.editorReady, Date() < end { try await Task.sleep(for: .milliseconds(50)) }
+            #expect(r.panel.editorReady)
+        }
+        r.panel.jsTimeout = 15
+        guard case .object(let o) = try await r.call("diagram.mermaid", ["text": .string("graph TD; A-->B")]) else { Issue.record("no reply"); return }
+        #expect(o["editable"] == .bool(true))
+    }
+
+    /// R13/L3: an export payload over the cap is refused, not decoded.
+    @Test func exportPayloadCapped() {
+        let uri = "data:image/png;base64," + Data(repeating: 1, count: 300).base64EncodedString()
+        #expect(DiagramPanel.decodeDataURI(uri, max: 1000)?.count == 300)
+        #expect(DiagramPanel.decodeDataURI(uri, max: 100) == nil)
+        #expect(DiagramPanel.exportMaxBytes == 32 << 20)
     }
 }

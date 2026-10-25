@@ -73,6 +73,8 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
     private(set) var currentPage = 0
     /// The last command's task: commands run one at a time.
     var queue: Task<Void, Never>?
+    /// How long a JS call into the editor may take (R13: 15 s); then the editor is restarted.
+    var jsTimeout: Double = 15
     private var waiters: [Waiter] = []
 
     public var view: NSView { box }
@@ -129,11 +131,10 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         func finish(_ v: [String: JSONValue]?) { c?.resume(returning: v); c = nil }
     }
 
-    /// The bytes the panel just wrote: its own folder event is not an outside change.
-    func noteWritten(_ xml: String) { known = Data(xml.utf8) }
-
     /// An agent command on a panel that was never shown starts the editor (the view works off screen too).
     func startIfNeeded() { if !started, !closed { start() } }
+    /// A JS call that never returned (R13): a fresh editor, so the panel's later commands aren't stuck behind it.
+    func resetEditor() { stopWatching(); dropWebView(); started = false; startIfNeeded() }
 
     public func close() {
         closed = true
@@ -261,8 +262,9 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem arquivo") }
         return try DiagramFile.read(file, root: root)
     }
-    func writeFile(_ xml: String) throws(ProtocolError) {
-        guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem arquivo") }
+    /// `at`: the file an agent command resolved, before the view ever started (`file` is still nil then).
+    func writeFile(_ xml: String, at url: URL? = nil) throws(ProtocolError) {
+        guard let file = url ?? file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem arquivo") }
         try DiagramFile.write(xml, to: file, root: root)
         known = Data(xml.utf8)
         rearmFileWatch()   // the rename replaced the inode the file watch had

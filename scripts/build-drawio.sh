@@ -15,14 +15,10 @@ OUT=vendor/drawio
 if [ ! -d "$SRC/.git" ]; then git clone --depth 1 --branch "$DRAWIO_TAG" https://github.com/jgraph/drawio "$SRC"; fi
 [ "$(git -C "$SRC" rev-parse HEAD)" = "$DRAWIO_COMMIT" ] || { echo "error: $SRC is not $DRAWIO_TAG ($DRAWIO_COMMIT)" >&2; exit 1; }
 
-# Patches: re-applied on a clean tree only when the set changes.
-STAMP="$SRC/.collie-patches"
-PATCHES_SUM="$(cat patches/drawio/*.patch | shasum -a 256 | cut -d' ' -f1)"
-if [ "$(cat "$STAMP" 2>/dev/null)" != "$PATCHES_SUM" ]; then
-  git -C "$SRC" checkout -q -- . && git -C "$SRC" clean -fdq
-  for p in patches/drawio/*.patch; do git -C "$SRC" apply --check "$ROOT/$p"; git -C "$SRC" apply "$ROOT/$p"; done
-  echo "$PATCHES_SUM" >"$STAMP"
-fi
+# Every run: the tree reset to the pinned commit (a modified or dirty clone is never trusted, ignored files
+# included), then the patches applied.
+git -C "$SRC" checkout -q -- . && git -C "$SRC" clean -fdxq
+for p in patches/drawio/*.patch; do git -C "$SRC" apply --check "$ROOT/$p"; git -C "$SRC" apply "$ROOT/$p"; done
 
 rm -rf "$OUT/web" && mkdir -p "$OUT/web"
 # ponytail: Azure/MS cloud icon sets (6.4 MB) left out to stay under 40 MB; only "Mais formas" > Azure needs them.

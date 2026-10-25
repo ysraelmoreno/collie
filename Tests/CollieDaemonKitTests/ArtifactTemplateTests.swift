@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
 
@@ -47,18 +48,49 @@ import CollieProtocol
     @Test func everyKindIsOffline() throws {
         let allowed: Set<String> = ["bg", "surface", "text", "muted", "accent", "space-s", "space-m", "space-l", "space-xl",
                                     "radius-card", "type-body", "type-h1", "type-h2", "type-h3"]
-        for kind in ArtifactTemplates.Kind.allCases {
-            let html = ArtifactTemplates.render(kind, title: "Título", tokensCSS: ArtifactTemplates.tokensCSS(variables: nil))
-            #expect(html.hasPrefix("<!doctype html>") && html.contains("<html lang=\"pt-BR\">") && html.contains("<title>Título</title>"), "\(kind)")
+        for kind in ArtifactTemplates.Kind.allCases { for libs in [[], Self.libs] {
+            let full = ArtifactTemplates.render(kind, title: "Título", tokensCSS: ArtifactTemplates.tokensCSS(variables: nil), libs: libs)
+            #expect(full.hasPrefix("<!doctype html>") && full.contains("<html lang=\"pt-BR\">") && full.contains("<title>Título</title>"), "\(kind)")
+            // the only external sources: <script src="collie-lib://…">
+            let html = full.replacing(/<script src="collie-lib:\/\/lib\/[a-z0-9.@\/-]+"><\/script>/, with: "")
             #expect(!html.lowercased().contains("http") && !html.contains("//"), "\(kind)")
             #expect(!html.contains("<script src") && html.components(separatedBy: "<style>").count == 2, "\(kind)")
             for m in html.matches(of: /(?:src|href)\s*=\s*["']?([^"' >]*)/) { #expect(m.1.hasPrefix("#"), "\(kind): \(m.0)") }
             let used = Set(html.matches(of: /var\(--([a-z0-9-]+)\)/).map { String($0.1) })
             #expect(used.isSubset(of: allowed), "\(kind): \(used.subtracting(allowed))")
-        }
+        } }
         let deck = ArtifactTemplates.render(.deck, title: "D", tokensCSS: "")
         #expect(deck.components(separatedBy: "<section class=\"slide").count == 5)
         #expect(ArtifactTemplates.render(.dashboard, title: "D", tokensCSS: "").contains("const data = ["))
+    }
+
+    static let libs: [WebLibEntry] = [("react", "18.3.1", "react.production.min.js", "React"), ("react-dom", "18.3.1", "react-dom.production.min.js", "ReactDOM"),
+                                      ("htm", "3.1.1", "htm.umd.js", "htm"), ("chart.js", "4.4.9", "chart.umd.js", "Chart"),
+                                      ("lucide", "0.469.0", "lucide.min.js", "lucide")]
+        .map { WebLibEntry(name: $0.0, version: $0.1, files: [$0.2], licence: "MIT", global: $0.3) }
+
+    @Test func templatesUseVersionedLibURLs() {
+        func srcs(_ k: ArtifactTemplates.Kind) -> [String] {
+            ArtifactTemplates.render(k, title: "T", tokensCSS: "", libs: Self.libs).matches(of: /<script src="([^"]+)">/).map { String($0.1) }
+        }
+        let lucide = "collie-lib://lib/lucide@0.469.0/lucide.min.js"
+        #expect(srcs(.dashboard) == ["collie-lib://lib/chart.js@4.4.9/chart.umd.js", lucide])
+        #expect(srcs(.prototype) == ["collie-lib://lib/react@18.3.1/react.production.min.js", "collie-lib://lib/react-dom@18.3.1/react-dom.production.min.js",
+                                     "collie-lib://lib/htm@3.1.1/htm.umd.js", lucide])
+        #expect(srcs(.deck) == [lucide] && srcs(.doc) == [lucide])
+        let p = ArtifactTemplates.render(.prototype, title: "T", tokensCSS: "", libs: Self.libs)
+        #expect(p.contains("html`<${App}") && p.contains("Bibliotecas offline indisponíveis") && p.contains("lucide.createIcons("))
+        #expect(ArtifactTemplates.render(.dashboard, title: "T", tokensCSS: "", libs: Self.libs).contains("new Chart("))
+        // only the libraries the manifest has
+        #expect(!ArtifactTemplates.render(.dashboard, title: "T", tokensCSS: "", libs: Array(Self.libs.prefix(3))).contains("<script src"))
+    }
+
+    @Test func templatesWithoutLibsUnchanged() {
+        for kind in ArtifactTemplates.Kind.allCases {
+            let css = ArtifactTemplates.tokensCSS(variables: nil)
+            #expect(ArtifactTemplates.render(kind, title: "T", tokensCSS: css, libs: []) == ArtifactTemplates.render(kind, title: "T", tokensCSS: css), "\(kind)")
+            #expect(!ArtifactTemplates.render(kind, title: "T", tokensCSS: css, libs: []).contains("collie-lib"))
+        }
     }
 
     @Test func titleIsEscaped() {

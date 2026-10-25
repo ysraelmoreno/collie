@@ -16,7 +16,7 @@ import CollieProtocol
         #expect(!none.contains("Design panel") && !none.contains("Browser panel") && !none.contains("As Shepherd"))
         #expect(none.contains("collie panel open browser [--url <url>] [--visible]") && !none.contains("design --file") && !text(shepherd: true).contains("Your own test browsers"))
         #expect(none.contains("none yet") && none.contains("Artifacts: collie artifact"))
-        #expect(none.contains("No CDN: offline React/htm/Chart.js/Lucide URLs from collie artifact libs."))
+        #expect(none.contains("No CDN: offline JS libs via artifact libs."))
         #expect(none.contains("collie work task defer <task> \"<reason>\"") && none.contains("collie work done") && text(shepherd: true).contains("collie work status"))
         let d = text(paddock: "F1", peers: ["Bob"], panels: [("Home", "design")])
         #expect(d.contains("Design panel \"Home\"") && d.contains("Do not use other design editors") && d.contains("on paddock \"F1\"") && d.contains("(\"Bob\")"))
@@ -155,7 +155,6 @@ import CollieProtocol
                     #expect(t.count <= 1500, "\(pref) \(shepherd) \(t.count)")
                     #expect(t.contains("collie herd list") == shepherd && t.contains("collie panel open"))
                     #expect(t.contains("collie lot board"))
-                    #expect(t.contains("libs"))   // tight: "libs: offline JS"
                     if shepherd && (pref != .never || !paddockPanels.isEmpty || panels.contains { $0.pluginId == "design" }) { #expect(t.contains("UI work")) }
                 }
             }

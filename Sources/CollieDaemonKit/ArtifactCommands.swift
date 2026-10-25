@@ -100,6 +100,10 @@ extension CommandRouter {
     /// with a warning (the command never fails for that).
     private func newPage(_ kind: ArtifactTemplates.Kind, _ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        // read before the Prévia reservation: an await inside it widens the window where a just-opened Prévia is
+        // counted twice (open + still reserved)
+        let dir = config.weblibsDir
+        let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
         let tester = caller.flatMap { $0.isShepherd ? nil : $0 }
         if let me = tester { try reservePreview(me) }   // before anything is written; held until the panel is open
         defer { if let me = tester { releasePreview(me) } }
@@ -126,7 +130,8 @@ extension CommandRouter {
             } catch { warnings.append("design system indisponível: tokens padrão") }
         } else { warnings.append("sem design system ativo: tokens padrão") }
         let title = str(r, "title").flatMap { $0.isEmpty ? nil : $0 } ?? str(r, "name") ?? kind.label
-        let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables))
+        if libs.isEmpty { warnings.append("bibliotecas offline ausentes") }
+        let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables), libs: libs)
         try await UnixSocketClient.offPool { try DiagramFile.write(html, to: url, root: root, noun: "página", exclusive: true) }
         let name = freePanelName("preview")
         try reserve(name); defer { launching.remove(name.lowercased()) }

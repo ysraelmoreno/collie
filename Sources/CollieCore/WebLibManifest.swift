@@ -7,6 +7,9 @@ public struct WebLibEntry: Codable, Sendable, Equatable {
     public let files: [String]
     public let licence: String
     public let global: String
+    public init(name: String, version: String, files: [String], licence: String, global: String) {
+        self.name = name; self.version = version; self.files = files; self.licence = licence; self.global = global
+    }
 }
 
 /// The offline web libraries served as `collie-lib://lib/<name>@<version>/<file>` (app: `WebLibSchemeHandler`;

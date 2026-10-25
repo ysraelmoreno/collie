@@ -550,11 +550,11 @@ extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSyste
 
 @Suite(.serialized) struct ArtifactNewTests {
     /// A terminal `A` (not a Shepherd) in a fresh project folder.
-    private func withProject(_ body: (Daemon, Paths, Term, URL) async throws -> Void) async throws {
+    private func withProject(libs: URL? = nil, _ body: (Daemon, Paths, Term, URL) async throws -> Void) async throws {
         let proj = URL(fileURLWithPath: "/tmp/collie-new-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
         try FileManager.default.createDirectory(at: proj, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: proj) }
-        try await withDaemon { d, p in
+        try await withDaemon(configure: { $0.weblibsDir = libs }) { d, p in
             let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
                 args: ["name": "A", "preset": "shell", "cwd": .string(proj.path)]), to: p.socket, timeoutSeconds: 60)
             guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
@@ -607,7 +607,7 @@ extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSyste
     @Test func newWithoutSystemUsesSeed() async throws {
         try await withProject { _, p, a, proj in
             let r = try await call(p, a, "artifact.new", ["kind": "doc", "title": "Notas"])
-            #expect(warnings(r) == ["sem design system ativo: tokens padrão"], "\(r)")
+            #expect(warnings(r) == ["sem design system ativo: tokens padrão", "bibliotecas offline ausentes"], "\(r)")
             let html = try String(contentsOf: proj.appendingPathComponent("docs/pages/doc-1/index.html"), encoding: .utf8)
             #expect(html.contains("<title>Notas</title>") && html.contains("[data-theme=\"dark\"]") && html.contains("[data-theme=\"light\"]"))
         }
@@ -617,8 +617,21 @@ extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSyste
         try await withProject { d, p, a, proj in
             await d.router.testSetActiveSystem(UUID())   // active, but no engine (and no such system) here
             let r = try await call(p, a, "artifact.new", ["kind": "prototype"])
-            #expect(r.error == nil && warnings(r) == ["design system indisponível: tokens padrão"], "\(r)")
+            #expect(r.error == nil && warnings(r) == ["design system indisponível: tokens padrão", "bibliotecas offline ausentes"], "\(r)")
             #expect(FileManager.default.fileExists(atPath: proj.appendingPathComponent("docs/pages/prototype-1/index.html").path))
+        }
+    }
+
+    @Test func newUsesLibs() async throws {
+        let dir = URL(fileURLWithPath: "/tmp/collie-weblibs-\(UUID().uuidString.prefix(8))"); defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"[{"name":"chart.js","version":"4.4.9","files":["chart.umd.js"],"licence":"MIT","global":"Chart"}]"#.utf8)
+            .write(to: dir.appendingPathComponent("manifest.json"))
+        try await withProject(libs: dir) { _, p, a, proj in
+            let r = try await call(p, a, "artifact.new", ["kind": "dashboard"])
+            #expect(warnings(r) == ["sem design system ativo: tokens padrão"], "\(r)")
+            let html = try String(contentsOf: proj.appendingPathComponent("docs/pages/dashboard-1/index.html"), encoding: .utf8)
+            #expect(html.contains(#"<script src="collie-lib://lib/chart.js@4.4.9/chart.umd.js"></script>"#))
         }
     }
 

@@ -52,9 +52,10 @@ enum CollieOrientation {
         let d = of("design"), b = of("browser"), v = of("device")
         if !d.isEmpty { lines.append("- Design panel \(names(d)): collie design …. Do not use other design editors or external artifact tools.") }
         if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens and checks pages.") }
-        // panel-free: independent of reach. ponytail: the kinds and libs only while names fit (k = 3); else `--help` lists them
-        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps handed-in pages; artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline React/htm/Chart.js/Lucide URLs from collie artifact libs."
-            : "- Artifacts: collie artifact … (new <kind> opens a Prévia; libs: offline JS).")
+        // panel-free: independent of reach. ponytail: the kinds and libs only while names fit (k = 3); else `--help` lists
+        // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
+        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps handed-in pages; artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs."
+            : "- Artifacts: collie artifact … (new <kind> opens a Prévia).")
         if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
         if isShepherd {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]

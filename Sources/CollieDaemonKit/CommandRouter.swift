@@ -545,9 +545,13 @@ actor CommandRouter {
         try await link(a.id, b.id)
     }
 
-    /// Idempotent leash between two ids; persists, emits `.connected`. Never to a free terminal.
+    /// Idempotent leash between two ids; persists, emits `.connected`. Never to a free terminal, nor to a node gone
+    /// during a caller's awaits.
     func link(_ a: UUID, _ b: UUID) async throws {
         try refuseFreeLeash(a, b)
+        for id in [a, b] where !ws.terminals.contains(where: { $0.id == id }) && !ws.panels.contains(where: { $0.id == id }) {
+            throw ProtocolError(code: .notFound, message: "a terminal or panel was removed meanwhile")
+        }
         guard !ws.connections.contains(where: { Set([$0.a, $0.b]) == Set([a, b]) }) else { return }
         let c = Connection(a: a, b: b)
         ws.connections.append(c)

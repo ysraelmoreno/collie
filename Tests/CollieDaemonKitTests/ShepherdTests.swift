@@ -252,6 +252,32 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
         }
     }
 
+    /// Between the check and the link (summon's/openPanel's awaits) a node can go or leave reach: nothing dangles.
+    @Test func connectRechecksAtLinkTime() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            #expect(try await call(p, m, "summon", ["name": "A", "preset": "shell"]).ok)
+            #expect(try await call(p, m, "summon", ["name": "W", "preset": "shell"]).ok)
+            #expect(try await call(p, m, "panel.open", ["plugin": "browser", "name": "c", "visible": "true"]).ok)
+            let ws = await d.router.ws
+            let me = try #require(ws.terminals.first { $0.name == "M" }), w = try #require(ws.terminals.first { $0.name == "W" })
+            let a = try #require(ws.terminals.first { $0.name == "A" })
+            let c = try #require(ws.panels.first { $0.name == "c" })
+            // a terminal gone meanwhile: no connection to a ghost
+            let ghost = TerminalRecord(id: UUID(), name: "G", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false, paddockId: nil)
+            await #expect(throws: ProtocolError.self) { try await d.router.leash(ghost, c) }
+            await #expect(throws: ProtocolError.self) { try await d.router.link(c.id, UUID()) }
+            // A unleashed from M after the check: the wiring re-checks reach and refuses
+            let r = Request(id: "w", token: "", command: "summon", args: ["connect": .string("A")])
+            #expect(try await call(p, m, "unleash", ["a": "M", "b": "A"]).ok)
+            await #expect(throws: ProtocolError.self) { try await d.router.wire(w, r, by: me) }
+            let after = await d.router.ws.connections
+            #expect(!after.contains { Set([$0.a, $0.b]) == Set([w.id, a.id]) }, "\(after)")
+            let live = Set(ws.terminals.map(\.id) + ws.panels.map(\.id))
+            #expect(after.allSatisfy { live.contains($0.a) && live.contains($0.b) }, "\(after)")
+        }
+    }
+
     @Test func dismissNeedsLeash() async throws {
         try await withDaemon { d, p in
             let m = try await shepherd(d, p, "M")

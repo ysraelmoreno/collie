@@ -74,6 +74,13 @@ extension CommandRouter {
         return (ts, ps)
     }
 
+    /// Leashes `rec` to the `--connect` targets of `r`, re-checked now (after the caller's awaits a target may have left reach).
+    func wire(_ rec: TerminalRecord, _ r: Request, by me: TerminalRecord) async throws {
+        let (ts, ps) = try connectTargets(r, by: me)
+        for t in ts { try await leash(rec, t) }
+        for p in ps { try await leash(rec, p) }   // link refuses a panel closed meanwhile
+    }
+
     private func summon(_ r: Request, by me: TerminalRecord) async throws -> JSONValue {
         let name = try need(r, "name")
         try refuseFree(r)
@@ -83,7 +90,7 @@ extension CommandRouter {
             throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
         }
         if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists") }
-        let wire = try connectTargets(r, by: me)   // before the launch: a refused target creates nothing
+        _ = try connectTargets(r, by: me)   // before the launch: a refused target creates nothing
         var paddockId = me.paddockId, cwd = me.cwd
         var allowed = try await projectRoot(of: me)   // the new terminal's project stays within it
         if let f = str(r, "paddock") {
@@ -102,11 +109,7 @@ extension CommandRouter {
         try await ensurePaddock(of: rec)
         do {
             try await leash(me, rec)
-            for t in wire.terminals { try await leash(rec, t) }
-            for p in wire.panels {
-                guard ws.panels.contains(where: { $0.id == p.id }) else { throw ProtocolError(code: .notFound, message: "Panel '\(p.name)' was closed meanwhile") }
-                try await leash(rec, p)
-            }
+            try await wire(rec, r, by: me)   // re-checked: a target may have left reach during the launch
             if let l = ws.lot(of: me.id) { try await place([rec.id], in: l.id); result["lot"] = .string(l.name) }   // grouping, never reach
         } catch { try? await remove(rec); throw error }
         if let p = str(r, "prompt"), !p.isEmpty {

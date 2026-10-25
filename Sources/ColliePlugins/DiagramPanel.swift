@@ -63,6 +63,15 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
     private(set) var seen: [String] = []
     private var watcher: DispatchSourceFileSystemObject?
     private var pendingCheck: Task<Void, Never>?
+    /// The editor has loaded the file (agent commands that need it wait for this).
+    private(set) var editorReady = false
+    /// Why the panel can't open (shown in it, and the error of the commands that need the editor).
+    private(set) var failure: String?
+    /// The page on screen (index), from draw.io's replies.
+    private(set) var currentPage = 0
+    /// The last command's task: commands run one at a time.
+    var queue: Task<Void, Never>?
+    private var waiters: [Waiter] = []
 
     public var view: NSView { box }
 
@@ -89,9 +98,40 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
     var projectRoot: URL? { if case .string(let r)? = panel.state["root"], !r.isEmpty { URL(fileURLWithPath: r) } else { nil } }
     var requestedFile: String? { if case .string(let f)? = panel.state["file"] { f } else { nil } }
 
-    public func handle(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
-        throw ProtocolError(code: .unavailable, message: "\(command): ainda não disponível")   // plan 2Q Diagram, Task 3
+    /// The panel's exports and screenshots go with it; the `.drawio` file stays (it belongs to the project).
+    public static func panelRemoved(_ panel: Panel, host: PanelHostContext) {
+        let dir = host.root.appendingPathComponent("screens", isDirectory: true), prefix = panel.id.uuidString + "-"
+        Task.detached {
+            for n in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where n.hasPrefix(prefix) {
+                try? FileManager.default.removeItem(at: dir.appendingPathComponent(n))
+            }
+        }
     }
+
+    /// A reply from draw.io (`export`, `merge`…) to a message just sent; nil after `timeout` seconds.
+    func next(_ event: String, timeout: Double) async -> [String: JSONValue]? {
+        let w = Waiter(event)
+        waiters.append(w)
+        return await withCheckedContinuation { c in
+            w.c = c
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(timeout))
+                w.finish(nil); self?.waiters.removeAll { $0 === w }
+            }
+        }
+    }
+    @MainActor private final class Waiter {
+        let event: String
+        var c: CheckedContinuation<[String: JSONValue]?, Never>?
+        init(_ e: String) { event = e }
+        func finish(_ v: [String: JSONValue]?) { c?.resume(returning: v); c = nil }
+    }
+
+    /// The bytes the panel just wrote: its own folder event is not an outside change.
+    func noteWritten(_ xml: String) { known = Data(xml.utf8) }
+
+    /// An agent command on a panel that was never shown starts the editor (the view works off screen too).
+    func startIfNeeded() { if !started, !closed { start() } }
 
     public func close() {
         closed = true
@@ -99,6 +139,9 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         dropWebView()
     }
     private func dropWebView() {
+        editorReady = false
+        for w in waiters { w.finish(nil) }
+        waiters = []
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil; web.uiDelegate = nil
@@ -112,15 +155,16 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
 
     fileprivate func start() {
         started = true
-        guard let dir = webRoot else { return box.status("Editor de diagramas indisponível\nRode scripts/build-drawio.sh", retry: false) }
-        guard let root = projectRoot else { return box.status("Painel sem pasta de projeto: abra-o de novo", retry: false) }
+        failure = nil
+        guard let dir = webRoot else { return fail("Editor de diagramas indisponível\nRode scripts/build-drawio.sh", retry: false) }
+        guard let root = projectRoot else { return fail("Painel sem pasta de projeto: abra-o de novo", retry: false) }
         let url: URL, xml: String
         do throws(ProtocolError) {
             url = try DiagramFile.resolve(requestedFile, panelName: panel.name, projectRoot: root)
             if !FileManager.default.fileExists(atPath: url.path) { try DiagramFile.write(DiagramFile.empty, to: url) }
             xml = try DiagramFile.read(url)
             try DiagramFile.validate(xml: xml)
-        } catch { return box.status(error.message, retry: true) }
+        } catch { return fail(error.message, retry: true) }
         file = url; known = Data(xml.utf8)
         let rel = String(url.path.dropFirst(DiagramFile.real(root).path.count + 1))
         box.setHeader(file: rel)
@@ -129,10 +173,12 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         Task { [weak self] in
             let rules = try? await HTMLSnapshotter.ruleList()
             guard let self, !self.closed else { return }
-            guard let rules else { return self.box.status("Não consegui bloquear a rede do editor", retry: true) }
+            guard let rules else { return self.fail("Não consegui bloquear a rede do editor", retry: true) }
             self.makeWebView(dir: dir, rules: rules)
         }
     }
+
+    private func fail(_ m: String, retry: Bool) { failure = m; box.status(m, retry: retry) }
 
     private func makeWebView(dir: URL, rules: WKContentRuleList) {
         let config = WKWebViewConfiguration()
@@ -159,14 +205,21 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
 
     /// One message from draw.io (`event`: init, load, merge, autosave, export…).
     func received(_ m: [String: Any]) {
-        if let e = m["event"] as? String { seen.append(e) }
-        switch m["event"] as? String {
+        let event = m["event"] as? String
+        if let event { seen.append(event) }
+        if let p = m["currentPage"] as? Int { currentPage = p }
+        if let i = waiters.firstIndex(where: { $0.event == event }) {
+            let w = waiters.remove(at: i)
+            let v = (try? JSONSerialization.data(withJSONObject: m)).flatMap { try? JSONDecoder().decode([String: JSONValue].self, from: $0) }
+            w.finish(v ?? [:])
+        }
+        switch event {
         case "init":
             guard let file, let xml = try? DiagramFile.read(file) else { return }
             known = Data(xml.utf8)
             send(["action": "load", "xml": xml, "autosave": 1, "noExitBtn": 1, "noSaveBtn": 1, "saveAndExit": 0])
         case "load":
-            programmaticUntil = nil
+            programmaticUntil = nil; editorReady = true
             box.status(nil, retry: false)
         case "merge":
             programmaticUntil = nil
@@ -308,13 +361,13 @@ extension DiagramPanel: WKNavigationDelegate, WKUIDelegate {
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
-        if !BrowserPanel.isSuperseded(error) { box.status("Editor de diagramas indisponível", retry: true) }
+        if !BrowserPanel.isSuperseded(error) { fail("Editor de diagramas indisponível", retry: true) }
     }
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
-        if !BrowserPanel.isSuperseded(error) { box.status("Editor de diagramas indisponível", retry: true) }
+        if !BrowserPanel.isSuperseded(error) { fail("Editor de diagramas indisponível", retry: true) }
     }
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         stopWatching(); dropWebView()
-        box.status("O editor de diagramas parou", retry: true)
+        started = false; fail("O editor de diagramas parou", retry: true)
     }
 }

@@ -25,9 +25,21 @@ enum Client {
         var args = args
         let out = Commands.outputFile.contains(command) ? args.removeValue(forKey: "out") : nil
         if let out, case .string = out {} else if out != nil { throw ProtocolError(code: .invalidArgs, message: "--out must be a string") }
+        if command == "diagram.set", let from = args.removeValue(forKey: "from") { args["xml"] = .string(try diagramFrom(from, args)) }
         let result = try await send(command, args)
         guard case .string(let dest)? = out else { return result }
         return try OutFile.copyPath(of: result, to: dest, cwd: FileManager.default.currentDirectoryPath)
+    }
+
+    /// `diagram.set --from PATH`: the caller's own file, read here (relative to this process's cwd), sent as `xml`.
+    static func diagramFrom(_ from: JSONValue, _ args: [String: JSONValue]) throws(ProtocolError) -> String {
+        guard case .string(let path) = from else { throw ProtocolError(code: .invalidArgs, message: "--from must be a path") }
+        guard args["xml"] == nil else { throw ProtocolError(code: .invalidArgs, message: "give --xml or --from, not both") }
+        let url = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/"))
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard size <= DiagramFile.maxBytes else { throw ProtocolError(code: .invalidArgs, message: "--from: grande demais (máximo 8 MiB)") }
+        guard let xml = try? String(contentsOf: url, encoding: .utf8) else { throw ProtocolError(code: .invalidArgs, message: "--from: não consegui ler \(path)") }
+        return xml
     }
 
     private static func send(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {

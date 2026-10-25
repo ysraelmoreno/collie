@@ -164,7 +164,12 @@ extension CommandRouter {
             }
             state["file"] = .string(id)
         }
-        if pluginId == "diagram" { state["root"] = .string(try await diagramRoot(paddock: paddock, caller: caller).path) }
+        if pluginId == "diagram" {   // an agent's path is a trust boundary: the app must never be pointed outside the project
+            let root = try await diagramRoot(paddock: paddock, caller: caller)
+            let requested: String? = if case .string(let f)? = state["file"] { f } else { nil }
+            _ = try DiagramFile.resolve(requested, panelName: name, projectRoot: root)
+            state["root"] = .string(root.path)
+        }
         let canvas = placement == .canvas
         let p = Panel(id: UUID(), name: name, pluginId: pluginId, placement: placement,
                       paddockId: canvas ? paddock : nil, state: state, createdBy: caller?.id)

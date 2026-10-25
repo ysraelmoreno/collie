@@ -71,6 +71,12 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool {
             let s = try await snapshot(d, p)
             let pn = try #require(s.panels.first { $0.pluginId == "diagram" })
             #expect(pn.state["file"] == .string("docs/a.drawio") && pn.placement == .canvas)
+            // R9: a bad --file is refused at open (outside the project, wrong extension), nothing opened
+            for bad in ["../x.drawio", "/etc/x.drawio", "notes.txt"] {
+                let e = try await call(p, m, "panel.open", ["plugin": "diagram", "file": bad]).error
+                #expect(e?.code == .invalidArgs && (e?.message.contains("projeto") == true || e?.message.contains(".drawio") == true), "\(bad): \(String(describing: e))")
+            }
+            #expect(try await snapshot(d, p).panels.count(where: { $0.pluginId == "diagram" }) == 1)
             guard case .string(let root)? = pn.state["root"] else { Issue.record("no root: \(pn.state)"); return }
             #expect(URL(fileURLWithPath: root).resolvingSymlinksInPath().path == tmp, "\(root)")
             let r2 = try await admin(d, p, "panel.open", ["plugin": "diagram", "placement": "dock.right"])   // the pasture terminal's project

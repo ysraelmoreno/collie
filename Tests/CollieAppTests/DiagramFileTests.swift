@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-import ColliePlugins
+import CollieCore
 import CollieProtocol
 
 @Suite struct DiagramFileTests {

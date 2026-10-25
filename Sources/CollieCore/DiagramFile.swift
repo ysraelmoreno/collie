@@ -2,7 +2,7 @@ import Foundation
 import CollieProtocol
 
 /// The Diagram panel's document: a `.drawio` file inside the panel's project (`state["root"]`), at most 8 MiB.
-/// Pure helpers: where it is, whether its XML is a draw.io document, reading and writing it, the conflict rule.
+/// Shared by the daemon (`panel.open` refuses a bad file) and the app (the panel checks again). Pure helpers: where it is, whether its XML is a draw.io document, reading and writing it, the conflict rule.
 public enum DiagramFile {
     public static let maxBytes = 8 << 20
     /// An empty one-page draw.io document (what a missing file starts as).
@@ -21,11 +21,14 @@ public enum DiagramFile {
         guard url.pathComponents.count > root.pathComponents.count, url.pathComponents.starts(with: root.pathComponents) else {
             throw bad("o diagrama precisa ficar dentro do projeto \(root.path): \(path)")
         }
+        if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > maxBytes {
+            throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB): \(path)")
+        }
         return url
     }
 
     /// Symlinks resolved through the deepest existing ancestor (a missing tail is kept as is); `..` removed.
-    static func real(_ u: URL) -> URL {
+    public static func real(_ u: URL) -> URL {
         var head = u.standardizedFileURL, tail: [String] = []
         while !FileManager.default.fileExists(atPath: head.path), head.pathComponents.count > 1 {
             tail.insert(head.lastPathComponent, at: 0); head = head.deletingLastPathComponent()

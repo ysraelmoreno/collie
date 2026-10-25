@@ -85,6 +85,9 @@ actor FigcraftServer {
         if kill(-p.pid, 0) == 0 { kill(-p.pid, SIGKILL) }
     }
 
+    /// Largest design file the local server accepts, in MiB.
+    static let maxFileMB = 512
+
     private func start() async -> Result<Endpoint, ProtocolError> {
         generation += 1
         let gen = generation
@@ -98,7 +101,12 @@ actor FigcraftServer {
             guard let port = preferred.flatMap({ Self.isFree($0) ? $0 : nil }) ?? Self.freePort(from: basePort) else {
                 throw ProtocolError(code: .unavailable, message: "design engine: no free port in \(basePort)...\(Self.lastPort(basePort))")
             }
-            let p = try LongProcess(executable: binary, args: ["--listen", "127.0.0.1:\(port)", "--data", dataDir.path],
+            // the server's default largest file is 64 MiB (a project with many pages and images outgrows it, and the
+            // user had to split one design into several files); the app opens files of up to 1 GiB
+            let cfg = dataDir.appendingPathComponent("collie-server.toml")
+            try Data("max_file_mb = \(Self.maxFileMB)\n".utf8).write(to: cfg, options: .atomic)
+            let p = try LongProcess(executable: binary, args: ["--listen", "127.0.0.1:\(port)", "--data", dataDir.path,
+                                                                "--config", cfg.path],
                                     env: env, runDir: runDir, onLine: { _ in },
                                     onExit: { [weak self] _ in Task { await self?.exited(gen) } })
             proc = p; startedAt = .now

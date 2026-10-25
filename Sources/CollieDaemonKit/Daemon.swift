@@ -60,7 +60,7 @@ public struct DaemonConfig: Sendable {
     /// The home a sandboxed terminal's profile closes (collied: the user's); nil: terminals start unsandboxed (tests,
     /// which pass a fake home in a temp dir when they test the sandbox, R2).
     public var sandboxHome: URL?
-    /// The sandbox mode when the workspace has none set (`Workspace.terminalSandbox`): open (user decision). The suites
+    /// The sandbox mode when Collie's preferences have none (`<root>/preferences.json`): open (user decision). The suites
     /// written before open mode pin `.strict` (`testConfig`).
     var defaultSandboxMode: SandboxMode = .open
     /// Watch sandbox denials with `log stream` (collied, with the sandbox on): the app's access cards.

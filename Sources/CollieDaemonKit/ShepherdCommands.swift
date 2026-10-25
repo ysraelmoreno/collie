@@ -73,7 +73,7 @@ extension CommandRouter {
             paddockId = fl.id; cwd = fl.path; allowed = ProjectRoot.resolve(cwd: fl.path, paddock: fl)
         }
         cwd = SignedAppCheck.realPath(URL(fileURLWithPath: str(r, "cwd") ?? cwd))   // spawned as checked (no symlink swap)
-        let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed)
+        let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: startedOpen(me))
         let rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: str(r, "command"),
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
         var result = try await launch(rec)

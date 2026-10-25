@@ -115,7 +115,7 @@ extension CommandRouter {
     /// I1: a terminal's paddock repo (found by git, which knows nothing of R9/R11: a dotfiles `~/.git` is a repo to it)
     /// lies within the terminal's project, or is the pasture of the terminal's own paddock.
     func paddockRepoAllowed(_ root: URL, for me: TerminalRecord) async throws -> Bool {
-        if sandboxMode == .open { return true }   // open mode: no project bound
+        if startedOpen(me) { return true }   // started open: no project bound (L1)
         if ProjectRoot.contains(root.path, root: try await projectRoot(of: me)) { return true }
         guard let pasture = ws.paddocks.first(where: { $0.id == me.paddockId }).map({ URL(fileURLWithPath: $0.repoRoot) }) else { return false }
         return SignedAppCheck.realPath(pasture) == SignedAppCheck.realPath(root)

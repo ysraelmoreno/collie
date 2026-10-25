@@ -22,7 +22,7 @@ extension CommandRouter {
             guard read != write else { throw ProtocolError(code: .invalidArgs, message: "pass one of --read or --write") }
             let base = URL(fileURLWithPath: r.cwd ?? me.cwd, isDirectory: true)
             let path = SignedAppCheck.realPath(URL(fileURLWithPath: try need(r, "path"), relativeTo: base).absoluteURL)
-            if sandboxOpen.contains(me.id) {   // open mode: nothing to ask; Collie's internals never open
+            if startedOpen(me) {   // open mode: nothing to ask; Collie's internals never open
                 let collieOwn = [config.paths.root, SandboxInput.appBundle(of: config.collieExecutable)].compactMap { $0 }
                     .contains { ProjectRoot.contains(path, root: URL(fileURLWithPath: SignedAppCheck.realPath($0))) }
                 return .object(["shown": .bool(false), "message": .string(collieOwn
@@ -124,16 +124,17 @@ extension CommandRouter {
         return try find(s)
     }
 
-    /// The mode of terminals started from now on: the workspace's, else the daemon's default (open).
-    var sandboxMode: SandboxMode { ws.terminalSandbox ?? config.defaultSandboxMode }
+    /// The mode of terminals started from now on: the Collie-wide preference, else the daemon's default (open).
+    var sandboxMode: SandboxMode { sandboxPref ?? config.defaultSandboxMode }
+    /// `t`'s last sandboxed start was open (its profile, its cards, its cwd bounds: L1).
+    func startedOpen(_ t: TerminalRecord) -> Bool { t.sandbox == .sandboxed && t.startMode == .open }
 
     /// `admin.sandbox`: nil reads; otherwise saved (running terminals keep theirs until they start again).
     func setSandboxMode(_ v: String?) async throws -> JSONValue {
         if let v {
             guard let m = SandboxMode(rawValue: v) else { throw ProtocolError(code: .invalidArgs, message: "mode must be open or strict") }
-            let before = ws.terminalSandbox
-            ws.terminalSandbox = m
-            do { try await persist() } catch { ws.terminalSandbox = before; throw error }
+            try CollieSettings(terminalSandbox: m).save(config.paths.root)
+            sandboxPref = m
         }
         return .object(["mode": .string(sandboxMode.rawValue)])
     }
@@ -146,7 +147,7 @@ extension CommandRouter {
     /// for is dropped (R5: a forged or stale tag).
     func raise(_ denial: SandboxDenial) async {
         guard sandboxKnown.contains(denial.terminal) else { return }
-        if sandboxOpen.contains(denial.terminal) { accessCards.hush(denial); return }   // open mode: Collie's internals, counted only
+        if ws.terminals.first(where: { $0.id == denial.terminal }).map(startedOpen) == true { accessCards.hush(denial); return }   // open mode: Collie's internals, counted only
         let home = sandboxHomeDir, collie = config.paths.root, app = SandboxInput.appBundle(of: config.collieExecutable)
         let closed = ws.terminals.first { $0.id == denial.terminal }.map { closedPaddocks(sandboxProject($0)) } ?? []
         let c = accessCards.add(denial) { d in   // a card to show: what can't be released, and why
@@ -159,7 +160,7 @@ extension CommandRouter {
     /// A removed terminal: its cards, its known id and its own grants go (a lot's grants stay with the lot).
     func sandboxGone(_ id: UUID) async {
         accessCards.forget(terminal: id)
-        sandboxKnown.remove(id); sandboxOpen.remove(id)
+        sandboxKnown.remove(id)
         let before = sandboxGrants
         sandboxGrants.removeAll { $0.scope == .terminal && $0.owner == id }
         if sandboxGrants != before { try? saveGrants() }
@@ -180,5 +181,22 @@ extension CommandRouter {
         guard sandboxDetection != ok else { return }
         sandboxDetection = ok
         await hub.emit(.sandboxDetection(available: ok))
+    }
+}
+
+/// Collie-wide preferences the daemon keeps (`<root>/preferences.json`, closed to every terminal with the data root).
+struct CollieSettings: Codable {
+    var terminalSandbox: SandboxMode?
+    static func file(_ root: URL) -> URL { root.appendingPathComponent("preferences.json") }
+    /// A missing file: nothing set; one that can't be read: strict (fail closed).
+    static func load(_ root: URL) -> CollieSettings {
+        guard let data = try? Data(contentsOf: file(root)) else {
+            return FileManager.default.fileExists(atPath: file(root).path) ? CollieSettings(terminalSandbox: .strict) : CollieSettings()
+        }
+        return (try? JSONDecoder().decode(CollieSettings.self, from: data)) ?? CollieSettings(terminalSandbox: .strict)
+    }
+    func save(_ root: URL) throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try JSONEncoder().encode(self).write(to: Self.file(root), options: [.atomic])
     }
 }

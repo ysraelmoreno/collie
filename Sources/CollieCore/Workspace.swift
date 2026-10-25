@@ -31,13 +31,15 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     public var sandbox: TerminalSandbox
     /// Resolved project folder (git toplevel of the cwd, the paddock's worktree, else the folder); nil = not computed yet.
     public var projectRoot: String?
+    /// The sandbox mode its last sandboxed start ran with (its profile, cards, cwd bounds); nil: none yet (strict rules).
+    public var startMode: SandboxMode?
     public init(id: UUID, name: String, preset: Preset, command: String?, cwd: String, isShepherd: Bool, paddockId: UUID? = nil,
                 sandbox: TerminalSandbox = .sandboxed, projectRoot: String? = nil) {
         self.id = id; self.name = name; self.preset = preset; self.command = command
         self.cwd = cwd; self.isShepherd = isShepherd; self.paddockId = paddockId
         self.sandbox = sandbox; self.projectRoot = projectRoot
     }
-    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot }
+    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot, startMode }
     private enum Legacy: String, CodingKey { case isMaestro, floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self), l = try d.container(keyedBy: Legacy.self)
@@ -48,6 +50,7 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
         paddockId = try c.decodeIfPresent(UUID.self, forKey: .paddockId) ?? l.decodeIfPresent(UUID.self, forKey: .floorId)
         sandbox = (try? c.decodeIfPresent(TerminalSandbox.self, forKey: .sandbox)) ?? .sandboxed   // records before the sandbox
         projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
+        startMode = try? c.decodeIfPresent(SandboxMode.self, forKey: .startMode)
     }
 }
 
@@ -93,7 +96,7 @@ public struct Workspace: Codable, Sendable, Equatable {
     public var designSystem: UUID?   // active design system of pasture and of paddocks without their own
     public var designFirst: DesignFirst = .ask   // set only by `design.prefer` / Preferences
     public var lots: [Lot] = []
-    /// nil: the daemon's default (`DaemonConfig.defaultSandboxMode`, open). Set only by `admin.sandbox` / Preferences.
+    /// Before the mode became one Collie-wide preference (`<root>/preferences.json`): read once and moved there.
     public var terminalSandbox: SandboxMode?
     public init(id: UUID, name: String, terminals: [TerminalRecord] = [], connections: [Connection] = [], paddocks: [Paddock] = [], panels: [Panel] = []) {
         self.id = id; self.name = name; self.terminals = terminals; self.connections = connections; self.paddocks = paddocks; self.panels = panels

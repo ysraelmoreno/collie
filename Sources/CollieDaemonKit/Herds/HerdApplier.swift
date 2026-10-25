@@ -179,7 +179,7 @@ extension CommandRouter {
         let at = caller == nil ? j.paddock?.path ?? cwd : SignedAppCheck.realPath(URL(fileURLWithPath: j.paddock?.path ?? cwd))   // a Shepherd's: as checked
         // a paddock this application made bounds its own terminals, like a Shepherd's `summon --paddock`
         let root = try allowed.map { a throws(ProtocolError) in
-            try childProject(cwd: at, paddock: fl, allowed: j.paddock.map { ProjectRoot.resolve(cwd: $0.path, paddock: $0) } ?? a)
+            try childProject(cwd: at, paddock: fl, allowed: j.paddock.map { ProjectRoot.resolve(cwd: $0.path, paddock: $0) } ?? a, open: caller.map(startedOpen) ?? false)
         } ?? ProjectRoot.resolve(cwd: at, paddock: fl, home: sandboxHomeDir)
         for t in made {
             try Task.checkCancellation()

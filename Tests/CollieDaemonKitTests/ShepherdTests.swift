@@ -215,6 +215,69 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
         }
     }
 
+    /// `--connect`: all-or-nothing, within the Shepherd's reach only; nothing is created when one target is refused.
+    @Test func summonAndPanelOpenConnect() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            #expect(try await call(p, m, "summon", ["name": "A", "preset": "shell"]).ok)
+            _ = try await spawn(d, p, "U")   // not leashed to M
+            #expect(try await admin(d, p, "spawn", ["name": .string("F"), "preset": .string("shell"), "cwd": .string("/tmp"),
+                                                    "sandbox": .string("free")]).ok)
+            #expect(try await call(p, m, "panel.open", ["plugin": "browser", "name": "h", "placement": "headless"]).ok)
+            #expect(try await call(p, m, "panel.open", ["plugin": "browser", "name": "dk", "placement": "dock.right"]).ok)
+            let before = try await snapshot(d, p)
+            for (target, code) in [("U", ErrorCode.notConnected), ("F", .notConnected), ("h", .invalidArgs),
+                                   ("dk", .invalidArgs), ("nope", .notFound), ("A,U", .notConnected)] {
+                let s = try await call(p, m, "summon", ["name": "W", "preset": "shell", "connect": target])
+                #expect(s.error?.code == code, "summon \(target): \(s)")
+                let o = try await call(p, m, "panel.open", ["plugin": "browser", "name": "c", "placement": "canvas", "connect": target])
+                #expect(o.error != nil, "panel.open \(target): \(o)")
+            }
+            #expect(try await call(p, m, "panel.open", ["plugin": "browser", "name": "c", "placement": "dock.left", "connect": "A"]).error?.code == .invalidArgs)
+            let after = try await snapshot(d, p)
+            #expect(after.terminals.map(\.name) == before.terminals.map(\.name) && after.panels.map(\.name) == before.panels.map(\.name))
+            #expect(after.connections == before.connections)
+            // within reach: the new terminal is leashed to M and A; the canvas panel to M, A and W
+            #expect(try await call(p, m, "summon", ["name": "W", "preset": "shell", "connect": "A"]).ok)
+            #expect(try await call(p, m, "panel.open", ["plugin": "browser", "name": "c", "visible": "true", "connect": "A,W"]).ok)
+            let s = try await snapshot(d, p)
+            let id = Dictionary(uniqueKeysWithValues: s.terminals.map { ($0.name, $0.id) } + s.panels.map { ($0.name, $0.id) })
+            let pairs = Set(s.connections.map { Set([$0.a, $0.b]) })
+            for (a, b) in [("M", "W"), ("A", "W"), ("c", "M"), ("c", "A"), ("c", "W")] {
+                #expect(pairs.contains([id[a]!, id[b]!]), "\(a)-\(b)")
+            }
+            // a non-Shepherd's own browser can't wire anything
+            let a = Term(id: id["A"]!.uuidString, token: try await tokenOf(d, id["A"]!.uuidString))
+            #expect(try await call(p, a, "panel.open", ["plugin": "browser", "name": "q", "visible": "true", "connect": "W"]).error?.code == .notShepherd)
+        }
+    }
+
+    /// Between the check and the link (summon's/openPanel's awaits) a node can go or leave reach: nothing dangles.
+    @Test func connectRechecksAtLinkTime() async throws {
+        try await withDaemon { d, p in
+            let m = try await shepherd(d, p, "M")
+            #expect(try await call(p, m, "summon", ["name": "A", "preset": "shell"]).ok)
+            #expect(try await call(p, m, "summon", ["name": "W", "preset": "shell"]).ok)
+            #expect(try await call(p, m, "panel.open", ["plugin": "browser", "name": "c", "visible": "true"]).ok)
+            let ws = await d.router.ws
+            let me = try #require(ws.terminals.first { $0.name == "M" }), w = try #require(ws.terminals.first { $0.name == "W" })
+            let a = try #require(ws.terminals.first { $0.name == "A" })
+            let c = try #require(ws.panels.first { $0.name == "c" })
+            // a terminal gone meanwhile: no connection to a ghost
+            let ghost = TerminalRecord(id: UUID(), name: "G", preset: .shell, command: nil, cwd: "/tmp", isShepherd: false, paddockId: nil)
+            await #expect(throws: ProtocolError.self) { try await d.router.leash(ghost, c) }
+            await #expect(throws: ProtocolError.self) { try await d.router.link(c.id, UUID()) }
+            // A unleashed from M after the check: the wiring re-checks reach and refuses
+            let r = Request(id: "w", token: "", command: "summon", args: ["connect": .string("A")])
+            #expect(try await call(p, m, "unleash", ["a": "M", "b": "A"]).ok)
+            await #expect(throws: ProtocolError.self) { try await d.router.wire(w, r, by: me) }
+            let after = await d.router.ws.connections
+            #expect(!after.contains { Set([$0.a, $0.b]) == Set([w.id, a.id]) }, "\(after)")
+            let live = Set(ws.terminals.map(\.id) + ws.panels.map(\.id))
+            #expect(after.allSatisfy { live.contains($0.a) && live.contains($0.b) }, "\(after)")
+        }
+    }
+
     @Test func dismissNeedsLeash() async throws {
         try await withDaemon { d, p in
             let m = try await shepherd(d, p, "M")

@@ -119,6 +119,8 @@ enum SandboxProfile {
                 while u.pathComponents.count > 1 { parents.insert(u.path); u = u.deletingLastPathComponent() }
             }
             rule("deny", "file-write*", tagged: true, parents.sorted().map(lit))
+            // launchctl could boot out Collie's own daemon (by path only: a copy still runs, as in strict mode)
+            rule("deny", "process-exec", tagged: true, [lit("/bin/launchctl")])
         } else {
             // R26: a grant is rendered exactly as stored (the resolved path the card showed), never resolved again: a symlink
             // swapped in later opens nothing (Seatbelt matches the resolved path)

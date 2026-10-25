@@ -56,7 +56,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
 /// When the plug-in is not installed (never, removed, disabled) the panel shows a placeholder and keeps its state;
 /// when the registry changes it follows: a new version reloads, a removal fails the calls in flight (`unavailable`).
 @MainActor public final class WebPluginPanel: NSObject, PluginPanelView {
-    static let resultCap = 1 << 20, stateCap = 256 * 1024, outputCap = 16 << 20, payloadCap = 64 * 1024, outputsKept = 100, crashesAllowed = 3
+    static let resultCap = 1 << 20, stateCap = 256 * 1024, outputCap = 16 << 20, payloadCap = 64 * 1024, outputsKept = 200, outputDayCap = 64 << 20, crashesAllowed = 3
     static let outputExtensions: Set<String> = ["png", "svg", "json", "txt", "md", "csv", "html"]
     static let outputScheme = "collie-output://"
     let panel: Panel
@@ -273,6 +273,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             guard let b64 = str("data"), b64.utf8.count <= Self.outputCap / 3 * 4 + 4, let data = Data(base64Encoded: b64), data.count <= Self.outputCap else {
                 return (nil, "arquivo inválido (base64) ou maior que 16 MiB")
             }
+            guard Self.chargeOutput(panel.pluginId, data.count) else { return (nil, "limite de 64 MiB de arquivos por dia atingido") }
             let token = UUID().uuidString
             guard let file = Self.writeOutput(data, name: "\(panel.id.uuidString)-\(token)-\(name)", panel: panel, root: host.root) else {
                 return (nil, "não foi possível gravar o arquivo")
@@ -312,6 +313,16 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         }
     }
 
+    /// `files.output` bytes per plug-in (all its panels) per calendar day: at most `outputDayCap`. True: charged.
+    // ponytail: in memory, so an app restart resets the day's count; the 200-file prune still bounds the disk
+    static func chargeOutput(_ id: String, _ n: Int, now: Date = Date()) -> Bool {
+        let day = Calendar.current.startOfDay(for: now)
+        let used = outputDay[id].flatMap { $0.day == day ? $0.bytes : nil } ?? 0
+        guard used + n <= outputDayCap else { return false }
+        outputDay[id] = (day, used + n)
+        return true
+    }
+    private static var outputDay: [String: (day: Date, bytes: Int)] = [:]
     static func validOutputName(_ n: String) -> Bool {
         (try? Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}").wholeMatch(in: n)) != nil && outputExtensions.contains((n as NSString).pathExtension.lowercased())
     }
@@ -322,12 +333,28 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     static func stateFile(_ panel: Panel, root: URL) -> URL {
         root.appendingPathComponent("plugin-data").appendingPathComponent(panel.pluginId).appendingPathComponent("\(panel.id.uuidString).json")
     }
-    /// Atomic, 0600, dirs 0700.
+    /// `<root>/plugin-data/<id>/<file>`, atomic, 0600: both dirs made 0700 and opened no-follow (a link there is
+    /// refused, never followed), the temp file created new (O_EXCL, O_NOFOLLOW) and renamed in that dir.
     static func writePrivate(_ data: Data, to f: URL) throws {
-        try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let tmp = f.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString)")
-        guard FileManager.default.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
-        guard rename(tmp.path, f.path) == 0 else { try? FileManager.default.removeItem(at: tmp); throw CocoaError(.fileWriteUnknown) }
+        let fail = CocoaError(.fileWriteUnknown)
+        let idDir = f.deletingLastPathComponent(), pd = idDir.deletingLastPathComponent(), root = pd.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var fd = open(root.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard fd >= 0 else { throw fail }
+        for c in [pd.lastPathComponent, idDir.lastPathComponent] {
+            if mkdirat(fd, c, 0o700) != 0 && errno != EEXIST { Darwin.close(fd); throw fail }
+            let next = openat(fd, c, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            Darwin.close(fd)
+            guard next >= 0 else { throw fail }
+            fd = next
+        }
+        defer { Darwin.close(fd) }
+        let tmp = ".\(UUID().uuidString)"
+        let t = openat(fd, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard t >= 0 else { throw fail }
+        let ok = data.withUnsafeBytes { b in b.count == 0 || write(t, b.baseAddress, b.count) == b.count }
+        Darwin.close(t)
+        guard ok, renameat(fd, tmp, fd, f.lastPathComponent) == 0 else { unlinkat(fd, tmp, 0); throw fail }
     }
 
     // MARK: theme

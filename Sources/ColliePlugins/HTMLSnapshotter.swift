@@ -105,6 +105,7 @@ import WebKit
         }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list
         config.setURLSchemeHandler(DesignSchemeHandler(root: artifactsRoot, artifacts: true), forURLScheme: BrowserPanel.artifactScheme)
         let content = config.userContentController
         content.add(try await ruleList())
@@ -122,6 +123,11 @@ import WebKit
         let secs = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
         let late = ProtocolError(code: .timeout, message: "html.snapshot timed out after \(String(format: "%g", secs)) s")
         let timer = Task { try? await Task.sleep(for: timeout); run.finish(.failure(late)) }
+        // fail closed: the WebRTC switch is private, so check it took before the page exists
+        guard let w = web, await WebLockdown.peerConnectionsOff(w) else {
+            timer.cancel(); web?.navigationDelegate = nil; content.removeAllScriptMessageHandlers()
+            throw ProtocolError(code: .unavailable, message: "html.snapshot: \(WebLockdown.failure)")
+        }
         let out: Result<String, ProtocolError> = await withCheckedContinuation { c in
             run.waiter = c
             web?.load(URLRequest(url: url))

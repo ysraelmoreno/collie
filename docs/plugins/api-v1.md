@@ -32,7 +32,9 @@ LICENSE
 - more than 5 000 entries
 - more than 64 MiB in total
 
-Installing an id that is already installed replaces it, after the user confirms. The confirmation shows the old and new author and version.
+Installing an id that is already installed replaces it only when asked to. Preferências asks first, and the confirmation shows the old and new author and version. The CLI refuses unless you pass `--replace`: `collie plugin install --path <folder> --replace`.
+
+Preferências installs exactly the id and version it showed: if the folder changes between the confirmation and the copy, the install is refused.
 
 ## Manifest (`collie-plugin.json`)
 
@@ -79,7 +81,7 @@ Unknown keys are ignored, so a newer manifest still loads.
 **How agents see the commands:**
 - They are `<id>.<name>`: `collie notas add "comprar café"`, or MCP `notas_add`.
 - An agent reaches them only when it is leashed to a panel of the plug-in, the same rule as for built-in panels.
-- MCP descriptions are prefixed `[plug-in <id>]` and cut at 200 characters.
+- MCP descriptions and param help are prefixed `[plug-in <id>]` and cut at 200 characters.
 - The agent orientation never names external plug-ins. A Shepherd sees one line: `collie plugin list`.
 
 ## The page
@@ -102,7 +104,7 @@ The page sees only the arguments of each command. It never sees the agent's requ
 | `collie.onCommand(async (name, args) => result)` | Handles agent commands. `name` comes without the id (`"add"`); `args` holds the command's arguments (no `panel`). The result must be JSON, at most 1 MiB. A throw comes back to the agent as the error, cut to one line of 500 characters. A command that doesn't answer within its `timeout` fails with `timeout`. |
 | `collie.emit(event, payload)` | Sends a plug-in event. The event must be declared in `events`, otherwise the promise rejects. The payload must be JSON, at most 64 KiB. |
 | `collie.state.get()` / `collie.state.set(obj)` | The panel's own state: a JSON object of at most 256 KiB. It is kept across restarts and plug-in updates, and deleted when the panel is closed. |
-| `collie.files.output(name, base64)` | Writes an output file, at most 16 MiB. `name` matches `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` with extension png, svg, json, txt, md, csv or html. The call resolves to `{path}`, an opaque handle; return it (or an object with that `path`) from an `outputFile` command. Collie writes the file under `<root>/plugins-out/<id>/` and gives the agent its own copy (`--out` works too). An `outputFile` result whose `path` didn't come from `files.output` is refused. The newest 100 files per plug-in are kept. |
+| `collie.files.output(name, base64)` | Writes an output file, at most 16 MiB. `name` matches `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` with extension png, svg, json, txt, md, csv or html. The call resolves to `{path}`, an opaque handle; return it (or an object with that `path`) from an `outputFile` command. Collie writes the file under `<root>/plugins-out/<id>/` and gives the agent its own copy (`--out` works too). An `outputFile` result whose `path` didn't come from `files.output` is refused. Each plug-in may write at most 64 MiB of output files per day (all its panels together), and its newest 200 files are kept. |
 | `collie.theme` | `{scheme: "light" \| "dark", tokens: {"--collie-text": "#…", …}}`. The tokens are also set as CSS variables on `:root`. A `collie-theme` event fires on `window` when the theme changes. |
 
 ### Lifecycle

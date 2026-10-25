@@ -271,6 +271,29 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         }
     }
 
+    /// Final review M1 (the expected id + version must match the copy) and M2 (an installed id needs `replace`).
+    @Test(.timeLimit(.minutes(2))) func installPinsExpectedAndReplaceIsExplicit() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+        try await withDaemon { d, p in
+            let src = try source(p.root, "src")
+            func install(_ extra: [String: JSONValue]) async throws -> Response {
+                try await send(p, Request(id: "i", token: d.adminToken, command: "plugin.install",
+                                          args: ["path": .string(src.path)].merging(extra) { $1 }), timeoutSeconds: 60)
+            }
+            for bad in [["expectId": "outro", "expectVersion": "0.1.0"], ["expectId": "notas", "expectVersion": "9.9.9"]] {
+                let r = try await install(bad.mapValues { .string($0) })
+                #expect(r.error?.code == .conflict && r.error?.message.contains("mudou") == true, "\(r)")
+            }
+            #expect(try await send(p, Request(id: "l", token: d.adminToken, command: "plugin.list")).result == .array([]))
+            #expect(try await install(["expectId": .string("notas"), "expectVersion": .string("0.1.0")]).ok)
+            let again = try await install([:])
+            #expect(again.error?.code == .conflict && again.error?.message.contains("--replace") == true, "\(again)")
+            #expect(try await install(["replace": .bool(true)]).ok)
+            #expect(try await send(p, Request(id: "u", token: d.adminToken, command: "plugin.uninstall", args: ["id": .string("notas")])).ok)
+        }
+        }
+    }
+
     @Test(.timeLimit(.minutes(2))) func specsReadableByTerminal() async throws {
         try await PluginRegistry.exclusively { () async throws in
         try await withDaemon { d, p in

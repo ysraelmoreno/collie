@@ -13,7 +13,7 @@ public enum MCPSchema {
             var props: [String: JSONValue] = [:]
             for p in c.params {
                 let type = p.kind == .int ? "integer" : p.kind == .flag ? "boolean" : "string"
-                props[p.name] = .object(["type": .string(type), "description": .string(ext == nil ? p.help : String(p.help.prefix(200)))])
+                props[p.name] = .object(["type": .string(type), "description": .string(ext.map { String(("[plug-in \($0)] " + p.help).prefix(200)) } ?? p.help)])
             }
             let summary = ext.map { String(("[plug-in \($0)] " + c.summary).prefix(200)) }
                 ?? (c.name.hasPrefix("design.") && !c.panelFree ? "Collie Design panel leashed to you: " + c.summary : c.summary)

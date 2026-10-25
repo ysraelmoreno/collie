@@ -61,7 +61,9 @@ actor PluginStore {
 
     /// Copies `source` in (refusing links, special files, > 64 MiB, > 5 000 entries), validates its manifest, hashes
     /// it and swaps it in: the previous version keeps working until the new one is complete, then goes.
-    func install(from source: URL) throws(ProtocolError) -> InstalledPlugin {
+    /// `expect`: the id and version the user was shown; a copy that differs is refused (the folder changed meanwhile).
+    /// An installed id is replaced only with `replace`.
+    func install(from source: URL, expect: (id: String, version: String)? = nil, replace: Bool = true) throws(ProtocolError) -> InstalledPlugin {
         let src = source.resolvingSymlinksInPath()   // the folder the user picked; links inside it are refused
         let fm = FileManager.default
         try io { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
@@ -70,6 +72,12 @@ actor PluginStore {
         try Self.copyTree(src, to: staging)   // holds the caps while copying
         let files = try Self.scan(staging)   // the copy is what counts: the source may have changed meanwhile
         let m = try PluginManifest.load(folder: staging)
+        if let expect, expect != (m.id, m.version) {
+            throw ProtocolError(code: .conflict, message: "a pasta do plug-in mudou depois da confirmação (esperado \(expect.id) \(expect.version), encontrado \(m.id) \(m.version)); escolha de novo")
+        }
+        if !replace, let e = entries.first(where: { $0.id == m.id }) {
+            throw ProtocolError(code: .conflict, message: "o plug-in '\(m.id)' \(e.version) já está instalado: use --replace para substituí-lo")
+        }
         let hash = try Self.treeHash(staging, files)
         try Self.lock(staging, files)
 

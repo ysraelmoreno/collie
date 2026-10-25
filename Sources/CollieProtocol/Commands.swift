@@ -415,7 +415,10 @@ public enum Commands {
         // External plug-ins (PluginStore): installing, removing, enabling is the user's alone (as admin.*); a terminal
         // may read the list and the specs (names, versions, commands; never paths)
         CommandSpec(name: "plugin.install", summary: "Install an external plug-in from a folder with a collie-plugin.json (the user only: the app, or collie outside a terminal)",
-                    params: [ParamSpec("path", .string, required: true, help: "Plug-in folder (relative to the current directory)")],
+                    params: [ParamSpec("path", .string, required: true, help: "Plug-in folder (relative to the current directory)"),
+                             ParamSpec("replace", .flag, help: "Replace the installed plug-in of the same id (refused without it)"),
+                             ParamSpec("expectId", .string, help: "Refuse unless the copied manifest has this id (the app: what the user confirmed)"),
+                             ParamSpec("expectVersion", .string, help: "Refuse unless the copied manifest has this version")],
                     timeoutSeconds: 120, exposedToMCP: false),
         CommandSpec(name: "plugin.uninstall", summary: "Remove an external plug-in (the user only)",
                     params: [ParamSpec("id", .string, positional: true, required: true, help: "Plug-in id")], timeoutSeconds: 30, exposedToMCP: false),

@@ -71,7 +71,7 @@ private func kanban(_ id: String = "kanban", version: String = "0.1.0", commands
         #expect(d.hasPrefix("[plug-in kanban] ") && d.count == 200)
         guard case .object(let schema)? = tool("kanban_add")["inputSchema"], case .object(let props)? = schema["properties"],
               case .object(let x)? = props["x"], case .string(let h)? = x["description"] else { Issue.record("no param"); return }
-        #expect(h.count <= 200)
+        #expect(h.hasPrefix("[plug-in kanban] ") && h.count == 200)
         guard case .string(let b)? = tool("browser_navigate")["description"] else { Issue.record("no browser"); return }
         #expect(!b.hasPrefix("[plug-in"))
         }

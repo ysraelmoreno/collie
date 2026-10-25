@@ -384,8 +384,10 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         do { return try dec.decode([PluginRow].self, from: JSONEncoder().encode(r)) }
         catch { throw ProtocolError(code: .internal, message: "plugin.list: resposta inesperada") }
     }
-    public func installPlugin(folder: URL) async throws(ProtocolError) {
-        _ = try await adminCall("plugin.install", ["path": .string(folder.path)], timeout: 125)
+    /// `id` + `version`: what the user confirmed (the daemon refuses a copy that differs); `replace`: they confirmed replacing.
+    public func installPlugin(folder: URL, id: String, version: String, replace: Bool) async throws(ProtocolError) {
+        _ = try await adminCall("plugin.install", ["path": .string(folder.path), "expectId": .string(id), "expectVersion": .string(version),
+                                                   "replace": .bool(replace)], timeout: 125)
     }
     public func uninstallPlugin(_ id: String) async throws(ProtocolError) { _ = try await adminCall("plugin.uninstall", ["id": .string(id)]) }
     public func setPluginEnabled(_ id: String, _ on: Bool) async throws(ProtocolError) {

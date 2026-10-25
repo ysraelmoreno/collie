@@ -110,7 +110,7 @@ struct PluginsPreferences: View {
             HStack {
                 Spacer()
                 Button("Cancelar", role: .cancel) { prompt = nil }.keyboardShortcut(.cancelAction)
-                Button(p.confirm) { prompt = nil; run { try await client.installPlugin(folder: p.folder) } }
+                Button(p.confirm) { prompt = nil; run { try await client.installPlugin(folder: p.folder, id: p.manifest.id, version: p.manifest.version, replace: p.replacing != nil) } }
                     .keyboardShortcut(.defaultAction).disabled(!connected)
             }
         }

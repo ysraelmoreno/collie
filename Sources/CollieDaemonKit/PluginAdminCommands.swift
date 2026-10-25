@@ -23,7 +23,9 @@ extension CommandRouter {
         switch r.command {
         case "plugin.install":
             let base = URL(fileURLWithPath: r.cwd ?? NSHomeDirectory(), isDirectory: true)
-            let e = try await plugins.install(from: URL(fileURLWithPath: try need(r, "path"), relativeTo: base).absoluteURL)
+            let expect = str(r, "expectId").map { ($0, str(r, "expectVersion") ?? "") }
+            let e = try await plugins.install(from: URL(fileURLWithPath: try need(r, "path"), relativeTo: base).absoluteURL,
+                                              expect: expect, replace: flag(r, "replace"))
             await publishPlugins()
             return try await pluginRow(e)
         case "plugin.uninstall":

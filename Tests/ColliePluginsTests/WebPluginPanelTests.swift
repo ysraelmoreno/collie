@@ -51,7 +51,7 @@ collie.onCommand(async (name, args) => {
     try { await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); return "granted" } catch (e) { return "denied" }
   }
   case "two": { await collie.files.output("a.txt", btoa("1")); return collie.files.output("a.txt", btoa("2")) }
-  case "many": { let last; for (let i = 0; i < 102; i++) last = await collie.files.output(`f${i}.txt`, btoa(String(i))); return last }
+  case "many": { let last; for (let i = 0; i < 202; i++) last = await collie.files.output(`f${i}.txt`, btoa(String(i))); return last }
   case "out1": try { return await collie.files.output("a.txt", btoa("x")) } catch (e) { return { refused: String(e.message || e) } }
   case "nav": setTimeout(() => { location.href = "index.html" }, 0); return "ok";
   case "ver": return window.V;
@@ -230,6 +230,31 @@ collie.onCommand(async (name, args) => {
         }
     }
 
+    /// Final review M3: `files.output` ≤ 64 MiB a day per plug-in (all its panels), the newest 200 files kept.
+    @Test func outputBudgetPerPluginPerDay() {
+        let id = "budget-\(UUID().uuidString.prefix(6))", day = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(WebPluginPanel.outputsKept == 200)
+        for _ in 0..<4 { #expect(WebPluginPanel.chargeOutput(id, 16 << 20, now: day)) }
+        #expect(!WebPluginPanel.chargeOutput(id, 1, now: day))
+        #expect(WebPluginPanel.chargeOutput("other-\(id)", 1, now: day))
+        #expect(WebPluginPanel.chargeOutput(id, 16 << 20, now: day.addingTimeInterval(86_400)))   // next day
+    }
+
+    /// Final review M5: the state file is written without following a link at `plugin-data/<id>`.
+    @Test func writePrivateRefusesLinkedDataDir() throws {
+        let r = root.appendingPathComponent("wp-\(UUID().uuidString.prefix(6))"), outside = r.appendingPathComponent("outside")
+        let fm = FileManager.default
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        try fm.createDirectory(at: r.appendingPathComponent("plugin-data"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: r.appendingPathComponent("plugin-data/hostil"), withDestinationURL: outside)
+        #expect(throws: (any Error).self) { try WebPluginPanel.writePrivate(Data("{}".utf8), to: r.appendingPathComponent("plugin-data/hostil/p.json")) }
+        #expect(try fm.contentsOfDirectory(atPath: outside.path).isEmpty)
+        let ok = r.appendingPathComponent("plugin-data/notas/p.json")
+        try WebPluginPanel.writePrivate(Data("{}".utf8), to: ok)
+        #expect(try String(contentsOf: ok, encoding: .utf8) == "{}")
+        #expect((try fm.attributesOfItem(atPath: ok.deletingLastPathComponent().path)[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+    }
+
     @Test func outputFileReturnsPathUnderPluginsOut() async throws {
         try await PluginRegistry.exclusively { () async throws in
         try await install(notasSource)
@@ -304,7 +329,7 @@ collie.onCommand(async (name, args) => {
         }
     }
 
-    /// M1, M2, M8: unique names in plugins-out/<id>, the newest 100 kept, a linked dir refused.
+    /// M1, M2, M8: unique names in plugins-out/<id>, the newest 200 kept, a linked dir refused.
     @Test func outputFilesUniqueCappedNoFollow() async throws {
         try await PluginRegistry.exclusively { () async throws in
         try await install(try hostil())
@@ -315,7 +340,7 @@ collie.onCommand(async (name, args) => {
         let bodies = Set(try two.map { try String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8) })
         #expect(two.count == 2 && bodies == ["1", "2"], "\(two)")
         _ = try await x.0.handle("hostil.many", [:])
-        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 100)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).count == WebPluginPanel.outputsKept)
         try FileManager.default.removeItem(at: dir)
         let elsewhere = root.appendingPathComponent("elsewhere"); try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(atPath: dir.path, withDestinationPath: elsewhere.path)

@@ -10,7 +10,8 @@ enum SandboxLaunch {
     static func filesDir(_ id: UUID, root: URL) -> URL { dir(id, root: root).appendingPathComponent("files") }
     static let filesKept = 100
 
-    /// The dirs output-file commands write to (R5): screenshots (design, browser, device: `screens/`), design exports, and
+    /// The dirs output-file commands write to (R5): screenshots (design, browser, device: `screens/`), external plug-ins'
+    /// files (`plugins-out/<id>/`, written by the app's host), design exports, and
     /// an html export's artifact folder (R4). Never `admin.token`, `sandbox/` or anything else under the root.
     /// ponytail: a new output command must add its dir here.
     static func isOutput(_ realPath: String, root: URL) -> Bool {
@@ -19,6 +20,7 @@ enum SandboxLaunch {
         let rel = realPath.dropFirst(r.count).split(separator: "/")
         guard !rel.contains(where: { $0.hasPrefix(".") }) else { return false }
         if rel.count == 2, rel[0] == "screens" { return true }
+        if rel.count == 3, rel[0] == "plugins-out" { return true }   // the router first checks it is the calling plug-in's (vetPluginOutput)
         if rel.count >= 4, rel[0] == "design", rel[1] == "exports" { return true }
         return rel.count >= 3 && rel[0] == "artifacts"   // a file in an artifact's folder, not artifacts.json
     }

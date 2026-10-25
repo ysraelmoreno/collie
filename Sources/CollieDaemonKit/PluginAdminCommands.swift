@@ -59,3 +59,26 @@ extension CommandRouter {
         return .object(o)
     }
 }
+
+extension CommandRouter {
+    /// An external plug-in's output command result: its `path` must be `<root>/plugins-out/<id>/<file>`, every
+    /// component a real directory and the file a regular one (lstat, no link followed), never a dot name. The app's host
+    /// writes these files from the bytes the page hands it; the page never picks a path. No `path`: unchanged.
+    nonisolated func vetPluginOutput(_ result: JSONValue, plugin id: String) throws(ProtocolError) -> JSONValue {
+        guard case .object(var o) = result, let v = o["path"] else { return result }
+        let bad = ProtocolError(code: .invalidArgs, message: "o plug-in '\(id)' devolveu um arquivo fora de plugins-out/\(id)")
+        guard case .string(let p) = v, p.hasPrefix("/"), !p.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else { throw bad }
+        let root = config.paths.root.standardizedFileURL.path, real = SignedAppCheck.realPath(config.paths.root)
+        guard let base = [root, real].first(where: { p.hasPrefix($0 + "/") }) else { throw bad }
+        let rel = p.dropFirst(base.count + 1).split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard rel.count == 3, rel[0] == "plugins-out", rel[1] == id, !rel[2].isEmpty, !rel[2].hasPrefix(".") else { throw bad }
+        var at = URL(fileURLWithPath: base)
+        for (i, c) in rel.enumerated() {
+            at.appendPathComponent(c)
+            let t = try? FileManager.default.attributesOfItem(atPath: at.path)[.type] as? FileAttributeType   // lstat
+            guard t == (i < 2 ? .typeDirectory : .typeRegular) else { throw bad }
+        }
+        o["path"] = .string(p)
+        return .object(o)
+    }
+}

@@ -210,7 +210,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .pluginsChanged(let ms): setPlugins(ms)
         }
     }
-    private func setPlugins(_ ms: [PluginManifest]) { plugins = ms; PluginManifest.register(ms) }
+    private func setPlugins(_ ms: [PluginManifest]) { guard ms != plugins else { return }; plugins = ms; PluginManifest.register(ms) }   // unchanged: the registry stays
     private func same(_ x: Connection, _ y: Connection) -> Bool { Set([x.a, x.b]) == Set([y.a, y.b]) }
 
     // MARK: commands

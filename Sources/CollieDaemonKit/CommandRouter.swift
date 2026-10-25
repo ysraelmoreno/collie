@@ -248,7 +248,9 @@ actor CommandRouter {
                     : plugin.id == "artifacts" ? try await artifactCommand(req, peer: peer)
                     : plugin.runsInDaemon ? try await deviceCommand(req, peer: peer)
                     : try await pluginCommand(req, plugin: plugin, spec: spec, peer: peer)
-                return Response(id: req.id, ok: true, result: await handedOver(result, for: req))
+                // R6: an external plug-in's file comes only from its own plugins-out dir, for every caller (and --out)
+                let vetted = plugin.source != .builtIn && spec.outputFile ? try vetPluginOutput(result, plugin: plugin.id) : result
+                return Response(id: req.id, ok: true, result: await handedOver(vetted, for: req))
             }
             guard let idStr = req.terminalId, let tid = UUID(uuidString: idStr), let t = req.token,
                   await auth.verify(terminal: tid, token: t) else {

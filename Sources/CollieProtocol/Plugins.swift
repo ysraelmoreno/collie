@@ -1,3 +1,4 @@
+import Foundation
 import Synchronization
 
 /// Lives in CollieProtocol (not CollieCore) because PluginSpec references it and CollieCore depends on CollieProtocol.
@@ -50,7 +51,28 @@ public enum PluginRegistry {
             guard n.allSatisfy({ $0.hasPrefix(s.id + ".") }), names.isDisjoint(with: n), Set(n).count == n.count else { continue }
             names.formUnion(n); kept.append(s)
         }
-        external.withLock { if $0.specs != kept { $0.specs = kept; $0.version += 1 } }
+        let changed = external.withLock { x -> Bool in
+            guard x.specs != kept else { return false }
+            x.specs = kept; x.version += 1; return true
+        }
+        if changed { NotificationCenter.default.post(name: externalChanged, object: nil) }
+    }
+    /// Posted (on the caller's thread) after `setExternal` changed the list: open panels of external plug-ins reload,
+    /// or show their placeholder.
+    public static let externalChanged = Notification.Name("collie.externalPluginsChanged")
+
+    /// Tests only. The external list is process-wide and every suite runs in one process: a test that sets it runs its
+    /// body through this, one at a time, so another suite's `setExternal` can't change it mid-test.
+    // ponytail: a test hook in the product (a few lines); nothing else calls it.
+    public static func exclusively<T>(isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
+        await testGate.acquire()
+        do { let r = try await body(); await testGate.release(); return r } catch { await testGate.release(); throw error }
+    }
+    private static let testGate = Gate()
+    private actor Gate {
+        private var busy = false, waiters: [CheckedContinuation<Void, Never>] = []
+        func acquire() async { if busy { await withCheckedContinuation { waiters.append($0) } } else { busy = true } }
+        func release() { if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() } }
     }
 
     /// Plugin ids a Shepherd can open on the canvas (feeds `panel.open` help and the agent orientation).

@@ -39,7 +39,7 @@ import CollieProtocol
         do { _ = try await s.dispatch(UUID(), "echo", [:]); Issue.record("expected notFound") }
         catch { #expect(error.code == .notFound) }
         do { _ = try await s.dispatch(ghost.id, "echo", [:]); Issue.record("expected unavailable") }
-        catch { #expect(error.code == .unavailable && error.message == "Plug-in indisponível") }
+        catch { #expect(error.code == .unavailable && error.message == "plug-in nope não está instalado") }   // an external plug-in's placeholder
         do { _ = try await s.dispatch(a.id, "x", [:]); Issue.record("expected invalidArgs") }
         catch { #expect(error.code == .invalidArgs) }
     }

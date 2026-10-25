@@ -52,6 +52,10 @@ private func healthy(_ port: UInt16) async -> Bool {
         let args = fx.starts.first ?? []
         #expect(args.contains("--listen") && args.contains("127.0.0.1:\(fx.port)"), "\(args)")
         #expect(args.contains("--data") && args.contains(fx.dataDir.path), "\(args)")
+        // design files up to 512 MiB (the server's own default is 64; the app opens up to 1 GiB)
+        let cfg = fx.dataDir.appendingPathComponent("collie-server.toml")
+        #expect(args.contains("--config") && args.contains(cfg.path), "\(args)")
+        #expect(try String(contentsOf: cfg, encoding: .utf8).contains("max_file_mb = 512"))
         #expect(await healthy(fx.port))
         // already up: no second start
         _ = try await s.ensureRunning()

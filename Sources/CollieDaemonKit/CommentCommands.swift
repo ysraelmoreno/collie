@@ -22,9 +22,11 @@ extension CommandRouter {
                 throw ProtocolError(code: .invalidArgs, message: "pass --artifact <id>, or --root <folder> with --path <file>")
             }
             let to = try str(r, "panel").flatMap { n throws(ProtocolError) in addressee(of: try findPanel(n)) }
-            let anchor = CommentAnchor(selector: str(r, "selector").flatMap { $0.isEmpty ? nil : $0 },
-                                       x: try fraction(r, "x"), y: try fraction(r, "y"), text: str(r, "text"))
-            let title = try need(r, "title")
+            // the page's text, selector and title are agent-written: stored scrubbed like the bodies
+            let secrets = await auth.secrets()
+            let anchor = CommentAnchor(selector: str(r, "selector").flatMap { $0.isEmpty ? nil : LotBoards.scrub($0, secrets: secrets) },
+                                       x: try fraction(r, "x"), y: try fraction(r, "y"), text: str(r, "text").map { LotBoards.scrub($0, secrets: secrets) })
+            let title = LotBoards.scrub(try need(r, "title"), secrets: secrets)
             let c = try await comments.add(page: page, title: title, anchor: anchor, body: try await scrubbed("body"), to: to?.id, toName: to?.name)
             await commentChanged(page, c)
             return commentJSON(page, title, c)

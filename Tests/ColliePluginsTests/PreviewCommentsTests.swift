@@ -60,6 +60,19 @@ private func comment(_ id: String, selector: String?, x: Double, y: Double, reso
         try? await panel.webView?.callAsyncJavaScript("return \(expr)", contentWorld: PreviewComments.world)
     }
     func loaded(_ panel: PreviewPanel, _ n: Int = 1) async -> Bool { await pollUntil(10) { panel.loads >= n } }
+    /// A real (trusted) click on the element's top-left corner + 5 pt: mouse events sent to the web view.
+    func realClick(_ panel: PreviewPanel, _ w: NSWindow, _ sel: String) async throws {
+        let r = try #require(await page(panel, "(() => { const r = document.querySelector('\(sel)').getBoundingClientRect(); return [r.left + 5, r.top + 5] })()") as? [NSNumber])
+        let web = try #require(panel.webView)
+        let local = NSPoint(x: r[0].doubleValue, y: web.isFlipped ? r[1].doubleValue : web.bounds.height - r[1].doubleValue)
+        let at = web.convert(local, to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let e = try #require(NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                    windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            if type == .leftMouseDown { web.mouseDown(with: e) } else { web.mouseUp(with: e) }
+        }
+    }
+    /// A synthetic click the page itself could dispatch (`isTrusted` false).
     func click(_ panel: PreviewPanel, _ sel: String) async {
         _ = await page(panel, "(() => { const r = document.querySelector('\(sel)').getBoundingClientRect();"
                       + " document.querySelector('\(sel)').dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true,"
@@ -74,7 +87,7 @@ private func comment(_ id: String, selector: String?, x: Double, y: Double, reso
         defer { panel.close(); w.close() }
         #expect(await loaded(panel))
         panel.comments.setMode(true)
-        await click(panel, ".t")
+        try await realClick(panel, w, ".t")
         #expect(await pollUntil(3) { panel.comments.draft != nil })
         let draft = try #require(panel.comments.draft)
         let sel = try #require(draft.selector)
@@ -89,6 +102,38 @@ private func comment(_ id: String, selector: String?, x: Double, y: Double, reso
         #expect(add["root"] == .string(root.path) && add["path"] == .string("p.html") && add["panel"] == .string("Prévia"))
         #expect(add["body"] == .string("deixe maior") && add["selector"] == .string(sel) && add["text"] == .string("alvo"))
         #expect(panel.comments.draft == nil)
+    }
+
+    /// A click the page dispatches itself never sets the comment's point (nor is swallowed: comment mode stays on).
+    @Test func syntheticClickIgnoredInCommentMode() async throws {
+        let root = try project("<body><p class='t'>alvo</p><script>window.hit = 0; document.addEventListener('click', () => window.hit++)</script></body>")
+        let (panel, w) = mount(root: root, daemon: PreviewFakeDaemon())
+        defer { panel.close(); w.close() }
+        #expect(await loaded(panel))
+        panel.comments.setMode(true)
+        await click(panel, ".t")
+        #expect(await pollUntil(2) { await page(panel, "window.hit") as? Int == 1 })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(panel.comments.draft == nil && panel.comments.mode)
+    }
+
+    /// A pin at the document's edge never grows the page's scroll size.
+    @Test func edgePinKeepsScrollSize() async throws {
+        let root = try project("<body style='margin:0'><div style='height:1000px;width:400px'></div></body>")
+        let d = PreviewFakeDaemon(); d.list = [comment("c1aaaaaa-1", selector: nil, x: 1, y: 1)]
+        let (panel, w) = mount(root: root, daemon: d)
+        defer { panel.close(); w.close() }
+        #expect(await loaded(panel))
+        let before = (await page(panel, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]") as? [NSNumber])?.map(\.intValue)
+        await panel.comments.refresh()
+        #expect(await pollUntil(3) { await pins(panel, "collieComments.positions().length") as? Int == 1 })
+        let after = (await page(panel, "[document.documentElement.scrollWidth, document.documentElement.scrollHeight]") as? [NSNumber])?.map(\.intValue)
+        #expect(before != nil && before == after)
+        // drawn again (resize, reload): the same point, not pushed further out
+        let top1 = ((await pins(panel, "collieComments.positions()[0].top")) as? NSNumber)?.doubleValue
+        _ = await pins(panel, "collieComments.show(collieComments.positions().length ? [{id: 'c1aaaaaa-1', n: 1, selector: null, x: 1, y: 1}] : [])")
+        let top2 = ((await pins(panel, "collieComments.positions()[0].top")) as? NSNumber)?.doubleValue
+        #expect(top1 != nil && top1 == top2)
     }
 
     @Test func clickOutsideCommentModePassesThrough() async throws {

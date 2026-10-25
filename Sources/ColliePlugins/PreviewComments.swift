@@ -86,9 +86,7 @@ import WebKit
     }
 
     /// A message of the pin script (its world only, main frame): `{click: {selector, x, y, text}}` in comment mode, or
-    /// `{open: id}`. Clamped and capped: the page is untrusted, though only its DOM events reach the script.
-    /// ponytail: a synthetic click from the page counts in comment mode; it only moves the draft's point, the user still
-    /// writes and sends the comment.
+    /// `{open: id}`. Clamped and capped: the page is untrusted (the script counts only trusted clicks, `isTrusted`).
     func received(_ body: Any) {
         guard let o = body as? [String: Any] else { return }
         if let id = o["open"] as? String {
@@ -182,7 +180,7 @@ import WebKit
             return parts.join(' > ');
           };
           window.addEventListener('click', e => {
-            if (!on || e.target === host) return;
+            if (!on || !e.isTrusted || e.target === host) return;   // a click the page dispatches never counts
             e.preventDefault(); e.stopImmediatePropagation();
             on = false;
             const el = e.target instanceof Element ? e.target : (e.target && e.target.parentElement);
@@ -194,7 +192,8 @@ import WebKit
             placed = [];
             // no pins, no host: the page's DOM stays as it was written
             if (!document.documentElement || !list.length) { if (host) host.remove(); return [] }
-            const [w, h] = size();
+            if (host) { host.style.setProperty('width', '0', 'important'); host.style.setProperty('height', '0', 'important') }
+            const [w, h] = size();   // the page's own size: the host is 0×0 while measured
             if (!host || !host.isConnected) {
               host = document.createElement('collie-pins');
               root = host.attachShadow({ mode: 'closed' });
@@ -202,10 +201,12 @@ import WebKit
                                     ['z-index', '2147483647'], ['display', 'block'], ['margin', '0'], ['padding', '0']]) host.style.setProperty(k, v, 'important');
               document.documentElement.appendChild(host);
             }
+            // as big as the page and clipping: a pin at the edge never grows the scroll size; clicks go through it
+            for (const [k, v] of [['width', w + 'px'], ['height', h + 'px'], ['overflow', 'hidden'], ['pointer-events', 'none']]) host.style.setProperty(k, v, 'important');
             const style = document.createElement('style');
             style.textContent = '.pin{position:absolute;transform:translate(-50%,-50%);min-width:22px;height:22px;border-radius:11px;'
               + 'background:#e8590c;color:#fff;font:600 12px -apple-system,sans-serif;display:flex;align-items:center;justify-content:center;'
-              + 'box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:pointer;padding:0 4px;box-sizing:border-box}.pin.done{opacity:.4}';
+              + 'box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:pointer;pointer-events:auto;padding:0 4px;box-sizing:border-box}.pin.done{opacity:.4}';
             root.replaceChildren(style);
             for (const c of list) {
               let el = null;

@@ -240,7 +240,8 @@ actor CommentStore {
             let a = p.comment.anchor
             let spot = a.text.flatMap { $0.isEmpty ? nil : $0 } ?? a.selector ?? "ponto \(Int(a.x * 100))%, \(Int(a.y * 100))%"
             let text = LotBoards.cut(LotBoards.clean(p.message.body, max: .max), bytes: LotBoards.injectMaxBytes)
-            let line = "\nComentário em \(LotBoards.clean(p.title, max: 64, quoted: true)) (\(LotBoards.clean(spot, max: 80))) [\(p.comment.short)]: \"\(text)\""
+            // the anchor is the page's (agent-written) text: labelled, scrubbed, one line, ≤ 120 characters
+            let line = "\nComentário em \(LotBoards.clean(LotBoards.scrub(p.title), max: 64, quoted: true)) (texto da página: \(LotBoards.clean(LotBoards.scrub(spot), max: 120))) [\(p.comment.short)]: \"\(text)\""
                 + " — responda: collie comment reply \(p.comment.short) \"<resposta>\""
             guard out.utf8.count + line.utf8.count <= limit else { continue }
             out += line; picked.append((p.comment.id, p.message.id))

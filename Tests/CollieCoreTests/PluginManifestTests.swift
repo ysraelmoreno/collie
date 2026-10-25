@@ -97,6 +97,30 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         #expect(s.commands.map(\.name) == ["notas.add", "notas.list", "notas.export"])
         #expect(s.commands[0].params.map(\.name) == ["text", "panel"] && s.commands[0].params[0].kind == .rest)
         #expect(s.commands[0].timeoutSeconds == 30 && s.events == ["notas.changed"])
+        #expect(s.commands.map(\.outputFile) == [false, false, true])
+        #expect(s.commands[2].params.map(\.name) == ["format", "out", "panel"])   // the manifest's own --out
+        // an outputFile command without --out gets one; a positional or non-string --out is refused
+        let m = try manifest { var c = command("png"); c["outputFile"] = true; $0["commands"] = [c]; $0["stateKeys"] = ["board"] }
+        #expect(m.pluginSpec().commands[0].params.map(\.name) == ["out", "panel"] && m.pluginSpec().stateKeys == ["board"])
+        #expect(refusal { var c = command("png"); c["outputFile"] = true; c["params"] = [["name": "out", "type": "string", "positional": true]]; $0["commands"] = [c] }?.code == .invalidArgs)
+    }
+
+    @Test func registerRevalidatesAndHerdAcceptsExternalWithStateKeys() throws {
+        defer { PluginRegistry.setExternal([]) }
+        var bad = try PluginManifest.load(folder: notas); bad.id = "kanban"; bad.helper = "bin/x"   // fine on the wire, not valid
+        var ok = try PluginManifest.load(folder: notas); ok.stateKeys = ["filter"]
+        PluginManifest.register([ok, bad])
+        #expect(PluginRegistry.externalSpecs.map(\.id) == ["notas"] && Commands.spec("notas.add") != nil)
+        let t = HerdTerminal(key: "pastor", preset: .shell, isShepherd: true)
+        func herd(_ state: [String: JSONValue], plugin: String = "notas") -> Herd {
+            Herd(id: "h", name: "H", terminals: [t], panels: [HerdPanel(key: "notas", pluginId: plugin, placement: .canvas, state: state)])
+        }
+        #expect(throws: Never.self) { try HerdFormat.validate(herd(["filter": .string("hoje")])) }
+        #expect(throws: ProtocolError.self) { try HerdFormat.validate(herd(["url": .string("x")])) }   // not a declared key
+        #expect(throws: ProtocolError.self) { try HerdFormat.validate(herd([:], plugin: "kanban")) }   // not loaded
+        #expect(throws: ProtocolError.self) { try HerdFormat.validate(herd([:], plugin: "device")) }   // built-in, still out
+        PluginManifest.register([])
+        #expect(throws: ProtocolError.self) { try HerdFormat.validate(herd([:])) }   // uninstalled
     }
 
     @Test func unknownKeysIgnored() throws {

@@ -14,7 +14,7 @@ extension CommandRouter {
             for e in await plugins.list() { rows.append(try await pluginRow(e)) }
             return .array(rows)
         case "plugin.specs":
-            return .object(["plugins": try isoJSON(await plugins.loaded().map(\.0))])
+            return .object(["plugins": try isoJSON(await plugins.loaded().map(\.0)), "version": .number(Double(PluginRegistry.catalogVersion))])
         default: break
         }
         guard caller == nil else {
@@ -24,17 +24,29 @@ extension CommandRouter {
         case "plugin.install":
             let base = URL(fileURLWithPath: r.cwd ?? NSHomeDirectory(), isDirectory: true)
             let e = try await plugins.install(from: URL(fileURLWithPath: try need(r, "path"), relativeTo: base).absoluteURL)
+            await publishPlugins()
             return try await pluginRow(e)
         case "plugin.uninstall":
             try await plugins.uninstall(try need(r, "id"))
+            await publishPlugins()
             return .object([:])
         case "plugin.enable", "plugin.disable":
             let id = try need(r, "id")
             try await plugins.setEnabled(id, r.command == "plugin.enable")
+            await publishPlugins()
             guard let e = await plugins.list().first(where: { $0.id == id }) else { return .object([:]) }
             return try await pluginRow(e)
         default: throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(r.command)'")
         }
+    }
+
+    /// The store's loaded plug-ins become this process's registry (`Commands.all`, routing, help) and the app hears
+    /// `pluginsChanged`. At start (`atStart`) an empty store leaves the registry alone and emits nothing.
+    func publishPlugins(atStart: Bool = false) async {
+        let ms = await plugins.loaded().map(\.0)
+        if atStart && ms.isEmpty { return }   // ponytail: tests run many daemons in one process; one with none must not clear another's
+        PluginRegistry.setExternal(ms.map { $0.pluginSpec() })
+        if !atStart { await hub.emit(.pluginsChanged(ms)) }
     }
 
     private func pluginRow(_ e: InstalledPlugin) async throws -> JSONValue {

@@ -4,15 +4,22 @@ import CollieCore
 import CollieProtocol
 import CollieDaemonKit
 
-/// A fake daemon answering `panel.list` with panels of `plugins` (mutable), anything else ok/null.
+/// A fake daemon answering `panel.list` with panels of `plugins` (mutable), `plugin.specs` with `specs` (nil: null, as
+/// a daemon without plug-ins support), anything else ok/null; every request is kept in `calls`.
 private final class FakeDaemon: @unchecked Sendable {
     let socket = URL(fileURLWithPath: "/tmp/collie-fd-\(UUID().uuidString.prefix(8)).sock")
-    private let lock = NSLock(); private var _plugins: [String]
+    private let lock = NSLock(); private var _plugins: [String]; private var _specs: [JSONValue]?; private var _calls: [Request] = []
     var plugins: [String] { get { lock.withLock { _plugins } } set { lock.withLock { _plugins = newValue } } }
+    var specs: [JSONValue]? { get { lock.withLock { _specs } } set { lock.withLock { _specs = newValue } } }
+    var calls: [Request] { lock.withLock { _calls } }
     private var server: UnixSocketServer?
-    init(_ plugins: [String]) throws {
-        _plugins = plugins
+    init(_ plugins: [String], specs: [JSONValue]? = nil) throws {
+        _plugins = plugins; _specs = specs
         let s = UnixSocketServer(path: socket) { [unowned self] r in
+            self.lock.withLock { self._calls.append(r) }
+            if r.command == "plugin.specs" {
+                return Response(id: r.id, ok: true, result: self.specs.map { .object(["plugins": .array($0)]) } ?? .null)
+            }
             guard r.command == "panel.list" else { return Response(id: r.id, ok: true, result: .null) }
             return Response(id: r.id, ok: true, result: .array(self.plugins.map { .object(["pluginId": .string($0), "name": .string($0)]) }))
         }
@@ -37,6 +44,10 @@ private final class Session: @unchecked Sendable {
     func send(_ line: String) { i.fileHandleForWriting.write(Data((line + "\n").utf8)) }
     func close() { try? i.fileHandleForWriting.close(); p.waitUntilExit(); o.fileHandleForReading.readabilityHandler = nil }
 }
+
+/// The notas example's manifest, as `plugin.specs` carries it.
+private let notas: JSONValue = try! JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Examples/plugins/notas/collie-plugin.json")))
 
 private func toolNames(_ m: [String: Any]?) -> Set<String> {
     Set(((m?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? [])
@@ -118,6 +129,63 @@ private func lines(_ s: String) -> [[String: Any]] {
         #expect(changed() == 1)
         s.close()
         #expect(s.p.terminationStatus == 0)
+    }
+    /// Review Focus 4: an external plug-in's panel-bound tools follow reach like a built-in's.
+    @Test func mcpListsExternalOnlyWhenReached() async throws {
+        let d = try FakeDaemon([], specs: [notas])
+        let list = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"# + "\n" + #"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"# + "\n"
+        func listed() async throws -> [String: Any]? { lines(try await runCollie(["mcp"], env: d.env, stdin: list).out).first { $0["id"] as? Int == 2 } }
+        #expect(!toolNames(try await listed()).contains { $0.hasPrefix("notas_") })
+        d.plugins = ["notas"]
+        let r = try await listed()
+        #expect(toolNames(r).isSuperset(of: ["notas_add", "notas_list", "notas_export"]), "\(String(describing: r))")
+        let export = ((r?["result"] as? [String: Any])?["tools"] as? [[String: Any]])?.first { $0["name"] as? String == "notas_export" }
+        let props = ((export?["inputSchema"] as? [String: Any])?["properties"] as? [String: Any]) ?? [:]
+        #expect(props["format"] != nil && props["out"] != nil && props["panel"] != nil)
+        // a call reaches the daemon as the dotted command, with its args
+        let call = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"# + "\n"
+            + #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"notas_add","arguments":{"text":"comprar café"}}}"# + "\n"
+        let out = lines(try await runCollie(["mcp"], env: d.env, stdin: call).out)
+        #expect((out.first { $0["id"] as? Int == 2 }?["result"] as? [String: Any])?["isError"] as? Bool == false, "\(out)")
+        #expect(d.calls.contains { $0.command == "notas.add" && $0.args["text"] == .string("comprar café") })
+    }
+    @Test func mcpListChangedAfterInstall() async throws {
+        let d = try FakeDaemon(["notas"], specs: [])
+        var env = d.env; env["COLLIE_MCP_POLL_MS"] = "100"
+        let s = try Session(env: env)
+        s.send(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
+        s.send(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+        s.send(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)
+        #expect(await waitFor(5) { s.messages.contains { $0["id"] as? Int == 2 } })
+        #expect(!toolNames(s.messages.first { $0["id"] as? Int == 2 }).contains("notas_add"))
+        func changed() -> Int { s.messages.filter { $0["method"] as? String == "notifications/tools/list_changed" }.count }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(changed() == 0)
+        d.specs = [notas]   // installed
+        #expect(await waitFor(5) { changed() == 1 })
+        s.send(#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#)
+        #expect(await waitFor(5) { toolNames(s.messages.first { $0["id"] as? Int == 3 }).contains("notas_add") })
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(changed() == 1)
+        d.specs = []   // removed
+        #expect(await waitFor(5) { changed() == 2 })
+        s.send(#"{"jsonrpc":"2.0","id":4,"method":"tools/list"}"#)
+        #expect(await waitFor(5) { s.messages.contains { $0["id"] as? Int == 4 } })
+        #expect(!toolNames(s.messages.first { $0["id"] as? Int == 4 }).contains("notas_add"))
+        s.close()
+    }
+    @Test func cliResolvesExternalAfterFetch() async throws {
+        let d = try FakeDaemon([], specs: [notas])
+        let r = try await runCollie(["notas", "add", "comprar", "café"], env: d.env)
+        #expect(r.status == 0, "\(r)")
+        #expect(d.calls.map(\.command) == ["plugin.specs", "notas.add"])
+        #expect(d.calls.last?.args["text"] == .string("comprar café"))
+        // no such plug-in: still the parse error, after the one fetch
+        let u = try await runCollie(["kanban", "add", "x"], env: d.env)
+        #expect(u.status == 2 && u.err.contains("unknown command"), "\(u)")
+        // a built-in command never fetches
+        _ = try await runCollie(["list"], env: d.env)
+        #expect(d.calls.filter { $0.command == "plugin.specs" }.count == 2)
     }
     @Test func mcpCallAsk() async throws {
         try await withRig { rig in

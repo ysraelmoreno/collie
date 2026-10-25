@@ -5,6 +5,9 @@ import CollieProtocol
 /// Phase 1 accepts web-UI plug-ins only: `apiVersion` 1, a `ui`, commands that run in the page, no helper, no
 /// permissions. Unknown keys are ignored (a newer manifest still loads); every known one is validated: the id and the
 /// version name folders, the `ui` path is served by the app.
+/// The wire form of an external plug-in's spec (snapshot, `pluginsChanged`, `plugin.specs`): its manifest.
+public typealias PluginSpecDTO = PluginManifest
+
 public struct PluginManifest: Codable, Sendable, Equatable {
     public struct Param: Codable, Sendable, Equatable {
         public var name: String
@@ -105,16 +108,30 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         return m
     }
 
-    /// The registry form: commands named `<id>.<name>`, run in the app's page (`ui.host`).
+    /// The registry form: commands named `<id>.<name>`, run in the app's page (`ui.host`). An `outputFile` command
+    /// gets `--out` (the collie process copies the file) when the manifest doesn't declare it.
     public func pluginSpec() -> PluginSpec {
         let kinds: [String: ParamSpec.Kind] = ["string": .string, "int": .int, "flag": .flag, "rest": .rest]
         return PluginSpec(id: id, title: name, placements: placements, defaultPlacement: defaultPlacement,
             commands: commands.map { c in
-                CommandSpec(name: "\(id).\(c.name)", summary: c.summary,
-                            params: c.params.map { ParamSpec($0.name, kinds[$0.type] ?? .string, positional: $0.positional, required: $0.required, help: $0.help) },
-                            timeoutSeconds: c.timeout)
+                var params = c.params.map { ParamSpec($0.name, kinds[$0.type] ?? .string, positional: $0.positional, required: $0.required, help: $0.help) }
+                if c.outputFile, !params.contains(where: { $0.name == "out" }) {
+                    params.append(ParamSpec("out", .string, help: "Copy the file here (relative to the current directory; dirs created, overwritten); returns that path"))
+                }
+                return CommandSpec(name: "\(id).\(c.name)", summary: c.summary, params: params, timeoutSeconds: c.timeout, outputFile: c.outputFile)
             },
-            events: events, runsInDaemon: false, source: .external(version: version))
+            events: events, runsInDaemon: false, source: .external(version: version), stateKeys: stateKeys)
+    }
+
+    /// Makes `manifests` this process's external plug-ins (`PluginRegistry.setExternal`). Each one is validated again:
+    /// they come from another process (snapshot, event, `plugin.specs`); an invalid one is left out.
+    public static func register(_ manifests: [PluginManifest]) {
+        PluginRegistry.setExternal(manifests.filter { (try? $0.validate()) != nil }.map { $0.pluginSpec() })
+    }
+    /// The manifests of a `plugin.specs` reply (`{plugins: [...]}`); nil: not that shape.
+    public static func fromSpecs(_ reply: JSONValue) -> [PluginManifest]? {
+        guard case .object(let o) = reply, let list = o["plugins"], let data = try? JSONEncoder().encode(list) else { return nil }
+        return try? JSONDecoder().decode([PluginManifest].self, from: data)
     }
 
     /// An id and a version that are safe as folder names (what `validate` accepts), for entries read back from disk.
@@ -122,7 +139,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         match(id, "[a-z][a-z0-9-]{1,31}") && match(version, "[0-9][0-9A-Za-z.+-]{0,31}")
     }
 
-    func validate() throws(ProtocolError) {
+    public func validate() throws(ProtocolError) {
         if helper != nil || commands.contains(where: { $0.runs == "helper" }) { throw Self.bad(Self.newer) }
         for (k, v) in permissions ?? [:] {   // empty network list and project "none" mean nothing asked
             switch (k, v) {
@@ -158,6 +175,9 @@ public struct PluginManifest: Codable, Sendable, Equatable {
                     throw Self.bad("parâmetro '\(p.name)': rest precisa ser o último posicional")
                 }
                 if p.type == "flag", p.positional || p.required { throw Self.bad("parâmetro '\(p.name)': flag não é posicional nem obrigatória") }
+                if p.name == "out", c.outputFile, p.type != "string" || p.positional {   // collie copies the file to it
+                    throw Self.bad("comando '\(c.name)': --out de um outputFile é string, não posicional")
+                }
                 try Self.text(p.help, "help de '\(p.name)'", 0...500)
             }
         }

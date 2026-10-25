@@ -23,6 +23,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var detection: Bool?
     /// `BuildID` of the connected daemon (nil: not connected yet, or a daemon that predates it).
     public private(set) var daemonBuild: String?
+    /// The daemon's loaded external plug-ins (also this process's `PluginRegistry` external list).
+    public private(set) var plugins: [PluginManifest] = []
     /// The `ui.host` role: `.replaced` when another Collie window took it (see `resumeHost()`).
     public private(set) var hostStatus: HostConnection.Status = .idle
     /// The default workspace's id (for plugin storage), read once connected.
@@ -138,6 +140,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             panels = snap.panels
             lots = snap.lots
             daemonBuild = snap.build
+            setPlugins(snap.plugins)
             workspaceId = (try? String(contentsOf: paths.root.appendingPathComponent("default-workspace"), encoding: .utf8))
                 .flatMap { UUID(uuidString: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }
             if let c = currentPaddock, !paddocks.contains(where: { $0.id == c }) { currentPaddock = nil }   // deleted while away
@@ -204,8 +207,10 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             else { accessCards.append(d); if d.refusal == nil { onAccessCard?(d) } }
         case .sandboxDetection(let ok): detection = ok
         case .confirmCorrection(let t, let e, let title): onConfirmCorrection?(t, e, title)
+        case .pluginsChanged(let ms): setPlugins(ms)
         }
     }
+    private func setPlugins(_ ms: [PluginManifest]) { plugins = ms; PluginManifest.register(ms) }
     private func same(_ x: Connection, _ y: Connection) -> Bool { Set([x.a, x.b]) == Set([y.a, y.b]) }
 
     // MARK: commands

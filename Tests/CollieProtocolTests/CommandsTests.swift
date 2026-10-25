@@ -91,7 +91,7 @@ import Foundation
         let tools = MCPSchema.tools()
         let names = tools.compactMap { t -> String? in
             if case .object(let o) = t, case .string(let n)? = o["name"] { return n } else { return nil }
-        }
+        }.filter(builtInTool)
         #expect(names == ["list", "ask", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                          "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get",
@@ -107,7 +107,7 @@ import Foundation
 
     @Test func mcpSchemaListsShepherdToolsOnlyForShepherd() throws {
         func names(_ m: Bool) -> [String] {
-            MCPSchema.tools(shepherd: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }
+            MCPSchema.tools(shepherd: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }.filter(builtInTool)
         }
         #expect(names(true) == ["list", "ask", "check", "summon", "dismiss", "leash", "unleash", "notify",
                                 "paddock_create", "paddock_list", "paddock_status", "paddock_land", "paddock_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
@@ -157,3 +157,7 @@ import Foundation
         #expect(e?.message == "--out: cannot read \(src)", "\(String(describing: e))")
     }
 }
+
+/// A built-in's tool: another suite may have external plug-ins registered in this process meanwhile (the registry is
+/// process-wide), whose tools come after these.
+private func builtInTool(_ name: String) -> Bool { Commands.reservedPluginIds.contains(String(name.prefix { $0 != "_" })) }

@@ -175,7 +175,8 @@ actor CommandRouter {
             let running = await registry.process(t.id)?.isRunning == true
             badges[t.id.uuidString] = running ? live[t.id] : .stopped
         }
-        let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, paddocks: ws.paddocks, panels: ws.panels, lots: ws.lots, build: config.build)
+        let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, paddocks: ws.paddocks, panels: ws.panels, lots: ws.lots, build: config.build,
+                                     plugins: await plugins.loaded().map(\.0))
         return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(snap))
     }
 
@@ -717,13 +718,11 @@ actor CommandRouter {
                                           pluginDir: pluginDir)
     }
 
-    static let outputFileCommands = Commands.outputFile
-
-    /// A file the daemon made for a sandboxed caller (`outputFileCommands`' `path`) cloned into the terminal's readable
+    /// A file the daemon made for a sandboxed caller (an `outputFile` command's `path`, built-in or external) cloned into the terminal's readable
     /// `files/`, the reply pointing at the clone. Anything else (admin, free terminal, other command, a source that is
     /// not a regular file under the root): `result` unchanged. `r` already passed its command's principal check.
     func handedOver(_ result: JSONValue, for r: Request) async -> JSONValue {
-        guard Self.outputFileCommands.contains(r.command), case .object(var o) = result, case .string(let p)? = o["path"],
+        guard Commands.spec(r.command)?.outputFile == true, case .object(var o) = result, case .string(let p)? = o["path"],
               let id = r.terminalId.flatMap(UUID.init(uuidString:)), let rec = ws.terminals.first(where: { $0.id == id }),
               sandboxed(rec) else { return result }
         let root = config.paths.root

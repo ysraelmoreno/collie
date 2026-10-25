@@ -1,5 +1,6 @@
 import Foundation
 import CollieProtocol
+import CollieCore
 
 /// JSON-RPC 2.0 over stdio, one message per line. Requests run concurrently; stdout writes are locked.
 enum MCPServer {
@@ -8,6 +9,18 @@ enum MCPServer {
     /// Every tool this terminal could call; `tools/call` checks against it (the daemon enforces reach).
     private static var tools: [JSONValue] { MCPSchema.tools(shepherd: shepherd) }
     private nonisolated(unsafe) static var initialized = false, lastReach: Set<String>?   // under `lock`
+    private nonisolated(unsafe) static var lastSpecs: [PluginManifest]?   // under `lock`
+
+    /// The daemon's external plug-ins (`plugin.specs`) into this process's registry; true when they changed since the
+    /// last fetch. No answer: nothing changes.
+    private static func refreshPlugins() async -> Bool {
+        guard let r = try? await Client.call("plugin.specs", [:]), let ms = PluginManifest.fromSpecs(r) else { return false }
+        PluginManifest.register(ms)
+        return lock.withLock { defer { lastSpecs = ms }; return (lastSpecs ?? []) != ms }
+    }
+
+    /// Requests run concurrently: a list or call that beats `initialize`'s fetch fetches first.
+    private static func ensurePlugins() async { if lock.withLock({ lastSpecs == nil }) { _ = await refreshPlugins() } }
 
     /// Plug-in ids of the panels this terminal reaches (the daemon applies the leashes); an error reaches none.
     private static func reach() async -> Set<String> {
@@ -20,12 +33,13 @@ enum MCPServer {
         let ms = max(50, ProcessInfo.processInfo.environment["COLLIE_MCP_POLL_MS"].flatMap(Int.init) ?? 10_000)   // tests shorten it
         while (try? await Task.sleep(for: .milliseconds(ms))) != nil {
             guard lock.withLock({ initialized }) else { continue }
+            let catalog = await refreshPlugins()   // installed, removed, enabled, disabled
             let now = await reach()
-            let changed = lock.withLock { () -> Bool in
+            let reached = lock.withLock { () -> Bool in
                 defer { lastReach = now }
                 return lastReach != nil && lastReach != now
             }
-            if changed { write(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"]) }
+            if catalog || reached { write(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"]) }
         }
     }
     private static func write(_ o: [String: Any]) {
@@ -67,16 +81,19 @@ enum MCPServer {
         guard let id = o["id"], !method.hasPrefix("notifications/") else { return }
         switch method {
         case "initialize":
+            _ = await refreshPlugins()
             lock.withLock { initialized = true }
             reply(id, ["protocolVersion": "2025-06-18", "capabilities": ["tools": ["listChanged": true]],
                        "serverInfo": ["name": "collie", "version": "0.1.0"]])
         case "ping": reply(id, [String: Any]())
         case "tools/list":
+            await ensurePlugins()
             let now = await reach()
             lock.withLock { lastReach = now }
             let tools = (try? JSONEncoder().encode(MCPSchema.tools(shepherd: shepherd, plugins: now))).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
             reply(id, ["tools": tools])
         case "tools/call":
+            await ensurePlugins()
             let p = o["params"] as? [String: Any] ?? [:]
             reply(id, await call(name: p["name"] as? String ?? "", arguments: p["arguments"] as? [String: Any] ?? [:]))
         default: fail(id, -32601, "method not found: \(method)")

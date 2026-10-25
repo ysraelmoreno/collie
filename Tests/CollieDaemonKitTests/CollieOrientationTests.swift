@@ -16,6 +16,7 @@ import CollieProtocol
         #expect(!none.contains("Design panel") && !none.contains("Browser panel") && !none.contains("As Shepherd"))
         #expect(none.contains("collie panel open browser [--url <url>] [--visible]") && !none.contains("design --file") && !text(shepherd: true).contains("Your own test browsers"))
         #expect(none.contains("none yet") && none.contains("Artifacts: collie artifact"))
+        #expect(none.contains("No CDN: offline JS libs via artifact libs."))
         #expect(none.contains("collie work task defer <task> \"<reason>\"") && none.contains("collie work done") && text(shepherd: true).contains("collie work status"))
         let d = text(paddock: "F1", peers: ["Bob"], panels: [("Home", "design")])
         #expect(d.contains("Design panel \"Home\"") && d.contains("Do not use other design editors") && d.contains("on paddock \"F1\"") && d.contains("(\"Bob\")"))

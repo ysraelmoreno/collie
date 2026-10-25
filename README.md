@@ -293,7 +293,7 @@ No app: **Abrir painel… → Artifacts** (miniatura, origem, versão, status `c
 
 Comandos (`artifact.*`): `list`, `get <id>`, `add <caminho.html> [--root <pasta>] [--title] [--width <px>]` (o caminho é
 resolvido contra o cwd e caminhos absolutos são aceitos; `.html`/`.htm`, sem symlink, até 8 MB), `import <id> [--width <px>]`
-(largura 320–3840, padrão 1440), `reexport <id>` e `remove <id>` (só o app).
+(largura 320–3840, padrão 1440), `libs` (veja Bibliotecas offline), `reexport <id>` e `remove <id>` (só o app).
 
 O painel também atualiza sozinho com os eventos `artifact.*` (no máximo uma vez a cada 500 ms); falha de importação em segundo plano chega como `artifact.imported` com `error`.
 
@@ -302,6 +302,31 @@ Links só de camada inteira; trechos com link dentro do texto saem sem `<a>` (a 
 coberta por fixtures unitárias e pelo teste com o motor real). Fundo-imagem de frame com filhos não é exportado. Todos
 os artifacts compartilham a origem `collie-artifact://app` no Navegador (HTML de agente pode ler outros artifacts locais).
 Agentes podem usar `text.link` (e `hyperlink` em `text.style`/`node.set`) com http(s), mailto, tel, `#âncora` ou caminho relativo; outros esquemas (`javascript:`, `data:`) são recusados. Não podem usar `image.place` com caminho em `design run/batch`.
+
+### Bibliotecas offline
+
+As páginas locais do Collie não acessam a rede (nem CDN). Para isso o app traz, fixadas por versão e SHA-256, React 18.3.1 +
+ReactDOM 18.3.1 (UMD), htm 3.1.1, Chart.js 4.4.9 e Lucide 0.469.0, servidas em
+`collie-lib://lib/<nome>@<versão>/<arquivo>` às páginas de artifact (`collie-artifact://`) no Navegador, à Prévia e à
+importação de HTML; nunca a sites http(s). `collie artifact libs` lista `{name, version, global, url, licence}`. A versão vai
+na URL: atualizar uma biblioteca não muda uma página antiga.
+
+```html
+<div id="root"></div>
+<script src="collie-lib://lib/react@18.3.1/react.production.min.js"></script>
+<script src="collie-lib://lib/react-dom@18.3.1/react-dom.production.min.js"></script>
+<script src="collie-lib://lib/htm@3.1.1/htm.umd.js"></script>
+<script>
+  const html = htm.bind(React.createElement);
+  ReactDOM.createRoot(document.getElementById("root")).render(html`<h1>Olá</h1>`);
+</script>
+```
+
+Sem JSX (não há Babel na página): use `htm`. Em build de desenvolvimento rode antes `scripts/fetch-weblibs.sh` (baixa só
+os tarballs do npm, confere o SHA-256 e copia o arquivo UMD + licença para `vendor/weblibs/`); sem ele, `artifact libs`
+responde "Bibliotecas offline ausentes" e `scripts/bundle-app.sh` para com erro (`COLLIE_ALLOW_NO_WEBLIBS=1` empacota
+sem elas). Licenças: `NOTICE-weblibs` e o `LICENSE` de cada biblioteca em
+`Contents/Resources/weblibs/<nome>@<versão>/`.
 
 ## Prévia e modelos
 
@@ -318,8 +343,10 @@ simbólicos para fora e sem caminhos com ponto (`.env`, `.git/`, `.collie/`), at
 `collie artifact new deck|dashboard|doc|prototype [nome] [--title T]` escreve uma página inicial em
 `docs/pages/<nome>/index.html` (nome em `a-z0-9-`, até 48; padrão `<tipo>-<n>`; nunca sobrescreve) e abre uma Prévia nela.
 Os tokens vêm do design system ativo (Light/Dark em `[data-theme]`); sem design system ativo, ou com o motor de design
-indisponível, a página usa os tokens padrão e `warnings` avisa. As páginas são HTML/CSS/JS sem bibliotecas nem URLs:
-funcionam offline. `deck`: slides 16:9 (←/→/espaço); `dashboard`: indicadores, gráfico SVG de um array `data` e tabela;
+indisponível, a página usa os tokens padrão e `warnings` avisa. As páginas são HTML/CSS/JS que só carregam as
+bibliotecas offline (`collie-lib://`): ícones Lucide em todas, Chart.js no `dashboard`, React + htm no `prototype`; sem
+elas (ou com `scripts/fetch-weblibs.sh` não rodado, aviso `bibliotecas offline ausentes`) a página funciona do mesmo jeito,
+com a nota "Bibliotecas offline indisponíveis". `deck`: slides 16:9 (←/→/espaço); `dashboard`: indicadores, gráfico SVG de um array `data` e tabela;
 `doc`: documento com sumário fixo; `prototype`: casca de app de celular com lista, abas e uma folha.
 
 ## Importar HTML

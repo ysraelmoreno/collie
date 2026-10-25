@@ -1,0 +1,20 @@
+Offline web libraries (served to Collie's local pages as collie-lib://)
+
+Collie bundles these files unmodified, from the npm registry tarballs pinned by SHA-256 in
+scripts/fetch-weblibs.sh, under Contents/Resources/weblibs/<name>@<version>/, each next to its licence.
+
+react 18.3.1 (umd/react.production.min.js) — MIT License
+  Copyright (c) Facebook, Inc. and its affiliates.
+
+react-dom 18.3.1 (umd/react-dom.production.min.js) — MIT License
+  Copyright (c) Facebook, Inc. and its affiliates.
+
+htm 3.1.1 (dist/htm.umd.js) — Apache License, Version 2.0
+  Copyright 2018 Google Inc.
+
+chart.js 4.4.9 (dist/chart.umd.js) — MIT License
+  Copyright (c) 2014-2024 Chart.js Contributors
+
+lucide 0.469.0 (dist/umd/lucide.min.js) — ISC License
+  Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT).
+  All other copyright (c) for Lucide are held by Lucide Contributors 2022.

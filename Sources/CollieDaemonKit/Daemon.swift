@@ -48,6 +48,9 @@ public struct DaemonConfig: Sendable {
     public var deviceGrace: Duration = .seconds(5)
     /// The bundled figcraft (`bin/figcraft-server`, `bin/figcraft-cli`, `web/`); nil/missing: design commands report it is not bundled.
     public var figcraftDir: URL?
+    /// The offline web libraries (`manifest.json` + `<name>@<version>/`, scripts/fetch-weblibs.sh); nil/missing:
+    /// `artifact.libs` reports them absent.
+    public var weblibsDir: URL?
     /// How long a caller's design client may sit unused before it is closed.
     public var designIdle: Duration = .seconds(300)
     /// Longest any design command may take (tests shrink it); nil: each command's own timeout.

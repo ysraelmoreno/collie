@@ -260,6 +260,16 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
         }
     }
 
+    @Test func snapshotterServesLibs() async throws {
+        let page = #"<body><script src="collie-lib://lib/react@18.3.1/react.production.min.js"></script>"#
+            + #"<script>document.body.textContent = window.React ? "ok" : "no"</script></body>"#
+        let s = try site(["index.html": Data(page.utf8)])
+        let snap = try await HTMLSnapshotter.snapshot(url: s.url, artifactsRoot: s.root, width: 800, timeout: .seconds(30),
+                                                      libs: try webLibsFixture())
+        guard case .object(let o) = snap else { Issue.record("not an object"); return }
+        #expect(Self.nodes(o["root"]).contains { $0["text"] == .string("ok") }, "\(snap)")
+    }
+
     @Test func refusesBadArgs() async throws {
         let s = try site(["index.html": Data("<h1>x</h1>".utf8)])
         func code(_ cmd: String, _ args: [String: JSONValue]) async -> ErrorCode? {

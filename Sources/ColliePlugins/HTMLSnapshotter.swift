@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 import CollieProtocol
 import WebKit
 
@@ -99,7 +100,8 @@ import WebKit
     }
 
     /// The snapshot with payloads inline (`image.data` base64 PNG, `svg` markup).
-    static func snapshot(url: URL, artifactsRoot: URL, width: Int, timeout: Duration) async throws(ProtocolError) -> JSONValue {
+    static func snapshot(url: URL, artifactsRoot: URL, width: Int, timeout: Duration,
+                         libs: URL? = WebLibs.directory) async throws(ProtocolError) -> JSONValue {
         guard url.scheme?.lowercased() == BrowserPanel.artifactScheme, url.host == "app" else {
             throw ProtocolError(code: .invalidArgs, message: "url must be collie-artifact://app/…: \(url.absoluteString)")
         }
@@ -107,6 +109,7 @@ import WebKit
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list
         config.setURLSchemeHandler(DesignSchemeHandler(root: artifactsRoot, artifacts: true), forURLScheme: BrowserPanel.artifactScheme)
+        config.setURLSchemeHandler(WebLibSchemeHandler(directory: libs), forURLScheme: WebLibs.scheme)
         let content = config.userContentController
         content.add(try await ruleList())
         // The script runs as a user script that posts its result, not through `callAsyncJavaScript`: WebKit keeps the
@@ -160,7 +163,7 @@ import WebKit
     }
 
     /// One snapshot's outcome, resumed once by whichever comes first: the script's message, a failed load, the deadline.
-    /// Only artifact, data, blob and about: navigations are allowed; once the page has loaded, a later navigation
+    /// Only artifact, collie-lib, data, blob and about: navigations are allowed; once the page has loaded, a later navigation
     /// that was cancelled (or refused by policy) leaves the snapshot running.
     private final class Run: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         static let handler = "collieSnapshot"
@@ -185,7 +188,7 @@ import WebKit
         }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
             let scheme = action.request.url?.scheme?.lowercased() ?? ""
-            decisionHandler([BrowserPanel.artifactScheme, "data", "blob", "about"].contains(scheme) ? .allow : .cancel)
+            decisionHandler([BrowserPanel.artifactScheme, WebLibs.scheme, "data", "blob", "about"].contains(scheme) ? .allow : .cancel)
         }
 
         private func failed(_ error: any Error) {

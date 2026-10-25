@@ -4,6 +4,7 @@ import CollieProtocol
 
 extension CommandRouter {
     /// `artifact.*`: the admin token or a terminal token (as `memory.*`); `reexport` and `remove` are the app's.
+    /// `libs`: the offline web libraries (`config.weblibsDir`'s manifest) as `collie-lib://` URLs.
     func artifactCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
         @Sendable func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -78,6 +79,14 @@ extension CommandRouter {
             let deadline = design.deadline(r.command)
             let snap = try await design.systemSnapshot(fileId: fid, node: a.node, page: a.page, deadline: deadline)
             return try await exportHTML(f, node: a.node, snapshot: snap, by: Self.origin(nil), deadline: deadline)
+        case "artifact.libs":
+            let dir = config.weblibsDir
+            let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
+            guard !libs.isEmpty else { throw ProtocolError(code: .unavailable, message: "Bibliotecas offline ausentes: rode scripts/fetch-weblibs.sh") }
+            return .array(libs.map { e in
+                .object(["name": .string(e.name), "version": .string(e.version), "global": .string(e.global),
+                         "url": WebLibs.url(e.name, in: [e]).map { .string($0) } ?? .null, "licence": .string(e.licence)])
+            })
         case "artifact.remove":
             try await artifacts.remove(try id())
             return .object([:])
@@ -91,9 +100,11 @@ extension CommandRouter {
     /// with a warning (the command never fails for that).
     private func newPage(_ kind: ArtifactTemplates.Kind, _ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        let dir = config.weblibsDir
+        let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
         let tester = caller.flatMap { $0.isShepherd ? nil : $0 }
-        if let me = tester { try reservePreview(me) }   // before anything is written; held until the panel is open
-        defer { if let me = tester { releasePreview(me) } }
+        let slot = try tester.map { me throws(ProtocolError) in try reservePreview(me) }   // before anything is written
+        defer { if let me = tester, let slot { releasePreview(me, slot) } }
         let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
         let root = try await projectRootForPanel(paddock: paddock, caller: caller)
         let slug: String
@@ -117,12 +128,13 @@ extension CommandRouter {
             } catch { warnings.append("design system indisponível: tokens padrão") }
         } else { warnings.append("sem design system ativo: tokens padrão") }
         let title = str(r, "title").flatMap { $0.isEmpty ? nil : $0 } ?? str(r, "name") ?? kind.label
-        let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables))
+        if libs.isEmpty { warnings.append("bibliotecas offline ausentes") }
+        let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables), libs: libs)
         try await UnixSocketClient.offPool { try DiagramFile.write(html, to: url, root: root, noun: "página", exclusive: true) }
         let name = freePanelName("preview")
         try reserve(name); defer { launching.remove(name.lowercased()) }
         let (p, _, _) = try await openPanel(name: name, pluginId: "preview", placement: .canvas, state: ["file": .string(rel)],
-                                            file: nil, paddock: paddock, caller: caller)
+                                            file: nil, paddock: paddock, caller: caller, reservation: slot)
         return .object(["file": .string(rel), "panel": .string(p.name), "warnings": .array(warnings.map { .string($0) })])
     }
 

@@ -71,11 +71,15 @@ let scrcpy = ProcessInfo.processInfo.environment["COLLIE_SCRCPY_SERVER"].map { U
 // the bundled design engine (Contents/Resources/figcraft); a missing one is reported by the design commands
 let figcraft = ProcessInfo.processInfo.environment["COLLIE_FIGCRAFT_DIR"].map { URL(fileURLWithPath: $0) }
     ?? collie.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/figcraft")
+// the offline web libraries (Contents/Resources/weblibs), for `artifact.libs`
+let weblibs = ProcessInfo.processInfo.environment["COLLIE_WEBLIBS_DIR"].map { URL(fileURLWithPath: $0) }
+    ?? collie.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/weblibs")
 let daemon: Daemon
 do {
     var config = DaemonConfig(paths: Paths(root: root), collieExecutable: collie, workspaceId: workspace!)
     config.scrcpyServer = FileManager.default.fileExists(atPath: scrcpy.path) ? scrcpy : nil
     config.figcraftDir = figcraft
+    config.weblibsDir = weblibs
     let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
     config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil
     // every non-free terminal starts sandboxed (R15), whatever the root

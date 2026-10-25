@@ -77,7 +77,7 @@ private func lines(_ s: String) -> [[String: Any]] {
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop",
                          "work_note", "work_status", "work_summary", "work_list", "work_get", "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list",
                          "design_files", "design_new", "design_help", "design_prefer", "design_system_list", "design_system_create", "design_system_history",
-                         "design_system_use", "design_system_undo", "artifact_list", "artifact_get", "artifact_add", "artifact_import"].sorted())
+                         "design_system_use", "design_system_undo", "artifact_list", "artifact_get", "artifact_add", "artifact_import", "artifact_new"].sorted())
         if ProcessInfo.processInfo.environment["COLLIE_TOKEN"] == nil {   // no credential: one line on stderr
             #expect(r.err.split(separator: "\n").filter { $0.contains("COLLIE_TOKEN") }.count == 1, "\(r.err)")
         }

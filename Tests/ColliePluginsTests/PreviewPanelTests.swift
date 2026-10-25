@@ -294,7 +294,7 @@ import CollieProtocol
         await panel.save()
         #expect(panel.header.note == "Salvo como artifact" && panel.saved == "a1")
         await panel.importToDesign()
-        let seen = await calls.all
+        let seen = await calls.all.filter { $0.0 != "comment.list" }   // the comments drawer loads on start
         #expect(seen.map(\.0) == ["artifact.add", "artifact.import", "panel.open"], "\(seen.map(\.0))")
         #expect(seen.last?.1["plugin"] == .string("design") && seen.last?.1["file"] == .string("Vendas"))
         #expect(panel.header.error == nil && !panel.header.busy)

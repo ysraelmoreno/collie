@@ -328,6 +328,11 @@ Na Prévia (uma página do projeto ou um artifact) você fixa um comentário num
 o terminal dono da página: o que abriu a Prévia; se ele não existe mais, o único terminal ligado a ela por guia; senão
 ninguém (ligue um terminal para entregar). O destinatário é fixado ao criar.
 
+No cabeçalho da Prévia, **Comentários (n)** abre a gaveta: **Fixar comentário**, clique no ponto da página, escreva e
+**Enviar**. Cada conversa mostra as mensagens (você e o terminal), **Responder**, **Resolver**/**Reabrir** e o filtro
+**Abertos | Todos**. Os marcadores numerados ficam sobre a página num mundo isolado (a página não os vê nem os aciona);
+se o elemento sumiu, o marcador fica no ponto guardado com "posição aproximada".
+
 - **Entrega.** Suas mensagens ainda não entregues entram no próximo prompt do terminal, uma vez (também depois de
   reiniciar o serviço), cercadas e marcadas como dados, não ordens; cada uma em uma linha, o texto cortado em 1200
   bytes. Funciona fora de lotes. O resto do texto fica em `collie comment list`.

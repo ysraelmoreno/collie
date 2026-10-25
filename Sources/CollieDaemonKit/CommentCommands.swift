@@ -78,12 +78,12 @@ extension CommandRouter {
         guard rootArg.hasPrefix("/"), FileManager.default.fileExists(atPath: root.path, isDirectory: &dir), dir.boolValue else {
             throw ProtocolError(code: .invalidArgs, message: "'root' must be an existing folder (absolute path)")
         }
-        // ponytail: the .html/.htm prefix rule; PreviewFile.resolve once plan 2U lands
-        let file = PageRef.canonical(root.appendingPathComponent(path))
+        // the Prévia's own rule (inside the root, .html/.htm, ≤ 8 MiB), then the volume's case; add needs the file to exist
+        guard !path.hasPrefix("/") else { throw ProtocolError(code: .invalidArgs, message: "'path' must be relative to the root") }
+        let file = PageRef.canonical(try PreviewFile.resolve(path, projectRoot: root))
         var isDir: ObjCBool = false
-        guard !path.hasPrefix("/"), file.path.hasPrefix(root.path == "/" ? "/" : root.path + "/"),
-              !check || (["html", "htm"].contains(file.pathExtension.lowercased())
-                         && FileManager.default.fileExists(atPath: file.path, isDirectory: &isDir) && !isDir.boolValue) else {
+        guard file.path.hasPrefix(root.path == "/" ? "/" : root.path + "/"),
+              !check || (FileManager.default.fileExists(atPath: file.path, isDirectory: &isDir) && !isDir.boolValue) else {
             throw ProtocolError(code: .invalidArgs, message: "'path' must be an .html or .htm file inside the root")
         }
         return .project(root: root.path, path: String(file.path.dropFirst(root.path.count + (root.path == "/" ? 0 : 1))))

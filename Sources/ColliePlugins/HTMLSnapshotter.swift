@@ -141,7 +141,8 @@ import WebKit
     }
 
     /// Compiled once per app run (WebKit also keeps it in its store).
-    private static func ruleList() async throws(ProtocolError) -> WKContentRuleList {
+    /// Also the Diagram panel's: no http(s)/ws(s)/ftp load at all.
+    static func ruleList() async throws(ProtocolError) -> WKContentRuleList {
         if let rules { return rules }
         let list: WKContentRuleList?
         do { list = try await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "collie-import-offline", encodedContentRuleList: ruleJSON) } catch {

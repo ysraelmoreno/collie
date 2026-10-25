@@ -19,7 +19,7 @@ import CollieCore
         let d = text(paddock: "F1", peers: ["Bob"], panels: [("Home", "design")])
         #expect(d.contains("Design panel \"Home\"") && d.contains("Do not use other design editors") && d.contains("on paddock \"F1\"") && d.contains("(\"Bob\")"))
         let m = text(shepherd: true)
-        #expect(m.contains("collie panel open") && m.contains("design --file <name>") && m.contains("browser --url <url>") && m.contains("device [--serial <id|avd:<name>>]"))
+        #expect(m.contains("collie panel open") && m.contains("design --file <name>") && m.contains("diagram --file <path.drawio>") && m.contains("browser --url <url>") && m.contains("device [--serial <id|avd:<name>>]"))
         #expect(!m.contains("Design panel"))
     }
 

@@ -63,6 +63,7 @@ extension CommandRouter {
             try reserve(name); defer { launching.remove(name.lowercased()) }   // also refuses an existing panel name
             var state: [String: JSONValue] = ["storage": .string(storage.rawValue)]
             if let u = str(r, "url") { state["url"] = .string(u) }
+            if pluginId == "diagram", let f = str(r, "file") { state["file"] = .string(f) }
             if let device { state["serial"] = .string(device.serial); state["platform"] = .string(device.platform) }
             let (p, designWarning, _) = try await openPanel(name: name, pluginId: pluginId, placement: placement, state: state,
                                                          file: pluginId == "design" ? try need(r, "file") : nil,
@@ -163,6 +164,7 @@ extension CommandRouter {
             }
             state["file"] = .string(id)
         }
+        if pluginId == "diagram" { state["root"] = .string(try await diagramRoot(paddock: paddock, caller: caller).path) }
         let canvas = placement == .canvas
         let p = Panel(id: UUID(), name: name, pluginId: pluginId, placement: placement,
                       paddockId: canvas ? paddock : nil, state: state, createdBy: caller?.id)
@@ -180,6 +182,18 @@ extension CommandRouter {
         await hub.emit(.panel(p))
         if let leash, ws.connections.contains(leash) { await hub.emit(.connected(leash)) }
         return (p, designWarning, fileCreated)
+    }
+
+    /// The project a Diagram panel's file lives in (the app resolves and checks the file in it): the opening terminal's
+    /// project; for the app, the paddock's worktree, else the project of a terminal on the pasture.
+    /// ponytail: the app on the pasture takes its first terminal's project; add a folder picker when pastures mix projects.
+    func diagramRoot(paddock: UUID?, caller: TerminalRecord?) async throws -> URL {
+        if let me = caller { return try await projectRoot(of: me) }
+        if let f = ws.paddocks.first(where: { $0.id == paddock }) { return URL(fileURLWithPath: f.path) }
+        guard let t = ws.terminals.first(where: { $0.paddockId == nil }) else {
+            throw ProtocolError(code: .invalidArgs, message: "Diagrama: abra antes um terminal no projeto (o arquivo .drawio fica nele)")
+        }
+        return try await projectRoot(of: t)
     }
 
     /// Appends a plugin event to `panel`'s ring (oldest dropped past `panelEventCap`). Unknown panels are ignored.

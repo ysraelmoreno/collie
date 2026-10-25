@@ -60,6 +60,26 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool {
         }
     }
 
+    /// A Diagram panel carries its project (`root`) and the requested file; the app resolves the file in it.
+    @Test func diagramPanelCarriesProjectRoot() async throws {
+        try await withDaemon { d, p in
+            #expect(try await admin(d, p, "panel.open", ["plugin": "diagram"]).error?.code == .invalidArgs)   // no project yet
+            let m = try await term(d, p, "M", shepherd: true)
+            let r = try await call(p, m, "panel.open", ["plugin": "diagram", "file": "docs/a.drawio"])
+            #expect(r.error == nil, "\(r)")
+            let tmp = URL(fileURLWithPath: "/tmp").resolvingSymlinksInPath().path
+            let s = try await snapshot(d, p)
+            let pn = try #require(s.panels.first { $0.pluginId == "diagram" })
+            #expect(pn.state["file"] == .string("docs/a.drawio") && pn.placement == .canvas)
+            guard case .string(let root)? = pn.state["root"] else { Issue.record("no root: \(pn.state)"); return }
+            #expect(URL(fileURLWithPath: root).resolvingSymlinksInPath().path == tmp, "\(root)")
+            let r2 = try await admin(d, p, "panel.open", ["plugin": "diagram", "placement": "dock.right"])   // the pasture terminal's project
+            #expect(r2.error == nil, "\(r2)")
+            let s2 = try await snapshot(d, p)
+            #expect(s2.panels.filter { $0.pluginId == "diagram" }.allSatisfy { $0.state["root"] != nil })
+        }
+    }
+
     @Test func adminCanvasPanelTakesPaddockArg() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

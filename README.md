@@ -303,6 +303,23 @@ coberta por fixtures unitárias e pelo teste com o motor real). Fundo-imagem de 
 os artifacts compartilham a origem `collie-artifact://app` no Navegador (HTML de agente pode ler outros artifacts locais).
 Agentes podem usar `text.link` (e `hyperlink` em `text.style`/`node.set`) com http(s), mailto, tel, `#âncora` ou caminho relativo; outros esquemas (`javascript:`, `data:`) são recusados. Não podem usar `image.place` com caminho em `design run/batch`.
 
+## Comentários
+
+Na Prévia (uma página do projeto ou um artifact) você fixa um comentário num ponto ou elemento da página. Quem recebe é
+o terminal dono da página: o que abriu a Prévia; se ele não existe mais, o único terminal ligado a ela por guia; senão
+ninguém (ligue um terminal para entregar). O destinatário é fixado ao criar.
+
+- **Entrega.** Suas mensagens ainda não entregues entram no próximo prompt do terminal, uma vez (também depois de
+  reiniciar o serviço), cercadas e marcadas como dados, não ordens; cada uma em uma linha, o texto cortado em 1200
+  bytes. Funciona fora de lotes. O resto do texto fica em `collie comment list`.
+- **Responder.** O agente responde com `collie comment reply <id> "<resposta>"` (só aos comentários endereçados a ele);
+  a resposta aparece na conversa da Prévia. `collie comment list [--open]` mostra os comentários dele com as conversas.
+  O Codex não tem o gancho do prompt: lê com `collie comment list`.
+- **Só você** cria comentários, manda continuações e resolve/reabre (o app); um agente nunca cria nem resolve um.
+- **Onde fica.** Nos dados do Collie (`<raiz>/comments/<chave>.json`, 0600), nunca no projeto: nada vai para o git e um
+  agente em sandbox não consegue forjar um comentário seu. Entra no backup dos dados.
+- Limites: 2000 caracteres por mensagem sua, 4000 por resposta, 500 comentários por página, 200 mensagens por conversa.
+
 ## Importar HTML
 
 Uma página registrada por um agente vira uma **tela editável**: `collie artifact add <página.html> [--root <pasta>] [--title]`
@@ -669,10 +686,10 @@ A memória do Collie vive em três escopos: **global** (vale em todo lugar), **p
 | Quando | O que entra |
 |---|---|
 | Início | memórias fixadas e o índice (títulos) do lote (dentro de um lote) ou do projeto e global (fora de um) |
-| Cada prompt | recados do quadro endereçados a você, depois as memórias relevantes ao prompt, sem repetir |
+| Cada prompt | recados do quadro endereçados a você, os comentários do usuário nas suas páginas (veja Comentários), depois as memórias relevantes ao prompt, sem repetir |
 | Depois de compactar (e ao retomar) | seu trabalho ativo (tarefas abertas e as 3 últimas notas), o último recado do quadro para você e os 3 últimos status do lote, depois o índice de memórias |
 
-O recado entregue na compactação não é repetido no prompt seguinte. Só o Claude recebe essa injeção (início, prompt e compactação). O Codex ainda não recebe nada no início nem no prompt (não tem esse gancho): leia os recados com `collie lot board`. O preset do Cursor ainda não está disponível.
+O recado entregue na compactação não é repetido no prompt seguinte. Só o Claude recebe essa injeção (início, prompt e compactação). O Codex ainda não recebe nada no início nem no prompt (não tem esse gancho): leia os recados com `collie lot board` e os comentários com `collie comment list`. O preset do Cursor ainda não está disponível.
 
 ## Backup dos dados
 

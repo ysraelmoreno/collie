@@ -188,7 +188,7 @@ extension CommandRouter {
                 text = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
             } else {
                 // one 2048-byte budget: retractions, the rules pushed to the caller, board posts addressed to it (newest
-                // first), then memories
+                // first), the user's comments on its pages, then memories
                 let prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
                 // a likely correction goes to the curator detached: the hook never waits for it
                 // R12: taken at every submit (it starts over); the user's own keystrokes, or a proposal at most
@@ -206,6 +206,7 @@ extension CommandRouter {
                 if ret.contains("\n… e mais ") { left = 0 }
                 add(await memory.pushedRules(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, limit: left))
                 if let myLot, left > 0 { add(await boards.inject(to: me.id, lot: myLot, limit: left)) }
+                if left > 0 { add(await commentsInject(to: me.id, limit: left)) }   // the user's comments on its pages, also outside a lot
                 let w = try? await work.active(terminal: me.id)
                 if left > 0 { add(await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, prompt: prompt, limit: left)) }
                 text = parts.joined(separator: "\n\n")

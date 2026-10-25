@@ -181,4 +181,13 @@ private actor Fake {
         await m.reimport(m.rows[4])
         #expect(await f.last("artifact.import") == ["id": .string("e")])
     }
+
+    @Test func artifactsPanelOpenInPreviewArgs() async throws {
+        let (m, f) = make()
+        await m.refresh()
+        let row = try #require(m.rows.first { $0.id == "e" })
+        await m.openInPreview(row)
+        let a = try #require(await f.last("panel.open"))
+        #expect(a["plugin"] == .string("preview") && a["artifact"] == .string("e") && a["placement"] == .string("dock.right"), "\(a)")
+    }
 }

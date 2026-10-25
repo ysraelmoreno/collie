@@ -50,7 +50,7 @@ enum Config {
              _consented = State(initialValue: UserDefaults.standard.bool(forKey: Config.consentKey))   // after the migration
              PluginViews.register("browser", BrowserPanel.self); PluginViews.register("memory", MemoryPanel.self)
              PluginViews.register("device", DevicePanel.self); PluginViews.register("design", DesignPanel.self)
-             PluginViews.register("diagram", DiagramPanel.self)
+             PluginViews.register("diagram", DiagramPanel.self); PluginViews.register("preview", PreviewPanel.self)
              PluginViews.register("designsystems", DesignSystemsPanel.self)
              PluginViews.register("artifacts", ArtifactsPanel.self); PluginViews.register("work", WorkPanel.self)   // before any panel view is made
              Self.applyTheme() }

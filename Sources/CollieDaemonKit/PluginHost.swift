@@ -122,9 +122,9 @@ extension CommandRouter {
     func pluginCommand(_ r: Request, plugin: PluginSpec, spec: CommandSpec, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
         let panel = try ConnectionGraph.resolvePanel(name: str(r, "panel"), plugin: plugin.id, from: caller?.id, in: ws)
-        // R13: a docked panel is everyone's, but a Diagram panel reads and writes its project's file: only from that project
+        // R13: a docked panel is everyone's, but a Diagram or Prévia panel reads its project's files: only from that project
         // ponytail: checked after resolving, so several docked diagrams across projects need --panel
-        if plugin.id == "diagram", let me = caller, panel.placement != .canvas, panel.placement != .headless {
+        if plugin.id == "diagram" || plugin.id == "preview", let me = caller, panel.placement != .canvas, panel.placement != .headless {
             let mine = DiagramFile.real(try await projectRoot(of: me)).path
             guard case .string(let root)? = panel.state["root"], DiagramFile.real(URL(fileURLWithPath: root)).path == mine else {
                 throw ProtocolError(code: .notConnected, message: "O painel '\(panel.name)' é de outro projeto")

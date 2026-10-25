@@ -148,11 +148,16 @@ actor ArtifactStore {
     /// The folder `root` kept as a new agent artifact (`<id>/source/`), `page` (inside it) its page. Only regular files of
     /// the allowed kinds are copied (never a link; hidden names skipped), up to `maxFiles` and `maxBytes`: past them
     /// (or `page` outside `root`, or not copied) nothing is created. Read and written on the io queue.
-    func addAgent(root: URL, page: URL, title: String, paddockId: UUID?, by: String) async throws -> Artifact {
+    /// `noFollow` (the Prévia's save): `root` and the page's folder must be real paths already (no link anywhere in them).
+    func addAgent(root: URL, page: URL, title: String, noFollow: Bool = false, paddockId: UUID?, by: String) async throws -> Artifact {
         let id = UUID()
         // links in the paths themselves resolved (the page's own name is not: a linked page is not copied)
         let rootURL = root.standardizedFileURL.resolvingSymlinksInPath()
-        let pageURL = page.standardizedFileURL.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(page.lastPathComponent)
+        let pageDir = page.standardizedFileURL.deletingLastPathComponent()
+        let pageURL = pageDir.resolvingSymlinksInPath().appendingPathComponent(page.lastPathComponent)
+        if noFollow, DiagramFile.real(root.standardizedFileURL).path != root.standardizedFileURL.path || DiagramFile.real(pageDir).path != pageDir.path {
+            throw Self.invalid("--nofollow: the page's folder goes through a symbolic link")
+        }
         let base = rootURL.path, pagePath = pageURL.path
         guard pagePath.hasPrefix(base + "/") else { throw Self.invalid("the page must be a regular file inside --root") }
         let pageRel = String(pagePath.dropFirst(base.count + 1))

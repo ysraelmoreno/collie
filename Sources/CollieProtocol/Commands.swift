@@ -109,7 +109,7 @@ public enum Commands {
                              ParamSpec("force", .flag, help: "Delete even if unmerged or dirty")],
                     timeoutSeconds: 300, shepherdOnly: true),
         // Panels (core): plugin panels open/close/move; `events` reads recent plugin events from reachable panels
-        CommandSpec(name: "panel.open", summary: "Open a plugin panel. A non-Shepherd terminal opens only browser panels (max 8), headless unless --visible, leashed to it; it closes and moves only its own",
+        CommandSpec(name: "panel.open", summary: "Open a plugin panel. A non-Shepherd terminal opens only browser panels (max 8), headless unless --visible, and Prévias (preview, max 8) on the canvas, leashed to it; it closes and moves only its own",
                     params: [ParamSpec("plugin", .string, positional: true, required: true, help: "Plugin id (\(PluginRegistry.canvasPluginIds.joined(separator: "|")))"),
                              ParamSpec("name", .string, help: "Panel name"),
                              ParamSpec("placement", .string, help: "dock.left|dock.right|dock.bottom|canvas|headless (headless: browser only, hosted but never shown; closed when its terminal is removed or exits)"),
@@ -117,7 +117,8 @@ public enum Commands {
                              ParamSpec("url", .string, help: "Initial URL (browser)"),
                              ParamSpec("storage", .string, help: "isolated|workspace|global"),
                              ParamSpec("serial", .string, help: "Android serial, avd:<AVD name> (boots it), or iOS Simulator UDID (boots a shut-down one); default: the only one online"),
-                             ParamSpec("file", .string, help: "Design file name (design; created when new), or the .drawio file in your project (diagram; default docs/diagrams/<name>.drawio)"),
+                             ParamSpec("file", .string, help: "Design file name (design; created when new), or the .drawio file in your project (diagram; default docs/diagrams/<name>.drawio), or the .html page in your project (preview)"),
+                             ParamSpec("artifact", .string, help: "Artifact id to show (preview, instead of --file)"),
                              ParamSpec("paddock", .string, help: "Paddock of a canvas panel (app only; a terminal's panel lands on its own paddock)"),
                              ParamSpec("connect", .string, help: "Connect the new agent/panel to these terminals or canvas panels you reach (comma list; repeatable)", repeatable: true)],
                     timeoutSeconds: 190),   // a shut-down simulator (120 s) or Android emulator (180 s) boots first

@@ -20,7 +20,7 @@ extension WebLibs {
 /// by exact key, never as a path). Only for main documents on `collie-preview`/`collie-artifact`: any other page
 /// (http, https, about, none) gets 403. A file is read once per handler and kept in memory.
 public final class WebLibSchemeHandler: NSObject, WKURLSchemeHandler {
-    static let documents: Set<String> = ["collie-preview", BrowserPanel.artifactScheme]
+    static let documents: Set<String> = [PreviewSchemeHandler.scheme, BrowserPanel.artifactScheme]
     private let dir: URL?
     /// "<name>@<version>/<file>" for each manifest file.
     private let keys: Set<String>

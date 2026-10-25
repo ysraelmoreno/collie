@@ -115,7 +115,7 @@ extension CommandRouter {
         var kept: [(Panel, [String: JSONValue])] = []
         var designFiles: [DesignService.File]?
         for p in panels {
-            guard let allowed = HerdFormat.allowedState[p.pluginId] else {
+            guard let allowed = HerdFormat.allowedKeys(p.pluginId) else {
                 warnings.append("painel \(p.name) (\(p.pluginId)) não entra em rebanhos"); continue
             }
             var state: [String: JSONValue] = [:]

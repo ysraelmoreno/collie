@@ -84,10 +84,16 @@ public extension PluginPanelView {
                                   reconcile: { V.reconcile(livePanels: $0, host: $1) })
     }
     public static func unregister(_ pluginId: String) { entries[pluginId] = nil }
+    /// A registered type's view; an id that is no built-in: an external plug-in's `WebPluginPanel` (its placeholder
+    /// while it is not installed, so a panel of a removed plug-in keeps its node and state); an unregistered built-in: nil.
     public static func make(_ panel: Panel, host: PanelHostContext) -> (any PluginPanelView)? {
-        entries[panel.pluginId]?.make(panel, host)
+        if let e = entries[panel.pluginId] { return e.make(panel, host) }
+        return isExternal(panel.pluginId) ? WebPluginPanel(panel: panel, host: host) : nil
     }
-    static func removed(_ panel: Panel, host: PanelHostContext) { entries[panel.pluginId]?.removed(panel, host) }
+    static func removed(_ panel: Panel, host: PanelHostContext) {
+        if let e = entries[panel.pluginId] { e.removed(panel, host) } else if isExternal(panel.pluginId) { WebPluginPanel.panelRemoved(panel, host: host) }
+    }
+    private static func isExternal(_ id: String) -> Bool { !PluginRegistry.builtIn.contains { $0.id == id } }
     static var registered: [String] { Array(entries.keys) }
     static func reconcile(_ id: String, _ live: [Panel], host: PanelHostContext) { entries[id]?.reconcile(live, host) }
 }

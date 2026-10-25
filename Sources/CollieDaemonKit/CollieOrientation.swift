@@ -3,6 +3,7 @@ import CollieProtocol
 import CollieCore
 
 /// The "you are running inside Collie" text injected at session start: only what the terminal reaches (English, short, no secrets).
+/// External plug-ins never appear by name (`morePanels`: one fixed line for a Shepherd when any is loaded).
 enum CollieOrientation {
     private static let maxName = 40, limit = 1500
 
@@ -19,20 +20,20 @@ enum CollieOrientation {
     static func text(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                      panels: [(name: String, pluginId: String)],
                      paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .ask,
-                     lot: (name: String, goal: String)? = nil) -> String {
+                     lot: (name: String, goal: String)? = nil, morePanels: Bool = false) -> String {
         // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
         for n in [3, 1, 0, -1] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, n)
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, n)
             if t.count <= limit { return t }
         }
-        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, -1)
+        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, -1)
     }
 
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
-                              lot: (name: String, goal: String)?, _ k: Int) -> String {
+                              lot: (name: String, goal: String)?, morePanels: Bool, _ k: Int) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -55,9 +56,10 @@ enum CollieOrientation {
         if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
         if isShepherd {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
-            let open = PluginRegistry.canvasPluginIds.map { hints[$0] ?? $0 }.joined(separator: " | ")
+            // built-ins only: external plug-ins are user-installed text, kept out of the agent's context (one fixed line below)
+            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
-                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>")
+                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
             } else {
                 lines.append("- As Shepherd you can open panels: collie panel open \(open) (leashed to you, on your paddock).")
                 // ponytail: at the length cap (orientationSanitizesNames keeps 3 names); `leash <agent> <panel>` hands one over later
@@ -77,6 +79,7 @@ enum CollieOrientation {
                 lines.append("- UI work (new screen, flow or visible change): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name. \(notFor)")
             }
             lines.append("- Herds: collie herd list | apply <id> --name <n> | save <name> --terminals a,b")
+            if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")
         }

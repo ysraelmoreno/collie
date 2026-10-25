@@ -150,4 +150,44 @@ import CollieProtocol
         _ = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")   // a free terminal
         #expect(try settings()["permissions"] == nil)
     }
+
+    /// R6 (Task 2 review I1): an external plug-in's output file comes only from `<root>/plugins-out/<its id>/`, checked
+    /// component-wise without following links, for every caller (so `--out` never sees another path either).
+    @Test func externalOutputOnlyFromItsPluginsOut() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+        try await withTerminals { d, p, f, s, _ in
+            PluginRegistry.setExternal([PluginSpec(id: "notas", title: "Notas", placements: [.canvas], defaultPlacement: .canvas,
+                commands: [CommandSpec(name: "notas.export", summary: "e", timeoutSeconds: 30, outputFile: true)], events: [], source: .external(version: "1"))])
+            defer { PluginRegistry.setExternal([]) }
+            let out = p.root.appendingPathComponent("plugins-out")
+            let fm = FileManager.default
+            for d in ["notas", "kanban"] { try fm.createDirectory(at: out.appendingPathComponent(d), withIntermediateDirectories: true) }
+            let good = out.appendingPathComponent("notas/p-1-notas.md"); try "ok".write(to: good, atomically: false, encoding: .utf8)
+            let other = out.appendingPathComponent("kanban/p-1-x.md"); try "kanban".write(to: other, atomically: false, encoding: .utf8)
+            let link = out.appendingPathComponent("notas/link.md")
+            try fm.createSymbolicLink(atPath: link.path, withDestinationPath: f.home.appendingPathComponent(".ssh/id_ed25519").path)
+            let shot = try Self.shot(p.root, "other-terminal.png")
+            try fm.createSymbolicLink(atPath: out.appendingPathComponent("evil").path, withDestinationPath: f.home.appendingPathComponent(".ssh").path)
+            for bad in [f.home.appendingPathComponent(".ssh/id_ed25519").path, other.path, link.path, shot.path,
+                        out.appendingPathComponent("notas/../kanban/p-1-x.md").path, out.appendingPathComponent("evil/id_ed25519").path,
+                        "notas/p-1-notas.md", out.appendingPathComponent("notas").path, out.appendingPathComponent("notas/.hidden").path] {
+                #expect(throws: ProtocolError.self, "\(bad)") { try d.router.vetPluginOutput(pathResult(good).replacingPath(bad), plugin: "notas") }
+            }
+            #expect(files(s, p.root).isEmpty)
+            // its own file passes and is handed over to the sandboxed caller
+            let v = try d.router.vetPluginOutput(pathResult(good), plugin: "notas")
+            let handed = try #require(path(await d.router.handedOver(v, for: req("notas.export", s))))
+            #expect(handed.hasPrefix(SignedAppCheck.realPath(SandboxLaunch.filesDir(s, root: p.root)) + "/") && files(s, p.root).count == 1, "\(handed)")
+            #expect(try String(contentsOfFile: handed, encoding: .utf8) == "ok")
+        }
+        }
+    }
+}
+
+private extension JSONValue {
+    /// The same result with `path` set to `p` verbatim (relative or not).
+    func replacingPath(_ p: String) -> JSONValue {
+        guard case .object(var o) = self else { return self }
+        o["path"] = .string(p); return .object(o)
+    }
 }

@@ -5,7 +5,7 @@ import CollieClient
 import CollieProtocol
 import ColliePlugins
 
-/// Single page (Aparência); a section bar comes with the second page.
+/// Two pages, Aparência and Plug-ins (`PluginsPreferences`), picked in the header.
 extension DesignFirst {
     var label: String { switch self { case .ask: "Perguntar"; case .always: "Sempre"; case .never: "Nunca" } }
     /// The `design.prefer` reply (`{designFirst}`); nil when it is anything else.
@@ -28,6 +28,7 @@ struct PreferencesView: View {
     let client: DaemonClient
     @State private var designFirst = DesignFirst.ask
     @State private var sandboxMode = SandboxMode.open
+    @State private var page = "Aparência"
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
@@ -43,7 +44,21 @@ struct PreferencesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PanelHeader("Aparência", subtitle: "Preferências")
+            PanelHeader(page, subtitle: "Preferências")
+            Picker("Página", selection: $page) { ForEach(["Aparência", "Plug-ins"], id: \.self) { Text($0).tag($0) } }
+                .labelsHidden().pickerStyle(.segmented).fixedSize().padding(.top, 10)
+            if page == "Plug-ins" {
+                ScrollView { PluginsPreferences(client: client).padding(20).frame(maxWidth: .infinity, alignment: .leading) }
+            } else { appearance }
+        }
+        .frame(width: 560, height: 560)
+        .background(Color.collieBackground)
+        .onAppear { AppearanceSettings.normalize(.standard) }   // a stale or hand-edited value would leave a picker blank
+        .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode() }   // no workspace event: read when shown
+        .onChange(of: theme) { CollieApp.applyTheme() }
+    }
+
+    private var appearance: some View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     section("Tema") {
@@ -108,12 +123,6 @@ struct PreferencesView: View {
                 }
                 .padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
-        }
-        .frame(width: 560, height: 560)
-        .background(Color.collieBackground)
-        .onAppear { AppearanceSettings.normalize(.standard) }   // a stale or hand-edited value would leave a picker blank
-        .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode() }   // no workspace event: read when shown
-        .onChange(of: theme) { CollieApp.applyTheme() }
     }
 
     private func loadDesignFirst() async {

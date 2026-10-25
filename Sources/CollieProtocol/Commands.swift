@@ -1,5 +1,5 @@
-public struct ParamSpec: Sendable {
-    public enum Kind: Sendable { case string, int, flag, rest }
+public struct ParamSpec: Sendable, Equatable {
+    public enum Kind: Sendable, Equatable { case string, int, flag, rest }
     public var name: String; public var kind: Kind; public var positional: Bool; public var required: Bool; public var help: String
     /// A `.string` flag given more than once: its values joined with "," (the daemon splits on ",").
     public var repeatable: Bool
@@ -9,26 +9,36 @@ public struct ParamSpec: Sendable {
     }
 }
 
-public struct CommandSpec: Sendable {
+public struct CommandSpec: Sendable, Equatable {
     public var name: String; public var summary: String; public var params: [ParamSpec]
     public var timeoutSeconds: Double?      // nil = usa --timeout / padrão do comando
     public var shepherdOnly: Bool; public var exposedToMCP: Bool
     /// Plug-in command that needs no reachable panel (ignores --panel, no leash check): listed to MCP regardless of reach.
     public var panelFree: Bool
+    /// The result's `path` is a file the daemon made for the caller: a sandboxed terminal gets it cloned into its own
+    /// readable `files/` (plan 2O), and `--out` copies it. Never memory files, artifacts, crash logs or anything else
+    /// under the root.
+    public var outputFile: Bool
     public init(name: String, summary: String, params: [ParamSpec] = [], timeoutSeconds: Double? = nil,
-                shepherdOnly: Bool = false, exposedToMCP: Bool = true, panelFree: Bool = false) {
+                shepherdOnly: Bool = false, exposedToMCP: Bool = true, panelFree: Bool = false, outputFile: Bool = false) {
         self.name = name; self.summary = summary; self.params = params; self.timeoutSeconds = timeoutSeconds
-        self.shepherdOnly = shepherdOnly; self.exposedToMCP = exposedToMCP; self.panelFree = panelFree
+        self.shepherdOnly = shepherdOnly; self.exposedToMCP = exposedToMCP; self.panelFree = panelFree; self.outputFile = outputFile
     }
     /// MCP/API tool names can't contain '.': `paddock.list` is the `paddock_list` tool.
     public var mcpName: String { name.replacingOccurrences(of: ".", with: "_") }
 }
 
 public enum Commands {
-    public static let all: [CommandSpec] = core + PluginRegistry.all.flatMap(\.commands)
-    /// Commands whose result `path` is a file the daemon made for the caller: a sandboxed terminal gets it cloned into
-    /// its own readable `files/` (plan 2O). Never memory files, artifacts, crash logs or anything else under the root.
-    public static let outputFile: Set<String> = ["design.screenshot", "design.export", "browser.screenshot", "device.screenshot", "diagram.export", "diagram.screenshot"]
+    /// Core, built-in plug-ins' and external plug-ins' commands (`PluginRegistry.setExternal` changes it).
+    public static var all: [CommandSpec] { builtIn + PluginRegistry.externalSpecs.flatMap(\.commands) }
+    static let builtIn: [CommandSpec] = core + PluginRegistry.builtIn.flatMap(\.commands)
+    static let builtInNames = builtIn.map(\.name)
+    /// Commands whose result `path` is a file made for the caller (`CommandSpec.outputFile`).
+    public static var outputFile: Set<String> { Set(all.filter(\.outputFile).map(\.name)) }
+    /// Ids an external plug-in can't take: the built-in plug-ins' ids and the first word of every built-in command
+    /// (`panel`, `admin`, `plugin`, `artifact`, `list`...), so its `<id>.<cmd>` never shadows or groups with one.
+    public static let reservedPluginIds: Set<String> = Set(PluginRegistry.builtIn.map(\.id))
+        .union(builtIn.map { String($0.name.prefix { $0 != "." }) })
     static let core: [CommandSpec] = [
         CommandSpec(name: "list", summary: "List connected agents", timeoutSeconds: 10),
         CommandSpec(name: "ask", summary: "Send a prompt to an agent and wait for its reply",
@@ -402,6 +412,25 @@ public enum Commands {
                     params: [ParamSpec("from", .string, required: true, help: "Absolute path of the .colliebackup"),
                              ParamSpec("dryRun", .flag, help: "Only check it and count what it holds")],
                     timeoutSeconds: 600, exposedToMCP: false),
+        // External plug-ins (PluginStore): installing, removing, enabling is the user's alone (as admin.*); a terminal
+        // may read the list and the specs (names, versions, commands; never paths)
+        CommandSpec(name: "plugin.install", summary: "Install an external plug-in from a folder with a collie-plugin.json (the user only: the app, or collie outside a terminal)",
+                    params: [ParamSpec("path", .string, required: true, help: "Plug-in folder (relative to the current directory)"),
+                             ParamSpec("replace", .flag, help: "Replace the installed plug-in of the same id (refused without it)"),
+                             ParamSpec("expectId", .string, help: "Refuse unless the copied manifest has this id (the app: what the user confirmed)"),
+                             ParamSpec("expectVersion", .string, help: "Refuse unless the copied manifest has this version")],
+                    timeoutSeconds: 120, exposedToMCP: false),
+        CommandSpec(name: "plugin.uninstall", summary: "Remove an external plug-in (the user only)",
+                    params: [ParamSpec("id", .string, positional: true, required: true, help: "Plug-in id")], timeoutSeconds: 30, exposedToMCP: false),
+        CommandSpec(name: "plugin.enable", summary: "Enable an installed plug-in (the user only)",
+                    params: [ParamSpec("id", .string, positional: true, required: true, help: "Plug-in id")], timeoutSeconds: 60, exposedToMCP: false),
+        CommandSpec(name: "plugin.disable", summary: "Disable an installed plug-in (the user only)",
+                    params: [ParamSpec("id", .string, positional: true, required: true, help: "Plug-in id")], timeoutSeconds: 10, exposedToMCP: false),
+        // ponytail: off MCP (agents' panel commands already are tools); `collie plugin list` from a shell
+        CommandSpec(name: "plugin.list", summary: "Installed external plug-ins [{id,name,version,author,license,enabled,error,commands}]",
+                    timeoutSeconds: 10, exposedToMCP: false),
+        CommandSpec(name: "plugin.specs", summary: "The loaded external plug-ins' manifests (for collie and collie mcp) {plugins}",
+                    timeoutSeconds: 10, exposedToMCP: false),
         // UI streams (admin): the reply line is followed by StreamFrame lines both ways
         CommandSpec(name: "ui.attach", summary: "Stream a terminal (replay, output, input, resize)",
                     params: [ParamSpec("terminal", .string, positional: true, required: true, help: "Terminal id")],
@@ -416,5 +445,7 @@ public enum Commands {
         CommandSpec(name: "ui.usage", summary: "Agent plan usage (5h / 7d windows) from the declarative providers",
                     timeoutSeconds: 150, exposedToMCP: false),
     ]
-    public static func spec(_ name: String) -> CommandSpec? { all.first { $0.name == name } }
+    public static func spec(_ name: String) -> CommandSpec? {
+        builtIn.first { $0.name == name } ?? PluginRegistry.externalSpecs.lazy.flatMap(\.commands).first { $0.name == name }
+    }
 }

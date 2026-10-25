@@ -165,6 +165,15 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
         #expect(remote["image"] == nil)
     }
 
+    /// Final review I1: WebRTC (ICE over UDP) gets past the content rules; the snapshot page must not have it.
+    @Test func webRTCOff() async throws {
+        let page = "<title>t</title><body><script>document.title = typeof RTCPeerConnection + '/' + typeof webkitRTCPeerConnection</script></body>"
+        let s = try site(["index.html": Data(page.utf8)])
+        guard case .object(let o) = try await HTMLSnapshotter.snapshot(url: s.url, artifactsRoot: s.root, width: 800, timeout: .seconds(30))
+        else { Issue.record("not an object"); return }
+        #expect(o["title"] == .string("undefined/undefined"))
+    }
+
     @Test func runsKeepOffsetsAcrossCaseAndNbsp() async throws {
         let html = #"<p style="text-transform: uppercase">a\#u{00A0}b <b>forte</b> fim</p>"#
         let s = try site(["index.html": Data(html.utf8)])

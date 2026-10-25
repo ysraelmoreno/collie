@@ -1,0 +1,21 @@
+{
+  "apiVersion": 1,
+  "id": "notas",
+  "name": "Notas",
+  "version": "0.1.0",
+  "author": "Collie",
+  "license": "MIT",
+  "placements": ["dock.right", "dock.left", "dock.bottom", "canvas"],
+  "defaultPlacement": "dock.right",
+  "ui": "ui/index.html",
+  "commands": [
+    { "name": "add", "summary": "Add a note; returns it {id,text,at}", "runs": "ui",
+      "params": [{ "name": "text", "type": "rest", "required": true, "positional": true, "help": "Note text" }] },
+    { "name": "list", "summary": "The notes, oldest first [{id,text,at}]", "runs": "ui" },
+    { "name": "export", "summary": "Export the notes to a file; returns {path}", "runs": "ui", "outputFile": true,
+      "params": [{ "name": "format", "type": "string", "required": true, "help": "md" },
+                 { "name": "out", "type": "string", "help": "Copy the file here (relative to the current directory); returns that path" }] }
+  ],
+  "events": ["notas.changed"],
+  "stateKeys": []
+}

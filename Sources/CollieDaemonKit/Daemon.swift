@@ -195,6 +195,7 @@ public final class Daemon: Sendable {
         sweep(root) { n in [".backup-", ".import-"].contains { n.hasPrefix($0) && UUID(uuidString: String(n.dropFirst($0.count))) != nil } }
         await router.jobsGoneWithoutProcess()   // a previous daemon's terminals all died with it
         sweep(hooksDir) { $0.hasSuffix(".claude.json") || $0.hasSuffix(".mcp.json") }
+        await router.publishPlugins(atStart: true)   // external plug-ins' commands, before any client can authenticate
         try await auth.persist()
         await hub.start()
         await router.watchDevices()

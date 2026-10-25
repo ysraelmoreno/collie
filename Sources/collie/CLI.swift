@@ -31,6 +31,13 @@ enum Client {
         return try OutFile.copyPath(of: result, to: dest, cwd: FileManager.default.currentDirectoryPath)
     }
 
+    /// Learns the daemon's external plug-ins (`plugin.specs`) into this process's registry. false: none, or no answer.
+    static func fetchPlugins() async -> Bool {
+        guard let r = try? await call("plugin.specs", [:]), let ms = PluginManifest.fromSpecs(r) else { return false }
+        PluginManifest.register(ms)
+        return !ms.isEmpty
+    }
+
     /// `diagram.set --from PATH`: the caller's own file, read here (relative to this process's cwd), sent as `xml`.
     static func diagramFrom(_ from: JSONValue, _ args: [String: JSONValue]) throws(ProtocolError) -> String {
         guard case .string(let path) = from else { throw ProtocolError(code: .invalidArgs, message: "--from must be a path") }
@@ -44,7 +51,8 @@ enum Client {
         var token = env["COLLIE_TOKEN"], terminalId = env["COLLIE_TERMINAL_ID"]
         // paddock.* / memory.* / work.* / lot.* outside a terminal (no COLLIE_TOKEN) is the user: admin token
         if command.hasPrefix("admin.") || command.hasPrefix("ui.")
-            || ((command.hasPrefix("paddock.") || command.hasPrefix("memory.") || command.hasPrefix("work.") || command.hasPrefix("lot.")) && token == nil) {
+            || ((command.hasPrefix("paddock.") || command.hasPrefix("memory.") || command.hasPrefix("work.") || command.hasPrefix("lot.")
+                 || command.hasPrefix("plugin.")) && token == nil) {
             // inside a Collie terminal: never the admin file (the daemon refuses it from there anyway)
             if env["COLLIE_TERMINAL_ID"] != nil {
                 throw ProtocolError(code: .unauthorized, message: "the admin token can't be used from inside a Collie terminal")
@@ -84,7 +92,7 @@ enum CLI {
         if argv.first == "help" || argv.first == "--help" { print(usage(), terminator: ""); return 0 }
         if argv.isEmpty { FileHandle.standardError.write(Data(usage().utf8)); return 2 }
         let cmd: (command: String, args: [String: JSONValue])
-        do { cmd = try ArgvParser.parse(argv) } catch { err(error.message); return 2 }
+        do { cmd = try await parse(argv) } catch { err(error.message); return 2 }
         do {
             let result = try await Client.call(cmd.command, cmd.args)
             print(render(cmd.command, result, json: json), terminator: "")
@@ -93,6 +101,14 @@ enum CLI {
         } catch {
             err(error.message)
             return error.code == .daemonUnavailable ? 3 : 1
+        }
+    }
+
+    /// An unknown command may be an external plug-in's: one `plugin.specs` fetch, then the parse again.
+    static func parse(_ argv: [String]) async throws(ProtocolError) -> (command: String, args: [String: JSONValue]) {
+        do { return try ArgvParser.parse(argv) } catch {
+            guard error.message.hasPrefix("unknown command"), await Client.fetchPlugins() else { throw error }
+            return try ArgvParser.parse(argv)
         }
     }
 

@@ -1,29 +1,79 @@
+import Foundation
+import Synchronization
+
 /// Lives in CollieProtocol (not CollieCore) because PluginSpec references it and CollieCore depends on CollieProtocol.
 /// `headless`: a browser hosted but never shown (no canvas node, not in a dock); see `panel.open`.
-public enum PanelPlacement: String, Codable, Sendable {
+public enum PanelPlacement: String, Codable, Sendable, Equatable {
     case dockLeft = "dock.left", dockRight = "dock.right", dockBottom = "dock.bottom", canvas, headless
     /// ponytail: a placement this build doesn't know (a newer one's) loads as `canvas` instead of failing the whole workspace.
     public init(from d: Decoder) throws { self = PanelPlacement(rawValue: try d.singleValueContainer().decode(String.self)) ?? .canvas }
 }
 public enum StorageScope: String, Codable, Sendable { case isolated, workspace, global }   // default .isolated
+/// Where a plug-in comes from: compiled into Collie, or installed from a folder (`PluginManifest`).
+public enum PluginSource: Sendable, Equatable { case builtIn, external(version: String) }
 
-public struct PluginSpec: Sendable {
+public struct PluginSpec: Sendable, Equatable {
     public var id: String; public var title: String
     public var placements: [PanelPlacement]; public var defaultPlacement: PanelPlacement
     public var commands: [CommandSpec]   // named "<id>.<cmd>"; each gets an optional "panel" param
     public var events: [String]
     /// true: the daemon runs the commands itself (adb); false: they are forwarded to the app (`ui.host`).
     public var runsInDaemon: Bool
+    public var source: PluginSource
+    /// Panel state keys a herd may carry (external plug-ins; built-ins' are `HerdFormat.allowedState`).
+    public var stateKeys: [String]
     public init(id: String, title: String, placements: [PanelPlacement], defaultPlacement: PanelPlacement,
-                commands: [CommandSpec], events: [String], runsInDaemon: Bool = false) {
+                commands: [CommandSpec], events: [String], runsInDaemon: Bool = false, source: PluginSource = .builtIn,
+                stateKeys: [String] = []) {
         self.id = id; self.title = title; self.placements = placements; self.defaultPlacement = defaultPlacement
-        self.events = events; self.runsInDaemon = runsInDaemon
+        self.events = events; self.runsInDaemon = runsInDaemon; self.source = source; self.stateKeys = stateKeys
         self.commands = commands.map { var c = $0; c.params.append(ParamSpec("panel", .string, help: "Panel name (default: the only reachable one)")); return c }
     }
 }
 
 public enum PluginRegistry {
-    public static let all: [PluginSpec] = [browser, memory, device, design, diagram, designsystems, artifacts, work]
+    /// The plug-ins compiled into Collie, in palette order.
+    public static let builtIn: [PluginSpec] = [browser, memory, device, design, diagram, designsystems, artifacts, work]
+    /// Built-ins, then the external plug-ins this process knows (`setExternal`).
+    public static var all: [PluginSpec] { builtIn + external.withLock { $0.specs } }
+    public static var externalSpecs: [PluginSpec] { external.withLock { $0.specs } }
+    /// Bumped by every `setExternal` that changes the list (per process).
+    public static var catalogVersion: Int { external.withLock { $0.version } }
+    private static let external = Mutex<(specs: [PluginSpec], version: Int)>(([], 0))
+
+    /// The external plug-ins, as each process learns them: the daemon from its store, the app from the snapshot and
+    /// `pluginsChanged`, `collie` and `collie mcp` from `plugin.specs`. A spec taking a built-in's id or a command name
+    /// already used, or repeating an id, is dropped.
+    public static func setExternal(_ specs: [PluginSpec]) {
+        var ids = Set(builtIn.map(\.id)), names = Set(Commands.builtInNames), kept: [PluginSpec] = []
+        for s in specs where s.source != .builtIn && !Commands.reservedPluginIds.contains(s.id) && ids.insert(s.id).inserted {
+            let n = s.commands.map(\.name)
+            guard n.allSatisfy({ $0.hasPrefix(s.id + ".") }), names.isDisjoint(with: n), Set(n).count == n.count else { continue }
+            names.formUnion(n); kept.append(s)
+        }
+        let changed = external.withLock { x -> Bool in
+            guard x.specs != kept else { return false }
+            x.specs = kept; x.version += 1; return true
+        }
+        if changed { NotificationCenter.default.post(name: externalChanged, object: nil) }
+    }
+    /// Posted (on the caller's thread) after `setExternal` changed the list: open panels of external plug-ins reload,
+    /// or show their placeholder.
+    public static let externalChanged = Notification.Name("collie.externalPluginsChanged")
+
+    /// Tests only. The external list is process-wide and every suite runs in one process: a test that sets it runs its
+    /// body through this, one at a time, so another suite's `setExternal` can't change it mid-test.
+    // ponytail: a test hook in the product (a few lines); nothing else calls it.
+    public static func exclusively<T>(isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
+        await testGate.acquire()
+        do { let r = try await body(); await testGate.release(); return r } catch { await testGate.release(); throw error }
+    }
+    private static let testGate = Gate()
+    private actor Gate {
+        private var busy = false, waiters: [CheckedContinuation<Void, Never>] = []
+        func acquire() async { if busy { await withCheckedContinuation { waiters.append($0) } } else { busy = true } }
+        func release() { if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() } }
+    }
 
     /// Plugin ids a Shepherd can open on the canvas (feeds `panel.open` help and the agent orientation).
     public static var canvasPluginIds: [String] { all.filter { $0.placements.contains(.canvas) }.map(\.id) }
@@ -35,7 +85,7 @@ public enum PluginRegistry {
     }
 
     private static func cmd(_ n: String, _ summary: String, _ params: [ParamSpec] = [], timeout: Double = 30) -> CommandSpec {
-        CommandSpec(name: "browser.\(n)", summary: summary, params: params, timeoutSeconds: timeout)
+        CommandSpec(name: "browser.\(n)", summary: summary, params: params, timeoutSeconds: timeout, outputFile: n == "screenshot")
     }
 
     static let browser = PluginSpec(
@@ -100,7 +150,7 @@ extension PluginRegistry {
 
 extension PluginRegistry {
     private static func dcmd(_ n: String, _ summary: String, _ params: [ParamSpec] = [], timeout: Double, panelFree: Bool = false) -> CommandSpec {
-        CommandSpec(name: "device.\(n)", summary: summary, params: params, timeoutSeconds: timeout, panelFree: panelFree)
+        CommandSpec(name: "device.\(n)", summary: summary, params: params, timeoutSeconds: timeout, panelFree: panelFree, outputFile: n == "screenshot")
     }
     private static func coord(_ n: String, _ positional: Bool = true, required: Bool = false) -> ParamSpec {
         ParamSpec(n, .int, positional: positional, required: required, help: "Android pixels or iOS points, 0-100000")
@@ -138,10 +188,11 @@ extension PluginRegistry {
 extension PluginRegistry {
     private static func gcmd(_ n: String, _ summary: String, _ params: [ParamSpec] = [], timeout: Double,
                              exposedToMCP: Bool = true, panelFree: Bool = false) -> CommandSpec {
-        CommandSpec(name: "design.\(n)", summary: summary, params: params, timeoutSeconds: timeout, exposedToMCP: exposedToMCP, panelFree: panelFree)
+        CommandSpec(name: "design.\(n)", summary: summary, params: params, timeoutSeconds: timeout, exposedToMCP: exposedToMCP, panelFree: panelFree,
+                    outputFile: n == "screenshot" || n == "export")
     }
     private static let node = ParamSpec("node", .string, help: "Layer id (as design.inspect shows it)")
-    /// `--out` of a command in `Commands.outputFile`: the collie process copies the reply's file (`OutFile`).
+    /// `--out` of an `outputFile` command: the collie process copies the reply's file (`OutFile`).
     private static let out = ParamSpec("out", .string, help: "Copy the file here (relative to the current directory; dirs created, overwritten); returns that path")
     private static let ids = ParamSpec("ids", .string, required: true, help: "Layer ids, comma-separated (as design.inspect shows them)")
     private static let reason = ParamSpec("reason", .string, required: true, help: "Why (kept in the history and as a project decision)")
@@ -254,7 +305,7 @@ extension PluginRegistry {
 
 extension PluginRegistry {
     private static func dgcmd(_ n: String, _ summary: String, _ params: [ParamSpec] = [], timeout: Double = 30) -> CommandSpec {
-        CommandSpec(name: "diagram.\(n)", summary: summary, params: params, timeoutSeconds: timeout)
+        CommandSpec(name: "diagram.\(n)", summary: summary, params: params, timeoutSeconds: timeout, outputFile: n == "export" || n == "screenshot")
     }
     private static let page = ParamSpec("page", .string, help: "Page name (default: the current one)")
 

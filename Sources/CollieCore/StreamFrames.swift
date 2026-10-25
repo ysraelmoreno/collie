@@ -110,10 +110,13 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
     public var lots: [Lot]
     /// `BuildID` of the daemon's executable (nil from a daemon that predates it).
     public var build: String?
-    public init(terminals: [TerminalRecord], connections: [Connection], badges: [String: StatusBadge], paddocks: [Paddock] = [], panels: [Panel] = [], lots: [Lot] = [], build: String? = nil) {
+    /// The daemon's loaded external plug-ins.
+    public var plugins: [PluginSpecDTO]
+    public init(terminals: [TerminalRecord], connections: [Connection], badges: [String: StatusBadge], paddocks: [Paddock] = [], panels: [Panel] = [], lots: [Lot] = [], build: String? = nil, plugins: [PluginSpecDTO] = []) {
         self.terminals = terminals; self.connections = connections; self.badges = badges; self.paddocks = paddocks; self.panels = panels; self.lots = lots; self.build = build
+        self.plugins = plugins
     }
-    private enum K: String, CodingKey { case terminals, connections, badges, paddocks, panels, lots, build }
+    private enum K: String, CodingKey { case terminals, connections, badges, paddocks, panels, lots, build, plugins }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         terminals = try c.decode([TerminalRecord].self, forKey: .terminals)
@@ -123,6 +126,7 @@ public struct WorkspaceSnapshot: Codable, Sendable, Equatable {
         panels = try c.decodeIfPresent([Panel].self, forKey: .panels) ?? []
         lots = ((try? c.decodeIfPresent([Lossy<Lot>].self, forKey: .lots)) ?? []).compactMap(\.value)
         build = try c.decodeIfPresent(String.self, forKey: .build)
+        plugins = ((try? c.decodeIfPresent([Lossy<PluginSpecDTO>].self, forKey: .plugins)) ?? []).compactMap(\.value)
     }
 }
 
@@ -143,9 +147,11 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
          /// Whether the daemon sees sandbox denials (its `log stream` runs); false: "detecção indisponível".
          sandboxDetection(available: Bool),
          /// A correction that is probably the user's waits for Confirmar (digest `entry`); `title` is the rule.
-         confirmCorrection(terminal: UUID, entry: UUID, title: String)
+         confirmCorrection(terminal: UUID, entry: UUID, title: String),
+         /// The loaded external plug-ins changed (install, uninstall, enable, disable): all of them, as manifests.
+         pluginsChanged([PluginSpecDTO])
 
-    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l, d, ok, e }
+    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l, d, ok, e, m }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -175,6 +181,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case "sandboxDetection": self = .sandboxDetection(available: try c.decode(Bool.self, forKey: .ok))
         case "confirmCorrection":
             self = .confirmCorrection(terminal: try id(), entry: try c.decode(UUID.self, forKey: .e), title: try c.decode(String.self, forKey: .name))
+        case "pluginsChanged": self = .pluginsChanged(try c.decode([Lossy<PluginSpecDTO>].self, forKey: .m).compactMap(\.value))   // one unreadable manifest loses only itself
         case let t: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "unknown event '\(t)'")
         }
     }
@@ -206,6 +213,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .sandboxDetection(let ok): try c.encode("sandboxDetection", forKey: .t); try c.encode(ok, forKey: .ok)
         case .confirmCorrection(let t, let e, let title):
             try c.encode("confirmCorrection", forKey: .t); try c.encode(t, forKey: .id); try c.encode(e, forKey: .e); try c.encode(title, forKey: .name)
+        case .pluginsChanged(let m): try c.encode("pluginsChanged", forKey: .t); try c.encode(m, forKey: .m)
         }
     }
 }

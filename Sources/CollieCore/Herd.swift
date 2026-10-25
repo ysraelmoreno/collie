@@ -89,6 +89,11 @@ public enum HerdFormat {
         "browser": ["url", "storage"], "design": ["file", "storage"], "diagram": ["file"],
         "memory": [], "artifacts": [], "designsystems": [], "work": [],
     ]
+    /// The state keys a panel of `pluginId` may carry in a herd: a built-in's `allowedState`, an external plug-in's
+    /// manifest `stateKeys`; nil: not allowed.
+    public static func allowedKeys(_ pluginId: String) -> Set<String>? {
+        allowedState[pluginId] ?? PluginRegistry.spec(pluginId).flatMap { $0.source == .builtIn ? nil : Set($0.stateKeys) }
+    }
 
     private static func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: "rebanho: \(m)") }
 
@@ -176,7 +181,7 @@ public enum HerdFormat {
             guard isKey(a.key, max: 24) else { throw bad("chave inválida '\(a.key)'") }
             guard keys.insert(a.key).inserted else { throw bad("chave repetida '\(a.key)'") }
             panelKeys.insert(a.key)
-            guard let allowed = allowedState[a.pluginId] else { throw bad("plug-in '\(a.pluginId)' não é permitido") }
+            guard let allowed = allowedKeys(a.pluginId) else { throw bad("plug-in '\(a.pluginId)' não é permitido") }
             for (k, v) in a.state {
                 guard allowed.contains(k) else { throw bad("'\(a.key)': chave de estado '\(k)' não é permitida") }
                 if k == "storage" {

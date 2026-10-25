@@ -36,6 +36,8 @@ actor CommandRouter {
     nonisolated let systems: DesignSystemService
     /// Pages Collie keeps: html exports and agents' pages.
     nonisolated let artifacts: ArtifactStore
+    /// External plug-ins the user installed (`<root>/plugins`).
+    nonisolated let plugins: PluginStore
     /// What each terminal's agent is doing (`<root>/work`).
     nonisolated let work: WorkStore
     /// The work chat of this workspace (`<root>/work/work-chat-<workspace>.jsonl`).
@@ -115,6 +117,7 @@ actor CommandRouter {
                                     timeoutCap: config.designTimeoutCap)
         self.systems = DesignSystemService(design: design, root: config.paths.root)
         self.artifacts = ArtifactStore(root: config.paths.root)
+        self.plugins = PluginStore(root: config.paths.root)
         let workDir = config.paths.root.appendingPathComponent("work")
         self.work = WorkStore(dir: workDir) { id in Task { await me.router?.workChanged(id) } }
         self.chat = ChatLog(dir: workDir, name: "work-chat-\(config.workspaceId.uuidString.lowercased())")
@@ -181,7 +184,8 @@ actor CommandRouter {
             let running = await registry.process(t.id)?.isRunning == true
             badges[t.id.uuidString] = running ? live[t.id] : .stopped
         }
-        let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, paddocks: ws.paddocks, panels: ws.panels, lots: ws.lots, build: config.build)
+        let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, paddocks: ws.paddocks, panels: ws.panels, lots: ws.lots, build: config.build,
+                                     plugins: await plugins.loaded().map(\.0))
         return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(snap))
     }
 
@@ -252,12 +256,17 @@ actor CommandRouter {
             if req.command.hasPrefix("herd.") {   // admin or Shepherd; app-only ones checked in herdCommand
                 return Response(id: req.id, ok: true, result: try await herdCommand(req, peer: peer))
             }
+            if req.command.hasPrefix("plugin.") {   // install/uninstall/enable/disable: admin only; list/specs: terminals too
+                return Response(id: req.id, ok: true, result: try await pluginAdminCommand(req, peer: peer))
+            }
             if let (plugin, spec) = PluginRegistry.command(req.command) {   // admin or terminal; reach rules in resolvePanel
                 let result = plugin.id == "design" ? try await designCommand(req, peer: peer)
                     : plugin.id == "artifacts" ? try await artifactCommand(req, peer: peer)
                     : plugin.runsInDaemon ? try await deviceCommand(req, peer: peer)
                     : try await pluginCommand(req, plugin: plugin, spec: spec, peer: peer)
-                return Response(id: req.id, ok: true, result: await handedOver(result, for: req))
+                // R6: an external plug-in's file comes only from its own plugins-out dir, for every caller (and --out)
+                let vetted = plugin.source != .builtIn && spec.outputFile ? try vetPluginOutput(result, plugin: plugin.id) : result
+                return Response(id: req.id, ok: true, result: await handedOver(vetted, for: req))
             }
             guard let idStr = req.terminalId, let tid = UUID(uuidString: idStr), let t = req.token,
                   await auth.verify(terminal: tid, token: t) else {
@@ -741,13 +750,11 @@ actor CommandRouter {
                                           pluginDir: pluginDir)
     }
 
-    static let outputFileCommands = Commands.outputFile
-
-    /// A file the daemon made for a sandboxed caller (`outputFileCommands`' `path`) cloned into the terminal's readable
+    /// A file the daemon made for a sandboxed caller (an `outputFile` command's `path`, built-in or external) cloned into the terminal's readable
     /// `files/`, the reply pointing at the clone. Anything else (admin, free terminal, other command, a source that is
     /// not a regular file under the root): `result` unchanged. `r` already passed its command's principal check.
     func handedOver(_ result: JSONValue, for r: Request) async -> JSONValue {
-        guard Self.outputFileCommands.contains(r.command), case .object(var o) = result, case .string(let p)? = o["path"],
+        guard Commands.spec(r.command)?.outputFile == true, case .object(var o) = result, case .string(let p)? = o["path"],
               let id = r.terminalId.flatMap(UUID.init(uuidString:)), let rec = ws.terminals.first(where: { $0.id == id }),
               sandboxed(rec) else { return result }
         let root = config.paths.root

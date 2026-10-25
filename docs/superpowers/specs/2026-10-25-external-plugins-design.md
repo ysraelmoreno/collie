@@ -1,6 +1,6 @@
 # External Plug-ins — Design
 
-**Status:** agreed (2026-10-25; decisions at the end). Splits into one plan per phase.
+**Status:** agreed (2026-10-25; decisions at the end). Splits into one plan per phase. **Phase 1 shipped** (plan 2R Plugins; API reference: `docs/plugins/api-v1.md`).
 
 ## Why
 
@@ -76,9 +76,9 @@ The helper gets the same host API as JSON-RPC methods the daemon serves on its s
 
 ## Phases
 
-1. **UI-only plug-ins** (no helper, no network, `project: none`): manifest, install/uninstall, `WebPluginPanel`, page bridge, registry at runtime, MCP list change. Proof: a tiny "Notas" plug-in + Diagram port.
+1. **UI-only plug-ins** (no helper, no network, `project: none`): manifest, install/uninstall, `WebPluginPanel`, page bridge, registry at runtime, MCP list change. Proof: the "Notas" plug-in (`Examples/plugins/notas`). **Shipped.** As built: scheme `collie-plugin://<id>/` (one scheme, the id as host); output files written by the app host into `<root>/plugins-out/<id>/`, the page gets opaque handles.
 2. **Helpers** under Seatbelt, JSON-RPC, lifecycle.
-3. **Permissions**: network allow-list and project read/write, with the install screen.
+3. **Permissions**: network allow-list and project read/write, with the install screen. The Diagram port moves here: it needs project read/write (its `.drawio` lives in the project).
 4. **Distribution**: `.collieplugin` packaging, signature of the package (developer key), optional catalog. Out of scope until someone asks.
 
 ## Decisions (user, 2026-10-25)

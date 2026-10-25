@@ -46,11 +46,12 @@ public enum DiagramFile {
         let data = Data(xml.utf8)
         guard data.count <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
         guard !xml.contains("\0") else { throw bad("XML inválido: contém um caractere nulo") }
-        if let m = xml.prefix(256).firstMatch(of: /^\s*<\?xml[^>]*encoding\s*=\s*["']([^"']*)["']/),
-           !["utf-8", "utf8"].contains(m.1.lowercased()) {
+        // every XML declaration anywhere (padding can push one past any fixed window): only UTF-8 may be declared
+        for m in xml.matches(of: /<\?xml[^>]*?encoding\s*=\s*["']([^"']*)["']/.ignoresCase())
+        where !["utf-8", "utf8"].contains(m.1.lowercased()) {
             throw bad("o diagrama precisa ser UTF-8 (declarado: \(m.1))")
         }
-        guard !xml.contains("<!DOCTYPE"), !xml.contains("<!ENTITY") else {
+        guard xml.range(of: "<!DOCTYPE", options: .caseInsensitive) == nil, xml.range(of: "<!ENTITY", options: .caseInsensitive) == nil else {
             throw bad("diagrama recusado: <!DOCTYPE>/<!ENTITY> não são aceitos (o draw.io não os usa)")
         }
         let p = XMLParser(data: data), root = RootName()

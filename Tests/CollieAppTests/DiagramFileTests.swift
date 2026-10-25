@@ -132,6 +132,8 @@ import CollieProtocol
         let t0 = Date()
         for (label, xml) in [("xxe", xxe), ("bomb", bomb), ("entity only", "<mxfile><!ENTITY x \"y\"></mxfile>"),
                              ("utf-7", "<?xml version=\"1.0\" encoding=\"UTF-7\"?><mxfile/>"),
+                             ("padded utf-7", "<?xml version=\"1.0\"" + String(repeating: " ", count: 400) + "encoding=\"UTF-7\"?>+ADw-!DOCTYPE mxfile+AD4-<mxfile/>"),
+                             ("late decl", "\n" + String(repeating: " ", count: 300) + "<?xml version=\"1.0\" encoding=\"UTF-7\"?><mxfile/>"),
                              ("utf-16 bytes", "<\0?\0x\0m\0l\0 \0?\0>\0<\0m\0x\0f\0i\0l\0e\0/\0>\0")] {
             do { try DiagramFile.validate(xml: xml); Issue.record("\(label) accepted") } catch {
                 #expect(error.code == .invalidArgs, "\(label)")

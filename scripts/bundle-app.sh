@@ -36,6 +36,11 @@ if [ -x vendor/figcraft/bin/figcraft-server ] && [ -f vendor/figcraft/web/index.
   # --deep doesn't sign Mach-O under Resources: sign the helpers themselves
   codesign --force -s "$SIGN" --options runtime "$APP/Contents/Resources/figcraft/bin/"*
 else echo "warning: vendor/figcraft missing (run scripts/build-figcraft.sh): no design engine" >&2; fi
+# Diagram editor (scripts/build-drawio.sh): draw.io embed web UI + licence under Resources/drawio/
+cp Resources/NOTICE-drawio "$APP/Contents/Resources/"
+if [ -f vendor/drawio/web/index.html ]; then
+  mkdir -p "$APP/Contents/Resources/drawio"; cp -R vendor/drawio/web vendor/drawio/LICENSE "$APP/Contents/Resources/drawio/"
+else echo "warning: vendor/drawio missing (run scripts/build-drawio.sh): no diagram editor" >&2; fi
 codesign --force --deep -s "$SIGN" --options runtime "$APP"
 codesign -v "$APP"
 echo "ok: $APP"

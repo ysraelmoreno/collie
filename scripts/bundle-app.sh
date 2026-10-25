@@ -43,6 +43,12 @@ if [ -f vendor/drawio/web/index.html ]; then
   rsync -a --delete vendor/drawio/web/ "$APP/Contents/Resources/drawio/web/"   # no stale files from an older build
   cp vendor/drawio/LICENSE "$APP/Contents/Resources/drawio/"
 else echo "warning: vendor/drawio missing (run scripts/build-drawio.sh): no diagram editor" >&2; fi
+# Offline web libraries (scripts/fetch-weblibs.sh): served as collie-lib:// from Resources/weblibs/
+cp Resources/NOTICE-weblibs "$APP/Contents/Resources/"
+if [ -f vendor/weblibs/manifest.json ]; then
+  mkdir -p "$APP/Contents/Resources/weblibs"
+  rsync -a --delete vendor/weblibs/ "$APP/Contents/Resources/weblibs/"
+else echo "warning: vendor/weblibs missing (run scripts/fetch-weblibs.sh): pages get no offline libraries" >&2; fi
 codesign --force --deep -s "$SIGN" --options runtime "$APP"
 codesign -v "$APP"
 echo "ok: $APP"

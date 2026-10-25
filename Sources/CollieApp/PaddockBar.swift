@@ -65,7 +65,7 @@ extension LandMode {
     }
 
     func create() {
-        let name = (newName ?? "").trimmingCharacters(in: .whitespaces)
+        guard let name = PaddockName.slug(newName ?? "") else { return }
         let p = NSOpenPanel()
         p.canChooseFiles = false; p.canChooseDirectories = true
         p.message = "Repositório git do cercado"
@@ -175,15 +175,20 @@ private struct PaddockDialogs: ViewModifier {
     private var newSheet: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Novo cercado").font(.collieUI(20, .semibold)).foregroundStyle(Color.collieText)
-            TextField("Nome (a-z, 0-9, -)", text: Binding(get: { actions.newName ?? "" }, set: { actions.newName = $0 }))
+            TextField("Nome do cercado", text: Binding(get: { actions.newName ?? "" }, set: { actions.newName = $0 }))
                 .collieField(mono: true)
+            if let typed = actions.newName, !typed.isEmpty {
+                let slug = PaddockName.slug(typed)
+                Text(slug.map { $0 == typed ? "Nome: \($0)" : "Será criado como: \($0)" } ?? "Use letras ou números")
+                    .font(.collieMono(12)).foregroundStyle(slug == nil ? Color.collieDanger : Color.collieMuted)
+            }
             Text("Repositório: \(UserDefaults.standard.string(forKey: PaddockActions.repoKey) ?? "escolha ao criar")")
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted).lineLimit(1).truncationMode(.middle)
             HStack(spacing: 10) {
                 Spacer()
                 Button("Cancelar") { actions.newName = nil }.keyboardShortcut(.cancelAction).buttonStyle(CollieButtonStyle(.secondary))
                 Button("Escolher repositório e criar…") { actions.create() }.keyboardShortcut(.defaultAction)
-                    .disabled((actions.newName ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(PaddockName.slug(actions.newName ?? "") == nil)
                     .buttonStyle(CollieButtonStyle(.primary))
             }
         }

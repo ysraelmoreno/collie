@@ -28,7 +28,7 @@ public enum Commands {
     public static let all: [CommandSpec] = core + PluginRegistry.all.flatMap(\.commands)
     /// Commands whose result `path` is a file the daemon made for the caller: a sandboxed terminal gets it cloned into
     /// its own readable `files/` (plan 2O). Never memory files, artifacts, crash logs or anything else under the root.
-    public static let outputFile: Set<String> = ["design.screenshot", "design.export", "browser.screenshot", "device.screenshot"]
+    public static let outputFile: Set<String> = ["design.screenshot", "design.export", "browser.screenshot", "device.screenshot", "diagram.export", "diagram.screenshot"]
     static let core: [CommandSpec] = [
         CommandSpec(name: "list", summary: "List connected agents", timeoutSeconds: 10),
         CommandSpec(name: "ask", summary: "Send a prompt to an agent and wait for its reply",
@@ -107,7 +107,7 @@ public enum Commands {
                              ParamSpec("url", .string, help: "Initial URL (browser)"),
                              ParamSpec("storage", .string, help: "isolated|workspace|global"),
                              ParamSpec("serial", .string, help: "Android serial, avd:<AVD name> (boots it), or iOS Simulator UDID (boots a shut-down one); default: the only one online"),
-                             ParamSpec("file", .string, help: "Design file name (design; created when new)"),
+                             ParamSpec("file", .string, help: "Design file name (design; created when new), or the .drawio file in your project (diagram; default docs/diagrams/<name>.drawio)"),
                              ParamSpec("paddock", .string, help: "Paddock of a canvas panel (app only; a terminal's panel lands on its own paddock)"),
                              ParamSpec("connect", .string, help: "Connect the new agent/panel to these terminals or canvas panels you reach (comma list; repeatable)", repeatable: true)],
                     timeoutSeconds: 190),   // a shut-down simulator (120 s) or Android emulator (180 s) boots first

@@ -23,7 +23,7 @@ public struct PluginSpec: Sendable {
 }
 
 public enum PluginRegistry {
-    public static let all: [PluginSpec] = [browser, memory, device, design, designsystems, artifacts, work]
+    public static let all: [PluginSpec] = [browser, memory, device, design, diagram, designsystems, artifacts, work]
 
     /// Plugin ids a Shepherd can open on the canvas (feeds `panel.open` help and the agent orientation).
     public static var canvasPluginIds: [String] { all.filter { $0.placements.contains(.canvas) }.map(\.id) }
@@ -250,4 +250,29 @@ extension PluginRegistry {
         id: "work", title: "Trabalho",
         placements: [.dockRight, .dockLeft, .dockBottom], defaultPlacement: .dockRight,
         commands: [], events: ["work.changed", "work.chat", "work.approval"])
+}
+
+extension PluginRegistry {
+    private static func dgcmd(_ n: String, _ summary: String, _ params: [ParamSpec] = [], timeout: Double = 30) -> CommandSpec {
+        CommandSpec(name: "diagram.\(n)", summary: summary, params: params, timeoutSeconds: timeout)
+    }
+    private static let page = ParamSpec("page", .string, help: "Page name (default: the current one)")
+
+    /// A draw.io editor on a `.drawio` file of the project (`state["file"]`, default docs/diagrams/<panel>.drawio); the app
+    /// runs the commands (the panel's view), the file is the document.
+    static let diagram = PluginSpec(
+        id: "diagram", title: "Diagrama",
+        placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
+        commands: [
+            dgcmd("get", "The panel's diagram: {file, xml, pages:[{id,name}]}"),
+            dgcmd("set", "Replace the diagram with draw.io XML (refused while the user is editing: try again); returns {file, bytes}",
+                  [ParamSpec("xml", .string, help: "draw.io XML (<mxfile> or <mxGraphModel>)"),
+                   ParamSpec("from", .string, help: "A .drawio file with it (relative to the current directory)")]),
+            dgcmd("mermaid", "Insert a Mermaid diagram as editable shapes; returns {inserted, editable}",
+                  [ParamSpec("text", .rest, positional: true, required: true, help: "Mermaid source"), page], timeout: 60),
+            dgcmd("export", "Export a page to PNG or SVG; returns {path, width, height}",
+                  [ParamSpec("format", .string, required: true, help: "png|svg"), page, out], timeout: 60),
+            dgcmd("screenshot", "Screenshot of the panel to a PNG file; returns {path, width, height}", [out], timeout: 30),
+        ],
+        events: [])
 }

@@ -219,6 +219,18 @@ do pasto, com `collie design prefer ask|always|never`; qualquer terminal lê com
 painel Design, ele é usado primeiro. O rebanho de fábrica **Feature com design** (Pastor, designer, interface e tester)
 já vem com o painel Design e o Navegador ligados: o designer desenha, a interface implementa e o tester compara as telas.
 
+## Diagrama
+
+O plug-in **Diagrama** é um editor leve de fluxogramas, raias, ERD e UML (o [draw.io](https://github.com/jgraph/drawio)
+v32.6.1 em modo embed, fixado, offline: nenhuma requisição sai da máquina; `scripts/build-drawio.sh` gera
+`vendor/drawio/web`, ~34 MB, sem os ícones de nuvem Azure/Microsoft, e `scripts/bundle-app.sh` o copia para
+`Contents/Resources/drawio`). O documento é um arquivo `.drawio` do projeto (padrão `docs/diagrams/<painel>.drawio`;
+`collie panel open diagram --file <caminho.drawio>`, sempre dentro do projeto): versionado no git, editado à mão no painel
+(salvo a cada mudança) e pelos agentes, e recarregado quando muda no disco. Comandos (`collie diagram …`): `get`,
+`set --xml X | --from ARQ` (recusado se o usuário editou nos últimos 2 s), `mermaid "<texto>" [--page NOME]` (vira formas
+editáveis, abaixo do que já existe), `export --format png|svg [--page NOME] [--out ARQ]` e `screenshot [--out ARQ]`.
+Avisos de licença: `Resources/NOTICE-drawio` (Apache-2.0; draw.io e diagrams.net são marcas da JGraph).
+
 ## Design systems
 
 Um **design system** é um arquivo de design (figcraft) com variáveis (tokens, com modos), estilos e componentes, publicado em

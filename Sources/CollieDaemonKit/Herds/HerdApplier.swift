@@ -221,6 +221,7 @@ extension CommandRouter {
             let name = member(p.key)
             var state: [String: JSONValue] = ["storage": p.state["storage"] ?? .string(StorageScope.isolated.rawValue)]
             if let u = p.state["url"] { state["url"] = u }
+            if p.pluginId == "diagram", let f = p.state["file"] { state["file"] = f }   // the file in the applier's project
             var file: String?
             if p.pluginId == "design" { if case .string(let s)? = p.state["file"] { file = s } else { file = name } }
             do {

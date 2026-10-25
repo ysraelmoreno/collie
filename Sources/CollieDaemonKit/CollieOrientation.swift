@@ -54,7 +54,7 @@ enum CollieOrientation {
         lines.append("- Artifacts: collie artifact … keeps handed-in pages.")   // panel-free: independent of reach
         if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
         if isShepherd {
-            let hints = ["design": "design --file <name>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
+            let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             let open = PluginRegistry.canvasPluginIds.map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
                 lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>")

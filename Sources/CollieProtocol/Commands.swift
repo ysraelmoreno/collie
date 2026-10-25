@@ -1,8 +1,11 @@
 public struct ParamSpec: Sendable {
     public enum Kind: Sendable { case string, int, flag, rest }
     public var name: String; public var kind: Kind; public var positional: Bool; public var required: Bool; public var help: String
-    public init(_ name: String, _ kind: Kind, positional: Bool = false, required: Bool = false, help: String = "") {
+    /// A `.string` flag given more than once: its values joined with "," (the daemon splits on ",").
+    public var repeatable: Bool
+    public init(_ name: String, _ kind: Kind, positional: Bool = false, required: Bool = false, help: String = "", repeatable: Bool = false) {
         self.name = name; self.kind = kind; self.positional = positional; self.required = required; self.help = help
+        self.repeatable = repeatable
     }
 }
 
@@ -58,6 +61,7 @@ public enum Commands {
                              ParamSpec("command", .string, help: "Command line (custom preset)"),
                              ParamSpec("cwd", .string, help: "Working directory within your project (default: yours, or the paddock's)"),
                              ParamSpec("paddock", .string, help: "Paddock name (default: your paddock)"),
+                             ParamSpec("connect", .string, help: "Connect the new agent/panel to these terminals or canvas panels you reach (comma list; repeatable)", repeatable: true),
                              ParamSpec("prompt", .rest, positional: true, help: "First prompt, sent without waiting for a reply")],
                     timeoutSeconds: 60, shepherdOnly: true),
         CommandSpec(name: "dismiss", summary: "Kill an agent leashed to you",
@@ -104,7 +108,8 @@ public enum Commands {
                              ParamSpec("storage", .string, help: "isolated|workspace|global"),
                              ParamSpec("serial", .string, help: "Android serial, avd:<AVD name> (boots it), or iOS Simulator UDID (boots a shut-down one); default: the only one online"),
                              ParamSpec("file", .string, help: "Design file name (design; created when new), or the .drawio file in your project (diagram; default docs/diagrams/<name>.drawio)"),
-                             ParamSpec("paddock", .string, help: "Paddock of a canvas panel (app only; a terminal's panel lands on its own paddock)")],
+                             ParamSpec("paddock", .string, help: "Paddock of a canvas panel (app only; a terminal's panel lands on its own paddock)"),
+                             ParamSpec("connect", .string, help: "Connect the new agent/panel to these terminals or canvas panels you reach (comma list; repeatable)", repeatable: true)],
                     timeoutSeconds: 190),   // a shut-down simulator (120 s) or Android emulator (180 s) boots first
         CommandSpec(name: "panel.close", summary: "Close a panel",
                     params: [ParamSpec("name", .string, positional: true, required: true, help: "Panel name")],

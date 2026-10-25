@@ -33,6 +33,13 @@ extension CommandRouter {
                 if r.args["placement"] == nil, !flag(r, "visible") { placement = .headless }
                 guard placement == .canvas || placement == .headless else { throw refuse("a terminal that isn't a Shepherd opens browsers headless or --visible on the canvas") }
             }
+            // --connect: a Shepherd wires its new canvas panel to terminals it reaches, checked before it opens
+            var wirer: TerminalRecord?
+            if r.args["connect"] != nil {
+                guard let me = caller, me.isShepherd else { throw refuse("--connect is Shepherd-only") }
+                guard placement == .canvas else { throw ProtocolError(code: .invalidArgs, message: "--connect needs a canvas panel (dock panels need no leash)") }
+                _ = try connectTargets(r, by: me, panels: false); wirer = me
+            }
             if placement == .headless, caller == nil {   // nothing would ever close it
                 throw ProtocolError(code: .invalidArgs, message: "placement headless is for terminals")
             }
@@ -69,6 +76,9 @@ extension CommandRouter {
                                                          file: pluginId == "design" ? try need(r, "file") : nil,
                                                          paddock: placement == .canvas || pluginId == "design"
                                                              ? try canvasPaddock(str(r, "paddock"), caller: caller) : nil, caller: caller)
+            do {   // re-checked after openPanel's awaits; all or nothing
+                for t in try wirer.map({ try connectTargets(r, by: $0, panels: false).terminals }) ?? [] { try await leash(t, p) }
+            } catch { try? await remove(p); throw error }
             guard !designWarning.isEmpty, case .object(var o) = try isoJSON(p) else { return try isoJSON(p) }
             o.merge(designWarning) { _, b in b }   // the panel is open; its file just lacks the library
             return .object(o)

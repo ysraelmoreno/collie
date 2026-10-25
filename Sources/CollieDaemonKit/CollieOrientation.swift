@@ -57,10 +57,11 @@ enum CollieOrientation {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             let open = PluginRegistry.canvasPluginIds.map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
-                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …")
+                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>")
             } else {
                 lines.append("- As Shepherd you can open panels: collie panel open \(open) (leashed to you, on your paddock).")
-                lines.append("  Hand one over: collie leash <agent> <panel>; collie panel close|move. Team: collie summon|dismiss|leash|unleash, collie paddock …")
+                // ponytail: at the length cap (orientationSanitizesNames keeps 3 names); `leash <agent> <panel>` hands one over later
+                lines.append("  Team: collie summon designer-1 --preset claude --connect design-1 | panel open design --file F --connect designer-1; leash|unleash|dismiss|paddock, panel close|move")
             }
             // leashed design panels are usable; a paddock-only one is not reachable until the user leashes it
             let notFor = "Not for backend, refactors, tests, docs, invisible fixes."

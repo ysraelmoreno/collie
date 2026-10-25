@@ -8,6 +8,13 @@ import Foundation
         #expect(r.command == "artifact.add" && r.args["path"] == .string("a.html"))
     }
 
+    @Test func connectRepeatsIntoACommaList() throws {
+        let r = try ArgvParser.parse(["summon", "d1", "--preset", "claude", "--connect", "design-1", "--connect", "a,b"])
+        #expect(r.args["connect"] == .string("design-1,a,b"))
+        let o = try ArgvParser.parse(["panel", "open", "design", "--file", "F", "--connect", "d1"])
+        #expect(o.command == "panel.open" && o.args["connect"] == .string("d1"))
+    }
+
     @Test func parsesAskWithRestPrompt() throws {
         let r = try ArgvParser.parse(["ask", "Reviewer", "revise", "o", "PR", "--raw"])
         #expect(r.command == "ask")

@@ -26,6 +26,7 @@ public enum ArgvParser {
             if p.kind == .int {
                 guard let n = Int(v) else { throw bad("--\(key) must be an integer, got \(v)") }
                 args[key] = .number(Double(n))
+            } else if p.repeatable, case .string(let prev)? = args[key] { args[key] = .string(prev + "," + v)
             } else { args[key] = .string(v) }
         }
 

@@ -6,6 +6,8 @@ public enum PanelPlacement: String, Codable, Sendable {
     public init(from d: Decoder) throws { self = PanelPlacement(rawValue: try d.singleValueContainer().decode(String.self)) ?? .canvas }
 }
 public enum StorageScope: String, Codable, Sendable { case isolated, workspace, global }   // default .isolated
+/// Where a plug-in comes from: compiled into Collie, or installed from a folder (`PluginManifest`).
+public enum PluginSource: Sendable, Equatable { case builtIn, external(version: String) }
 
 public struct PluginSpec: Sendable {
     public var id: String; public var title: String
@@ -14,10 +16,11 @@ public struct PluginSpec: Sendable {
     public var events: [String]
     /// true: the daemon runs the commands itself (adb); false: they are forwarded to the app (`ui.host`).
     public var runsInDaemon: Bool
+    public var source: PluginSource
     public init(id: String, title: String, placements: [PanelPlacement], defaultPlacement: PanelPlacement,
-                commands: [CommandSpec], events: [String], runsInDaemon: Bool = false) {
+                commands: [CommandSpec], events: [String], runsInDaemon: Bool = false, source: PluginSource = .builtIn) {
         self.id = id; self.title = title; self.placements = placements; self.defaultPlacement = defaultPlacement
-        self.events = events; self.runsInDaemon = runsInDaemon
+        self.events = events; self.runsInDaemon = runsInDaemon; self.source = source
         self.commands = commands.map { var c = $0; c.params.append(ParamSpec("panel", .string, help: "Panel name (default: the only reachable one)")); return c }
     }
 }

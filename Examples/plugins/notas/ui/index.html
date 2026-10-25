@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Notas</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 12px; font: 13px -apple-system, system-ui, sans-serif;
+         background: var(--collie-background, Canvas); color: var(--collie-text, CanvasText); }
+  form { display: flex; gap: 6px; margin-bottom: 10px; }
+  input { flex: 1; padding: 4px 6px; }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin: 2px 0; }
+  .empty { opacity: .6; }
+</style>
+</head>
+<body>
+<form id="add">
+  <input id="text" placeholder="Nova nota" aria-label="Nova nota" autocomplete="off">
+  <button type="submit">Adicionar</button>
+</form>
+<p id="empty" class="empty">Nenhuma nota ainda.</p>
+<ul id="notes"></ul>
+<script src="app.js"></script>
+</body>
+</html>

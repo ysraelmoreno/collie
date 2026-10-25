@@ -36,6 +36,8 @@ actor CommandRouter {
     nonisolated let systems: DesignSystemService
     /// Pages Collie keeps: html exports and agents' pages.
     nonisolated let artifacts: ArtifactStore
+    /// External plug-ins the user installed (`<root>/plugins`).
+    nonisolated let plugins: PluginStore
     /// What each terminal's agent is doing (`<root>/work`).
     nonisolated let work: WorkStore
     /// The work chat of this workspace (`<root>/work/work-chat-<workspace>.jsonl`).
@@ -113,6 +115,7 @@ actor CommandRouter {
                                     timeoutCap: config.designTimeoutCap)
         self.systems = DesignSystemService(design: design, root: config.paths.root)
         self.artifacts = ArtifactStore(root: config.paths.root)
+        self.plugins = PluginStore(root: config.paths.root)
         let workDir = config.paths.root.appendingPathComponent("work")
         self.work = WorkStore(dir: workDir) { id in Task { await me.router?.workChanged(id) } }
         self.chat = ChatLog(dir: workDir, name: "work-chat-\(config.workspaceId.uuidString.lowercased())")
@@ -235,6 +238,9 @@ actor CommandRouter {
             }
             if req.command.hasPrefix("herd.") {   // admin or Shepherd; app-only ones checked in herdCommand
                 return Response(id: req.id, ok: true, result: try await herdCommand(req, peer: peer))
+            }
+            if req.command.hasPrefix("plugin.") {   // install/uninstall/enable/disable: admin only; list/specs: terminals too
+                return Response(id: req.id, ok: true, result: try await pluginAdminCommand(req, peer: peer))
             }
             if let (plugin, spec) = PluginRegistry.command(req.command) {   // admin or terminal; reach rules in resolvePanel
                 let result = plugin.id == "design" ? try await designCommand(req, peer: peer)

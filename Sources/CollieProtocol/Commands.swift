@@ -26,6 +26,10 @@ public enum Commands {
     /// Commands whose result `path` is a file the daemon made for the caller: a sandboxed terminal gets it cloned into
     /// its own readable `files/` (plan 2O). Never memory files, artifacts, crash logs or anything else under the root.
     public static let outputFile: Set<String> = ["design.screenshot", "design.export", "browser.screenshot", "device.screenshot"]
+    /// Ids an external plug-in can't take: the built-in plug-ins' ids and the first word of every built-in command
+    /// (`panel`, `admin`, `plugin`, `artifact`, `list`...), so its `<id>.<cmd>` never shadows or groups with one.
+    public static let reservedPluginIds: Set<String> = Set(PluginRegistry.all.map(\.id))
+        .union((core + PluginRegistry.all.flatMap(\.commands)).map { String($0.name.prefix { $0 != "." }) })
     static let core: [CommandSpec] = [
         CommandSpec(name: "list", summary: "List connected agents", timeoutSeconds: 10),
         CommandSpec(name: "ask", summary: "Send a prompt to an agent and wait for its reply",
@@ -394,6 +398,22 @@ public enum Commands {
                     params: [ParamSpec("from", .string, required: true, help: "Absolute path of the .colliebackup"),
                              ParamSpec("dryRun", .flag, help: "Only check it and count what it holds")],
                     timeoutSeconds: 600, exposedToMCP: false),
+        // External plug-ins (PluginStore): installing, removing, enabling is the user's alone (as admin.*); a terminal
+        // may read the list and the specs (names, versions, commands; never paths)
+        CommandSpec(name: "plugin.install", summary: "Install an external plug-in from a folder with a collie-plugin.json (the user only: the app, or collie outside a terminal)",
+                    params: [ParamSpec("path", .string, required: true, help: "Plug-in folder (relative to the current directory)")],
+                    timeoutSeconds: 120, exposedToMCP: false),
+        CommandSpec(name: "plugin.uninstall", summary: "Remove an external plug-in (the user only)",
+                    params: [ParamSpec("id", .string, positional: true, required: true, help: "Plug-in id")], timeoutSeconds: 30, exposedToMCP: false),
+        CommandSpec(name: "plugin.enable", summary: "Enable an installed plug-in (the user only)",
+                    params: [ParamSpec("id", .string, positional: true, required: true, help: "Plug-in id")], timeoutSeconds: 60, exposedToMCP: false),
+        CommandSpec(name: "plugin.disable", summary: "Disable an installed plug-in (the user only)",
+                    params: [ParamSpec("id", .string, positional: true, required: true, help: "Plug-in id")], timeoutSeconds: 10, exposedToMCP: false),
+        // ponytail: off MCP (agents' panel commands already are tools); `collie plugin list` from a shell
+        CommandSpec(name: "plugin.list", summary: "Installed external plug-ins [{id,name,version,author,license,enabled,error,commands}]",
+                    timeoutSeconds: 10, exposedToMCP: false),
+        CommandSpec(name: "plugin.specs", summary: "The loaded external plug-ins' manifests (for collie and collie mcp) {plugins}",
+                    timeoutSeconds: 10, exposedToMCP: false),
         // UI streams (admin): the reply line is followed by StreamFrame lines both ways
         CommandSpec(name: "ui.attach", summary: "Stream a terminal (replay, output, input, resize)",
                     params: [ParamSpec("terminal", .string, positional: true, required: true, help: "Terminal id")],

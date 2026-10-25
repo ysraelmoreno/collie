@@ -334,6 +334,12 @@ extension PluginRegistry {
     static let preview = PluginSpec(
         id: "preview", title: "Prévia",
         placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
-        commands: [],
+        commands: [
+            CommandSpec(name: "preview.get", summary: "The panel's page: {file, url, errors} (errors: the page's last 20 uncaught errors and rejections)",
+                        timeoutSeconds: 30),
+            CommandSpec(name: "preview.screenshot", summary: "Screenshot of the page to a PNG file; returns {path, width, height} (pixels at backing scale)",
+                        params: [ParamSpec("full-page", .flag, help: "Whole document, tiled by viewport height"), out],
+                        timeoutSeconds: 60, outputFile: true),
+        ],
         events: [])
 }

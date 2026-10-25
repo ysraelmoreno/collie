@@ -60,8 +60,6 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
     /// `data-theme` set on the page's `<html>`: light | dark | nil (the page's own).
     private(set) var theme: String?
     private var pendingScroll: Double?
-    /// The last command's task: commands run one at a time.
-    var queue: Task<Void, Never>?
 
     /// Errors and theme live in a world of their own: the page can't see, hide or forge them.
     static let world = WKContentWorld.world(name: "collie-preview")
@@ -95,8 +93,24 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
         DiagramPanel.panelRemoved(panel, host: host)
     }
 
+    /// `preview.get`, `preview.screenshot` (agents, through `ui.host`); a panel never shown starts its view first.
     public func handle(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
-        throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(command)'")
+        switch command {
+        case "preview.get":
+            return .object(["file": header.file.flatMap { file == nil ? nil : .string($0) } ?? .null,
+                            "url": pageURL.map { .string($0.absoluteString) } ?? .null,
+                            "errors": .array(errors.map { .string($0) })])
+        case "preview.screenshot":
+            startIfNeeded()
+            let deadline = Date().addingTimeInterval(25)
+            while loads == 0, failure == nil, !closed, Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
+            guard let web = webView, loads > 0 else { throw ProtocolError(code: .unavailable, message: failure ?? "a prévia não carregou a página") }
+            let cg = args["full-page"] == .bool(true) ? try await BrowserPanel.fullPage(web) : try await BrowserPanel.snapshot(web, rect: nil)
+            let dir = host.root.appendingPathComponent("screens", isDirectory: true), prefix = panel.id.uuidString + "-"
+            return try await DiagramPanel.offMain { BrowserPanel.savePNG(cg, in: dir, prefix: prefix) }.get()
+        default:
+            throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(command)'")
+        }
     }
 
     public func close() {

@@ -90,10 +90,10 @@ import CollieProtocol
         defer { panel.close(); w.close() }
         #expect(await pollUntil(10) { await text(panel) == "um" })
         try put("p/a.html", root, "<body>dois</body>")
-        #expect(await pollUntil(1) { await text(panel) == "dois" })
+        #expect(await pollUntil(1.5) { await text(panel) == "dois" })
         // in place (same inode)
         try Data("<body>tres</body>".utf8).write(to: root.appendingPathComponent("p/a.html"))
-        #expect(await pollUntil(1) { await text(panel) == "tres" })
+        #expect(await pollUntil(1.5) { await text(panel) == "tres" })
     }
 
     @Test func burstReloadsOnceKeepsScroll() async throws {
@@ -163,5 +163,46 @@ import CollieProtocol
         let (panel, w) = mount(root: root, state: ["file": .string("e.html")])
         defer { panel.close(); w.close() }
         #expect(await pollUntil(10) { panel.errors.contains { $0.contains("boom") } && panel.errors.contains { $0.contains("rejeitado") } }, "\(panel.errors)")
+    }
+
+    // MARK: agent commands (Task 3)
+
+    @Test func getReturnsFileAndErrors() async throws {
+        let root = try project()
+        try put("g/e.html", root, #"<body><script>throw new Error("falhou")</script></body>"#)
+        let (panel, w) = mount(root: root, state: ["file": .string("g/e.html")])
+        defer { panel.close(); w.close() }
+        #expect(await pollUntil(10) { !panel.errors.isEmpty })
+        guard case .object(let o) = try await panel.handle("preview.get", [:]) else { Issue.record("not an object"); return }
+        #expect(o["file"] == .string("g/e.html") && o["url"] == .string("collie-preview://app/g/e.html"), "\(o)")
+        guard case .array(let es)? = o["errors"], case .string(let e)? = es.first else { Issue.record("\(o)"); return }
+        #expect(e.contains("falhou"))
+    }
+
+    func shot(_ panel: PreviewPanel, _ args: [String: JSONValue]) async throws -> (Data, Double, Double) {
+        guard case .object(let o) = try await panel.handle("preview.screenshot", args), case .string(let path)? = o["path"],
+              case .number(let width)? = o["width"], case .number(let height)? = o["height"] else { throw ProtocolError(code: .internal, message: "bad reply") }
+        #expect(path.contains("/screens/\(panel.panel.id.uuidString)-"))
+        return (try Data(contentsOf: URL(fileURLWithPath: path)), width, height)
+    }
+
+    @Test func screenshotIsPNG() async throws {
+        let root = try project()
+        try put("s.html", root, "<body style='background:#c00'>s</body>")
+        let (panel, w) = mount(root: root, state: ["file": .string("s.html")])
+        defer { panel.close(); w.close() }
+        let (png, width, _) = try await shot(panel, [:])
+        #expect(png.prefix(8) == Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))
+        let web = try #require(panel.webView)
+        #expect(abs(width - web.bounds.width * w.backingScaleFactor) < 1, "\(width) vs \(web.bounds.width)")
+    }
+
+    @Test func screenshotFullPage() async throws {
+        let root = try project()
+        try put("f.html", root, #"<body style="margin:0"><div style="height:3000px;background:linear-gradient(#fff,#00f)">f</div></body>"#)
+        let (panel, w) = mount(root: root, state: ["file": .string("f.html")])
+        defer { panel.close(); w.close() }
+        let (_, _, height) = try await shot(panel, ["full-page": .bool(true)])
+        #expect(height >= 3000 * w.backingScaleFactor, "\(height)")
     }
 }

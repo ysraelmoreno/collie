@@ -78,7 +78,7 @@ private func kanban(_ id: String = "kanban", version: String = "0.1.0", commands
     }
 
     @Test func outputFileFlagForBuiltIns() {
-        #expect(Set(Commands.builtIn.filter(\.outputFile).map(\.name)) == ["design.screenshot", "design.export", "browser.screenshot", "device.screenshot", "diagram.export", "diagram.screenshot"])
+        #expect(Set(Commands.builtIn.filter(\.outputFile).map(\.name)) == ["design.screenshot", "design.export", "browser.screenshot", "device.screenshot", "diagram.export", "diagram.screenshot", "preview.screenshot"])
     }
 
     @Test func registryCommandsAppearInCommandsAndMCP() {

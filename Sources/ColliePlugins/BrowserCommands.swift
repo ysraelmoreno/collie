@@ -180,8 +180,8 @@ extension BrowserPanel {
         guard !full || (clip == nil && ref == nil) else { throw ProtocolError(code: .invalidArgs, message: "--full-page cannot combine with --clip or --ref") }
         container.offscreenFrame()
         let cg: CGImage
-        if full { cg = try await fullPage(web) }
-        else if let clip { cg = try await snapshot(web, rect: try Self.clipRect(clip, in: web.bounds.size)) }
+        if full { cg = try await Self.fullPage(web) }
+        else if let clip { cg = try await Self.snapshot(web, rect: try Self.clipRect(clip, in: web.bounds.size)) }
         else if let ref {
             // a screenshot must not move the viewport: the scroll before is restored, also on error
             let before = try await Self.pageNumbers(web, "return [scrollX, scrollY]")
@@ -191,16 +191,16 @@ extension BrowserPanel {
             guard case .number(let x)? = r["x"], case .number(let y)? = r["y"], case .number(let w)? = r["width"], case .number(let h)? = r["height"] else {
                 throw ProtocolError(code: .internal, message: "browser: bad rect reply")
             }
-            do throws(ProtocolError) { cg = try await snapshot(web, rect: CGRect(x: x, y: y, width: w, height: h)) }
+            do throws(ProtocolError) { cg = try await Self.snapshot(web, rect: CGRect(x: x, y: y, width: w, height: h)) }
             catch { _ = try? await Self.pageNumbers(web, restore); throw error }
             _ = try? await Self.pageNumbers(web, restore)
-        } else { cg = try await snapshot(web, rect: nil) }
+        } else { cg = try await Self.snapshot(web, rect: nil) }
         let dir = host.root.appendingPathComponent("screens", isDirectory: true)
         let prefix = panel.id.uuidString + "-"
         return try await BrowserAutomation.offMain { Self.savePNG(cg, in: dir, prefix: prefix) }.get()
     }
 
-    private func snapshot(_ web: WKWebView, rect: CGRect?) async throws(ProtocolError) -> CGImage {
+    static func snapshot(_ web: WKWebView, rect: CGRect?) async throws(ProtocolError) -> CGImage {
         let config = WKSnapshotConfiguration()
         if let rect { config.rect = rect }   // the web view's bounds are the page viewport (1:1 with CSS px)
         let image: NSImage
@@ -228,7 +228,7 @@ extension BrowserPanel {
     /// meaning) and the scroll position is restored. The last tile is the partial one: the page clamps its scroll, so it overlaps
     /// the previous tile and is drawn at its real offset.
     /// ponytail: the height is measured once at the start (content that grows while capturing, lazy/infinite, is cut; re-measure per tile if needed); viewport width only (no horizontal tiling); fixed/sticky elements repeat per tile; scrolling inside a nested container is not followed.
-    private func fullPage(_ web: WKWebView) async throws(ProtocolError) -> CGImage {
+    static func fullPage(_ web: WKWebView) async throws(ProtocolError) -> CGImage {
         let vh = Int(web.bounds.height)
         let doc = try await Self.pageNumbers(web, "return [Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), scrollX, scrollY]")
         let height = max(doc[0], vh)
@@ -243,7 +243,7 @@ extension BrowserPanel {
                     await new Promise(r => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 150); });
                     return [scrollY]
                     """)[0]
-                let tile = try await snapshot(web, rect: nil)
+                let tile = try await Self.snapshot(web, rect: nil)
                 if ctx == nil {
                     scale = Double(tile.width) / web.bounds.width
                     let h = Int((Double(height) * scale).rounded())
@@ -268,7 +268,7 @@ extension BrowserPanel {
     }
 
     /// Runs `body` (async function body returning an array of numbers) in the page world.
-    private static func pageNumbers(_ web: WKWebView, _ body: String) async throws(ProtocolError) -> [Int] {
+    static func pageNumbers(_ web: WKWebView, _ body: String) async throws(ProtocolError) -> [Int] {
         do {
             let r = try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page) as? [Any]
             return (r ?? []).map { Int(($0 as? NSNumber)?.doubleValue.rounded() ?? 0) }

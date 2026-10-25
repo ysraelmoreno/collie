@@ -28,7 +28,7 @@ manifest="["; sep=""
 while read -r name version path sum licence global; do
   [ -n "$name" ] || continue
   tgz="$TMP/tgz/$name-$version.tgz"
-  curl -fsSL --proto '=https' -o "$tgz" "https://registry.npmjs.org/$name/-/${name##*/}-$version.tgz"
+  curl -fsSL --proto '=https' --proto-redir '=https' -o "$tgz" "https://registry.npmjs.org/$name/-/${name##*/}-$version.tgz"
   got="$(shasum -a 256 "$tgz" | cut -d' ' -f1)"
   if [ "$PRINT" = 1 ]; then echo "$name $version $got"; continue; fi
   [ "$got" = "$sum" ] || { echo "error: sha256 mismatch: $name ($got)" >&2; exit 1; }
@@ -36,7 +36,11 @@ while read -r name version path sum licence global; do
   mkdir -p "$dir" "$x"
   # bsdtar: arguments are patterns; only these members are written
   tar -xzf "$tgz" -C "$x" "package/$path" 'package/LICENSE*'
-  cp "$x/package/$path" "$dir/"; cp "$x"/package/LICENSE* "$dir/"
+  # regular files only: a member that is a link is refused, never followed
+  for f in "$x/package/$path" "$x"/package/LICENSE*; do
+    [ -f "$f" ] && [ ! -L "$f" ] || { echo "error: not a regular file in $name: ${f#"$x/"}" >&2; exit 1; }
+    cp -P "$f" "$dir/"
+  done
   manifest+="$sep"$'\n'"$(printf '  {"name":"%s","version":"%s","files":["%s"],"licence":"%s","global":"%s"}' \
     "$name" "$version" "$(basename "$path")" "$licence" "$global")"; sep=","
 done <<<"$LIBS"

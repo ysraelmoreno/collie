@@ -324,7 +324,8 @@ na URL: atualizar uma biblioteca não muda uma página antiga.
 
 Sem JSX (não há Babel na página): use `htm`. Em build de desenvolvimento rode antes `scripts/fetch-weblibs.sh` (baixa só
 os tarballs do npm, confere o SHA-256 e copia o arquivo UMD + licença para `vendor/weblibs/`); sem ele, `artifact libs`
-responde "Bibliotecas offline ausentes". Licenças: `NOTICE-weblibs` e o `LICENSE` de cada biblioteca em
+responde "Bibliotecas offline ausentes" e `scripts/bundle-app.sh` para com erro (`COLLIE_ALLOW_NO_WEBLIBS=1` empacota
+sem elas). Licenças: `NOTICE-weblibs` e o `LICENSE` de cada biblioteca em
 `Contents/Resources/weblibs/<nome>@<versão>/`.
 
 ## Prévia e modelos
@@ -342,8 +343,10 @@ simbólicos para fora e sem caminhos com ponto (`.env`, `.git/`, `.collie/`), at
 `collie artifact new deck|dashboard|doc|prototype [nome] [--title T]` escreve uma página inicial em
 `docs/pages/<nome>/index.html` (nome em `a-z0-9-`, até 48; padrão `<tipo>-<n>`; nunca sobrescreve) e abre uma Prévia nela.
 Os tokens vêm do design system ativo (Light/Dark em `[data-theme]`); sem design system ativo, ou com o motor de design
-indisponível, a página usa os tokens padrão e `warnings` avisa. As páginas são HTML/CSS/JS sem bibliotecas nem URLs:
-funcionam offline. `deck`: slides 16:9 (←/→/espaço); `dashboard`: indicadores, gráfico SVG de um array `data` e tabela;
+indisponível, a página usa os tokens padrão e `warnings` avisa. As páginas são HTML/CSS/JS que só carregam as
+bibliotecas offline (`collie-lib://`): ícones Lucide em todas, Chart.js no `dashboard`, React + htm no `prototype`; sem
+elas (ou com `scripts/fetch-weblibs.sh` não rodado, aviso `bibliotecas offline ausentes`) a página funciona do mesmo jeito,
+com a nota "Bibliotecas offline indisponíveis". `deck`: slides 16:9 (←/→/espaço); `dashboard`: indicadores, gráfico SVG de um array `data` e tabela;
 `doc`: documento com sumário fixo; `prototype`: casca de app de celular com lista, abas e uma folha.
 
 ## Importar HTML

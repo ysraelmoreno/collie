@@ -48,7 +48,8 @@ cp Resources/NOTICE-weblibs "$APP/Contents/Resources/"
 if [ -f vendor/weblibs/manifest.json ]; then
   mkdir -p "$APP/Contents/Resources/weblibs"
   rsync -a --delete vendor/weblibs/ "$APP/Contents/Resources/weblibs/"
-else echo "warning: vendor/weblibs missing (run scripts/fetch-weblibs.sh): pages get no offline libraries" >&2; fi
+elif [ "${COLLIE_ALLOW_NO_WEBLIBS:-}" = 1 ]; then echo "warning: vendor/weblibs missing: pages get no offline libraries" >&2
+else echo "error: vendor/weblibs missing (run scripts/fetch-weblibs.sh; COLLIE_ALLOW_NO_WEBLIBS=1 bundles without)" >&2; exit 1; fi
 codesign --force --deep -s "$SIGN" --options runtime "$APP"
 codesign -v "$APP"
 echo "ok: $APP"

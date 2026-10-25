@@ -41,7 +41,7 @@ extension CommandRouter {
         }
         let adminCommands: Set<String> = ["memory.review", "memory.restore", "memory.pin", "memory.unpin",
                                           "memory.cleanup", "memory.purge", "memory.repos", "memory.curator",
-                                          "memory.digest", "memory.undo", "memory.resolve", "memory.consolidate"]
+                                          "memory.digest", "memory.undo", "memory.resolve", "memory.confirm", "memory.consolidate"]
         if caller != nil, adminCommands.contains(r.command) {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is admin-only")
         }
@@ -192,9 +192,10 @@ extension CommandRouter {
                 let prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
                 // a likely correction goes to the curator detached: the hook never waits for it
                 // R12: taken at every submit (it starts over); the user's own keystrokes, or a proposal at most
-                let user = asks.provenance.take(me.id, prompt: prompt)
-                if CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id]) || CorrectionDetector.isProcedure(prompt) {
-                    Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt, user: user) }
+                let (user, likely) = asks.provenance.submit(me.id, prompt: prompt)
+                let correction = CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id])
+                if correction || CorrectionDetector.isProcedure(prompt) {
+                    Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt, user: user, likely: likely && correction) }
                 }
                 var left = 2048, parts: [String] = []
                 func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
@@ -315,6 +316,7 @@ extension CommandRouter {
                 guard let d = ISO8601DateFormatter().date(from: s) else { throw invalid("since must be an ISO 8601 date") }
                 return d
             } ?? .distantPast
+            await settleConfirms()
             return .object(["entries": try isoJSON(digest.since(since, openAsks: true)), "curator": try isoJSON(await curator.status())])
 
         case "memory.undo", "memory.resolve":
@@ -323,6 +325,12 @@ extension CommandRouter {
             let keep = try need(r, "keep")
             guard ["newer", "older"].contains(keep) else { throw invalid("keep must be newer|older") }
             return try isoJSON(try await resolveAsk(e, keepNewer: keep == "newer"))
+
+        case "memory.confirm":   // "Parece uma correção sua — confirmar?": Confirmar | Descartar (the app only)
+            guard let e = UUID(uuidString: try need(r, "entry")) else { throw invalid("'entry' must be a digest entry id") }
+            let action = try need(r, "action")
+            guard ["confirm", "discard"].contains(action) else { throw invalid("action must be confirm|discard") }
+            return try isoJSON(try await confirmLikely(e, confirm: action == "confirm"))
 
         case "memory.consolidate":   // run now: the store's cleanup (in the digest) and its cluster job queued
             await consolidate(repo)

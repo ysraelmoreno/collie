@@ -23,6 +23,7 @@ struct PreferencesView: View {
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
     @AppStorage(AppearanceKeys.terminalSize) private var size = Double(TerminalFontChoice.default.size)
     @AppStorage(MemoryDigestNotice.defaultsKey) private var dailyNotification = MemoryDigestNotice.defaultOn
+    @AppStorage(Notifier.confirmKey) private var confirmNotification = Notifier.confirmDefaultOn
 
     private let themes: [(ThemeChoice, String, String, Palette?)] = [
         (.dark, "Escuro", "fundo índigo, menta", .dark), (.light, "Claro", "papel, cobalto", .light),
@@ -81,6 +82,7 @@ struct PreferencesView: View {
                         Toggle("Avisar uma vez por dia o que o Collie aprendeu", isOn: $dailyNotification)
                         Text("Às 18h, se houver algo no Aprendizado de hoje. O resumo fica sempre no painel Memória.")
                             .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                        Toggle("Avisar quando uma correção precisar de confirmação", isOn: $confirmNotification)
                     }
                 }
                 .padding(20).frame(maxWidth: .infinity, alignment: .leading)

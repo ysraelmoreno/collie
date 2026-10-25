@@ -352,6 +352,21 @@ struct ContentView: View {
                    let f = canvas.frames[d.terminal], f.intersects(CGRect(origin: canvas.offset, size: CGSize(width: viewport.width / canvas.zoom, height: viewport.height / canvas.zoom))) { return }
                 notifier.notifyAccess(d, name: client.terminals.first { $0.id == d.terminal }?.name ?? "Terminal")
             }
+            client.onConfirmCorrection = { [notifier, client, store] terminal, entry, title in
+                let mem = client.panels.first { $0.pluginId == "memory" }
+                if let mem { (store.instance(for: mem.id) as? MemoryPanel)?.refresh() }
+                notifier.notifyConfirm(terminal: terminal, entry: entry, rule: title, shown: NSApp.isActive && mem.map { store.isShown($0.id) } == true)
+            }
+            notifier.onConfirm = { [client, store, notifier] _ in
+                Task { @MainActor in
+                    var id = client.panels.first { $0.pluginId == "memory" }?.id
+                    if id == nil { id = try? await client.openPanel(plugin: "memory", name: nil, placement: .dockRight, url: nil, storage: .isolated) }
+                    guard let id else { return }
+                    NotificationCenter.default.post(name: .collieFocusPanel, object: id)   // its dock tab
+                    notifier.onFocus?(id)   // a canvas panel: centered
+                    (store.instance(for: id) as? MemoryPanel)?.refresh(learning: true)
+                }
+            }
             notifier.onFocus = { [canvas, client, paddocks] id in
                 if client.accessCards.contains(where: { $0.terminal == id }) { AccessPopoverState.shared.open.insert(id) }   // only with cards: a stale id would pop open later
                 // a node on another paddock: switch to its paddock first

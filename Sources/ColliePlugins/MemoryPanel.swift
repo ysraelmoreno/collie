@@ -40,6 +40,8 @@ public struct DigestRow: Decodable, Identifiable, Equatable, Sendable {
     public let id: UUID, at: Date, action: String, title: String, reason: String, store: String
     public let created: [UUID], before: [MemoryRecord], undone: Bool, resolved: Bool
     public var isAsk: Bool { action == "ask" }
+    /// "Parece uma correção sua — confirmar?": `title` is the rule, `reason` the user's prompt, `created` the proposal.
+    public var isConfirm: Bool { action == "confirmar" }
 }
 /// The curator's availability and today's usage (`memory.digest`'s `curator`).
 public struct CuratorInfo: Decodable, Equatable, Sendable {
@@ -51,7 +53,7 @@ public enum MemoryDigestNotice {
     public static let defaultsKey = "memory.dailyNotification", lastPostedKey = "memory.dailyNotification.lastPosted"
     public static let defaultOn = false, hour = 18
     public struct Item: Sendable { public var at: Date, ask: Bool; public init(at: Date, ask: Bool) { self.at = at; self.ask = ask } }
-    public static func items(_ rows: [DigestRow]) -> [Item] { rows.filter { !$0.undone && !($0.isAsk && $0.resolved) }.map { Item(at: $0.at, ask: $0.isAsk) } }
+    public static func items(_ rows: [DigestRow]) -> [Item] { rows.filter { !$0.undone && !(($0.isAsk || $0.isConfirm) && $0.resolved) }.map { Item(at: $0.at, ask: $0.isAsk || $0.isConfirm) } }
     /// nil: nothing to post now. "Collie aprendeu <n> coisas, <m> precisa(m) de você" (the `m` part only when > 0).
     public static func message(enabled: Bool, items: [Item], now: Date, lastPosted: Date?, calendar: Calendar = .current) -> String? {
         guard enabled, calendar.component(.hour, from: now) >= hour, lastPosted.map({ !calendar.isDate($0, inSameDayAs: now) }) ?? true else { return nil }
@@ -151,7 +153,7 @@ public enum MemoryDigestNotice {
     /// "Precisa de você" (open asks) first, then "Hoje" and "Esta semana" (the rest of the 7 days), newest first; empty
     /// groups left out.
     public func learningGroups(now: Date = Date(), calendar: Calendar = .current) -> [(title: String, rows: [DigestRow])] {
-        let rows = digest.sorted { $0.at > $1.at }
+        let rows = digest.sorted { $0.at > $1.at }.filter { !$0.isConfirm }
         let groups: [(String, [DigestRow])] = [
             ("Precisa de você", rows.filter { $0.isAsk && !$0.resolved && !$0.undone }),
             ("Hoje", rows.filter { !$0.isAsk && calendar.isDate($0.at, inSameDayAs: now) }),
@@ -168,6 +170,11 @@ public enum MemoryDigestNotice {
             : (Double(t) / 1_000_000).formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "pt_BR"))) + " mi"
         let cost = c.costUSD.formatted(.number.precision(.fractionLength(2)).locale(Locale(identifier: "pt_BR")))
         return "Curador: \(c.today)/\(c.cap) hoje · \(tokens) tokens · US$ \(cost)"
+    }
+    /// Corrections that are probably the user's, waiting for Confirmar (the top of Aprendizado), newest first.
+    public var toConfirm: [DigestRow] { digest.filter { $0.isConfirm && !$0.resolved && !$0.undone }.sorted { $0.at > $1.at } }
+    public func confirm(_ e: DigestRow, _ yes: Bool) async {
+        await change("memory.confirm", ["entry": .string(e.id.uuidString), "action": .string(yes ? "confirm" : "discard")])
     }
     public func undo(_ e: DigestRow) async { await change("memory.undo", ["entry": .string(e.id.uuidString)]) }
     public func resolve(_ e: DigestRow, keepNewer: Bool) async {
@@ -279,6 +286,12 @@ public enum MemoryDigestNotice {
     public init(panel: Panel, host: PanelHostContext) {
         model = MemoryPanelModel(call: host.call)
         view = NSHostingView(rootView: MemoryPanelView(model: model))
+    }
+    /// A correction to confirm arrived: the lists again; `learning`: on the Aprendizado tab (a notification click).
+    /// ponytail: the confirmations sit at the top of the tab, so it isn't scrolled to the row.
+    public func refresh(learning: Bool = false) {
+        if learning { model.tab = .learning }
+        Task { await model.load() }
     }
     public func handle(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         throw ProtocolError(code: .notFound, message: "memory has no commands")
@@ -401,10 +414,23 @@ struct MemoryPanelView: View {
                 }
             }
         }
-        let groups = model.learningGroups()
+        let groups = model.learningGroups(), confirms = model.toConfirm
         // procedures the curator noticed in the works: they wait for the user (approve → active → a skill)
         let noticed = model.proposals.filter { $0.record.kind == .procedure }
-        if groups.isEmpty && noticed.isEmpty { empty("Nada aprendido nesta semana.") }
+        if groups.isEmpty && noticed.isEmpty && confirms.isEmpty { empty("Nada aprendido nesta semana.") }
+        ForEach(confirms) { e in
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Parece uma correção sua — confirmar?").font(.collieUI(12, .semibold)).foregroundStyle(Color.collieAttention)
+                Text("\u{201C}\(e.reason)\u{201D}").font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary).lineLimit(3)
+                Text(e.title).font(.collieUI(15, .semibold)).foregroundStyle(Color.collieText)
+                HStack(spacing: 6) {
+                    act("Confirmar", .primary) { Task { await model.confirm(e, true) } }
+                    act("Descartar", .quiet) { Task { await model.confirm(e, false) } }
+                }.padding(.top, 2)
+            }
+            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+            .collieCard(highlight: Color.collieAttention)
+        }
         if !noticed.isEmpty {
             section("Precisa de você")
             ForEach(noticed) { r in

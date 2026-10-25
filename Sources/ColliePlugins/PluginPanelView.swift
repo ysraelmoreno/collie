@@ -154,6 +154,12 @@ public extension PluginPanelView {
         for p in current where p.placement == .headless && live[p.id] == nil { _ = instance(for: p.id) }
     }
 
+    /// The panel's live view is on screen (in a visible window, not hidden, not scrolled away); never creates a view.
+    public func isShown(_ id: UUID) -> Bool {
+        guard let v = live[id]?.view else { return false }
+        return v.window?.isVisible == true && !v.isHiddenOrHasHiddenAncestor && !v.visibleRect.isEmpty
+    }
+
     /// Delivers a plugin event to the panel's live view; a panel without one drops it (never creates a view).
     public func deliver(panel: UUID, event: String, payload: JSONValue) { live[panel]?.receive(event: event, payload: payload) }
 

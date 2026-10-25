@@ -6,7 +6,7 @@ import CollieProtocol
 struct DigestEntry: Codable, Sendable, Identifiable, Equatable {
     var id: UUID
     var at: Date
-    var action: String   // aprendido|aposentado|mesclado|ativado|descartado|ask
+    var action: String   // aprendido|aposentado|mesclado|ativado|descartado|ask|confirmar
     var title: String
     var reason: String
     var store: String    // RepoMemory.key
@@ -18,6 +18,11 @@ struct DigestEntry: Codable, Sendable, Identifiable, Equatable {
     var job: UUID? = nil
     /// A supersede's successor (not in `created`: undoing a retirement never discards a record it didn't create).
     var by: UUID? = nil
+    /// "confirmar": a correction that is probably the user's (`CorrectionPayload.likelyUser`); `created` is its proposal.
+    var likelyUser: Bool? = nil
+    /// "confirmar": what Confirmar replays with the user's provenance — the job's payload and the curator's ops.
+    var replay: Replay? = nil
+    struct Replay: Codable, Sendable, Equatable { var payload: JSONValue; var ops: JSONValue }
 }
 
 /// `<root>/learning/digest.jsonl` (0600 in a 0700 dir), oldest first, the newest `cap` kept.
@@ -32,9 +37,10 @@ struct MemoryDigest {
         try save(Array((all() + e).suffix(Self.cap)))
     }
 
-    /// Entries at or after `d`, oldest first; `openAsks`: plus the asks still open, however old (L4: they wait for the user).
+    /// Entries at or after `d`, oldest first; `openAsks`: plus the asks (and confirmations) still open, however old (L4:
+    /// they wait for the user).
     func since(_ d: Date, openAsks: Bool = false) -> [DigestEntry] {
-        all().filter { $0.at >= d || openAsks && $0.action == "ask" && !$0.resolved && !$0.undone }
+        all().filter { $0.at >= d || openAsks && ["ask", "confirmar"].contains($0.action) && !$0.resolved && !$0.undone }
     }
 
     func mark(_ ids: [UUID], undone: Bool?, resolved: Bool?) throws {
@@ -93,6 +99,7 @@ extension CommandRouter {
         }
         if e.undone { return e }
         guard e.action != "ask" else { throw ProtocolError(code: .invalidArgs, message: "uma pergunta se resolve (memory.resolve), não se desfaz") }
+        guard e.action != "confirmar" else { throw ProtocolError(code: .invalidArgs, message: "uma confirmação se responde (memory.confirm), não se desfaz") }
         let group = e.job.map { j in es.filter { $0.job == j && !$0.undone && $0.action != "ask" } } ?? [e]
         let before = group.flatMap(\.before)
         let created = Set(group.flatMap(\.created)).subtracting(before.map(\.id))
@@ -123,6 +130,16 @@ extension CommandRouter {
         await memory.restored(back)
         e.undone = true
         return e
+    }
+
+    /// Open confirmations whose proposal is no longer waiting (reviewed in Revisar, expired, gone) are answered.
+    func settleConfirms() async {
+        var done: [UUID] = []
+        for e in digest.since(.distantPast) where e.action == "confirmar" && !e.resolved {
+            if let id = e.created.first, await current(id, e)?.rec.status == .proposed { continue }
+            done.append(e.id)
+        }
+        if !done.isEmpty { try? digest.mark(done, undone: nil, resolved: true) }
     }
 
     /// "Precisa de você": the user keeps the newer or the older of the records the ask names (by when each was last

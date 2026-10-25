@@ -21,6 +21,9 @@ struct CorrectionPayload: Codable, Sendable {
     /// R12: the prompt is the user's own keystrokes (nothing else wrote into the terminal). nil/false: the result is a
     /// proposal only — never active, never supersedes or unpins.
     var user: Bool?
+    /// No exact match, but the app typed and nothing tainted the terminal (`InputProvenance.submit`), with a rule of the
+    /// user's own (R24): the result is still a proposal, highlighted for one-click confirmation.
+    var likelyUser: Bool?
 }
 
 enum MemoryLearning {
@@ -95,8 +98,9 @@ extension CommandRouter {
     /// `proposed` feedback, written before the job is queued (R15: dropped again if the job is refused), so a job that
     /// waits for any reason — no login, the cap — is visible; the job replaces it when it runs. `user`: R12 provenance.
     /// Runs detached from the hook.
-    func enqueueCorrection(terminal: UUID, prompt raw: String, user: Bool = false) async {
+    func enqueueCorrection(terminal: UUID, prompt raw: String, user: Bool = false, likely: Bool = false) async {
         let user = user && CorrectionDetector.hasOwnRule(raw)   // R24: an active rule is grounded in the user's own words
+        let likely = likely && CorrectionDetector.hasOwnRule(raw)
         guard let me = ws.terminals.first(where: { $0.id == terminal }) else { return }
         // R21: the user's corrections and the unproven ones (an agent calling the hook) have separate hourly budgets
         let budget = "\(terminal.uuidString)|\(user)", hourAgo = Date().addingTimeInterval(-3600)
@@ -129,7 +133,7 @@ extension CommandRouter {
         }
         let p = CorrectionPayload(terminal: terminal, name: me.name, family: family.key, lot: lot?.id, lotName: lot?.name,
                                   root: project.root?.path, prompt: prompt, lastTurn: lastTurn[terminal].map(clean), work: work,
-                                  candidates: Array(candidates), proposal: UUID(), user: user)
+                                  candidates: Array(candidates), proposal: UUID(), user: user, likelyUser: likely ? true : nil)
         guard let payload = try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)), let pid = p.proposal else { release(); return }
         let job = CuratorJob(id: UUID(), kind: .correction, store: family.key, payload: payload,
                              dedupe: family.key + "|" + MemoryRecord.normalize(prompt), createdAt: Date(), attempts: 0)
@@ -177,6 +181,51 @@ extension CommandRouter {
         }
         // only an active rule (the user's own correction) is pushed
         for e in entries where e.action == "aprendido" && p.user == true { for id in e.created { await memory.pushRule(id, to: p.terminal) } }
+        if p.likelyUser == true, p.user != true { await askConfirmation(j, p, ops: out.json) }
+    }
+
+    /// "Parece uma correção sua — confirmar?": the rule the job proposed (its id is the job's) gets a digest row holding
+    /// the curator's ops, replayed with the user's provenance on Confirmar, and the app is told (its notification).
+    private func askConfirmation(_ j: CuratorJob, _ p: CorrectionPayload, ops: JSONValue) async {
+        for key in Set([p.family, "global"]) {
+            guard let s = await memory.store(key: key),
+                  let rule = (try? await s.run { $0.store.all().records.first { $0.id == j.id && $0.status == .proposed } }) ?? nil else { continue }
+            let e = DigestEntry(id: UUID(), at: Date(), action: "confirmar", title: rule.title,
+                                reason: MemoryLearning.oneLine(p.prompt, max: MemoryLearning.quoteMax), store: s.key, created: [rule.id],
+                                before: [], undone: false, resolved: false, likelyUser: true, replay: .init(payload: j.payload, ops: ops))
+            do { try digest.append([e]) } catch { memoryLog("digest: \(error)"); return }
+            await hub.emit(.confirmCorrection(terminal: p.terminal, entry: e.id, title: rule.title))
+            return
+        }
+    }
+
+    /// Confirmar (the app's): the job's ops applied again as the user's own correction — the rule active, its supersedes,
+    /// unpins and retractions exactly as an exact match (R13), an "aprendido" row with Desfazer. Descartar: discarded.
+    /// The row is answered either way; one whose proposal the user already reviewed (or that expired) only gets answered.
+    func confirmLikely(_ id: UUID, confirm: Bool) async throws -> DigestEntry {
+        guard var e = digest.since(.distantPast).first(where: { $0.id == id }), e.action == "confirmar", let rid = e.created.first else {
+            throw ProtocolError(code: .notFound, message: "entrada \(id.uuidString.lowercased()) não encontrada")
+        }
+        if e.resolved { return e }
+        let s = await memory.store(key: e.store) ?? memory.global
+        if var rule = (try? await s.run { $0.store.all().records.first { $0.id == rid } }) ?? nil, rule.status == .proposed {
+            if confirm, let replay = e.replay {
+                var p = try JSONDecoder().decode(CorrectionPayload.self, from: JSONEncoder().encode(replay.payload))
+                p.user = true; p.likelyUser = nil; p.proposal = nil   // its waiting quote is long gone
+                let job = CuratorJob(id: rid, kind: .correction, store: p.family, payload: try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)),
+                                     dedupe: "", createdAt: Date(), attempts: 0)
+                let entries = try await applyOps(CuratorOps.validate(replay.ops, scope: Self.correctionScope(p)).ops, job: job)
+                try digest.append(entries)
+                for x in entries where x.action == "aprendido" { for c in x.created { await memory.pushRule(c, to: p.terminal) } }
+            } else {
+                rule.status = .discarded; rule.updatedAt = Date()
+                let r = rule
+                try await s.run { try $0.store.write(r) }
+            }
+        }
+        try digest.mark([id], undone: nil, resolved: true)
+        e.resolved = true
+        return e
     }
 
     static func payload(_ j: CuratorJob) throws(ProtocolError) -> CorrectionPayload {
@@ -288,7 +337,8 @@ extension CommandRouter {
             if scope == .global, family !== memory.global, leaks([n.title, n.subject, body] + n.aliases) { target = family; scope = familyScope }
             var rec = MemoryRecord(id: job.id, kind: n.kind, scope: scope, lotId: target.lotId, subject: subject, title: n.title, body: body,
                                    origin: ctx.name.map { "curador (\($0))" } ?? "curador", aliases: n.aliases)
-            if let done = await find(job.id) { created = done.rec; touched.insert(done.rec.id); continue }   // a retry: already written
+            // a retry: already written (a confirmed likely-user proposal is written again, active)
+            if let done = await find(job.id), !(ctx.user && done.rec.status == .proposed) { created = done.rec; touched.insert(done.rec.id); continue }
             if correction, !ctx.user {
                 rec.status = .proposed   // R12: not proven the user's: the user approves it in the panel
                 let r = rec
@@ -502,7 +552,9 @@ extension CommandRouter {
 
     /// Queued proposal ids (never expire while they wait) and the records of open asks (R18: the only ones that expire).
     func proposalState() async -> (keep: Set<UUID>, asked: Set<UUID>) {
-        let asked = digest.since(.distantPast).filter { $0.action == "ask" && !$0.resolved && !$0.undone }.flatMap { $0.before.map(\.id) }
+        let open = digest.since(.distantPast).filter { !$0.resolved && !$0.undone }
+        // a likely-user proposal waits like an ask (R18): 14 days unanswered, then discarded-restorable
+        let asked = open.filter { $0.action == "ask" }.flatMap { $0.before.map(\.id) } + open.filter { $0.action == "confirmar" }.flatMap(\.created)
         return (await queuedProposalIds(), Set(asked))
     }
 

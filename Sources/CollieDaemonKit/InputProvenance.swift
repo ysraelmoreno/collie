@@ -8,17 +8,20 @@ final class InputProvenance: @unchecked Sendable {   // state under `lock`
     private let lock = NSLock()
     private var typed: [UUID: Data] = [:]
     private var tainted: Set<UUID> = []
+    /// The app typed into it since the last submit (a mismatched submit keeps `typed`, not this).
+    private var fresh: Set<UUID> = []
 
     func typed(_ terminal: UUID, _ d: Data) {
         lock.withLock {
             var b = typed[terminal] ?? Data()
             b.append(d)
             typed[terminal] = b.count > Self.cap ? b.suffix(Self.cap) : b
+            fresh.insert(terminal)
         }
     }
 
     /// What the user typed before a Collie write can't be told apart from it: the buffer starts over too.
-    func taint(_ terminal: UUID) { lock.withLock { _ = tainted.insert(terminal); typed[terminal] = nil } }
+    func taint(_ terminal: UUID) { lock.withLock { _ = tainted.insert(terminal); typed[terminal] = nil; fresh.remove(terminal) } }
     func isTainted(_ terminal: UUID) -> Bool { lock.withLock { tainted.contains(terminal) } }
     func hasTyped(_ terminal: UUID) -> Bool { lock.withLock { !(typed[terminal]?.isEmpty ?? true) } }   // tests
 
@@ -26,15 +29,21 @@ final class InputProvenance: @unchecked Sendable {   // state under `lock`
     /// line editing, to the whole buffer or to its last lines (stale lines a mismatched submit left before them); a
     /// fragment of a line never counts. R21: only a match consumes the buffer — another caller's prompt (an agent calling
     /// the hook itself) leaves the user's keystrokes alone. Any submit clears the taint.
-    func take(_ terminal: UUID, prompt: String) -> Bool {
+    func take(_ terminal: UUID, prompt: String) -> Bool { submit(terminal, prompt: prompt).user }
+
+    /// `take`, plus `likely`: no match, but the app typed into the terminal since the last submit and nothing tainted it
+    /// (a history recall, Tab/@ completion, cursor edits, an image paste): very probably the user's — asked, never assumed.
+    func submit(_ terminal: UUID, prompt: String) -> (user: Bool, likely: Bool) {
         lock.withLock {
-            let wasTainted = tainted.remove(terminal) != nil
+            let wasTainted = tainted.remove(terminal) != nil, wasTyped = fresh.remove(terminal) != nil
             let p = Self.collapse(prompt)
-            guard !wasTainted, !p.isEmpty, let d = typed[terminal] else { return false }
-            let lines = Self.text(d).split(separator: "\n").map { Self.collapse(String($0)) }.filter { !$0.isEmpty }
-            guard (1...max(1, lines.count)).contains(where: { k in lines.count >= k && lines.suffix(k).joined(separator: " ") == p }) else { return false }
+            guard !wasTainted, !p.isEmpty else { return (false, false) }
+            let lines = typed[terminal].map { Self.text($0).split(separator: "\n").map { Self.collapse(String($0)) }.filter { !$0.isEmpty } } ?? []
+            guard (1...max(1, lines.count)).contains(where: { k in lines.count >= k && lines.suffix(k).joined(separator: " ") == p }) else {
+                return (false, wasTyped)
+            }
             typed[terminal] = nil
-            return true
+            return (true, false)
         }
     }
 

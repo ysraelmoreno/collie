@@ -524,3 +524,129 @@ private func curated(_ out: CuratorOutput? = nil) -> (FakeCurator, (inout Daemon
         }
     }
 }
+
+/// The app typed ↑ then Enter (a history recall): the submitted text is not what it typed.
+private func recalled(_ d: Daemon, _ p: Paths, _ t: Term, _ prompt: String) async throws -> String {
+    await d.router.asks.provenance.typed(t.uuid, Data("\u{1B}[A\r".utf8))
+    return try await relevant(p, t, prompt)
+}
+private func toConfirm(_ d: Daemon) async -> DigestEntry? { await d.router.digest.since(.distantPast).first { $0.action == "confirmar" } }
+private let likelyPrompt = "não, use SQLite em vez do Postgres pool no índice local da memória"
+private let ruleTitle = "Use SQLite, nunca o Postgres pool"
+
+/// "Parece uma correção sua — confirmar?": the app typed, nothing tainted, but the exact match failed.
+@Suite(.serialized) struct LikelyUserCorrectionTests {
+    @Test func likelyUserWhenHistoryRecall() async throws {
+        let repo = try await makeRepo()
+        let x = rec("Use Postgres pool", subject: "db", body: "postgres pool sizing")
+        let (fake, cfg) = curated(ops([createFeedback(), supersede(x.id)]))
+        try await withDaemon(configure: cfg) { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            let store = await d.router.memory.repo(for: repo.path)
+            _ = try await store.run { try $0.store.save(x) }
+            _ = try await recalled(d, p, a, likelyPrompt)
+            #expect(await waitFor(10) { await toConfirm(d) != nil })
+            let e = try #require(await toConfirm(d))
+            let recs = try await all(store)
+            let rule = try #require(recs.first { $0.kind == .feedback && $0.title == ruleTitle })
+            #expect(rule.status == .proposed && e.created == [rule.id] && e.likelyUser == true && !e.resolved)
+            #expect(e.title == ruleTitle && e.reason.contains("use SQLite em vez do Postgres pool"), "\(e.reason)")
+            #expect(recs.first { $0.id == x.id }?.status == .active)   // nothing superseded until confirmed
+            #expect(await d.router.proposalState().asked.contains(rule.id))   // R18: expires like "Precisa de você"
+            #expect(fake.calls == 1)
+        }
+    }
+
+    @Test func agentTaintNoHighlight() async throws {
+        let repo = try await makeRepo()
+        let (fake, cfg) = curated(ops([createFeedback()]))
+        try await withDaemon(configure: cfg) { d, p in
+            let a = try await term(d, p, "A", cwd: repo), b = try await term(d, p, "B", cwd: repo)
+            #expect(try await admin(d, p, "admin.leash", ["a": "B", "b": "A"]).ok)
+            let asking = Task { try? await call(p, b, "ask", ["target": "A", "prompt": "rode os testes", "timeout": "5"]) }
+            defer { asking.cancel() }
+            #expect(await waitFor(10) { await d.router.asks.provenance.isTainted(a.uuid) })
+            _ = try await recalled(d, p, a, likelyPrompt)
+            #expect(await waitFor(10) { fake.calls == 1 })
+            #expect(await waitFor(10) { await d.router.curator.queued(kind: .correction).isEmpty })
+            #expect(try await all(d.router.memory.repo(for: repo.path)).contains { $0.title == ruleTitle && $0.status == .proposed })
+            #expect(await toConfirm(d) == nil)
+        }
+    }
+
+    @Test func noAppTypingNoHighlight() async throws {
+        let repo = try await makeRepo()
+        let (fake, cfg) = curated(ops([createFeedback()]))
+        try await withDaemon(configure: cfg) { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            _ = try await relevant(p, a, likelyPrompt)
+            #expect(await waitFor(10) { fake.calls == 1 })
+            #expect(await waitFor(10) { await d.router.curator.queued(kind: .correction).isEmpty })
+            #expect(try await all(d.router.memory.repo(for: repo.path)).contains { $0.title == ruleTitle && $0.status == .proposed })
+            #expect(await toConfirm(d) == nil)
+        }
+    }
+
+    @Test func shortPromptNotLikely() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in   // unavailable: the jobs stay queued
+            let a = try await term(d, p, "A", cwd: repo)
+            _ = try await recalled(d, p, a, "não, use SQLite")
+            _ = try await recalled(d, p, a, likelyPrompt)
+            #expect(await waitFor(10) { await d.router.curator.queued(kind: .correction).count == 2 })
+            let jobs = try await d.router.curator.queued(kind: .correction).map(payload)
+            #expect(jobs.first { $0.prompt == "não, use SQLite" }?.likelyUser != true)
+            #expect(jobs.first { $0.prompt == likelyPrompt }?.likelyUser == true)
+            #expect(jobs.allSatisfy { $0.user != true })
+        }
+    }
+
+    @Test func confirmMakesActiveWithSupersede() async throws {
+        let repo = try await makeRepo()
+        let x = rec("Use Postgres pool", subject: "db", body: "postgres pool sizing", pinned: true)
+        let (_, cfg) = curated(ops([createFeedback(), supersede(x.id)]))
+        try await withDaemon(configure: cfg) { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            let store = await d.router.memory.repo(for: repo.path)
+            _ = try await store.run { try $0.store.save(x) }
+            _ = try await call(p, a, "memory.hookContext")   // X (pinned) reaches A
+            _ = try await recalled(d, p, a, likelyPrompt)
+            #expect(await waitFor(10) { await toConfirm(d) != nil })
+            let e = try #require(await toConfirm(d))
+            let r = try await admin(d, p, "memory.confirm", ["entry": e.id.uuidString, "action": "confirm"])
+            #expect(r.ok, "\(r)")
+            let recs = try await all(store)
+            let rule = try #require(recs.first { $0.title == ruleTitle })
+            let old = try #require(recs.first { $0.id == x.id })
+            #expect(rule.status == .active && old.status == .superseded && old.supersededBy == rule.id && !old.pinned)
+            let next = try await relevant(p, a, "ok")
+            #expect(next.hasPrefix("Memória retirada (Collie):\nNão vale mais: Use Postgres pool. Use: \(ruleTitle)."), "\(next)")
+            #expect(next.contains("Regra nova do usuário (Collie):\n- [regra] \(ruleTitle)"), "\(next)")
+            let digest = await d.router.digest.since(.distantPast)
+            #expect(digest.first { $0.id == e.id }?.resolved == true)
+            let learned = try #require(digest.first { $0.action == "aprendido" })
+            #expect(learned.created == [rule.id])
+            #expect(try await admin(d, p, "memory.undo", ["entry": learned.id.uuidString]).ok)   // Desfazer
+            let after = try await all(store)
+            #expect(after.first { $0.id == rule.id }?.status == .discarded && after.first { $0.id == x.id }?.status == .active)
+        }
+    }
+
+    @Test func agentCannotConfirm() async throws {
+        let repo = try await makeRepo()
+        let (_, cfg) = curated(ops([createFeedback()]))
+        try await withDaemon(configure: cfg) { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            _ = try await recalled(d, p, a, likelyPrompt)
+            #expect(await waitFor(10) { await toConfirm(d) != nil })
+            let e = try #require(await toConfirm(d))
+            let store = await d.router.memory.repo(for: repo.path)
+            #expect(!(try await call(p, a, "memory.confirm", ["entry": e.id.uuidString, "action": "confirm"])).ok)
+            #expect(try await all(store).first { $0.id == e.created.first }?.status == .proposed)
+            // Descartar: discarded, the row answered
+            #expect(try await admin(d, p, "memory.confirm", ["entry": e.id.uuidString, "action": "discard"]).ok)
+            #expect(try await all(store).first { $0.id == e.created.first }?.status == .discarded)
+            #expect(await toConfirm(d)?.resolved == true)
+        }
+    }
+}

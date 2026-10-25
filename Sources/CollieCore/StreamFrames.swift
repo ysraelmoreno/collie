@@ -141,9 +141,11 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
          /// An access card for the app (new, or its count updated): a sandbox denial or an agent's request.
          sandboxDenied(SandboxDenial),
          /// Whether the daemon sees sandbox denials (its `log stream` runs); false: "detecção indisponível".
-         sandboxDetection(available: Bool)
+         sandboxDetection(available: Bool),
+         /// A correction that is probably the user's waits for Confirmar (digest `entry`); `title` is the rule.
+         confirmCorrection(terminal: UUID, entry: UUID, title: String)
 
-    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l, d, ok }
+    private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l, d, ok, e }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -171,6 +173,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
                                      paddock: try c.decodeIfPresent(UUID.self, forKey: .paddock))
         case "sandboxDenied": self = .sandboxDenied(try c.decode(SandboxDenial.self, forKey: .d))
         case "sandboxDetection": self = .sandboxDetection(available: try c.decode(Bool.self, forKey: .ok))
+        case "confirmCorrection":
+            self = .confirmCorrection(terminal: try id(), entry: try c.decode(UUID.self, forKey: .e), title: try c.decode(String.self, forKey: .name))
         case let t: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "unknown event '\(t)'")
         }
     }
@@ -200,6 +204,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
             try c.encodeIfPresent(anchor, forKey: .anchor); try c.encode(frames, forKey: .frames); try c.encodeIfPresent(paddock, forKey: .paddock)
         case .sandboxDenied(let x): try c.encode("sandboxDenied", forKey: .t); try c.encode(x, forKey: .d)
         case .sandboxDetection(let ok): try c.encode("sandboxDetection", forKey: .t); try c.encode(ok, forKey: .ok)
+        case .confirmCorrection(let t, let e, let title):
+            try c.encode("confirmCorrection", forKey: .t); try c.encode(t, forKey: .id); try c.encode(e, forKey: .e); try c.encode(title, forKey: .name)
         }
     }
 }

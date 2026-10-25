@@ -36,6 +36,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// A new grantable access card (not an update of an open one, not a refused one).
     @ObservationIgnored public var onAccessCard: ((SandboxDenial) -> Void)?
     @ObservationIgnored public var onNotify: ((UUID, String) -> Void)?
+    /// (terminal, digest entry, rule title): a correction that is probably the user's waits for Confirmar.
+    @ObservationIgnored public var onConfirmCorrection: ((UUID, UUID, String) -> Void)?
     /// Called (main actor) on `herd.applied`: applying terminal (nil = the app), anchor Shepherd, frames by node id,
     /// the paddock it created.
     @ObservationIgnored public var onHerdApplied: ((UUID?, UUID?, [String: HerdFrame], UUID?) -> Void)?
@@ -201,6 +203,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             if let i = accessCards.firstIndex(where: { Self.sameCard($0, d) }) { accessCards[i] = d }
             else { accessCards.append(d); if d.refusal == nil { onAccessCard?(d) } }
         case .sandboxDetection(let ok): detection = ok
+        case .confirmCorrection(let t, let e, let title): onConfirmCorrection?(t, e, title)
         }
     }
     private func same(_ x: Connection, _ y: Connection) -> Bool { Set([x.a, x.b]) == Set([y.a, y.b]) }

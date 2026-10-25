@@ -48,22 +48,31 @@ import CollieProtocol
         let h = PreviewSchemeHandler(root: root)
         let t = DesignPanelTests.FakeTask(URLRequest(url: URL(string: "collie-preview://app/docs/pages/d/app.css")!))
         h.webView(WKWebView(), start: t)
+        #expect(await pollUntil(2) { t.finished })   // read off the main thread
         #expect(t.response?.statusCode == 200 && t.response?.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("text/css") == true)
         #expect(String(decoding: t.body, as: UTF8.self).contains("rgb(1, 2, 3)"))
     }
 
-    @Test func dotPathIs404() throws {
+    @Test func dotPathIs404() async throws {
         let root = try project()
         try put(".env", root, "SECRET=1"); try put(".git/config", root, "x"); try put("a.html", root, "ok")
         let h = PreviewSchemeHandler(root: root)
         for path in [".env", ".git/config", "%2e%2e/%2e%2e/etc/hosts", "missing.html"] {
             let t = DesignPanelTests.FakeTask(URLRequest(url: URL(string: "collie-preview://app/\(path)")!))
             h.webView(WKWebView(), start: t)
+            #expect(await pollUntil(2) { t.finished })
             #expect(t.response?.statusCode == 404 && t.body.isEmpty, "\(path)")
         }
         let other = DesignPanelTests.FakeTask(URLRequest(url: URL(string: "collie-preview://elsewhere/a.html")!))
         h.webView(WKWebView(), start: other)
+        #expect(await pollUntil(2) { other.finished })
         #expect(other.response?.statusCode == 404)
+        // stopped before the read finishes: no late reply
+        let gone = DesignPanelTests.FakeTask(URLRequest(url: URL(string: "collie-preview://app/a.html")!))
+        let web = WKWebView()
+        h.webView(web, start: gone); h.webView(web, stop: gone)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!gone.finished && gone.response == nil)
     }
 
     @Test func noNetwork() async throws {
@@ -234,7 +243,7 @@ import CollieProtocol
         try put("docs/pages/d/index.html", root, "<body>x</body>")
         let (panel, w) = mount(root: root, state: ["file": .string("docs/pages/d/index.html")])
         defer { panel.close(); w.close() }
-        let a = panel.saveArgs()
+        let a = try panel.saveArgs()
         #expect(a["path"] == .string(root.path + "/docs/pages/d/index.html") && a["root"] == .string(root.path + "/docs/pages/d"), "\(a)")
         #expect(a["title"] == .string("index.html"))
     }
@@ -244,7 +253,7 @@ import CollieProtocol
         try put("a.html", root, "<body>x</body>")
         let (panel, w) = mount(root: root, state: ["file": .string("a.html")])
         defer { panel.close(); w.close() }
-        let a = panel.saveArgs()
+        let a = try panel.saveArgs()
         #expect(a["path"] == .string(root.path + "/a.html") && a["root"] == nil, "\(a)")
     }
 
@@ -253,7 +262,7 @@ import CollieProtocol
         try put("p/t.html", root, "<html><head><TITLE>  Meu título\n</TITLE></head><body>x</body></html>")
         let (panel, w) = mount(root: root, state: ["file": .string("p/t.html")])
         defer { panel.close(); w.close() }
-        #expect(panel.saveArgs()["title"] == .string("Meu título"))
+        #expect(try panel.saveArgs()["title"] == .string("Meu título"))
     }
 
     @Test func artifactModeHidesSaveButtons() throws {
@@ -293,5 +302,64 @@ import CollieProtocol
     actor Calls {
         var all: [(String, [String: JSONValue])] = []
         func add(_ c: String, _ a: [String: JSONValue]) { all.append((c, a)) }
+    }
+
+    // MARK: final review
+
+    @Test func measuresAreClamped() {
+        let n = BrowserPanel.measures([Double.nan, Double.infinity, -Double.infinity, 1e308, -5.0, 42.6, "x"])
+        #expect(n == [0, 0, 0, BrowserPanel.measureCap, 0, 43, 0], "\(n)")
+    }
+
+    /// The page patches what the full-page screenshot measures: the measure runs in its own world, so it is not fooled
+    /// (and nothing it returns can trap the app).
+    @Test func fullPageIgnoresPatchedMeasures() async throws {
+        let root = try project()
+        try put("m.html", root, """
+            <body style="margin:0"><div style="height:1500px">m</div><script>
+            Math.max = () => 1e308; Math.round = () => NaN;
+            Object.defineProperty(window, 'scrollY', { get: () => NaN }); Object.defineProperty(window, 'scrollX', { get: () => Infinity });
+            Object.defineProperty(Element.prototype, 'scrollHeight', { get: () => 1e308 });
+            </script></body>
+            """)
+        let (panel, w) = mount(root: root, state: ["file": .string("m.html")])
+        defer { panel.close(); w.close() }
+        let (png, _, height) = try await shot(panel, ["full-page": .bool(true)])
+        #expect(png.prefix(4) == Data([0x89, 0x50, 0x4E, 0x47]))
+        #expect(height >= 1500 * w.backingScaleFactor && height < 1600 * w.backingScaleFactor, "\(height)")
+    }
+
+    @Test func cameraAndMicDenied() {
+        let sel = #selector(WKUIDelegate.webView(_:requestMediaCapturePermissionFor:initiatedByFrame:type:decisionHandler:))
+        #expect(PreviewPanel.instancesRespond(to: sel))
+    }
+
+    /// The page's folder swapped for a link out after the Prévia opened: Salvar refuses, nothing is added.
+    @Test func saveRefusesSymlinkedFolder() async throws {
+        let root = try project(), outside = try project()
+        try put("docs/pages/x/index.html", root, "<body>x</body>")
+        try put("index.html", outside, "<title>Fora</title><body>segredo</body>")
+        let calls = Calls()
+        let (panel, w) = mount(root: root, state: ["file": .string("docs/pages/x/index.html")]) { cmd, args throws(ProtocolError) in
+            await calls.add(cmd, args); return .object(["id": .string("a1")])
+        }
+        defer { panel.close(); w.close() }
+        let dir = root.appendingPathComponent("docs/pages/x")
+        try FileManager.default.removeItem(at: dir)
+        try FileManager.default.createSymbolicLink(at: dir, withDestinationURL: outside)
+        #expect(throws: ProtocolError.self) { _ = try panel.saveArgs() }
+        #expect(await panel.save() == nil)
+        #expect(await calls.all.isEmpty && panel.header.error != nil)
+    }
+
+    @Test func artifactModeServesNoProjectFiles() async throws {
+        let root = try project(), data = try project(), id = UUID().uuidString.lowercased()
+        try put("artifacts/\(id)/source.html", data, "<body>a</body>")
+        let (panel, w) = mount(root: root, state: ["artifact": .string(id)], dataRoot: data) { _, _ throws(ProtocolError) in
+            .object(["url": .string("collie-artifact://app/\(id)/source.html")])
+        }
+        defer { panel.close(); w.close() }
+        #expect(await pollUntil(10) { panel.loads > 0 })
+        #expect(panel.webView?.configuration.urlSchemeHandler(forURLScheme: PreviewSchemeHandler.scheme) == nil)
     }
 }

@@ -7,13 +7,16 @@ import WebKit
 
 /// Serves `collie-preview://app/<path>` from the panel's project: only what `PreviewFile.servable` allows (no dot-path,
 /// nothing outside the root, no symlink out), read without following links (`DiagramFile.readData`), at most 8 MiB.
-/// Everything else is a 404 with an empty body. The page is agent-written: untrusted.
-final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
-    static let scheme = "collie-preview"
+/// Everything else is a 404 with an empty body. The page is agent-written: untrusted. Files are read off the main
+/// thread; a request stopped meanwhile gets no reply.
+@MainActor final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
+    nonisolated static let scheme = "collie-preview"
     let root: URL
+    /// The requests started and not stopped nor answered (main thread only).
+    private var live: Set<ObjectIdentifier> = []
     init(root: URL) { self.root = root }
 
-    func serve(_ r: URLRequest) -> (Int, String, Data) {
+    nonisolated static func serve(_ r: URLRequest, root: URL) -> (Int, String, Data) {
         guard (r.httpMethod ?? "GET") == "GET", let url = r.url, url.host == "app",
               let file = PreviewFile.servable(url.path(percentEncoded: true), projectRoot: root),
               let data = (try? DiagramFile.readData(file, root: root, noun: "página")) ?? nil else { return (404, "text/plain", Data()) }
@@ -21,7 +24,16 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
-        let (status, type, data) = serve(task.request)
+        let id = ObjectIdentifier(task), request = task.request, root = root
+        live.insert(id)
+        Task { [weak self] in
+            let r = await Task.detached { Self.serve(request, root: root) }.value
+            guard let self, self.live.remove(id) != nil else { return }
+            Self.reply(task, r)
+        }
+    }
+    private static func reply(_ task: any WKURLSchemeTask, _ r: (Int, String, Data)) {
+        let (status, type, data) = r
         guard let url = task.request.url,
               let resp = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1",
                                          headerFields: ["Content-Type": type, "Content-Length": "\(data.count)", "Cache-Control": "no-store"]) else {
@@ -31,7 +43,7 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
         if !data.isEmpty { task.didReceive(data) }
         task.didFinish()
     }
-    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}   // answered synchronously in `start`
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) { live.remove(ObjectIdentifier(task)) }
 }
 
 /// The Prévia plug-in's view: a project page (`state["file"]` under `state["root"]`) live — reloaded within 1 s of a
@@ -65,7 +77,8 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
     /// saves again.
     private(set) var saved: String?
 
-    /// Errors and theme live in a world of their own: the page can't see, hide or forge them.
+    /// Errors and theme live in a world of their own: the page can't reach the message handler. It can still dispatch a
+    /// fake `ErrorEvent` or stop the real ones (DOM events are shared): the errors are diagnostics, not evidence.
     static let world = WKContentWorld.world(name: "collie-preview")
     static let errorScript = """
         (() => {
@@ -189,7 +202,7 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list
-        if let root = projectRoot { config.setURLSchemeHandler(PreviewSchemeHandler(root: root), forURLScheme: PreviewSchemeHandler.scheme) }
+        if artifactId == nil, let root = projectRoot { config.setURLSchemeHandler(PreviewSchemeHandler(root: root), forURLScheme: PreviewSchemeHandler.scheme) }
         config.setURLSchemeHandler(DesignSchemeHandler(root: host.root.appendingPathComponent("artifacts"), artifacts: true),
                                    forURLScheme: BrowserPanel.artifactScheme)
         config.userContentController.add(rules)
@@ -255,13 +268,17 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
 
     // MARK: out of the panel
 
-    /// `artifact.add`'s arguments for the page: its absolute path, its `<title>` (else the file name), and its folder as
-    /// `root` (the files it links) unless that is the project root.
-    func saveArgs() -> [String: JSONValue] {
-        guard let file, let root = projectRoot else { return [:] }
-        var args: [String: JSONValue] = ["path": .string(file.path), "title": .string(file.lastPathComponent)]
-        if let data = (try? DiagramFile.readData(file, root: root, noun: "página")) ?? nil,
-           let m = String(decoding: data, as: UTF8.self).firstMatch(of: /(?is)<title[^>]*>(.*?)<\/title>/) {
+    /// `artifact.add`'s arguments for the page: its absolute path, its `<title>` (else the file name), its folder as
+    /// `root` (the files it links) unless that is the project root, and `nofollow`. Refused when the page no longer
+    /// resolves to the same file (a folder swapped for a link) or can't be read without following one.
+    func saveArgs() throws(ProtocolError) -> [String: JSONValue] {
+        guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "a prévia não tem página") }
+        let moved = ProtocolError(code: .invalidArgs, message: "a pasta da página mudou (link simbólico?): reabra a prévia")
+        guard try PreviewFile.resolve(string("file") ?? "", projectRoot: root) == file,
+              DiagramFile.real(file.deletingLastPathComponent()) == file.deletingLastPathComponent() else { throw moved }
+        guard let data = try DiagramFile.readData(file, root: root, noun: "página") else { throw ProtocolError(code: .notFound, message: "Arquivo removido") }
+        var args: [String: JSONValue] = ["path": .string(file.path), "title": .string(file.lastPathComponent), "nofollow": .bool(true)]
+        if let m = String(decoding: data, as: UTF8.self).firstMatch(of: /(?is)<title[^>]*>(.*?)<\/title>/) {
             let t = m.1.trimmingCharacters(in: .whitespacesAndNewlines)
             if !t.isEmpty { args["title"] = .string(String(t.prefix(200))) }
         }
@@ -276,7 +293,7 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
         header.error = nil; header.busy = true
         defer { header.busy = false }
         do throws(ProtocolError) {
-            guard case .object(let o) = try await host.call("artifact.add", saveArgs()), case .string(let id)? = o["id"] else {
+            guard case .object(let o) = try await host.call("artifact.add", try saveArgs()), case .string(let id)? = o["id"] else {
                 header.error = "Resposta inválida do Collie"; return nil
             }
             saved = id
@@ -433,6 +450,9 @@ extension PreviewPanel: WKNavigationDelegate, WKUIDelegate {
     }
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
+    /// Camera and microphone: never (no prompt either).
+    public func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
+                        type: WKMediaCaptureType, decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void) { decisionHandler(.deny) }
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { errors = [] }
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loads += 1

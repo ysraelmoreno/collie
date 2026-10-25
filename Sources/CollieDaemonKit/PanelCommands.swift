@@ -50,9 +50,10 @@ extension CommandRouter {
             if let me = caller, await registry.process(me.id)?.isRunning != true {
                 throw ProtocolError(code: .notRunning, message: "terminal '\(me.name)' is not running")
             }
-            if tester, let me = caller, ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == pluginId }) >= Self.testerBrowserCap {
-                let what = pluginId == "preview" ? "Prévias" : "browsers"
-                throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open \(what) per terminal; close one with `panel close`")
+            if tester, let me = caller, pluginId == "preview" { try reservePreview(me) }
+            defer { if tester, let me = caller, pluginId == "preview" { releasePreview(me) } }
+            if tester, let me = caller, pluginId == "browser", ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == pluginId }) >= Self.testerBrowserCap {
+                throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open browsers per terminal; close one with `panel close`")
             }
             guard let storage = StorageScope(rawValue: str(r, "storage") ?? "isolated") else {
                 throw ProtocolError(code: .invalidArgs, message: "storage must be isolated|workspace|global")
@@ -277,6 +278,19 @@ extension CommandRouter {
         try await link(t.id, p.id)
     }
     func unleash(_ t: TerminalRecord, _ p: Panel) async throws { try await unlink(t.id, p.id) }
+
+    /// A non-Shepherd's Prévia about to open: refused past the cap, counting those still opening; `releasePreview` after.
+    func reservePreview(_ me: TerminalRecord) throws(ProtocolError) {
+        let open = ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == "preview" })
+        guard open + previewsOpening[me.id, default: 0] < Self.testerBrowserCap else {
+            throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open Prévias per terminal; close one with `panel close`")
+        }
+        previewsOpening[me.id, default: 0] += 1
+    }
+    func releasePreview(_ me: TerminalRecord) {
+        previewsOpening[me.id, default: 1] -= 1
+        if previewsOpening[me.id] == 0 { previewsOpening[me.id] = nil }
+    }
 
     /// Max open browser panels per non-Shepherd terminal.
     static let testerBrowserCap = 8

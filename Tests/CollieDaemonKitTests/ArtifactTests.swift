@@ -605,4 +605,31 @@ extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSyste
             #expect(e?.code == .invalidArgs && e?.message.contains("deck|dashboard|doc|prototype") == true, "\(String(describing: e))")
         }
     }
+
+    /// Many `artifact new` at once from one terminal: the 8-Prévia cap counts the ones still opening.
+    @Test func newCapCountsInFlight() async throws {
+        try await withProject { d, p, a, _ in
+            let rs = try await withThrowingTaskGroup(of: Response.self) { g in
+                for i in 0..<12 { g.addTask { try await call(p, a, "artifact.new", ["kind": "doc", "name": "d\(i)"]) } }
+                return try await g.reduce(into: []) { $0.append($1) }
+            }
+            #expect(rs.count(where: { $0.ok }) == CommandRouter.testerBrowserCap, "\(rs.map { $0.error?.message ?? "ok" })")
+            #expect(await d.router.ws.panels.count(where: { $0.pluginId == "preview" }) == CommandRouter.testerBrowserCap)
+        }
+    }
+
+    /// `artifact.add --nofollow` (the Prévia's save): a root or page reached through a link is refused, nothing copied.
+    @Test func addNoFollowRefusesLinkedRoot() async throws {
+        try await withProject { d, p, a, proj in
+            let outside = URL(fileURLWithPath: "/tmp/collie-out-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: outside) }
+            try Data("<body>segredo</body>".utf8).write(to: outside.appendingPathComponent("index.html"))
+            let real = DiagramFile.real(proj)
+            try FileManager.default.createSymbolicLink(at: real.appendingPathComponent("x"), withDestinationURL: outside)
+            let e = try await admin(d, p, "artifact.add", ["path": real.path + "/x/index.html", "root": real.path + "/x", "nofollow": "true"]).error
+            #expect(e?.code == .invalidArgs, "\(String(describing: e))")
+            #expect(try await d.router.artifacts.list().isEmpty)
+        }
+    }
 }

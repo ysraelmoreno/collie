@@ -28,6 +28,8 @@ import Foundation
         fileSource = source(fd, [.write, .extend, .delete, .rename, .attrib])
     }
 
+    isolated deinit { stop() }
+
     func stop() {
         stopped = true
         dirSource?.cancel(); dirSource = nil; fileSource?.cancel(); fileSource = nil

@@ -34,7 +34,7 @@ extension CommandRouter {
             let width = try DeviceService.int(r.args, "width", 320...3840) ?? 1440
             let a: Artifact
             if let root = str(r, "root").flatMap({ $0.isEmpty ? nil : $0 }) {
-                a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title,
+                a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title, noFollow: flag(r, "nofollow"),
                                                  paddockId: caller?.paddockId, by: Self.origin(caller))
             } else {
             // opened without following a link (nor blocking on a fifo), then checked and read through that descriptor
@@ -91,9 +91,9 @@ extension CommandRouter {
     /// with a warning (the command never fails for that).
     private func newPage(_ kind: ArtifactTemplates.Kind, _ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
-        if let me = caller, !me.isShepherd, ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == "preview" }) >= Self.testerBrowserCap {
-            throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open Prévias per terminal; close one with `panel close`")
-        }
+        let tester = caller.flatMap { $0.isShepherd ? nil : $0 }
+        if let me = tester { try reservePreview(me) }   // before anything is written; held until the panel is open
+        defer { if let me = tester { releasePreview(me) } }
         let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
         let root = try await projectRootForPanel(paddock: paddock, caller: caller)
         let slug: String

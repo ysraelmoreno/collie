@@ -76,6 +76,8 @@ import WebKit
     /// ponytail: kept by the view, not in the panel's state (no command updates a panel's state from the app); a relaunch
     /// saves again.
     private(set) var saved: String?
+    /// Pins and threads (plan 2W): the app's comments on this page.
+    lazy var comments = PreviewComments(host: host, page: PreviewComments.page(of: panel), title: { [weak self] in self?.header.file ?? "" })
 
     /// Errors and theme live in a world of their own: the page can't reach the message handler. It can still dispatch a
     /// fake `ErrorEvent` or stop the real ones (DOM events are shared): the errors are diagnostics, not evidence.
@@ -107,6 +109,11 @@ import WebKit
         header.onImport = { [weak self] in Task { await self?.importToDesign() } }
         header.canSave = artifactId == nil
         box.setHeader(header)
+        header.canComment = comments.page != nil
+        header.onComments = { [weak self] in guard let c = self?.comments else { return }; c.drawer.toggle(); if !c.drawer { c.setMode(false) } }
+        comments.onLayout = { [weak box] in box?.needsLayout = true }
+        comments.onCount = { [weak header] in header?.comments = $0 }
+        box.setDrawer(comments)
     }
 
     func string(_ k: String) -> String? { if case .string(let s)? = panel.state[k], !s.isEmpty { s } else { nil } }
@@ -138,8 +145,15 @@ import WebKit
         }
     }
 
+    /// `comment.changed` (any page: the list is small): the threads and pins again.
+    public func receive(event: String, payload: JSONValue) {
+        guard event == "comment.changed" else { return }
+        Task { await comments.refresh() }
+    }
+
     public func close() {
         closed = true
+        comments.web = nil
         watcher?.stop(); watcher = nil
         dropWebView()
     }
@@ -159,6 +173,7 @@ import WebKit
 
     fileprivate func start() {
         started = true; failure = nil
+        Task { await comments.refresh() }
         box.overlay("Abrindo…")
         if let id = artifactId {
             header.file = "artifact"
@@ -213,10 +228,11 @@ import WebKit
         config.setURLSchemeHandler(WebLibSchemeHandler(directory: libs), forURLScheme: WebLibs.scheme)
         config.userContentController.add(rules)
         config.userContentController.add(Bridge(self), contentWorld: Self.world, name: "colliePreview")
+        config.userContentController.add(PreviewComments.Bridge(comments), contentWorld: PreviewComments.world, name: "collieComments")
         installScripts(config.userContentController)
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = self; web.uiDelegate = self
-        webView = web; box.web = web
+        webView = web; box.web = web; comments.web = web
         box.card.addSubview(web); box.needsLayout = true
         Task { [weak self] in   // fail closed: the WebRTC switch is private, check it took before loading
             guard let self, !self.closed, self.webView === web else { return }
@@ -231,6 +247,8 @@ import WebKit
     private func installScripts(_ c: WKUserContentController) {
         c.removeAllUserScripts()
         c.addUserScript(WKUserScript(source: Self.errorScript, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Self.world))
+        // document start (not end): its capturing click listener comes before the page's own window listeners
+        c.addUserScript(WKUserScript(source: PreviewComments.script, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: PreviewComments.world))
         if let t = theme { c.addUserScript(WKUserScript(source: Self.themeJS(t), injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: Self.world)) }
     }
     static func themeJS(_ t: String?) -> String {
@@ -354,6 +372,8 @@ import WebKit
         var web: WKWebView?
         let card = NSView()
         private var header: NSView?
+        private var drawer: NSView?
+        private weak var comments: PreviewComments?
         private let label = NSTextField(wrappingLabelWithString: "")
         override var isFlipped: Bool { true }
 
@@ -374,6 +394,11 @@ import WebKit
             addSubview(h); header = h
             needsLayout = true
         }
+        func setDrawer(_ c: PreviewComments) {
+            let d = NSHostingView(rootView: PreviewCommentsDrawer(m: c))
+            addSubview(d); drawer = d; comments = c
+            needsLayout = true
+        }
         private func applyChrome() {
             effectiveAppearance.performAsCurrentDrawingAppearance {
                 layer?.backgroundColor = CollieColor.background.cgColor
@@ -391,7 +416,10 @@ import WebKit
         override func layout() {
             super.layout()
             let top = header.map { h in h.frame = CGRect(x: 0, y: 0, width: bounds.width, height: h.fittingSize.height); return h.frame.maxY } ?? 0
-            card.frame = CGRect(x: 12, y: top + 12, width: max(0, bounds.width - 24), height: max(0, bounds.height - top - 24))
+            let side: CGFloat = comments?.drawer == true ? 300 : 0
+            drawer?.isHidden = side == 0
+            card.frame = CGRect(x: 12, y: top + 12, width: max(0, bounds.width - 24 - side), height: max(0, bounds.height - top - 24))
+            drawer?.frame = CGRect(x: bounds.width - side, y: top, width: side, height: max(0, bounds.height - top))
             web?.frame = card.bounds
             let w = max(0, min(card.frame.width - 24, 360)), h = label.fittingSize.height
             label.frame = CGRect(x: card.frame.minX + (card.frame.width - w) / 2, y: card.frame.minY + (card.frame.height - h) / 2, width: w, height: h)
@@ -415,6 +443,10 @@ import WebKit
     var onTheme: (String?) -> Void = { _ in }
     var onSave: () -> Void = {}
     var onImport: () -> Void = {}
+    /// Open comments on the page; **Comentários (n)** shows when the page can take comments.
+    @Published var comments = 0
+    @Published var canComment = false
+    var onComments: () -> Void = {}
 }
 
 /// The file (relative to the project), a status over the last render, **Recarregar**, `Página | Claro | Escuro` and, for a
@@ -436,6 +468,7 @@ private struct PreviewHeader: View {
                     Text("Página").tag(""); Text("Claro").tag("light"); Text("Escuro").tag("dark")
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
+                if m.canComment { Button("Comentários (\(m.comments))") { m.onComments() }.buttonStyle(CollieButtonStyle(.secondary)) }
                 Button("Recarregar") { m.onReload() }.buttonStyle(CollieButtonStyle(.secondary))
             }
         }
@@ -462,6 +495,7 @@ extension PreviewPanel: WKNavigationDelegate, WKUIDelegate {
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { errors = [] }
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loads += 1
+        Task { await comments.drawPins() }   // re-anchored on the page just loaded
         guard let y = pendingScroll else { return }
         pendingScroll = nil
         webView.evaluateJavaScript("window.scrollTo(0, \(y))", in: nil, in: Self.world) { _ in }

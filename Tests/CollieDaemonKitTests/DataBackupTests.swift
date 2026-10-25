@@ -142,6 +142,21 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         #expect(try await LotBoards(lotsDir: b.appendingPathComponent("lots")).posts(lot).map(\.text) == ["tela pronta"])
     }
 
+    /// Comments (written by the real store) survive export → import into a fresh root.
+    @Test func backupIncludesComments() async throws {
+        let a = tempRoot(), b = tempRoot(), page = PageRef.artifact(UUID())
+        defer { for r in [a, b] { try? FileManager.default.removeItem(at: r) } }
+        _ = try await CommentStore(dir: a.appendingPathComponent("comments"))
+            .add(page: page, title: "Doc", anchor: CommentAnchor(selector: nil, x: 0, y: 0, text: nil), body: "deixe maior", to: nil, toName: nil)
+        let out = a.appendingPathComponent("a.colliebackup")
+        _ = try await DataBackup.export(root: a, to: out, server: server(a), version: "t")
+        #expect(try await names(out).contains("comments/\(page.key).json"))
+        _ = try await DataBackup.stage(root: b, from: out, dryRun: false)
+        #expect(DataBackup.applyPending(Paths(root: b)))
+        let got = await CommentStore(dir: b.appendingPathComponent("comments")).comments(page)
+        #expect(got.map { $0.messages.map(\.body) } == [["deixe maior"]])
+    }
+
     @Test func stagedImportRecheckedAtStart() async throws {
         let a = tempRoot(), b = tempRoot(); defer { for r in [a, b] { try? FileManager.default.removeItem(at: r) } }
         populate(a, "A"); populate(b, "B")

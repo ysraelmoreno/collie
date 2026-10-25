@@ -47,6 +47,8 @@ actor CommandRouter {
     nonisolated let chat: ChatLog
     /// Lots' boards (`<root>/lots/<id>/board.jsonl`).
     nonisolated let boards: LotBoards
+    /// Users' comments on pages (`<root>/comments`).
+    nonisolated let comments: CommentStore
     /// Saved herds (`<root>/herds`).
     nonisolated let herds: HerdStore
     /// The on-device model's rewrites of work summaries.
@@ -126,6 +128,7 @@ actor CommandRouter {
         self.chat = ChatLog(dir: workDir, name: "work-chat-\(config.workspaceId.uuidString.lowercased())")
         self.boards = LotBoards(lotsDir: config.paths.root.appendingPathComponent("lots"))
         self.herds = HerdStore(dir: config.paths.root.appendingPathComponent("herds"))
+        self.comments = CommentStore(dir: config.paths.root.appendingPathComponent("comments"))
         self.assistant = WorkAssistant(model: config.localModel)
         let curatorDir = config.paths.root.appendingPathComponent("curator")
         self.curator = Curator(dir: curatorDir, runner: config.curatorRunner ?? ClaudeCuratorRunner(
@@ -252,6 +255,9 @@ actor CommandRouter {
             }
             if req.command.hasPrefix("lot.") {   // admin or terminal; reach rules in lotCommand
                 return Response(id: req.id, ok: true, result: try await lotCommand(req, peer: peer))
+            }
+            if req.command.hasPrefix("comment.") {   // add/message/resolve: the app alone; reply: the addressee; rules in commentCommand
+                return Response(id: req.id, ok: true, result: try await commentCommand(req, peer: peer))
             }
             if req.command.hasPrefix("access.") {   // request/list: a terminal; grant/deny/revoke: the app alone
                 return Response(id: req.id, ok: true, result: try await accessCommand(req, peer: peer))

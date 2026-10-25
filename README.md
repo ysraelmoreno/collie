@@ -349,6 +349,28 @@ elas (ou com `scripts/fetch-weblibs.sh` não rodado, aviso `bibliotecas offline 
 com a nota "Bibliotecas offline indisponíveis". `deck`: slides 16:9 (←/→/espaço); `dashboard`: indicadores, gráfico SVG de um array `data` e tabela;
 `doc`: documento com sumário fixo; `prototype`: casca de app de celular com lista, abas e uma folha.
 
+## Comentários
+
+Na Prévia (uma página do projeto ou um artifact) você fixa um comentário num ponto ou elemento da página. Quem recebe é
+o terminal dono da página: o que abriu a Prévia; se ele não existe mais, o único terminal ligado a ela por guia; senão
+ninguém (ligue um terminal para entregar). O destinatário é fixado ao criar.
+
+No cabeçalho da Prévia, **Comentários (n)** abre a gaveta: **Fixar comentário**, clique no ponto da página, escreva e
+**Enviar**. Cada conversa mostra as mensagens (você e o terminal), **Responder**, **Resolver**/**Reabrir** e o filtro
+**Abertos | Todos**. Os marcadores numerados ficam sobre a página num mundo isolado (a página não os vê nem os aciona);
+se o elemento sumiu, o marcador fica no ponto guardado com "posição aproximada".
+
+- **Entrega.** Suas mensagens ainda não entregues entram no próximo prompt do terminal, uma vez (também depois de
+  reiniciar o serviço), cercadas e marcadas como dados, não ordens; cada uma em uma linha, o texto cortado em 1200
+  bytes. Funciona fora de lotes. O resto do texto fica em `collie comment list`.
+- **Responder.** O agente responde com `collie comment reply <id> "<resposta>"` (só aos comentários endereçados a ele);
+  a resposta aparece na conversa da Prévia. `collie comment list [--open]` mostra os comentários dele com as conversas.
+  O Codex não tem o gancho do prompt: lê com `collie comment list`.
+- **Só você** cria comentários, manda continuações e resolve/reabre (o app); um agente nunca cria nem resolve um.
+- **Onde fica.** Nos dados do Collie (`<raiz>/comments/<chave>.json`, 0600), nunca no projeto: nada vai para o git e um
+  agente em sandbox não consegue forjar um comentário seu. Entra no backup dos dados.
+- Limites: 2000 caracteres por mensagem sua, 4000 por resposta, 500 comentários por página, 200 mensagens por conversa.
+
 ## Importar HTML
 
 Uma página registrada por um agente vira uma **tela editável**: `collie artifact add <página.html> [--root <pasta>] [--title]`
@@ -715,17 +737,17 @@ A memória do Collie vive em três escopos: **global** (vale em todo lugar), **p
 | Quando | O que entra |
 |---|---|
 | Início | memórias fixadas e o índice (títulos) do lote (dentro de um lote) ou do projeto e global (fora de um) |
-| Cada prompt | recados do quadro endereçados a você, depois as memórias relevantes ao prompt, sem repetir |
+| Cada prompt | recados do quadro endereçados a você, os comentários do usuário nas suas páginas (veja Comentários), depois as memórias relevantes ao prompt, sem repetir |
 | Depois de compactar (e ao retomar) | seu trabalho ativo (tarefas abertas e as 3 últimas notas), o último recado do quadro para você e os 3 últimos status do lote, depois o índice de memórias |
 
-O recado entregue na compactação não é repetido no prompt seguinte. Só o Claude recebe essa injeção (início, prompt e compactação). O Codex ainda não recebe nada no início nem no prompt (não tem esse gancho): leia os recados com `collie lot board`. O preset do Cursor ainda não está disponível.
+O recado entregue na compactação não é repetido no prompt seguinte. Só o Claude recebe essa injeção (início, prompt e compactação). O Codex ainda não recebe nada no início nem no prompt (não tem esse gancho): leia os recados com `collie lot board` e os comentários com `collie comment list`. O preset do Cursor ainda não está disponível.
 
 ## Backup dos dados
 
 Menu **Arquivo → Exportar dados do Collie…** gera um `.zip` (0600) com `manifest.json` na raiz.
 
 - **Entra:** `design/` (inclui o servidor do Design), `artifacts/`, `memory/`, `workspaces/` (sem o spill de terminais
-  em `workspaces/*/terminals`), `work/`, `herds/` e o workspace padrão (no manifesto).
+  em `workspaces/*/terminals`), `work/`, `herds/`, `lots/`, `comments/` (comentários nas páginas) e o workspace padrão (no manifesto).
 - **Fica de fora:** `run/`, `hooks/`, `cache/`, `usage/`, `admin.token`, `screens/` e o `.collie/memory` de cada repositório.
 - O arquivo guarda os links do Design: **trate como uma senha**.
 - A exportação pausa o Design por instantes (os painéis reconectam; o Design responde "backup em andamento" nesse intervalo).

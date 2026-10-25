@@ -6,14 +6,14 @@ import CollieProtocol
 /// `.colliebackup` (an Orq `.orqbackup` is the same format; the extension is never checked here): a zip (`ditto -c -k --norsrc`, entries at its root) of the user's Collie data — `manifest.json`
 /// (`{format: 1, createdAt, collieVersion, parts, workspace}`) and the parts `design/` (figcraft server data, registries,
 /// systems, exports), `artifacts/` (with `.removed/`), `memory/`, `workspaces/` (without `*/terminals`, the scrollback
-/// spills), `work/`, `herds/` (with `.removed/`) and `lots/` (each lot's memory and board, without `*/cache`, its index). Machine-specific data stays out (`run/`, `hooks/`, `cache/`, `usage/`, `screens/`, `admin.token`);
+/// spills), `work/`, `herds/` (with `.removed/`) `lots/` (each lot's memory and board, without `*/cache`, its index) and `comments/` (comments on pages). Machine-specific data stays out (`run/`, `hooks/`, `cache/`, `usage/`, `screens/`, `admin.token`);
 /// `default-workspace` travels as the manifest's `workspace`. It holds the design files' secret links: 0600, app only.
 ///
 /// An import is checked, extracted and staged in `<root>/.import-pending/`; collied applies it at its next start, before
 /// anything is loaded (the stores keep their data in memory: a swap under a live daemon would be written over).
 /// Nothing is deleted: the current parts move to `<root>/.replaced-<epochMs>/`.
 public enum DataBackup {
-    static let parts = ["design", "artifacts", "memory", "workspaces", "work", "herds", "lots"]
+    static let parts = ["design", "artifacts", "memory", "workspaces", "work", "herds", "lots", "comments"]
     static let pendingName = ".import-pending"
     /// Parts under the name an older backup gives them (Orq's and Collie's before the herding vocabulary).
     static let legacyParts = [LegacyOrq.partituraDir: "herds"]

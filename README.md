@@ -679,7 +679,7 @@ O recado entregue na compactação não é repetido no prompt seguinte. Só o Cl
 Menu **Arquivo → Exportar dados do Collie…** gera um `.zip` (0600) com `manifest.json` na raiz.
 
 - **Entra:** `design/` (inclui o servidor do Design), `artifacts/`, `memory/`, `workspaces/` (sem o spill de terminais
-  em `workspaces/*/terminals`), `work/`, `herds/` e o workspace padrão (no manifesto).
+  em `workspaces/*/terminals`), `work/`, `herds/`, `lots/`, `comments/` (comentários nas páginas) e o workspace padrão (no manifesto).
 - **Fica de fora:** `run/`, `hooks/`, `cache/`, `usage/`, `admin.token`, `screens/` e o `.collie/memory` de cada repositório.
 - O arquivo guarda os links do Design: **trate como uma senha**.
 - A exportação pausa o Design por instantes (os painéis reconectam; o Design responde "backup em andamento" nesse intervalo).

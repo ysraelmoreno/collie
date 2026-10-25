@@ -181,7 +181,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case "sandboxDetection": self = .sandboxDetection(available: try c.decode(Bool.self, forKey: .ok))
         case "confirmCorrection":
             self = .confirmCorrection(terminal: try id(), entry: try c.decode(UUID.self, forKey: .e), title: try c.decode(String.self, forKey: .name))
-        case "pluginsChanged": self = .pluginsChanged(try c.decode([PluginSpecDTO].self, forKey: .m))
+        case "pluginsChanged": self = .pluginsChanged(try c.decode([Lossy<PluginSpecDTO>].self, forKey: .m).compactMap(\.value))   // one unreadable manifest loses only itself
         case let t: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "unknown event '\(t)'")
         }
     }

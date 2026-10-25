@@ -9,7 +9,8 @@ private func kanban(_ id: String = "kanban", version: String = "0.1.0", commands
 
 /// `.serialized`: these set the process-wide external list (other suites tolerate extra external commands).
 @Suite(.serialized) struct PluginRegistryTests {
-    @Test func externalCommandsInCommandsAll() throws {
+    @Test func externalCommandsInCommandsAll() async throws {
+        try await PluginRegistry.exclusively { () async throws in
         defer { PluginRegistry.setExternal([]) }
         let v = PluginRegistry.catalogVersion
         PluginRegistry.setExternal([kanban(commands: ["add", "export"])])
@@ -28,17 +29,21 @@ private func kanban(_ id: String = "kanban", version: String = "0.1.0", commands
                                     PluginSpec(id: "nb", title: "", placements: [.canvas], defaultPlacement: .canvas, commands: [], events: [])])
         #expect(PluginRegistry.externalSpecs.map(\.id) == ["kanban"] && PluginRegistry.externalSpecs[0].source == .external(version: "0.1.0"))
         #expect(PluginRegistry.spec("browser")?.source == .builtIn)
+        }
     }
 
-    @Test func removingExternalDropsCommands() {
+    @Test func removingExternalDropsCommands() async throws {
+        try await PluginRegistry.exclusively { () async throws in
         PluginRegistry.setExternal([kanban()])
         #expect(Commands.spec("kanban.list") != nil)
         PluginRegistry.setExternal([])
         #expect(Commands.spec("kanban.list") == nil && PluginRegistry.spec("kanban") == nil)
         #expect((try? ArgvParser.parse(["kanban", "list"])) == nil)
+        }
     }
 
-    @Test func builtInsUnchanged() {
+    @Test func builtInsUnchanged() async throws {
+        try await PluginRegistry.exclusively { () async throws in
         defer { PluginRegistry.setExternal([]) }
         PluginRegistry.setExternal([kanban()])
         let ids = ["browser", "memory", "device", "design", "designsystems", "artifacts", "work"]
@@ -47,6 +52,29 @@ private func kanban(_ id: String = "kanban", version: String = "0.1.0", commands
         #expect(PluginRegistry.builtIn.allSatisfy { $0.source == .builtIn })
         #expect(Commands.reservedPluginIds.isSuperset(of: ids + ["panel", "admin", "plugin", "artifact", "list"]) && !Commands.reservedPluginIds.contains("kanban"))
         #expect(Array(Commands.all.prefix(Commands.builtIn.count)) == Commands.builtIn)
+        }
+    }
+
+    /// R7: an external tool's MCP text says where it comes from and stays short.
+    @Test func externalMCPDescriptionsMarked() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+        defer { PluginRegistry.setExternal([]) }
+        var k = kanban()
+        k.commands[0].summary = String(repeating: "s", count: 500)
+        k.commands[0].params = [ParamSpec("x", .string, help: String(repeating: "h", count: 500))] + k.commands[0].params
+        PluginRegistry.setExternal([k])
+        func tool(_ n: String) -> [String: JSONValue] {
+            for t in MCPSchema.tools() { if case .object(let o) = t, o["name"] == .string(n) { return o } }
+            return [:]
+        }
+        guard case .string(let d)? = tool("kanban_add")["description"] else { Issue.record("no kanban_add"); return }
+        #expect(d.hasPrefix("[plug-in kanban] ") && d.count == 200)
+        guard case .object(let schema)? = tool("kanban_add")["inputSchema"], case .object(let props)? = schema["properties"],
+              case .object(let x)? = props["x"], case .string(let h)? = x["description"] else { Issue.record("no param"); return }
+        #expect(h.count <= 200)
+        guard case .string(let b)? = tool("browser_navigate")["description"] else { Issue.record("no browser"); return }
+        #expect(!b.hasPrefix("[plug-in"))
+        }
     }
 
     @Test func outputFileFlagForBuiltIns() {

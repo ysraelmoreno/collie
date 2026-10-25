@@ -13,7 +13,18 @@ enum MCPServer {
 
     /// The daemon's external plug-ins (`plugin.specs`) into this process's registry; true when they changed since the
     /// last fetch. No answer: nothing changes.
+    /// One at a time, in order (each fetch starts after the previous one registered): an older reply never lands last.
     private static func refreshPlugins() async -> Bool {
+        let t: Task<Bool, Never> = lock.withLock {
+            let prev = refreshTail
+            let t = Task { _ = await prev?.value; return await fetchPlugins() }
+            refreshTail = t
+            return t
+        }
+        return await t.value
+    }
+    private nonisolated(unsafe) static var refreshTail: Task<Bool, Never>?   // under `lock`
+    private static func fetchPlugins() async -> Bool {
         guard let r = try? await Client.call("plugin.specs", [:]), let ms = PluginManifest.fromSpecs(r) else { return false }
         PluginManifest.register(ms)
         return lock.withLock { defer { lastSpecs = ms }; return (lastSpecs ?? []) != ms }

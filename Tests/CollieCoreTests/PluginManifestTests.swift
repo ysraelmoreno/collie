@@ -105,7 +105,8 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         #expect(refusal { var c = command("png"); c["outputFile"] = true; c["params"] = [["name": "out", "type": "string", "positional": true]]; $0["commands"] = [c] }?.code == .invalidArgs)
     }
 
-    @Test func registerRevalidatesAndHerdAcceptsExternalWithStateKeys() throws {
+    @Test func registerRevalidatesAndHerdAcceptsExternalWithStateKeys() async throws {
+        try await PluginRegistry.exclusively { () async throws in
         defer { PluginRegistry.setExternal([]) }
         var bad = try PluginManifest.load(folder: notas); bad.id = "kanban"; bad.helper = "bin/x"   // fine on the wire, not valid
         var ok = try PluginManifest.load(folder: notas); ok.stateKeys = ["filter"]
@@ -121,6 +122,15 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         #expect(throws: ProtocolError.self) { try HerdFormat.validate(herd([:], plugin: "device")) }   // built-in, still out
         PluginManifest.register([])
         #expect(throws: ProtocolError.self) { try HerdFormat.validate(herd([:])) }   // uninstalled
+        }
+    }
+
+    /// R7 (M5): one manifest an app can't read doesn't lose the event's others.
+    @Test func pluginsChangedDecodesLossily() throws {
+        let good = try String(contentsOf: notas.appendingPathComponent("collie-plugin.json"), encoding: .utf8)
+        let e = try JSONDecoder().decode(WorkspaceEvent.self, from: Data(#"{"t":"pluginsChanged","m":[{"id":5},\#(good)]}"#.utf8))
+        guard case .pluginsChanged(let ms) = e else { Issue.record("\(e)"); return }
+        #expect(ms.map(\.id) == ["notas"])
     }
 
     @Test func unknownKeysIgnored() throws {

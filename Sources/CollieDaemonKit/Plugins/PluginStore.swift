@@ -195,6 +195,7 @@ actor PluginStore {
             throw ProtocolError(code: .invalidArgs, message: "o plug-in precisa ser uma pasta")
         }
         var count = 0, budget = maxBytes
+        let inside = SignedAppCheck.realPath(src)
         while let rel = walk.nextObject() as? String {
             count += 1
             guard count <= maxFiles else { throw ProtocolError(code: .invalidArgs, message: "o plug-in tem mais de \(maxFiles) arquivos") }
@@ -203,22 +204,27 @@ actor PluginStore {
             case .typeDirectory?:
                 guard mkdir(to, 0o700) == 0 else { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
             case .typeRegular?:
-                try copyFile(from, to, rel, budget: &budget)
+                try copyFile(from, to, rel, inside: inside, budget: &budget)
             case .typeSymbolicLink?: throw ProtocolError(code: .invalidArgs, message: "'\(rel)' é um link simbólico: não aceito em plug-ins")
             default: throw ProtocolError(code: .invalidArgs, message: "'\(rel)' não é um arquivo comum")
             }
         }
     }
 
-    /// One file, opened without following a link (or blocking on a FIFO swapped in), checked regular, copied in chunks
-    /// out of `budget`.
-    private static func copyFile(_ from: String, _ to: String, _ rel: String, budget: inout Int) throws(ProtocolError) {
+    /// One file, opened without following a link (or blocking on a FIFO swapped in), checked regular and still at
+    /// `<inside>/<rel>` (a parent dir swapped for a link after the walk lands elsewhere: refused), copied in chunks out
+    /// of `budget`.
+    static func copyFile(_ from: String, _ to: String, _ rel: String, inside: String, budget: inout Int) throws(ProtocolError) {
         let tooBig = ProtocolError(code: .invalidArgs, message: "o plug-in passa de 64 MiB")
         let i = open(from, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard i >= 0 else { throw ProtocolError(code: .invalidArgs, message: "'\(rel)' ilegível ou um link") }
         defer { close(i) }
         var st = stat()
         guard fstat(i, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: "'\(rel)' não é um arquivo comum") }
+        var buf0 = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        guard fcntl(i, F_GETPATH, &buf0) == 0, String(cString: buf0) == inside + "/" + rel else {
+            throw ProtocolError(code: .invalidArgs, message: "'\(rel)' saiu da pasta do plug-in (link no caminho)")
+        }
         guard st.st_size <= budget else { throw tooBig }
         let o = open(to, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard o >= 0 else { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }

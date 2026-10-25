@@ -217,7 +217,26 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         }
     }
 
+    /// R7 (M6): a directory swapped for a link after the walk can't bring outside files in (the opened file must be
+    /// inside the source).
+    @Test func copyFileRefusesLinkedParent() async throws {
+        try await withTemp { d in
+            let s = try source(d), outside = d.appendingPathComponent("outside")
+            try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+            try "secret".write(to: outside.appendingPathComponent("k"), atomically: false, encoding: .utf8)
+            try fm.createSymbolicLink(atPath: s.appendingPathComponent("swapped").path, withDestinationPath: outside.path)
+            try fm.createDirectory(at: d.appendingPathComponent("dst"), withIntermediateDirectories: true)
+            var budget = PluginStore.maxBytes
+            #expect(throws: ProtocolError.self) {
+                try PluginStore.copyFile(s.appendingPathComponent("swapped/k").path, d.appendingPathComponent("dst/k").path, "swapped/k",
+                                         inside: SignedAppCheck.realPath(s), budget: &budget)
+            }
+            #expect(!fm.fileExists(atPath: d.appendingPathComponent("dst/k").path))
+        }
+    }
+
     @Test(.timeLimit(.minutes(2))) func adminOnly() async throws {
+        try await PluginRegistry.exclusively { () async throws in
         try await withDaemon { d, p in
             let src = try source(p.root, "src")
             let a = try await spawn(d, p, "A")
@@ -234,9 +253,11 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
             #expect(try await send(p, Request(id: "u", token: d.adminToken, command: "plugin.disable", args: ["id": .string("notas")])).ok)
             #expect(try await send(p, Request(id: "u", token: d.adminToken, command: "plugin.uninstall", args: ["id": .string("notas")])).ok)   // read-only tree: withDaemon can't remove it
         }
+        }
     }
 
     @Test(.timeLimit(.minutes(2))) func specsReadableByTerminal() async throws {
+        try await PluginRegistry.exclusively { () async throws in
         try await withDaemon { d, p in
             let src = try source(p.root, "src")
             #expect(try await send(p, Request(id: "i", token: d.adminToken, command: "plugin.install", args: ["path": .string(src.path)]), timeoutSeconds: 60).ok)
@@ -256,6 +277,7 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
             #expect(ms.map { $0.pluginSpec().commands.map(\.name) } == [["notas.add", "notas.list", "notas.export"]])
             #expect(try await send(p, Request(id: "s", terminalId: a.id, token: "bad", command: "plugin.list")).error?.code == .unauthorized)
             #expect(try await send(p, Request(id: "u", token: d.adminToken, command: "plugin.uninstall", args: ["id": .string("notas")])).ok)
+        }
         }
     }
 }

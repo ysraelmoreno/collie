@@ -4,6 +4,7 @@ import CollieProtocol
 
 extension CommandRouter {
     /// `artifact.*`: the admin token or a terminal token (as `memory.*`); `reexport` and `remove` are the app's.
+    /// `libs`: the offline web libraries (`config.weblibsDir`'s manifest) as `collie-lib://` URLs.
     func artifactCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
         @Sendable func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -73,6 +74,14 @@ extension CommandRouter {
             let deadline = design.deadline(r.command)
             let snap = try await design.systemSnapshot(fileId: fid, node: a.node, page: a.page, deadline: deadline)
             return try await exportHTML(f, node: a.node, snapshot: snap, by: Self.origin(nil), deadline: deadline)
+        case "artifact.libs":
+            let dir = config.weblibsDir
+            let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
+            guard !libs.isEmpty else { throw ProtocolError(code: .unavailable, message: "Bibliotecas offline ausentes: rode scripts/fetch-weblibs.sh") }
+            return .array(libs.map { e in
+                .object(["name": .string(e.name), "version": .string(e.version), "global": .string(e.global),
+                         "url": WebLibs.url(e.name, in: [e]).map { .string($0) } ?? .null, "licence": .string(e.licence)])
+            })
         case "artifact.remove":
             try await artifacts.remove(try id())
             return .object([:])

@@ -287,6 +287,8 @@ extension PluginRegistry {
                   ParamSpec("width", .int, help: "Viewport width of the import in px (default 1440, 320-3840)")], timeout: 30),
             acmd("import", "Import an agent's page as a screen in a new design file (needs the Collie app); it becomes the page's export; returns {artifact, file, node, version, warnings} (ignores --panel)",
                  [artifactId, ParamSpec("width", .int, help: "Viewport width in px (default 1440, 320-3840)")], timeout: 180),
+            acmd("libs", "Offline web libraries for local pages (no CDN): [{name,version,global,url,licence}], url = collie-lib://lib/<name>@<version>/<file> for a <script src> (ignores --panel)",
+                 timeout: 10),
             acmd("reexport", "Export the artifact's design again as its next version (the app only)", [artifactId], timeout: 120, exposedToMCP: false),
             acmd("remove", "Set the artifact aside (the app only)", [artifactId], timeout: 10, exposedToMCP: false),
         ],

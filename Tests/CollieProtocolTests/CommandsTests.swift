@@ -107,7 +107,7 @@ import Foundation
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help", "design_prefer",
                          "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
                          "diagram_get", "diagram_set", "diagram_mermaid", "diagram_export", "diagram_screenshot",
-                         "artifact_list", "artifact_get", "artifact_add", "artifact_import"])
+                         "artifact_list", "artifact_get", "artifact_add", "artifact_import", "artifact_libs"])
         guard case .object(let ask) = tools[1], case .object(let schema)? = ask["inputSchema"],
               case .array(let req)? = schema["required"] else { Issue.record("bad schema"); return }
         #expect(req.contains(.string("target")) && req.contains(.string("prompt")))
@@ -126,7 +126,7 @@ import Foundation
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help", "design_prefer",
                          "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
                          "diagram_get", "diagram_set", "diagram_mermaid", "diagram_export", "diagram_screenshot",
-                         "artifact_list", "artifact_get", "artifact_add", "artifact_import"])
+                         "artifact_list", "artifact_get", "artifact_add", "artifact_import", "artifact_libs"])
         #expect(try ArgvParser.parse(["summon", "w", "--preset", "shell", "echo", "hi"]).args
                 == ["name": .string("w"), "preset": .string("shell"), "prompt": .string("echo hi")])
         // flags anywhere before `--` are flags, not prompt words; after `--` everything is prompt

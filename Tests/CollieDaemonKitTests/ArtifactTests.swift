@@ -498,6 +498,29 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactExportTests {
         }
     }
 
+    @Test func libsListsManifest() async throws {
+        let dir = URL(fileURLWithPath: "/tmp/collie-weblibs-\(UUID().uuidString.prefix(8))"); defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"[{"name":"react","version":"18.3.1","files":["react.production.min.js"],"licence":"MIT","global":"React"}]"#.utf8)
+            .write(to: dir.appendingPathComponent("manifest.json"))
+        try await withDaemon(configure: { $0.weblibsDir = dir }) { d, p in
+            let r = try await admin(d, p, "artifact.libs")
+            #expect(r.result == .array([.object(["name": .string("react"), "version": .string("18.3.1"), "global": .string("React"),
+                                                 "url": .string("collie-lib://lib/react@18.3.1/react.production.min.js"), "licence": .string("MIT")])]), "\(r)")
+        }
+    }
+
+    @Test func libsMissingIsUnavailable() async throws {
+        try await withDaemon(configure: { $0.weblibsDir = URL(fileURLWithPath: "/nonexistent") }) { d, p in
+            let r = try await admin(d, p, "artifact.libs")
+            #expect(r.error?.code == .unavailable && r.error?.message == "Bibliotecas offline ausentes: rode scripts/fetch-weblibs.sh", "\(r)")
+        }
+        try await withDaemon { d, p in
+            let r = try await admin(d, p, "artifact.libs")
+            #expect(r.error?.code == .unavailable)
+        }
+    }
+
     @Test func reexportAndRemoveAreAppOnly() async throws {
         let fx = try Fake(); defer { fx.cleanup() }
         try await withPanel(fx) { d, p, m in

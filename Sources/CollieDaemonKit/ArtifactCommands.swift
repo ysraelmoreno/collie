@@ -100,13 +100,11 @@ extension CommandRouter {
     /// with a warning (the command never fails for that).
     private func newPage(_ kind: ArtifactTemplates.Kind, _ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
-        // read before the Prévia reservation: an await inside it widens the window where a just-opened Prévia is
-        // counted twice (open + still reserved)
         let dir = config.weblibsDir
         let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
         let tester = caller.flatMap { $0.isShepherd ? nil : $0 }
-        if let me = tester { try reservePreview(me) }   // before anything is written; held until the panel is open
-        defer { if let me = tester { releasePreview(me) } }
+        let slot = try tester.map { me throws(ProtocolError) in try reservePreview(me) }   // before anything is written
+        defer { if let me = tester, let slot { releasePreview(me, slot) } }
         let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
         let root = try await projectRootForPanel(paddock: paddock, caller: caller)
         let slug: String
@@ -136,7 +134,7 @@ extension CommandRouter {
         let name = freePanelName("preview")
         try reserve(name); defer { launching.remove(name.lowercased()) }
         let (p, _, _) = try await openPanel(name: name, pluginId: "preview", placement: .canvas, state: ["file": .string(rel)],
-                                            file: nil, paddock: paddock, caller: caller)
+                                            file: nil, paddock: paddock, caller: caller, reservation: slot)
         return .object(["file": .string(rel), "panel": .string(p.name), "warnings": .array(warnings.map { .string($0) })])
     }
 

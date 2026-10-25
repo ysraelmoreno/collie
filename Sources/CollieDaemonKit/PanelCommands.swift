@@ -50,8 +50,8 @@ extension CommandRouter {
             if let me = caller, await registry.process(me.id)?.isRunning != true {
                 throw ProtocolError(code: .notRunning, message: "terminal '\(me.name)' is not running")
             }
-            if tester, let me = caller, pluginId == "preview" { try reservePreview(me) }
-            defer { if tester, let me = caller, pluginId == "preview" { releasePreview(me) } }
+            let slot = tester && pluginId == "preview" ? try caller.map { me throws(ProtocolError) in try reservePreview(me) } : nil
+            defer { if let me = caller, let slot { releasePreview(me, slot) } }
             if tester, let me = caller, pluginId == "browser", ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == pluginId }) >= Self.testerBrowserCap {
                 throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open browsers per terminal; close one with `panel close`")
             }
@@ -72,7 +72,8 @@ extension CommandRouter {
             let (p, designWarning, _) = try await openPanel(name: name, pluginId: pluginId, placement: placement, state: state,
                                                          file: pluginId == "design" ? try need(r, "file") : nil,
                                                          paddock: placement == .canvas || pluginId == "design"
-                                                             ? try canvasPaddock(str(r, "paddock"), caller: caller) : nil, caller: caller)
+                                                             ? try canvasPaddock(str(r, "paddock"), caller: caller) : nil, caller: caller,
+                                                         reservation: slot)
             do {   // re-checked after openPanel's awaits; all or nothing
                 for t in try wirer.map({ try connectTargets(r, by: $0, panels: false).terminals }) ?? [] { try await leash(t, p) }
             } catch { try? await remove(p); throw error }
@@ -159,7 +160,7 @@ extension CommandRouter {
     /// when on the canvas), the opening Shepherd's leash, persist, events. Returns the panel, any `designSystemError`, and
     /// whether the design file was created by this call.
     func openPanel(name: String, pluginId: String, placement: PanelPlacement, state: [String: JSONValue], file: String?,
-                   paddock: UUID?, caller: TerminalRecord?) async throws -> (Panel, [String: JSONValue], fileCreated: Bool) {
+                   paddock: UUID?, caller: TerminalRecord?, reservation: UUID? = nil) async throws -> (Panel, [String: JSONValue], fileCreated: Bool) {
         if let me = caller, placement == .canvas || placement == .headless { try refuseFreeLeash(me.id) }   // before any side effect
         var state = state, designWarning: [String: JSONValue] = [:], fileCreated = false
         if let file {   // a new name: created on the panel's paddock, with the active design system's library
@@ -196,6 +197,7 @@ extension CommandRouter {
         let p = Panel(id: UUID(), name: name, pluginId: pluginId, placement: placement,
                       paddockId: canvas ? paddock : nil, state: state, createdBy: caller?.id)
         ws.panels.append(p)
+        if let me = caller, let reservation { releasePreview(me, reservation) }   // now counted as open: never twice
         // the opening terminal is leashed to its canvas or headless panel; a docked one needs none
         let leash = caller.flatMap { me in canvas || placement == .headless ? Connection(a: me.id, b: p.id) : nil }
         if let leash { ws.connections.append(leash) }
@@ -279,17 +281,20 @@ extension CommandRouter {
     }
     func unleash(_ t: TerminalRecord, _ p: Panel) async throws { try await unlink(t.id, p.id) }
 
-    /// A non-Shepherd's Prévia about to open: refused past the cap, counting those still opening; `releasePreview` after.
-    func reservePreview(_ me: TerminalRecord) throws(ProtocolError) {
+    /// A non-Shepherd's Prévia about to open: refused past the cap, counting those still opening; returns the slot,
+    /// released by `openPanel` once the panel is registered (or by the caller on failure; releasing twice is a no-op).
+    func reservePreview(_ me: TerminalRecord) throws(ProtocolError) -> UUID {
         let open = ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == "preview" })
-        guard open + previewsOpening[me.id, default: 0] < Self.testerBrowserCap else {
+        guard open + previewsOpening[me.id, default: []].count < Self.testerBrowserCap else {
             throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open Prévias per terminal; close one with `panel close`")
         }
-        previewsOpening[me.id, default: 0] += 1
+        let slot = UUID()
+        previewsOpening[me.id, default: []].insert(slot)
+        return slot
     }
-    func releasePreview(_ me: TerminalRecord) {
-        previewsOpening[me.id, default: 1] -= 1
-        if previewsOpening[me.id] == 0 { previewsOpening[me.id] = nil }
+    func releasePreview(_ me: TerminalRecord, _ slot: UUID) {
+        previewsOpening[me.id]?.remove(slot)
+        if previewsOpening[me.id]?.isEmpty == true { previewsOpening[me.id] = nil }
     }
 
     /// Max open browser panels per non-Shepherd terminal.

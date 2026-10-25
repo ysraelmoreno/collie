@@ -62,6 +62,7 @@ import WebKit
         let run = Run()
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        WebLockdown.harden(config)   // WebRTC off
         config.setURLSchemeHandler(Blank(), forURLScheme: DesignSchemeHandler.scheme)
         config.userContentController.add(run, name: "collieGPU")
         config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
@@ -166,6 +167,7 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         self.panel = panel; self.host = host
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        WebLockdown.harden(config)   // WebRTC off
         let failure = FailureHandler()
         // A WebGPU page that cannot start (figcraft-web writes "FigCraft failed to start") reloads with `?webgl`.
         // The page can post this, but the only effect is that reload.
@@ -233,6 +235,8 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
                 guard let self, self.gen == g else { return }
                 guard case .object(let o) = r, case .string(let link)? = o["editLink"] else { return self.failed(nil) }
                 let gpu = await GPUProbe.webGPUAvailable()
+                guard self.gen == g else { return }
+                guard await WebLockdown.peerConnectionsOff(web) else { return self.failed(WebLockdown.failure) }   // fail closed
                 guard self.gen == g else { return }
                 web.load(URLRequest(url: designURL(editLink: link, webGPU: gpu)))
             } catch {

@@ -38,6 +38,23 @@ collie.onCommand(async (name, args) => {
   }
   case "fakepath": return { path: "/etc/hosts" };
   case "bigstate": try { await collie.state.set({ s: "x".repeat(300 * 1024) }); return "stored" } catch (e) { return "refused" }
+  case "rtc": {
+    if (typeof RTCPeerConnection === "undefined" && typeof webkitRTCPeerConnection === "undefined") return "none";
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: `stun:127.0.0.1:${args.port}` }] });
+    pc.createDataChannel("x");
+    await pc.setLocalDescription(await pc.createOffer());
+    await new Promise(r => setTimeout(r, 1500));
+    pc.close(); return "tried";
+  }
+  case "media": {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return "none";
+    try { await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); return "granted" } catch (e) { return "denied" }
+  }
+  case "two": { await collie.files.output("a.txt", btoa("1")); return collie.files.output("a.txt", btoa("2")) }
+  case "many": { let last; for (let i = 0; i < 102; i++) last = await collie.files.output(`f${i}.txt`, btoa(String(i))); return last }
+  case "out1": try { return await collie.files.output("a.txt", btoa("x")) } catch (e) { return { refused: String(e.message || e) } }
+  case "nav": setTimeout(() => { location.href = "index.html" }, 0); return "ok";
+  case "ver": return window.V;
   case "theme": return collie.theme.scheme + " " + getComputedStyle(document.documentElement).getPropertyValue("--collie-text").trim();
   }
   throw new Error("unknown " + name);
@@ -64,9 +81,10 @@ collie.onCommand(async (name, args) => {
         }
         let m: [String: Any] = ["apiVersion": 1, "id": "hostil", "name": "Hostil", "version": version, "ui": "ui/index.html",
                                 "events": ["hostil.ok"], "commands": [c("hang", timeout: 1), c("wait"), c("big"), c("ping"), c("leave"), c("emit"),
+                                c("rtc", params: [["name": "port", "type": "int"]]), c("media", timeout: 5), c("two"), c("many"), c("out1"), c("nav"), c("ver"),
                                 c("probe", params: [["name": "port", "type": "int"]]), c("fakepath", out: true), c("bigstate"), c("theme")]]
         try JSONSerialization.data(withJSONObject: m).write(to: d.appendingPathComponent("collie-plugin.json"))
-        try #"<!doctype html><html><body><script src="app.js"></script></body></html>"#.write(to: d.appendingPathComponent("ui/index.html"), atomically: true, encoding: .utf8)
+        try "<!doctype html><html><body><script>window.V = \"\(version)\"</script><script src=\"app.js\"></script></body></html>".write(to: d.appendingPathComponent("ui/index.html"), atomically: true, encoding: .utf8)
         try hostileJS.write(to: d.appendingPathComponent("ui/app.js"), atomically: true, encoding: .utf8)
         return d
     }
@@ -264,5 +282,70 @@ collie.onCommand(async (name, args) => {
         #expect((theme.hasPrefix("light #") || theme.hasPrefix("dark #")) && theme.count == "light #000000".count + (theme.hasPrefix("dark") ? -1 : 0), "\(theme)")
         }
     }
-}
 
+    /// Task 3 review C1: WebRTC (ICE over UDP) gets past content rules and CSP; it must not exist in the page.
+    @Test func webRTCBlocked() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+        let fd = socket(AF_INET, SOCK_DGRAM, 0); defer { Darwin.close(fd) }
+        var addr = sockaddr_in(); addr.sin_family = sa_family_t(AF_INET); addr.sin_addr.s_addr = inet_addr("127.0.0.1"); addr.sin_port = 0
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, len) } }
+        _ = withUnsafeMutablePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
+        _ = fcntl(fd, F_SETFL, O_NONBLOCK)
+        try await install(try hostil())
+        let x = open("hostil"); defer { cleanup([x]) }
+        let r = try await x.0.handle("hostil.rtc", ["port": .number(Double(UInt16(bigEndian: addr.sin_port)))])
+        var buf = [UInt8](repeating: 0, count: 512)
+        #expect(recv(fd, &buf, buf.count, 0) < 0 && errno == EAGAIN, "a datagram reached the listener")
+        #expect(r == .string("none"), "\(r)")
+        // and the camera and microphone are never granted
+        let m = try await x.0.handle("hostil.media", [:])
+        #expect(m == .string("none") || m == .string("denied"), "\(m)")
+        }
+    }
+
+    /// M1, M2, M8: unique names in plugins-out/<id>, the newest 100 kept, a linked dir refused.
+    @Test func outputFilesUniqueCappedNoFollow() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+        try await install(try hostil())
+        let x = open("hostil"); defer { cleanup([x]) }
+        let dir = root.appendingPathComponent("plugins-out/hostil")
+        _ = try await x.0.handle("hostil.two", [:])
+        let two = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let bodies = Set(try two.map { try String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8) })
+        #expect(two.count == 2 && bodies == ["1", "2"], "\(two)")
+        _ = try await x.0.handle("hostil.many", [:])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).count == 100)
+        try FileManager.default.removeItem(at: dir)
+        let elsewhere = root.appendingPathComponent("elsewhere"); try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: dir.path, withDestinationPath: elsewhere.path)
+        let r = obj(try await x.0.handle("hostil.out1", [:]))
+        #expect(r["refused"] != nil, "\(r)")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: elsewhere.path).isEmpty)
+        }
+    }
+
+    /// M3: a navigation inside the plug-in waits for the new page's handler; M5: a new version answers at once.
+    @Test func navigationAndVersionSwap() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+        try await install(try hostil())
+        let x = open("hostil"); defer { cleanup([x]) }
+        #expect(try await x.0.handle("hostil.nav", [:]) == .string("ok"))
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(try await x.0.handle("hostil.ping", [:]) == .string("pong"))
+        try await install(try hostil(version: "0.2.0"))
+        #expect(try await x.0.handle("hostil.ver", [:]) == .string("0.2.0"))   // no window where the old page answers
+        }
+    }
+
+    /// M4: a page whose process keeps dying is reloaded a few times, then left as a placeholder.
+    @Test func crashLoopStops() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+        try await install(try hostil())
+        let x = open("hostil"); defer { cleanup([x]) }
+        _ = try await x.0.handle("hostil.ping", [:])
+        for _ in 0..<4 { if let w = x.0.webView { x.0.webViewWebContentProcessDidTerminate(w) } }
+        #expect(x.0.webView == nil && x.0.view.subviews.contains { ($0 as? NSTextField)?.stringValue.contains("parou várias vezes") == true })
+        }
+    }
+}

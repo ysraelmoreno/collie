@@ -37,7 +37,9 @@ enum WebPluginBridge {
         let m;
         try {
           if (!handler) throw new Error("the page registered no collie.onCommand handler");
-          m = { op: "result", id, ok: true, value: json(await handler(name, args)) };
+          const value = json(await handler(name, args));
+          if (value.length > 1048576) throw new Error("resultado maior que 1 MiB");   // before it crosses (Swift caps the bytes again)
+          m = { op: "result", id, ok: true, value };
         } catch (e) {
           m = { op: "result", id, ok: false, value: String((e && e.message) || e).slice(0, 500) };
         }

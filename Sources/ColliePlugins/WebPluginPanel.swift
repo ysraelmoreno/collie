@@ -56,7 +56,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
 /// When the plug-in is not installed (never, removed, disabled) the panel shows a placeholder and keeps its state;
 /// when the registry changes it follows: a new version reloads, a removal fails the calls in flight (`unavailable`).
 @MainActor public final class WebPluginPanel: NSObject, PluginPanelView {
-    static let resultCap = 1 << 20, stateCap = 256 * 1024, outputCap = 16 << 20, payloadCap = 64 * 1024, outputsKept = 20
+    static let resultCap = 1 << 20, stateCap = 256 * 1024, outputCap = 16 << 20, payloadCap = 64 * 1024, outputsKept = 100, crashesAllowed = 3
     static let outputExtensions: Set<String> = ["png", "svg", "json", "txt", "md", "csv", "html"]
     static let outputScheme = "collie-output://"
     let panel: Panel
@@ -71,6 +71,8 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     /// `files.output` handles this page made (token → file under `screens/`).
     private var outputs: [String: URL] = [:]
     private var observer: (any NSObjectProtocol)?
+    /// Web content process deaths of this page (reset by a version load); past `crashesAllowed` it is left as a placeholder.
+    private var crashes = 0
     public var view: NSView { box }
 
     public required init(panel: Panel, host: PanelHostContext) {
@@ -96,6 +98,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         guard v != version else { return }
         teardown("plug-in atualizado")
+        crashes = 0
         let folder = host.root.appendingPathComponent("plugins").appendingPathComponent(spec.id).appendingPathComponent(v)
         guard let m = try? PluginManifest.load(folder: folder), m.id == spec.id, m.version == v else {
             return box.placeholder("Plug-in \(spec.title) não pôde ser carregado")
@@ -109,6 +112,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         let g = gen
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list and the CSP
         config.setURLSchemeHandler(PluginSchemeHandler(id: m.id, uiRoot: folder.appendingPathComponent("ui")), forURLScheme: PluginSchemeHandler.scheme)
         let ucc = config.userContentController
         ucc.addScriptMessageHandler(Bridge(self), contentWorld: .page, name: WebPluginBridge.handler)
@@ -123,6 +127,11 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             guard let self, self.gen == g, let web = self.webView else { return }
             guard let rules else { self.teardown("bloqueio de rede indisponível"); return self.box.placeholder("Plug-in \(m.name): bloqueio de rede indisponível") }
             web.configuration.userContentController.add(rules)
+            // fail closed: the WebRTC switch is private, so check it took before the page exists
+            guard await WebLockdown.peerConnectionsOff(web), self.gen == g else {
+                if self.gen == g { self.teardown(WebLockdown.failure); self.box.placeholder("Plug-in \(m.name): \(WebLockdown.failure)") }
+                return
+            }
             web.load(URLRequest(url: page))   // only after the rules: no load ever runs unblocked
         }
     }
@@ -132,7 +141,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         gen += 1
         for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: why))) }
         pending = [:]
-        ready = false; version = nil; outputs = [:]
+        ready = false; version = nil; outputs = [:]   // files stay (plugins-out keeps the newest `outputsKept`)
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil; web.uiDelegate = nil
@@ -177,9 +186,11 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
 
     public func handle(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         let removed = ProtocolError(code: .unavailable, message: "plug-in removido")
-        guard let (p, cmd) = PluginRegistry.command(command), p.id == panel.pluginId, p.source != .builtIn, version != nil else {
+        guard let (p, cmd) = PluginRegistry.command(command), p.id == panel.pluginId, case .external(let v) = p.source else {
             throw ProtocolError(code: .unavailable, message: "plug-in \(panel.pluginId) não está instalado")
         }
+        if v != version { refresh() }   // the registry moved on before its notification ran: never the old page
+        guard version != nil else { throw ProtocolError(code: .unavailable, message: "plug-in \(panel.pluginId) não pôde ser carregado") }
         let seconds = cmd.timeoutSeconds ?? 30
         let deadline = ContinuousClock.now + .seconds(seconds)
         let timedOut = ProtocolError(code: .timeout, message: "'\(command)' não respondeu em \(Int(seconds)) s")
@@ -216,7 +227,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     /// it over); an `outputFile` command's `path` must be one.
     private func outputPath(_ v: JSONValue, outputFile: Bool) throws(ProtocolError) -> JSONValue {
         guard case .object(var o) = v, case .string(let p)? = o["path"] else { return v }
-        if p.hasPrefix(Self.outputScheme), let f = outputs[String(p.dropFirst(Self.outputScheme.count))] {
+        if p.hasPrefix(Self.outputScheme), let f = outputs[String(p.dropFirst(Self.outputScheme.count))], FileManager.default.fileExists(atPath: f.path) {
             o["path"] = .string(f.path)
             return .object(o)
         }
@@ -262,26 +273,43 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             guard let b64 = str("data"), b64.utf8.count <= Self.outputCap / 3 * 4 + 4, let data = Data(base64Encoded: b64), data.count <= Self.outputCap else {
                 return (nil, "arquivo inválido (base64) ou maior que 16 MiB")
             }
-            let dir = Self.outputDir(panel, root: host.root)
-            let file = dir.appendingPathComponent("\(panel.id.uuidString)-\(Int(Date().timeIntervalSince1970 * 1000))-\(name)")
-            do {
-                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-                try Self.writePrivate(data, to: file)
-            } catch { return (nil, "não foi possível gravar o arquivo") }
             let token = UUID().uuidString
+            guard let file = Self.writeOutput(data, name: "\(panel.id.uuidString)-\(token)-\(name)", panel: panel, root: host.root) else {
+                return (nil, "não foi possível gravar o arquivo")
+            }
             outputs[token] = file
-            pruneOutputs()
+            Self.pruneOutputs(Self.outputDir(panel, root: host.root))
             return ("{\"path\":\"\(Self.outputScheme)\(token)\"}", nil)
         default:
             return (nil, "operação desconhecida")
         }
     }
 
-    /// The newest `outputsKept` handles stay usable (and their files on disk).
-    private func pruneOutputs() {
-        guard outputs.count > Self.outputsKept else { return }
-        let old = outputs.sorted { $0.value.lastPathComponent < $1.value.lastPathComponent }.prefix(outputs.count - Self.outputsKept)
-        for (k, f) in old { outputs[k] = nil; try? FileManager.default.removeItem(at: f) }
+    /// `<root>/plugins-out/<id>/<name>`: both dirs made 0700 and checked real dirs (a link there is refused, never
+    /// followed), the file created new (O_EXCL, O_NOFOLLOW), 0600. nil: refused or failed.
+    static func writeOutput(_ data: Data, name: String, panel: Panel, root: URL) -> URL? {
+        let out = root.appendingPathComponent("plugins-out", isDirectory: true), dir = outputDir(panel, root: root)
+        for d in [out, dir] {
+            if mkdir(d.path, 0o700) != 0 && errno != EEXIST { return nil }
+            guard (try? FileManager.default.attributesOfItem(atPath: d.path)[.type] as? FileAttributeType) == .typeDirectory else { return nil }   // lstat
+        }
+        let file = dir.appendingPathComponent(name)
+        let fd = open(file.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { return nil }
+        defer { Darwin.close(fd) }
+        let ok = data.withUnsafeBytes { b in b.count == 0 || write(fd, b.baseAddress, b.count) == b.count }
+        if !ok { unlink(file.path); return nil }
+        return file
+    }
+
+    /// The plug-in's newest `outputsKept` files stay (all its panels); older ones go.
+    static func pruneOutputs(_ dir: URL) {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path), names.count > outputsKept else { return }
+        func mtime(_ n: String) -> Date { ((try? fm.attributesOfItem(atPath: dir.appendingPathComponent(n).path))?[.modificationDate] as? Date) ?? .distantPast }
+        for n in names.map({ ($0, mtime($0)) }).sorted(by: { $0.1 < $1.1 }).prefix(names.count - outputsKept).map(\.0) {
+            try? fm.removeItem(at: dir.appendingPathComponent(n))
+        }
     }
 
     static func validOutputName(_ n: String) -> Bool {
@@ -376,10 +404,32 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
     /// `window.open`, `target=_blank`: never a new window.
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
+    /// A process death fails the calls in flight and reloads after 0.5, 1, 2 s; the fourth one leaves the placeholder.
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
         ready = false
         for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: "a página do plug-in parou"))) }
         pending = [:]
-        webView.reload()
+        crashes += 1
+        guard crashes <= Self.crashesAllowed else {
+            teardown("a página do plug-in parou")
+            return box.placeholder("Plug-in \(title): a página parou várias vezes")
+        }
+        let g = gen, delay = 0.5 * pow(2, Double(crashes - 1))
+        Task { [weak self, weak webView] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, self.gen == g, let webView, webView === self.webView else { return }
+            webView.reload()
+        }
     }
+    /// A new document in the main frame (an in-plug-in navigation, a reload): its handler isn't registered yet.
+    public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard webView === self.webView, ready else { return }
+        ready = false
+        for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: "a página do plug-in recarregou"))) }
+        pending = [:]
+    }
+    /// Camera and microphone: never (motion permission is iOS-only) (the page could hand a recording out through a command result).
+    public func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
+                        type: WKMediaCaptureType, decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void) { decisionHandler(.deny) }
 }

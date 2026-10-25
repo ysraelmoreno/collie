@@ -188,6 +188,7 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
     private func makeWebView(dir: URL, rules: WKContentRuleList) {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list
         config.setURLSchemeHandler(DiagramSchemeHandler(root: dir), forURLScheme: DiagramSchemeHandler.scheme)
         config.userContentController.add(rules)
         config.userContentController.add(Bridge(self), name: "collieDiagram")
@@ -195,7 +196,12 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         web.navigationDelegate = self; web.uiDelegate = self
         webView = web; box.web = web
         box.card.addSubview(web); box.needsLayout = true
-        web.load(URLRequest(url: URL(string: "\(DiagramSchemeHandler.scheme)://app/host.html")!))
+        Task { [weak self] in   // fail closed: the WebRTC switch is private, check it took before loading
+            guard let self, !self.closed, self.webView === web else { return }
+            guard await WebLockdown.peerConnectionsOff(web) else { return self.fail("Não consegui bloquear a rede do editor", retry: false) }
+            guard !self.closed, self.webView === web else { return }
+            web.load(URLRequest(url: URL(string: "\(DiagramSchemeHandler.scheme)://app/host.html")!))
+        }
     }
 
     /// Weak: the user content controller keeps its handlers alive.

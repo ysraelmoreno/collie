@@ -116,6 +116,7 @@ actor PluginStore {
         do { try save() } catch { entries = before; throw error }
         manifests[id] = nil
         Self.removeTree(dir.appendingPathComponent(id))
+        Self.removeTree(dir.deletingLastPathComponent().appendingPathComponent("plugins-out").appendingPathComponent(id))   // its output files
     }
 
     /// Enabling verifies the folder again: a changed one stays off.
@@ -221,6 +222,7 @@ actor PluginStore {
         defer { close(i) }
         var st = stat()
         guard fstat(i, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { throw ProtocolError(code: .invalidArgs, message: "'\(rel)' não é um arquivo comum") }
+        guard st.st_nlink == 1 else { throw ProtocolError(code: .invalidArgs, message: "'\(rel)' é um link físico (hard link): não aceito em plug-ins") }
         var buf0 = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         guard fcntl(i, F_GETPATH, &buf0) == 0, String(cString: buf0) == inside + "/" + rel else {
             throw ProtocolError(code: .invalidArgs, message: "'\(rel)' saiu da pasta do plug-in (link no caminho)")

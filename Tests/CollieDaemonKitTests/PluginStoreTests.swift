@@ -62,6 +62,18 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         }
     }
 
+    /// Task 3 review M7: a hard link would copy a file from outside the folder (same volume) into the plug-in.
+    @Test func installRefusesHardLink() async throws {
+        try await withTemp { d in
+            let s = try source(d), outside = d.appendingPathComponent("secret.txt")
+            try "secret".write(to: outside, atomically: false, encoding: .utf8)
+            try fm.linkItem(at: outside, to: s.appendingPathComponent("ui/hard.txt"))
+            let store = PluginStore(root: d.appendingPathComponent("root"))
+            #expect(await code { _ = try await store.install(from: s) } == .invalidArgs)
+            #expect(await store.list().isEmpty)
+        }
+    }
+
     @Test func installRefusesOver64MiB() async throws {
         try await withTemp { d in
             let s = try source(d)
@@ -156,9 +168,12 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         try await withTemp { d in
             let root = d.appendingPathComponent("root"), store = PluginStore(root: root)
             _ = try await store.install(from: try source(d))
+            let out = root.appendingPathComponent("plugins-out/notas"); try fm.createDirectory(at: out, withIntermediateDirectories: true)
+            fm.createFile(atPath: out.appendingPathComponent("p-1-a.md").path, contents: Data("x".utf8))
             try await store.uninstall("notas")
             #expect(await store.list().isEmpty); #expect(await store.loaded().isEmpty)
             #expect(!fm.fileExists(atPath: root.appendingPathComponent("plugins/notas").path))
+            #expect(!fm.fileExists(atPath: root.appendingPathComponent("plugins-out/notas").path))   // its output files go too (review M2)
             #expect(await PluginStore(root: root).list().isEmpty)
             #expect(await code { try await store.uninstall("notas") } == .notFound)
             // an edited installed.json naming a path outside plugins/ is dropped, never followed

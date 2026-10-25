@@ -25,6 +25,9 @@ struct SandboxInput {
     var grants: [SandboxGrant] = []
     /// The Collie.app bundle (`collied`, `collie`, `collie-ctty`, which launchd runs outside any sandbox): never writable (I3).
     var appBundle: URL? = nil
+    /// `open`: Collie's internals closed, nothing else (the router passes the workspace's mode; strict here keeps the
+    /// curator's and the strict suites' profile).
+    var mode: SandboxMode = .strict
     var userTemp = SandboxInput.darwinDir(_CS_DARWIN_USER_TEMP_DIR)
     var userCache = SandboxInput.darwinDir(_CS_DARWIN_USER_CACHE_DIR)
 
@@ -67,7 +70,7 @@ struct SandboxInput {
     }
 }
 
-/// The per-terminal Seatbelt profile: `(allow default)`, then deny rules and allow-backs where the last matching rule
+/// The per-terminal Seatbelt profile (strict mode; open mode keeps only Collie's internals closed): `(allow default)`, then deny rules and allow-backs where the last matching rule
 /// wins (Task 1's shape). Reads open but for a closed list; writes closed but for the project, caches and grants.
 /// Every path is resolved and inlined as an escaped SBPL string; the ones inside regexes are regex-escaped too. Every deny that should raise a card carries `(with message "collie-term:<id>")` (Task 4).
 enum SandboxProfile {
@@ -102,92 +105,106 @@ enum SandboxProfile {
             guard !filters.isEmpty else { return }
             out.append("(\(verb) \(op)\(tagged ? " " + tag : "")\n  " + filters.joined(separator: "\n  ") + ")")
         }
-        // R26: a grant is rendered exactly as stored (the resolved path the card showed), never resolved again: a symlink
-        // swapped in later opens nothing (Seatbelt matches the resolved path)
-        let grants = i.grants.map { (path: $0.path, access: $0.access) }
+        func under(_ p: String, _ root: String) -> Bool { URL(fileURLWithPath: p).pathComponents.starts(with: URL(fileURLWithPath: root).pathComponents) }
+        if i.mode == .open {
+            // user decision (2026-10-25): everything in the account is open but Collie's internals: its data (below), the
+            // app bundle and its LaunchAgents (writes), and their parents (renaming one away, writing inside and renaming
+            // back would get past the leaves), every ancestor. Signals out and the socket rule stay (below)
+            out.append(";; open mode: only Collie's internals closed")
+            let app = i.appBundle.map(real), agents = home + "/Library/LaunchAgents"
+            rule("deny", "file-write*", tagged: true, [app].compactMap { $0.map(sub) } + [rx("^" + re(agents + "/dev.collie.") + ".*")])
+            var parents: Set<String> = [agents]
+            for p in [collie, agents] + [app].compactMap({ $0 }) {
+                var u = URL(fileURLWithPath: p).deletingLastPathComponent()
+                while u.pathComponents.count > 1 { parents.insert(u.path); u = u.deletingLastPathComponent() }
+            }
+            rule("deny", "file-write*", tagged: true, parents.sorted().map(lit))
+        } else {
+            // R26: a grant is rendered exactly as stored (the resolved path the card showed), never resolved again: a symlink
+            // swapped in later opens nothing (Seatbelt matches the resolved path)
+            let grants = i.grants.map { (path: $0.path, access: $0.access) }
 
-        // 2Q (user decision): reads are open, except what `readClosed` lists (secrets, browser profiles, mail, messages,
-        // containers) and Collie's data (below). No read grant is rendered (a stored one is moot): nothing re-opens them.
-        // ssh keeps what `git`/`ssh` need without the keys
-        out.append(";; reads: open; secrets, browser profiles, mail/messages/containers closed")
-        rule("deny", "file-read*", tagged: true, closing(EssentialPaths.readClosed))
-        rule("allow", "file-read*", [lit(home + "/.ssh"), lit(home + "/.ssh/known_hosts"), lit(home + "/.ssh/config"),
-                                     rx("^" + re(home + "/.ssh/") + "[^/]+\\.pub$")])
+            // 2Q (user decision): reads are open, except what `readClosed` lists (secrets, browser profiles, mail, messages,
+            // containers) and Collie's data (below). No read grant is rendered (a stored one is moot): nothing re-opens them.
+            // ssh keeps what `git`/`ssh` need without the keys
+            out.append(";; reads: open; secrets, browser profiles, mail/messages/containers closed")
+            rule("deny", "file-read*", tagged: true, closing(EssentialPaths.readClosed))
+            rule("allow", "file-read*", [lit(home + "/.ssh"), lit(home + "/.ssh/known_hosts"), lit(home + "/.ssh/config"),
+                                         rx("^" + re(home + "/.ssh/") + "[^/]+\\.pub$")])
 
-        out.append(";; writes: temp and devices; the home (and the git dirs) closed again; then the project and caches")
-        out.append("(deny file-write* \(tag))")
-        rule("allow", "file-write*", [sub("/private/tmp"), sub(real(i.userTemp))]
-             + EssentialPaths.userCacheWrites.map { entry(real(i.userCache), $0) }
-             + ["/dev/null", "/dev/zero", "/dev/dtracehelper", "/dev/tty", "/dev/ptmx"].map(lit) + [rx("^/dev/ttys[0-9]+$"), rx("^/dev/fd/")])
-        rule("deny", "file-write*", tagged: true, [sub(home)] + [common].compactMap { $0.map(sub) })
-        var writes = [sub(project)] + EssentialPaths.homeWrites.map { entry(home, $0) }
-        if let common {
-            if let worktree {   // a worktree commits through the common dir; its own git dir is its index/HEAD
-                writes += ["objects", "refs", "logs"].map { sub(common + "/" + $0) }
-                    + [lit(common + "/packed-refs"), lit(common + "/packed-refs.lock"), sub(worktree)]
+            out.append(";; writes: temp and devices; the home (and the git dirs) closed again; then the project and caches")
+            out.append("(deny file-write* \(tag))")
+            rule("allow", "file-write*", [sub("/private/tmp"), sub(real(i.userTemp))]
+                 + EssentialPaths.userCacheWrites.map { entry(real(i.userCache), $0) }
+                 + ["/dev/null", "/dev/zero", "/dev/dtracehelper", "/dev/tty", "/dev/ptmx"].map(lit) + [rx("^/dev/ttys[0-9]+$"), rx("^/dev/fd/")])
+            rule("deny", "file-write*", tagged: true, [sub(home)] + [common].compactMap { $0.map(sub) })
+            var writes = [sub(project)] + EssentialPaths.homeWrites.map { entry(home, $0) }
+            if let common {
+                if let worktree {   // a worktree commits through the common dir; its own git dir is its index/HEAD
+                    writes += ["objects", "refs", "logs"].map { sub(common + "/" + $0) }
+                        + [lit(common + "/packed-refs"), lit(common + "/packed-refs.lock"), sub(worktree)]
+                } else {
+                    writes.append(sub(common))
+                }
+            }
+            // write grants, before the project's own allows (which re-open the project's git dir and the tools' caches):
+            // R27: a write grant never covers a git dir beneath it (`.git` or `*.git`: hooks, config, modules, worktrees, bare)
+            let writeGrants = grants.filter { $0.access == .write }.map(\.path)
+            rule("allow", "file-write*", writeGrants.map(sub))
+            // except a grant under TMP outside the home: TMP is writable anyway, and clones go there (R17)
+            let temps = ["/private/tmp", real(i.userTemp)]
+            func gitDeny(_ gs: [String]) {
+                rule("deny", "file-write*", tagged: true, gs.filter { g in under(g, home) || !temps.contains { under(g, $0) } }
+                     .map { rx("^" + re($0) + "/(.+/)?[^/]*\\.git(/|$)") })
+            }
+            gitDeny(writeGrants)
+            rule("allow", "file-write*", writes)
+            // R34: global agent config closed after the project (the home as project too), then the agents' own state, then
+            // re-opened by a write grant on (or above) it: the user's click (user decision)
+            let agentConfig = EssentialPaths.agentConfig.map { home + "/" + $0 }
+            rule("deny", "file-write*", tagged: true, agentConfig.map(sub))
+            rule("allow", "file-write*", EssentialPaths.agentStateWrites.map { entry(home, $0) })
+            let reopened = writeGrants.filter { g in agentConfig.contains { under(g, $0) || under($0, g) } }
+            rule("allow", "file-write*", reopened.map(sub))
+            gitDeny(reopened)
+            // a pasture never writes its paddocks: their worktrees, nor any worktree's git dir in the common dir
+            var closed = i.paddockWorktrees.map { sub(real($0)) }
+            if let common, worktree == nil { closed.append(sub(common + "/worktrees")) }
+            rule("deny", "file-write*", tagged: true, closed)
+            // R17: no nested `.git` (dir, file or link) anywhere in the project either: the user's git or IDE runs its config.
+            // ponytail: agents can't clone/init/submodule-add inside the project (clone into TMP instead)
+            rule("deny", "file-write*", tagged: true, [rx("^" + re(project) + "/.+/\\.git(/|$)")])
+            // R20: except the tools' own checkouts at the project root (SwiftPM `.build/`, Carthage), normally git-ignored.
+            // Accepted: an IDE that scans nested repos there could run a planted config
+            rule("allow", "file-write*", [rx("^" + re(project) + "/(\\.build|Carthage/Checkouts)/.+")])
+            // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
+            // launchd agents, ~/Applications, the app bundle (I3). R23: secrets. (N2: after the `.build/` re-allow above)
+            rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
+            rule("deny", "file-write*", tagged: true, closing(EssentialPaths.readClosed))   // M1: what is never read, never moved away
+            // R35: their parents themselves (never their other children): renaming `~/Library` or `~/.config` away, writing
+            // inside and renaming back would get past the denies on the leaves. From the home down, computed from the lists
+            let protected = (EssentialPaths.neverWritable + EssentialPaths.agentConfig + EssentialPaths.readClosed)
+                .map { home + "/" + ($0.hasSuffix("*") ? String($0.dropLast()) : $0) } + [collie]
+            var parents: Set<String> = [home]
+            for p in protected where under(p, home) {
+                var u = URL(fileURLWithPath: p).deletingLastPathComponent()
+                while u.pathComponents.count > URL(fileURLWithPath: home).pathComponents.count { parents.insert(u.path); u = u.deletingLastPathComponent() }
+            }
+            rule("deny", "file-write*", tagged: true, parents.sorted().map(lit))
+            // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
+            // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
+            if let common {
+                let c = re(common)
+                rule("deny", "file-write*", tagged: true, [
+                    lit(common), lit(project + "/.git"), sub(common + "/hooks"), lit(common + "/config"),
+                    lit(common + "/config.worktree"), lit(common + "/info/attributes"), lit(common + "/commondir"),
+                    rx("^" + c + "/worktrees/[^/]+/(commondir|gitdir|config\\.worktree)$"),
+                    rx("^" + c + "/modules/.+/(hooks(/|$)|config$|config\\.worktree$|commondir$|info/attributes$)"),
+                ])
             } else {
-                writes.append(sub(common))
+                rule("deny", "file-write*", tagged: true, [lit(project + "/.git")])   // no planting a pointer in a non-git project
             }
         }
-        // write grants, before the project's own allows (which re-open the project's git dir and the tools' caches):
-        // R27: a write grant never covers a git dir beneath it (`.git` or `*.git`: hooks, config, modules, worktrees, bare)
-        let writeGrants = grants.filter { $0.access == .write }.map(\.path)
-        rule("allow", "file-write*", writeGrants.map(sub))
-        // except a grant under TMP outside the home: TMP is writable anyway, and clones go there (R17)
-        func under(_ p: String, _ root: String) -> Bool { URL(fileURLWithPath: p).pathComponents.starts(with: URL(fileURLWithPath: root).pathComponents) }
-        let temps = ["/private/tmp", real(i.userTemp)]
-        func gitDeny(_ gs: [String]) {
-            rule("deny", "file-write*", tagged: true, gs.filter { g in under(g, home) || !temps.contains { under(g, $0) } }
-                 .map { rx("^" + re($0) + "/(.+/)?[^/]*\\.git(/|$)") })
-        }
-        gitDeny(writeGrants)
-        rule("allow", "file-write*", writes)
-        // R34: global agent config closed after the project (the home as project too), then the agents' own state, then
-        // re-opened by a write grant on (or above) it: the user's click (user decision)
-        let agentConfig = EssentialPaths.agentConfig.map { home + "/" + $0 }
-        rule("deny", "file-write*", tagged: true, agentConfig.map(sub))
-        rule("allow", "file-write*", EssentialPaths.agentStateWrites.map { entry(home, $0) })
-        let reopened = writeGrants.filter { g in agentConfig.contains { under(g, $0) || under($0, g) } }
-        rule("allow", "file-write*", reopened.map(sub))
-        gitDeny(reopened)
-        // a pasture never writes its paddocks: their worktrees, nor any worktree's git dir in the common dir
-        var closed = i.paddockWorktrees.map { sub(real($0)) }
-        if let common, worktree == nil { closed.append(sub(common + "/worktrees")) }
-        rule("deny", "file-write*", tagged: true, closed)
-        // R17: no nested `.git` (dir, file or link) anywhere in the project either: the user's git or IDE runs its config.
-        // ponytail: agents can't clone/init/submodule-add inside the project (clone into TMP instead)
-        rule("deny", "file-write*", tagged: true, [rx("^" + re(project) + "/.+/\\.git(/|$)")])
-        // R20: except the tools' own checkouts at the project root (SwiftPM `.build/`, Carthage), normally git-ignored.
-        // Accepted: an IDE that scans nested repos there could run a planted config
-        rule("allow", "file-write*", [rx("^" + re(project) + "/(\\.build|Carthage/Checkouts)/.+")])
-        // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
-        // launchd agents, ~/Applications, the app bundle (I3). R23: secrets. (N2: after the `.build/` re-allow above)
-        rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
-        rule("deny", "file-write*", tagged: true, closing(EssentialPaths.readClosed))   // M1: what is never read, never moved away
-        // R35: their parents themselves (never their other children): renaming `~/Library` or `~/.config` away, writing
-        // inside and renaming back would get past the denies on the leaves. From the home down, computed from the lists
-        let protected = (EssentialPaths.neverWritable + EssentialPaths.agentConfig + EssentialPaths.readClosed)
-            .map { home + "/" + ($0.hasSuffix("*") ? String($0.dropLast()) : $0) } + [collie]
-        var parents: Set<String> = [home]
-        for p in protected where under(p, home) {
-            var u = URL(fileURLWithPath: p).deletingLastPathComponent()
-            while u.pathComponents.count > URL(fileURLWithPath: home).pathComponents.count { parents.insert(u.path); u = u.deletingLastPathComponent() }
-        }
-        rule("deny", "file-write*", tagged: true, parents.sorted().map(lit))
-        // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
-        // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
-        if let common {
-            let c = re(common)
-            rule("deny", "file-write*", tagged: true, [
-                lit(common), lit(project + "/.git"), sub(common + "/hooks"), lit(common + "/config"),
-                lit(common + "/config.worktree"), lit(common + "/info/attributes"), lit(common + "/commondir"),
-                rx("^" + c + "/worktrees/[^/]+/(commondir|gitdir|config\\.worktree)$"),
-                rx("^" + c + "/modules/.+/(hooks(/|$)|config$|config\\.worktree$|commondir$|info/attributes$)"),
-            ])
-        } else {
-            rule("deny", "file-write*", tagged: true, [lit(project + "/.git")])   // no planting a pointer in a non-git project
-        }
-
         out.append(";; Collie: closed (data, tokens, grants, workspace.json); this terminal's files readable; only the socket")
         rule("deny", "file-read* file-write*", tagged: true, [sub(collie)])
         rule("allow", "file-read*", i.ownFiles.map { lit(real($0)) } + [sub(tdir)])
@@ -203,9 +220,11 @@ enum SandboxProfile {
         rule("deny", "network-outbound", tagged: true, ["(remote unix-socket \(sub(collie)))"])
         rule("allow", "network-outbound", ["(remote unix-socket (path-literal \(q(real(i.socket)))))"])
 
-        // R14: by path only (a copy of the binary runs): defence in depth, not a boundary. R12: `security` stays (Keychain logins)
-        out.append(";; processes: no launchd, no LaunchServices `open` (the shim asks the daemon); no signals out")
-        rule("deny", "process-exec", tagged: true, [lit("/bin/launchctl"), lit("/usr/bin/open")])
+        if i.mode == .strict {
+            // R14: by path only (a copy of the binary runs): defence in depth, not a boundary. R12: `security` stays (Keychain logins)
+            out.append(";; processes: no launchd, no LaunchServices `open` (the shim asks the daemon); no signals out")
+            rule("deny", "process-exec", tagged: true, [lit("/bin/launchctl"), lit("/usr/bin/open")])
+        }
         out.append("(allow process-exec (literal \"/bin/ps\") (with no-sandbox))   ; setuid: a sandboxed exec of it fails otherwise")
         out.append("(deny signal \(tag))")
         out.append("(allow signal (target same-sandbox))")

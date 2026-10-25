@@ -143,6 +143,9 @@ struct SandboxCards {
         return d
     }
 
+    /// A denial that never raises a card (open mode): counted in `silent` only.
+    mutating func hush(_ d: SandboxDenial) { silent[d.terminal, default: 0] += d.count }
+
     mutating func remove(_ k: Key) {
         guard cards.removeValue(forKey: k) != nil else { return }
         lastSent[k] = nil; open[k.terminal, default: 1] -= 1

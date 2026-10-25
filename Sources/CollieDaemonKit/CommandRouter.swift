@@ -82,6 +82,8 @@ actor CommandRouter {
     var sandboxKnown: Set<UUID> = []
     var sandboxDetection: Bool?
     var sandboxWatch: Task<Void, Never>?
+    /// The terminals whose running profile is the open one (their mode at start): no access cards for them.
+    var sandboxOpen: Set<UUID> = []
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
     init(config: DaemonConfig, auth: AuthRegistry, registry: TerminalRegistry, store: WorkspaceStore,
@@ -500,6 +502,7 @@ actor CommandRouter {
                 try await remove(try find(name))
             }
             return .object([:])
+        case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))
         case "admin.data.export", "admin.data.import":
             let key = r.command == "admin.data.export" ? "out" : "from"
             let path = try need(key)
@@ -645,7 +648,15 @@ actor CommandRouter {
 
     /// The project of a terminal an agent creates at `cwd`: `cwd` must lie within `allowed` (the creator's project, or a
     /// paddock it owns), and outside the paddock worktrees nested there unless it goes into that paddock. Never wider than `allowed`.
+    /// Open mode: any existing directory (no project bound; the summoner's sandbox doesn't confine writes either).
     func childProject(cwd: String, paddock: Paddock?, allowed: URL) throws(ProtocolError) -> URL {
+        if sandboxMode == .open {
+            var dir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: cwd, isDirectory: &dir), dir.boolValue else {
+                throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is not an existing directory")
+            }
+            return ProjectRoot.resolve(cwd: cwd, paddock: paddock, home: sandboxHomeDir)
+        }
         guard ProjectRoot.contains(cwd, root: allowed) else {
             throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is outside your project \(allowed.path)")
         }
@@ -752,7 +763,8 @@ actor CommandRouter {
                                  terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
                                  agent: rec.preset, command: rec.command,
                                  grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, project: project.path, lot: ws.lot(of: rec.id)?.id),
-                                 appBundle: SandboxInput.appBundle(of: config.collieExecutable))
+                                 appBundle: SandboxInput.appBundle(of: config.collieExecutable), mode: sandboxMode)
+        if input.mode == .open { sandboxOpen.insert(rec.id) } else { sandboxOpen.remove(rec.id) }
         // R29: an id reused on another project (same-name respawn elsewhere) loses its terminal grants
         let stale = sandboxGrants.filter { $0.scope == .terminal && $0.owner == rec.id && $0.project != nil && $0.project != project.path }
         if !stale.isEmpty { sandboxGrants.removeAll { g in stale.contains { $0.id == g.id } }; try? saveGrants() }

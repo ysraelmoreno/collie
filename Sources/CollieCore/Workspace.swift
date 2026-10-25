@@ -10,6 +10,16 @@ public enum TerminalSandbox: String, Codable, Sendable {
     }
 }
 
+/// The sandbox of terminals started from now on (user decision 2026-10-25): `open` (the default) lets an agent read and
+/// write everything in the account but Collie's own internals; `strict` is the closed profile (project writes, secrets
+/// closed, access cards). Set only by the app (`admin.sandbox`).
+public enum SandboxMode: String, Codable, Sendable, CaseIterable {
+    case open, strict
+    public init(from d: Decoder) throws {   // fail closed: an unknown value is strict
+        self = SandboxMode(rawValue: try d.singleValueContainer().decode(String.self)) ?? .strict
+    }
+}
+
 public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
@@ -83,10 +93,12 @@ public struct Workspace: Codable, Sendable, Equatable {
     public var designSystem: UUID?   // active design system of pasture and of paddocks without their own
     public var designFirst: DesignFirst = .ask   // set only by `design.prefer` / Preferences
     public var lots: [Lot] = []
+    /// nil: the daemon's default (`DaemonConfig.defaultSandboxMode`, open). Set only by `admin.sandbox` / Preferences.
+    public var terminalSandbox: SandboxMode?
     public init(id: UUID, name: String, terminals: [TerminalRecord] = [], connections: [Connection] = [], paddocks: [Paddock] = [], panels: [Panel] = []) {
         self.id = id; self.name = name; self.terminals = terminals; self.connections = connections; self.paddocks = paddocks; self.panels = panels
     }
-    private enum K: String, CodingKey { case schemaVersion, id, name, terminals, connections, paddocks, panels, designSystem, designFirst, lots }
+    private enum K: String, CodingKey { case schemaVersion, id, name, terminals, connections, paddocks, panels, designSystem, designFirst, lots, terminalSandbox }
     private enum Legacy: String, CodingKey { case floors }   // before the herding vocabulary
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -98,6 +110,8 @@ public struct Workspace: Codable, Sendable, Equatable {
         panels = try c.decodeIfPresent([Panel].self, forKey: .panels) ?? []   // v1/v2 files have none
         designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
         designFirst = (try? c.decodeIfPresent(DesignFirst.self, forKey: .designFirst)) ?? .ask   // an unknown value must never discard the workspace
+        terminalSandbox = c.contains(.terminalSandbox)   // present but unreadable: strict (fail closed), never the workspace lost
+            ? (try? c.decodeIfPresent(SandboxMode.self, forKey: .terminalSandbox)) ?? .strict : nil
         lots = ((try? c.decodeIfPresent([Lossy<Lot>].self, forKey: .lots)) ?? []).compactMap(\.value)   // a bad entry is dropped, never the workspace
     }
     // schemaVersion always writes the current version (a decoded v1 file is re-saved as 3).
@@ -107,6 +121,7 @@ public struct Workspace: Codable, Sendable, Equatable {
         try c.encode(terminals, forKey: .terminals); try c.encode(connections, forKey: .connections); try c.encode(paddocks, forKey: .paddocks)
         try c.encode(panels, forKey: .panels); try c.encodeIfPresent(designSystem, forKey: .designSystem)
         if !lots.isEmpty { try c.encode(lots, forKey: .lots) }
+        try c.encodeIfPresent(terminalSandbox, forKey: .terminalSandbox)
         if designFirst != .ask { try c.encode(designFirst, forKey: .designFirst) }   // ponytail: the default is never written
     }
 }

@@ -370,7 +370,24 @@ terminal, gerado pelo daemon, que cobre a árvore inteira de processos. Ele é u
 ferramentas). O Seatbelt é uma API que a Apple marca como obsoleta mas que ainda é distribuída (é a que o Claude Code e o
 Codex usam); se um dia sair do macOS, o sandbox para de funcionar e o Collie terá de trocar de mecanismo.
 
-**O que fica fechado**
+**Modo do sandbox: aberto (padrão) ou estrito.** Em Preferências, "Modo do sandbox" escolhe entre **Aberto (padrão)** e
+**Estrito**; a mudança vale para terminais abertos depois (os que já rodam ficam com o modo com que começaram, até
+reiniciarem). Só o app muda o modo (`admin.sandbox`, nunca de dentro de um terminal).
+
+- **Aberto (padrão).** O agente lê e escreve tudo na sua conta: chaves e tokens (`~/.ssh`, `~/.aws`, `~/.netrc`, perfis
+  de navegador…), qualquer pasta, outros repositórios, os rc do shell, `.git/hooks` e `.git/config`, a configuração
+  global dos agentes. Não há cartões de acesso nem limite de projeto para `summon --cwd`, rebanhos e cercados (qualquer
+  pasta existente). **O risco, em palavras simples:** um agente (ou um texto malicioso que ele leia, o *prompt injection*)
+  pode ler as suas chaves e tokens e gravar ou apagar qualquer coisa na sua conta. Continua fechado só o que é do Collie:
+  a pasta de dados e o `admin.token` (nem leitura nem escrita, menos os arquivos que o Collie gera para o próprio
+  terminal), o app `Collie.app` e os LaunchAgents `dev.collie.*` (só escrita), as pastas que os contêm (não podem ser
+  renomeadas), sinais para processos fora do sandbox (não dá `kill` no daemon nem no app) e o socket do daemon (só o
+  `collie`, com o token do terminal). Os atalhos de `swift`/`xcodebuild` e o sandbox interno dos agentes desligado
+  continuam (o Seatbelt não aninha). Um bloqueio dos internos do Collie não vira cartão (fica só contado), e
+  `collie access request` responde que o acesso já está liberado.
+- **Estrito.** O de sempre, descrito abaixo: escrita só no projeto, segredos fechados, cartões para liberar.
+
+**O que fica fechado (modo estrito)**
 
 - **Escrita fora do projeto.** O terminal escreve só na pasta do projeto (o primeiro ancestral do diretório com `.git`,
   procurado sem rodar o git e nunca acima do seu `$HOME`; num cercado, a worktree do cercado) e nas pastas de trabalho

@@ -20,13 +20,13 @@ import CollieProtocol
         try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(text.utf8).write(to: u, options: .atomic)
     }
-    func mount(root: URL, state extra: [String: JSONValue], dataRoot: URL? = nil,
+    func mount(root: URL, state extra: [String: JSONValue], dataRoot: URL? = nil, libs: URL? = nil,
                call: @escaping PanelHostContext.Call = { _, _ throws(ProtocolError) in .null }) -> (PreviewPanel, NSWindow) {
         var state: [String: JSONValue] = ["root": .string(root.path)]
         state.merge(extra) { _, b in b }
         let p = Panel(id: UUID(), name: "previa", pluginId: "preview", placement: .canvas, state: state)
         let host = PanelHostContext(panel: p, root: dataRoot ?? root, workspaceId: nil, call: call, emit: { _, _ in })
-        let panel = PreviewPanel(panel: p, host: host)
+        let panel = PreviewPanel(panel: p, host: host, libs: libs)
         let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 900, height: 700), styleMask: [.borderless], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         panel.view.frame = w.contentView!.bounds
@@ -234,6 +234,44 @@ import CollieProtocol
             }
             #expect(await js(panel, check) as? Bool == true, "\(kind)")
         }
+    }
+
+    @Test func previewLoadsLibs() async throws {
+        let root = try project()
+        try put("l.html", root, #"<body><script src="collie-lib://lib/react@18.3.1/react.production.min.js"></script></body>"#)
+        let (panel, w) = mount(root: root, state: ["file": .string("l.html")], libs: try webLibsFixture())
+        defer { panel.close(); w.close() }
+        #expect(await pollUntil(10) { await js(panel, "typeof window.React === 'object' && window.React.ok === 1") as? Bool == true })
+    }
+
+    /// With the real vendored libraries (scripts/fetch-weblibs.sh run): Chart.js draws, React renders, icons appear.
+    @Test(.enabled(if: WebLibs.directory != nil)) func templatesRunWithLibs() async throws {
+        let root = try project(), dir = try #require(WebLibs.directory), libs = WebLibs.manifest(in: dir)
+        for kind in ArtifactTemplates.Kind.allCases {
+            try put("\(kind.rawValue).html", root, ArtifactTemplates.render(kind, title: "T", tokensCSS: ArtifactTemplates.tokensCSS(variables: nil), libs: libs))
+            let (panel, w) = mount(root: root, state: ["file": .string("\(kind.rawValue).html")], libs: dir)
+            defer { panel.close(); w.close() }
+            let check = switch kind {
+            case .deck, .doc: "document.querySelectorAll('svg.lucide').length > 0"
+            case .dashboard: "!!document.querySelector('canvas') && !document.getElementById('chart') && document.querySelectorAll('#rows tr').length === 6"
+            case .prototype: "document.querySelectorAll('#list .item').length === 3 && document.querySelectorAll('svg.lucide').length === 2"
+            }
+            #expect(await pollUntil(10) { await js(panel, check) as? Bool == true }, "\(kind)")
+            let shown = await text(panel)
+            #expect(panel.errors.isEmpty && !shown.contains("Bibliotecas offline indisponíveis"), "\(kind): \(panel.errors)")
+        }
+    }
+
+    /// Libraries named in the page but not served: the 2U rendering plus the note.
+    @Test func templatesFallBackWithoutLibs() async throws {
+        let root = try project()
+        let libs = [WebLibEntry(name: "chart.js", version: "4.4.9", files: ["chart.umd.js"], licence: "MIT", global: "Chart")]
+        try put("d.html", root, ArtifactTemplates.render(.dashboard, title: "T", tokensCSS: "", libs: libs))
+        let (panel, w) = mount(root: root, state: ["file": .string("d.html")])
+        defer { panel.close(); w.close() }
+        #expect(await pollUntil(10) { await text(panel).contains("Bibliotecas offline indisponíveis") })
+        #expect(await js(panel, "document.querySelectorAll('#chart rect').length === 6") as? Bool == true)
+        #expect(panel.errors.isEmpty, "\(panel.errors)")
     }
 
     // MARK: out of the panel (Task 5)

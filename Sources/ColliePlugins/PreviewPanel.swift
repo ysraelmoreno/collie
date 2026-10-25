@@ -94,8 +94,13 @@ import WebKit
 
     public var view: NSView { box }
 
-    public required init(panel: Panel, host: PanelHostContext) {
-        self.panel = panel; self.host = host
+    /// The offline libraries served as `collie-lib://` (tests pass their own).
+    private let libs: URL?
+
+    public required convenience init(panel: Panel, host: PanelHostContext) { self.init(panel: panel, host: host, libs: WebLibs.directory) }
+
+    init(panel: Panel, host: PanelHostContext, libs: URL?) {
+        self.panel = panel; self.host = host; self.libs = libs
         super.init()
         box.owner = self
         header.onReload = { [weak self] in self?.reload(keepScroll: true) }
@@ -220,6 +225,7 @@ import WebKit
         if artifactId == nil, let root = projectRoot { config.setURLSchemeHandler(PreviewSchemeHandler(root: root), forURLScheme: PreviewSchemeHandler.scheme) }
         config.setURLSchemeHandler(DesignSchemeHandler(root: host.root.appendingPathComponent("artifacts"), artifacts: true),
                                    forURLScheme: BrowserPanel.artifactScheme)
+        config.setURLSchemeHandler(WebLibSchemeHandler(directory: libs), forURLScheme: WebLibs.scheme)
         config.userContentController.add(rules)
         config.userContentController.add(Bridge(self), contentWorld: Self.world, name: "colliePreview")
         config.userContentController.add(PreviewComments.Bridge(comments), contentWorld: PreviewComments.world, name: "collieComments")

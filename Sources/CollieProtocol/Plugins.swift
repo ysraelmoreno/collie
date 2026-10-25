@@ -288,6 +288,8 @@ extension PluginRegistry {
                   ParamSpec("nofollow", .flag, help: "Refuse a path or --root that goes through a symbolic link")], timeout: 30),
             acmd("import", "Import an agent's page as a screen in a new design file (needs the Collie app); it becomes the page's export; returns {artifact, file, node, version, warnings} (ignores --panel)",
                  [artifactId, ParamSpec("width", .int, help: "Viewport width in px (default 1440, 320-3840)")], timeout: 180),
+            acmd("libs", "Offline web libraries for local pages (no CDN): [{name,version,global,url,licence}], url = collie-lib://lib/<name>@<version>/<file> for a <script src> (ignores --panel)",
+                 timeout: 10),
             acmd("new", "Start a page from a template (deck|dashboard|doc|prototype) at docs/pages/<slug>/index.html in your project, themed with the active design system's tokens (Light/Dark), and open a Prévia on it leashed to you (never overwrites); returns {file, panel, warnings}",
                  [ParamSpec("kind", .string, positional: true, required: true, help: "deck | dashboard | doc | prototype"),
                   ParamSpec("name", .string, positional: true, help: "Page name (slugged: a-z 0-9 -, up to 48; default <kind>-<n>)"),

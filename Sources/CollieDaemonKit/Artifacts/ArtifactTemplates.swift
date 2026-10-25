@@ -1,9 +1,12 @@
 import Foundation
+import CollieCore
 import CollieProtocol
 
-/// `artifact new`'s starter pages: self-contained HTML/CSS/vanilla JS (no library, no URL), themed by the tokens of the
-/// active design system (`[data-theme]` Light/Dark). The kinds' CSS uses only the seed's variable names, so any
-/// system with those names themes them.
+/// `artifact new`'s starter pages: self-contained HTML/CSS/vanilla JS (no URL but `collie-lib://`), themed by the tokens of
+/// the active design system (`[data-theme]` Light/Dark). The kinds' CSS uses only the seed's variable names, so any
+/// system with those names themes them. With the offline libraries (`libs`), the page also loads them: Chart.js for the
+/// dashboard's chart, React + htm for the prototype's list, Lucide icons on every kind; each library missing at run time
+/// leaves the vanilla page plus a muted note "Bibliotecas offline indisponíveis".
 enum ArtifactTemplates {
     enum Kind: String, CaseIterable, Sendable {
         case deck, dashboard, doc, prototype
@@ -80,13 +83,20 @@ enum ArtifactTemplates {
             .replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "'", with: "&#39;")
     }
 
-    static func render(_ kind: Kind, title: String, tokensCSS: String) -> String {
+    /// `libs`: the manifest's entries (`[]`: the library-free page, byte for byte).
+    static func render(_ kind: Kind, title: String, tokensCSS: String, libs: [WebLibEntry] = []) -> String {
         let t = escape(title)
-        let (css, body, js): (String, String, String) = switch kind {
+        var (css, body, js): (String, String, String) = switch kind {
         case .deck: (deckCSS, deckBody(t), deckJS)
         case .dashboard: (dashboardCSS, dashboardBody(t), dashboardJS)
         case .doc: (docCSS, docBody(t), docJS)
         case .prototype: (prototypeCSS, prototypeBody(t), prototypeJS)
+        }
+        let srcs = libs.isEmpty ? [] : uses(kind).compactMap { WebLibs.url($0, in: libs) }
+        if !srcs.isEmpty {
+            css += "\n" + libsCSS
+            body += "\n" + srcs.map { "<script src=\"\($0)\"></script>" }.joined(separator: "\n")
+            js += "\n" + libsJS(kind)
         }
         return """
             <!doctype html>
@@ -110,6 +120,88 @@ enum ArtifactTemplates {
             </html>
 
             """
+    }
+
+    // MARK: libraries
+
+    /// The manifest names each kind loads, in load order.
+    static func uses(_ kind: Kind) -> [String] {
+        switch kind {
+        case .deck, .doc: ["lucide"]
+        case .dashboard: ["chart.js", "lucide"]
+        case .prototype: ["react", "react-dom", "htm", "lucide"]
+        }
+    }
+
+    static let libsCSS = """
+        .lucide { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
+        .libs-note { margin: var(--space-m); font-size: 12px; }
+        """
+
+    /// Runs after the kind's own script (same scope: `data`, `items`, `render`, `list`). Each library guarded; the chart
+    /// repaints when `data-theme` changes (the Prévia's Claro/Escuro). No `//` in the page (everyKindIsOffline).
+    static func libsJS(_ kind: Kind) -> String {
+        let icons = switch kind {
+        case .deck: #"[['.slide .accent', 'sparkles']]"#
+        case .doc: #"[['.toc strong', 'list']]"#
+        case .dashboard: #"[['.kpi .delta', 'trending-up']]"#
+        case .prototype: #"[['[aria-label="Menu"]', 'menu', true], ['[aria-label="Buscar"]', 'search', true]]"#
+        }
+        let common = """
+            function libsMissing() {
+              if (document.querySelector('.libs-note')) return;
+              const p = document.createElement('p'); p.className = 'muted libs-note'; p.textContent = 'Bibliotecas offline indisponíveis';
+              document.body.appendChild(p);
+            }
+            if (window.lucide) {
+              for (const [sel, name, swap] of \(icons)) document.querySelectorAll(sel).forEach(el => {
+                const i = document.createElement('i'); i.setAttribute('data-lucide', name);
+                if (swap) el.replaceChildren(i); else el.prepend(i, ' ');
+              });
+              lucide.createIcons({ icons: lucide.icons });
+            } else libsMissing();
+            """
+        switch kind {
+        case .deck, .doc: return common
+        case .dashboard: return common + "\n" + """
+            if (window.Chart) {
+              const svg = document.getElementById('chart'), canvas = document.createElement('canvas');
+              canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', svg.getAttribute('aria-label'));
+              svg.replaceWith(canvas);
+              const token = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+              const chart = new Chart(canvas, {
+                data: { labels: data.map(d => d.mes), datasets: [
+                  { type: 'bar', label: 'Vendas (R$ mil)', data: data.map(d => d.valor), borderRadius: 6 },
+                  { type: 'line', label: 'Tendência', data: data.map(d => d.valor), tension: 0.3 },
+                ] },
+                options: { responsive: true, animation: false, plugins: { legend: { labels: {} } },
+                           scales: { x: { ticks: {}, grid: { display: false } }, y: { ticks: {}, grid: {} } } },
+              });
+              function paint() {
+                const accent = token('--accent'), muted = token('--muted');
+                chart.data.datasets[0].backgroundColor = accent;
+                chart.data.datasets[1].borderColor = muted; chart.data.datasets[1].backgroundColor = muted;
+                const o = chart.options;
+                o.plugins.legend.labels.color = o.scales.x.ticks.color = o.scales.y.ticks.color = muted;
+                o.scales.y.grid.color = 'color-mix(in srgb, ' + muted + ' 25%, transparent)';
+                chart.update();
+              }
+              paint();
+              new MutationObserver(paint).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+            } else libsMissing();
+            """
+        case .prototype: return common + "\n" + """
+            if (window.React && window.ReactDOM && window.htm) {
+              const html = htm.bind(React.createElement);
+              const Item = ({ it }) => html`<div class="item"><strong>${it.nome}</strong><span>${it.nota}</span></div>`;
+              const App = ({ items }) => html`${items.map((it, i) => html`<${Item} key=${i} it=${it}/>`)}`;
+              list.replaceChildren();
+              const root = ReactDOM.createRoot(list);
+              render = () => ReactDOM.flushSync(() => root.render(html`<${App} items=${[...items]}/>`));
+              render();
+            } else libsMissing();
+            """
+        }
     }
 
     // MARK: kinds

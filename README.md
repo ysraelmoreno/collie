@@ -303,6 +303,25 @@ coberta por fixtures unitárias e pelo teste com o motor real). Fundo-imagem de 
 os artifacts compartilham a origem `collie-artifact://app` no Navegador (HTML de agente pode ler outros artifacts locais).
 Agentes podem usar `text.link` (e `hyperlink` em `text.style`/`node.set`) com http(s), mailto, tel, `#âncora` ou caminho relativo; outros esquemas (`javascript:`, `data:`) são recusados. Não podem usar `image.place` com caminho em `design run/batch`.
 
+## Prévia e modelos
+
+A **Prévia** (plug-in `preview`) mostra ao vivo uma página HTML do projeto: `collie panel open preview --file <página.html>`
+(sempre dentro do projeto do terminal; qualquer terminal pode abrir até 8, no canvas, ligadas a ele). Quando a página — ou
+outro arquivo da pasta dela — muda no disco, ela recarrega em menos de 1 s mantendo a rolagem; se o arquivo some, aparece
+**Arquivo removido** sobre o último render. Mudanças feitas no lugar em arquivos de subpastas não são vistas: use
+**Recarregar**. O cabeçalho tem **Recarregar** e `Página | Claro | Escuro` (põe `data-theme` no `<html>` da página).
+`--artifact <id>` mostra um artifact (somente leitura). A página só lê arquivos da própria pasta do projeto, sem links
+simbólicos para fora e sem caminhos com ponto (`.env`, `.git/`, `.collie/`), até 8 MB cada; a rede fica bloqueada
+(http/https/ws, WebRTC). Comandos: `collie preview get` (`{file, url, errors}`: os últimos 20 erros da página) e
+`collie preview screenshot [--full-page] [--out ARQ]`.
+
+`collie artifact new deck|dashboard|doc|prototype [nome] [--title T]` escreve uma página inicial em
+`docs/pages/<nome>/index.html` (nome em `a-z0-9-`, até 48; padrão `<tipo>-<n>`; nunca sobrescreve) e abre uma Prévia nela.
+Os tokens vêm do design system ativo (Light/Dark em `[data-theme]`); sem design system ativo, ou com o motor de design
+indisponível, a página usa os tokens padrão e `warnings` avisa. As páginas são HTML/CSS/JS sem bibliotecas nem URLs:
+funcionam offline. `deck`: slides 16:9 (←/→/espaço); `dashboard`: indicadores, gráfico SVG de um array `data` e tabela;
+`doc`: documento com sumário fixo; `prototype`: casca de app de celular com lista, abas e uma folha.
+
 ## Comentários
 
 Na Prévia (uma página do projeto ou um artifact) você fixa um comentário num ponto ou elemento da página. Quem recebe é

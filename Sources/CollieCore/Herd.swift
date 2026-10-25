@@ -86,7 +86,7 @@ public enum HerdFormat {
     public static let maxPanels = 20
     /// Plug-ins allowed in a herd and the state keys each may carry (device etc. are out).
     public static let allowedState: [String: Set<String>] = [
-        "browser": ["url", "storage"], "design": ["file", "storage"], "diagram": ["file"],
+        "browser": ["url", "storage"], "design": ["file", "storage"], "diagram": ["file"], "preview": ["file"],
         "memory": [], "artifacts": [], "designsystems": [], "work": [],
     ]
     /// The state keys a panel of `pluginId` may carry in a herd: a built-in's `allowedState`, an external plug-in's

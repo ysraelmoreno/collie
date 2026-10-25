@@ -13,7 +13,7 @@ import CollieProtocol
     func project() throws -> URL {
         let u = FileManager.default.temporaryDirectory.appendingPathComponent("preview-panel-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: u, withIntermediateDirectories: true)
-        return u.resolvingSymlinksInPath()
+        return DiagramFile.real(u)   // /private/var, as the panel resolves it
     }
     func put(_ rel: String, _ root: URL, _ text: String) throws {
         let u = root.appendingPathComponent(rel)
@@ -225,5 +225,73 @@ import CollieProtocol
             }
             #expect(await js(panel, check) as? Bool == true, "\(kind)")
         }
+    }
+
+    // MARK: out of the panel (Task 5)
+
+    @Test func saveArgsUsesPageFolder() throws {
+        let root = try project()
+        try put("docs/pages/d/index.html", root, "<body>x</body>")
+        let (panel, w) = mount(root: root, state: ["file": .string("docs/pages/d/index.html")])
+        defer { panel.close(); w.close() }
+        let a = panel.saveArgs()
+        #expect(a["path"] == .string(root.path + "/docs/pages/d/index.html") && a["root"] == .string(root.path + "/docs/pages/d"), "\(a)")
+        #expect(a["title"] == .string("index.html"))
+    }
+
+    @Test func saveArgsNoRootAtProjectRoot() throws {
+        let root = try project()
+        try put("a.html", root, "<body>x</body>")
+        let (panel, w) = mount(root: root, state: ["file": .string("a.html")])
+        defer { panel.close(); w.close() }
+        let a = panel.saveArgs()
+        #expect(a["path"] == .string(root.path + "/a.html") && a["root"] == nil, "\(a)")
+    }
+
+    @Test func saveArgsTitleFromPage() throws {
+        let root = try project()
+        try put("p/t.html", root, "<html><head><TITLE>  Meu título\n</TITLE></head><body>x</body></html>")
+        let (panel, w) = mount(root: root, state: ["file": .string("p/t.html")])
+        defer { panel.close(); w.close() }
+        #expect(panel.saveArgs()["title"] == .string("Meu título"))
+    }
+
+    @Test func artifactModeHidesSaveButtons() throws {
+        let root = try project()
+        try put("a.html", root, "<body>x</body>")
+        let (filePanel, w1) = mount(root: root, state: ["file": .string("a.html")])
+        defer { filePanel.close(); w1.close() }
+        #expect(filePanel.header.canSave)
+        let (artPanel, w2) = mount(root: root, state: ["artifact": .string(UUID().uuidString.lowercased())])
+        defer { artPanel.close(); w2.close() }
+        #expect(!artPanel.header.canSave)
+    }
+
+    /// Salvar como artifact, then Importar no Design reuses that artifact (no second add) and opens a Design panel on
+    /// the imported file.
+    @Test func saveThenImportOpensDesign() async throws {
+        let root = try project()
+        try put("v/index.html", root, "<title>Vendas</title><body>x</body>")
+        let calls = Calls()
+        let (panel, w) = mount(root: root, state: ["file": .string("v/index.html")]) { cmd, args throws(ProtocolError) in
+            await calls.add(cmd, args)
+            switch cmd {
+            case "artifact.add": return .object(["id": .string("a1"), "importing": .bool(true)])
+            case "artifact.import": return .object(["artifact": .string("a1"), "file": .string("Vendas"), "warnings": .array([])])
+            default: return .object([:])
+            }
+        }
+        defer { panel.close(); w.close() }
+        await panel.save()
+        #expect(panel.header.note == "Salvo como artifact" && panel.saved == "a1")
+        await panel.importToDesign()
+        let seen = await calls.all
+        #expect(seen.map(\.0) == ["artifact.add", "artifact.import", "panel.open"], "\(seen.map(\.0))")
+        #expect(seen.last?.1["plugin"] == .string("design") && seen.last?.1["file"] == .string("Vendas"))
+        #expect(panel.header.error == nil && !panel.header.busy)
+    }
+    actor Calls {
+        var all: [(String, [String: JSONValue])] = []
+        func add(_ c: String, _ a: [String: JSONValue]) { all.append((c, a)) }
     }
 }

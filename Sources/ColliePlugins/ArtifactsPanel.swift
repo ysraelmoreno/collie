@@ -72,6 +72,11 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
     /// Into the "Prévia" Browser panel; opens it when it doesn't exist yet.
     public func openInBrowser(_ row: ArtifactRow) async { await browse(row.url) }
 
+    /// A Prévia on the artifact, docked right (where comments on it happen).
+    public func openInPreview(_ row: ArtifactRow) async {
+        await run { await send("panel.open", ["plugin": .string("preview"), "artifact": .string(row.id), "placement": .string("dock.right")]) }
+    }
+
     /// The agent's original page, in the same Browser panel.
     public func openSource(_ row: ArtifactRow) async {
         if let source = row.source { await browse(source) }
@@ -195,6 +200,7 @@ struct ArtifactsView: View {
                     HStack(spacing: 6) {
                         if r.isExport { Button("Reexportar") { Task { await model.reexport(r) } }.buttonStyle(CollieButtonStyle(.attention)) }
                         Button("Abrir no Navegador") { Task { await model.openInBrowser(r) } }
+                        Button("Abrir na Prévia") { Task { await model.openInPreview(r) } }
                         if r.status == "failed" { Button("Importar de novo") { Task { await model.reimport(r) } } }
                         if r.status == "pending" { Button("Importar") { Task { await model.reimport(r) } } }
                     }

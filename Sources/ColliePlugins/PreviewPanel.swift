@@ -60,6 +60,10 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
     /// `data-theme` set on the page's `<html>`: light | dark | nil (the page's own).
     private(set) var theme: String?
     private var pendingScroll: Double?
+    /// The artifact **Salvar como artifact** made of the page since it last changed on disk (`Importar no Design` reuses it).
+    /// ponytail: kept by the view, not in the panel's state (no command updates a panel's state from the app); a relaunch
+    /// saves again.
+    private(set) var saved: String?
 
     /// Errors and theme live in a world of their own: the page can't see, hide or forge them.
     static let world = WKContentWorld.world(name: "collie-preview")
@@ -81,6 +85,9 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
         box.owner = self
         header.onReload = { [weak self] in self?.reload(keepScroll: true) }
         header.onTheme = { [weak self] in self?.setTheme($0) }
+        header.onSave = { [weak self] in Task { await self?.save() } }
+        header.onImport = { [weak self] in Task { await self?.importToDesign() } }
+        header.canSave = artifactId == nil
         box.setHeader(header)
     }
 
@@ -242,7 +249,65 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
             guard try DiagramFile.readData(file, root: root, noun: "página") != nil else { header.status = "Arquivo removido"; return }
         } catch { header.status = error.message; return }
         header.status = nil
+        saved = nil
         reload(keepScroll: true)
+    }
+
+    // MARK: out of the panel
+
+    /// `artifact.add`'s arguments for the page: its absolute path, its `<title>` (else the file name), and its folder as
+    /// `root` (the files it links) unless that is the project root.
+    func saveArgs() -> [String: JSONValue] {
+        guard let file, let root = projectRoot else { return [:] }
+        var args: [String: JSONValue] = ["path": .string(file.path), "title": .string(file.lastPathComponent)]
+        if let data = (try? DiagramFile.readData(file, root: root, noun: "página")) ?? nil,
+           let m = String(decoding: data, as: UTF8.self).firstMatch(of: /(?is)<title[^>]*>(.*?)<\/title>/) {
+            let t = m.1.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { args["title"] = .string(String(t.prefix(200))) }
+        }
+        let folder = file.deletingLastPathComponent()
+        if folder.path != DiagramFile.real(root).path { args["root"] = .string(folder.path) }
+        return args
+    }
+
+    /// **Salvar como artifact**: `artifact.add` (its import starts in the background); the id kept for `importToDesign`.
+    @discardableResult func save() async -> String? {
+        guard header.canSave, !header.busy else { return nil }
+        header.error = nil; header.busy = true
+        defer { header.busy = false }
+        do throws(ProtocolError) {
+            guard case .object(let o) = try await host.call("artifact.add", saveArgs()), case .string(let id)? = o["id"] else {
+                header.error = "Resposta inválida do Collie"; return nil
+            }
+            saved = id
+            flash("Salvo como artifact")
+            return id
+        } catch { header.error = error.message; return nil }
+    }
+
+    /// **Importar no Design**: the saved artifact (saved now if the page changed since), imported as a design screen, then
+    /// a Design panel on the new file.
+    func importToDesign() async {
+        guard header.canSave, !header.busy else { return }
+        let id: String
+        if let s = saved { id = s } else { guard let s = await save() else { return }; id = s }
+        header.error = nil; header.busy = true; header.note = "Importando…"
+        defer { header.busy = false }
+        do throws(ProtocolError) {
+            guard case .object(let o) = try await host.call("artifact.import", ["id": .string(id)]), case .string(let f)? = o["file"] else {
+                header.note = nil; header.error = "Resposta inválida do Collie"; return
+            }
+            _ = try await host.call("panel.open", ["plugin": .string("design"), "file": .string(f)])
+            flash("Importado no Design: \(f)")
+        } catch { header.note = nil; header.error = error.message }
+    }
+
+    private func flash(_ m: String) {
+        header.note = m
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            if self?.header.note == m { self?.header.note = nil }
+        }
     }
 
     fileprivate func received(_ message: String) {
@@ -317,17 +382,33 @@ final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
     @Published var file: String?
     @Published var status: String?
     @Published var theme: String?
+    /// A project page (not an artifact): **Salvar como artifact** and **Importar no Design** show.
+    @Published var canSave = false
+    @Published var busy = false
+    /// A short confirmation ("Salvo como artifact", "Importando…") and the last action's error.
+    @Published var note: String?
+    @Published var error: String?
     var onReload: () -> Void = {}
     var onTheme: (String?) -> Void = { _ in }
+    var onSave: () -> Void = {}
+    var onImport: () -> Void = {}
 }
 
-/// The file (relative to the project), a status over the last render, **Recarregar** and `Página | Claro | Escuro`.
+/// The file (relative to the project), a status over the last render, **Recarregar**, `Página | Claro | Escuro` and, for a
+/// project page, **Salvar como artifact** / **Importar no Design**.
 private struct PreviewHeader: View {
     @ObservedObject var m: PreviewHeaderModel
     var body: some View {
         PanelHeader("Prévia", subtitle: m.file) {
             HStack(spacing: 8) {
                 if let s = m.status { Text(s).font(.collieMono(11, .medium)).foregroundStyle(Color.collieAttention) }
+                if let e = m.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger).lineLimit(2).help(e) }
+                if m.busy { ProgressView().controlSize(.small) }
+                if let n = m.note { Text(n).font(.collieMono(11, .medium)).foregroundStyle(Color.collieAccent) }
+                if m.canSave {
+                    Button("Salvar como artifact") { m.onSave() }.disabled(m.busy).buttonStyle(CollieButtonStyle(.secondary))
+                    Button("Importar no Design") { m.onImport() }.disabled(m.busy).buttonStyle(CollieButtonStyle(.secondary))
+                }
                 Picker("Tema", selection: Binding(get: { m.theme ?? "" }, set: { m.onTheme($0.isEmpty ? nil : $0) })) {
                     Text("Página").tag(""); Text("Claro").tag("light"); Text("Escuro").tag("dark")
                 }

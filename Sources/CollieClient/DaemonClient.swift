@@ -375,6 +375,23 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         do { token = try Self.readToken(paths) } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .daemonUnavailable, message: "\(error)") }
         return try await StreamClient.open(Request(id: UUID().uuidString, token: token, command: command, args: args), path: paths.socket)
     }
+    // MARK: plug-ins (the user's, from Preferences)
+
+    /// `plugin.list`: every installed external plug-in, loadable or not (errors verbatim from the daemon).
+    public func listPlugins() async throws(ProtocolError) -> [PluginRow] {
+        let r = try await adminCall("plugin.list", [:])
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        do { return try dec.decode([PluginRow].self, from: JSONEncoder().encode(r)) }
+        catch { throw ProtocolError(code: .internal, message: "plugin.list: resposta inesperada") }
+    }
+    public func installPlugin(folder: URL) async throws(ProtocolError) {
+        _ = try await adminCall("plugin.install", ["path": .string(folder.path)], timeout: 125)
+    }
+    public func uninstallPlugin(_ id: String) async throws(ProtocolError) { _ = try await adminCall("plugin.uninstall", ["id": .string(id)]) }
+    public func setPluginEnabled(_ id: String, _ on: Bool) async throws(ProtocolError) {
+        _ = try await adminCall(on ? "plugin.enable" : "plugin.disable", ["id": .string(id)], timeout: 65)
+    }
+
     public func closePanel(_ name: String) async throws { _ = try await admin("panel.close", ["name": .string(name)]) }
     public func movePanel(_ name: String, to placement: PanelPlacement) async throws {
         var args: [String: JSONValue] = ["name": .string(name), "placement": .string(placement.rawValue)]
@@ -446,4 +463,22 @@ public func editArgs(original: TerminalRecord, name: String, shepherd: Bool, pre
             preset != original.preset ? preset : nil,
             preset == .custom && c != (original.command ?? "") ? c : nil,
             !d.isEmpty && d != original.cwd ? d : nil)
+}
+
+/// A `plugin.list` row. `name`, `author`, `license`, `commands`: from the manifest when it loads (else the id, none).
+public struct PluginRow: Decodable, Sendable, Equatable, Identifiable {
+    public var id: String
+    public var name: String
+    public var version: String
+    public var author: String?
+    public var license: String?
+    public var enabled: Bool
+    public var error: String?
+    public var commands: [String]?
+    public var installedAt: Date?
+    public init(id: String, name: String, version: String, author: String? = nil, license: String? = nil, enabled: Bool = true,
+                error: String? = nil, commands: [String]? = nil, installedAt: Date? = nil) {
+        self.id = id; self.name = name; self.version = version; self.author = author; self.license = license
+        self.enabled = enabled; self.error = error; self.commands = commands; self.installedAt = installedAt
+    }
 }

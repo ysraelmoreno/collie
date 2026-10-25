@@ -231,6 +231,15 @@ v32.6.1 em modo embed, fixado, offline: nenhuma requisição sai da máquina; `s
 editáveis, abaixo do que já existe), `export --format png|svg [--page NOME] [--out ARQ]` e `screenshot [--out ARQ]`.
 Avisos de licença: `Resources/NOTICE-drawio` (Apache-2.0; draw.io e diagrams.net são marcas da JGraph).
 
+## Plug-ins externos
+
+Painéis e comandos de terceiros, sem recompilar o Collie (fase 1: só interface web). Um plug-in é uma pasta com
+`collie-plugin.json` e `ui/`; só o usuário instala, em **Preferências → Plug-ins → Instalar…** (ou `collie plugin install
+--path <pasta>` fora de um terminal), vendo antes os comandos e o que ele substitui. A cópia instalada fica somente leitura
+em `<raiz>/plugins/<id>/<versão>/` e é conferida por hash a cada início do serviço. O painel abre como os do Collie (paleta,
+`collie panel open <id>`, rebanhos) sem rede nem acesso ao projeto, e os comandos `collie <id> <cmd>` chegam aos agentes
+ligados a um painel dele pela guia. Exemplo: `Examples/plugins/notas`. Referência: [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
+
 ## Design systems
 
 Um **design system** é um arquivo de design (figcraft) com variáveis (tokens, com modos), estilos e componentes, publicado em

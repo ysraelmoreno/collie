@@ -9,8 +9,8 @@ let panelEventCap = 200
 /// `panel.*` and `events`: the admin token (same managed-terminal ancestry check as `admin.*`) or a terminal token.
 /// Terminals see only reachable panels (canvas: leashed; dock: everyone; headless: its creator; `panel.list` also lists it
 /// to the creator's leashed Shepherd, which can't reach it). A Shepherd opens any panel, closes the ones it created or is leashed to, and moves only its own. Any other
-/// terminal opens only browsers (headless unless `--visible`, leashed to it, at most `testerBrowserCap`) and closes and
-/// moves only its own.
+/// terminal opens only browsers (headless unless `--visible`, leashed to it, at most `testerBrowserCap`) and Prévias (canvas,
+/// leashed, at most as many, counted apart) and closes and moves only its own.
 extension CommandRouter {
     func panelCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
@@ -24,12 +24,14 @@ extension CommandRouter {
             return try isoJSON(visible + (caller.map { ConnectionGraph.listedHeadless(from: $0.id, in: ws) } ?? []))
         case "panel.open":
             let pluginId = try need(r, "plugin")
-            if tester, pluginId != "browser" { throw refuse("a terminal that isn't a Shepherd opens only browser panels") }
+            if tester, pluginId != "browser", pluginId != "preview" { throw refuse("a terminal that isn't a Shepherd opens only browser and preview panels") }
             guard let spec = PluginRegistry.spec(pluginId) else {
                 throw ProtocolError(code: .notFound, message: "Plugin '\(pluginId)' not found")
             }
             var placement = flag(r, "visible") ? PanelPlacement.canvas : try placementArg(r, spec)
-            if tester {
+            if tester, pluginId == "preview" {
+                guard placement == .canvas else { throw refuse("a terminal that isn't a Shepherd opens Prévias on the canvas") }
+            } else if tester {
                 if r.args["placement"] == nil, !flag(r, "visible") { placement = .headless }
                 guard placement == .canvas || placement == .headless else { throw refuse("a terminal that isn't a Shepherd opens browsers headless or --visible on the canvas") }
             }
@@ -48,7 +50,9 @@ extension CommandRouter {
             if let me = caller, await registry.process(me.id)?.isRunning != true {
                 throw ProtocolError(code: .notRunning, message: "terminal '\(me.name)' is not running")
             }
-            if tester, let me = caller, ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == "browser" }) >= Self.testerBrowserCap {
+            if tester, let me = caller, pluginId == "preview" { try reservePreview(me) }
+            defer { if tester, let me = caller, pluginId == "preview" { releasePreview(me) } }
+            if tester, let me = caller, pluginId == "browser", ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == pluginId }) >= Self.testerBrowserCap {
                 throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open browsers per terminal; close one with `panel close`")
             }
             guard let storage = StorageScope(rawValue: str(r, "storage") ?? "isolated") else {
@@ -56,21 +60,14 @@ extension CommandRouter {
             }
             let device = pluginId == "device" ? try await devices.resolveSerial(str(r, "serial")) : nil
             var name = str(r, "name") ?? ""
-            if r.args["name"] == nil {   // default: <plugin>-<lowest free n>
-                func taken(_ n: String) -> Bool {
-                    launching.contains(n.lowercased()) || panel(named: n) != nil
-                        || ws.terminals.contains { $0.name.caseInsensitiveCompare(n) == .orderedSame }
-                }
-                var i = 1
-                while taken("\(pluginId)-\(i)") { i += 1 }
-                name = "\(pluginId)-\(i)"
-            }
+            if r.args["name"] == nil { name = freePanelName(pluginId) }
             guard !name.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "Missing argument 'name'") }
             if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "'\(name)' is the name of terminal '\(t.name)'") }
             try reserve(name); defer { launching.remove(name.lowercased()) }   // also refuses an existing panel name
             var state: [String: JSONValue] = ["storage": .string(storage.rawValue)]
             if let u = str(r, "url") { state["url"] = .string(u) }
-            if pluginId == "diagram", let f = str(r, "file") { state["file"] = .string(f) }
+            if pluginId == "diagram" || pluginId == "preview", let f = str(r, "file") { state["file"] = .string(f) }
+            if pluginId == "preview", let a = str(r, "artifact") { state["artifact"] = .string(a) }
             if let device { state["serial"] = .string(device.serial); state["platform"] = .string(device.platform) }
             let (p, designWarning, _) = try await openPanel(name: name, pluginId: pluginId, placement: placement, state: state,
                                                          file: pluginId == "design" ? try need(r, "file") : nil,
@@ -175,10 +172,25 @@ extension CommandRouter {
             state["file"] = .string(id)
         }
         if pluginId == "diagram" {   // an agent's path is a trust boundary: the app must never be pointed outside the project
-            let root = try await diagramRoot(paddock: paddock, caller: caller)
+            let root = try await projectRootForPanel(paddock: paddock, caller: caller)
             let requested: String? = if case .string(let f)? = state["file"] { f } else { nil }
             _ = try DiagramFile.resolve(requested, panelName: name, projectRoot: root)
             state["root"] = .string(root.path)
+        }
+        if pluginId == "preview" {   // a page of the project (checked as the diagram's file), or an artifact that exists
+            switch (state["file"], state["artifact"]) {
+            case (.string(let f)?, nil):
+                let root = try await projectRootForPanel(paddock: paddock, caller: caller)
+                _ = try PreviewFile.resolve(f, projectRoot: root)
+                state["root"] = .string(root.path)
+            case (nil, .string(let a)?):
+                guard let id = UUID(uuidString: a) else { throw ProtocolError(code: .invalidArgs, message: "'artifact' must be an artifact id") }
+                _ = try await artifacts.get(id)
+                state["artifact"] = .string(id.uuidString.lowercased())
+                if let root = try? await projectRootForPanel(paddock: paddock, caller: caller) { state["root"] = .string(root.path) }
+            default:
+                throw ProtocolError(code: .invalidArgs, message: "Prévia: give --file <page.html> or --artifact <id>")
+            }
         }
         let canvas = placement == .canvas
         let p = Panel(id: UUID(), name: name, pluginId: pluginId, placement: placement,
@@ -199,14 +211,14 @@ extension CommandRouter {
         return (p, designWarning, fileCreated)
     }
 
-    /// The project a Diagram panel's file lives in (the app resolves and checks the file in it): the opening terminal's
-    /// project; for the app, the paddock's worktree, else the project of a terminal on the pasture.
+    /// The project a Diagram or Prévia panel's file lives in (the app resolves and checks the file in it): the opening
+    /// terminal's project; for the app, the paddock's worktree, else the project of a terminal on the pasture.
     /// ponytail: the app on the pasture takes its first terminal's project; add a folder picker when pastures mix projects.
-    func diagramRoot(paddock: UUID?, caller: TerminalRecord?) async throws -> URL {
+    func projectRootForPanel(paddock: UUID?, caller: TerminalRecord?) async throws -> URL {
         if let me = caller { return try await projectRoot(of: me) }
         if let f = ws.paddocks.first(where: { $0.id == paddock }) { return URL(fileURLWithPath: f.path) }
         guard let t = ws.terminals.first(where: { $0.paddockId == nil }) else {
-            throw ProtocolError(code: .invalidArgs, message: "Diagrama: abra antes um terminal no projeto (o arquivo .drawio fica nele)")
+            throw ProtocolError(code: .invalidArgs, message: "abra antes um terminal no projeto (o arquivo do painel fica nele)")
         }
         return try await projectRoot(of: t)
     }
@@ -219,6 +231,17 @@ extension CommandRouter {
         ring.append(PanelEvent(seq: eventSeq, name: name, payload: payload))
         if ring.count > panelEventCap { ring.removeFirst(ring.count - panelEventCap) }
         panelEvents[panel] = ring
+    }
+
+    /// `<plugin>-<lowest free n>`: no panel, terminal or name being launched has it.
+    func freePanelName(_ pluginId: String) -> String {
+        func taken(_ n: String) -> Bool {
+            launching.contains(n.lowercased()) || panel(named: n) != nil
+                || ws.terminals.contains { $0.name.caseInsensitiveCompare(n) == .orderedSame }
+        }
+        var i = 1
+        while taken("\(pluginId)-\(i)") { i += 1 }
+        return "\(pluginId)-\(i)"
     }
 
     func panel(named name: String) -> Panel? {
@@ -255,6 +278,19 @@ extension CommandRouter {
         try await link(t.id, p.id)
     }
     func unleash(_ t: TerminalRecord, _ p: Panel) async throws { try await unlink(t.id, p.id) }
+
+    /// A non-Shepherd's Prévia about to open: refused past the cap, counting those still opening; `releasePreview` after.
+    func reservePreview(_ me: TerminalRecord) throws(ProtocolError) {
+        let open = ws.panels.count(where: { $0.createdBy == me.id && $0.pluginId == "preview" })
+        guard open + previewsOpening[me.id, default: 0] < Self.testerBrowserCap else {
+            throw ProtocolError(code: .tooMany, message: "at most \(Self.testerBrowserCap) open Prévias per terminal; close one with `panel close`")
+        }
+        previewsOpening[me.id, default: 0] += 1
+    }
+    func releasePreview(_ me: TerminalRecord) {
+        previewsOpening[me.id, default: 1] -= 1
+        if previewsOpening[me.id] == 0 { previewsOpening[me.id] = nil }
+    }
 
     /// Max open browser panels per non-Shepherd terminal.
     static let testerBrowserCap = 8

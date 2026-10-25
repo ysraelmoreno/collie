@@ -16,6 +16,8 @@ actor CommandRouter {
     var ws: Workspace
     /// Names (lowercased) mid-launch: the launch awaits let a concurrent spawn/summon of the same name in.
     var launching: Set<String> = []
+    /// Prévias a non-Shepherd terminal is opening right now (`panel.open`, `artifact new`): counted in its cap.
+    var previewsOpening: [UUID: Int] = [:]
     /// Paddock names (lowercased) with a create/land/delete in flight; git awaits let other callers in.
     var paddockBusy: Set<String> = []
     /// Paddocks whose delete is in flight: a launch into one that finishes meanwhile is undone (`ensurePaddock`).

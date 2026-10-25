@@ -33,7 +33,7 @@ public struct PluginSpec: Sendable, Equatable {
 
 public enum PluginRegistry {
     /// The plug-ins compiled into Collie, in palette order.
-    public static let builtIn: [PluginSpec] = [browser, memory, device, design, diagram, designsystems, artifacts, work]
+    public static let builtIn: [PluginSpec] = [browser, memory, device, design, diagram, preview, designsystems, artifacts, work]
     /// Built-ins, then the external plug-ins this process knows (`setExternal`).
     public static var all: [PluginSpec] { builtIn + external.withLock { $0.specs } }
     public static var externalSpecs: [PluginSpec] { external.withLock { $0.specs } }
@@ -284,9 +284,15 @@ extension PluginRegistry {
                  [ParamSpec("path", .string, required: true, help: "The page (resolved against the current directory; absolute paths are accepted)"),
                   ParamSpec("root", .string, help: "A folder with the page's files (css, js, images, fonts), kept beside it: the page must be inside; up to 2000 files and 64 MiB, no links"),
                   ParamSpec("title", .string, help: "Title (default: the file name)"),
-                  ParamSpec("width", .int, help: "Viewport width of the import in px (default 1440, 320-3840)")], timeout: 30),
+                  ParamSpec("width", .int, help: "Viewport width of the import in px (default 1440, 320-3840)"),
+                  ParamSpec("nofollow", .flag, help: "Refuse a path or --root that goes through a symbolic link")], timeout: 30),
             acmd("import", "Import an agent's page as a screen in a new design file (needs the Collie app); it becomes the page's export; returns {artifact, file, node, version, warnings} (ignores --panel)",
                  [artifactId, ParamSpec("width", .int, help: "Viewport width in px (default 1440, 320-3840)")], timeout: 180),
+            acmd("new", "Start a page from a template (deck|dashboard|doc|prototype) at docs/pages/<slug>/index.html in your project, themed with the active design system's tokens (Light/Dark), and open a Prévia on it leashed to you (never overwrites); returns {file, panel, warnings}",
+                 [ParamSpec("kind", .string, positional: true, required: true, help: "deck | dashboard | doc | prototype"),
+                  ParamSpec("name", .string, positional: true, help: "Page name (slugged: a-z 0-9 -, up to 48; default <kind>-<n>)"),
+                  ParamSpec("title", .string, help: "Page title (default: the name)"),
+                  ParamSpec("paddock", .string, help: "Paddock whose project gets the page (app only)")], timeout: 30),
             acmd("reexport", "Export the artifact's design again as its next version (the app only)", [artifactId], timeout: 120, exposedToMCP: false),
             acmd("remove", "Set the artifact aside (the app only)", [artifactId], timeout: 10, exposedToMCP: false),
         ],
@@ -324,6 +330,22 @@ extension PluginRegistry {
             dgcmd("export", "Export a page to PNG or SVG; returns {path, width, height}",
                   [ParamSpec("format", .string, required: true, help: "png|svg"), page, out], timeout: 60),
             dgcmd("screenshot", "Screenshot of the panel to a PNG file; returns {path, width, height}", [out], timeout: 30),
+        ],
+        events: [])
+}
+
+extension PluginRegistry {
+    /// The Prévia: an HTML page of the project (`state["file"]` under `state["root"]`), live and offline, or an artifact
+    /// (`state["artifact"]`, read-only); the app runs the commands (the panel's view).
+    static let preview = PluginSpec(
+        id: "preview", title: "Prévia",
+        placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
+        commands: [
+            CommandSpec(name: "preview.get", summary: "The panel's page: {file, url, errors} (errors: the page's last 20 uncaught errors and rejections)",
+                        timeoutSeconds: 30),
+            CommandSpec(name: "preview.screenshot", summary: "Screenshot of the page to a PNG file; returns {path, width, height} (pixels at backing scale)",
+                        params: [ParamSpec("full-page", .flag, help: "Whole document, tiled by viewport height"), out],
+                        timeoutSeconds: 60, outputFile: true),
         ],
         events: [])
 }

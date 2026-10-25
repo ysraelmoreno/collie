@@ -52,12 +52,15 @@ enum CollieOrientation {
         let d = of("design"), b = of("browser"), v = of("device")
         if !d.isEmpty { lines.append("- Design panel \(names(d)): collie design …. Do not use other design editors or external artifact tools.") }
         if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens and checks pages.") }
-        lines.append("- Artifacts: collie artifact … keeps handed-in pages.")   // panel-free: independent of reach
+        // panel-free: independent of reach. ponytail: the kinds only while names fit (k = 3); else `--help` lists them
+        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps handed-in pages; artifact new deck|dashboard|doc|prototype opens a Prévia."
+            : "- Artifacts: collie artifact … (new <kind> opens a Prévia).")
         if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
         if isShepherd {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             // built-ins only: external plug-ins are user-installed text, kept out of the agent's context (one fixed line below)
-            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
+            // ponytail: no Prévia here (length cap); the Artifacts line teaches `artifact new`, which opens one
+            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
                 lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
             } else {

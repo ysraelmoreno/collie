@@ -180,8 +180,8 @@ extension BrowserPanel {
         guard !full || (clip == nil && ref == nil) else { throw ProtocolError(code: .invalidArgs, message: "--full-page cannot combine with --clip or --ref") }
         container.offscreenFrame()
         let cg: CGImage
-        if full { cg = try await fullPage(web) }
-        else if let clip { cg = try await snapshot(web, rect: try Self.clipRect(clip, in: web.bounds.size)) }
+        if full { cg = try await Self.fullPage(web) }
+        else if let clip { cg = try await Self.snapshot(web, rect: try Self.clipRect(clip, in: web.bounds.size)) }
         else if let ref {
             // a screenshot must not move the viewport: the scroll before is restored, also on error
             let before = try await Self.pageNumbers(web, "return [scrollX, scrollY]")
@@ -191,16 +191,16 @@ extension BrowserPanel {
             guard case .number(let x)? = r["x"], case .number(let y)? = r["y"], case .number(let w)? = r["width"], case .number(let h)? = r["height"] else {
                 throw ProtocolError(code: .internal, message: "browser: bad rect reply")
             }
-            do throws(ProtocolError) { cg = try await snapshot(web, rect: CGRect(x: x, y: y, width: w, height: h)) }
+            do throws(ProtocolError) { cg = try await Self.snapshot(web, rect: CGRect(x: x, y: y, width: w, height: h)) }
             catch { _ = try? await Self.pageNumbers(web, restore); throw error }
             _ = try? await Self.pageNumbers(web, restore)
-        } else { cg = try await snapshot(web, rect: nil) }
+        } else { cg = try await Self.snapshot(web, rect: nil) }
         let dir = host.root.appendingPathComponent("screens", isDirectory: true)
         let prefix = panel.id.uuidString + "-"
         return try await BrowserAutomation.offMain { Self.savePNG(cg, in: dir, prefix: prefix) }.get()
     }
 
-    private func snapshot(_ web: WKWebView, rect: CGRect?) async throws(ProtocolError) -> CGImage {
+    static func snapshot(_ web: WKWebView, rect: CGRect?) async throws(ProtocolError) -> CGImage {
         let config = WKSnapshotConfiguration()
         if let rect { config.rect = rect }   // the web view's bounds are the page viewport (1:1 with CSS px)
         let image: NSImage
@@ -228,7 +228,7 @@ extension BrowserPanel {
     /// meaning) and the scroll position is restored. The last tile is the partial one: the page clamps its scroll, so it overlaps
     /// the previous tile and is drawn at its real offset.
     /// ponytail: the height is measured once at the start (content that grows while capturing, lazy/infinite, is cut; re-measure per tile if needed); viewport width only (no horizontal tiling); fixed/sticky elements repeat per tile; scrolling inside a nested container is not followed.
-    private func fullPage(_ web: WKWebView) async throws(ProtocolError) -> CGImage {
+    static func fullPage(_ web: WKWebView) async throws(ProtocolError) -> CGImage {
         let vh = Int(web.bounds.height)
         let doc = try await Self.pageNumbers(web, "return [Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), scrollX, scrollY]")
         let height = max(doc[0], vh)
@@ -243,11 +243,15 @@ extension BrowserPanel {
                     await new Promise(r => { requestAnimationFrame(() => requestAnimationFrame(r)); setTimeout(r, 150); });
                     return [scrollY]
                     """)[0]
-                let tile = try await snapshot(web, rect: nil)
+                let tile = try await Self.snapshot(web, rect: nil)
                 if ctx == nil {
                     scale = Double(tile.width) / web.bounds.width
-                    let h = Int((Double(height) * scale).rounded())
-                    guard tile.width * h * 4 <= Self.screenshotMaxBytes else {
+                    let hd = (Double(height) * scale).rounded()
+                    guard hd.isFinite, hd <= Double(Self.screenshotMaxPixels) else {
+                        throw ProtocolError(code: .invalidArgs, message: "--full-page: the page is too tall, over the \(Self.screenshotMaxPixels) px cap; use --clip or --ref")
+                    }
+                    let h = Int(hd), (px, over) = tile.width.multipliedReportingOverflow(by: h)
+                    guard !over, px <= Self.screenshotMaxBytes / 4 else {
                         throw ProtocolError(code: .invalidArgs, message: "--full-page: \(tile.width)x\(h) px is too large (over 512 MiB); use --clip or --ref")
                     }
                     guard h <= Self.screenshotMaxPixels else {
@@ -267,12 +271,22 @@ extension BrowserPanel {
         return cg
     }
 
-    /// Runs `body` (async function body returning an array of numbers) in the page world.
-    private static func pageNumbers(_ web: WKWebView, _ body: String) async throws(ProtocolError) -> [Int] {
+    /// Runs `body` (async function body returning an array of numbers) in a world of its own: the page can't patch
+    /// `Math`, `scrollY` or `scrollHeight` there. The numbers are clamped (`measures`) before any arithmetic.
+    static func pageNumbers(_ web: WKWebView, _ body: String) async throws(ProtocolError) -> [Int] {
         do {
-            let r = try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page) as? [Any]
-            return (r ?? []).map { Int(($0 as? NSNumber)?.doubleValue.rounded() ?? 0) }
+            return measures(try await web.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: measureWorld) as? [Any])
         } catch { throw ProtocolError(code: .unavailable, message: "screenshot failed: \(BrowserAutomation.jsMessage(error))") }
+    }
+    static let measureWorld = WKContentWorld.world(name: "collie-measure")
+    /// A measure never trusted: not a finite number → 0, then clamped to 0...`measureCap` (so no Int conversion or
+    /// later multiply can trap).
+    nonisolated static let measureCap = 100_000_000
+    nonisolated static func measures(_ r: [Any]?) -> [Int] {
+        (r ?? []).map { v in
+            guard let d = (v as? NSNumber)?.doubleValue, d.isFinite, !(v is String) else { return 0 }
+            return Int(min(max(d.rounded(), 0), Double(measureCap)))
+        }
     }
 
     nonisolated static func removeScreenshots(in dir: URL, prefix: String) {

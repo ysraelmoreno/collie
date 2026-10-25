@@ -520,3 +520,116 @@ private func rows(_ p: Paths, _ t: Term) async throws -> [[String: JSONValue]] {
     guard case .array(let a)? = r.result else { throw ProtocolError(code: .internal, message: "\(r)") }
     return a.compactMap { if case .object(let o) = $0 { o } else { nil } }
 }
+
+// MARK: artifact new (plan 2U)
+
+extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSystem = id } }
+
+@Suite(.serialized) struct ArtifactNewTests {
+    /// A terminal `A` (not a Shepherd) in a fresh project folder.
+    private func withProject(_ body: (Daemon, Paths, Term, URL) async throws -> Void) async throws {
+        let proj = URL(fileURLWithPath: "/tmp/collie-new-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: proj, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: proj) }
+        try await withDaemon { d, p in
+            let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
+                args: ["name": "A", "preset": "shell", "cwd": .string(proj.path)]), to: p.socket, timeoutSeconds: 60)
+            guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
+            try await body(d, p, Term(id: id, token: try await tokenOf(d, id)), proj)
+        }
+    }
+    private func result(_ r: Response) -> [String: JSONValue] { if case .object(let o)? = r.result { o } else { [:] } }
+    private func warnings(_ r: Response) -> [String] {
+        guard case .array(let ws)? = result(r)["warnings"] else { return [] }
+        return ws.compactMap { if case .string(let s) = $0 { s } else { nil } }
+    }
+
+    @Test func newWritesPageAndOpensPreview() async throws {
+        try await withProject { d, p, a, proj in
+            let r = try await call(p, a, "artifact.new", ["kind": "deck"])
+            #expect(r.error == nil, "\(r)")
+            #expect(result(r)["file"] == .string("docs/pages/deck-1/index.html"), "\(r)")
+            let html = try String(contentsOf: proj.appendingPathComponent("docs/pages/deck-1/index.html"), encoding: .utf8)
+            #expect(html.hasPrefix("<!doctype html>") && html.contains("class=\"slide"))
+            let s = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "ui.snapshot"), to: p.socket, timeoutSeconds: 60)
+            let snap = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(s.result))
+            let pn = try #require(snap.panels.first { $0.pluginId == "preview" })
+            #expect(result(r)["panel"] == .string(pn.name) && pn.state["file"] == .string("docs/pages/deck-1/index.html"))
+            #expect(snap.connections.contains { Set([$0.a, $0.b]) == Set([UUID(uuidString: a.id)!, pn.id]) })
+        }
+    }
+
+    @Test func newDefaultNameCounts() async throws {
+        try await withProject { _, p, a, _ in
+            #expect(result(try await call(p, a, "artifact.new", ["kind": "deck"]))["file"] == .string("docs/pages/deck-1/index.html"))
+            #expect(result(try await call(p, a, "artifact.new", ["kind": "deck"]))["file"] == .string("docs/pages/deck-2/index.html"))
+            let named = try await call(p, a, "artifact.new", ["kind": "dashboard", "name": "Meu Deck 2026!"])
+            #expect(result(named)["file"] == .string("docs/pages/meu-deck-2026/index.html"), "\(named)")
+            #expect(try await call(p, a, "artifact.new", ["kind": "doc", "name": "!!!"]).error?.code == .invalidArgs)
+            #expect(result(try await call(p, a, "artifact.new", ["kind": "doc", "name": "../x"]))["file"] == .string("docs/pages/x/index.html"))
+        }
+    }
+
+    @Test func newRefusesExisting() async throws {
+        try await withProject { _, p, a, proj in
+            let f = proj.appendingPathComponent("docs/pages/vendas/index.html")
+            try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("meu".utf8).write(to: f)
+            let e = try await call(p, a, "artifact.new", ["kind": "dashboard", "name": "vendas"]).error
+            #expect(e?.code == .invalidArgs && e?.message.contains("já existe") == true, "\(String(describing: e))")
+            #expect(try Data(contentsOf: f) == Data("meu".utf8))
+        }
+    }
+
+    @Test func newWithoutSystemUsesSeed() async throws {
+        try await withProject { _, p, a, proj in
+            let r = try await call(p, a, "artifact.new", ["kind": "doc", "title": "Notas"])
+            #expect(warnings(r) == ["sem design system ativo: tokens padrão"], "\(r)")
+            let html = try String(contentsOf: proj.appendingPathComponent("docs/pages/doc-1/index.html"), encoding: .utf8)
+            #expect(html.contains("<title>Notas</title>") && html.contains("[data-theme=\"dark\"]") && html.contains("[data-theme=\"light\"]"))
+        }
+    }
+
+    @Test func newEngineDownUsesSeed() async throws {
+        try await withProject { d, p, a, proj in
+            await d.router.testSetActiveSystem(UUID())   // active, but no engine (and no such system) here
+            let r = try await call(p, a, "artifact.new", ["kind": "prototype"])
+            #expect(r.error == nil && warnings(r) == ["design system indisponível: tokens padrão"], "\(r)")
+            #expect(FileManager.default.fileExists(atPath: proj.appendingPathComponent("docs/pages/prototype-1/index.html").path))
+        }
+    }
+
+    @Test func newBadKind() async throws {
+        try await withProject { _, p, a, _ in
+            let e = try await call(p, a, "artifact.new", ["kind": "slides"]).error
+            #expect(e?.code == .invalidArgs && e?.message.contains("deck|dashboard|doc|prototype") == true, "\(String(describing: e))")
+        }
+    }
+
+    /// Many `artifact new` at once from one terminal: the 8-Prévia cap counts the ones still opening.
+    @Test func newCapCountsInFlight() async throws {
+        try await withProject { d, p, a, _ in
+            let rs = try await withThrowingTaskGroup(of: Response.self) { g in
+                for i in 0..<12 { g.addTask { try await call(p, a, "artifact.new", ["kind": "doc", "name": "d\(i)"]) } }
+                return try await g.reduce(into: []) { $0.append($1) }
+            }
+            #expect(rs.count(where: { $0.ok }) == CommandRouter.testerBrowserCap, "\(rs.map { $0.error?.message ?? "ok" })")
+            #expect(await d.router.ws.panels.count(where: { $0.pluginId == "preview" }) == CommandRouter.testerBrowserCap)
+        }
+    }
+
+    /// `artifact.add --nofollow` (the Prévia's save): a root or page reached through a link is refused, nothing copied.
+    @Test func addNoFollowRefusesLinkedRoot() async throws {
+        try await withProject { d, p, a, proj in
+            let outside = URL(fileURLWithPath: "/tmp/collie-out-\(UUID().uuidString.prefix(8))").resolvingSymlinksInPath()
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: outside) }
+            try Data("<body>segredo</body>".utf8).write(to: outside.appendingPathComponent("index.html"))
+            let real = DiagramFile.real(proj)
+            try FileManager.default.createSymbolicLink(at: real.appendingPathComponent("x"), withDestinationURL: outside)
+            let e = try await admin(d, p, "artifact.add", ["path": real.path + "/x/index.html", "root": real.path + "/x", "nofollow": "true"]).error
+            #expect(e?.code == .invalidArgs, "\(String(describing: e))")
+            #expect(try await d.router.artifacts.list().isEmpty)
+        }
+    }
+}

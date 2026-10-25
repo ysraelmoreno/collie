@@ -61,10 +61,9 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
     private var closed = false
     /// The draw.io events received, in order (tests, and Task 3's replies).
     private(set) var seen: [String] = []
-    private var dirWatch: DispatchSourceFileSystemObject?, fileWatch: DispatchSourceFileSystemObject?
+    private var watcher: FileWatch?
     /// The merge sent because the disk changed under a user autosave: its autosave (disk + the user's edit) is saved.
     private var keepMergeAutosave = false
-    private var pendingCheck: Task<Void, Never>?
     /// The editor has loaded the file (agent commands that need it wait for this).
     private(set) var editorReady = false
     /// Why the panel can't open (shown in it, and the error of the commands that need the editor).
@@ -273,51 +272,19 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         guard let file = url ?? file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem arquivo") }
         try DiagramFile.write(xml, to: file, root: root)
         known = Data(xml.utf8)
-        rearmFileWatch()   // the rename replaced the inode the file watch had
+        watcher?.rearm()   // the rename replaced the inode the file watch had
     }
 
-    /// Watches the file's folder (atomic writes: a rename) and the file itself (in-place writes: `echo >`, editors'
-    /// Write tools), the file re-armed after each change. Both opened without following links.
     private func watch() {
         stopWatching()
-        guard let file, let root = projectRoot, let d = try? DiagramFile.openDirectory(of: file, root: root, create: false) else { return }
-        dirWatch = source(d, [.write, .rename, .delete])
-        rearmFileWatch()
+        guard let file, let root = projectRoot else { return }
+        watcher = FileWatch(file: file, root: root) { [weak self] in self?.fileChanged() }
     }
-    private func rearmFileWatch() {
-        fileWatch?.cancel(); fileWatch = nil
-        guard !closed, let file, let root = projectRoot, let d = try? DiagramFile.openDirectory(of: file, root: root, create: false) else { return }
-        let fd = openat(d, file.lastPathComponent, O_EVTONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
-        Darwin.close(d)
-        guard fd >= 0 else { return }
-        fileWatch = source(fd, [.write, .extend, .delete, .rename, .attrib])
-    }
-    private func source(_ fd: Int32, _ mask: DispatchSource.FileSystemEvent) -> DispatchSourceFileSystemObject {
-        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: mask, queue: .main)
-        src.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.scheduleCheck() } }
-        src.setCancelHandler { Darwin.close(fd) }
-        src.resume()
-        return src
-    }
-    private func stopWatching() {
-        dirWatch?.cancel(); dirWatch = nil; fileWatch?.cancel(); fileWatch = nil
-        pendingCheck?.cancel(); pendingCheck = nil
-    }
-
-    /// Coalesces a burst of folder events into one look at the file, 150 ms later (well within the 1 s budget).
-    private func scheduleCheck() {
-        pendingCheck?.cancel()
-        pendingCheck = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
-            self?.fileChanged()
-        }
-    }
+    private func stopWatching() { watcher?.stop(); watcher = nil }
 
     /// The file differs from what the panel knows: merge it in. A missing or malformed file is left alone (the editor
     /// keeps the last good version; the user's next edit writes it back).
     func fileChanged() {
-        rearmFileWatch()
         guard let xml = (try? readFile()) ?? nil, Data(xml.utf8) != known,
               (try? DiagramFile.validate(xml: xml)) != nil else { return }
         known = Data(xml.utf8)

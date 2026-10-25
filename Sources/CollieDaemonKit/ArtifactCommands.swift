@@ -34,7 +34,7 @@ extension CommandRouter {
             let width = try DeviceService.int(r.args, "width", 320...3840) ?? 1440
             let a: Artifact
             if let root = str(r, "root").flatMap({ $0.isEmpty ? nil : $0 }) {
-                a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title,
+                a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title, noFollow: flag(r, "nofollow"),
                                                  paddockId: caller?.paddockId, by: Self.origin(caller))
             } else {
             // opened without following a link (nor blocking on a fifo), then checked and read through that descriptor
@@ -62,6 +62,11 @@ extension CommandRouter {
             }
             importInBackground(a, width: width, by: Self.origin(caller))
             return .object(["id": id, "importing": .bool(true)])
+        case "artifact.new":
+            guard let kind = ArtifactTemplates.Kind(rawValue: try need(r, "kind")) else {
+                throw invalid("kind must be " + ArtifactTemplates.Kind.allCases.map(\.rawValue).joined(separator: "|"))
+            }
+            return try await newPage(kind, r, caller: caller)
         case "artifact.import":
             return try await importArtifact(try id(), width: try DeviceService.int(r.args, "width", 320...3840) ?? 1440, by: Self.origin(caller))
         case "artifact.reexport":
@@ -79,6 +84,46 @@ extension CommandRouter {
         default:
             throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
+    }
+
+    /// `artifact new`: the starter page written (never over an existing file) into the caller's project, then a Prévia on
+    /// it leashed to the caller. Tokens: the active design system's, read within 10 s; none, or any failure: the seed's,
+    /// with a warning (the command never fails for that).
+    private func newPage(_ kind: ArtifactTemplates.Kind, _ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
+        func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        let tester = caller.flatMap { $0.isShepherd ? nil : $0 }
+        if let me = tester { try reservePreview(me) }   // before anything is written; held until the panel is open
+        defer { if let me = tester { releasePreview(me) } }
+        let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
+        let root = try await projectRootForPanel(paddock: paddock, caller: caller)
+        let slug: String
+        if let n = str(r, "name") {
+            guard let s = ArtifactTemplates.slug(n) else { throw invalid("nome sem letras nem números: \(n)") }
+            slug = s
+        } else {
+            var i = 1
+            while FileManager.default.fileExists(atPath: root.appendingPathComponent("docs/pages/\(kind.rawValue)-\(i)").path) { i += 1 }
+            slug = "\(kind.rawValue)-\(i)"
+        }
+        let rel = "docs/pages/\(slug)/index.html", url = root.appendingPathComponent(rel)   // the slug has no `/` nor `.`
+        if FileManager.default.fileExists(atPath: url.path) { throw invalid("já existe: \(rel)") }
+        var warnings: [String] = [], variables: JSONValue?
+        if let id = activeSystem(paddock: paddock) {
+            do throws(ProtocolError) {
+                guard let ds = (try? await systems.list())?.first(where: { $0.id == id }) else {
+                    throw ProtocolError(code: .notFound, message: "design system")
+                }
+                variables = try await systems.variables(of: ds, deadline: .now + .seconds(10))
+            } catch { warnings.append("design system indisponível: tokens padrão") }
+        } else { warnings.append("sem design system ativo: tokens padrão") }
+        let title = str(r, "title").flatMap { $0.isEmpty ? nil : $0 } ?? str(r, "name") ?? kind.label
+        let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables))
+        try await UnixSocketClient.offPool { try DiagramFile.write(html, to: url, root: root, noun: "página", exclusive: true) }
+        let name = freePanelName("preview")
+        try reserve(name); defer { launching.remove(name.lowercased()) }
+        let (p, _, _) = try await openPanel(name: name, pluginId: "preview", placement: .canvas, state: ["file": .string(rel)],
+                                            file: nil, paddock: paddock, caller: caller)
+        return .object(["file": .string(rel), "panel": .string(p.name), "warnings": .array(warnings.map { .string($0) })])
     }
 
     /// An export version whose artifact was removed while it was written: its folder deleted (and the artifact's, when

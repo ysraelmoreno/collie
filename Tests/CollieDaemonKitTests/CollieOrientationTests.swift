@@ -24,6 +24,15 @@ import CollieProtocol
         #expect(!m.contains("Design panel"))
     }
 
+    /// `artifact new` is taught to every terminal (its kinds while names fit; tight: the short form).
+    @Test func orientationTeachesArtifactNew() {
+        for t in [text(), text(shepherd: true, peers: ["Bob"], panels: [("Home", "design")])] {
+            #expect(t.contains("artifact new deck|dashboard|doc|prototype opens a Prévia."), "\(t)")
+        }
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        #expect(text(shepherd: true, peers: (1...20).map { "peer\($0)" }, panels: ps).contains("(new <kind> opens a Prévia)"))
+    }
+
     /// External plug-ins never by name: built-in hints only, plus one fixed line for a Shepherd when any is loaded.
     @Test func orientationListsBuiltInsOnly() async throws {
         try await PluginRegistry.exclusively { () async throws in

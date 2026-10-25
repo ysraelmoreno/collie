@@ -103,6 +103,70 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool {
         }
     }
 
+    /// Any terminal may open a Prévia: on the canvas, leashed to it.
+    @Test func nonShepherdOpensPreviewOnCanvas() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            let r = try await call(p, a, "panel.open", ["plugin": "preview", "file": "docs/x.html"])
+            guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
+            #expect(o["placement"] == .string("canvas") && o["name"] == .string("preview-1"), "\(r)")
+            let s = try await snapshot(d, p)
+            let pn = try #require(s.panels.first { $0.pluginId == "preview" })
+            #expect(leashed(s, UUID(uuidString: a.id)!, pn.id) && pn.state["file"] == .string("docs/x.html"))
+        }
+    }
+
+    @Test func nonShepherdPreviewDockRefused() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            let r = try await call(p, a, "panel.open", ["plugin": "preview", "file": "x.html", "placement": "dock.right"])
+            #expect(r.error?.code == .notShepherd, "\(r)")
+            #expect(try await snapshot(d, p).panels.isEmpty)
+        }
+    }
+
+    @Test func previewCapIs8PerTerminal() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            for i in 0..<CommandRouter.testerBrowserCap { #expect(try await call(p, a, "panel.open", ["plugin": "preview", "file": "p\(i).html"]).ok) }
+            let e = try await call(p, a, "panel.open", ["plugin": "preview", "file": "more.html"]).error
+            #expect(e?.code == .tooMany, "\(String(describing: e))")
+            #expect(try await call(p, a, "panel.open", ["plugin": "browser"]).ok)   // browsers are counted apart
+        }
+    }
+
+    @Test func previewFileOutsideProjectRefused() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            for bad in ["../x.html", "/etc/x.html", "notes.md"] {
+                let e = try await call(p, a, "panel.open", ["plugin": "preview", "file": bad]).error
+                #expect(e?.code == .invalidArgs, "\(bad): \(String(describing: e))")
+            }
+            #expect(try await snapshot(d, p).panels.isEmpty)
+        }
+    }
+
+    @Test func previewNeedsFileOrArtifact() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            #expect(try await call(p, a, "panel.open", ["plugin": "preview"]).error?.code == .invalidArgs)
+            #expect(try await call(p, a, "panel.open", ["plugin": "preview", "file": "a.html", "artifact": UUID().uuidString]).error?.code == .invalidArgs)
+            #expect(try await call(p, a, "panel.open", ["plugin": "preview", "artifact": UUID().uuidString]).error?.code == .notFound)
+            #expect(try await call(p, a, "panel.open", ["plugin": "preview", "artifact": "nope"]).error?.code == .invalidArgs)
+            #expect(try await snapshot(d, p).panels.isEmpty)
+        }
+    }
+
+    @Test func previewStateHasRoot() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            #expect(try await call(p, a, "panel.open", ["plugin": "preview", "file": "docs/x.html"]).ok)
+            let pn = try #require(try await snapshot(d, p).panels.first)
+            guard case .string(let root)? = pn.state["root"] else { Issue.record("no root: \(pn.state)"); return }
+            #expect(URL(fileURLWithPath: root).resolvingSymlinksInPath().path == URL(fileURLWithPath: "/tmp").resolvingSymlinksInPath().path)
+        }
+    }
+
     @Test func adminCanvasPanelTakesPaddockArg() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

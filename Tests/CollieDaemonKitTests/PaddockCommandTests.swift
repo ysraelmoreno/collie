@@ -110,9 +110,12 @@ private func paddockList(_ r: Response) -> [[String: JSONValue]] {
         let sent = repo.appendingPathExtension("sent"), gate = repo.appendingPathExtension("gate")   // outside the worktree
         FileManager.default.createFile(atPath: gate.path, contents: nil)
         defer { try? FileManager.default.removeItem(at: gate); try? FileManager.default.removeItem(at: sent) }
-        let hook = repo.appendingPathComponent(".git/hooks/pre-merge-commit")
-        try "#!/bin/sh\ntouch '\(sent.path)'\nwhile [ -e '\(gate.path)' ]; do sleep 0.05; done\n".write(to: hook, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        // the daemon's git runs no hooks (R4): a smudge filter on the merged-in file holds the merge instead
+        let gateFilter = "sh -c 'touch \"\(sent.path)\"; while [ -e \"\(gate.path)\" ]; do sleep 0.05; done; cat'"
+        let cfg = Process()
+        cfg.executableURL = URL(fileURLWithPath: "/usr/bin/git"); cfg.arguments = ["-C", repo.path, "config", "filter.gate.smudge", gateFilter]
+        try cfg.run(); cfg.waitUntilExit()
+        try "g.txt filter=gate\n".write(to: repo.appendingPathComponent(".git/info/attributes"), atomically: true, encoding: .utf8)
         try await withDaemon { d, p in
             let m = try await term(d, p, "M", cwd: repo, shepherd: true)
             #expect(try await call(p, m, "paddock.create", ["name": "feat"]).ok)

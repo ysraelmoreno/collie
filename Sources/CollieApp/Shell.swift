@@ -29,8 +29,8 @@ struct Shell<Content: View>: View {
     let structure: WindowStructure
     let ctx: ShellContext
     @ViewBuilder let content: Content
-    /// One-time sandbox notice (UserDefaults via @AppStorage, like the other UI state).
-    @AppStorage("sandbox.noticeSeen") private var noticeSeen = false
+    /// One-time sandbox notice (UserDefaults via @AppStorage, like the other UI state); a new key for open mode: shown again once.
+    @AppStorage("sandbox.openNoticeSeen") private var noticeSeen = false
 
     var body: some View {
         let full = structure == .full
@@ -50,7 +50,7 @@ struct Shell<Content: View>: View {
                 NSWorkspace.shared.open(URL(string: "https://github.com/ysraelmoreno/collie#sandbox-dos-terminais")!)
             }
         } message: {
-            Text("Os terminais agora rodam num sandbox: o agente só escreve no projeto e lê tudo, menos segredos, perfis de navegador, e-mail e os dados do Collie (esses nunca são liberados). Quando ele tenta escrever fora do projeto, aparece um cartão no terminal para você liberar ou negar. Terminais já abertos entram no sandbox na próxima vez que iniciarem. Para o seu trabalho, use \"Terminal livre (sem sandbox)\".")
+            Text("Os terminais rodam no sandbox aberto (padrão): o agente lê e escreve tudo na sua conta, inclusive chaves e tokens, e pode apagar qualquer coisa; só os dados, o app e o daemon do Collie ficam fechados ao acesso direto. O que ele gravar e você executar depois (rc do shell, LaunchAgents, binários, hooks do git) roda sem sandbox e alcança tudo, o Collie incluído. Em Preferências, \"Modo do sandbox\" muda para Estrito (escrita só no projeto, segredos fechados, cartões para liberar); vale para terminais abertos depois.")
         }
     }
 }

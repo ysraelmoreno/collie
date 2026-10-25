@@ -5,12 +5,21 @@ typealias GitResult = ProcessResult
 
 /// Thin git wrapper over `BoundedProcess`; git never prompts or opens an editor/pager.
 enum GitRunner {
+    /// R4: the profile of the open-mode terminal whose request this is (set by the router per request): its git and gh
+    /// run under it (sandbox-exec), so whatever an agent planted in the repo can't reach Collie's internals.
+    @TaskLocal static var sandbox: URL?
+
     static func run(_ args: [String], in dir: URL, timeout: Duration = .seconds(120),
                     executable: URL = URL(fileURLWithPath: "/usr/bin/git")) async throws(ProtocolError) -> GitResult {
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"; env["GIT_EDITOR"] = "true"; env["GIT_PAGER"] = "cat"
-        // core.fsmonitor in the (agent-writable) shared .git/config would run arbitrary code on every status
-        let args = executable.lastPathComponent == "git" ? ["-c", "core.fsmonitor=false"] + args : args
+        // core.fsmonitor and hooks in the (agent-writable) repo would run arbitrary code in the daemon's git (R4).
+        // ponytail: other planted config (filters, sshCommand, gpg.program) still runs; sandboxed for an open terminal's request
+        let args = executable.lastPathComponent == "git" ? ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"] + args : args
+        if let sandbox {
+            return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
+                                                args: ["-f", sandbox.path, executable.path] + args, in: dir, env: env, timeout: timeout)
+        }
         return try await BoundedProcess.run(executable: executable, args: args, in: dir, env: env, timeout: timeout)
     }
 }

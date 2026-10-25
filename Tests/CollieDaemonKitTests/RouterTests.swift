@@ -11,6 +11,7 @@ import CollieTerminal
 func testConfig(_ paths: Paths, _ ws: UUID = UUID()) -> DaemonConfig {
     var c = DaemonConfig(paths: paths, collieExecutable: URL(fileURLWithPath: "/tmp/collie"), workspaceId: ws)
     c.shell = "/bin/sh"
+    c.defaultSandboxMode = .strict   // the suites written before open mode (SandboxOpenTests set .open)
     // never the real simctl/AXe (nor the developer's simulators); the fake xcrun lists none unless a test sets it up
     let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures")
     c.xcrunPath = fixtures.appendingPathComponent("fake-xcrun.sh")

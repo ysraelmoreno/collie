@@ -84,6 +84,8 @@ actor CommandRouter {
     var sandboxKnown: Set<UUID> = []
     var sandboxDetection: Bool?
     var sandboxWatch: Task<Void, Never>?
+    /// The Collie-wide sandbox mode (`<root>/preferences.json`); nil: `config.defaultSandboxMode`.
+    var sandboxPref: SandboxMode?
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
     init(config: DaemonConfig, auth: AuthRegistry, registry: TerminalRegistry, store: WorkspaceStore,
@@ -125,6 +127,13 @@ actor CommandRouter {
         let curatorDir = config.paths.root.appendingPathComponent("curator")
         self.curator = Curator(dir: curatorDir, runner: config.curatorRunner ?? ClaudeCuratorRunner(
             root: config.paths.root, home: home, env: { await userEnv.current() }))
+        // L3: one Collie-wide preference; a workspace's value (before) moves there once
+        self.sandboxPref = CollieSettings.load(root).terminalSandbox
+        if sandboxPref == nil, let w = workspace.terminalSandbox {
+            sandboxPref = w
+            try? CollieSettings(terminalSandbox: w).save(root)
+        }
+        self.ws.terminalSandbox = nil
         me.router = self
         let approvals = asks.approvalEvents
         Task { for await e in approvals { await me.router?.approvalChanged(e) } }
@@ -207,6 +216,13 @@ actor CommandRouter {
 
     /// `peer`: pid of the connecting process (0 = unknown).
     func handle(_ req: Request, peer: pid_t = 0) async -> Response {
+        // R4: the daemon's git for an open terminal's request runs under its profile (a forged id only narrows)
+        let caller = req.terminalId.flatMap(UUID.init(uuidString:)).flatMap { id in ws.terminals.first { $0.id == id } }
+        let profile = caller.flatMap { startedOpen($0) && sandboxed($0) ? SandboxLaunch.profileFile($0.id, root: config.paths.root) : nil }
+        return await GitRunner.$sandbox.withValue(profile) { await route(req, peer: peer) }
+    }
+
+    private func route(_ req: Request, peer: pid_t) async -> Response {
         do {
             try preflight(req)
             if req.command.hasPrefix("admin.") {
@@ -509,6 +525,7 @@ actor CommandRouter {
                 try await remove(try find(name))
             }
             return .object([:])
+        case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))
         case "admin.data.export", "admin.data.import":
             let key = r.command == "admin.data.export" ? "out" : "from"
             let path = try need(key)
@@ -554,9 +571,13 @@ actor CommandRouter {
         try await link(a.id, b.id)
     }
 
-    /// Idempotent leash between two ids; persists, emits `.connected`. Never to a free terminal.
+    /// Idempotent leash between two ids; persists, emits `.connected`. Never to a free terminal, nor to a node gone
+    /// during a caller's awaits.
     func link(_ a: UUID, _ b: UUID) async throws {
         try refuseFreeLeash(a, b)
+        for id in [a, b] where !ws.terminals.contains(where: { $0.id == id }) && !ws.panels.contains(where: { $0.id == id }) {
+            throw ProtocolError(code: .notFound, message: "a terminal or panel was removed meanwhile")
+        }
         guard !ws.connections.contains(where: { Set([$0.a, $0.b]) == Set([a, b]) }) else { return }
         let c = Connection(a: a, b: b)
         ws.connections.append(c)
@@ -596,6 +617,7 @@ actor CommandRouter {
     func launch(_ rec: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
         var rec = rec
         if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }, home: sandboxHomeDir).path }
+        rec.startMode = rec.sandbox == .sandboxed ? sandboxMode : nil   // L2: on the record (survives a daemon restart)
         // the capture can take seconds: a relaunched record killed meanwhile stays gone
         let existed = ws.terminals.contains { $0.id == rec.id }
         let user = await agentEnv(rec)
@@ -654,7 +676,15 @@ actor CommandRouter {
 
     /// The project of a terminal an agent creates at `cwd`: `cwd` must lie within `allowed` (the creator's project, or a
     /// paddock it owns), and outside the paddock worktrees nested there unless it goes into that paddock. Never wider than `allowed`.
-    func childProject(cwd: String, paddock: Paddock?, allowed: URL) throws(ProtocolError) -> URL {
+    /// `open` (the creator started open, L1): any existing directory (no project bound; its sandbox doesn't confine writes either).
+    func childProject(cwd: String, paddock: Paddock?, allowed: URL, open: Bool) throws(ProtocolError) -> URL {
+        if open {
+            var dir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: cwd, isDirectory: &dir), dir.boolValue else {
+                throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is not an existing directory")
+            }
+            return ProjectRoot.resolve(cwd: cwd, paddock: paddock, home: sandboxHomeDir)
+        }
         guard ProjectRoot.contains(cwd, root: allowed) else {
             throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is outside your project \(allowed.path)")
         }
@@ -759,7 +789,7 @@ actor CommandRouter {
                                  terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
                                  agent: rec.preset, command: rec.command,
                                  grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, project: project.path, lot: ws.lot(of: rec.id)?.id),
-                                 appBundle: SandboxInput.appBundle(of: config.collieExecutable))
+                                 appBundle: SandboxInput.appBundle(of: config.collieExecutable), mode: rec.startMode ?? .strict)
         // R29: an id reused on another project (same-name respawn elsewhere) loses its terminal grants
         let stale = sandboxGrants.filter { $0.scope == .terminal && $0.owner == rec.id && $0.project != nil && $0.project != project.path }
         if !stale.isEmpty { sandboxGrants.removeAll { g in stale.contains { $0.id == g.id } }; try? saveGrants() }

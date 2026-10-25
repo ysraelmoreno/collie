@@ -55,14 +55,15 @@ enum CollieOrientation {
         lines.append("- Artifacts: collie artifact … keeps handed-in pages.")   // panel-free: independent of reach
         if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
         if isShepherd {
-            let hints = ["design": "design --file <name>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
+            let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             // built-ins only: external plug-ins are user-installed text, kept out of the agent's context (one fixed line below)
             let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
-                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …")
+                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
             } else {
                 lines.append("- As Shepherd you can open panels: collie panel open \(open) (leashed to you, on your paddock).")
-                lines.append("  Hand one over: collie leash <agent> <panel>; collie panel close|move. Team: collie summon|dismiss|leash|unleash, collie paddock …")
+                // ponytail: at the length cap (orientationSanitizesNames keeps 3 names); `leash <agent> <panel>` hands one over later
+                lines.append("  Team: collie summon designer-1 --preset claude --connect design-1 | panel open design --file F --connect designer-1; leash|unleash|dismiss|paddock, panel close|move")
             }
             // leashed design panels are usable; a paddock-only one is not reachable until the user leashes it
             let notFor = "Not for backend, refactors, tests, docs, invisible fixes."
@@ -78,7 +79,7 @@ enum CollieOrientation {
                 lines.append("- UI work (new screen, flow or visible change): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name. \(notFor)")
             }
             lines.append("- Herds: collie herd list | apply <id> --name <n> | save <name> --terminals a,b")
-            if morePanels { lines.append("- More panels: collie plugin list") }
+            if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")
         }

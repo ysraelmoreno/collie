@@ -20,7 +20,7 @@ import CollieProtocol
         let d = text(paddock: "F1", peers: ["Bob"], panels: [("Home", "design")])
         #expect(d.contains("Design panel \"Home\"") && d.contains("Do not use other design editors") && d.contains("on paddock \"F1\"") && d.contains("(\"Bob\")"))
         let m = text(shepherd: true)
-        #expect(m.contains("collie panel open") && m.contains("design --file <name>") && m.contains("browser --url <url>") && m.contains("device [--serial <id|avd:<name>>]"))
+        #expect(m.contains("collie panel open") && m.contains("design --file <name>") && m.contains("diagram --file <path.drawio>") && m.contains("browser --url <url>") && m.contains("device [--serial <id|avd:<name>>]"))
         #expect(!m.contains("Design panel"))
     }
 
@@ -39,7 +39,7 @@ import CollieProtocol
         for pref in DesignFirst.allCases {
             let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" },
                                            panels: ps, designFirst: pref, lot: lot, morePanels: true)
-            #expect(t.count <= 1500 && t.contains("More panels"), "\(pref) \(t.count)")
+            #expect(t.count <= 1500 && t.contains("collie plugin list"), "\(pref) \(t.count)")
         }
         }
     }
@@ -48,6 +48,8 @@ import CollieProtocol
         let m = text(shepherd: true)
         #expect(m.contains("collie herd list") && m.contains("apply <id> --name <n>") && m.contains("save <name> --terminals"))
         #expect(!text().contains("herd"))
+        #expect(m.contains("collie summon designer-1 --preset claude --connect design-1") && m.contains("--connect designer-1"))
+        #expect(!text().contains("--connect"))
     }
 
     @Test func orientationTeachesSandboxAccess() {

@@ -10,9 +10,9 @@ private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: Stri
     try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: cmd, args: args.mapValues { .string($0) }),
                                     to: p.socket, timeoutSeconds: 60)
 }
-private func term(_ d: Daemon, _ p: Paths, _ name: String, shepherd: Bool = false) async throws -> Term {
+private func term(_ d: Daemon, _ p: Paths, _ name: String, shepherd: Bool = false, cwd: String = "/tmp") async throws -> Term {
     let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
-        args: ["name": .string(name), "preset": .string("shell"), "cwd": .string("/tmp"), "shepherd": .bool(shepherd)]),
+        args: ["name": .string(name), "preset": .string("shell"), "cwd": .string(cwd), "shepherd": .bool(shepherd)]),
         to: p.socket, timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -57,6 +57,49 @@ private func leashed(_ s: WorkspaceSnapshot, _ a: UUID, _ b: UUID) -> Bool {
             #expect(o2["name"] == .string("browser-2") && o2["placement"] == .string("dock.right"))
             #expect(try await call(p, m, "panel.open", ["plugin": "nope"]).error?.code == .notFound)
             #expect(try await call(p, m, "panel.open", ["plugin": "browser", "storage": "x"]).error?.code == .invalidArgs)
+        }
+    }
+
+    /// A Diagram panel carries its project (`root`) and the requested file; the app resolves the file in it.
+    @Test func diagramPanelCarriesProjectRoot() async throws {
+        try await withDaemon { d, p in
+            #expect(try await admin(d, p, "panel.open", ["plugin": "diagram"]).error?.code == .invalidArgs)   // no project yet
+            let m = try await term(d, p, "M", shepherd: true)
+            let r = try await call(p, m, "panel.open", ["plugin": "diagram", "file": "docs/a.drawio"])
+            #expect(r.error == nil, "\(r)")
+            let tmp = URL(fileURLWithPath: "/tmp").resolvingSymlinksInPath().path
+            let s = try await snapshot(d, p)
+            let pn = try #require(s.panels.first { $0.pluginId == "diagram" })
+            #expect(pn.state["file"] == .string("docs/a.drawio") && pn.placement == .canvas)
+            // R9: a bad --file is refused at open (outside the project, wrong extension), nothing opened
+            for bad in ["../x.drawio", "/etc/x.drawio", "notes.txt"] {
+                let e = try await call(p, m, "panel.open", ["plugin": "diagram", "file": bad]).error
+                #expect(e?.code == .invalidArgs && (e?.message.contains("projeto") == true || e?.message.contains(".drawio") == true), "\(bad): \(String(describing: e))")
+            }
+            #expect(try await snapshot(d, p).panels.count(where: { $0.pluginId == "diagram" }) == 1)
+            guard case .string(let root)? = pn.state["root"] else { Issue.record("no root: \(pn.state)"); return }
+            #expect(URL(fileURLWithPath: root).resolvingSymlinksInPath().path == tmp, "\(root)")
+            let r2 = try await admin(d, p, "panel.open", ["plugin": "diagram", "placement": "dock.right"])   // the pasture terminal's project
+            #expect(r2.error == nil, "\(r2)")
+            let s2 = try await snapshot(d, p)
+            #expect(s2.panels.filter { $0.pluginId == "diagram" }.allSatisfy { $0.state["root"] != nil })
+        }
+    }
+
+    /// R13/M1: a docked Diagram panel is reached only from its own project (canvas ones only when leashed).
+    @Test func dockedDiagramOnlyFromItsProject() async throws {
+        let other = FileManager.default.temporaryDirectory.appendingPathComponent("diagram-other-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try await withDaemon { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            #expect(try await call(p, m, "panel.open", ["plugin": "diagram", "placement": "dock.right"]).error == nil)
+            let same = try await term(d, p, "Same"), far = try await term(d, p, "Far", cwd: other.path)
+            let e = try await call(p, far, "diagram.get").error
+            #expect(e?.code == .notConnected, "\(String(describing: e))")
+            #expect(try await call(p, far, "diagram.get", ["panel": "diagram-1"]).error?.code == .notConnected)
+            // same project: reaches the panel (no app in this test, so the host call itself fails)
+            let ok = try await call(p, same, "diagram.get").error
+            #expect(ok?.code == .unavailable, "\(String(describing: ok))")
         }
     }
 

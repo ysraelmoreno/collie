@@ -53,6 +53,34 @@ extension CommandRouter {
         return .object([:])
     }
 
+    /// `--connect a,b`: terminals and canvas panels the Shepherd `me` already reaches (never a free terminal, a headless
+    /// or a dock panel), all checked before anything is created. `panels: false` (a new panel's): terminals only.
+    func connectTargets(_ r: Request, by me: TerminalRecord, panels: Bool = true) throws -> (terminals: [TerminalRecord], panels: [Panel]) {
+        var ts: [TerminalRecord] = [], ps: [Panel] = []
+        for n in (str(r, "connect") ?? "").split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) where !n.isEmpty {
+            if let p = panel(named: n) {
+                guard panels else { throw ProtocolError(code: .invalidArgs, message: "cannot connect a panel to a panel ('\(p.name)')") }
+                if p.placement == .headless { throw ProtocolError(code: .invalidArgs, message: "a headless panel is reachable only by the terminal that opened it") }
+                guard p.placement == .canvas else { throw ProtocolError(code: .invalidArgs, message: "dock panels need no leash ('\(p.name)')") }
+                guard ConnectionGraph.reachablePanels(from: me.id, in: ws).contains(where: { $0.id == p.id }) else {
+                    throw ProtocolError(code: .notConnected, message: "No connection to panel '\(p.name)'. Connect it first.")
+                }
+                ps.append(p)
+            } else {
+                if let t = ws.terminals.first(where: { $0.name.caseInsensitiveCompare(n) == .orderedSame }) { try refuseFreeLeash(t.id) }
+                ts.append(try ConnectionGraph.resolve(name: n, from: me.id, in: ws))
+            }
+        }
+        return (ts, ps)
+    }
+
+    /// Leashes `rec` to the `--connect` targets of `r`, re-checked now (after the caller's awaits a target may have left reach).
+    func wire(_ rec: TerminalRecord, _ r: Request, by me: TerminalRecord) async throws {
+        let (ts, ps) = try connectTargets(r, by: me)
+        for t in ts { try await leash(rec, t) }
+        for p in ps { try await leash(rec, p) }   // link refuses a panel closed meanwhile
+    }
+
     private func summon(_ r: Request, by me: TerminalRecord) async throws -> JSONValue {
         let name = try need(r, "name")
         try refuseFree(r)
@@ -62,6 +90,7 @@ extension CommandRouter {
             throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
         }
         if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists") }
+        _ = try connectTargets(r, by: me)   // before the launch: a refused target creates nothing
         var paddockId = me.paddockId, cwd = me.cwd
         var allowed = try await projectRoot(of: me)   // the new terminal's project stays within it
         if let f = str(r, "paddock") {
@@ -73,13 +102,14 @@ extension CommandRouter {
             paddockId = fl.id; cwd = fl.path; allowed = ProjectRoot.resolve(cwd: fl.path, paddock: fl)
         }
         cwd = SignedAppCheck.realPath(URL(fileURLWithPath: str(r, "cwd") ?? cwd))   // spawned as checked (no symlink swap)
-        let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed)
+        let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: startedOpen(me))
         let rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: str(r, "command"),
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
         var result = try await launch(rec)
         try await ensurePaddock(of: rec)
         do {
             try await leash(me, rec)
+            try await wire(rec, r, by: me)   // re-checked: a target may have left reach during the launch
             if let l = ws.lot(of: me.id) { try await place([rec.id], in: l.id); result["lot"] = .string(l.name) }   // grouping, never reach
         } catch { try? await remove(rec); throw error }
         if let p = str(r, "prompt"), !p.isEmpty {

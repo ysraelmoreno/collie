@@ -1,0 +1,17 @@
+draw.io (embedded in Collie)
+
+Collie bundles the draw.io web editor in embed mode (Contents/Resources/drawio/web/), from draw.io
+v32.6.1 (https://github.com/jgraph/drawio, commit 84487b4891cbc0f32d7e30f34cf878c87cb1f414),
+licensed under the Apache License, Version 2.0 (Contents/Resources/drawio/LICENSE).
+draw.io and diagrams.net are trademarks of JGraph Ltd; Collie is not affiliated with or endorsed by
+JGraph, and uses the names only to identify the origin of this component (Apache-2.0 section 6).
+
+Only the files embed mode needs are included (no Confluence/viewer bundles, servlet, service worker,
+templates, math typesetting, or the Azure and Microsoft cloud icon sets).
+
+Changes made by Collie (patches/drawio/ in the Collie source):
+- 0001-collie-branding.patch: the page title is "Diagrama", the page's description, keywords, share
+  image and canonical link are replaced or removed, the no-JavaScript text is "Diagrama", the splash
+  logo is removed, the GitHub link in the page bar is no longer built, the About dialog shows only
+  "Diagrama" and the draw.io version (no logo or jgraph.com link), and the offline Help menu shows only
+  the version (the keyboard shortcut sheet it opened carries third-party branding).

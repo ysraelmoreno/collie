@@ -152,7 +152,7 @@ struct OpenPanelSheet: View {
                 let id = try await client.openPanel(plugin: plugin, name: n, placement: p, url: plugin == "browser" ? u : nil,
                                                     storage: storage, serial: plugin == "device" ? serial : nil,
                                                     file: plugin == "design" ? file : nil)
-                if onCanvas, let at { canvas.setFrame(CGRect(origin: at, size: plugin == "device" ? CGSize(width: 360, height: 720) : plugin == "design" ? CGSize(width: 1100, height: 720) : CanvasState.defaultTerminalSize), for: id) }
+                if onCanvas, let at { canvas.setFrame(CGRect(origin: at, size: plugin == "device" ? CGSize(width: 360, height: 720) : plugin == "design" || plugin == "diagram" ? CGSize(width: 1100, height: 720) : CanvasState.defaultTerminalSize), for: id) }
                 dismiss()
             } catch { self.error = "\(error)"; busy = false }
         }

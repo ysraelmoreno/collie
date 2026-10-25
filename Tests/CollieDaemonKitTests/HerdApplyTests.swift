@@ -324,6 +324,22 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
         }
     }
 
+    /// R9: a herd's diagram `state{file}` goes through the same check as `panel.open --file`: outside the project is refused,
+    /// and the apply rolls back.
+    @Test func herdDiagramFileOutsideProjectRefused() async throws {
+        let fx = try FakeAgents(); defer { fx.cleanup() }
+        try await withDaemon(configure: fx.configure) { d, p in
+            let herd = #"{"format":1,"id":"diag","name":"Diag","summary":"","wantsPaddock":false,"terminals":[{"key":"a","preset":"shell","isShepherd":false}],"panels":[{"key":"d","pluginId":"diagram","placement":"dock.right","state":{"file":"../fora.drawio"}}],"leashes":[]}"#
+            let file = p.root.appendingPathComponent("herds/diag.collieherd")
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(herd.utf8).write(to: file)
+            let r = try await apply(d, p, ["id": .string("diag"), "name": .string("v"), "cwd": .string("/tmp")])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("dentro do projeto") == true, "\(r)")
+            let s = try await state(d, p)
+            #expect(s.panels.isEmpty && s.terminals.isEmpty, "\(s)")
+        }
+    }
+
     @Test func appAppliesOnThePaddockOnScreen() async throws {
         let fx = try FakeAgents(); defer { fx.cleanup() }
         let repo = try await makeRepo()
@@ -417,6 +433,30 @@ extension DesignCommandTests {
 }
 
 extension DesignCommandTests {
+    /// Herd `leashes` wire designers to a design panel (terminal key ↔ panel key), not to each other.
+    @Test func herdLeashesDesignersToDesignPanel() async throws {
+        let fx = try FakeAgents(); defer { fx.cleanup() }
+        let fig = URL(fileURLWithPath: "/tmp/collie-fig-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: fig) }
+        let bin = fig.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for (n, f) in [("figcraft-cli", "fake-figcraft-mcp.py"), ("figcraft-server", "fake-figcraft-server.sh")] {
+            try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent(n), withDestinationURL: fixtures.appendingPathComponent(f))
+        }
+        let log = fig.appendingPathComponent("calls.log")
+        try Data().write(to: log)
+        setenv("COLLIE_FAKE_FIG_LOG", log.path, 1)
+        try await withDaemon(configure: { fx.configure(&$0); $0.figcraftDir = fig }) { d, p in
+            let pt = Herd(id: "design-team", name: "Design", terminals: [HerdTerminal(key: "designer-1", preset: .shell), HerdTerminal(key: "designer-2", preset: .shell)],
+                          panels: [HerdPanel(key: "design-1", pluginId: "design")], leashes: [["designer-1", "design-1"], ["design-1", "designer-2"]])
+            let json = JSONValue.string(String(decoding: try HerdFormat.encode(pt), as: UTF8.self))
+            #expect(try await send(p, Request(id: "i", token: d.adminToken, command: "herd.import", args: ["json": json])).ok)
+            let r = try await apply(d, p, ["id": .string("design-team"), "name": .string("x"), "cwd": .string("/tmp")])
+            #expect(r.ok, "\(r)")
+            #expect(pairs(try await state(d, p)) == [["x-designer-1", "x-design-1"], ["x-designer-2", "x-design-1"]])
+        }
+    }
+
     @Test func herdRollbackKeepsDesignFile() async throws {
         let fig = URL(fileURLWithPath: "/tmp/collie-fig-\(UUID().uuidString.prefix(8))")
         defer { try? FileManager.default.removeItem(at: fig) }

@@ -106,6 +106,33 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         }
     }
 
+    /// A Shepherd opens a design panel, then summons designers wired to it: each reaches the panel, not each other.
+    @Test func summonConnectsDesignersToPanel() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            var designers: [Term] = []
+            for n in ["designer-1", "designer-2"] {
+                let r = try await call(p, m, "summon", ["name": n, "preset": "shell", "connect": "design-1"])
+                guard case .string(let id)? = field(r, "id") else { Issue.record("\(r)"); return }
+                designers.append(Term(id: id, token: try await tokenOf(d, id)))
+            }
+            for t in designers {
+                let l = try await call(p, t, "panel.list")
+                guard case .array(let rows)? = l.result else { Issue.record("\(l)"); return }
+                #expect(rows.contains { if case .object(let o) = $0 { o["name"] == .string("design-1") } else { false } }, "\(l)")
+                let files = try await call(p, t, "design.files")   // design gating: the panel is reachable for it
+                #expect(files.result == .array([.object(["name": .string("Site"), "panels": .array([.string("design-1")])])]), "\(files)")
+            }
+            let s = try await UnixSocketClient.send(Request(id: "s", token: d.adminToken, command: "ui.snapshot"), to: p.socket, timeoutSeconds: 30)
+            let snap = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(s.result))
+            let panel = try #require(snap.panels.first { $0.name == "design-1" })
+            #expect(snap.connections.filter { $0.a == panel.id || $0.b == panel.id }.count == 3, "\(snap.connections)")
+            let ids = Set(designers.compactMap { UUID(uuidString: $0.id) })
+            #expect(!snap.connections.contains { Set([$0.a, $0.b]) == ids })
+        }
+    }
+
     @Test func fileNamesAreValidated() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in

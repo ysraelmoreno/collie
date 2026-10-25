@@ -53,6 +53,27 @@ extension CommandRouter {
         return .object([:])
     }
 
+    /// `--connect a,b`: terminals and canvas panels the Shepherd `me` already reaches (never a free terminal, a headless
+    /// or a dock panel), all checked before anything is created. `panels: false` (a new panel's): terminals only.
+    func connectTargets(_ r: Request, by me: TerminalRecord, panels: Bool = true) throws -> (terminals: [TerminalRecord], panels: [Panel]) {
+        var ts: [TerminalRecord] = [], ps: [Panel] = []
+        for n in (str(r, "connect") ?? "").split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) where !n.isEmpty {
+            if let p = panel(named: n) {
+                guard panels else { throw ProtocolError(code: .invalidArgs, message: "cannot connect a panel to a panel ('\(p.name)')") }
+                if p.placement == .headless { throw ProtocolError(code: .invalidArgs, message: "a headless panel is reachable only by the terminal that opened it") }
+                guard p.placement == .canvas else { throw ProtocolError(code: .invalidArgs, message: "dock panels need no leash ('\(p.name)')") }
+                guard ConnectionGraph.reachablePanels(from: me.id, in: ws).contains(where: { $0.id == p.id }) else {
+                    throw ProtocolError(code: .notConnected, message: "No connection to panel '\(p.name)'. Connect it first.")
+                }
+                ps.append(p)
+            } else {
+                if let t = ws.terminals.first(where: { $0.name.caseInsensitiveCompare(n) == .orderedSame }) { try refuseFreeLeash(t.id) }
+                ts.append(try ConnectionGraph.resolve(name: n, from: me.id, in: ws))
+            }
+        }
+        return (ts, ps)
+    }
+
     private func summon(_ r: Request, by me: TerminalRecord) async throws -> JSONValue {
         let name = try need(r, "name")
         try refuseFree(r)
@@ -62,6 +83,7 @@ extension CommandRouter {
             throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
         }
         if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists") }
+        let wire = try connectTargets(r, by: me)   // before the launch: a refused target creates nothing
         var paddockId = me.paddockId, cwd = me.cwd
         var allowed = try await projectRoot(of: me)   // the new terminal's project stays within it
         if let f = str(r, "paddock") {
@@ -80,6 +102,11 @@ extension CommandRouter {
         try await ensurePaddock(of: rec)
         do {
             try await leash(me, rec)
+            for t in wire.terminals { try await leash(rec, t) }
+            for p in wire.panels {
+                guard ws.panels.contains(where: { $0.id == p.id }) else { throw ProtocolError(code: .notFound, message: "Panel '\(p.name)' was closed meanwhile") }
+                try await leash(rec, p)
+            }
             if let l = ws.lot(of: me.id) { try await place([rec.id], in: l.id); result["lot"] = .string(l.name) }   // grouping, never reach
         } catch { try? await remove(rec); throw error }
         if let p = str(r, "prompt"), !p.isEmpty {

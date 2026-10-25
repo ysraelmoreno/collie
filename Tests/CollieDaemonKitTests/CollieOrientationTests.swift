@@ -27,6 +27,8 @@ import CollieCore
         let m = text(shepherd: true)
         #expect(m.contains("collie herd list") && m.contains("apply <id> --name <n>") && m.contains("save <name> --terminals"))
         #expect(!text().contains("herd"))
+        #expect(m.contains("collie summon designer-1 --preset claude --connect design-1") && m.contains("--connect designer-1"))
+        #expect(!text().contains("--connect"))
     }
 
     @Test func orientationTeachesSandboxAccess() {

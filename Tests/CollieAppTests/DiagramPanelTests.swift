@@ -51,7 +51,7 @@ import CollieProtocol
     @Test func getReturnsFileXml() async throws {
         guard Self.built else { return }
         let r = try await rig(shown: false); defer { r.done() }
-        try DiagramFile.write(two, to: r.file)
+        try DiagramFile.write(two, to: r.file, root: r.root)
         guard case .object(let o) = try await r.call("diagram.get") else { Issue.record("not an object"); return }
         #expect(o["file"] == .string("docs/diagrams/arq.drawio") && o["xml"] == .string(two))
         #expect(o["pages"] == .array([.object(["id": .string("p1"), "name": .string("Um")]), .object(["id": .string("p2"), "name": .string("Dois")])]))

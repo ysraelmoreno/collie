@@ -70,8 +70,8 @@ extension DiagramPanel {
             guard let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem pasta de projeto") }
             url = try DiagramFile.resolve(requestedFile, panelName: panel.name, projectRoot: root)
         }
-        guard FileManager.default.fileExists(atPath: url.path) else { return (url, DiagramFile.empty) }
-        return (url, try DiagramFile.read(url))
+        guard let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem pasta de projeto") }
+        return (url, try DiagramFile.read(url, root: root) ?? DiagramFile.empty)
     }
     private func relative(_ url: URL) -> String {
         guard let root = projectRoot.map(DiagramFile.real) else { return url.path }
@@ -85,7 +85,8 @@ extension DiagramPanel {
             throw ProtocolError(code: .unavailable, message: "o usuário está editando; tente de novo")   // no `conflict` code in the protocol
         }
         let (url, _) = try current()
-        try DiagramFile.write(xml, to: url)
+        guard let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem pasta de projeto") }
+        try DiagramFile.write(xml, to: url, root: root)
         noteWritten(xml)
         if editorReady {
             send(["action": "merge", "xml": xml])

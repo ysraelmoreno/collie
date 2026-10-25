@@ -58,19 +58,96 @@ public enum DiagramFile {
         }
     }
 
-    public static func read(_ url: URL) throws(ProtocolError) -> String {
-        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
-        do { return try String(contentsOf: url, encoding: .utf8) }
-        catch { throw ProtocolError(code: .internal, message: "não consegui ler \(url.lastPathComponent): \(error.localizedDescription)") }
+    // MARK: no-follow file access (R12)
+    // Every read and write walks from the project root with `openat(O_NOFOLLOW)` one folder at a time: a folder swapped for
+    // a symlink after the panel opened is refused, never followed out of the project. The file itself is opened
+    // O_NOFOLLOW|O_NONBLOCK and must be a regular file of at most 8 MiB (a FIFO or a link to /dev/zero fails at once).
+
+    static func posix(_ what: String) -> ProtocolError {
+        let e = errno
+        if e == ELOOP || e == ENOTDIR || e == EMLINK {
+            return bad("\(what): o caminho do diagrama passa por um link ou por algo que não é pasta")
+        }
+        return ProtocolError(code: .internal, message: "\(what): \(String(cString: strerror(e)))")
     }
 
-    /// Atomic (temp file + rename), creating the folders.
-    public static func write(_ xml: String, to url: URL) throws(ProtocolError) {
-        do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data(xml.utf8).write(to: url, options: .atomic)
-        } catch { throw ProtocolError(code: .internal, message: "não consegui gravar \(url.lastPathComponent): \(error.localizedDescription)") }
+    /// The folders below the root and the file name of `url` (already `resolve`d inside `root`).
+    static func parts(_ url: URL, _ root: URL) throws(ProtocolError) -> (dirs: [String], name: String) {
+        let r = real(root).pathComponents, u = url.pathComponents
+        guard u.count > r.count, u.starts(with: r) else { throw bad("o diagrama precisa ficar dentro do projeto \(real(root).path)") }
+        let rel = Array(u.dropFirst(r.count))
+        guard !rel.contains(where: { $0 == ".." || $0 == "." }) else { throw bad("caminho inválido: \(url.path)") }
+        return (Array(rel.dropLast()), rel.last!)
+    }
+
+    /// The file's folder, opened from the project root without following any link; `create` makes missing folders.
+    /// nil: a folder is missing (and `create` is false). The caller closes the fd.
+    public static func openDirectory(of url: URL, root: URL, create: Bool) throws(ProtocolError) -> Int32? {
+        let (dirs, _) = try parts(url, root)
+        var fd = open(real(root).path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard fd >= 0 else { throw posix("pasta do projeto") }
+        for d in dirs {
+            var next = openat(fd, d, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            if next < 0, errno == ENOENT, !create { close(fd); return nil }
+            if next < 0, errno == ENOENT, create {
+                if mkdirat(fd, d, 0o755) != 0, errno != EEXIST { let e = posix(d); close(fd); throw e }
+                next = openat(fd, d, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            }
+            let e = next < 0 ? posix(d) : nil
+            close(fd)
+            if let e { throw e }
+            fd = next
+        }
+        return fd
+    }
+
+    /// The file's text; nil when it does not exist (its folders included).
+    public static func read(_ url: URL, root: URL) throws(ProtocolError) -> String? {
+        guard let dir = try openDirectory(of: url, root: root, create: false) else { return nil }
+        defer { close(dir) }
+        let fd = openat(dir, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        if fd < 0, errno == ENOENT { return nil }
+        guard fd >= 0 else { throw posix(url.lastPathComponent) }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0 else { throw posix(url.lastPathComponent) }
+        guard (st.st_mode & S_IFMT) == S_IFREG else { throw bad("\(url.lastPathComponent) não é um arquivo comum") }
+        guard st.st_size <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
+        var data = Data(), buf = [UInt8](repeating: 0, count: 64 << 10)
+        while data.count <= maxBytes {
+            let n = Darwin.read(fd, &buf, buf.count)
+            if n < 0, errno == EINTR { continue }
+            guard n >= 0 else { throw posix(url.lastPathComponent) }
+            if n == 0 { break }
+            data.append(buf, count: n)
+        }
+        guard data.count <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
+        guard let s = String(data: data, encoding: .utf8) else { throw bad("\(url.lastPathComponent) não é UTF-8") }
+        return s
+    }
+
+    /// Atomic: a temp file in the same folder fd, then `renameat` over the name (a link at the name is replaced, not
+    /// followed). Creates missing folders, refuses more than 8 MiB.
+    public static func write(_ xml: String, to url: URL, root: URL) throws(ProtocolError) {
+        let data = Data(xml.utf8)
+        guard data.count <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
+        guard let dir = try openDirectory(of: url, root: root, create: true) else { throw bad("pasta do diagrama ausente") }
+        defer { close(dir) }
+        let name = url.lastPathComponent, tmp = ".\(name).\(UUID().uuidString).tmp"
+        let fd = openat(dir, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { throw posix(name) }
+        var off = 0, failed: ProtocolError?
+        data.withUnsafeBytes { p in
+            while off < data.count {
+                let n = Darwin.write(fd, p.baseAddress! + off, data.count - off)
+                if n < 0, errno == EINTR { continue }
+                guard n > 0 else { failed = posix(name); return }
+                off += n
+            }
+        }
+        close(fd)
+        if failed == nil, renameat(dir, tmp, dir, name) != 0 { failed = posix(name) }
+        if let failed { unlinkat(dir, tmp, 0); throw failed }
     }
 
     /// An agent's version may replace the document only when the user made no edit in the last 2 s.

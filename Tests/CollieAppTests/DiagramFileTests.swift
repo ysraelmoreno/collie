@@ -73,10 +73,50 @@ import CollieProtocol
         #expect(DiagramFile.mayOverwrite(lastUserEditAt: nil, now: now))
     }
 
+    /// R12: a folder swapped for a symlink after the file was resolved is refused; nothing lands outside.
+    @Test func dirSwappedForSymlinkRefused() throws {
+        let root = try project(), outside = try project()
+        let f = try DiagramFile.resolve("docs/diagrams/a.drawio", panelName: "p", projectRoot: root)
+        try DiagramFile.write("<mxfile/>", to: f, root: root)
+        let fm = FileManager.default, dir = root.appendingPathComponent("docs/diagrams")
+        try fm.moveItem(at: dir, to: root.appendingPathComponent("old"))
+        try fm.createSymbolicLink(at: dir, withDestinationURL: outside)
+        try Data("<mxfile><diagram/></mxfile>".utf8).write(to: outside.appendingPathComponent("a.drawio"))
+        #expect(throws: ProtocolError.self) { try DiagramFile.write("<mxfile/>", to: f, root: root) }
+        #expect(throws: ProtocolError.self) { _ = try DiagramFile.read(f, root: root) }
+        #expect(try String(contentsOf: outside.appendingPathComponent("a.drawio"), encoding: .utf8) == "<mxfile><diagram/></mxfile>")
+        #expect(try fm.contentsOfDirectory(atPath: outside.path) == ["a.drawio"])   // no temp file left there either
+    }
+
+    /// R12: a link to /dev/zero or a FIFO is refused at once (never read, never blocks).
+    @Test func nonRegularRefusedFast() throws {
+        let root = try project()
+        let f = try DiagramFile.resolve("z.drawio", panelName: "p", projectRoot: root)
+        try FileManager.default.createSymbolicLink(at: f, withDestinationURL: URL(fileURLWithPath: "/dev/zero"))
+        let t0 = Date()
+        #expect(throws: ProtocolError.self) { _ = try DiagramFile.read(f, root: root) }
+        try FileManager.default.removeItem(at: f)
+        #expect(mkfifo(f.path, 0o600) == 0)
+        do { _ = try DiagramFile.read(f, root: root); Issue.record("FIFO read") } catch { #expect(error.message.contains("arquivo comum"), "\(error.message)") }
+        #expect(Date().timeIntervalSince(t0) < 1)
+    }
+
+    /// R12: more than 8 MiB is refused on write and on read.
+    @Test func oversizeRefused() throws {
+        let root = try project()
+        let f = try DiagramFile.resolve("big.drawio", panelName: "p", projectRoot: root)
+        let big = String(repeating: "x", count: DiagramFile.maxBytes + 1)
+        #expect(throws: ProtocolError.self) { try DiagramFile.write(big, to: f, root: root) }
+        #expect(!FileManager.default.fileExists(atPath: f.path))
+        try Data(big.utf8).write(to: f)
+        #expect(throws: ProtocolError.self) { _ = try DiagramFile.read(f, root: root) }
+        #expect(try DiagramFile.read(root.appendingPathComponent("missing/none.drawio"), root: root) == nil)
+    }
+
     @Test func writeThenReadRoundTrips() throws {
         let root = try project()
         let f = try DiagramFile.resolve(nil, panelName: "n", projectRoot: root)
-        try DiagramFile.write("<mxfile/>", to: f)   // creates docs/diagrams/
-        #expect(try DiagramFile.read(f) == "<mxfile/>")
+        try DiagramFile.write("<mxfile/>", to: f, root: root)   // creates docs/diagrams/
+        #expect(try DiagramFile.read(f, root: root) == "<mxfile/>")
     }
 }

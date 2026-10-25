@@ -61,7 +61,9 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
     private var closed = false
     /// The draw.io events received, in order (tests, and Task 3's replies).
     private(set) var seen: [String] = []
-    private var watcher: DispatchSourceFileSystemObject?
+    private var dirWatch: DispatchSourceFileSystemObject?, fileWatch: DispatchSourceFileSystemObject?
+    /// The merge sent because the disk changed under a user autosave: its autosave (disk + the user's edit) is saved.
+    private var keepMergeAutosave = false
     private var pendingCheck: Task<Void, Never>?
     /// The editor has loaded the file (agent commands that need it wait for this).
     private(set) var editorReady = false
@@ -161,15 +163,17 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         let url: URL, xml: String
         do throws(ProtocolError) {
             url = try DiagramFile.resolve(requestedFile, panelName: panel.name, projectRoot: root)
-            if !FileManager.default.fileExists(atPath: url.path) { try DiagramFile.write(DiagramFile.empty, to: url) }
-            xml = try DiagramFile.read(url)
+            if let x = try DiagramFile.read(url, root: root) { xml = x } else {
+                xml = DiagramFile.empty
+                try DiagramFile.write(xml, to: url, root: root)
+            }
             try DiagramFile.validate(xml: xml)
         } catch { return fail(error.message, retry: true) }
         file = url; known = Data(xml.utf8)
         let rel = String(url.path.dropFirst(DiagramFile.real(root).path.count + 1))
         box.setHeader(file: rel)
         box.status("Abrindo…", retry: false)
-        watch(url)
+        watch()
         Task { [weak self] in
             let rules = try? await HTMLSnapshotter.ruleList()
             guard let self, !self.closed else { return }
@@ -215,20 +219,30 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         switch event {
         case "init":
-            guard let file, let xml = try? DiagramFile.read(file) else { return }
+            guard let xml = (try? readFile()) ?? nil else { return }
             known = Data(xml.utf8)
             send(["action": "load", "xml": xml, "autosave": 1, "noExitBtn": 1, "noSaveBtn": 1, "saveAndExit": 0])
         case "load":
             programmaticUntil = nil; editorReady = true
             box.status(nil, retry: false)
         case "merge":
-            programmaticUntil = nil
-            if m["error"] != nil, let file, let xml = try? DiagramFile.read(file) { send(["action": "load", "xml": xml, "autosave": 1]) }
+            programmaticUntil = nil; keepMergeAutosave = false
+            if m["error"] != nil, let xml = (try? readFile()) ?? nil { send(["action": "load", "xml": xml, "autosave": 1]) }
         case "autosave":
-            guard programmaticUntil.map({ Date() >= $0 }) ?? true, let file, let xml = m["xml"] as? String, (try? DiagramFile.validate(xml: xml)) != nil else { return }
+            let programmatic = programmaticUntil.map { Date() < $0 } ?? false
+            guard !programmatic || keepMergeAutosave, let xml = m["xml"] as? String, (try? DiagramFile.validate(xml: xml)) != nil else { return }
+            keepMergeAutosave = false
             lastUserEditAt = Date()
-            do throws(ProtocolError) { try DiagramFile.write(xml, to: file); known = Data(xml.utf8) }
-            catch { box.status(error.message, retry: true) }
+            // R12: the file changed on disk since the panel last read or wrote it (an in-place write not seen yet): never
+            // overwrite it. Merge it into the editor, which keeps the user's edit, and save what the merge gives.
+            if let disk = (try? readFile()) ?? nil, Data(disk.utf8) != known, (try? DiagramFile.validate(xml: disk)) != nil {
+                known = Data(disk.utf8)
+                send(["action": "merge", "xml": disk])
+                keepMergeAutosave = true
+                return
+            }
+            do throws(ProtocolError) { try writeFile(xml) }
+            catch { fail(error.message, retry: true) }
         default: break
         }
     }
@@ -242,19 +256,45 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
         webView?.evaluateJavaScript("collieSend(\(literal))")
     }
 
-    /// Watches the file's folder (atomic writes replace the file's inode); a change merges into the editor, which keeps
-    /// zoom and scroll. ponytail: one folder watch per panel; fine for the handful of diagram panels a workspace has.
-    private func watch(_ url: URL) {
+    /// The panel's file through DiagramFile's no-follow access from the project root; nil when missing.
+    func readFile() throws(ProtocolError) -> String? {
+        guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem arquivo") }
+        return try DiagramFile.read(file, root: root)
+    }
+    func writeFile(_ xml: String) throws(ProtocolError) {
+        guard let file, let root = projectRoot else { throw ProtocolError(code: .unavailable, message: "painel sem arquivo") }
+        try DiagramFile.write(xml, to: file, root: root)
+        known = Data(xml.utf8)
+        rearmFileWatch()   // the rename replaced the inode the file watch had
+    }
+
+    /// Watches the file's folder (atomic writes: a rename) and the file itself (in-place writes: `echo >`, editors'
+    /// Write tools), the file re-armed after each change. Both opened without following links.
+    private func watch() {
         stopWatching()
-        let fd = open(url.deletingLastPathComponent().path, O_EVTONLY)
+        guard let file, let root = projectRoot, let d = try? DiagramFile.openDirectory(of: file, root: root, create: false) else { return }
+        dirWatch = source(d, [.write, .rename, .delete])
+        rearmFileWatch()
+    }
+    private func rearmFileWatch() {
+        fileWatch?.cancel(); fileWatch = nil
+        guard !closed, let file, let root = projectRoot, let d = try? DiagramFile.openDirectory(of: file, root: root, create: false) else { return }
+        let fd = openat(d, file.lastPathComponent, O_EVTONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        Darwin.close(d)
         guard fd >= 0 else { return }
-        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+        fileWatch = source(fd, [.write, .extend, .delete, .rename, .attrib])
+    }
+    private func source(_ fd: Int32, _ mask: DispatchSource.FileSystemEvent) -> DispatchSourceFileSystemObject {
+        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: mask, queue: .main)
         src.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.scheduleCheck() } }
         src.setCancelHandler { Darwin.close(fd) }
         src.resume()
-        watcher = src
+        return src
     }
-    private func stopWatching() { watcher?.cancel(); watcher = nil; pendingCheck?.cancel(); pendingCheck = nil }
+    private func stopWatching() {
+        dirWatch?.cancel(); dirWatch = nil; fileWatch?.cancel(); fileWatch = nil
+        pendingCheck?.cancel(); pendingCheck = nil
+    }
 
     /// Coalesces a burst of folder events into one look at the file, 150 ms later (well within the 1 s budget).
     private func scheduleCheck() {
@@ -269,7 +309,8 @@ final class DiagramSchemeHandler: NSObject, WKURLSchemeHandler {
     /// The file differs from what the panel knows: merge it in. A missing or malformed file is left alone (the editor
     /// keeps the last good version; the user's next edit writes it back).
     func fileChanged() {
-        guard let file, let xml = try? DiagramFile.read(file), Data(xml.utf8) != known,
+        rearmFileWatch()
+        guard let xml = (try? readFile()) ?? nil, Data(xml.utf8) != known,
               (try? DiagramFile.validate(xml: xml)) != nil else { return }
         known = Data(xml.utf8)
         send(["action": "merge", "xml": xml])

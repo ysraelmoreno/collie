@@ -324,6 +324,22 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
         }
     }
 
+    /// R9: a herd's diagram `state{file}` goes through the same check as `panel.open --file`: outside the project is refused,
+    /// and the apply rolls back.
+    @Test func herdDiagramFileOutsideProjectRefused() async throws {
+        let fx = try FakeAgents(); defer { fx.cleanup() }
+        try await withDaemon(configure: fx.configure) { d, p in
+            let herd = #"{"format":1,"id":"diag","name":"Diag","summary":"","wantsPaddock":false,"terminals":[{"key":"a","preset":"shell","isShepherd":false}],"panels":[{"key":"d","pluginId":"diagram","placement":"dock.right","state":{"file":"../fora.drawio"}}],"leashes":[]}"#
+            let file = p.root.appendingPathComponent("herds/diag.collieherd")
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(herd.utf8).write(to: file)
+            let r = try await apply(d, p, ["id": .string("diag"), "name": .string("v"), "cwd": .string("/tmp")])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("dentro do projeto") == true, "\(r)")
+            let s = try await state(d, p)
+            #expect(s.panels.isEmpty && s.terminals.isEmpty, "\(s)")
+        }
+    }
+
     @Test func appAppliesOnThePaddockOnScreen() async throws {
         let fx = try FakeAgents(); defer { fx.cleanup() }
         let repo = try await makeRepo()

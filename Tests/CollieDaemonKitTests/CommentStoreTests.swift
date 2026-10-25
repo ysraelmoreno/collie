@@ -103,6 +103,36 @@ private let anchor = CommentAnchor(selector: "h1", x: 0.5, y: 0.1, text: "Títul
         #expect(try await fresh.find(base).1.id == c.id)
     }
 
+    @Test func pageKeyIgnoresCaseOnCaseInsensitiveVolume() throws {
+        let real = URL(fileURLWithPath: "/tmp/collie-cmc-\(UUID().uuidString.prefix(8).lowercased())")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: real) }
+        try Data("x".utf8).write(to: real.appendingPathComponent("index.html"))
+        let upper = real.path.uppercased()
+        guard FileManager.default.fileExists(atPath: upper) else { return }   // a case-sensitive volume: different pages
+        #expect(PageRef.project(root: upper, path: "INDEX.html").key == PageRef.project(root: real.path, path: "index.html").key)
+    }
+
+    @Test func followUpReopensResolved() async throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let s = CommentStore(dir: dir), to = UUID()
+        let c = try await s.add(page: .artifact(UUID()), title: "T", anchor: anchor, body: "um", to: to, toName: "A")
+        _ = try await s.setResolved(c.id, true)
+        #expect(try await s.message(c.id, body: "de novo").resolved == false)
+        #expect(await s.pending(for: to).map(\.message.body) == ["de novo", "um"])
+    }
+
+    /// Two prompts at once never get the same comment.
+    @Test func concurrentInjectDeliversOnce() async throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let s = CommentStore(dir: dir), to = UUID()
+        _ = try await s.add(page: .artifact(UUID()), title: "T", anchor: anchor, body: "uma vez", to: to, toName: "A")
+        async let x = s.inject(to: to, limit: 2048)
+        async let y = s.inject(to: to, limit: 2048)
+        let both = await [x, y]
+        #expect(both.filter { $0.contains("uma vez") }.count == 1, "\(both)")
+    }
+
     @Test func anchorClamped() {
         let a = CommentAnchor(selector: nil, x: 1.7, y: -2, text: String(repeating: "é", count: 100))
         #expect(a.x == 1 && a.y == 0 && a.text?.count == 80)

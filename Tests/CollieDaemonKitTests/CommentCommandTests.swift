@@ -239,6 +239,17 @@ extension CommandRouter {
         }
     }
 
+    /// Two prompts of the same terminal at once: the comment reaches only one of them.
+    @Test func concurrentPromptsDeliverOnce() async throws {
+        try await withOwner { d, p, repo, a in
+            _ = try await add(d, p, repo, body: "uma vez")
+            async let x = d.router.commentsInject(to: a.uuid, limit: 2048)
+            async let y = d.router.commentsInject(to: a.uuid, limit: 2048)
+            let both = await [x, y]
+            #expect(both.filter { $0.contains("uma vez") }.count == 1, "\(both)")
+        }
+    }
+
     @Test func deliveredWithoutLot() async throws {
         try await withOwner { d, p, repo, a in
             #expect(try await call(p, a, "lot.get").error?.code == .notFound)

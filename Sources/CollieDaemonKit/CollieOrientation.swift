@@ -57,7 +57,8 @@ enum CollieOrientation {
         if isShepherd {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             // built-ins only: external plug-ins are user-installed text, kept out of the agent's context (one fixed line below)
-            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
+            // ponytail: no Prévia here (length cap); the Artifacts line teaches `artifact new`, which opens one
+            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
                 lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
             } else {

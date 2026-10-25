@@ -33,7 +33,7 @@ public struct PluginSpec: Sendable, Equatable {
 
 public enum PluginRegistry {
     /// The plug-ins compiled into Collie, in palette order.
-    public static let builtIn: [PluginSpec] = [browser, memory, device, design, diagram, designsystems, artifacts, work]
+    public static let builtIn: [PluginSpec] = [browser, memory, device, design, diagram, preview, designsystems, artifacts, work]
     /// Built-ins, then the external plug-ins this process knows (`setExternal`).
     public static var all: [PluginSpec] { builtIn + external.withLock { $0.specs } }
     public static var externalSpecs: [PluginSpec] { external.withLock { $0.specs } }
@@ -325,5 +325,15 @@ extension PluginRegistry {
                   [ParamSpec("format", .string, required: true, help: "png|svg"), page, out], timeout: 60),
             dgcmd("screenshot", "Screenshot of the panel to a PNG file; returns {path, width, height}", [out], timeout: 30),
         ],
+        events: [])
+}
+
+extension PluginRegistry {
+    /// The Prévia: an HTML page of the project (`state["file"]` under `state["root"]`), live and offline, or an artifact
+    /// (`state["artifact"]`, read-only); the app runs the commands (the panel's view).
+    static let preview = PluginSpec(
+        id: "preview", title: "Prévia",
+        placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
+        commands: [],
         events: [])
 }

@@ -46,9 +46,9 @@ private func kanban(_ id: String = "kanban", version: String = "0.1.0", commands
         try await PluginRegistry.exclusively { () async throws in
         defer { PluginRegistry.setExternal([]) }
         PluginRegistry.setExternal([kanban()])
-        let ids = ["browser", "memory", "device", "design", "diagram", "designsystems", "artifacts", "work"]
+        let ids = ["browser", "memory", "device", "design", "diagram", "preview", "designsystems", "artifacts", "work"]
         #expect(PluginRegistry.builtIn.map(\.id) == ids)
-        #expect(Array(PluginRegistry.all.prefix(8)) == PluginRegistry.builtIn && PluginRegistry.all.map(\.id) == ids + ["kanban"])
+        #expect(Array(PluginRegistry.all.prefix(9)) == PluginRegistry.builtIn && PluginRegistry.all.map(\.id) == ids + ["kanban"])
         #expect(PluginRegistry.builtIn.allSatisfy { $0.source == .builtIn })
         #expect(Commands.reservedPluginIds.isSuperset(of: ids + ["panel", "admin", "plugin", "artifact", "list"]) && !Commands.reservedPluginIds.contains("kanban"))
         #expect(Array(Commands.all.prefix(Commands.builtIn.count)) == Commands.builtIn)

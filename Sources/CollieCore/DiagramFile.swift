@@ -115,13 +115,20 @@ public enum DiagramFile {
 
     /// The file's text; nil when it does not exist (its folders included).
     public static func read(_ url: URL, root: URL) throws(ProtocolError) -> String? {
+        guard let data = try readData(url, root: root) else { return nil }
+        return try utf8(data, url.lastPathComponent)
+    }
+
+    /// The file's bytes (any kind: the Prévia serves images and fonts too); nil when it does not exist. `noun` names
+    /// the document in the size error ("página grande demais").
+    public static func readData(_ url: URL, root: URL, noun: String = "diagrama") throws(ProtocolError) -> Data? {
         guard let dir = try openDirectory(of: url, root: root, create: false) else { return nil }
         defer { close(dir) }
         let fd = openat(dir, url.lastPathComponent, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         if fd < 0, errno == ENOENT { return nil }
         guard fd >= 0 else { throw posix(url.lastPathComponent) }
         defer { close(fd) }
-        return try readOpened(fd, url.lastPathComponent)
+        return try readOpenedData(fd, url.lastPathComponent, noun: noun)
     }
 
     /// `diagram.set --from`: the caller's own file (links followed: it is the caller's path, in its own sandbox), with the
@@ -134,10 +141,18 @@ public enum DiagramFile {
     }
 
     static func readOpened(_ fd: Int32, _ name: String) throws(ProtocolError) -> String {
+        try utf8(readOpenedData(fd, name, noun: "diagrama"), name)
+    }
+    static func utf8(_ data: Data, _ name: String) throws(ProtocolError) -> String {
+        guard let s = String(data: data, encoding: .utf8) else { throw bad("\(name) não é UTF-8") }
+        return s
+    }
+
+    static func readOpenedData(_ fd: Int32, _ name: String, noun: String) throws(ProtocolError) -> Data {
         var st = stat()
         guard fstat(fd, &st) == 0 else { throw posix(name) }
         guard (st.st_mode & S_IFMT) == S_IFREG else { throw bad("\(name) não é um arquivo comum") }
-        guard st.st_size <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
+        guard st.st_size <= maxBytes else { throw bad("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)") }
         var data = Data(), buf = [UInt8](repeating: 0, count: 64 << 10)
         while data.count <= maxBytes {
             let n = Darwin.read(fd, &buf, buf.count)
@@ -146,17 +161,16 @@ public enum DiagramFile {
             if n == 0 { break }
             data.append(buf, count: n)
         }
-        guard data.count <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
-        guard let s = String(data: data, encoding: .utf8) else { throw bad("\(name) não é UTF-8") }
-        return s
+        guard data.count <= maxBytes else { throw bad("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)") }
+        return data
     }
 
     /// Atomic: a temp file in the same folder fd, then `renameat` over the name (a link at the name is replaced, not
     /// followed). Creates missing folders, refuses more than 8 MiB.
-    public static func write(_ xml: String, to url: URL, root: URL) throws(ProtocolError) {
+    public static func write(_ xml: String, to url: URL, root: URL, noun: String = "diagrama") throws(ProtocolError) {
         let data = Data(xml.utf8)
-        guard data.count <= maxBytes else { throw bad("diagrama grande demais (máximo \(maxBytes >> 20) MiB)") }
-        guard let dir = try openDirectory(of: url, root: root, create: true) else { throw bad("pasta do diagrama ausente") }
+        guard data.count <= maxBytes else { throw bad("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)") }
+        guard let dir = try openDirectory(of: url, root: root, create: true) else { throw bad("pasta do arquivo ausente") }
         defer { close(dir) }
         let name = url.lastPathComponent, tmp = ".\(name).\(UUID().uuidString).tmp"
         let fd = openat(dir, tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)

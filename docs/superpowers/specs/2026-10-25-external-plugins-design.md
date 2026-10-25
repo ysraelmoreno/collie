@@ -1,6 +1,6 @@
 # External Plug-ins — Design
 
-**Status:** proposal (2026-10-25). Not a plan yet: decide the open questions at the end, then it splits into plans per phase.
+**Status:** agreed (2026-10-25; decisions at the end). Splits into one plan per phase.
 
 ## Why
 
@@ -81,8 +81,8 @@ The helper gets the same host API as JSON-RPC methods the daemon serves on its s
 3. **Permissions**: network allow-list and project read/write, with the install screen.
 4. **Distribution**: `.collieplugin` packaging, signature of the package (developer key), optional catalog. Out of scope until someone asks.
 
-## Open questions (user decisions)
+## Decisions (user, 2026-10-25)
 
-1. May a plug-in see the agent's request text, or only the command args? (Proposed: args only.)
-2. Should a Shepherd be allowed to *open* an external plug-in's panel, like built-ins, or only the user? (Proposed: yes, same as built-ins; install stays user-only.)
-3. Paid/third-party plug-ins: any revenue or review model in mind? Affects phase 4 only.
+1. A plug-in sees only the command args, never the agent's request text.
+2. A Shepherd may open an external plug-in's panel, like a built-in; installing stays user-only.
+3. Both free and paid third-party plug-ins are in scope: phase 4 must support a signed package from a third-party developer and leave room for paid distribution (licence check owned by the plug-in, never by Collie's daemon calling out).

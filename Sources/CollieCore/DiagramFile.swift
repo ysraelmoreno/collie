@@ -166,8 +166,9 @@ public enum DiagramFile {
     }
 
     /// Atomic: a temp file in the same folder fd, then `renameat` over the name (a link at the name is replaced, not
-    /// followed). Creates missing folders, refuses more than 8 MiB.
-    public static func write(_ xml: String, to url: URL, root: URL, noun: String = "diagrama") throws(ProtocolError) {
+    /// followed). Creates missing folders, refuses more than 8 MiB. `exclusive`: never replaces anything at the name
+    /// (`RENAME_EXCL`): "já existe".
+    public static func write(_ xml: String, to url: URL, root: URL, noun: String = "diagrama", exclusive: Bool = false) throws(ProtocolError) {
         let data = Data(xml.utf8)
         guard data.count <= maxBytes else { throw bad("\(noun) grande demais (máximo \(maxBytes >> 20) MiB)") }
         guard let dir = try openDirectory(of: url, root: root, create: true) else { throw bad("pasta do arquivo ausente") }
@@ -185,7 +186,9 @@ public enum DiagramFile {
             }
         }
         close(fd)
-        if failed == nil, renameat(dir, tmp, dir, name) != 0 { failed = posix(name) }
+        if failed == nil, (exclusive ? renameatx_np(dir, tmp, dir, name, UInt32(RENAME_EXCL)) : renameat(dir, tmp, dir, name)) != 0 {
+            failed = exclusive && errno == EEXIST ? bad("já existe: \(name)") : posix(name)
+        }
         if let failed { unlinkat(dir, tmp, 0); throw failed }
     }
 

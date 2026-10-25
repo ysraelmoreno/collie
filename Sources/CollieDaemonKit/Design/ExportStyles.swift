@@ -140,7 +140,7 @@ enum ExportStyles {
         return out
     }
 
-    private static func resolve(_ v: [String: JSONValue], mode: String, byId: [String: [String: JSONValue]],
+    static func resolve(_ v: [String: JSONValue], mode: String, byId: [String: [String: JSONValue]],
                                 modes: [String: [(id: String, name: String)]], px: Bool) -> String? {
         var v = v
         for _ in 0...8 {

@@ -458,6 +458,13 @@ actor DesignSystemService {
         return cols.contains { if case .object(let c) = $0 { c["name"] == .string("Tokens") } else { false } }
     }
 
+    /// The system's own file's variables (`variable.list`), on the daemon's client (`artifact new`'s tokens).
+    func variables(of ds: DesignSystem, deadline: ContinuousClock.Instant) async throws(ProtocolError) -> JSONValue {
+        do { return try await design.variables(ofFile: ds.fileId.uuidString.lowercased(), deadline: deadline) }
+        catch let e as ProtocolError { throw e }
+        catch { throw ProtocolError(code: .unavailable, message: "design engine: \(error.localizedDescription)") }
+    }
+
     // MARK: seed
 
     /// Light / Dark values (from the 2026-10-20 figcraft spike's portfolio tokens).

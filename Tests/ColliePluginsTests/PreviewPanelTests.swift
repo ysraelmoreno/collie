@@ -5,6 +5,7 @@ import WebKit
 import CollieCore
 import CollieProtocol
 @testable import ColliePlugins
+@testable import CollieDaemonKit
 
 /// The Prévia against a temp project (no app): it serves the page and its folder, nothing else, stays offline, reloads on
 /// change (once per burst, keeping the scroll), shows artifacts, sets the theme and keeps the page's errors.
@@ -204,5 +205,25 @@ import CollieProtocol
         defer { panel.close(); w.close() }
         let (_, _, height) = try await shot(panel, ["full-page": .bool(true)])
         #expect(height >= 3000 * w.backingScaleFactor, "\(height)")
+    }
+
+    /// `artifact new`'s pages run in a Prévia with no page error, and their script did its part.
+    @Test func templatesRunWithoutErrors() async throws {
+        let root = try project()
+        for kind in ArtifactTemplates.Kind.allCases {
+            try put("\(kind.rawValue).html", root, ArtifactTemplates.render(kind, title: "T", tokensCSS: ArtifactTemplates.tokensCSS(variables: nil)))
+            let (panel, w) = mount(root: root, state: ["file": .string("\(kind.rawValue).html")])
+            defer { panel.close(); w.close() }
+            #expect(await pollUntil(10) { panel.loads > 0 }, "\(kind)")
+            try await Task.sleep(for: .milliseconds(200))
+            #expect(panel.errors.isEmpty, "\(kind): \(panel.errors)")
+            let check = switch kind {
+            case .deck: "document.getElementById('counter').textContent === '1 / 4'"
+            case .dashboard: "document.querySelectorAll('#chart rect').length === 6 && document.querySelectorAll('#rows tr').length === 6"
+            case .doc: "document.querySelectorAll('#toc a').length === 5"
+            case .prototype: "document.querySelectorAll('#list .item').length === 3"
+            }
+            #expect(await js(panel, check) as? Bool == true, "\(kind)")
+        }
     }
 }

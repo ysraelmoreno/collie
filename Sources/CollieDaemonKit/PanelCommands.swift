@@ -59,15 +59,7 @@ extension CommandRouter {
             }
             let device = pluginId == "device" ? try await devices.resolveSerial(str(r, "serial")) : nil
             var name = str(r, "name") ?? ""
-            if r.args["name"] == nil {   // default: <plugin>-<lowest free n>
-                func taken(_ n: String) -> Bool {
-                    launching.contains(n.lowercased()) || panel(named: n) != nil
-                        || ws.terminals.contains { $0.name.caseInsensitiveCompare(n) == .orderedSame }
-                }
-                var i = 1
-                while taken("\(pluginId)-\(i)") { i += 1 }
-                name = "\(pluginId)-\(i)"
-            }
+            if r.args["name"] == nil { name = freePanelName(pluginId) }
             guard !name.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "Missing argument 'name'") }
             if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "'\(name)' is the name of terminal '\(t.name)'") }
             try reserve(name); defer { launching.remove(name.lowercased()) }   // also refuses an existing panel name
@@ -238,6 +230,17 @@ extension CommandRouter {
         ring.append(PanelEvent(seq: eventSeq, name: name, payload: payload))
         if ring.count > panelEventCap { ring.removeFirst(ring.count - panelEventCap) }
         panelEvents[panel] = ring
+    }
+
+    /// `<plugin>-<lowest free n>`: no panel, terminal or name being launched has it.
+    func freePanelName(_ pluginId: String) -> String {
+        func taken(_ n: String) -> Bool {
+            launching.contains(n.lowercased()) || panel(named: n) != nil
+                || ws.terminals.contains { $0.name.caseInsensitiveCompare(n) == .orderedSame }
+        }
+        var i = 1
+        while taken("\(pluginId)-\(i)") { i += 1 }
+        return "\(pluginId)-\(i)"
     }
 
     func panel(named name: String) -> Panel? {

@@ -172,6 +172,51 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         }
     }
 
+    /// Review 1: one entry this build can't read is skipped, kept verbatim through later writes, never empties the list.
+    @Test func badEntryKeptVerbatim() async throws {
+        try await withTemp { d in
+            let root = d.appendingPathComponent("root"), file = root.appendingPathComponent("plugins/installed.json")
+            _ = try await PluginStore(root: root).install(from: try source(d))
+            var rows = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [[String: Any]]
+            rows.append(["id": "future", "version": "9.0.0", "newKey": ["x": 1]])   // no sha256 etc.: undecodable here
+            try JSONSerialization.data(withJSONObject: rows).write(to: file)
+            let store = PluginStore(root: root)
+            #expect(await store.list().map(\.id) == ["notas"])
+            #expect(await store.loaded().map(\.0.id) == ["notas"])
+            _ = try await store.install(from: try source(d, "k") { $0["id"] = "kanban"; $0["events"] = [] })
+            let after = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [[String: Any]]
+            #expect(after.compactMap { $0["id"] as? String }.sorted() == ["future", "kanban", "notas"])
+            #expect(after.first { $0["id"] as? String == "future" }?["newKey"] != nil)
+            #expect(await PluginStore(root: root).list().map(\.id) == ["kanban", "notas"])
+            // a file that isn't a list at all is kept aside, never overwritten
+            try "{oops".write(to: file, atomically: true, encoding: .utf8)
+            let broken = PluginStore(root: root)
+            #expect(await broken.list().isEmpty)
+            #expect(try fm.contentsOfDirectory(atPath: root.appendingPathComponent("plugins").path).contains { $0.hasPrefix("installed.json.unreadable-") })
+        }
+    }
+
+    /// Review 2: the copy itself holds the caps (a source that grows after a scan can't fill the disk).
+    @Test func copyEnforcesCaps() async throws {
+        try await withTemp { d in
+            let s = try source(d), dst = d.appendingPathComponent("dst")
+            let big = s.appendingPathComponent("ui/big.bin")
+            fm.createFile(atPath: big.path, contents: nil)
+            let h = try FileHandle(forWritingTo: big); try h.truncate(atOffset: 64 * 1024 * 1024 + 1); try h.close()
+            #expect(throws: ProtocolError.self) { try PluginStore.copyTree(s, to: dst) }
+            try fm.removeItem(at: big)
+            let many = d.appendingPathComponent("many"); try fm.createDirectory(at: many, withIntermediateDirectories: true)
+            for i in 0...5000 { fm.createFile(atPath: many.appendingPathComponent("f\(i)").path, contents: nil) }
+            #expect(throws: ProtocolError.self) { try PluginStore.copyTree(many, to: d.appendingPathComponent("dst2")) }
+            try fm.removeItem(at: many); try fm.removeItem(at: d.appendingPathComponent("dst2"))
+            try fm.createSymbolicLink(atPath: s.appendingPathComponent("ui/l").path, withDestinationPath: "/etc/hosts")
+            #expect(throws: ProtocolError.self) { try PluginStore.copyTree(s, to: d.appendingPathComponent("dst3")) }
+            try fm.removeItem(at: s.appendingPathComponent("ui/l"))
+            try PluginStore.copyTree(s, to: d.appendingPathComponent("dst4"))
+            #expect(try PluginStore.scan(d.appendingPathComponent("dst4")) == PluginStore.scan(s))
+        }
+    }
+
     @Test(.timeLimit(.minutes(2))) func adminOnly() async throws {
         try await withDaemon { d, p in
             let src = try source(p.root, "src")

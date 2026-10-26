@@ -366,6 +366,7 @@ extension CommandRouter {
         defer { if let me = tester, let slot { releasePreview(me, slot) } }
         let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
         let folder = try artifactFolder(r, caller: caller)   // the Prévia's Salvar como artifact keeps the page there
+        if let me = caller { try checkImportFolder(folder, link: nil, by: me) }   // as an add: its lot's folder or none
         let root = try await projectRootForPanel(paddock: paddock, caller: caller)
         let slug: String
         if let n = str(r, "name") {

@@ -195,7 +195,9 @@ private func obj(_ r: Response) -> [String: JSONValue] { if case .object(let o)?
             let a = try await spawn(d, p, "A", cwd: proj.path)
             #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "A"]).ok)
             let r = try await call(p, a, "artifact.new", ["kind": "doc"])
-            let r2 = try await call(p, a, "artifact.new", ["kind": "doc", "folder": "Cliente"])
+            // a terminal's page goes in its lot's folder or none, as adds
+            #expect(try await call(p, a, "artifact.new", ["kind": "doc", "folder": "Cliente"]).error?.code == .unauthorized)
+            let r2 = try await admin(d, p, "artifact.new", ["kind": "doc", "folder": "Cliente"])
             #expect(r.ok && r2.ok, "\(r) \(r2)")
             let s = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "ui.snapshot"), to: p.socket, timeoutSeconds: 60)
             let snap = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(s.result))

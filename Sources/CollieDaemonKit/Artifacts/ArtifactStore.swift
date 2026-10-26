@@ -142,11 +142,14 @@ actor ArtifactStore {
     /// Whether `id` was removed (an export of it in flight is then dropped).
     func wasRemoved(_ id: UUID) -> Bool { removed.contains(id) }
 
-    /// The artifact a page from `origin` added by `byId` (nil: the app) continues: an agent's page from that link that
-    /// this terminal added (the app: anyone's), the latest. Never an export (its design stays as it is).
+    /// The artifact a page from `origin` added by `byId` (nil: the app) continues: one from that link that this terminal
+    /// added (the app: anyone's), the latest; an imported page since made a design screen too (it has a `source`), never
+    /// an export born from a design.
     func continued(origin: String?, byId: UUID?) async throws -> Artifact? {
         guard let origin else { return nil }
-        return try await registry().last { $0.origin == origin && $0.kind == .agent && !removed.contains($0.id) && (byId == nil || $0.byId == byId) }
+        return try await registry().last {
+            $0.origin == origin && ($0.kind == .agent || $0.source != nil) && !removed.contains($0.id) && (byId == nil || $0.byId == byId)
+        }
     }
 
     /// The record a new agent page starts from: a new artifact, or (`continued`) that artifact's next version in

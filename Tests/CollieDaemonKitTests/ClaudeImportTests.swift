@@ -218,12 +218,9 @@ private let codeLink = "https://claude.ai/code/artifact/0f8fad5b-d9cb-469f-a165-
         #expect(e.version == 2 && folder.lastPathComponent == "v2")
         try Data("<p>e</p>".utf8).write(to: folder.appendingPathComponent("index.html"))
         #expect(try await s.commit(e))
-        // an export is never turned back into an agent's page: the link again is a new artifact, then its versions
+        // an imported page later made a design screen: the link again is still its next version
         let c = try await s.addAgent(page: Data("<p>3</p>".utf8), title: "A3", paddockId: nil, by: "W", origin: link)
-        #expect(c.id != a.id && c.version == 1 && c.kind == .agent)
-        let exp = try await s.get(a.id)
-        #expect(exp.kind == .export && exp.fileId == "f")
-        #expect(try await s.addAgent(page: Data("<p>4</p>".utf8), title: "A4", paddockId: nil, by: "W", origin: link).id == c.id)
+        #expect(c.id == a.id && c.version == 3 && c.kind == .agent && c.origin == link)
         #expect(try await ArtifactStore(root: root).get(a.id).origin == link)
     }
 

@@ -339,8 +339,8 @@ logado, com a ferramenta Artifact dele; o Collie orienta, confere e guarda.
   escolheu para aquele link.
 - `artifact add … --source <link>`: o mesmo link de novo vira a **próxima versão** do mesmo artifact (`<id>/r<N>/`; a
   pasta continua a dele, salvo `--folder`), só se foi esse terminal que o adicionou (o app versiona qualquer um); um
-  artifact que já virou export (tela no Design) não volta a ser página: o link vira um artifact novo. Adds do mesmo
-  link entram um de cada vez.
+  artifact export nascido de um design (sem página de origem) nunca vira página. Adds do mesmo
+  link entram um de cada vez. Uma página importada que já virou tela no Design continua versionando pelo link; só um export nascido de um design não.
 - O pedido do app leva um `--nonce`: só o terminal a quem o app pediu, com esse nonce, faz a linha do link andar
   (`artifact add`), relata falha (`import-failed`) ou entrega a lista (`import-list`); relatos de outros são recusados ou
   ignorados.

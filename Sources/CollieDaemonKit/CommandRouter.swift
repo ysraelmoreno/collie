@@ -82,6 +82,9 @@ actor CommandRouter {
     var importingArtifacts: Set<UUID> = []
     /// A `herd.apply` in flight: one at a time, the next waits.
     var applyingHerd = false
+    /// `font.add`: one at a time; the terminals' adds in the last hour.
+    var addingFont = false
+    var fontAdds: [ContinuousClock.Instant] = []
     /// The user's sandbox grants (`<root>/sandbox/grants.json`), the pending access cards, the terminals whose profile
     /// this daemon rendered (a denial's tag must name one), whether denials are seen (nil: no watcher), the watcher.
     var sandboxGrants: [SandboxGrant]

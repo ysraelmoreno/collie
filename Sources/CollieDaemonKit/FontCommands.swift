@@ -10,6 +10,8 @@ public typealias FontFetch = @Sendable (_ url: URL, _ cap: Int) async throws -> 
 public enum GoogleFonts {
     static let hosts: Set<String> = ["fonts.googleapis.com", "fonts.gstatic.com"]
     public static let fileCap = 2 << 20, familyCap = 20 << 20
+    /// All of `<root>/fonts`: bytes and families; and `font.add`s per terminal-wide hour (the app has no limit).
+    public static let totalCap = 200 << 20, maxFamilies = 40, addsPerHour = 20
     /// The css2 answer names woff2 files only for a current browser.
     static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
 
@@ -42,27 +44,38 @@ public enum GoogleFonts {
     /// read up to `cap`.
     public static let fetch: FontFetch = { url, cap in
         guard allowed(url) else { throw ProtocolError(code: .invalidArgs, message: "endereço fora do Google Fonts: \(url.absoluteString)") }
-        let session = URLSession(configuration: .ephemeral, delegate: Redirects(), delegateQueue: nil)
-        defer { session.finishTasksAndInvalidate() }
         var req = URLRequest(url: url, timeoutInterval: 30)
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        let (bytes, resp) = try await session.bytes(for: req)
+        let dl = Download(cap: cap)
+        let session = URLSession(configuration: .ephemeral, delegate: dl, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
+        let (data, resp) = try await withCheckedThrowingContinuation { c in dl.start(c, session.dataTask(with: req)) }
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200, let final = http.url, allowed(final) else {
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             throw ProtocolError(code: code == 400 || code == 404 ? .notFound : .unavailable, message: "o Google Fonts respondeu \(code)")
         }
-        guard http.expectedContentLength <= cap else { throw ProtocolError(code: .tooMany, message: "acima do limite") }
-        var data = Data()
-        for try await b in bytes {
-            data.append(b)
-            if data.count > cap { throw ProtocolError(code: .tooMany, message: "acima do limite") }
-        }
         return data
     }
 
-    private final class Redirects: NSObject, URLSessionTaskDelegate {
+    /// One GET read in the chunks URLSession hands over, cancelled past `cap`; a redirect only to `allowed`.
+    private final class Download: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+        private let cap: Int, lock = NSLock()
+        private var data = Data(), over = false, done: CheckedContinuation<(Data, URLResponse?), any Error>?
+        init(cap: Int) { self.cap = cap }
+        func start(_ c: CheckedContinuation<(Data, URLResponse?), any Error>, _ task: URLSessionDataTask) {
+            lock.withLock { done = c }; task.resume()
+        }
         func urlSession(_ s: URLSession, task: URLSessionTask, willPerformHTTPRedirection r: HTTPURLResponse, newRequest: URLRequest) async -> URLRequest? {
             newRequest.url.map(GoogleFonts.allowed) == true ? newRequest : nil
+        }
+        func urlSession(_ s: URLSession, dataTask: URLSessionDataTask, didReceive chunk: Data) {
+            let stop = lock.withLock { data.append(chunk); over = over || data.count > cap || dataTask.response?.expectedContentLength ?? 0 > Int64(cap); return over }
+            if stop { dataTask.cancel() }
+        }
+        func urlSession(_ s: URLSession, task: URLSessionTask, didCompleteWithError e: (any Error)?) {
+            let (c, d, o) = lock.withLock { () -> (CheckedContinuation<(Data, URLResponse?), any Error>?, Data, Bool) in defer { done = nil }; return (done, data, over) }
+            if o { c?.resume(throwing: ProtocolError(code: .tooMany, message: "acima do limite")) }
+            else if let e { c?.resume(throwing: e) } else { c?.resume(returning: (d, task.response)) }
         }
     }
 }
@@ -101,7 +114,7 @@ extension CommandRouter {
             try await UnixSocketClient.offPool { try FileManager.default.removeItem(at: dir.appendingPathComponent(f)) }
             return .object(["family": .string(f)])
         case "font.add":
-            let f = try family()
+            var f = try family()
             var weights = [400, 700]
             if let w = str(r, "weights") {
                 let parts = w.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -112,7 +125,51 @@ extension CommandRouter {
             guard googleFonts else {
                 throw ProtocolError(code: .unavailable, message: "Baixar fontes do Google Fonts está desligado nas Preferências do Collie; peça ao usuário para ligar")
             }
-            let added = try await downloadFont(f, weights: weights, italic: flag(r, "italic"), into: dir)
+            // one at a time (a call's downloads held in memory): the next waits. ponytail: 100 ms polling, as herd.apply
+            while addingFont { try await Task.sleep(for: .milliseconds(100)) }
+            addingFont = true; defer { addingFont = false }
+            if caller != nil {   // terminals: 20 adds an hour, all together; the app: no limit
+                let hour = ContinuousClock.now - .seconds(3600)
+                fontAdds.removeAll { $0 < hour }
+                guard fontAdds.count < GoogleFonts.addsPerHour else {
+                    throw ProtocolError(code: .tooMany, message: "limite de \(GoogleFonts.addsPerHour) fontes por hora para os terminais; tente mais tarde ou baixe pelas Preferências")
+                }
+                fontAdds.append(.now)
+            }
+            // the folder already there under any case keeps its spelling; its faces are kept (merged), never dropped
+            let asked = f
+            let (stored, used) = try await UnixSocketClient.offPool { () -> (FontFamily?, (bytes: Int, families: [String: Int])) in
+                let fm = FileManager.default
+                var fams: [String: Int] = [:], bytes = 0
+                for n in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where !n.hasPrefix(".") {
+                    let sub = dir.appendingPathComponent(n)
+                    let size = ((try? fm.subpathsOfDirectory(atPath: sub.path)) ?? []).reduce(0) { t, p in
+                        t + (((try? fm.attributesOfItem(atPath: sub.appendingPathComponent(p).path))?[.size] as? Int) ?? 0)
+                    }
+                    bytes += size; fams[n] = size
+                }
+                let match = fams.keys.first { $0.caseInsensitiveCompare(asked) == .orderedSame }
+                return (match.flatMap { Fonts.downloaded($0, in: dir) }, (bytes, fams))
+            }
+            var italic = flag(r, "italic")
+            if let stored {
+                let have = Set(stored.faces.flatMap { $0.weight.split(separator: " ").compactMap { Int($0) } })
+                let hasItalic = stored.faces.contains { $0.style == "italic" }
+                if Set(weights).isSubset(of: have), !italic || hasItalic {   // nothing new: no download
+                    return .object(["family": .string(stored.family), "faces": .number(Double(stored.faces.count)), "css": .string(Fonts.cssURL([stored.family])), "already": .bool(true)])
+                }
+                f = stored.family
+                weights = Array(have.union(weights).filter { (100...900).contains($0) }).sorted()
+                italic = italic || hasItalic
+                guard weights.count <= 9 else { throw invalid("\(f) já tem pesos demais; remova a família nas Preferências e baixe de novo") }
+            } else if used.families.count >= GoogleFonts.maxFamilies {
+                throw ProtocolError(code: .tooMany, message: "já há \(GoogleFonts.maxFamilies) famílias baixadas; remova algumas em Preferências → Fontes")
+            }
+            let budget = GoogleFonts.totalCap - used.bytes + (stored.map { used.families[$0.family] ?? 0 } ?? 0)
+            guard budget > 0 else {
+                throw ProtocolError(code: .tooMany, message: "as fontes baixadas já ocupam \(GoogleFonts.totalCap >> 20) MiB; remova algumas em Preferências → Fontes")
+            }
+            let added = try await downloadFont(f, weights: weights, italic: italic, into: dir, budget: budget)
             return .object(["family": .string(f), "faces": .number(Double(added.faces.count)), "css": .string(Fonts.cssURL([f]))])
         default:
             throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
@@ -121,7 +178,8 @@ extension CommandRouter {
 
     /// The css2 answer, then each distinct woff2 once (≤ 2 MiB each, ≤ 20 MiB in all), into a fresh folder that then
     /// replaces `<dir>/<family>` (0700, files 0600); any failure leaves nothing behind.
-    private func downloadFont(_ family: String, weights: [Int], italic: Bool, into dir: URL) async throws -> FontFamily {
+    /// `budget`: what `<root>/fonts` may still take (the 200 MiB in all, the family it replaces freed).
+    private func downloadFont(_ family: String, weights: [Int], italic: Bool, into dir: URL, budget: Int) async throws -> FontFamily {
         let fetch = config.fontFetch
         let css = GoogleFonts.cssURL(family: family, weights: weights, italic: italic)
         func get(_ u: URL, _ cap: Int, _ what: String) async throws -> Data {
@@ -147,6 +205,9 @@ extension CommandRouter {
                 let d = try await get(face.url, GoogleFonts.fileCap, "um arquivo da fonte")
                 total += d.count
                 guard total <= GoogleFonts.familyCap else { throw ProtocolError(code: .tooMany, message: "a família passa de 20 MiB; peça menos pesos") }
+                guard total <= budget else {
+                    throw ProtocolError(code: .tooMany, message: "as fontes baixadas passariam de \(GoogleFonts.totalCap >> 20) MiB; remova algumas em Preferências → Fontes")
+                }
                 files[face.url] = name; blobs.append((name, d))
             }
             meta.faces.append(.init(style: face.style, weight: face.weight, file: files[face.url]!, unicodeRange: face.range))

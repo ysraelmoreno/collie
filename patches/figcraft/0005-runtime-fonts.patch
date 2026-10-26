@@ -1,0 +1,75 @@
+diff --git a/Cargo.lock b/Cargo.lock
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1730,6 +1730,7 @@
+  "egui",
+  "figcraft-collab-net",
+  "figcraft-engine",
++ "figcraft-text",
+  "figcraft-ui-egui",
+  "js-sys",
+  "log",
+diff --git a/apps/figcraft-web/Cargo.toml b/apps/figcraft-web/Cargo.toml
+--- a/apps/figcraft-web/Cargo.toml
++++ b/apps/figcraft-web/Cargo.toml
+@@ -16,6 +16,7 @@
+ [dependencies]
+ figcraft-engine = { workspace = true }
+ figcraft-ui-egui = { workspace = true }
++figcraft-text = { workspace = true }
+ figcraft-collab-net = { workspace = true }
+ egui = { workspace = true }
+ log = { workspace = true }
+diff --git a/apps/figcraft-web/src/web.rs b/apps/figcraft-web/src/web.rs
+--- a/apps/figcraft-web/src/web.rs
++++ b/apps/figcraft-web/src/web.rs
+@@ -39,6 +39,7 @@
+                     // Live sessions: the browser joins sessions a desktop app hosts; whatever arrives
+                     // on the socket wakes the page for a frame.
+                     let ctx = cc.egui_ctx.clone();
++                    CTX.with(|c| *c.borrow_mut() = Some(ctx.clone()));
+                     session.live.install(Box::new(figcraft_collab_net::NetLink::new(std::sync::Arc::new(move || ctx.request_repaint()))));
+                     let mut fig = FigApp::new(session, Box::new(WebServices { reduce_motion, ctx: cc.egui_ctx.clone() }));
+                     // `#join=<link>`: join that session, as opening an invite link does on the desktop
+@@ -65,6 +66,27 @@
+     });
+ }
+ 
++thread_local! {
++    /// The running app's context: [`collie_add_font`] repaints with it.
++    static CTX: std::cell::RefCell<Option<egui::Context>> = const { std::cell::RefCell::new(None) };
++}
++
++/// Collie: adds a font file (TTF/OTF/TTC, variable ok) to the font database at run time, then lays
++/// text out again. False when it holds no usable face.
++#[wasm_bindgen::prelude::wasm_bindgen]
++pub fn collie_add_font(bytes: &[u8]) -> bool {
++    let added = !figcraft_text::db().write().unwrap_or_else(std::sync::PoisonError::into_inner).add_bytes(bytes.to_vec()).is_empty();
++    if added {
++        figcraft_text::clear_layout_cache();
++        CTX.with(|c| {
++            if let Some(ctx) = c.borrow().as_ref() {
++                ctx.request_repaint();
++            }
++        });
++    }
++    added
++}
++
+ fn query() -> String {
+     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
+ }
+diff --git a/crates/text/src/fontdb.rs b/crates/text/src/fontdb.rs
+--- a/crates/text/src/fontdb.rs
++++ b/crates/text/src/fontdb.rs
+@@ -718,6 +718,10 @@
+         v.push("/usr/share/fonts".into());
+         v.push("/usr/local/share/fonts".into());
+         v.extend(unix_user_font_dirs(std::env::var_os("HOME"), std::env::var_os("XDG_DATA_HOME")));
++    }
++    // Collie: the fonts it downloaded, walked like the system folders.
++    if let Some(d) = std::env::var_os("FIGCRAFT_EXTRA_FONTS_DIR").filter(|d| !d.is_empty()) {
++        v.push(d.into());
+     }
+     v
+ }

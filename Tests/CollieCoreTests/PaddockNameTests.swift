@@ -3,7 +3,7 @@ import CollieCore
 
 struct PaddockNameTests {
     @Test func slugs() {
-        #expect(PaddockName.slug("ShowOn") == "showon")
+        #expect(PaddockName.slug("MeuApp") == "meuapp")
         #expect(PaddockName.slug("Meu Cercado_2") == "meu-cercado-2")
         #expect(PaddockName.slug("  ação!! ") == "acao")
         #expect(PaddockName.slug("--a--b--") == "a-b")

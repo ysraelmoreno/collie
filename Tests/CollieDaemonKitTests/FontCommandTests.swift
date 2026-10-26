@@ -293,7 +293,7 @@ final class FakeFontFetch: @unchecked Sendable {
     @Test func badTTFOnlyWarns() async throws {
         for bad in ["big", "https://evil.example/a.ttf", "https://fonts.gstatic.com/s/a.woff2"] {
             let fake = FakeFontFetch.inter()
-            if bad == "big" { fake.files["https://fonts.gstatic.com/s/inter/v18/b.ttf"] = Data(count: GoogleFonts.fileCap + 1) }
+            if bad == "big" { fake.files["https://fonts.gstatic.com/s/inter/v18/b.ttf"] = Data(count: GoogleFonts.ttfFileCap + 1) }
             else { fake.files["ttf:" + FakeFontFetch.cssURL] = Data("@font-face { font-style: normal; font-weight: 400; src: url(\(bad)); }".utf8) }
             try await withDaemon(configure: { $0.fontFetch = fake.fetch }) { d, p in
                 let r = try await admin(d, p, "font.add", ["family": "Inter", "weights": "400,700"])
@@ -303,6 +303,61 @@ final class FakeFontFetch: @unchecked Sendable {
                 #expect(!FileManager.default.fileExists(atPath: p.root.appendingPathComponent("fonts/Inter/ttf").path), "\(bad)")
                 #expect(!fake.urls.contains { $0.absoluteString.contains("evil") })
             }
+        }
+    }
+
+    /// TTFs have their own caps (12 MiB a file, 60 MiB a family): a 3 MiB TTF is fine; one past them marks the family
+    /// `ttfSkipped`, and the next add with nothing new fetches nothing (a host error is retried instead).
+    @Test func ttfCapsAndSkip() async throws {
+        let ok = FakeFontFetch.inter()
+        ok.files["https://fonts.gstatic.com/s/inter/v18/b.ttf"] = Data(count: 3 << 20)
+        try await withDaemon(configure: { $0.fontFetch = ok.fetch }) { d, p in
+            let r = try await admin(d, p, "font.add", ["family": "Inter", "weights": "400,700"])
+            guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
+            #expect(o["warning"] == nil, "\(r)")
+            #expect(FileManager.default.fileExists(atPath: p.root.appendingPathComponent("fonts/Inter/ttf/normal-700-1.ttf").path))
+        }
+        for many in [false, true] {
+            let fake = FakeFontFetch.inter()
+            if many {   // six files of 11 MB: over the family's 60 MiB
+                let blocks = (0..<6).map { "@font-face { font-style: normal; font-weight: 400; src: url(https://fonts.gstatic.com/s/t/\($0).ttf); }" }
+                fake.files["ttf:" + FakeFontFetch.cssURL] = Data(blocks.joined(separator: "\n").utf8)
+                for i in 0..<6 { fake.files["https://fonts.gstatic.com/s/t/\(i).ttf"] = Data(count: 11_000_000) }
+            } else {
+                fake.files["https://fonts.gstatic.com/s/inter/v18/b.ttf"] = Data(count: GoogleFonts.ttfFileCap + 1)
+            }
+            try await withDaemon(configure: { $0.fontFetch = fake.fetch }) { d, p in
+                let r = try await admin(d, p, "font.add", ["family": "Inter", "weights": "400,700"])
+                guard case .object(let o)? = r.result, case .string(let w)? = o["warning"] else { Issue.record("\(many): \(r)"); return }
+                #expect(w.contains(many ? "60 MiB" : "12 MiB"), "\(w)")
+                #expect(Fonts.downloaded("Inter", in: p.root.appendingPathComponent("fonts"))?.ttfSkipped == true)
+                let n = fake.urls.count
+                let again = try await admin(d, p, "font.add", ["family": "Inter", "weights": "400"])
+                #expect(again.ok && fake.urls.count == n, "\(again)")
+            }
+        }
+        let host = FakeFontFetch.inter()
+        host.files["ttf:" + FakeFontFetch.cssURL] = Data("@font-face { font-style: normal; font-weight: 400; src: url(https://evil.example/a.ttf); }".utf8)
+        try await withDaemon(configure: { $0.fontFetch = host.fetch }) { (d: Daemon, p: Paths) async throws in
+            #expect(try await admin(d, p, "font.add", ["family": "Inter", "weights": "400,700"]).ok)
+            #expect(Fonts.downloaded("Inter", in: p.root.appendingPathComponent("fonts"))?.ttfSkipped == nil)
+            let n = host.urls.count
+            #expect(try await admin(d, p, "font.add", ["family": "Inter", "weights": "400"]).ok && host.urls.count > n)
+        }
+    }
+
+    /// A cancelled add is cancelled, not saved without TTFs.
+    @Test func ttfCancellationIsRethrown() async throws {
+        let fake = FakeFontFetch.inter()
+        let gate = fake.fetch
+        let cancelling: FontFetch = { url, cap, ua in
+            if url.pathExtension == "ttf" { throw CancellationError() }
+            return try await gate(url, cap, ua)
+        }
+        try await withDaemon(configure: { $0.fontFetch = cancelling }) { d, p in
+            let r = try await admin(d, p, "font.add", ["family": "Inter", "weights": "400,700"])
+            #expect(!r.ok, "\(r)")
+            #expect(Fonts.downloaded("Inter", in: p.root.appendingPathComponent("fonts")) == nil)
         }
     }
 

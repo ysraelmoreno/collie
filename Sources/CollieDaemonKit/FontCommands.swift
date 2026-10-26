@@ -12,6 +12,8 @@ public typealias FontFetch = @Sendable (_ url: URL, _ cap: Int, _ userAgent: Str
 public enum GoogleFonts {
     static let hosts: Set<String> = ["fonts.googleapis.com", "fonts.gstatic.com"]
     public static let fileCap = 2 << 20, familyCap = 20 << 20
+    /// The TTFs' own caps (full fonts, no subsets), counted apart from the woff2's.
+    public static let ttfFileCap = 12 << 20, ttfFamilyCap = 60 << 20
     /// All of `<root>/fonts`: bytes and families; and `font.add`s per terminal-wide hour (the app has no limit).
     public static let totalCap = 200 << 20, maxFamilies = 40, addsPerHour = 20
     /// The css2 answer names woff2 files only for a current browser.
@@ -161,7 +163,7 @@ extension CommandRouter {
             if let stored {
                 let have = Set(stored.faces.flatMap { $0.weight.split(separator: " ").compactMap { Int($0) } })
                 let hasItalic = stored.faces.contains { $0.style == "italic" }
-                if Set(weights).isSubset(of: have), !italic || hasItalic, hasTTF {   // nothing new (TTFs too): no download
+                if Set(weights).isSubset(of: have), !italic || hasItalic, hasTTF || stored.ttfSkipped == true {   // nothing new (TTFs too): no download
                     return .object(["family": .string(stored.family), "faces": .number(Double(stored.faces.count)), "css": .string(Fonts.cssURL([stored.family])), "already": .bool(true)])
                 }
                 f = stored.family
@@ -203,7 +205,7 @@ extension CommandRouter {
                 throw ProtocolError(code: .tooMany, message: "\(what) passa de \(cap >> 20) MiB")
             } catch let e as ProtocolError where e.code == .notFound {
                 throw ProtocolError(code: .notFound, message: "o Google Fonts não tem \(family) com esses pesos")
-            } catch let e as ProtocolError { throw e } catch {
+            } catch let e as ProtocolError { throw e } catch where error is CancellationError || Task.isCancelled { throw error } catch {
                 throw ProtocolError(code: .unavailable, message: "não consegui baixar do Google Fonts: \(error.localizedDescription)")
             }
             guard d.count <= cap else { throw ProtocolError(code: .tooMany, message: "\(what) passa de \(cap >> 20) MiB") }
@@ -229,15 +231,23 @@ extension CommandRouter {
         }
         var ttfs: [(String, Data)] = [], warning: String?
         do {
-            var seen: Set<URL> = [], sum = total
+            var seen: Set<URL> = [], sum = 0
             let answer = try await get(css, GoogleFonts.fileCap, "a resposta do Google Fonts", GoogleFonts.ttfUserAgent)
             for face in try GoogleFonts.faces(String(decoding: answer, as: UTF8.self), ext: "ttf") where seen.insert(face.url).inserted {
-                let d = try await get(face.url, GoogleFonts.fileCap, "um TTF da fonte", GoogleFonts.ttfUserAgent)
+                let d: Data
+                do { d = try await get(face.url, GoogleFonts.ttfFileCap, "um TTF da fonte", GoogleFonts.ttfUserAgent) }
+                catch let e as ProtocolError where e.code == .tooMany { meta.ttfSkipped = true; throw e }
                 sum += d.count
-                guard sum <= GoogleFonts.familyCap, sum <= budget else { throw ProtocolError(code: .tooMany, message: "os TTF passam do limite") }
+                guard sum <= GoogleFonts.ttfFamilyCap else {
+                    meta.ttfSkipped = true
+                    throw ProtocolError(code: .tooMany, message: "os TTF passam de \(GoogleFonts.ttfFamilyCap >> 20) MiB")
+                }
+                guard total + sum <= budget else { throw ProtocolError(code: .tooMany, message: "as fontes baixadas passariam de \(GoogleFonts.totalCap >> 20) MiB") }
                 ttfs.append(("ttf/\(face.style)-\(face.weight.replacingOccurrences(of: " ", with: "-"))-\(ttfs.count).ttf", d))
             }
             if ttfs.isEmpty { throw ProtocolError(code: .notFound, message: "sem TTF") }
+        } catch where error is CancellationError || Task.isCancelled {
+            throw error
         } catch {
             ttfs = []
             warning = "o FigCraft não vai usar \(family) (as páginas sim): \((error as? ProtocolError)?.message ?? error.localizedDescription)"

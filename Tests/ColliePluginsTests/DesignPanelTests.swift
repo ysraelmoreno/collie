@@ -212,6 +212,34 @@ import CollieProtocol
         #expect(await got() == "3:7,2:5")
     }
 
+    /// A font the editor refused (`collie_add_font` false) is tried once more on the next push, then left alone.
+    @Test func retriesARefusedFontOnce() async throws {
+        let root = try webRoot()
+        try Data("""
+            <html><body><script>window.got = [];
+            window.wasmBindings = { collie_add_font: b => { window.got.push(b[0]); return b[0] !== 9 } }</script></body></html>
+            """.utf8).write(to: root.appendingPathComponent("index.html"))
+        let collie = root.deletingLastPathComponent().appendingPathComponent("collie")
+        let ttf = collie.appendingPathComponent("fonts/Inter/ttf")
+        try FileManager.default.createDirectory(at: ttf, withIntermediateDirectories: true)
+        try Data([7]).write(to: ttf.appendingPathComponent("a.ttf"))
+        try Data([9]).write(to: ttf.appendingPathComponent("b.ttf"))
+        let panel = Panel(id: UUID(), name: "d", pluginId: "design", placement: .canvas, state: ["file": .string("f")])
+        let host = PanelHostContext(panel: panel, root: collie, workspaceId: nil, call: { _, _ throws(ProtocolError) in .null }, emit: { _, _ in })
+        let v = DesignPanel(panel: panel, host: host, webRoot: root)
+        defer { v.close() }
+        let web = try #require(v.webView)
+        func got() async -> String { ((try? await web.evaluateJavaScript("window.got ? window.got.join(',') : ''")) as? String) ?? "" }
+        web.load(URLRequest(url: URL(string: "collie-design://app/index.html")!))
+        for _ in 0..<100 where await got() != "7,9" { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(await got() == "7,9")
+        for _ in 0..<2 {
+            v.receive(event: "fonts.changed", payload: .object([:]))
+            try await Task.sleep(for: .milliseconds(400))
+        }
+        #expect(await got() == "7,9,9")   // retried once, never again
+    }
+
     /// The figcraft web build exports `collie_add_font` (patch 0005; rebuild with scripts/build-figcraft.sh).
     @Test func webBuildExportsAddFont() throws {
         guard let web = DesignPanel.webDirectory else { return }   // not built here

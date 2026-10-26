@@ -147,6 +147,9 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
     /// Bumped per page load (its FigCraft starts with only the embedded fonts); `pushedFonts`: the files it was given since.
     private var load = 0
     private var pushedFonts: Set<String> = []
+    /// Files on their way to the page, and refusals per file (`collie_add_font` false): one retry, then left alone (kept
+    /// across reloads).
+    private var sendingFonts: Set<String> = [], fontFailures: [String: Int] = [:]
     nonisolated static let fontFileCap = 20 << 20, fontPushCap = 64 << 20
 
     public var view: NSView { box }
@@ -218,16 +221,25 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
 
     /// The TTFs `font.add` keeps for FigCraft (`<root>/fonts/<family>/ttf/*.ttf|otf`) not yet given to this page, read off
     /// the main thread: real folders and regular files only (no symlink followed), each ≤ 20 MiB, ≤ 64 MiB per push. Each
-    /// goes to `wasmBindings.collie_add_font` (patch 0005) in the page, once it has started. A removed font stays until
+    /// goes to `wasmBindings.collie_add_font` (patch 0005) in the page, once it has started; a refused one is tried again
+    /// on the next push, once. A page that never starts (30 s) leaves it for the next push. A removed font stays until
     /// the page reloads.
     func pushFonts() {
         guard let web = webView else { return }
-        let l = load, skip = pushedFonts, dir = host.root.appendingPathComponent("fonts")
+        let l = load, dir = host.root.appendingPathComponent("fonts")
+        let skip = pushedFonts.union(sendingFonts).union(fontFailures.filter { $0.value >= 2 }.keys)
         Task { [weak self] in
             let files = await Task.detached { Self.fontFiles(dir, skip: skip) }.value
             guard let self, self.load == l, self.webView === web else { return }
-            for (path, data) in files where self.pushedFonts.insert(path).inserted {
-                _ = try? await web.evaluateJavaScript(Self.addFontScript(data))
+            for (path, data) in files where !self.pushedFonts.contains(path) && self.sendingFonts.insert(path).inserted {
+                let r = try? await web.callAsyncJavaScript(Self.addFontScript, arguments: ["s": data.base64EncodedString()], contentWorld: .page)
+                self.sendingFonts.remove(path)
+                guard self.load == l else { return }
+                switch r as? Bool {
+                case true?: self.pushedFonts.insert(path)
+                case false?: self.fontFailures[path, default: 0] += 1
+                case nil: break   // not started yet: the next push
+                }
             }
         }
     }
@@ -250,14 +262,18 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         return out
     }
 
-    /// Base64 into a `Uint8Array`, then `collie_add_font` now or when trunk's loader says the app started.
-    static func addFontScript(_ d: Data) -> String {
+    /// `s` (base64) into a `Uint8Array`, then `collie_add_font` now or when trunk's loader says the app started: its
+    /// answer (true/false), or null after 30 s without a start.
+    static let addFontScript = """
+        const t = atob(s), b = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) b[i] = t.charCodeAt(i);
+        return await new Promise(done => {
+          const go = () => { try { done(window.wasmBindings.collie_add_font(b) === true) } catch (e) { done(false) } };
+          if (window.wasmBindings) return go();
+          const h = () => { clearTimeout(timer); go() };
+          const timer = setTimeout(() => { removeEventListener("TrunkApplicationStarted", h); done(null) }, 30000);
+          addEventListener("TrunkApplicationStarted", h, { once: true });
+        });
         """
-        (() => { const s = atob("\(d.base64EncodedString())"), b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
-        const go = () => { try { window.wasmBindings.collie_add_font(b) } catch (e) {} };
-        if (window.wasmBindings) go(); else addEventListener("TrunkApplicationStarted", go, { once: true }) })()
-        """
-    }
 
     public func close() {
         gen += 1; load += 1

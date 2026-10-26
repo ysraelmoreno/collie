@@ -7,11 +7,11 @@ import ColliePlugins
 
 /// Two pages, Aparência and Plug-ins (`PluginsPreferences`), picked in the header.
 extension DesignFirst {
-    var label: String { switch self { case .ask: "Perguntar"; case .always: "Sempre"; case .never: "Nunca" } }
+    var label: String { switch self { case .artifact: "Página (Prévia)"; case .figcraft: "FigCraft"; case .ask: "Perguntar" } }
     /// The `design.prefer` reply (`{designFirst}`); nil when it is anything else.
     static func from(reply: JSONValue) -> DesignFirst? {
         guard case .object(let o) = reply, case .string(let v)? = o["designFirst"] else { return nil }
-        return DesignFirst(rawValue: v)
+        return DesignFirst.parse(v)
     }
 }
 
@@ -26,7 +26,7 @@ extension SandboxMode {
 
 struct PreferencesView: View {
     let client: DaemonClient
-    @State private var designFirst = DesignFirst.ask
+    @State private var designFirst = DesignFirst.artifact
     @State private var sandboxMode = SandboxMode.open
     @State private var page = "Aparência"
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
@@ -94,13 +94,13 @@ struct PreferencesView: View {
                         }
                         .fixedSize()
                     }
-                    section("Design antes da interface") {
-                        Picker("Design antes da interface", selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .ask) })) {
+                    section("Onde desenhar") {
+                        Picker("Onde desenhar", selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .artifact) })) {
                             ForEach(DesignFirst.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
                         }
                         .labelsHidden().pickerStyle(.segmented).fixedSize()
                         .disabled(client.state != .connected)
-                        Text("Em trabalho de interface, o Pastor desenha antes no FigCraft: pergunta, sempre ou nunca. Vale para o workspace.")
+                        Text("Em trabalho de interface, o Pastor desenha antes: numa página na Prévia (fontes, animação, bibliotecas offline), no FigCraft, ou pergunta. Vale para o workspace e para o rebanho Feature com design.")
                             .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                     }
                     section("Modo do sandbox") {

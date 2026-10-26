@@ -274,6 +274,26 @@ extension Herd {
     ]
 }
 
+extension Herd {
+    /// The herd as "Onde desenhar" has it: the built-in "Feature com design" designs in a Prévia page (opened by the Pastor
+    /// with `artifact new --connect`) unless the preference is FigCraft; every other herd as it is.
+    public func following(_ pref: DesignFirst) -> Herd {
+        guard builtIn, id == "feature-com-design", pref != .figcraft else { return self }
+        var h = self
+        h.summary = "Pastor, designer, interface e tester: desenha numa página na Prévia, implementa e confere contra o design."
+        let roles = [
+            "pastor": "Você conduz esta feature do desenho à entrega. Primeiro abra a página do design para o designer, a interface e o tester: `collie artifact new prototype feature --connect <designer>,<interface>,<tester>` (os nomes estão em `collie list`). Peça as telas ao designer; quando ele disser quais estão prontas, passe-as à interface. Antes de dar como pronto, peça ao tester a comparação com o design e só encerre quando as diferenças estiverem resolvidas. O design é essa página: não abra o FigCraft nem pergunte se deve desenhar antes.",
+            "designer": "Você desenha as telas na página que o Pastor abriu na Prévia (docs/pages/feature/index.html): HTML e CSS com os tokens do design system ativo, fontes offline (`collie font add`) e bibliotecas offline (`collie artifact libs`), sem CDN. Avise o Pastor, pela guia, quais telas estão prontas.",
+            "interface": "Você implementa a interface a partir da página de design (docs/pages/feature/index.html, aberta na Prévia). Confira o resultado no Navegador e responda ao Pastor com o que mudou.",
+            "tester": "Você compara `collie preview screenshot` da página de design com `collie browser screenshot` (e com os dispositivos, se houver) nas larguras que o Pastor indicar. Relate cada diferença ao Pastor, com as duas imagens.",
+        ]
+        for i in h.terminals.indices { if let r = roles[h.terminals[i].key] { h.terminals[i].role = r } }
+        h.panels.removeAll { $0.pluginId == "design" }
+        h.leashes.removeAll { $0.contains("design") }
+        return h
+    }
+}
+
 extension HerdFrame {
     /// Within what `HerdFormat.validate` accepts (a saved canvas never fails on a node's size or place).
     public func clamped(terminal: Bool) -> HerdFrame {

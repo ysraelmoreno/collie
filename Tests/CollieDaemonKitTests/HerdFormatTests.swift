@@ -36,6 +36,22 @@ private func rejects(_ p: Herd, _ reason: String) {
                               ["interface", "design"], ["interface", "navegador"], ["tester", "design"], ["tester", "navegador"]])
     }
 
+    /// "Onde desenhar" = artifact (or ask): the herd's design is a Prévia page the Pastor opens for the designers, no FigCraft panel.
+    @Test func featureComDesignFollowsPreference() throws {
+        let h = try #require(Herd.factory.first { $0.id == "feature-com-design" })
+        #expect(h.following(.figcraft) == h)
+        for pref in [DesignFirst.artifact, .ask] {
+            let a = h.following(pref)
+            try HerdFormat.validate(a)
+            #expect(a.panels.map(\.pluginId) == ["browser"] && a.terminals.map(\.key) == h.terminals.map(\.key))
+            #expect(a.leashes.allSatisfy { !$0.contains("design") } && !a.summary.contains("FigCraft"))
+            #expect(a.terminals[0].role?.contains("collie artifact new prototype feature --connect") == true)
+            #expect(a.terminals.allSatisfy { !($0.role ?? "").contains("collie design ") })
+        }
+        let other = try #require(Herd.factory.first { $0.id == "feature-fullstack" })
+        #expect(other.following(.artifact) == other)
+    }
+
     @Test func validationRejects() throws {
         rejects(base { $0.format = 2 }, "formato")
         rejects(base { $0.terminals = (0..<21).map { HerdTerminal(key: "t\($0)", preset: .shell) } }, "terminais demais")

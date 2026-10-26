@@ -103,6 +103,12 @@ extension CommandRouter {
         let dir = config.weblibsDir
         let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
         let tester = caller.flatMap { $0.isShepherd ? nil : $0 }
+        // --connect: a Shepherd leashes the new Prévia to terminals it reaches (as `panel open --connect`), checked first
+        var wirer: TerminalRecord?
+        if r.args["connect"] != nil {
+            guard let me = caller, me.isShepherd else { throw ProtocolError(code: .notShepherd, message: "--connect is Shepherd-only") }
+            _ = try connectTargets(r, by: me, panels: false); wirer = me
+        }
         let slot = try tester.map { me throws(ProtocolError) in try reservePreview(me) }   // before anything is written
         defer { if let me = tester, let slot { releasePreview(me, slot) } }
         let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
@@ -135,6 +141,9 @@ extension CommandRouter {
         try reserve(name); defer { launching.remove(name.lowercased()) }
         let (p, _, _) = try await openPanel(name: name, pluginId: "preview", placement: .canvas, state: ["file": .string(rel)],
                                             file: nil, paddock: paddock, caller: caller, reservation: slot)
+        do {   // re-checked after openPanel's awaits; the page stays, the panel goes
+            for t in try wirer.map({ try connectTargets(r, by: $0, panels: false).terminals }) ?? [] { try await leash(t, p) }
+        } catch { try? await remove(p); throw error }
         return .object(["file": .string(rel), "panel": .string(p.name), "warnings": .array(warnings.map { .string($0) })])
     }
 

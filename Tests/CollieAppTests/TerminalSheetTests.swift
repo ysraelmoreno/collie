@@ -11,8 +11,8 @@ import CollieProtocol
 }
 
 @Test func designFirstPickerLabels() {
-    #expect(DesignFirst.allCases.map(\.label) == ["Perguntar", "Sempre", "Nunca"])
-    #expect(DesignFirst.from(reply: .object(["designFirst": .string("never")])) == .never)
+    #expect(DesignFirst.allCases.map(\.label) == ["Página (Prévia)", "FigCraft", "Perguntar"])
+    #expect(DesignFirst.from(reply: .object(["designFirst": .string("figcraft")])) == .figcraft)
     #expect(DesignFirst.from(reply: .object(["designFirst": .string("x")])) == nil)
 }
 

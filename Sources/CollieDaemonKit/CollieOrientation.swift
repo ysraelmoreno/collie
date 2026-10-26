@@ -19,7 +19,7 @@ enum CollieOrientation {
 
     static func text(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                      panels: [(name: String, pluginId: String)],
-                     paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .ask,
+                     paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .artifact,
                      lot: (name: String, goal: String)? = nil, morePanels: Bool = false) -> String {
         // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
@@ -50,7 +50,7 @@ enum CollieOrientation {
             lines.append("- Lot \(quote(tight ? String(lot.name.prefix(20)) : lot.name))\(goal.isEmpty ? "" : " (\(goal))"): collie lot board / collie lot post --kind handoff --to <name> \"<what, where, next>\"" + (tight ? "." : "; save lot decisions with collie memory save."))
         }
         let d = of("design"), b = of("browser"), v = of("device")
-        if !d.isEmpty { lines.append("- Design panel \(names(d)): collie design …. Do not use other design editors or external artifact tools.") }
+        if !d.isEmpty { lines.append("- Design panel \(names(d)): collie design …. No other design editors, external design tools or CDNs.") }
         if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens and checks pages.") }
         // panel-free: independent of reach. ponytail: the kinds and libs only while names fit (k = 3); else `--help` lists
         // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
@@ -76,11 +76,17 @@ enum CollieOrientation {
                 lines.append("- UI work (new screen, flow or visible change): use design panel \(names(d)) first; leash it to whoever implements. \(notFor)")
             } else if !loose.isEmpty {
                 lines.append("- UI work (new screen, flow or visible change): design panel \(names(loose)) is on your paddock but not leashed to you; ask the user to leash it to you, then design first. \(notFor)")
-            } else if designFirst == .ask {
-                // ponytail: `design prefer` is pasture-only; a paddock Shepherd tells the user where to set it
-                lines.append("- UI work (new screen, flow or visible change) and no design panel: ask the user once whether to design it in FigCraft first. " + (paddock == nil ? "Save the answer: collie design prefer always|never." : "Tell the user to set it in Collie's Preferences.") + " \(notFor)")
-            } else if designFirst == .always {
-                lines.append("- UI work (new screen, flow or visible change): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name. \(notFor)")
+            } else {
+                // "Onde desenhar"; a bare "design X" request follows it too
+                switch designFirst {
+                case .artifact:
+                    lines.append("- UI work (screen, flow, visible change; also a bare 'design X'): design it as a page first: collie artifact new prototype <name>\(tight ? "" : " (Prévia; fonts, animation, offline libs, collie font add)"). Use FigCraft only if the user asks or for design-system work. \(notFor)")
+                case .figcraft:
+                    lines.append("- UI work (new screen, flow or visible change; also a bare 'design X'): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name. \(notFor)")
+                case .ask:
+                    // ponytail: `design prefer` is pasture-only; a paddock Shepherd tells the user where to set it
+                    lines.append("- UI work (new screen, flow or visible change; also a bare 'design X') and no design panel: ask the user once: a page (collie artifact new prototype <name>) or FigCraft? " + (paddock == nil ? "Save the answer: collie design prefer artifact|figcraft." : "Tell the user to set it in Collie's Preferences (Onde desenhar).") + " \(notFor)")
+                }
             }
             lines.append("- Herds: collie herd list | apply <id> --name <n> | save <name> --terminals a,b")
             if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line

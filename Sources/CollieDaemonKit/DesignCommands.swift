@@ -33,11 +33,11 @@ extension CommandRouter {
             if let me = caller {
                 if !me.isShepherd { throw ProtocolError(code: .notShepherd, message: "'design.prefer' is Shepherd-only to set") }
                 if me.paddockId.flatMap({ id in ws.paddocks.first { $0.id == id } }) != nil {
-                    throw ProtocolError(code: .notShepherd, message: "the workspace design-first preference can be set only from the pasture or the app")
+                    throw ProtocolError(code: .notShepherd, message: "the workspace design preference (Onde desenhar) can be set only from the pasture or the app")
                 }
             }
-            guard let pref = DesignFirst(rawValue: v) else {
-                throw ProtocolError(code: .invalidArgs, message: "'\(v)' is not a design-first value; use \(DesignFirst.allCases.map(\.rawValue).joined(separator: "|"))")
+            guard let pref = DesignFirst.parse(v) else {   // always|never: the values before "Onde desenhar"
+                throw ProtocolError(code: .invalidArgs, message: "'\(v)' is not a design preference; use \(DesignFirst.allCases.map(\.rawValue).joined(separator: "|"))")
             }
             let before = ws.designFirst
             ws.designFirst = pref

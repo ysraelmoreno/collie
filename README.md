@@ -212,12 +212,19 @@ O export HTML agora gera um artifact versionado (veja a seção Artifacts).
 Limitações: os arquivos ficam no armazenamento do servidor local (não no git; `export --format figcraft` gera um
 `.figcraft`); o painel usa WebGPU quando o WebKit tem um adaptador (sonda única por execução, prazo de 2 s) e WebGL2 (`?webgl`) caso contrário; se a página WebGPU não iniciar, recarrega com `?webgl`. `COLLIE_DESIGN_GPU=webgl|webgpu` força um dos dois. Medido em macOS 15 (Darwin 24.6, arm64): a sonda respondeu false nesta máquina; o figcraft registrou o backend Gl com e sem ?webgl. Servidor, CLI e UI são sempre a mesma versão (v0.7.0). Limitações da importação de HTML: veja a seção Importar HTML.
 
-**Design antes da interface.** Para trabalho de interface (tela nova, fluxo novo ou mudança visível), o Pastor segue a
-preferência `design-first` do workspace: `ask` (padrão) pergunta uma vez se deve desenhar antes no FigCraft, `always`
-desenha sempre e `never` nunca pergunta. Quem altera é o app (**Preferências → Design antes da interface**) ou um Pastor
-do pasto, com `collie design prefer ask|always|never`; qualquer terminal lê com `collie design prefer`. Se já houver um
-painel Design, ele é usado primeiro. O rebanho de fábrica **Feature com design** (Pastor, designer, interface e tester)
-já vem com o painel Design e o Navegador ligados: o designer desenha, a interface implementa e o tester compara as telas.
+### Onde desenhar
+
+Para trabalho de interface (tela nova, fluxo novo, mudança visível, ou só "faz um design de X"), o Pastor desenha antes
+onde a preferência **Onde desenhar** do workspace manda: `artifact` (padrão) numa página na Prévia
+(`collie artifact new prototype <nome>`: HTML/CSS com fontes, animação e bibliotecas offline, `collie font add`), `figcraft`
+num painel Design (FigCraft), ou `ask`, que pergunta uma vez. Com `artifact`, o FigCraft fica para quando o usuário pede ou
+para trabalho de design system. Quem altera é o app (**Preferências → Onde desenhar**) ou um Pastor do pasto, com
+`collie design prefer artifact|figcraft|ask`; qualquer terminal lê com `collie design prefer`. Os valores antigos continuam
+aceitos e migram sozinhos: `always` vira `figcraft`, `never` vira `artifact` (desconhecido ou ausente: `artifact`). Se já
+houver um painel Design ligado ao Pastor, ele é usado primeiro. O rebanho de fábrica **Feature com design** (Pastor,
+designer, interface e tester) segue a preferência: com `figcraft` vem com o painel Design e o Navegador ligados; senão o
+Pastor abre a página do design com `collie artifact new prototype feature --connect <designer>,<interface>,<tester>`
+(`--connect` é só de Pastor) e o tester compara `collie preview screenshot` com o Navegador.
 
 ## Diagrama
 

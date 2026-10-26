@@ -1,5 +1,6 @@
 public struct ParamSpec: Sendable, Equatable {
-    public enum Kind: Sendable, Equatable { case string, int, flag, rest }
+    /// `rest`: the remaining words as one string; `list`: as an array of strings (an array over the protocol and MCP).
+    public enum Kind: Sendable, Equatable { case string, int, flag, rest, list }
     public var name: String; public var kind: Kind; public var positional: Bool; public var required: Bool; public var help: String
     /// A `.string` flag given more than once: its values joined with "," (the daemon splits on ",").
     public var repeatable: Bool

@@ -19,7 +19,7 @@ public enum ArgvParser {
             if t == "--" { words.append(contentsOf: rest[i...]); break }
             guard t.hasPrefix("--"), t.count > 2 else { words.append(t); continue }
             let key = String(t.dropFirst(2))
-            guard let p = spec.params.first(where: { $0.name == key && $0.kind != .rest }) else { throw bad("unknown flag --\(key)") }
+            guard let p = spec.params.first(where: { $0.name == key && $0.kind != .rest && $0.kind != .list }) else { throw bad("unknown flag --\(key)") }
             if p.kind == .flag { args[key] = .bool(true); continue }
             guard i < rest.count else { throw bad("--\(key) needs a value") }
             let v = rest[i]; i += 1
@@ -34,6 +34,8 @@ public enum ArgvParser {
         for p in spec.params where p.positional {
             if p.kind == .rest {
                 if !pos.isEmpty { args[p.name] = .string(pos.joined(separator: " ")); pos = [] }
+            } else if p.kind == .list {
+                if !pos.isEmpty { args[p.name] = .array(pos.map { .string($0) }); pos = [] }
             } else if let w = pos.popFirst() { args[p.name] = .string(w) }
         }
         if !pos.isEmpty { throw bad("unexpected argument: \(pos.joined(separator: " "))") }

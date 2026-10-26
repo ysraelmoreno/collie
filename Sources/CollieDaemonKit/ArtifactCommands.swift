@@ -105,11 +105,23 @@ extension CommandRouter {
             return .object([:])
         case "artifact.move":
             guard case .string(let f)? = r.args["folder"] else { throw invalid("Missing argument 'folder' (\"\" for none)") }
-            let folder = try ArtifactFolder.normalize(f), a = try await artifacts.get(try id())
+            // `ids` (an array, or words) or `id`: all checked before any moves, in one change and one event
+            let words: [String] = switch r.args["ids"] ?? r.args["id"] {
+            case .array(let a)?: a.map { if case .string(let s) = $0 { s } else { "\($0)" } }
+            case .string(let s)?: s.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
+            default: []
+            }
+            guard !words.isEmpty else { throw invalid("Missing argument 'ids'") }
+            var ids: [UUID] = []
+            for w in words {
+                guard let u = UUID(uuidString: w) else { throw invalid("'\(w)' is not an artifact id") }
+                if !ids.contains(u) { ids.append(u) }
+            }
+            let folder = try ArtifactFolder.normalize(f)
             if let me = caller { try await checkImportFolder(folder, link: nil, by: me) }   // user decision: any agent moves any artifact, into an existing folder
-            try await artifacts.move(a.id, to: folder)
+            try await artifacts.move(ids, to: folder)
             await artifactsChanged()
-            return .object(["folder": folder.map { .string($0) } ?? .null])
+            return .object(["folder": folder.map { .string($0) } ?? .null, "moved": .number(Double(ids.count))])
         case "artifact.folders":
             return .array(try await artifacts.folders().map { f in
                 .object(["path": .string(f.path), "count": .number(Double(f.count)), "total": .number(Double(f.total)),

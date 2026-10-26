@@ -8,6 +8,17 @@ import Foundation
         #expect(r.command == "artifact.add" && r.args["path"] == .string("a.html"))
     }
 
+    @Test func artifactMoveTakesManyIds() throws {
+        let r = try ArgvParser.parse(["artifact", "move", "a", "b", "c", "--folder", "Cliente"])
+        #expect(r.args == ["ids": .array([.string("a"), .string("b"), .string("c")]), "folder": .string("Cliente")])
+        #expect(throws: ProtocolError.self) { try ArgvParser.parse(["artifact", "move", "--folder", "Cliente"]) }
+        let tool = MCPSchema.tools().first { if case .object(let o) = $0 { o["name"] == .string("artifact_move") } else { false } }
+        guard case .object(let o)? = tool, case .object(let schema)? = o["inputSchema"], case .object(let props)? = schema["properties"],
+              case .object(let ids)? = props["ids"] else { Issue.record("\(String(describing: tool))"); return }
+        #expect(ids["type"] == .string("array") && ids["items"] == .object(["type": .string("string")]))
+        #expect(schema["required"] == .array([.string("ids"), .string("folder")]))
+    }
+
     @Test func connectRepeatsIntoACommaList() throws {
         let r = try ArgvParser.parse(["summon", "d1", "--preset", "claude", "--connect", "design-1", "--connect", "a,b"])
         #expect(r.args["connect"] == .string("design-1,a,b"))

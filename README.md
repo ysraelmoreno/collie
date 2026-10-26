@@ -313,7 +313,7 @@ usuário (vazias inclusive), com ordem, cor, fixação e apresentação, ficam e
 
 - `artifact add … --folder <caminho>` e `artifact new … --folder <caminho>` (a Prévia guarda a pasta e o **Salvar como
   artifact** usa). Padrão de um agente: o nome do seu lote, se estiver em um; senão nenhuma (`--folder` explícito vence).
-- `artifact move <id> --folder <caminho|"">`: o agente só move os artifacts que ele adicionou; o app move qualquer um.
+- `artifact move <id> [<id> …] --folder <caminho|"">`: vários de uma vez, numa só gravação (tudo ou nada: um id desconhecido recusa todos). O agente move qualquer artifact para uma pasta que já existe (ou a do seu lote, ou nenhuma); criar pastas é no app, que move para qualquer uma.
 - `artifact folders`: as pastas (as do usuário na ordem dele, depois as outras) com `count`, `total` e `items`.
 - Só o app: `artifact folder create <caminho>`, `folder rename <caminho> <novo>` (move tudo dentro, de uma vez),
   `folder remove <caminho> [--move-to <caminho|"">]` (só vazia, ou levando os artifacts; nunca apaga artifacts) e

@@ -2,7 +2,7 @@ import Foundation
 
 /// A paddock name the daemon accepts (`^[a-z0-9][a-z0-9-]{0,39}$`), from whatever the user typed.
 public enum PaddockName {
-    /// "ShowOn" → "showon", "Meu Cercado_2" → "meu-cercado-2", "  ação!! " → "acao"; nil when nothing usable is left.
+    /// "MeuApp" → "meuapp", "Meu Cercado_2" → "meu-cercado-2", "  ação!! " → "acao"; nil when nothing usable is left.
     public static func slug(_ typed: String) -> String? {
         let folded = typed.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .lowercased()

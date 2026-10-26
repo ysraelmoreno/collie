@@ -1,6 +1,7 @@
 #!/usr/bin/python3 -I
 """Fake `figcraft-cli mcp` for tests: minimal MCP over stdio, one JSON object per line.
-Logs every request as `<method> <tool> <command>` to $COLLIE_FAKE_FIG_LOG (initialize logs `initialize <client name>`).
+Logs every request as `<method> <tool> <command>` to $COLLIE_FAKE_FIG_LOG (initialize logs `initialize <client name>`, and
+writes its $FIGCRAFT_EXTRA_FONTS_DIR to `<log>.fonts`).
 COLLIE_FAKE_FIG_SLEEP=<s> delays each tools/call answer. COLLIE_FAKE_FIG_NOISE=1 sends garbage, a notification and an answer
 with a foreign id before each answer. run_command ids: `bad.*` fails (isError, like the engine: "unknown command `bad.x`";
 `bad.leak` also echoes a share link and the server key), `big` answers 17 MiB, `die` exits, `rpcerr` answers a JSON-RPC
@@ -241,6 +242,9 @@ for line in sys.stdin:
     method, mid = msg.get("method"), msg.get("id")
     if method == "initialize":
         log("initialize", msg["params"]["clientInfo"]["name"])
+        if LOG:
+            with open(LOG + ".fonts", "w") as f:
+                f.write(os.environ.get("FIGCRAFT_EXTRA_FONTS_DIR", ""))
         send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}},
                                                       "serverInfo": {"name": "fake-figcraft", "version": "0"}}})
     elif method == "tools/call":

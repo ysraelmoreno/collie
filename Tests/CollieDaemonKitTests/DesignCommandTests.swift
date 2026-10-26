@@ -106,6 +106,16 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
         }
     }
 
+    /// Every `figcraft-cli` gets `FIGCRAFT_EXTRA_FONTS_DIR=<root>/fonts` (patch 0005): renders and exports use the downloaded TTFs.
+    @Test func cliReadsDownloadedFonts() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            #expect(try await admin(d, p, "design.new", ["name": "Site"]).ok)
+            let got = try String(contentsOf: URL(fileURLWithPath: fx.log.path + ".fonts"), encoding: .utf8)
+            #expect(got == p.root.appendingPathComponent("fonts").path, "\(got)")
+        }
+    }
+
     /// A Shepherd opens a design panel, then summons designers wired to it: each reaches the panel, not each other.
     @Test func summonConnectsDesignersToPanel() async throws {
         let fx = try Fx(); defer { fx.cleanup() }

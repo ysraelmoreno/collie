@@ -69,6 +69,11 @@ actor DesignService {
         self.root = root; self.runDir = runDir; self.idle = idle; self.timeoutCap = timeoutCap
     }
 
+    /// Every `figcraft-cli`'s environment: the daemon's, plus `FIGCRAFT_EXTRA_FONTS_DIR=<root>/fonts` (patch 0005): its
+    /// font scan walks the families' folders and reads the `ttf/` files `font.add` keeps for it (the woff2 are skipped).
+    private var cliEnv: [String: String] {
+        ProcessInfo.processInfo.environment.merging(["FIGCRAFT_EXTRA_FONTS_DIR": root.appendingPathComponent("fonts").path]) { _, new in new }
+    }
     private var designDir: URL { root.appendingPathComponent("design") }
     private var registryFile: URL { designDir.appendingPathComponent("files.json") }
     private var screens: URL { root.appendingPathComponent("screens") }
@@ -117,7 +122,7 @@ actor DesignService {
                     return try await c.command("file.save", ["path": .string(doc.path)], timeout: try Self.left(deadline))
                 }
                 let bridge = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-read-root", tmp.path],
-                                                      env: ProcessInfo.processInfo.environment, runDir: runDir, name: "collie-bridge")
+                                                      env: cliEnv, runDir: runDir, name: "collie-bridge")
                 defer { bridge.close() }
                 _ = try await bridge.command("file.open", ["path": .string(doc.path)], timeout: try Self.left(deadline))
                 _ = try await bridge.command("file.rename", ["name": .string(name)], timeout: try Self.left(deadline))
@@ -126,7 +131,7 @@ actor DesignService {
                 pub = o
             } else {
                 let bridge = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-read-root", try dir(sandbox).path],
-                                                      env: ProcessInfo.processInfo.environment, runDir: runDir, name: "collie-bridge")
+                                                      env: cliEnv, runDir: runDir, name: "collie-bridge")
                 defer { bridge.close() }
                 _ = try await bridge.command("collab.publish", ["server": .string(ep.wsURL), "name": .string(name)], timeout: try Self.left(deadline))
                 let peers = try await live(bridge, name, deadline) { o in
@@ -355,7 +360,7 @@ actor DesignService {
         try await guarded {
             if commandList == nil {
                 let c = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-read-root", try dir(sandbox).path],
-                                                 env: ProcessInfo.processInfo.environment, runDir: runDir, name: "collie-bridge")
+                                                 env: cliEnv, runDir: runDir, name: "collie-bridge")
                 defer { c.close() }
                 let text = try await c.call("list_commands", [:], timeout: try Self.left(deadline("design.help"))).texts.joined(separator: "\n")
                 commandList = Self.parseCommands(text).filter { Self.permitted($0.id) }
@@ -548,7 +553,7 @@ actor DesignService {
             let f = try file(id)
             let (ep, _) = try await running()
             let c = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-read-root", snapshot.deletingLastPathComponent().path],
-                                             env: ProcessInfo.processInfo.environment, runDir: runDir, name: "collie-bridge")
+                                             env: cliEnv, runDir: runDir, name: "collie-bridge")
             defer { c.close() }
             _ = try await c.command("file.open", ["path": .string(snapshot.path)], timeout: try Self.left(deadline))
             _ = try await c.command("file.rename", ["name": .string(f.name)], timeout: try Self.left(deadline))
@@ -659,7 +664,7 @@ actor DesignService {
                         _ deadline: ContinuousClock.Instant) async throws(ProtocolError) -> MCPStdioClient {
         let out = try dir(out)
         let c = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-write-root", out.path],
-                                         env: ProcessInfo.processInfo.environment, runDir: runDir, name: name)
+                                         env: cliEnv, runDir: runDir, name: name)
         do throws(ProtocolError) {
             _ = try await c.command("collab.join", ["link": .string(rehosted(f.editLink, ep))], timeout: try Self.left(deadline))
             _ = try await live(c, f.name, deadline) { _ in true }

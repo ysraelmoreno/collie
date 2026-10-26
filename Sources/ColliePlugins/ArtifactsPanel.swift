@@ -39,6 +39,7 @@ public struct FolderSection: Identifiable, Equatable {
 /// The Artifacts panel's folders as a tree (pure: tested without the daemon). Siblings: pinned first, then the user's
 /// order (`artifact.folders`), then by name; "Sem pasta" last. A search hides folders without a match.
 public enum ArtifactFolderTree {
+    /// Lowercased, as the daemon's `ArtifactFolder.same`.
     static func key(_ p: String) -> String { p.lowercased() }
     static func under(_ p: String?, _ f: String) -> Bool { p.map { key($0) == key(f) || key($0).hasPrefix(key(f) + "/") } ?? false }
     static func parent(_ p: String) -> String? { p.lastIndex(of: "/").map { String(p[..<$0]) } }

@@ -45,6 +45,13 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
         #expect(s[0].rows.map(\.id) == ["c", "a", "b"] && s[0].presentation)
     }
 
+    @Test func caseRuleMatchesTheDaemon() {
+        // lowercased, as ArtifactFolder.same: "Straße" and "STRASSE" are two folders
+        let s = ArtifactFolderTree.sections(rows: [row("a", "Straße"), row("b", "STRASSE"), row("c", "árvore")], folders: [folder("ÁRVORE")])
+        #expect(s.map(\.name) == ["ÁRVORE", "STRASSE", "Straße"] || s.map(\.name) == ["ÁRVORE", "Straße", "STRASSE"])
+        #expect(s[0].rows.map(\.id) == ["c"])
+    }
+
     @Test func renamedPathKeepsParent() {
         #expect(ArtifactFolderTree.renamed("Cliente/Landing", to: " Nova ") == "Cliente/Nova")
         #expect(ArtifactFolderTree.renamed("Cliente", to: "Marca") == "Marca")

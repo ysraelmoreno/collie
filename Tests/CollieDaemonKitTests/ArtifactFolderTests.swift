@@ -12,7 +12,8 @@ import CollieProtocol
     }
 
     @Test func refusesBadPaths() {
-        for bad in ["/Cliente", "Cliente/", "a//b", "a/b/c/d", String(repeating: "a", count: 41), "a/\u{7}b", "a\nb", "a/ /b"] {
+        for bad in ["/Cliente", "Cliente/", "a//b", "a/b/c/d", String(repeating: "a", count: 41), "a/\u{7}b", "a\nb", "a/ /b",
+                    "a\u{200B}b", "\u{FEFF}a", "a\u{2060}", "a\u{202E}b", "a/\u{2067}b", ".", "a/..", "../a", "a/./b"] {
             #expect(throws: ProtocolError.self, "\(bad)") { try ArtifactFolder.normalize(bad) }
         }
     }
@@ -21,6 +22,8 @@ import CollieProtocol
         #expect(ArtifactFolder.same("Cliente/Landing", "cliente/LANDING") && !ArtifactFolder.same("Cliente", "Clientes"))
         #expect(ArtifactFolder.isUnder("cliente/landing/v2", "Cliente") && ArtifactFolder.isUnder("Cliente", "cliente"))
         #expect(!ArtifactFolder.isUnder("Clientes/x", "Cliente") && !ArtifactFolder.isUnder(nil, "Cliente"))
+        // the panel's rule (lowercased), not Foundation's folding (ß = SS)
+        #expect(!ArtifactFolder.same("Straße", "STRASSE") && ArtifactFolder.same("ÁRVORE", "árvore"))
     }
 }
 
@@ -104,6 +107,20 @@ import CollieProtocol
         try await s.removeFolder("Arquivo", moveTo: .some(nil))
         #expect(try await s.get(a.id).inFolder == nil)
         #expect(try await s.folders().isEmpty)
+    }
+
+    @Test func corruptFoldersFileNeverBlocksAdd() async throws {
+        let root = tmp(); defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("artifacts")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data("{not json".utf8).write(to: dir.appendingPathComponent("folders.json"))
+        let s = ArtifactStore(root: root)
+        let a = try await s.addAgent(page: page, title: "A", paddockId: nil, by: "W", inFolder: "Cliente")
+        #expect(a.inFolder == "Cliente")
+        #expect(try await s.folders().map(\.path) == ["Cliente"])
+        let aside = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.hasPrefix("folders.json.bad-") }
+        #expect(aside.count == 1)
+        #expect(try FileManager.default.contents(atPath: dir.appendingPathComponent(aside[0]).path) == Data("{not json".utf8))
     }
 
     @Test func presentationOrder() async throws {

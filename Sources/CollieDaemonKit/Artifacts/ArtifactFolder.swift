@@ -2,7 +2,8 @@ import Foundation
 import CollieProtocol
 
 /// A user folder artifacts are kept in: up to 3 names joined by "/" ("Cliente/Landing/v2"), each 1–40 characters,
-/// trimmed, no control characters. The spelling is kept, compared ignoring case. nil: "Sem pasta".
+/// trimmed, no control or format characters (zero-width, bidi overrides), not "." or "..". The spelling is kept, compared
+/// lowercased (the Artifacts panel's rule too). nil: "Sem pasta".
 enum ArtifactFolder {
     static let maxDepth = 3, maxName = 40
 
@@ -16,7 +17,9 @@ enum ArtifactFolder {
         guard names.count <= maxDepth else { throw bad("até \(maxDepth) níveis") }
         for n in names {
             guard (1...maxName).contains(n.count) else { throw bad("cada nome com 1 a \(maxName) caracteres") }
-            guard !n.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw bad("caractere de controle") }
+            // controlCharacters is Cc + Cf: zero-width spaces/joiners, BOM, bidi embeddings, overrides and isolates
+            guard !n.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw bad("caractere de controle ou invisível") }
+            guard n != ".", n != ".." else { throw bad("nome . ou .. não vale") }
         }
         return names.joined(separator: "/")
     }
@@ -24,7 +27,7 @@ enum ArtifactFolder {
     static func names(_ p: String) -> [Substring] { p.split(separator: "/") }
     static func same(_ a: String?, _ b: String?) -> Bool {
         guard let a, let b else { return a == nil && b == nil }
-        return a.caseInsensitiveCompare(b) == .orderedSame
+        return a.lowercased() == b.lowercased()
     }
     /// `p` is `folder` or inside it.
     static func isUnder(_ p: String?, _ folder: String) -> Bool {

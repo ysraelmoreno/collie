@@ -168,6 +168,7 @@ import WebKit
         dropWebView()
     }
     private func dropWebView() {
+        endPresent()
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil; web.uiDelegate = nil
@@ -176,7 +177,10 @@ import WebKit
         box.web = nil; webView = nil
     }
 
-    fileprivate func windowChanged() { if box.window != nil, !started, !closed { start() } }
+    fileprivate func windowChanged() {
+        if presenting, webView?.isInFullScreenMode != true { endPresent() }   // full screen left with the window
+        if box.window != nil, !started, !closed { start() }
+    }
     func startIfNeeded() { if !started, !closed { start() } }
 
     private func fail(_ m: String) { failure = m; box.overlay(m) }
@@ -219,7 +223,7 @@ import WebKit
             sequence = []
             if let folder, case .array(let fs) = try await host.call("artifact.folders", [:]) {
                 for case .object(let f) in fs {
-                    guard case .string(let p)? = f["path"], p.caseInsensitiveCompare(folder) == .orderedSame, f["presentation"] == .bool(true),
+                    guard case .string(let p)? = f["path"], p.lowercased() == folder.lowercased(), f["presentation"] == .bool(true),
                           case .array(let items)? = f["items"] else { continue }
                     sequence = items.compactMap { if case .string(let i) = $0 { i } else { nil } }
                 }
@@ -254,18 +258,21 @@ import WebKit
         web.enterFullScreenMode(screen, withOptions: [.fullScreenModeAllScreens: false])
         keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             let code = e.keyCode
-            let handled = MainActor.assumeIsolated { () -> Bool in
-                guard let self else { return false }
-                switch code {
-                case 53: self.endPresent()   // Esc
-                case 123: self.step(-1)
-                case 124: self.step(1)
-                default: return false
-                }
-                return true
-            }
+            let handled = MainActor.assumeIsolated { self?.handleKey(code) ?? false }
             return handled ? nil : e
         }
+    }
+    var presenting: Bool { keys != nil }
+    /// A key while presenting: Esc ends, ← → step. Full screen already left another way: the monitor goes, the key passes.
+    func handleKey(_ code: UInt16) -> Bool {
+        guard webView?.isInFullScreenMode == true else { endPresent(); return false }
+        switch code {
+        case 53: endPresent()
+        case 123: step(-1)
+        case 124: step(1)
+        default: return false
+        }
+        return true
     }
     func endPresent() {
         if let k = keys { NSEvent.removeMonitor(k); keys = nil }

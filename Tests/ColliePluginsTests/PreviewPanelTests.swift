@@ -183,6 +183,22 @@ import CollieProtocol
         #expect(PreviewPanel.neighbor(items, of: "x", by: 1) == nil)
     }
 
+    /// Full screen left any way (not Esc): the key monitor goes with it, the arrows are the page's again.
+    @Test func presentMonitorEndsWithFullScreen() async throws {
+        let root = try project()
+        try put("t.html", root, "<body>t</body>")
+        let (panel, w) = mount(root: root, state: ["file": .string("t.html")])
+        defer { panel.close(); w.close() }
+        #expect(await pollUntil(10) { panel.loads == 1 })
+        panel.present()
+        #expect(panel.presenting)
+        panel.webView?.exitFullScreenMode(options: nil)
+        #expect(panel.handleKey(124) == false && !panel.presenting)
+        panel.present(); #expect(panel.presenting)
+        panel.close()
+        #expect(!panel.presenting)
+    }
+
     @Test func saveKeepsTheNewPagesFolder() throws {
         let root = try project()
         try put("v/index.html", root, "<body>x</body>")

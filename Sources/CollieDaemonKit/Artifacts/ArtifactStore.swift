@@ -397,10 +397,12 @@ actor ArtifactStore {
         let file = foldersFile
         let loaded = try await onIO { () throws -> [FolderEntry] in
             guard let d = FileManager.default.contents(atPath: file.path) else { return [] }
-            guard let v = try? JSONDecoder().decode([FolderEntry].self, from: d) else {
-                throw ProtocolError(code: .internal, message: "artifacts: \(file.path) is unreadable")
-            }
-            return v
+            if let v = try? JSONDecoder().decode([FolderEntry].self, from: d) { return v }
+            // unreadable: set aside (kept for the user) and started over empty; folders are only labels, never block an add
+            let aside = file.deletingLastPathComponent().appendingPathComponent("folders.json.bad-\(Int64(Date().timeIntervalSince1970 * 1000))")
+            let moved = (try? FileManager.default.moveItem(at: file, to: aside)) != nil
+            FileHandle.standardError.write(Data("collied: artifacts: \(file.path) is unreadable; \(moved ? "moved to \(aside.lastPathComponent)" : "ignored")\n".utf8))
+            return []
         }
         if entries == nil { entries = loaded }
         return entries ?? loaded

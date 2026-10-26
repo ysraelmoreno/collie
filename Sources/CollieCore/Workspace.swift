@@ -82,8 +82,17 @@ public struct Connection: Codable, Sendable, Equatable {
     public init(a: UUID, b: UUID) { self.a = a; self.b = b }
 }
 
-/// Whether the Shepherd should have UI work designed first: ask the user, always, or never.
-public enum DesignFirst: String, Codable, Sendable, CaseIterable { case ask, always, never }
+/// "Onde desenhar": where the Shepherd has UI work designed first: a Prévia page (`artifact`, the default), FigCraft, or ask
+/// the user. (Before: "design primeiro" ask|always|never; `always` is now `figcraft`, `never` `artifact`.)
+public enum DesignFirst: String, Codable, Sendable, CaseIterable {
+    case artifact, figcraft, ask
+    /// A value, or one from before "Onde desenhar"; nil when unknown.
+    public static func parse(_ s: String) -> DesignFirst? { DesignFirst(rawValue: s) ?? ["always": .figcraft, "never": .artifact][s] }
+    /// Unknown (or not a string): the default, never an error.
+    public init(from decoder: Decoder) throws {
+        self = ((try? decoder.singleValueContainer().decode(String.self)).flatMap(Self.parse)) ?? .artifact
+    }
+}
 
 public struct Workspace: Codable, Sendable, Equatable {
     public var schemaVersion: Int = 3
@@ -94,7 +103,7 @@ public struct Workspace: Codable, Sendable, Equatable {
     public var paddocks: [Paddock]
     public var panels: [Panel]
     public var designSystem: UUID?   // active design system of pasture and of paddocks without their own
-    public var designFirst: DesignFirst = .ask   // set only by `design.prefer` / Preferences
+    public var designFirst: DesignFirst = .artifact   // set only by `design.prefer` / Preferences
     public var lots: [Lot] = []
     /// Before the mode became one Collie-wide preference (`<root>/preferences.json`): read once and moved there.
     public var terminalSandbox: SandboxMode?
@@ -112,7 +121,7 @@ public struct Workspace: Codable, Sendable, Equatable {
             ?? decoder.container(keyedBy: Legacy.self).decodeIfPresent([Paddock].self, forKey: .floors) ?? []   // v1 files have none
         panels = try c.decodeIfPresent([Panel].self, forKey: .panels) ?? []   // v1/v2 files have none
         designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
-        designFirst = (try? c.decodeIfPresent(DesignFirst.self, forKey: .designFirst)) ?? .ask   // an unknown value must never discard the workspace
+        designFirst = (try? c.decodeIfPresent(DesignFirst.self, forKey: .designFirst)) ?? .artifact   // an unknown value must never discard the workspace
         terminalSandbox = c.contains(.terminalSandbox)   // present but unreadable: strict (fail closed), never the workspace lost
             ? (try? c.decodeIfPresent(SandboxMode.self, forKey: .terminalSandbox)) ?? .strict : nil
         lots = ((try? c.decodeIfPresent([Lossy<Lot>].self, forKey: .lots)) ?? []).compactMap(\.value)   // a bad entry is dropped, never the workspace
@@ -125,6 +134,6 @@ public struct Workspace: Codable, Sendable, Equatable {
         try c.encode(panels, forKey: .panels); try c.encodeIfPresent(designSystem, forKey: .designSystem)
         if !lots.isEmpty { try c.encode(lots, forKey: .lots) }
         try c.encodeIfPresent(terminalSandbox, forKey: .terminalSandbox)
-        if designFirst != .ask { try c.encode(designFirst, forKey: .designFirst) }   // ponytail: the default is never written
+        if designFirst != .artifact { try c.encode(designFirst, forKey: .designFirst) }   // ponytail: the default is never written
     }
 }

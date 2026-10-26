@@ -5,7 +5,7 @@ import CollieProtocol
 
 @Suite struct CollieOrientationTests {
     private func text(shepherd: Bool = false, paddock: String? = nil, peers: [String] = [], panels: [(name: String, pluginId: String)] = [],
-                      paddockPanels: [(name: String, pluginId: String)] = [], pref: DesignFirst = .ask,
+                      paddockPanels: [(name: String, pluginId: String)] = [], pref: DesignFirst = .artifact,
                       lot: (name: String, goal: String)? = nil) -> String {
         CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: pref, lot: lot)
     }
@@ -19,7 +19,7 @@ import CollieProtocol
         #expect(none.contains("No CDN: offline JS libs via artifact libs."))
         #expect(none.contains("collie work task defer <task> \"<reason>\"") && none.contains("collie work done") && text(shepherd: true).contains("collie work status"))
         let d = text(paddock: "F1", peers: ["Bob"], panels: [("Home", "design")])
-        #expect(d.contains("Design panel \"Home\"") && d.contains("Do not use other design editors") && d.contains("on paddock \"F1\"") && d.contains("(\"Bob\")"))
+        #expect(d.contains("Design panel \"Home\"") && d.contains("No other design editors, external design tools or CDNs.") && !d.contains("artifact tools") && d.contains("on paddock \"F1\"") && d.contains("(\"Bob\")"))
         let m = text(shepherd: true)
         #expect(m.contains("collie panel open") && m.contains("design --file <name>") && m.contains("diagram --file <path.drawio>") && m.contains("browser --url <url>") && m.contains("device [--serial <id|avd:<name>>]"))
         #expect(!m.contains("Design panel"))
@@ -92,16 +92,21 @@ import CollieProtocol
     }
 
     @Test func shepherdAskLine() {
+        let t = text(shepherd: true, pref: .ask)
+        #expect(t.contains("and no design panel: ask the user once: a page (collie artifact new prototype <name>) or FigCraft? Save the answer: collie design prefer artifact|figcraft. Not for backend, refactors, tests, docs, invisible fixes."), "\(t)")
+        let f = text(shepherd: true, paddock: "F1", pref: .ask)
+        #expect(!f.contains("collie design prefer") && f.contains("Collie's Preferences (Onde desenhar)") && f.contains("ask the user once"))
+    }
+    /// The default: UI work (and a bare "design X") is designed as a Prévia page; FigCraft only on request.
+    @Test func shepherdArtifactLine() {
         let t = text(shepherd: true)
-        #expect(t.contains("and no design panel: ask the user once whether to design it in FigCraft first. Save the answer: collie design prefer always|never. Not for backend, refactors, tests, docs, invisible fixes."))
-        #expect(!text(shepherd: true, paddock: "F1").contains("collie design prefer") && text(shepherd: true, paddock: "F1").contains("Collie's Preferences"))
-        #expect(text(shepherd: true, paddock: "F1").contains("ask the user once"))
+        #expect(t.contains("- UI work (screen, flow, visible change; also a bare 'design X'): design it as a page first: collie artifact new prototype <name> (Prévia; fonts, animation, offline libs, collie font add). Use FigCraft only if the user asks or for design-system work."), "\(t)")
+        #expect(!t.contains("open a design panel (collie") && !t.contains("ask the user once"))
     }
-    @Test func shepherdAlwaysLine() {
-        #expect(text(shepherd: true, pref: .always).contains("open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name."))
-    }
-    @Test func shepherdNeverNoLine() {
-        #expect(!text(shepherd: true, pref: .never).contains("UI work"))
+    @Test func shepherdFigcraftLine() {
+        let t = text(shepherd: true, pref: .figcraft)
+        #expect(t.contains("also a bare 'design X'): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name."), "\(t)")
+        #expect(!t.contains("artifact new prototype <name>"))
     }
     @Test func shepherdWithPanelUsesIt() {
         for pref in DesignFirst.allCases {
@@ -122,7 +127,7 @@ import CollieProtocol
         #expect(text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, paddockPanels: long).count <= 1500)
     }
     @Test func nonShepherdNoDesignFirstLine() {
-        #expect(!text(pref: .always).contains("UI work") && !text(panels: [("Home", "design")]).contains("UI work"))
+        #expect(!text(pref: .figcraft).contains("UI work") && !text(panels: [("Home", "design")]).contains("UI work"))
     }
     @Test func worstCaseFitsLimit() {
         let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
@@ -130,7 +135,7 @@ import CollieProtocol
             for withDesign in [true, false] {
                 let t = text(shepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" }, panels: withDesign ? ps : ps.filter { $0.pluginId != "design" }, pref: pref)
                 #expect(t.count <= 1500, "\(pref) \(t.count)")
-                if withDesign || pref != .never { #expect(t.contains("UI work")) }
+                #expect(t.contains("UI work"))
             }
         }
     }
@@ -155,7 +160,7 @@ import CollieProtocol
                     #expect(t.count <= 1500, "\(pref) \(shepherd) \(t.count)")
                     #expect(t.contains("collie herd list") == shepherd && t.contains("collie panel open"))
                     #expect(t.contains("collie lot board"))
-                    if shepherd && (pref != .never || !paddockPanels.isEmpty || panels.contains { $0.pluginId == "design" }) { #expect(t.contains("UI work")) }
+                    #expect(t.contains("UI work") == shepherd)
                 }
             }
         }

@@ -21,7 +21,7 @@ extension CommandRouter {
         let id = try need(r, "id"), applyName = try need(r, "name")
         try refuseFree(r)   // a herd's terminals are always sandboxed
         if let me = caller { try refuseFreeSummoner(me) }
-        guard let pt = await herds.get(id) else { throw ProtocolError(code: .notFound, message: "rebanho '\(id)' não existe") }
+        guard let pt = await herds.get(id)?.following(ws.designFirst) else { throw ProtocolError(code: .notFound, message: "rebanho '\(id)' não existe") }
         // one application at a time per workspace: the next waits
         // ponytail: 100 ms polling; a continuation queue if many ever wait at once
         while applyingHerd { try await Task.sleep(for: .milliseconds(100)) }

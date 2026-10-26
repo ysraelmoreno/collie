@@ -6,7 +6,7 @@ import Foundation
     @Test func decodesWithoutDesignFirst() throws {
         let json = #"{"schemaVersion":3,"id":"\#(UUID())","name":"w","terminals":[],"connections":[]}"#
         let w = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
-        #expect(w.designFirst == .ask)
+        #expect(w.designFirst == .artifact)
         #expect(!String(decoding: try JSONEncoder().encode(w), as: UTF8.self).contains("designFirst"))
     }
     @Test func roundTripsDesignFirst() throws {
@@ -15,12 +15,21 @@ import Foundation
             #expect(try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(w)).designFirst == v)
         }
     }
-    @Test func invalidDesignFirstDecodesAsAsk() throws {
+    @Test func invalidDesignFirstDecodesAsArtifact() throws {
         for bad in [#""Always""#, "7", "null", "{}"] {
             let json = #"{"schemaVersion":3,"id":"\#(UUID())","name":"keep","terminals":[],"connections":[],"designFirst":\#(bad)}"#
             let w = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
-            #expect(w.designFirst == .ask && w.name == "keep", "\(bad)")
+            #expect(w.designFirst == .artifact && w.name == "keep", "\(bad)")
         }
+    }
+    /// "Onde desenhar" replaced "design primeiro": always → figcraft, never → artifact, ask stays.
+    @Test func oldDesignFirstValuesMigrate() throws {
+        for (old, new) in [("always", DesignFirst.figcraft), ("never", .artifact), ("ask", .ask), ("figcraft", .figcraft)] {
+            let json = #"{"schemaVersion":3,"id":"\#(UUID())","name":"w","terminals":[],"connections":[],"designFirst":"\#(old)"}"#
+            #expect(try JSONDecoder().decode(Workspace.self, from: Data(json.utf8)).designFirst == new, "\(old)")
+            #expect(DesignFirst.parse(old) == new)
+        }
+        #expect(DesignFirst.parse("sometimes") == nil)
     }
     @Test func decodesWithoutLots() throws {
         let json = #"{"schemaVersion":3,"id":"\#(UUID())","name":"w","terminals":[],"connections":[]}"#

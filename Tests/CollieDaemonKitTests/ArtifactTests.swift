@@ -610,6 +610,7 @@ extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSyste
             #expect(warnings(r) == ["sem design system ativo: tokens padrão", "bibliotecas offline ausentes"], "\(r)")
             let html = try String(contentsOf: proj.appendingPathComponent("docs/pages/doc-1/index.html"), encoding: .utf8)
             #expect(html.contains("<title>Notas</title>") && html.contains("[data-theme=\"dark\"]") && html.contains("[data-theme=\"light\"]"))
+            #expect(html.contains(Fonts.cssURL(["Space Grotesk", "DM Mono"])))   // the bundled fonts, offline
         }
     }
 
@@ -632,6 +633,25 @@ extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSyste
             #expect(warnings(r) == ["sem design system ativo: tokens padrão"], "\(r)")
             let html = try String(contentsOf: proj.appendingPathComponent("docs/pages/dashboard-1/index.html"), encoding: .utf8)
             #expect(html.contains(#"<script src="collie-lib://lib/chart.js@4.4.9/chart.umd.js"></script>"#))
+        }
+    }
+
+    /// `--connect` (the "Feature com design" Pastor): a Shepherd leashes the new Prévia to terminals it reaches; others are refused.
+    @Test func newConnectLeashesTargets() async throws {
+        try await withProject { d, p, a, proj in
+            let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
+                args: ["name": "M", "preset": "shell", "cwd": .string(proj.path), "shepherd": true]), to: p.socket, timeoutSeconds: 60)
+            guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
+            let m = Term(id: id, token: try await tokenOf(d, id))
+            #expect(try await call(p, a, "artifact.new", ["kind": "prototype", "connect": "M"]).error?.code == .notShepherd)
+            #expect(try await call(p, m, "artifact.new", ["kind": "prototype", "connect": "A"]).error?.code == .notConnected)   // not reached yet
+            #expect(!FileManager.default.fileExists(atPath: proj.appendingPathComponent("docs/pages/prototype-1").path))
+            #expect(try await admin(d, p, "admin.leash", ["a": "M", "b": "A"]).ok)
+            let n = try await call(p, m, "artifact.new", ["kind": "prototype", "name": "feature", "connect": "A"])
+            #expect(n.error == nil, "\(n)")
+            let pn = try #require(await d.router.ws.panels.first { $0.pluginId == "preview" })
+            let conns = await d.router.ws.connections
+            for t in [a, m] { #expect(conns.contains { Set([$0.a, $0.b]) == Set([UUID(uuidString: t.id)!, pn.id]) }) }
         }
     }
 

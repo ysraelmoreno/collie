@@ -83,8 +83,27 @@ enum ArtifactTemplates {
             .replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "'", with: "&#39;")
     }
 
-    /// `libs`: the manifest's entries (`[]`: the library-free page, byte for byte).
-    static func render(_ kind: Kind, title: String, tokensCSS: String, libs: [WebLibEntry] = []) -> String {
+    /// The page's text and mono families: the design system's string variables named `font…` (`mono`/`code` in the
+    /// name: the mono one; valid family names only), else the bundled Space Grotesk and DM Mono.
+    static func fonts(variables: JSONValue?) -> (text: String, mono: String) {
+        var text: String?, mono: String?
+        if case .object(let o)? = variables, case .array(let vs)? = o["variables"] {
+            for case .object(let v) in vs {
+                guard let name = v["name"]?.str?.lowercased(), name.contains("font"), case .object(let values)? = v["values"] else { continue }
+                let family = values.keys.sorted().lazy.compactMap { k -> String? in
+                    guard case .object(let val)? = values[k], val["type"]?.str == "string", let f = val["value"]?.str, Fonts.validFamily(f) else { return nil }
+                    return f
+                }.first
+                guard let family else { continue }
+                if name.contains("mono") || name.contains("code") { mono = mono ?? family } else { text = text ?? family }
+            }
+        }
+        return (text ?? Fonts.defaultText, mono ?? Fonts.defaultMono)
+    }
+
+    /// `libs`: the manifest's entries (`[]`: the library-free page, byte for byte). `fonts`: loaded from
+    /// `collie-lib://fonts` (nil: system fonts only, byte for byte).
+    static func render(_ kind: Kind, title: String, tokensCSS: String, libs: [WebLibEntry] = [], fonts: (text: String, mono: String)? = nil) -> String {
         let t = escape(title)
         var (css, body, js): (String, String, String) = switch kind {
         case .deck: (deckCSS, deckBody(t), deckJS)
@@ -98,13 +117,19 @@ enum ArtifactTemplates {
             body += "\n" + srcs.map { "<script src=\"\($0)\"></script>" }.joined(separator: "\n")
             js += "\n" + libsJS(kind)
         }
+        var link = ""
+        if let fonts {   // valid family names only (Fonts.validFamily): safe in the CSS string
+            link = "\n<link rel=\"stylesheet\" href=\"\(Fonts.cssURL([fonts.text, fonts.mono]))\">"
+            css += "\nbody { font-family: \"\(fonts.text)\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif; }"
+                + "\ncode, pre, kbd, samp { font-family: \"\(fonts.mono)\", ui-monospace, Menlo, monospace; }"
+        }
         return """
             <!doctype html>
             <html lang="pt-BR">
             <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>\(t)</title>
+            <title>\(t)</title>\(link)
             <style>
             \(tokensCSS)
             \(baseCSS)

@@ -11,9 +11,16 @@ import CollieProtocol
 }
 
 @Test func designFirstPickerLabels() {
-    #expect(DesignFirst.allCases.map(\.label) == ["Perguntar", "Sempre", "Nunca"])
-    #expect(DesignFirst.from(reply: .object(["designFirst": .string("never")])) == .never)
+    #expect(DesignFirst.allCases.map(\.label) == ["Página (Prévia)", "FigCraft", "Perguntar"])
+    #expect(DesignFirst.from(reply: .object(["designFirst": .string("figcraft")])) == .figcraft)
     #expect(DesignFirst.from(reply: .object(["designFirst": .string("x")])) == nil)
+}
+
+@Test func fontRowsFromReply() {
+    let r: JSONValue = .array([.object(["family": .string("Inter"), "source": .string("google")]), .object(["family": .string("DM Mono"), "source": .string("bundled")]), .string("x")])
+    #expect(FontRow.rows(r) == [FontRow(family: "Inter", downloaded: true), FontRow(family: "DM Mono", downloaded: false)])
+    #expect(FontRow.rows(.object([:])).isEmpty)
+    #expect(FontRow.download(.object(["download": .bool(false)])) == false && FontRow.download(.null) == nil)
 }
 
 @Test func lotPickerAndSidebarCopy() {

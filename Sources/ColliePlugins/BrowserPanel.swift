@@ -44,7 +44,8 @@ import os
         config.preferences.tabFocusesLinks = true   // Tab walks links and buttons too (as in Chrome), not only text fields
         config.setURLSchemeHandler(DesignSchemeHandler(root: host.root.appendingPathComponent("artifacts"), artifacts: true), forURLScheme: Self.artifactScheme)
         // offline libraries for artifact pages only: the handler refuses any other main document (http/https)
-        config.setURLSchemeHandler(WebLibSchemeHandler(directory: WebLibs.directory), forURLScheme: WebLibs.scheme)
+        config.setURLSchemeHandler(WebLibSchemeHandler(directory: WebLibs.directory, bundledFonts: WebLibs.fontsDirectory,
+                                                            downloadedFonts: host.root.appendingPathComponent("fonts")), forURLScheme: WebLibs.scheme)
         let content = config.userContentController
         let web = WKWebView(frame: .zero, configuration: config)
         webView = web

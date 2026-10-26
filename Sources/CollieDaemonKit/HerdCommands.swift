@@ -33,11 +33,11 @@ extension CommandRouter {
         func herd() async throws -> Herd {
             let id = try need(r, "id")
             guard let p = await herds.get(id) else { throw ProtocolError(code: .notFound, message: "rebanho '\(id)' não existe") }
-            return p
+            return p.following(ws.designFirst)
         }
         switch r.command {
         case "herd.list":
-            return .array(await herds.list().map { p in
+            return .array(await herds.list().map { $0.following(ws.designFirst) }.map { p in
                 .object(["id": .string(p.id), "name": .string(p.name), "summary": .string(p.summary), "wantsPaddock": .bool(p.wantsPaddock),
                          "builtIn": .bool(p.builtIn), "terminals": .number(Double(p.terminals.count)), "panels": .number(Double(p.panels.count))])
             })

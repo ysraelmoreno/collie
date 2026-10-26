@@ -7,11 +7,11 @@ import ColliePlugins
 
 /// Two pages, Aparência and Plug-ins (`PluginsPreferences`), picked in the header.
 extension DesignFirst {
-    var label: String { switch self { case .ask: "Perguntar"; case .always: "Sempre"; case .never: "Nunca" } }
+    var label: String { switch self { case .artifact: "Página (Prévia)"; case .figcraft: "FigCraft"; case .ask: "Perguntar" } }
     /// The `design.prefer` reply (`{designFirst}`); nil when it is anything else.
     static func from(reply: JSONValue) -> DesignFirst? {
         guard case .object(let o) = reply, case .string(let v)? = o["designFirst"] else { return nil }
-        return DesignFirst(rawValue: v)
+        return DesignFirst.parse(v)
     }
 }
 
@@ -24,10 +24,34 @@ extension SandboxMode {
     }
 }
 
+/// A `font.list` row: downloaded (Google Fonts, removable) or bundled.
+struct FontRow: Equatable, Identifiable {
+    var family: String
+    var downloaded: Bool
+    var id: String { family }
+    static func rows(_ reply: JSONValue) -> [FontRow] {
+        guard case .array(let a) = reply else { return [] }
+        return a.compactMap { v in
+            guard case .object(let o) = v, case .string(let f)? = o["family"] else { return nil }
+            return FontRow(family: f, downloaded: o["source"] == .string("google"))
+        }
+    }
+    /// The `admin.fonts` reply (`{download}`).
+    static func download(_ reply: JSONValue) -> Bool? {
+        guard case .object(let o) = reply, case .bool(let b)? = o["download"] else { return nil }
+        return b
+    }
+}
+
 struct PreferencesView: View {
     let client: DaemonClient
-    @State private var designFirst = DesignFirst.ask
+    @State private var designFirst = DesignFirst.artifact
     @State private var sandboxMode = SandboxMode.open
+    @State private var googleFonts = true
+    @State private var fonts: [FontRow] = []
+    @State private var newFont = ""
+    @State private var fontBusy = false
+    @State private var fontError: String?
     @State private var page = "Aparência"
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
@@ -54,7 +78,7 @@ struct PreferencesView: View {
         .frame(width: 560, height: 560)
         .background(Color.collieBackground)
         .onAppear { AppearanceSettings.normalize(.standard) }   // a stale or hand-edited value would leave a picker blank
-        .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode() }   // no workspace event: read when shown
+        .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode(); await loadFonts() }   // no workspace event: read when shown
         .onChange(of: theme) { CollieApp.applyTheme() }
     }
 
@@ -94,13 +118,13 @@ struct PreferencesView: View {
                         }
                         .fixedSize()
                     }
-                    section("Design antes da interface") {
-                        Picker("Design antes da interface", selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .ask) })) {
+                    section("Onde desenhar") {
+                        Picker("Onde desenhar", selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .artifact) })) {
                             ForEach(DesignFirst.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
                         }
                         .labelsHidden().pickerStyle(.segmented).fixedSize()
                         .disabled(client.state != .connected)
-                        Text("Em trabalho de interface, o Pastor desenha antes no FigCraft: pergunta, sempre ou nunca. Vale para o workspace.")
+                        Text("Em trabalho de interface, o Pastor desenha antes: numa página na Prévia (fontes, animação, bibliotecas offline), no FigCraft, ou pergunta. Vale para o workspace e para o rebanho Feature com design.")
                             .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                     }
                     section("Modo do sandbox") {
@@ -113,6 +137,26 @@ struct PreferencesView: View {
                              ? "Aberto: o agente lê e escreve tudo na sua conta (chaves e tokens incluídos); só os dados e o app do Collie ficam fechados. Vale para terminais abertos depois."
                              : "Estrito: escrita só no projeto, segredos fechados, cartões para liberar. Vale para terminais abertos depois.")
                             .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                    }
+                    section("Fontes") {
+                        Toggle("Baixar fontes do Google Fonts", isOn: Binding(get: { googleFonts }, set: { setGoogleFonts($0) }))
+                            .disabled(client.state != .connected)
+                        Text("Para as páginas da Prévia, offline: o daemon baixa cada família uma vez (só o nome da fonte e o download vão ao Google); as páginas nunca acessam a rede. Os agentes pedem com collie font add.")
+                            .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                        HStack {
+                            TextField("Família (ex.: Inter)", text: $newFont).frame(width: 220).onSubmit(addFont)
+                            Button(fontBusy ? "Baixando…" : "Baixar", action: addFont)
+                                .disabled(!googleFonts || fontBusy || newFont.trimmingCharacters(in: .whitespaces).isEmpty || client.state != .connected)
+                        }
+                        if let fontError { Text(fontError).font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
+                        ForEach(fonts) { f in
+                            HStack {
+                                Text(f.family).font(.collieUI(13))
+                                Text(f.downloaded ? "Google Fonts" : "vem com o Collie").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
+                                Spacer()
+                                if f.downloaded { Button("Remover") { removeFont(f.family) }.disabled(client.state != .connected) }
+                            }
+                        }
                     }
                     section("Memória") {
                         Toggle("Avisar uma vez por dia o que o Collie aprendeu", isOn: $dailyNotification)
@@ -138,6 +182,44 @@ struct PreferencesView: View {
             if let r = try? await client.adminCall("design.prefer", ["value": .string(v.rawValue)]), let got = DesignFirst.from(reply: r) { designFirst = got }
             else { designFirst = before }   // refused or daemon gone: show what is saved
         }
+    }
+
+    private func loadFonts() async {
+        guard client.state == .connected else { return }
+        if let r = try? await client.adminCall("admin.fonts", [:]), let on = FontRow.download(r) { googleFonts = on }
+        if let r = try? await client.adminCall("font.list", [:]) { fonts = FontRow.rows(r) }
+    }
+
+    private func setGoogleFonts(_ on: Bool) {
+        let before = googleFonts
+        googleFonts = on
+        Task {
+            if let r = try? await client.adminCall("admin.fonts", ["download": .string(on ? "on" : "off")]), let got = FontRow.download(r) { googleFonts = got }
+            else { googleFonts = before }   // refused or daemon gone: show what is saved
+        }
+    }
+
+    private func addFont() {
+        let f = newFont.trimmingCharacters(in: .whitespaces)
+        guard !f.isEmpty, !fontBusy else { return }
+        fontBusy = true; fontError = nil
+        Task {
+            switch await call("font.add", ["family": .string(f)]) { case nil: newFont = ""; case let m?: fontError = m }
+            fontBusy = false
+            await loadFonts()
+        }
+    }
+
+    private func removeFont(_ family: String) {
+        Task {
+            if let m = await call("font.remove", ["family": .string(family)]) { fontError = m }
+            await loadFonts()
+        }
+    }
+
+    /// An admin call's error message; nil when it worked.
+    private func call(_ command: String, _ args: [String: JSONValue]) async -> String? {
+        do { _ = try await client.adminCall(command, args); return nil } catch { return error.message }
     }
 
     private func loadSandboxMode() async {

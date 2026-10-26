@@ -212,12 +212,19 @@ O export HTML agora gera um artifact versionado (veja a seção Artifacts).
 Limitações: os arquivos ficam no armazenamento do servidor local (não no git; `export --format figcraft` gera um
 `.figcraft`); o painel usa WebGPU quando o WebKit tem um adaptador (sonda única por execução, prazo de 2 s) e WebGL2 (`?webgl`) caso contrário; se a página WebGPU não iniciar, recarrega com `?webgl`. `COLLIE_DESIGN_GPU=webgl|webgpu` força um dos dois. Medido em macOS 15 (Darwin 24.6, arm64): a sonda respondeu false nesta máquina; o figcraft registrou o backend Gl com e sem ?webgl. Servidor, CLI e UI são sempre a mesma versão (v0.7.0). Limitações da importação de HTML: veja a seção Importar HTML.
 
-**Design antes da interface.** Para trabalho de interface (tela nova, fluxo novo ou mudança visível), o Pastor segue a
-preferência `design-first` do workspace: `ask` (padrão) pergunta uma vez se deve desenhar antes no FigCraft, `always`
-desenha sempre e `never` nunca pergunta. Quem altera é o app (**Preferências → Design antes da interface**) ou um Pastor
-do pasto, com `collie design prefer ask|always|never`; qualquer terminal lê com `collie design prefer`. Se já houver um
-painel Design, ele é usado primeiro. O rebanho de fábrica **Feature com design** (Pastor, designer, interface e tester)
-já vem com o painel Design e o Navegador ligados: o designer desenha, a interface implementa e o tester compara as telas.
+### Onde desenhar
+
+Para trabalho de interface (tela nova, fluxo novo, mudança visível, ou só "faz um design de X"), o Pastor desenha antes
+onde a preferência **Onde desenhar** do workspace manda: `artifact` (padrão) numa página na Prévia
+(`collie artifact new prototype <nome>`: HTML/CSS com fontes, animação e bibliotecas offline, `collie font add`), `figcraft`
+num painel Design (FigCraft), ou `ask`, que pergunta uma vez. Com `artifact`, o FigCraft fica para quando o usuário pede ou
+para trabalho de design system. Quem altera é o app (**Preferências → Onde desenhar**) ou um Pastor do pasto, com
+`collie design prefer artifact|figcraft|ask`; qualquer terminal lê com `collie design prefer`. Os valores antigos continuam
+aceitos e migram sozinhos: `always` vira `figcraft`, `never` vira `artifact` (desconhecido ou ausente: `artifact`). Se já
+houver um painel Design ligado ao Pastor, ele é usado primeiro. O rebanho de fábrica **Feature com design** (Pastor,
+designer, interface e tester) segue a preferência: com `figcraft` vem com o painel Design e o Navegador ligados; senão o
+Pastor abre a página do design com `collie artifact new prototype feature --connect <designer>,<interface>,<tester>`
+(`--connect` é só de Pastor) e o tester compara `collie preview screenshot` com o Navegador.
 
 ## Diagrama
 
@@ -327,6 +334,27 @@ os tarballs do npm, confere o SHA-256 e copia o arquivo UMD + licença para `ven
 responde "Bibliotecas offline ausentes" e `scripts/bundle-app.sh` para com erro (`COLLIE_ALLOW_NO_WEBLIBS=1` empacota
 sem elas). Licenças: `NOTICE-weblibs` e o `LICENSE` de cada biblioteca em
 `Contents/Resources/weblibs/<nome>@<versão>/`.
+
+### Fontes
+
+As páginas usam fontes offline em `collie-lib://fonts`: `<link rel="stylesheet" href="collie-lib://fonts/css?family=Inter:400,700&family=DM%20Mono">`
+devolve as regras `@font-face` (sem `:pesos`, todos os que houver) e cada arquivo sai de
+`collie-lib://fonts/<família>/<arquivo>`. Vêm com o Collie a Space Grotesk e a DM Mono (`vendor/fonts`); as páginas de
+`artifact new` usam as fontes do design system ativo (variáveis de texto com `font` no nome; `mono`/`code`: a monoespaçada),
+senão essas duas, e avisam quando uma fonte do design system não foi baixada.
+
+Do Google Fonts: `collie font add "<Família>" [--weights 400,700] [--italic]` (agentes e o app) baixa a família uma vez;
+`collie font list` lista as baixadas e as que vêm com o Collie; remover é só no app (**Preferências → Fontes**). Quem baixa é
+o daemon, nunca uma página: a API css2 em `fonts.googleapis.com` e os woff2 em `fonts.gstatic.com`, só https, sem
+redirecionar para fora desses hosts, até 2 MiB por arquivo e 20 MiB por família, nome em `[A-Za-z0-9 ]{1,64}`. Ficam em
+`<root>/fonts/<família>/` (pasta 0700, arquivos 0600) com `font.json` e um `LICENSE.txt` que registra a URL de origem e a
+licença (SIL OFL 1.1 ou Apache 2.0, conforme a família; o texto completo fica na página da família no Google Fonts).
+**Privacidade:** só o nome da fonte e o download vão ao Google; as páginas continuam offline. A preferência **Baixar fontes
+do Google Fonts** (ligada por padrão; só o app muda, `admin.fonts`) desligada faz `font add` recusar com um aviso.
+
+O FigCraft não enxerga essas fontes: o painel Design roda o build web do figcraft, que só tem as fontes do craft-fonts
+embutidas na compilação (sem fontes do sistema nem pasta de fontes configurável, e ele não lê woff2). Para uma fonte do
+Google Fonts no design, desenhe na Prévia.
 
 ## Prévia e modelos
 

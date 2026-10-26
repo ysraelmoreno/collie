@@ -82,6 +82,9 @@ actor CommandRouter {
     var importingArtifacts: Set<UUID> = []
     /// A `herd.apply` in flight: one at a time, the next waits.
     var applyingHerd = false
+    /// `font.add`: one at a time; the terminals' adds in the last hour.
+    var addingFont = false
+    var fontAdds: [ContinuousClock.Instant] = []
     /// The user's sandbox grants (`<root>/sandbox/grants.json`), the pending access cards, the terminals whose profile
     /// this daemon rendered (a denial's tag must name one), whether denials are seen (nil: no watcher), the watcher.
     var sandboxGrants: [SandboxGrant]
@@ -91,6 +94,8 @@ actor CommandRouter {
     var sandboxWatch: Task<Void, Never>?
     /// The Collie-wide sandbox mode (`<root>/preferences.json`); nil: `config.defaultSandboxMode`.
     var sandboxPref: SandboxMode?
+    /// Preferências → "Baixar fontes do Google Fonts" (`<root>/preferences.json`; on unless turned off).
+    var googleFonts = true
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
     init(config: DaemonConfig, auth: AuthRegistry, registry: TerminalRegistry, store: WorkspaceStore,
@@ -134,10 +139,13 @@ actor CommandRouter {
         self.curator = Curator(dir: curatorDir, runner: config.curatorRunner ?? ClaudeCuratorRunner(
             root: config.paths.root, home: home, env: { await userEnv.current() }))
         // L3: one Collie-wide preference; a workspace's value (before) moves there once
-        self.sandboxPref = CollieSettings.load(root).terminalSandbox
+        let settings = CollieSettings.load(root)
+        self.sandboxPref = settings.terminalSandbox
+        self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {
             sandboxPref = w
-            try? CollieSettings(terminalSandbox: w).save(root)
+            var s = settings; s.terminalSandbox = w
+            try? s.save(root)
         }
         self.ws.terminalSandbox = nil
         me.router = self
@@ -261,6 +269,9 @@ actor CommandRouter {
             }
             if req.command.hasPrefix("access.") {   // request/list: a terminal; grant/deny/revoke: the app alone
                 return Response(id: req.id, ok: true, result: try await accessCommand(req, peer: peer))
+            }
+            if req.command.hasPrefix("font.") {   // add/list: admin or terminal; remove: the app's
+                return Response(id: req.id, ok: true, result: try await fontCommand(req, peer: peer))
             }
             if req.command.hasPrefix("herd.") {   // admin or Shepherd; app-only ones checked in herdCommand
                 return Response(id: req.id, ok: true, result: try await herdCommand(req, peer: peer))
@@ -535,6 +546,7 @@ actor CommandRouter {
             }
             return .object([:])
         case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))
+        case "admin.fonts": return try setGoogleFonts(str(r, "download"))
         case "admin.data.export", "admin.data.import":
             let key = r.command == "admin.data.export" ? "out" : "from"
             let path = try need(key)

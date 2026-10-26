@@ -5,23 +5,15 @@ import CollieProtocol
 /// claude.ai artifacts imported by a Claude Code terminal (already logged in, with its own Artifact tool): Collie never
 /// holds claude.ai credentials nor fetches; it hands the terminal the recipe and keeps what `artifact add --source` brings.
 enum ClaudeImport {
-    static let maxLinks = 50, maxListed = 200
+    static let maxLinks = ClaudeLinks.maxPerImport, maxListed = 200
     private static func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
 
-    /// `https://claude.ai/artifact/<id>` or `https://claude.ai/code/artifact/<uuid>`, exactly (no query, port, user).
-    static func isLink(_ s: String) -> Bool {
-        s.wholeMatch(of: /https:\/\/claude\.ai\/artifact\/[A-Za-z0-9_-]{1,128}/) != nil
-            || s.wholeMatch(of: /https:\/\/claude\.ai\/code\/artifact\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/) != nil
-    }
+    static func isLink(_ s: String) -> Bool { ClaudeLinks.isLink(s) }
 
     /// The links in `raw` (split on spaces, lines and commas; a trailing `/` dropped), each once, in order; 1 to 50.
     static func links(_ raw: [String]) throws(ProtocolError) -> [String] {
-        var out: [String] = []
-        for w in raw.flatMap({ $0.split(whereSeparator: { $0.isWhitespace || $0 == "," }) }) {
-            let s = w.hasSuffix("/") ? String(w.dropLast()) : String(w)
-            guard isLink(s) else { throw invalid("não é um link de artifact do claude.ai (https://claude.ai/artifact/… ou …/code/artifact/…): \(s.prefix(120))") }
-            if !out.contains(s) { out.append(s) }
-        }
+        let (out, bad) = ClaudeLinks.split(raw.joined(separator: "\n"))
+        if let b = bad.first { throw invalid("não é um link de artifact do claude.ai (https://claude.ai/artifact/… ou …/code/artifact/…): \(b.prefix(120))") }
         guard !out.isEmpty else { throw invalid("nenhum link de artifact do claude.ai") }
         guard out.count <= maxLinks else { throw invalid("até \(maxLinks) links por vez (\(out.count) dados)") }
         return out

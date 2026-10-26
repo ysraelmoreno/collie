@@ -23,8 +23,9 @@ enum CollieOrientation {
                      lot: (name: String, goal: String)? = nil, morePanels: Bool = false) -> String {
         // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
-        for n in [3, 1, 0, -1] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, n)
+        // the claude.ai import hint first goes, before any name
+        for (n, claude) in [(3, true), (3, false), (1, false), (0, false), (-1, false)] {
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, n, claude: claude)
             if t.count <= limit { return t }
         }
         return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, -1)
@@ -33,7 +34,7 @@ enum CollieOrientation {
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
-                              lot: (name: String, goal: String)?, morePanels: Bool, _ k: Int) -> String {
+                              lot: (name: String, goal: String)?, morePanels: Bool, _ k: Int, claude: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -54,7 +55,7 @@ enum CollieOrientation {
         if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens and checks pages.") }
         // panel-free: independent of reach. ponytail: the kinds and libs only while names fit (k = 3); else `--help` lists
         // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
-        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs."
+        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs." + (claude ? " claude.ai links: artifact import-claude." : "")
             : "- Artifacts: collie artifact … (new <kind>: Prévia; --folder).")
         if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
         if isShepherd {

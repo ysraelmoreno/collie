@@ -13,6 +13,8 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
     public let source: String?, importError: String?
     /// The user folder it is in (nil: "Sem pasta").
     public let folder: String?
+    /// Remote resources the page still loads after its offline rewrite (nil: a record from before it).
+    public let needsNetwork: [String]?
     public var isExport: Bool { kind == "export" }
     public var statusLabel: String {
         ["current": "atual", "stale": "desatualizado", "missing": "origem removida", "unknown": "desconhecido",
@@ -104,6 +106,9 @@ public enum ArtifactFolderTree {
     public var sections: [FolderSection] { ArtifactFolderTree.sections(rows: rows, folders: folders, query: query, collapsed: collapsed) }
     @Published public private(set) var error: String?
     @Published public private(set) var busy = false
+    /// The "Importar do Claude…" sheet: its links' progress and the Claude terminals it can use.
+    @Published public var claude = ClaudeImportProgress()
+    @Published public private(set) var terminals: [ClaudeTerminalRow] = []
 
     private let call: PanelHostContext.Call
     private var coalescer: RefreshCoalescer?
@@ -113,7 +118,51 @@ public enum ArtifactFolderTree {
     }
 
     /// `artifact.*` events refresh the list (coalesced: at most one refresh per window).
-    public func handleEvent(_ name: String) async { if name.hasPrefix("artifact.") { await coalescer?.fire() } }
+    public func handleEvent(_ name: String, _ payload: JSONValue = .null) async {
+        guard name.hasPrefix("artifact.") else { return }
+        claude.apply(name, payload)
+        if !name.hasPrefix("artifact.import.") { await coalescer?.fire() }
+    }
+
+    // MARK: import
+
+    public func loadTerminals() async {
+        guard let v = await send("artifact.import-terminals") else { return }
+        terminals = (try? JSONDecoder().decode([ClaudeTerminalRow].self, from: JSONEncoder().encode(v))) ?? []
+    }
+
+    /// `links` sent to Claude terminal `terminal` (an id) to import into `folder` ("": none); true once sent.
+    public func importClaude(_ links: [String], folder: String, terminal: String) async -> Bool {
+        var ok = false
+        await run {
+            ok = await send("artifact.import-claude", ["urls": .string(links.joined(separator: " ")), "folder": .string(folder),
+                                                       "terminal": .string(terminal)]) != nil
+        }
+        if ok { claude.started(links) }
+        return ok
+    }
+
+    /// The terminal lists the user's claude.ai artifacts (`artifact.import.list` brings them).
+    public func listClaude(terminal: String) async {
+        var ok = false
+        await run { ok = await send("artifact.import-claude", ["mine": .bool(true), "terminal": .string(terminal)]) != nil }
+        claude.listing = ok
+    }
+
+    /// Files dropped on the panel (or a folder: `into`) added as artifacts, one after another; refusals as the error.
+    public func drop(_ urls: [URL], into folder: String?) async {
+        let (ok, refused) = ArtifactDrop.check(urls)
+        var failed = refused
+        await run {
+            for u in ok {
+                do throws(ProtocolError) {
+                    _ = try await call("artifact.add", ["path": .string(u.path), "folder": .string(folder ?? "")])
+                } catch { failed.append("\(u.lastPathComponent): \(error.message)") }
+            }
+        }
+        if !ok.isEmpty { await refresh() }
+        if !failed.isEmpty { error = failed.joined(separator: "\n") }   // after the refresh, which clears it
+    }
 
     @discardableResult private func send(_ command: String, _ args: [String: JSONValue] = [:]) async -> JSONValue? {
         do { return try await call(command, args) } catch { self.error = error.message; return nil }
@@ -241,7 +290,7 @@ public enum ArtifactFolderTree {
         throw ProtocolError(code: .notFound, message: "artifacts has no commands")
     }
     public func close() { model.stop() }   // later events' tasks find the coalescer closed
-    public func receive(event: String, payload: JSONValue) { Task { [model] in await model.handleEvent(event) } }
+    public func receive(event: String, payload: JSONValue) { Task { [model] in await model.handleEvent(event, payload) } }
 }
 
 @MainActor private let relative: RelativeDateTimeFormatter = {
@@ -256,12 +305,14 @@ struct ArtifactsView: View {
     @State private var naming: Naming?
     @State private var name = ""
     @State private var removingFolder: FolderSection?
+    @State private var importing = false
 
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader("Artifacts", subtitle: model.rows.count == 1 ? "1 página" : "\(model.rows.count) páginas") {
                 HStack(spacing: 8) {
                     if model.busy { ProgressView().controlSize(.small) }
+                    Button("Importar do Claude…") { importing = true }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                     Button("Nova pasta") { name = ""; naming = .create(nil) }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                     Button("Atualizar") { Task { await model.refresh() } }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                 }
@@ -277,9 +328,14 @@ struct ArtifactsView: View {
                     }
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
-            PanelFooter("collie artifact add <página.html>")
+            PanelFooter("collie artifact add <página.html> · solte .html, pasta ou .zip aqui")
         }
         .background(Color.collieSidebar)
+        .dropDestination(for: URL.self) { urls, _ in   // onto the panel: "Sem pasta"
+            Task { await model.drop(urls, into: nil) }
+            return !urls.isEmpty
+        }
+        .sheet(isPresented: $importing) { ClaudeImportSheet(model: model, shown: $importing) }
         .task { await model.refresh() }
         .confirmationDialog("Remover \(removing?.title ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
                             titleVisibility: .visible, presenting: removing) { r in
@@ -329,7 +385,12 @@ struct ArtifactsView: View {
         .padding(.leading, CGFloat(s.depth) * 16).padding(.top, 4)
         .accessibilityLabel("\(s.path ?? s.name), \(s.total) artifacts, \(s.collapsed ? "recolhida" : "aberta")")
         .dropDestination(for: String.self) { ids, _ in
-            Task { for id in ids { await model.move(id, to: s.path) } }
+            // a row's id moves it; a file from the Finder (its file URL) is added into the folder
+            let files = ids.compactMap { $0.hasPrefix("file://") ? URL(string: $0) : nil }
+            Task {
+                for id in ids where !id.hasPrefix("file://") { await model.move(id, to: s.path) }
+                if !files.isEmpty { await model.drop(files, into: s.path) }
+            }
             return !ids.isEmpty
         }
         .contextMenu {
@@ -383,6 +444,10 @@ struct ArtifactsView: View {
                         .help(r.importError ?? "")
                 }
                 Text("\(r.origin) · v\(r.version)").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                if let net = r.needsNetwork, !net.isEmpty {
+                    Label("precisa de rede", systemImage: "wifi").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                        .help(net.joined(separator: "\n")).accessibilityLabel("Precisa de rede: " + net.joined(separator: ", "))
+                }
                 Text("por \(r.by) · \(relative.localizedString(for: r.at, relativeTo: Date()))").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                 if r.status == "importing" { ProgressView().progressViewStyle(.linear).tint(Color.collieSecondary) }
                 VStack(alignment: .leading, spacing: 6) {

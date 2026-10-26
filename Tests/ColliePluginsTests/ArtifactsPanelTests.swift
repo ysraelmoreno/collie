@@ -29,6 +29,7 @@ private actor Fake {
                            row("d", "export", "unknown", file: "Site"), row("e", "agent", "pending"),
                            row("f", "export", "current", file: "Imp", source: "collie-artifact://app/f/source/index.html"),
                            row("g", "agent", "importing"), row("h", "agent", "failed", source: "collie-artifact://app/h/source/index.html", error: "Collie app is not running")].prefix(rowLimit)))
+        case "artifact.folders": return .array([])
         case "artifact.remove":
             if holdRemove { await withCheckedContinuation { removeWaiter = $0 } }
             return .object([:])
@@ -36,7 +37,7 @@ private actor Fake {
         }
     }
     func listCount() -> Int { calls.filter { $0.0 == "artifact.list" }.count }
-    func names() -> [String] { calls.map(\.0) }
+    func names() -> [String] { calls.map(\.0).filter { $0 != "artifact.folders" } }   // fetched with every list
     func last(_ c: String) -> [String: JSONValue]? { calls.last { $0.0 == c }?.1 }
 }
 

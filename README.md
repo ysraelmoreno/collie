@@ -352,9 +352,12 @@ licença (SIL OFL 1.1 ou Apache 2.0, conforme a família; o texto completo fica 
 **Privacidade:** só o nome da fonte e o download vão ao Google; as páginas continuam offline. A preferência **Baixar fontes
 do Google Fonts** (ligada por padrão; só o app muda, `admin.fonts`) desligada faz `font add` recusar com um aviso.
 
-O FigCraft não enxerga essas fontes: o painel Design roda o build web do figcraft, que só tem as fontes do craft-fonts
-embutidas na compilação (sem fontes do sistema nem pasta de fontes configurável, e ele não lê woff2). Para uma fonte do
-Google Fonts no design, desenhe na Prévia.
+O FigCraft também usa as fontes baixadas: além dos woff2 das páginas, `font add` guarda um TTF inteiro por face em
+`<família>/ttf/` (o mesmo css2 pedido com um User-Agent que recebe TrueType; mesmos hosts e limites; se o TTF falhar, a
+família fica só para as páginas e o comando avisa). O painel Design entrega esses TTFs ao editor quando ele abre e a cada
+`font add`/remoção (patch `0005-runtime-fonts`: `collie_add_font` no build web); os `figcraft-cli` do daemon (exports,
+miniaturas) leem `<root>/fonts` por `FIGCRAFT_EXTRA_FONTS_DIR`. Famílias baixadas antes ganham os TTFs no próximo
+`font add` delas. É local: quem abre o arquivo sem a fonte vê Inter no lugar.
 
 ## Prévia e modelos
 

@@ -20,6 +20,8 @@ public struct FontFamily: Codable, Sendable, Equatable {
     /// Where it came from (the css2 URL) and its licence's name: downloaded families only.
     public var source: String?
     public var licence: String?
+    /// The TTFs for FigCraft were past their caps: `font.add` doesn't download them again (downloaded families only).
+    public var ttfSkipped: Bool?
     public init(family: String, faces: [Face], source: String? = nil, licence: String? = nil) {
         self.family = family; self.faces = faces; self.source = source; self.licence = licence
     }

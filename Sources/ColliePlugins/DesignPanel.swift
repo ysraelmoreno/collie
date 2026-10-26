@@ -144,6 +144,13 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
     private let box = Box()
     private var started = false
     private var gen = 0   // bumped per connect: a stale `design.link` reply never loads
+    /// Bumped per page load (its FigCraft starts with only the embedded fonts); `pushedFonts`: the files it was given since.
+    private var load = 0
+    private var pushedFonts: Set<String> = []
+    /// Files on their way to the page, and refusals per file (`collie_add_font` false): one retry, then left alone (kept
+    /// across reloads).
+    private var sendingFonts: Set<String> = [], fontFailures: [String: Int] = [:]
+    nonisolated static let fontFileCap = 20 << 20, fontPushCap = 64 << 20
 
     public var view: NSView { box }
 
@@ -209,8 +216,67 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         throw ProtocolError(code: .unavailable, message: "design commands run in the daemon")
     }
 
+    /// `fonts.changed` (the daemon, after `font.add`/`font.remove`): the page gets the new TTFs.
+    public func receive(event: String, payload: JSONValue) { if event == "fonts.changed" { pushFonts() } }
+
+    /// The TTFs `font.add` keeps for FigCraft (`<root>/fonts/<family>/ttf/*.ttf|otf`) not yet given to this page, read off
+    /// the main thread: real folders and regular files only (no symlink followed), each ≤ 20 MiB, ≤ 64 MiB per push. Each
+    /// goes to `wasmBindings.collie_add_font` (patch 0005) in the page, once it has started; a refused one is tried again
+    /// on the next push, once. A page that never starts (30 s) leaves it for the next push. A removed font stays until
+    /// the page reloads.
+    func pushFonts() {
+        guard let web = webView else { return }
+        let l = load, dir = host.root.appendingPathComponent("fonts")
+        let skip = pushedFonts.union(sendingFonts).union(fontFailures.filter { $0.value >= 2 }.keys)
+        Task { [weak self] in
+            let files = await Task.detached { Self.fontFiles(dir, skip: skip) }.value
+            guard let self, self.load == l, self.webView === web else { return }
+            for (path, data) in files where !self.pushedFonts.contains(path) && self.sendingFonts.insert(path).inserted {
+                let r = try? await web.callAsyncJavaScript(Self.addFontScript, arguments: ["s": data.base64EncodedString()], contentWorld: .page)
+                self.sendingFonts.remove(path)
+                guard self.load == l else { return }
+                switch r as? Bool {
+                case true?: self.pushedFonts.insert(path)
+                case false?: self.fontFailures[path, default: 0] += 1
+                case nil: break   // not started yet: the next push
+                }
+            }
+        }
+    }
+
+    nonisolated static func fontFiles(_ dir: URL, skip: Set<String>) -> [(String, Data)] {
+        let fm = FileManager.default
+        func type(_ u: URL) -> FileAttributeType? { (try? fm.attributesOfItem(atPath: u.path))?[.type] as? FileAttributeType }   // lstat
+        var out: [(String, Data)] = [], left = fontPushCap
+        for family in ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).sorted() where !family.hasPrefix(".") {
+            let ttf = dir.appendingPathComponent(family).appendingPathComponent("ttf")
+            guard type(ttf.deletingLastPathComponent()) == .typeDirectory, type(ttf) == .typeDirectory else { continue }
+            for name in ((try? fm.contentsOfDirectory(atPath: ttf.path)) ?? []).sorted() where ["ttf", "otf"].contains((name as NSString).pathExtension.lowercased()) {
+                let f = ttf.appendingPathComponent(name)
+                guard !skip.contains(f.path), type(f) == .typeRegular,
+                      let size = (try? fm.attributesOfItem(atPath: f.path))?[.size] as? Int, size <= fontFileCap, size <= left,
+                      let d = try? Data(contentsOf: f), d.count == size else { continue }
+                left -= size; out.append((f.path, d))
+            }
+        }
+        return out
+    }
+
+    /// `s` (base64) into a `Uint8Array`, then `collie_add_font` now or when trunk's loader says the app started: its
+    /// answer (true/false), or null after 30 s without a start.
+    static let addFontScript = """
+        const t = atob(s), b = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) b[i] = t.charCodeAt(i);
+        return await new Promise(done => {
+          const go = () => { try { done(window.wasmBindings.collie_add_font(b) === true) } catch (e) { done(false) } };
+          if (window.wasmBindings) return go();
+          const h = () => { clearTimeout(timer); go() };
+          const timer = setTimeout(() => { removeEventListener("TrunkApplicationStarted", h); done(null) }, 30000);
+          addEventListener("TrunkApplicationStarted", h, { once: true });
+        });
+        """
+
     public func close() {
-        gen += 1
+        gen += 1; load += 1
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil
@@ -325,7 +391,11 @@ extension DesignPanel: WKNavigationDelegate {
         let scheme = navigationAction.request.url?.scheme?.lowercased()
         decisionHandler(scheme == DesignSchemeHandler.scheme || scheme == "about" ? .allow : .cancel)
     }
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { box.status(nil, retry: false) }
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        box.status(nil, retry: false)
+        load += 1; pushedFonts = []
+        pushFonts()
+    }
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
         if !BrowserPanel.isSuperseded(error) { failed(nil) }
     }

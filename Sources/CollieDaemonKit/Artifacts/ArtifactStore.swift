@@ -14,11 +14,15 @@ struct Artifact: Codable, Sendable, Equatable {
     var source: String? = nil
     /// Why the last import of the page into a design failed.
     var importError: String? = nil
+    /// The user folder it is kept in (`ArtifactFolder`; nil: "Sem pasta"), and the terminal that handed it in (nil: the app,
+    /// or a record from before it): only that terminal (or the app) moves it.
+    var inFolder: String? = nil
+    var byId: UUID? = nil
 }
 
 extension Artifact {
     private enum CodingKeys: String, CodingKey {
-        case id, kind, title, fileId, node, paddockId, by, at, version, folder, stamp, warnings, page, source, importError
+        case id, kind, title, fileId, node, paddockId, by, at, version, folder, stamp, warnings, page, source, importError, inFolder, byId
     }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     init(from d: Decoder) throws {
@@ -30,17 +34,20 @@ extension Artifact {
         folder = try c.decode(String.self, forKey: .folder); stamp = try c.decodeIfPresent(String.self, forKey: .stamp)
         warnings = try c.decode([String].self, forKey: .warnings); page = try c.decodeIfPresent(String.self, forKey: .page)
         source = try c.decodeIfPresent(String.self, forKey: .source); importError = try c.decodeIfPresent(String.self, forKey: .importError)
+        inFolder = try c.decodeIfPresent(String.self, forKey: .inFolder); byId = try c.decodeIfPresent(UUID.self, forKey: .byId)
     }
 }
 
 /// `<root>/artifacts/artifacts.json` (0600) and a folder per artifact: an export's versions in `<id>/v<N>/`, an
 /// agent's page as `<id>/source.html` (0444). A version is reserved here (`newVersion`) and listed once committed: a
-/// folder never committed is passed over. Removed artifacts move to `.removed/<id>-<epochMs>/`.
+/// folder never committed is passed over. Removed artifacts move to `.removed/<id>-<epochMs>/`. User folders: each
+/// artifact's `inFolder`, plus `folders.json` (0600: the folders the user made or set something on, in order).
 /// All disk work runs on one serial queue, off the cooperative pool.
 actor ArtifactStore {
     /// `<root>/artifacts`.
     let dir: URL
     private var all: [Artifact]?   // loaded on first use
+    private var entries: [FolderEntry]?   // `folders.json`, loaded on first use
     /// Per artifact, the highest version handed out (committed or not); per (file, node), the id of an export not
     /// committed yet (its first versions share it).
     private var reserved: [UUID: Int] = [:]
@@ -61,6 +68,7 @@ actor ArtifactStore {
     init(root: URL) { dir = root.appendingPathComponent("artifacts") }
 
     private var registryFile: URL { dir.appendingPathComponent("artifacts.json") }
+    private var foldersFile: URL { dir.appendingPathComponent("folders.json") }
     private static func name(_ id: UUID) -> String { id.uuidString.lowercased() }
 
     func list() async throws -> [Artifact] { try await registry() }
@@ -127,10 +135,10 @@ actor ArtifactStore {
     func wasRemoved(_ id: UUID) -> Bool { removed.contains(id) }
 
     /// `page` (an HTML document) kept as a new agent artifact.
-    func addAgent(page: Data, title: String, paddockId: UUID?, by: String) async throws -> Artifact {
+    func addAgent(page: Data, title: String, paddockId: UUID?, by: String, byId: UUID? = nil, inFolder: String? = nil) async throws -> Artifact {
         let id = UUID()
         var a = Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
-                         version: 1, folder: Self.name(id), stamp: nil, warnings: [])
+                         version: 1, folder: Self.name(id), stamp: nil, warnings: [], inFolder: inFolder, byId: byId)
         a.source = "\(a.folder)/source.html"
         let folder = dir.appendingPathComponent(a.folder)
         try await onIO {
@@ -141,7 +149,7 @@ actor ArtifactStore {
                 throw ProtocolError(code: .internal, message: "artifacts: cannot write \(dst.path)")
             }
         }
-        try await update { [a] in $0.append(a) }
+        try await append(&a)
         return a
     }
 
@@ -149,7 +157,8 @@ actor ArtifactStore {
     /// the allowed kinds are copied (never a link; hidden names skipped), up to `maxFiles` and `maxBytes`: past them
     /// (or `page` outside `root`, or not copied) nothing is created. Read and written on the io queue.
     /// `noFollow` (the Prévia's save): `root` and the page's folder must be real paths already (no link anywhere in them).
-    func addAgent(root: URL, page: URL, title: String, noFollow: Bool = false, paddockId: UUID?, by: String) async throws -> Artifact {
+    func addAgent(root: URL, page: URL, title: String, noFollow: Bool = false, paddockId: UUID?, by: String,
+                  byId: UUID? = nil, inFolder: String? = nil) async throws -> Artifact {
         let id = UUID()
         // links in the paths themselves resolved (the page's own name is not: a linked page is not copied)
         let rootURL = root.standardizedFileURL.resolvingSymlinksInPath()
@@ -162,7 +171,7 @@ actor ArtifactStore {
         guard pagePath.hasPrefix(base + "/") else { throw Self.invalid("the page must be a regular file inside --root") }
         let pageRel = String(pagePath.dropFirst(base.count + 1))
         var a = Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
-                         version: 1, folder: Self.name(id), stamp: nil, warnings: [])
+                         version: 1, folder: Self.name(id), stamp: nil, warnings: [], inFolder: inFolder, byId: byId)
         a.source = "\(a.folder)/source/\(pageRel)"
         let folder = dir.appendingPathComponent(a.folder), dst = folder.appendingPathComponent("source")
         try await onIO {
@@ -184,7 +193,7 @@ actor ArtifactStore {
                 for d in dirs.sorted(by: { $0.count > $1.count }) { try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: d) }
             } catch { Self.purge(folder); throw error }
         }
-        do { try await update { [a] in $0.append(a) } }
+        do { try await append(&a) }
         catch { try? await onIO { Self.purge(folder) }; throw error }   // the copy of a record never made
         return a
     }
@@ -282,7 +291,120 @@ actor ArtifactStore {
         try await update { $0.removeAll { $0.id == id } }
     }
 
+    /// `a` recorded, its folder spelled as an existing one.
+    private func append(_ a: inout Artifact) async throws {
+        var made = a
+        try await edit { list, fl in
+            made.inFolder = made.inFolder.map { ArtifactFolder.canonical($0, known: Self.known(list, fl)) }
+            list.append(made)
+        }
+        a = made
+    }
+
+    // MARK: folders
+
+    private static func known(_ list: [Artifact], _ fl: [FolderEntry]) -> [String] { fl.map(\.path) + list.compactMap(\.inFolder) }
+    private static func missing(_ p: String) -> ProtocolError { ProtocolError(code: .notFound, message: "pasta não encontrada: \(p)") }
+
+    /// Artifact `id` into `folder` (normalized; nil: none), spelled as an existing one.
+    func move(_ id: UUID, to folder: String?) async throws {
+        try await edit { list, fl in
+            guard let i = list.firstIndex(where: { $0.id == id }) else { throw ProtocolError(code: .notFound, message: "no artifact \(Self.name(id))") }
+            list[i].inFolder = folder.map { ArtifactFolder.canonical($0, known: Self.known(list, fl)) }
+        }
+    }
+
+    /// Every folder (with the ones they are in): the user's in their order, then the others by name.
+    func folders() async throws -> [FolderInfo] {
+        let list = try await registry(), fl = try await folderEntries()
+        var out: [String] = []
+        func add(_ p: String) { for q in ArtifactFolder.lineage(p) where !out.contains(where: { ArtifactFolder.same($0, q) }) { out.append(q) } }
+        fl.forEach { add($0.path) }
+        list.compactMap(\.inFolder).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }.forEach(add)
+        return out.map { p in
+            let e = fl.first { ArtifactFolder.same($0.path, p) }
+            let own = list.filter { ArtifactFolder.same($0.inFolder, p) }.map(\.id), first = (e?.order ?? []).filter(own.contains)
+            return FolderInfo(path: p, count: own.count, total: list.filter { ArtifactFolder.isUnder($0.inFolder, p) }.count, color: e?.color,
+                              pinned: e?.pinned ?? false, presentation: e?.presentation ?? false, items: first + own.filter { !first.contains($0) })
+        }
+    }
+
+    /// An empty folder kept (`path` normalized); one the user already has: refused.
+    func createFolder(_ path: String) async throws {
+        try await edit { list, fl in
+            guard !fl.contains(where: { ArtifactFolder.same($0.path, path) }) else { throw Self.invalid("já existe: \(path)") }
+            fl.append(FolderEntry(path: ArtifactFolder.canonical(path, known: Self.known(list, fl))))
+        }
+    }
+
+    /// `from` and everything in it renamed to `to` (both normalized), artifacts' folders and the user's together in one
+    /// change. Refused into an existing folder, inside itself, or past 3 levels; nothing changes then.
+    /// ponytail: artifacts.json is written before folders.json; a failure between them leaves the user's empty folders
+    /// under the old name (the artifacts already moved).
+    func renameFolder(_ from: String, to: String) async throws {
+        try await edit { list, fl in
+            let known = Self.known(list, fl)
+            guard known.contains(where: { ArtifactFolder.isUnder($0, from) }) else { throw Self.missing(from) }
+            if !ArtifactFolder.same(from, to) {
+                guard !ArtifactFolder.isUnder(to, from) else { throw Self.invalid("não cabe dentro dela mesma: \(to)") }
+                guard !known.contains(where: { ArtifactFolder.isUnder($0, to) }) else { throw Self.invalid("já existe: \(to)") }
+            }
+            func moved(_ p: String) throws(ProtocolError) -> String {
+                let n = ArtifactFolder.rebase(p, from: from, to: to) ?? to
+                guard ArtifactFolder.names(n).count <= ArtifactFolder.maxDepth else { throw Self.invalid("passaria de \(ArtifactFolder.maxDepth) níveis: \(n)") }
+                return n
+            }
+            for i in list.indices where ArtifactFolder.isUnder(list[i].inFolder, from) { list[i].inFolder = try moved(list[i].inFolder!) }
+            for i in fl.indices where ArtifactFolder.isUnder(fl[i].path, from) { fl[i].path = try moved(fl[i].path) }
+        }
+    }
+
+    /// `path` (and its subfolders) gone: only when no artifact is in it, unless `moveTo` (`.some(nil)`: "Sem pasta"), where
+    /// its artifacts go. Never removes an artifact.
+    func removeFolder(_ path: String, moveTo: String??) async throws {
+        try await edit { list, fl in
+            let known = Self.known(list, fl)
+            guard known.contains(where: { ArtifactFolder.isUnder($0, path) }) else { throw Self.missing(path) }
+            let inside = list.indices.filter { ArtifactFolder.isUnder(list[$0].inFolder, path) }
+            if let dest = moveTo {
+                if let d = dest, ArtifactFolder.isUnder(d, path) { throw Self.invalid("--move-to fica dentro da pasta removida") }
+                let to = dest.map { ArtifactFolder.canonical($0, known: known) }
+                for i in inside { list[i].inFolder = to }
+            } else if !inside.isEmpty {
+                throw Self.invalid("a pasta \(path) tem \(inside.count) artifact(s): esvazie-a ou use --move-to")
+            }
+            fl.removeAll { ArtifactFolder.isUnder($0.path, path) }
+        }
+    }
+
+    /// The folder's settings (nil: unchanged; `color` "": none); a folder not kept yet becomes the user's.
+    func setFolder(_ path: String, color: String?, pinned: Bool?, presentation: Bool?, order: [UUID]?) async throws {
+        try await edit { list, fl in
+            let i = fl.firstIndex { ArtifactFolder.same($0.path, path) } ?? {
+                fl.append(FolderEntry(path: ArtifactFolder.canonical(path, known: Self.known(list, fl)))); return fl.count - 1
+            }()
+            if let color { fl[i].color = color.isEmpty ? nil : color }
+            if let pinned { fl[i].pinned = pinned }
+            if let presentation { fl[i].presentation = presentation }
+            if let order { fl[i].order = order }
+        }
+    }
+
     // MARK: disk
+
+    private func folderEntries() async throws -> [FolderEntry] {
+        if let entries { return entries }
+        let file = foldersFile
+        let loaded = try await onIO { () throws -> [FolderEntry] in
+            guard let d = FileManager.default.contents(atPath: file.path) else { return [] }
+            guard let v = try? JSONDecoder().decode([FolderEntry].self, from: d) else {
+                throw ProtocolError(code: .internal, message: "artifacts: \(file.path) is unreadable")
+            }
+            return v
+        }
+        if entries == nil { entries = loaded }
+        return entries ?? loaded
+    }
 
     private func registry() async throws -> [Artifact] {
         if let all { return all }
@@ -300,16 +422,27 @@ actor ArtifactStore {
 
     /// The registry changed by `change`, written, then kept in memory; one change at a time (a later one waits, so
     /// none is lost while another is being written).
-    private func update(_ change: (inout [Artifact]) -> Void) async throws {
+    private func update(_ change: (inout [Artifact]) -> Void) async throws { try await edit { list, _ in change(&list) } }
+
+    /// `update` over both files: each written only when changed (artifacts.json first); a throwing `change` writes none.
+    private func edit(_ change: (inout [Artifact], inout [FolderEntry]) throws -> Void) async throws {
         while saving { await withCheckedContinuation { waiters.append($0) } }
         saving = true
         defer { saving = false; if !waiters.isEmpty { waiters.removeFirst().resume() } }
-        var list = try await registry()
-        change(&list)
+        let list0 = try await registry(), fl0 = try await folderEntries()
+        var list = list0, fl = fl0
+        try change(&list, &fl)
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601; enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try enc.encode(list), file = registryFile
-        try await onIO { try DesignService.writePrivate(data, to: file) }
-        all = list
+        if list != list0 {
+            let data = try enc.encode(list), file = registryFile
+            try await onIO { try DesignService.writePrivate(data, to: file) }
+            all = list
+        }
+        if fl != fl0 {
+            let data = try enc.encode(fl), file = foldersFile
+            try await onIO { try DesignService.writePrivate(data, to: file) }
+            entries = fl
+        }
     }
 
     private static let decoder: JSONDecoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()

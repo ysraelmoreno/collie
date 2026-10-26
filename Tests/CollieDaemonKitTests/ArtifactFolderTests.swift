@@ -172,11 +172,12 @@ private func obj(_ r: Response) -> [String: JSONValue] { if case .object(let o)?
     @Test func addWithFolderAndLotDefault() async throws {
         try await withProject { d, p, proj in
             let a = try await spawn(d, p, "A", cwd: proj.path)
-            // the app files anywhere; a terminal only in its lot's folder or none (any other: refused)
+            // the app files anywhere; a terminal in a folder that exists, its lot's folder or none (a new one: refused)
+            #expect(try await call(p, a, "artifact.add", ["path": "p.html", "folder": "Cliente/Landing"], cwd: proj.path).error?.code == .unauthorized)
             let r = try await admin(d, p, "artifact.add", ["path": proj.appendingPathComponent("p.html").path, "folder": "Cliente/Landing"])
             guard case .string(let byApp)? = obj(r)["id"] else { Issue.record("\(r)"); return }
             #expect(try await folder(d, p, byApp) == .string("Cliente/Landing"))
-            #expect(try await call(p, a, "artifact.add", ["path": "p.html", "folder": "Cliente/Landing"], cwd: proj.path).error?.code == .unauthorized)
+            #expect(try await folder(d, p, try await add(p, a, proj, ["folder": "cliente/landing"])) == .string("Cliente/Landing"))
             #expect(try await folder(d, p, try await add(p, a, proj)) == .null)
             #expect(try await call(p, a, "artifact.add", ["path": "p.html", "folder": "a/b/c/d"], cwd: proj.path).error?.code == .invalidArgs)
             #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "A"]).ok)
@@ -206,16 +207,24 @@ private func obj(_ r: Response) -> [String: JSONValue] { if case .object(let o)?
         }
     }
 
-    @Test func agentMovesOnlyItsOwn() async throws {
+    @Test func agentMovesAnyArtifactIntoAnExistingFolder() async throws {
         try await withProject { d, p, proj in
             let a = try await spawn(d, p, "A", cwd: proj.path), b = try await spawn(d, p, "B", cwd: proj.path)
             let mine = try await add(p, a, proj), theirs = try await add(p, b, proj)
-            #expect(try await call(p, a, "artifact.move", ["id": mine, "folder": "Cliente"]).ok)
-            #expect(try await folder(d, p, mine) == .string("Cliente"))
-            #expect(try await call(p, a, "artifact.move", ["id": theirs, "folder": "Cliente"]).error?.code == .unauthorized)
-            #expect(try await admin(d, p, "artifact.move", ["id": theirs, "folder": "Cliente"]).ok)
-            #expect(try await admin(d, p, "artifact.move", ["id": theirs, "folder": ""]).ok)
+            // a folder that doesn't exist: refused, in pt-BR, nothing moved
+            let no = try await call(p, a, "artifact.move", ["id": theirs, "folder": "Cliente"])
+            #expect(no.error?.code == .unauthorized && no.error?.message == "a pasta 'Cliente' não existe: crie no app (Artifacts → Nova pasta) ou use uma existente", "\(no)")
             #expect(try await folder(d, p, theirs) == .null)
+            #expect(try await admin(d, p, "artifact.folder.create", ["path": "Cliente"]).ok)
+            // another terminal's artifact, and its own, into the existing folder (its spelling kept)
+            #expect(try await call(p, a, "artifact.move", ["id": theirs, "folder": "cliente"]).ok)
+            #expect(try await call(p, a, "artifact.move", ["id": mine, "folder": "Cliente"]).ok)
+            #expect(try await folder(d, p, theirs) == .string("Cliente"))
+            #expect(try await folder(d, p, mine) == .string("Cliente"))
+            #expect(try await call(p, b, "artifact.move", ["id": mine, "folder": ""]).ok)   // out to none
+            #expect(try await folder(d, p, mine) == .null)
+            #expect(try await call(p, a, "artifact.move", ["id": theirs, "folder": "Cliente/Nova"]).error?.code == .unauthorized)
+            #expect(try await admin(d, p, "artifact.move", ["id": theirs, "folder": "Cliente/Nova"]).ok)   // the app: any
         }
     }
 
@@ -228,7 +237,7 @@ private func obj(_ r: Response) -> [String: JSONValue] { if case .object(let o)?
             }
             #expect(try await admin(d, p, "artifact.folder.create", ["path": "Cliente"]).ok)
             let id = try await add(p, a, proj)
-            #expect(try await admin(d, p, "artifact.move", ["id": id, "folder": "Cliente"]).ok)   // a terminal files only in its lot's
+            #expect(try await call(p, a, "artifact.move", ["id": id, "folder": "Cliente"]).ok)   // an existing folder: a terminal too
             #expect(try await admin(d, p, "artifact.folder.remove", ["path": "Cliente"]).error?.code == .invalidArgs)
             #expect(try await admin(d, p, "artifact.folder.rename", ["path": "Cliente", "to": "Marca"]).ok)
             #expect(try await folder(d, p, id) == .string("Marca"))

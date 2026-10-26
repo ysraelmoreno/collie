@@ -85,3 +85,54 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
         #expect(calls[3].1["to"] == .string("Cliente/Home") && calls[4].1["move-to"] == .string("") && calls[5].1["pin"] == .string("true"))
     }
 }
+
+/// A move used to refetch `artifact.list` twice (the action's refresh and the `artifact.changed` one): the daemon asks the
+/// design engine for every export's stamp on each list. A move or a folder change now refetches only `artifact.folders`.
+@MainActor @Suite struct ArtifactMoveRefreshTests {
+    actor Log {
+        var calls: [String] = [], items: [String] = []
+        func add(_ c: String) { calls.append(c) }
+        func put(_ i: [String]) { items = i }
+        func count(_ c: String) -> Int { calls.filter { $0 == c }.count }
+    }
+    private func make(window: Duration = .milliseconds(500)) -> (ArtifactsModel, Log) {
+        let log = Log()
+        let m = ArtifactsModel(call: { c, _ throws(ProtocolError) in
+            await log.add(c)
+            switch c {
+            case "artifact.list":
+                return .array(["a", "b", "c"].map { id in
+                    .object(["id": .string(id), "kind": .string("export"), "title": .string(id), "file": .null, "node": .null, "by": .string("app"),
+                             "at": .string("2026-10-21T10:00:00Z"), "version": .number(1), "url": .string("u"), "thumbnail": .null,
+                             "status": .string("current"), "warnings": .array([]), "source": .null, "importError": .null, "folder": .null])
+                })
+            case "artifact.folders":
+                return .array([.object(["path": .string("Cliente"), "count": .number(0), "total": .number(0), "color": .null, "pinned": .bool(false),
+                                        "presentation": .bool(false), "items": .array(await log.items.map { .string($0) })])])
+            default: return .object([:])
+            }
+        }, window: window)
+        return (m, log)
+    }
+
+    @Test func moveRefetchesOnlyTheFolders() async {
+        let (m, log) = make()
+        await m.refresh()
+        await log.put(["a", "c"])   // what the daemon has after the move
+        await m.move("a", to: "Cliente")
+        #expect(await log.count("artifact.list") == 1)   // the first refresh only
+        #expect(m.rows.map(\.folder) == ["Cliente", nil, "Cliente"] && m.rows.map(\.status) == ["current", "current", "current"])
+    }
+
+    @Test func changedEventsRefetchFoldersCoalesced() async throws {
+        let (m, log) = make(window: .milliseconds(100))
+        await m.refresh()
+        await log.put(["b"])
+        for _ in 0..<20 { await m.handleEvent("artifact.changed") }
+        #expect(await pollUntil { await log.count("artifact.folders") == 3 })   // the first at once, one at the window's end
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(await log.count("artifact.folders") == 3)
+        #expect(await log.count("artifact.list") == 1)
+        #expect(m.rows.map(\.folder) == [nil, "Cliente", nil])
+    }
+}

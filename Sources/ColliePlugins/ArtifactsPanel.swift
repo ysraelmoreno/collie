@@ -11,8 +11,8 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
     public let thumbnail: String?, status: String?, warnings: [String]
     /// The archived agent page (`collie-artifact://` URL); `importError` when its import failed.
     public let source: String?, importError: String?
-    /// The user folder it is in (nil: "Sem pasta").
-    public let folder: String?
+    /// The user folder it is in (nil: "Sem pasta"); kept current from `artifact.folders` after a move.
+    public internal(set) var folder: String?
     /// Remote resources the page still loads after its offline rewrite (nil: a record from before it).
     public let needsNetwork: [String]?
     public var isExport: Bool { kind == "export" }
@@ -111,17 +111,23 @@ public enum ArtifactFolderTree {
     @Published public private(set) var terminals: [ClaudeTerminalRow] = []
 
     private let call: PanelHostContext.Call
-    private var coalescer: RefreshCoalescer?
+    private var coalescer: RefreshCoalescer?, folderCoalescer: RefreshCoalescer?
     public init(call: @escaping PanelHostContext.Call, window: Duration = .milliseconds(500)) {
         self.call = call
         coalescer = RefreshCoalescer(window: window) { [weak self] in await self?.backgroundRefresh() }
+        folderCoalescer = RefreshCoalescer(window: window) { [weak self] in
+            guard let self else { return }
+            if let e = await fetchFolders(), !busy { error = e }
+        }
     }
 
-    /// `artifact.*` events refresh the list (coalesced: at most one refresh per window).
+    /// `artifact.*` events refresh the list (coalesced: at most one refresh per window); `artifact.changed` (a move or a
+    /// folder change) only the folders: `artifact.list` asks the design engine for every export's stamp (seconds with 200+).
     public func handleEvent(_ name: String, _ payload: JSONValue = .null) async {
         guard name.hasPrefix("artifact.") else { return }
         claude.apply(name, payload)
-        if !name.hasPrefix("artifact.import.") { await coalescer?.fire() }
+        if name == "artifact.changed" { await folderCoalescer?.fire() }
+        else if !name.hasPrefix("artifact.import.") { await coalescer?.fire() }
     }
 
     // MARK: import
@@ -188,8 +194,19 @@ public enum ArtifactFolderTree {
             let v = try await call("artifact.list", [:])
             let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
             do { rows = try d.decode([ArtifactRow].self, from: JSONEncoder().encode(v)) } catch { return "lista inválida: \(error.localizedDescription)" }
+            return await fetchFolders()
+        } catch { return error.message }
+    }
+
+    /// `artifact.folders` into `folders`, and each row's folder from their `items` (no `artifact.list`); the failure message, if any.
+    private func fetchFolders() async -> String? {
+        do throws(ProtocolError) {
             let f = try await call("artifact.folders", [:])
             do { folders = try JSONDecoder().decode([ArtifactFolderRow].self, from: JSONEncoder().encode(f)) } catch { return "pastas inválidas: \(error.localizedDescription)" }
+            var at: [String: String] = [:]
+            for f in folders { for id in f.items { at[id] = f.path } }
+            let moved = rows.map { r in var r = r; r.folder = at[r.id]; return r }
+            if moved != rows { rows = moved }
             return nil
         } catch { return error.message }
     }
@@ -200,7 +217,7 @@ public enum ArtifactFolderTree {
     }
 
     /// The panel closed: events no longer refresh.
-    public func stop() { coalescer?.cancel() }
+    public func stop() { coalescer?.cancel(); folderCoalescer?.cancel() }
 
     /// Into the "Prévia" Browser panel; opens it when it doesn't exist yet.
     public func openInBrowser(_ row: ArtifactRow) async { await browse(row.url) }
@@ -248,11 +265,9 @@ public enum ArtifactFolderTree {
 
     // MARK: folders
 
-    /// Runs `command`, then refreshes on success.
+    /// Runs `command` (a move or a folder change), then refreshes the folders on success.
     private func change(_ command: String, _ args: [String: JSONValue]) async {
-        var ok = false
-        await run { ok = await send(command, args) != nil }
-        if ok { await refresh() }
+        await run { if await send(command, args) != nil, let e = await fetchFolders() { error = e } }
     }
     /// Artifact `id` into `folder` (nil: "Sem pasta").
     public func move(_ id: String, to folder: String?) async { await change("artifact.move", ["id": .string(id), "folder": .string(folder ?? "")]) }
@@ -312,7 +327,9 @@ struct ArtifactsView: View {
     @State private var importing = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        // once per render: each row's "Mover para…" used to rebuild the tree (2 × 200 rows × the tree ≈ 0.6 s a render)
+        let targets = ArtifactFolderTree.sections(rows: model.rows, folders: model.folders).filter { $0.path != nil }
+        return VStack(spacing: 0) {
             PanelHeader("Artifacts", subtitle: model.rows.count == 1 ? "1 página" : "\(model.rows.count) páginas") {
                 HStack(spacing: 8) {
                     if model.busy { ProgressView().controlSize(.small) }
@@ -322,13 +339,13 @@ struct ArtifactsView: View {
                 }
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 12) {   // lazy: only the cards on screen are built (and their thumbnails read)
                     if let e = model.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger) }
                     TextField("Buscar artifacts ou pastas", text: $model.query).textFieldStyle(.roundedBorder).font(.collieUI(13))
                     if model.rows.isEmpty { Text("Nenhum artifact.").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
                     ForEach(model.sections) { s in
                         folderHeader(s)
-                        if !s.collapsed { ForEach(s.rows) { row($0).padding(.leading, CGFloat(s.depth) * 16) } }
+                        if !s.collapsed { ForEach(s.rows) { row($0, targets).padding(.leading, CGFloat(s.depth) * 16) } }
                     }
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -367,9 +384,6 @@ struct ArtifactsView: View {
             }
         } message: { s in Text(s.total == 0 ? "A pasta está vazia." : "Nenhum artifact é apagado.") }
     }
-
-    /// Folder paths a row can move to ("Sem pasta" first).
-    private var targets: [FolderSection] { ArtifactFolderTree.sections(rows: model.rows, folders: model.folders).filter { $0.path != nil } }
 
     /// The folder's line: chevron, name, count; drop an artifact on it to move it there; its menu.
     private func folderHeader(_ s: FolderSection) -> some View {
@@ -411,8 +425,8 @@ struct ArtifactsView: View {
         }
     }
 
-    /// **Mover para…**: every folder, and "Sem pasta".
-    private func moveMenu(_ r: ArtifactRow) -> some View {
+    /// **Mover para…**: every folder (`targets`), and "Sem pasta".
+    private func moveMenu(_ r: ArtifactRow, _ targets: [FolderSection]) -> some View {
         Menu("Mover para…") {
             Button("Sem pasta") { Task { await model.move(r.id, to: nil) } }.disabled(r.folder == nil)
             ForEach(targets) { t in
@@ -433,7 +447,7 @@ struct ArtifactsView: View {
         }
     }
 
-    private func row(_ r: ArtifactRow) -> some View {
+    private func row(_ r: ArtifactRow, _ targets: [FolderSection]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Thumbnail(path: r.isExport ? r.thumbnail : nil)
             VStack(alignment: .leading, spacing: 6) {
@@ -465,7 +479,7 @@ struct ArtifactsView: View {
                     HStack(spacing: 6) {
                         if r.source != nil { Button("Abrir origem") { Task { await model.openSource(r) } } }
                         if r.isExport, r.file != nil { Button("Abrir no Design") { Task { await model.openInDesign(r) } } }
-                        moveMenu(r).fixedSize()
+                        moveMenu(r, targets).fixedSize()
                         Button("Remover…", role: .destructive) { removing = r }.buttonStyle(CollieButtonStyle(.quiet))
                     }
                 }
@@ -477,7 +491,7 @@ struct ArtifactsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .collieCard(highlight: r.status == "stale" ? Color.collieAttention : nil)
         .draggable(r.id)
-        .contextMenu { moveMenu(r) }
+        .contextMenu { moveMenu(r, targets) }
     }
 }
 

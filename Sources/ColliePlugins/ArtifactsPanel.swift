@@ -11,8 +11,8 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
     public let thumbnail: String?, status: String?, warnings: [String]
     /// The archived agent page (`collie-artifact://` URL); `importError` when its import failed.
     public let source: String?, importError: String?
-    /// The user folder it is in (nil: "Sem pasta").
-    public let folder: String?
+    /// The user folder it is in (nil: "Sem pasta"); kept current from `artifact.folders` after a move.
+    public internal(set) var folder: String?
     /// Remote resources the page still loads after its offline rewrite (nil: a record from before it).
     public let needsNetwork: [String]?
     public var isExport: Bool { kind == "export" }
@@ -94,6 +94,33 @@ public enum ArtifactFolderTree {
     }
 }
 
+/// The rows checked in "Selecionar" (pure: tested without the daemon). `anchor`: the last one clicked, where a
+/// shift-click range starts.
+public struct ArtifactSelection: Equatable {
+    public private(set) var ids: Set<String> = []
+    private var anchor: String?
+    public init() {}
+    public var count: Int { ids.count }
+    public func contains(_ id: String) -> Bool { ids.contains(id) }
+    public mutating func toggle(_ id: String) {
+        if ids.remove(id) == nil { ids.insert(id) }
+        anchor = id
+    }
+    /// Shift-click: every row from the anchor to `id` in `order` (the rows shown) checked.
+    public mutating func extend(to id: String, in order: [String]) {
+        guard let a = anchor.flatMap(order.firstIndex(of:)), let b = order.firstIndex(of: id) else { toggle(id); return }
+        ids.formUnion(order[min(a, b)...max(a, b)])
+        anchor = id
+    }
+    public func all(_ some: [String]) -> Bool { !some.isEmpty && some.allSatisfy(ids.contains) }
+    /// "Selecionar todos" of a folder (or the search results): all checked, or all unchecked when they already were.
+    public mutating func selectAll(_ some: [String]) { if all(some) { ids.subtract(some) } else { ids.formUnion(some) } }
+    /// Only the ones still listed (after a refresh).
+    public mutating func keep(_ listed: Set<String>) { ids.formIntersection(listed) }
+    /// The rows shown, in order (open folders only): what ⌘A and a shift-click range cover.
+    public static func visible(_ sections: [FolderSection]) -> [String] { sections.flatMap { $0.collapsed ? [] : $0.rows.map(\.id) } }
+}
+
 /// State and daemon calls of the Artifacts panel.
 @MainActor public final class ArtifactsModel: ObservableObject {
     /// The Browser panel artifacts open in (created on first use).
@@ -109,19 +136,39 @@ public enum ArtifactFolderTree {
     /// The "Importar do Claude…" sheet: its links' progress and the Claude terminals it can use.
     @Published public var claude = ClaudeImportProgress()
     @Published public private(set) var terminals: [ClaudeTerminalRow] = []
-
-    private let call: PanelHostContext.Call
-    private var coalescer: RefreshCoalescer?
-    public init(call: @escaping PanelHostContext.Call, window: Duration = .milliseconds(500)) {
-        self.call = call
-        coalescer = RefreshCoalescer(window: window) { [weak self] in await self?.backgroundRefresh() }
+    /// "Selecionar": checkboxes on the rows and the bar of batch actions.
+    @Published public var selecting = false { didSet { if !selecting { selection = ArtifactSelection() } } }
+    @Published public var selection = ArtifactSelection()
+    /// The compact list (true), the cards (false), or nil: compact only in a folder with more than 30 (remembered per user).
+    @Published public private(set) var compact: Bool?
+    private let defaults: UserDefaults
+    private static let compactKey = "collie.artifacts.compact"
+    public func isCompact(rows: Int) -> Bool { compact ?? (rows > 30) }
+    public func toggleCompact() {
+        compact = !(compact ?? false)
+        defaults.set(compact, forKey: Self.compactKey)
     }
 
-    /// `artifact.*` events refresh the list (coalesced: at most one refresh per window).
+    private let call: PanelHostContext.Call
+    private var coalescer: RefreshCoalescer?, folderCoalescer: RefreshCoalescer?
+    public init(call: @escaping PanelHostContext.Call, window: Duration = .milliseconds(500), defaults: UserDefaults = .standard) {
+        self.call = call
+        self.defaults = defaults
+        compact = defaults.object(forKey: Self.compactKey) as? Bool
+        coalescer = RefreshCoalescer(window: window) { [weak self] in await self?.backgroundRefresh() }
+        folderCoalescer = RefreshCoalescer(window: window) { [weak self] in
+            guard let self else { return }
+            if let e = await fetchFolders(), !busy { error = e }
+        }
+    }
+
+    /// `artifact.*` events refresh the list (coalesced: at most one refresh per window); `artifact.changed` (a move or a
+    /// folder change) only the folders: `artifact.list` asks the design engine for every export's stamp (seconds with 200+).
     public func handleEvent(_ name: String, _ payload: JSONValue = .null) async {
         guard name.hasPrefix("artifact.") else { return }
         claude.apply(name, payload)
-        if !name.hasPrefix("artifact.import.") { await coalescer?.fire() }
+        if name == "artifact.changed" { await folderCoalescer?.fire() }
+        else if !name.hasPrefix("artifact.import.") { await coalescer?.fire() }
     }
 
     // MARK: import
@@ -188,8 +235,20 @@ public enum ArtifactFolderTree {
             let v = try await call("artifact.list", [:])
             let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
             do { rows = try d.decode([ArtifactRow].self, from: JSONEncoder().encode(v)) } catch { return "lista inválida: \(error.localizedDescription)" }
+            selection.keep(Set(rows.map(\.id)))
+            return await fetchFolders()
+        } catch { return error.message }
+    }
+
+    /// `artifact.folders` into `folders`, and each row's folder from their `items` (no `artifact.list`); the failure message, if any.
+    private func fetchFolders() async -> String? {
+        do throws(ProtocolError) {
             let f = try await call("artifact.folders", [:])
             do { folders = try JSONDecoder().decode([ArtifactFolderRow].self, from: JSONEncoder().encode(f)) } catch { return "pastas inválidas: \(error.localizedDescription)" }
+            var at: [String: String] = [:]
+            for f in folders { for id in f.items { at[id] = f.path } }
+            let moved = rows.map { r in var r = r; r.folder = at[r.id]; return r }
+            if moved != rows { rows = moved }
             return nil
         } catch { return error.message }
     }
@@ -200,7 +259,7 @@ public enum ArtifactFolderTree {
     }
 
     /// The panel closed: events no longer refresh.
-    public func stop() { coalescer?.cancel() }
+    public func stop() { coalescer?.cancel(); folderCoalescer?.cancel() }
 
     /// Into the "Prévia" Browser panel; opens it when it doesn't exist yet.
     public func openInBrowser(_ row: ArtifactRow) async { await browse(row.url) }
@@ -248,14 +307,32 @@ public enum ArtifactFolderTree {
 
     // MARK: folders
 
-    /// Runs `command`, then refreshes on success.
+    /// Runs `command` (a move or a folder change), then refreshes the folders on success.
     private func change(_ command: String, _ args: [String: JSONValue]) async {
-        var ok = false
-        await run { ok = await send(command, args) != nil }
-        if ok { await refresh() }
+        await run { if await send(command, args) != nil, let e = await fetchFolders() { error = e } }
     }
     /// Artifact `id` into `folder` (nil: "Sem pasta").
-    public func move(_ id: String, to folder: String?) async { await change("artifact.move", ["id": .string(id), "folder": .string(folder ?? "")]) }
+    public func move(_ id: String, to folder: String?) async { await move([id], to: folder) }
+    /// Many at once: one `artifact.move` (one write, all or nothing).
+    public func move(_ ids: [String], to folder: String?) async {
+        await change("artifact.move", ["ids": .array(ids.map { .string($0) }), "folder": .string(folder ?? "")])
+    }
+    /// The selection into `folder`, then out of "Selecionar" (kept when it failed).
+    public func moveSelected(to folder: String?) async {
+        await move(selection.ids.sorted(), to: folder)
+        if error == nil { selecting = false }
+    }
+    /// The selection set aside, one `artifact.remove` each (the app's), then one refresh and out of "Selecionar".
+    public func removeSelected() async {
+        var failed: [String] = []
+        await run {
+            for id in selection.ids.sorted() {
+                do throws(ProtocolError) { _ = try await call("artifact.remove", ["id": .string(id)]) } catch { failed.append(error.message) }
+            }
+        }
+        await refresh()
+        if failed.isEmpty { selecting = false } else { error = failed.joined(separator: "\n") }
+    }
     public func createFolder(_ name: String, in parent: String?) async {
         let n = name.trimmingCharacters(in: .whitespaces)
         await change("artifact.folder.create", ["path": .string(parent.map { "\($0)/\(n)" } ?? n)])
@@ -310,28 +387,55 @@ struct ArtifactsView: View {
     @State private var name = ""
     @State private var removingFolder: FolderSection?
     @State private var importing = false
+    /// **Remover…** of the selection: asking.
+    @State private var removingSelected = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        // once per render: each row's "Mover para…" used to rebuild the tree (2 × 200 rows × the tree ≈ 0.6 s a render)
+        let targets = ArtifactFolderTree.sections(rows: model.rows, folders: model.folders).filter { $0.path != nil }
+        let sections = model.sections, visible = ArtifactSelection.visible(sections)
+        return VStack(spacing: 0) {
             PanelHeader("Artifacts", subtitle: model.rows.count == 1 ? "1 página" : "\(model.rows.count) páginas") {
                 HStack(spacing: 8) {
                     if model.busy { ProgressView().controlSize(.small) }
+                    Button { model.toggleCompact() } label: {
+                        Image(systemName: model.compact == true ? "rectangle.grid.1x2" : "list.bullet")
+                    }
+                    .help(model.compact == true ? "Mostrar cartões" : "Lista compacta")
+                    .accessibilityLabel(model.compact == true ? "Mostrar cartões" : "Lista compacta").buttonStyle(CollieButtonStyle(.secondary))
+                    Button(model.selecting ? "Concluir" : "Selecionar") { model.selecting.toggle() }.disabled(model.rows.isEmpty)
+                        .buttonStyle(CollieButtonStyle(.secondary))
                     Button("Importar do Claude…") { importing = true }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                     Button("Nova pasta") { name = ""; naming = .create(nil) }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                     Button("Atualizar") { Task { await model.refresh() } }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                 }
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 12) {   // lazy: only the cards on screen are built (and their thumbnails read)
                     if let e = model.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger) }
                     TextField("Buscar artifacts ou pastas", text: $model.query).textFieldStyle(.roundedBorder).font(.collieUI(13))
+                    if model.selecting, !model.query.trimmingCharacters(in: .whitespaces).isEmpty, !visible.isEmpty {
+                        Button(model.selection.all(visible) ? "Desmarcar os resultados" : "Selecionar todos os resultados (\(visible.count))") {
+                            model.selection.selectAll(visible)
+                        }.buttonStyle(CollieButtonStyle(.quiet))
+                    }
                     if model.rows.isEmpty { Text("Nenhum artifact.").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
-                    ForEach(model.sections) { s in
+                    ForEach(sections) { s in
                         folderHeader(s)
-                        if !s.collapsed { ForEach(s.rows) { row($0).padding(.leading, CGFloat(s.depth) * 16) } }
+                        if !s.collapsed {
+                            let compact = model.isCompact(rows: s.rows.count)
+                            ForEach(s.rows) { r in
+                                HStack(alignment: compact ? .center : .top, spacing: 8) {
+                                    if model.selecting { checkbox(r, visible) }
+                                    if compact { compactRow(r, targets) } else { row(r, targets) }
+                                }
+                                .padding(.leading, CGFloat(s.depth) * 16)
+                            }
+                        }
                     }
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
+            if model.selecting { selectionBar(targets, visible) }
             PanelFooter("collie artifact add <página.html> · solte .html, pasta ou .zip aqui")
         }
         .background(Color.collieSidebar)
@@ -366,10 +470,72 @@ struct ArtifactsView: View {
                 Task { if let p = s.path { await model.removeFolder(p, emptying: s.total > 0) } }
             }
         } message: { s in Text(s.total == 0 ? "A pasta está vazia." : "Nenhum artifact é apagado.") }
+        .confirmationDialog("Remover \(model.selection.count == 1 ? "1 artifact" : "\(model.selection.count) artifacts")?", isPresented: $removingSelected,
+                            titleVisibility: .visible) {
+            Button("Remover", role: .destructive) { Task { await model.removeSelected() } }
+        } message: { Text("As pastas deles vão para artifacts/.removed.") }
     }
 
-    /// Folder paths a row can move to ("Sem pasta" first).
-    private var targets: [FolderSection] { ArtifactFolderTree.sections(rows: model.rows, folders: model.folders).filter { $0.path != nil } }
+    /// The row's checkbox; shift-click checks the range from the last one clicked.
+    private func checkbox(_ r: ArtifactRow, _ visible: [String]) -> some View {
+        let on = model.selection.contains(r.id)
+        return Button {
+            if NSEvent.modifierFlags.contains(.shift) { model.selection.extend(to: r.id, in: visible) } else { model.selection.toggle(r.id) }
+        } label: {
+            Image(systemName: on ? "checkmark.square.fill" : "square").font(.system(size: 15))
+                .foregroundStyle(on ? Color.collieAccent : Color.collieMuted)
+        }
+        .buttonStyle(.plain).accessibilityLabel(r.title).accessibilityValue(on ? "selecionado" : "não selecionado")
+    }
+
+    /// "N selecionados" · **Mover para…** · **Remover…** · **Cancelar**; ⌘A checks every row shown.
+    private func selectionBar(_ targets: [FolderSection], _ visible: [String]) -> some View {
+        let n = model.selection.count
+        return HStack(spacing: 8) {
+            Text(n == 1 ? "1 selecionado" : "\(n) selecionados").font(.collieMono(12)).foregroundStyle(Color.collieText)
+            Button("Selecionar todos") { model.selection.selectAll(visible.filter { !model.selection.contains($0) }) }
+                .keyboardShortcut("a", modifiers: .command).buttonStyle(CollieButtonStyle(.quiet))
+            Spacer(minLength: 0)
+            Menu("Mover para…") {
+                Button("Sem pasta") { Task { await model.moveSelected(to: nil) } }
+                ForEach(targets) { t in
+                    Button(String(repeating: "  ", count: t.depth) + t.name) { Task { await model.moveSelected(to: t.path) } }
+                }
+            }
+            .fixedSize().disabled(n == 0 || model.busy)
+            Button("Remover…", role: .destructive) { removingSelected = true }.disabled(n == 0 || model.busy).buttonStyle(CollieButtonStyle(.quiet))
+            Button("Cancelar") { model.selecting = false }.keyboardShortcut(.cancelAction).buttonStyle(CollieButtonStyle(.secondary))
+        }
+        .padding(.horizontal, 16).padding(.vertical, 8).background(Color.collieSunken)
+    }
+
+    /// One line: a small thumbnail, title, state, folder; the card's actions in its menu.
+    private func compactRow(_ r: ArtifactRow, _ targets: [FolderSection]) -> some View {
+        HStack(spacing: 8) {
+            Thumbnail(path: r.isExport ? r.thumbnail : nil, height: 28).frame(width: 44).clipShape(RoundedRectangle(cornerRadius: 4))
+            Text(r.title).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
+            if !r.warnings.isEmpty {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(Color.collieAttention)
+                    .help(r.warnings.joined(separator: "\n")).accessibilityLabel("Avisos: " + r.warnings.joined(separator: ", "))
+            }
+            Spacer(minLength: 0)
+            if let f = r.folder { Text(f).font(.collieMono(11)).foregroundStyle(Color.collieMuted).lineLimit(1) }
+            Text(r.statusLabel).font(.collieMono(11, r.status == "stale" ? .semibold : .medium)).foregroundStyle(statusColor(r)).help(r.importError ?? "")
+            Menu {
+                Button("Abrir na Prévia") { Task { await model.openInPreview(r) } }
+                Button("Abrir no Navegador") { Task { await model.openInBrowser(r) } }
+                moveMenu(r, targets)
+                Divider()
+                Button("Remover…", role: .destructive) { removing = r }
+            } label: { Image(systemName: "ellipsis") }
+            .menuStyle(.borderlessButton).fixedSize().disabled(model.busy).accessibilityLabel("Ações de \(r.title)")
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .collieCard(highlight: r.status == "stale" ? Color.collieAttention : nil)
+        .draggable(r.id)
+        .contextMenu { moveMenu(r, targets) }
+    }
 
     /// The folder's line: chevron, name, count; drop an artifact on it to move it there; its menu.
     private func folderHeader(_ s: FolderSection) -> some View {
@@ -382,6 +548,11 @@ struct ArtifactsView: View {
                 if s.pinned { Image(systemName: "pin.fill").font(.system(size: 10)).accessibilityLabel("Fixada") }
                 Text("\(s.total)").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                 Spacer(minLength: 0)
+                if model.selecting, !s.rows.isEmpty {
+                    let ids = s.rows.map(\.id)
+                    Button(model.selection.all(ids) ? "Desmarcar todos" : "Selecionar todos") { model.selection.selectAll(ids) }
+                        .buttonStyle(CollieButtonStyle(.quiet))
+                }
             }
             .contentShape(Rectangle())
         }
@@ -389,10 +560,12 @@ struct ArtifactsView: View {
         .padding(.leading, CGFloat(s.depth) * 16).padding(.top, 4)
         .accessibilityLabel("\(s.path ?? s.name), \(s.total) artifacts, \(s.collapsed ? "recolhida" : "aberta")")
         .dropDestination(for: String.self) { ids, _ in
-            // a row's id moves it; a file from the Finder (its file URL) is added into the folder
+            // a row's id moves it (a selected one: the whole selection, in one move); a file from the Finder (its file URL) is added into the folder
             let files = ids.compactMap { $0.hasPrefix("file://") ? URL(string: $0) : nil }
+            let rows = ids.filter { !$0.hasPrefix("file://") }
+            let selected = model.selecting && rows.contains(where: model.selection.contains)
             Task {
-                for id in ids where !id.hasPrefix("file://") { await model.move(id, to: s.path) }
+                if selected { await model.moveSelected(to: s.path) } else if !rows.isEmpty { await model.move(rows, to: s.path) }
                 if !files.isEmpty { await model.drop(files, into: s.path) }
             }
             return !ids.isEmpty
@@ -411,8 +584,8 @@ struct ArtifactsView: View {
         }
     }
 
-    /// **Mover para…**: every folder, and "Sem pasta".
-    private func moveMenu(_ r: ArtifactRow) -> some View {
+    /// **Mover para…**: every folder (`targets`), and "Sem pasta".
+    private func moveMenu(_ r: ArtifactRow, _ targets: [FolderSection]) -> some View {
         Menu("Mover para…") {
             Button("Sem pasta") { Task { await model.move(r.id, to: nil) } }.disabled(r.folder == nil)
             ForEach(targets) { t in
@@ -433,7 +606,7 @@ struct ArtifactsView: View {
         }
     }
 
-    private func row(_ r: ArtifactRow) -> some View {
+    private func row(_ r: ArtifactRow, _ targets: [FolderSection]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Thumbnail(path: r.isExport ? r.thumbnail : nil)
             VStack(alignment: .leading, spacing: 6) {
@@ -465,7 +638,7 @@ struct ArtifactsView: View {
                     HStack(spacing: 6) {
                         if r.source != nil { Button("Abrir origem") { Task { await model.openSource(r) } } }
                         if r.isExport, r.file != nil { Button("Abrir no Design") { Task { await model.openInDesign(r) } } }
-                        moveMenu(r).fixedSize()
+                        moveMenu(r, targets).fixedSize()
                         Button("Remover…", role: .destructive) { removing = r }.buttonStyle(CollieButtonStyle(.quiet))
                     }
                 }
@@ -477,20 +650,22 @@ struct ArtifactsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .collieCard(highlight: r.status == "stale" ? Color.collieAttention : nil)
         .draggable(r.id)
-        .contextMenu { moveMenu(r) }
+        .contextMenu { moveMenu(r, targets) }
     }
 }
 
-/// 120 pt tall, the card's width; the file is read off the main thread. No path (agent page, or no thumbnail yet): a document icon.
+/// 120 pt tall (the compact row's: 28), the card's width; the file is read off the main thread. No path (agent page, or no
+/// thumbnail yet): a document icon.
 private struct Thumbnail: View {
     let path: String?
+    var height: CGFloat = 120
     @State private var image: NSImage?
     var body: some View {
         Group {
             if let image { Image(nsImage: image).resizable().aspectRatio(contentMode: .fit) }
-            else { Image(systemName: "doc.richtext").font(.system(size: 28)).foregroundStyle(Color.collieMuted).accessibilityHidden(true) }
+            else { Image(systemName: "doc.richtext").font(.system(size: height < 60 ? 14 : 28)).foregroundStyle(Color.collieMuted).accessibilityHidden(true) }
         }
-        .frame(maxWidth: .infinity).frame(height: 120).background(Color.collieSunken)
+        .frame(maxWidth: .infinity).frame(height: height).background(Color.collieSunken)
         .task(id: path) {
             guard let path else { image = nil; return }
             let data = await Task.detached { FileManager.default.contents(atPath: path) }.value

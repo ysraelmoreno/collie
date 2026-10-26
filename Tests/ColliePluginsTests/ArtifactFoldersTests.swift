@@ -85,3 +85,124 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
         #expect(calls[3].1["to"] == .string("Cliente/Home") && calls[4].1["move-to"] == .string("") && calls[5].1["pin"] == .string("true"))
     }
 }
+
+/// A move used to refetch `artifact.list` twice (the action's refresh and the `artifact.changed` one): the daemon asks the
+/// design engine for every export's stamp on each list. A move or a folder change now refetches only `artifact.folders`.
+@MainActor @Suite struct ArtifactMoveRefreshTests {
+    actor Log {
+        var calls: [String] = [], items: [String] = []
+        func add(_ c: String) { calls.append(c) }
+        func put(_ i: [String]) { items = i }
+        func count(_ c: String) -> Int { calls.filter { $0 == c }.count }
+    }
+    private func make(window: Duration = .milliseconds(500)) -> (ArtifactsModel, Log) {
+        let log = Log()
+        let m = ArtifactsModel(call: { c, _ throws(ProtocolError) in
+            await log.add(c)
+            switch c {
+            case "artifact.list":
+                return .array(["a", "b", "c"].map { id in
+                    .object(["id": .string(id), "kind": .string("export"), "title": .string(id), "file": .null, "node": .null, "by": .string("app"),
+                             "at": .string("2026-10-21T10:00:00Z"), "version": .number(1), "url": .string("u"), "thumbnail": .null,
+                             "status": .string("current"), "warnings": .array([]), "source": .null, "importError": .null, "folder": .null])
+                })
+            case "artifact.folders":
+                return .array([.object(["path": .string("Cliente"), "count": .number(0), "total": .number(0), "color": .null, "pinned": .bool(false),
+                                        "presentation": .bool(false), "items": .array(await log.items.map { .string($0) })])])
+            default: return .object([:])
+            }
+        }, window: window)
+        return (m, log)
+    }
+
+    @Test func moveRefetchesOnlyTheFolders() async {
+        let (m, log) = make()
+        await m.refresh()
+        await log.put(["a", "c"])   // what the daemon has after the move
+        await m.move("a", to: "Cliente")
+        #expect(await log.count("artifact.list") == 1)   // the first refresh only
+        #expect(m.rows.map(\.folder) == ["Cliente", nil, "Cliente"] && m.rows.map(\.status) == ["current", "current", "current"])
+    }
+
+    @Test func changedEventsRefetchFoldersCoalesced() async throws {
+        let (m, log) = make(window: .milliseconds(100))
+        await m.refresh()
+        await log.put(["b"])
+        for _ in 0..<20 { await m.handleEvent("artifact.changed") }
+        #expect(await pollUntil { await log.count("artifact.folders") == 3 })   // the first at once, one at the window's end
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(await log.count("artifact.folders") == 3)
+        #expect(await log.count("artifact.list") == 1)
+        #expect(m.rows.map(\.folder) == [nil, "Cliente", nil])
+    }
+}
+
+@Suite struct ArtifactSelectionTests {
+    @Test func toggleRangeAndCounts() {
+        var s = ArtifactSelection()
+        let order = ["a", "b", "c", "d", "e"]
+        s.toggle("b")
+        s.extend(to: "d", in: order)   // shift-click: b…d
+        #expect(s.ids == ["b", "c", "d"] && s.count == 3)
+        s.toggle("c")
+        #expect(s.ids == ["b", "d"])
+        s.extend(to: "a", in: order)   // from the last clicked (c), backwards
+        #expect(s.ids == ["a", "b", "c", "d"])
+        var t = ArtifactSelection()
+        t.extend(to: "c", in: order)   // no anchor yet: that one
+        #expect(t.ids == ["c"])
+    }
+
+    @Test func selectAllPerFolderTogglesAndPrunes() {
+        var s = ArtifactSelection()
+        let cliente = ["a", "b"], loose = ["c", "d", "e"]
+        s.toggle("a")
+        #expect(!s.all(cliente))
+        s.selectAll(cliente)
+        #expect(s.all(cliente) && s.count == 2)
+        s.selectAll(loose)
+        #expect(s.count == 5)
+        s.selectAll(cliente)   // all of it already: deselects it
+        #expect(s.ids == ["c", "d", "e"] && !s.all([]))
+        s.keep(["c", "x"])   // after a refresh: the gone ones drop out
+        #expect(s.ids == ["c"])
+    }
+
+    @Test func visibleOrderFollowsTheTreeAndSearch() {
+        let rows = [row("a", "Cliente", title: "Home"), row("b", nil, title: "Preços"), row("c", "Cliente", title: "home 2")]
+        let s = ArtifactFolderTree.sections(rows: rows, folders: [], query: "home")
+        #expect(ArtifactSelection.visible(s) == ["a", "c"])
+        #expect(ArtifactSelection.visible(ArtifactFolderTree.sections(rows: rows, folders: [], collapsed: ["cliente"])) == ["b"])
+    }
+}
+
+@MainActor @Suite struct ArtifactBatchModelTests {
+    actor Log { var calls: [(String, [String: JSONValue])] = []; func add(_ c: String, _ a: [String: JSONValue]) { calls.append((c, a)) } }
+
+    @Test func moveSelectedIsOneCallAndExits() async {
+        let log = Log()
+        let m = ArtifactsModel(call: { c, a throws(ProtocolError) in await log.add(c, a); return c == "artifact.folders" ? .array([]) : .object([:]) })
+        m.selecting = true
+        m.selection.selectAll(["a", "b", "c"])
+        await m.moveSelected(to: "Cliente")
+        let moves = await log.calls.filter { $0.0 == "artifact.move" }
+        #expect(moves.count == 1 && moves[0].1["ids"] == .array([.string("a"), .string("b"), .string("c")]) && moves[0].1["folder"] == .string("Cliente"))
+        #expect(!m.selecting && m.selection.count == 0)
+        m.selecting = true; m.selection.toggle("a")
+        await m.removeSelected()
+        #expect(await log.calls.filter { $0.0 == "artifact.remove" }.map(\.1) == [["id": .string("a")]])
+        #expect(!m.selecting)
+    }
+
+    @Test func compactChoiceIsRemembered() {
+        let d = UserDefaults(suiteName: "collie-test-\(UUID().uuidString)")!
+        let call: PanelHostContext.Call = { _, _ throws(ProtocolError) in .object([:]) }
+        let m = ArtifactsModel(call: call, defaults: d)
+        #expect(m.compact == nil && m.isCompact(rows: 31) && !m.isCompact(rows: 30))   // auto: compact past 30 in a folder
+        m.toggleCompact()
+        #expect(m.compact == true && m.isCompact(rows: 1))
+        #expect(ArtifactsModel(call: call, defaults: d).compact == true)   // remembered
+        m.toggleCompact()
+        #expect(ArtifactsModel(call: call, defaults: d).compact == false && !m.isCompact(rows: 500))
+    }
+}

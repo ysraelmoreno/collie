@@ -68,6 +68,8 @@ actor ArtifactStore {
     /// Agent artifacts being converted to an export (until its commit or `setImportError`).
     private var converting: Set<UUID> = []
     private var saving = false
+    /// Files written (artifacts.json, folders.json) since launch: tests count them.
+    private(set) var writes = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private let io = DispatchQueue(label: "collie.artifacts")
 
@@ -357,11 +359,16 @@ actor ArtifactStore {
     private static func known(_ list: [Artifact], _ fl: [FolderEntry]) -> [String] { fl.map(\.path) + list.compactMap(\.inFolder) }
     private static func missing(_ p: String) -> ProtocolError { ProtocolError(code: .notFound, message: "pasta não encontrada: \(p)") }
 
-    /// Artifact `id` into `folder` (normalized; nil: none), spelled as an existing one.
-    func move(_ id: UUID, to folder: String?) async throws {
+    func move(_ id: UUID, to folder: String?) async throws { try await move([id], to: folder) }
+    /// Artifacts `ids` into `folder` (normalized; nil: none), spelled as an existing one: one write; an unknown id moves none.
+    func move(_ ids: [UUID], to folder: String?) async throws {
         try await edit { list, fl in
-            guard let i = list.firstIndex(where: { $0.id == id }) else { throw ProtocolError(code: .notFound, message: "no artifact \(Self.name(id))") }
-            list[i].inFolder = folder.map { ArtifactFolder.canonical($0, known: Self.known(list, fl)) }
+            let to = folder.map { ArtifactFolder.canonical($0, known: Self.known(list, fl)) }
+            let at = Dictionary(list.indices.map { (list[$0].id, $0) }, uniquingKeysWith: { a, _ in a })
+            for id in ids {
+                guard let i = at[id] else { throw ProtocolError(code: .notFound, message: "no artifact \(Self.name(id))") }
+                list[i].inFolder = to
+            }
         }
     }
 
@@ -489,12 +496,12 @@ actor ArtifactStore {
         if list != list0 {
             let data = try enc.encode(list), file = registryFile
             try await onIO { try DesignService.writePrivate(data, to: file) }
-            all = list
+            all = list; writes += 1
         }
         if fl != fl0 {
             let data = try enc.encode(fl), file = foldersFile
             try await onIO { try DesignService.writePrivate(data, to: file) }
-            entries = fl
+            entries = fl; writes += 1
         }
     }
 

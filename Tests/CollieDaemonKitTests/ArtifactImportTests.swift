@@ -117,7 +117,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
             // the kept copy is the page made offline (its Google Fonts link to collie-lib://), the original untouched
             let original = try String(contentsOf: htmlImport.appendingPathComponent("landing/index.html"), encoding: .utf8)
             #expect(FileManager.default.contents(atPath: dir.appendingPathComponent("source/index.html").path)
-                    == Data(OfflineRewrite.html(original, libs: []).0.utf8))
+                    == Data(OfflineRewrite.html(original, libs: [])!.0.utf8))
             #expect(original.contains("fonts.googleapis.com"))
             #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("v1/index.html").path))
             #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent(".import").path))

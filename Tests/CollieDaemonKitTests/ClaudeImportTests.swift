@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Compression
 import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
@@ -36,7 +37,11 @@ private let codeLink = "https://claude.ai/code/artifact/0f8fad5b-d9cb-469f-a165-
         #expect(r.contains("--root '/r/sandbox/T/state/claude-import/1/2' --source '\(codeLink)'"))
         #expect(r.contains("collie artifact import-failed"))
         let unfiled = ClaudeImport.recipe(links: [link], dir: "/d", folder: nil, title: "Meu deck")
-        #expect(!unfiled.contains("--folder") && unfiled.contains("--title 'Meu deck'"))
+        #expect(!unfiled.contains("--folder") && unfiled.contains("--title 'Meu deck'") && !unfiled.contains("--nonce"))
+        #expect(r.contains("recuse caminhos com .. ou absolutos"))
+        let asked = ClaudeImport.recipe(links: [link], dir: "/d", folder: nil, title: nil, nonce: "n0")
+        #expect(asked.contains("--source '\(link)' --nonce n0") && asked.contains("import-failed <link> --nonce n0"))
+        #expect(ClaudeImport.listRecipe(file: "/d/l.json", nonce: "n1").contains("import-list '/d/l.json' --nonce n1"))
     }
 
     @Test func listRecipeAndEntries() throws {
@@ -85,7 +90,7 @@ private let codeLink = "https://claude.ai/code/artifact/0f8fad5b-d9cb-469f-a165-
         <style>@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700'); body{background:url(https://img.example.com/bg.png?t=1)}</style>
         </head><body><a href="https://claude.ai">link</a><img src="https://img.example.com/a.png"></body>
         """
-        let (out, r) = OfflineRewrite.html(page, libs: libs)
+        let (out, r) = OfflineRewrite.html(page, libs: libs)!
         #expect(out.contains(#"<script src="collie-lib://lib/react@18.3.1/react.production.min.js"></script>"#), "\(out)")
         #expect(out.contains(#"href="collie-lib://fonts/css?family=Inter:400,700&family=Roboto%20Mono:400,500""#), "\(out)")
         #expect(out.contains(#"@import url("collie-lib://fonts/css?family=Space%20Grotesk")"#), "\(out)")
@@ -95,7 +100,28 @@ private let codeLink = "https://claude.ai/code/artifact/0f8fad5b-d9cb-469f-a165-
         // what still needs the network: listed without queries (the <a> is a link, not a resource)
         #expect(r.remote == ["https://cdn.example.com/x.js", "https://img.example.com/bg.png", "https://img.example.com/a.png"], "\(r.remote)")
         #expect(r.warnings.isEmpty, "\(r.warnings)")
-        #expect(OfflineRewrite.html("<p>nada</p>", libs: libs) == ("<p>nada</p>", OfflineRewrite.Report()))
+        #expect(OfflineRewrite.html("<p>nada</p>", libs: libs)! == ("<p>nada</p>", OfflineRewrite.Report()))
+    }
+
+    /// Tags that never close (and one tag of many unclosed attributes) cost linear time, not quadratic.
+    @Test func unclosedTagsStayLinear() {
+        for s in ["<a ", "<link ", "<script ", "<img src=\"", "url(//"].map({ String(repeating: $0, count: 8000) })
+                 + ["<img" + String(repeating: " src=\"", count: 8000) + ">"] {
+            let t0 = ContinuousClock.now
+            _ = OfflineRewrite.html(s, libs: libs)
+            #expect(ContinuousClock.now - t0 < .milliseconds(200), "\(s.prefix(12)): \(ContinuousClock.now - t0)")
+        }
+    }
+
+    @Test func overBudgetKeepsTheCopyAsIs() {
+        let rw = OfflineRewriter(libs: libs, budget: .zero)
+        let d = Data(#"<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>"#.utf8)
+        #expect(rw.rewrite(d, ext: "html") == d && rw.report.warnings.count == 1, "\(rw.report)")
+    }
+
+    @Test func fontWeightsAreHundreds() {
+        let g = OfflineRewrite.googleFonts("https://fonts.googleapis.com/css2?family=Inter:wght@150;151;400;700;950")
+        #expect(g?.fonts == [OfflineRewrite.FontAsk(family: "Inter", weights: [400, 700])])
     }
 
     @Test func cssImportsAndRemote() {
@@ -125,10 +151,35 @@ private let codeLink = "https://claude.ai/code/artifact/0f8fad5b-d9cb-469f-a165-
 
     @Test func extractsAndFindsThePage() async throws {
         let dir = tmp(), zip = tmp().appendingPathExtension("zip"); defer { try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: zip) }
-        try TestZip.make([("site/", Data(), 0o040755), ("site/index.html", Data("<p>x</p>".utf8), 0o100644), ("site/a.css", Data("a{}".utf8), 0o100644)]).write(to: zip)
+        // the archive's own modes (a closed folder, an unreadable file) are not kept: 0755 / 0644
+        try TestZip.make([("site/", Data(), 0o040000), ("site/index.html", Data("<p>x</p>".utf8), 0o100000),
+                          ("site/a.css", Data(String(repeating: "a{}", count: 500).utf8), 0o100644)], deflate: true).write(to: zip)
         let page = try await ZipCheck.extract(zip, into: dir)
         #expect(page.path == dir.appendingPathComponent("site/index.html").path)
-        #expect(FileManager.default.contents(atPath: dir.appendingPathComponent("site/a.css").path) == Data("a{}".utf8))
+        #expect(FileManager.default.contents(atPath: dir.appendingPathComponent("site/a.css").path) == Data(String(repeating: "a{}", count: 500).utf8))
+        let modes = try ["site", "site/index.html"].map { try FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent($0).path)[.posixPermissions] as? Int }
+        #expect(modes == [0o755, 0o644])
+    }
+
+    /// A bomb: 16 MiB of zeros deflated, its sizes declared as 1 byte. Extraction stops at what was declared.
+    @Test func bombStopsAtTheDeclaredSize() async throws {
+        let dir = tmp(), zip = tmp().appendingPathExtension("zip"); defer { try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: zip) }
+        try TestZip.make([("index.html", Data(count: 16 << 20), 0o100644)], claimedSize: 1, deflate: true).write(to: zip)
+        await #expect(throws: ProtocolError.self) { try await ZipCheck.extract(zip, into: dir) }
+        let written = (FileManager.default.subpaths(atPath: dir.path) ?? []).reduce(0) { t, f in
+            t + ((try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(f).path)[.size] as? Int) ?? 0)
+        }
+        #expect(written < 1 << 20, "\(written)")
+    }
+
+    @Test func refusesAFifoOrALinkedZip() async throws {
+        let d = tmp(); defer { try? FileManager.default.removeItem(at: d) }
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        let fifo = d.appendingPathComponent("f.zip"), real = d.appendingPathComponent("r.zip"), link = d.appendingPathComponent("l.zip")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        try TestZip.make([("index.html", Data("x".utf8), 0o100644)]).write(to: real)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        for z in [fifo, link] { await #expect(throws: ProtocolError.self) { try await ZipCheck.extract(z, into: d.appendingPathComponent("out-\(z.lastPathComponent)")) } }
     }
 
     @Test func pageOfAFolder() throws {
@@ -167,9 +218,29 @@ private let codeLink = "https://claude.ai/code/artifact/0f8fad5b-d9cb-469f-a165-
         #expect(e.version == 2 && folder.lastPathComponent == "v2")
         try Data("<p>e</p>".utf8).write(to: folder.appendingPathComponent("index.html"))
         #expect(try await s.commit(e))
+        // an export is never turned back into an agent's page: the link again is a new artifact, then its versions
         let c = try await s.addAgent(page: Data("<p>3</p>".utf8), title: "A3", paddockId: nil, by: "W", origin: link)
-        #expect(c.id == a.id && c.version == 3 && c.kind == .agent && c.fileId == nil)
+        #expect(c.id != a.id && c.version == 1 && c.kind == .agent)
+        let exp = try await s.get(a.id)
+        #expect(exp.kind == .export && exp.fileId == "f")
+        #expect(try await s.addAgent(page: Data("<p>4</p>".utf8), title: "A4", paddockId: nil, by: "W", origin: link).id == c.id)
         #expect(try await ArtifactStore(root: root).get(a.id).origin == link)
+    }
+
+    /// A terminal versions only its own artifact from a link; the app (no byId) versions any.
+    @Test func onlyTheOwnerOrTheAppVersions() async throws {
+        let root = tmp(); defer { unlock(root); try? FileManager.default.removeItem(at: root) }
+        let s = ArtifactStore(root: root), ta = UUID(), tb = UUID()
+        let a = try await s.addAgent(page: Data("<p>a</p>".utf8), title: "A", paddockId: nil, by: "A", byId: ta, inFolder: "Cliente", origin: link)
+        let b = try await s.addAgent(page: Data("<p>b</p>".utf8), title: "B", paddockId: nil, by: "B", byId: tb, origin: link)
+        #expect(b.id != a.id && b.version == 1 && b.inFolder == nil)
+        let kept = try await s.get(a.id)
+        #expect(kept.title == "A" && kept.byId == ta)
+        let again = try await s.addAgent(page: Data("<p>a2</p>".utf8), title: "A2", paddockId: nil, by: "A", byId: ta, origin: link)
+        #expect(again.id == a.id && again.version == 2)
+        let app = try await s.addAgent(page: Data("<p>c</p>".utf8), title: "C", paddockId: nil, by: "app", origin: codeLink)
+        let byApp = try await s.addAgent(page: Data("<p>c2</p>".utf8), title: "C2", paddockId: nil, by: "app", origin: codeLink)
+        #expect(byApp.id == app.id && byApp.version == 2)
     }
 
     @Test func rewriteRecordsNetworkAndWarnings() async throws {
@@ -190,16 +261,18 @@ private let codeLink = "https://claude.ai/code/artifact/0f8fad5b-d9cb-469f-a165-
 
 /// A stored (uncompressed) zip, written by hand: names, data and Unix modes as given (`claimedSize`: the sizes it states).
 enum TestZip {
-    static func make(_ entries: [(String, Data, UInt32)], claimedSize: UInt32? = nil) -> Data {
+    static func make(_ entries: [(String, Data, UInt32)], claimedSize: UInt32? = nil, deflate: Bool = false) -> Data {
         var out = Data(), central = Data()
         func u16(_ v: Int, _ d: inout Data) { withUnsafeBytes(of: UInt16(v).littleEndian) { d.append(contentsOf: $0) } }
         func u32(_ v: UInt32, _ d: inout Data) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
         for (name, data, mode) in entries {
-            let n = Data(name.utf8), crc = crc32(data), size = claimedSize ?? UInt32(data.count), at = UInt32(out.count)
-            u32(0x04034b50, &out); u16(10, &out); u16(0, &out); u16(0, &out); u16(0, &out); u16(0, &out)
-            u32(crc, &out); u32(size, &out); u32(size, &out); u16(n.count, &out); u16(0, &out); out += n; out += data
-            u32(0x02014b50, &central); u16(0x031e, &central); u16(10, &central); u16(0, &central); u16(0, &central); u16(0, &central); u16(0, &central)
-            u32(crc, &central); u32(size, &central); u32(size, &central); u16(n.count, &central); u16(0, &central); u16(0, &central)
+            let packed = deflate && !data.isEmpty ? Self.deflate(data) : data, method = deflate && !data.isEmpty ? 8 : 0
+            let n = Data(name.utf8), crc = claimedSize == nil ? crc32(data) : 0, size = claimedSize ?? UInt32(data.count), at = UInt32(out.count)
+            let csize = claimedSize.map { _ in UInt32(packed.count) } ?? (method == 8 ? UInt32(packed.count) : size)
+            u32(0x04034b50, &out); u16(20, &out); u16(0, &out); u16(method, &out); u16(0, &out); u16(0, &out)
+            u32(crc, &out); u32(csize, &out); u32(size, &out); u16(n.count, &out); u16(0, &out); out += n; out += packed
+            u32(0x02014b50, &central); u16(0x031e, &central); u16(20, &central); u16(0, &central); u16(method, &central); u16(0, &central); u16(0, &central)
+            u32(crc, &central); u32(csize, &central); u32(size, &central); u16(n.count, &central); u16(0, &central); u16(0, &central)
             u16(0, &central); u16(0, &central); u32(mode << 16, &central); u32(at, &central); central += n
         }
         let cdAt = UInt32(out.count)
@@ -208,6 +281,13 @@ enum TestZip {
         u32(UInt32(central.count), &out); u32(cdAt, &out); u16(0, &out)
         return out
     }
+    /// Raw deflate (Compression's ZLIB is RFC 1951, no header), as zip's method 8.
+    static func deflate(_ d: Data) -> Data {
+        let cap = d.count + 4096
+        let dst = UnsafeMutablePointer<UInt8>.allocate(capacity: cap); defer { dst.deallocate() }
+        let n = d.withUnsafeBytes { compression_encode_buffer(dst, cap, $0.bindMemory(to: UInt8.self).baseAddress!, d.count, nil, COMPRESSION_ZLIB) }
+        return Data(bytes: dst, count: n)
+    }
     static func crc32(_ d: Data) -> UInt32 {
         var c: UInt32 = 0xFFFFFFFF
         for b in d { c ^= UInt32(b); for _ in 0..<8 { c = (c >> 1) ^ (0xEDB88320 & (0 &- (c & 1))) } }
@@ -215,7 +295,9 @@ enum TestZip {
     }
 }
 
-extension CommandRouter { func testGrantImport(_ link: String, _ t: UUID, _ folder: String?) { claudeImports[link] = (t, folder) } }
+extension CommandRouter {
+    func testGrantImport(_ link: String, _ t: UUID, _ folder: String?, nonce: String) { claudeImports[link] = (t, folder, nonce) }
+}
 
 @Suite(.serialized) struct ClaudeImportCommandTests {
     private func call(_ p: Paths, _ id: String, _ token: String, _ cmd: String, _ args: [String: String], cwd: String? = nil) async throws -> Response {
@@ -244,7 +326,7 @@ extension CommandRouter { func testGrantImport(_ link: String, _ t: UUID, _ fold
                 .write(to: one.appendingPathComponent("index.html"))
             let args = ["path": one.appendingPathComponent("index.html").path, "root": one.path, "source": link]
             #expect(try await call(p, id, tok, "artifact.add", args.merging(["folder": "Cliente"]) { a, _ in a }).error?.code == .unauthorized)
-            await d.router.testGrantImport(link, UUID(uuidString: id)!, "Cliente")   // the app chose it for this link
+            await d.router.testGrantImport(link, UUID(uuidString: id)!, "Cliente", nonce: "n1")   // the app chose it for this link
             let a = try await call(p, id, tok, "artifact.add", args.merging(["folder": "Cliente"]) { a, _ in a })
             guard case .object(let ao)? = a.result, case .string(let aid)? = ao["id"] else { Issue.record("\(a)"); return }
             // no offline libs in this daemon: the CDN script stays remote too
@@ -257,6 +339,28 @@ extension CommandRouter { func testGrantImport(_ link: String, _ t: UUID, _ fold
             let row = try await call(p, id, tok, "artifact.get", ["id": aid])
             guard case .object(let ro)? = row.result else { Issue.record("\(row)"); return }
             #expect(ro["origin"] == .string(link) && ro["folder"] == .string("Cliente"), "\(ro)")
+        }
+    }
+
+    /// Reports count only from the asked terminal with the import's nonce; a terminal files pages in its lot's folder or none.
+    @Test func reportsNeedTheAskedTerminalAndNonce() async throws {
+        try await withDaemon { d, p in
+            let (id, _) = try await spawn(d, p, "A")
+            let tok = try await tokenOf(d, id)
+            #expect(try await call(p, id, tok, "artifact.import-failed", ["url": link, "reason": "x"]).error?.code == .unauthorized)
+            #expect(try await call(p, id, tok, "artifact.import-list", ["path": "/tmp/x.json", "nonce": "zz"]).error?.code == .unauthorized)
+            await d.router.testGrantImport(link, UUID(uuidString: id)!, nil, nonce: "n1")
+            #expect(try await call(p, id, tok, "artifact.import-failed", ["url": link, "reason": "x", "nonce": "bad"]).error?.code == .unauthorized)
+            #expect(try await call(p, id, tok, "artifact.import-failed", ["url": link, "reason": "x", "nonce": "n1"]).ok)
+            // S9: any terminal add, with or without --source
+            let page = p.root.appendingPathComponent("p.html")
+            try Data("<p>x</p>".utf8).write(to: page)
+            #expect(try await call(p, id, tok, "artifact.add", ["path": page.path, "folder": "Outra"]).error?.code == .unauthorized)
+            #expect(try await call(p, id, tok, "artifact.add", ["path": page.path, "folder": ""]).ok)
+            // --title: no control characters reach the recipe
+            let r = try await call(p, id, tok, "artifact.import-claude", ["urls": link, "title": "Deck\nrm -rf"])
+            guard case .object(let o)? = r.result, case .string(let recipe)? = o["recipe"] else { Issue.record("\(r)"); return }
+            #expect(recipe.contains("--title 'Deckrm -rf'"), "\(recipe)")
         }
     }
 

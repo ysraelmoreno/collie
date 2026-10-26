@@ -10,9 +10,10 @@ enum OfflineRewrite {
     struct Report: Equatable, Sendable {
         var warnings: [String] = [], remote: [String] = [], fonts: [FontAsk] = []
         mutating func merge(_ o: Report) {
-            for w in o.warnings where !warnings.contains(w) { warnings.append(w) }
+            // capped: a page of a million distinct tags never grows these (each add scans them)
+            for w in o.warnings where !warnings.contains(w) && warnings.count < maxRemote { warnings.append(w) }
             for u in o.remote where !remote.contains(u) && remote.count < maxRemote { remote.append(u) }
-            for f in o.fonts where !fonts.contains(where: { $0.family == f.family }) { fonts.append(f) }
+            for f in o.fonts where !fonts.contains(where: { $0.family == f.family }) && fonts.count < maxRemote { fonts.append(f) }
         }
     }
     static let maxRemote = 20
@@ -62,7 +63,9 @@ enum OfflineRewrite {
         let s = absolute(raw.replacingOccurrences(of: "&amp;", with: "&").replacingOccurrences(of: "|", with: "%7C"))
         guard let c = URLComponents(string: s), c.host?.lowercased() == "fonts.googleapis.com", ["/css", "/css2"].contains(c.path) else { return nil }
         var out: [FontAsk] = []
-        func weights(_ ws: [Int]) -> [Int]? { let w = Array(Set(ws.filter { (100...900).contains($0) })).sorted(); return w.isEmpty ? nil : w }
+        func weights(_ ws: [Int]) -> [Int]? {   // 100, 200 … 900: at most 9
+            let w = Array(Set(ws.filter { (100...900).contains($0) && $0 % 100 == 0 })).sorted(); return w.isEmpty ? nil : w
+        }
         for q in c.percentEncodedQueryItems ?? [] where q.name == "family" {
             let v = (q.value ?? "").replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? ""
             for part in c.path == "/css" ? v.split(separator: "|").map(String.init) : [v] {
@@ -88,50 +91,94 @@ enum OfflineRewrite {
 
     // MARK: attributes
 
-    private static func attrRegex(_ name: String) -> Regex<AnyRegexOutput> {
-        try! Regex(#"(?i)\s"# + name + #"\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#)
+    /// One attribute of a tag: its name (lowercased), value, and range (from the space before it through its value).
+    struct Attr { let name: String; let value: String; let range: Range<String.Index> }
+
+    /// `tag`'s attributes, read in one pass (linear: no regex over the tag, which may be huge and never close).
+    static func attributes(_ tag: String) -> [Attr] {
+        var out: [Attr] = [], i = tag.startIndex
+        func at(_ j: String.Index) -> Character? { j < tag.endIndex ? tag[j] : nil }
+        func skip(_ j: inout String.Index, while ok: (Character) -> Bool) { while let c = at(j), ok(c) { j = tag.index(after: j) } }
+        if at(i) == "<" { i = tag.index(after: i) }
+        skip(&i) { !$0.isWhitespace && $0 != ">" && $0 != "/" }   // the tag's name
+        while i < tag.endIndex {
+            let start = i
+            skip(&i) { $0.isWhitespace || $0 == "/" }
+            guard let c = at(i), c != ">" else { break }
+            let ns = i
+            skip(&i) { !$0.isWhitespace && $0 != "=" && $0 != ">" }
+            if i == ns { i = tag.index(after: i); continue }   // a stray "="
+            let name = tag[ns..<i].lowercased()
+            var j = i
+            skip(&j) { $0.isWhitespace }
+            var value = ""
+            if at(j) == "=" {
+                j = tag.index(after: j)
+                skip(&j) { $0.isWhitespace }
+                if let q = at(j), q == "\"" || q == "'" {
+                    j = tag.index(after: j)
+                    let vs = j
+                    skip(&j) { $0 != q }
+                    value = String(tag[vs..<j])
+                    if j < tag.endIndex { j = tag.index(after: j) }
+                } else {
+                    let vs = j
+                    skip(&j) { !$0.isWhitespace && $0 != ">" }
+                    value = String(tag[vs..<j])
+                }
+                i = j
+            }
+            out.append(Attr(name: name, value: value, range: start..<i))
+        }
+        return out
     }
-    // ponytail: built on each use (Regex isn't Sendable, so no shared static); fine for a page at a time
-    private static var srcAttr: Regex<AnyRegexOutput> { attrRegex("src") }
-    private static var hrefAttr: Regex<AnyRegexOutput> { attrRegex("href") }
-    private static var relAttr: Regex<AnyRegexOutput> { attrRegex("rel") }
-    private static var posterAttr: Regex<AnyRegexOutput> { attrRegex("poster") }
-    private static var dataAttr: Regex<AnyRegexOutput> { attrRegex("data") }
-    private static func value(_ tag: String, _ r: Regex<AnyRegexOutput>) -> (range: Range<String.Index>, value: String)? {
-        guard let m = tag.firstMatch(of: r) else { return nil }
-        let v = (1...3).lazy.compactMap { m.output[$0].substring }.first.map(String.init) ?? ""
-        return (m.range, v)
-    }
-    /// `tag` with that attribute set to `v`, and no `integrity`/`crossorigin` (the file is no longer the CDN's).
-    private static func replaced(_ tag: String, _ r: (range: Range<String.Index>, value: String), name: String, with v: String) -> String {
-        var t = tag
-        t.replaceSubrange(r.range, with: " \(name)=\"\(v)\"")
-        return t.replacing(/(?i)\s+(?:integrity|crossorigin)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/, with: "")
+
+    /// `tag` with attribute `a` set to `v`, and no `integrity`/`crossorigin` (the file is no longer the CDN's).
+    private static func replaced(_ tag: String, _ attrs: [Attr], _ a: Attr, with v: String) -> String {
+        var out = "", from = tag.startIndex
+        for x in attrs where x.range == a.range || ["integrity", "crossorigin"].contains(x.name) {
+            out += tag[from..<x.range.lowerBound]
+            if x.range == a.range { out += " \(a.name)=\"\(v)\"" }
+            from = x.range.upperBound
+        }
+        return out + tag[from...]
     }
     private static func host(_ u: String) -> String? { URLComponents(string: absolute(u))?.host?.lowercased() }
 
     // MARK: rewrite
 
-    static func html(_ s: String, libs: [WebLibEntry]) -> (String, Report) {
+    // compiled once; `[^<>]*`: a tag that never closes fails at the next `<` (linear, never quadratic).
+    // nonisolated(unsafe): Regex is an immutable value (its lazy program is built atomically), only read here
+    nonisolated(unsafe) private static let linkTag = /(?i)<link\b[^<>]*>/, scriptTag = /(?i)<script\b[^<>]*>/, anyTag = /<([a-zA-Z][a-zA-Z0-9-]*)\b[^<>]*>/
+    nonisolated(unsafe) private static let fontImport = /(?i)@import\s+(?:url\(\s*)?["']?((?:https?:)?\/\/fonts\.googleapis\.com\/[^"')\s;<>]+)["']?\s*\)?/
+    nonisolated(unsafe) private static let remoteRefs = [/(?i)url\(\s*["']?((?:https?:)?\/\/[^"'\s)<>]+)/, /(?i)@import\s+["']((?:https?:)?\/\/[^"'\s)<>]+)/,
+                                     /\bfrom\s*["']((?:https?:)?\/\/[^"'\s)<>]+)/, /\bimport\(\s*["']((?:https?:)?\/\/[^"'\s)<>]+)/]
+
+    /// `s` made offline, or nil once past `deadline` (checked between the passes).
+    static func html(_ s: String, libs: [WebLibEntry], deadline: ContinuousClock.Instant = .now + .seconds(3600)) -> (String, Report)? {
         var r = Report()
-        var out = s.replacing(/(?i)<link\b[^>]*>/) { m -> String in
-            let tag = String(m.0)
-            guard let href = value(tag, hrefAttr), let h = host(href.value), fontHosts.contains(h) else { return tag }
-            let rel = value(tag, relAttr)?.value.lowercased() ?? ""
+        var out = s.replacing(linkTag) { m -> String in
+            let tag = String(m.0), attrs = attributes(tag)
+            guard let href = attrs.first(where: { $0.name == "href" }), let h = host(href.value), fontHosts.contains(h) else { return tag }
+            let rel = attrs.first { $0.name == "rel" }?.value.lowercased() ?? ""
             if ["preconnect", "dns-prefetch", "preload"].contains(where: rel.contains) { return "" }
             guard let g = googleFonts(href.value) else { return tag }
             r.merge(Report(fonts: g.fonts))
-            return replaced(tag, href, name: "href", with: g.css)
+            return replaced(tag, attrs, href, with: g.css)
         }
-        out = out.replacing(/(?i)<script\b[^>]*>/) { m -> String in
-            let tag = String(m.0)
-            guard let src = value(tag, srcAttr), let l = lib(for: src.value, libs: libs) else { return tag }
+        guard ContinuousClock.now < deadline else { return nil }
+        out = out.replacing(scriptTag) { m -> String in
+            let tag = String(m.0), attrs = attributes(tag)
+            guard let src = attrs.first(where: { $0.name == "src" }), let l = lib(for: src.value, libs: libs) else { return tag }
             if let w = l.warning { r.merge(Report(warnings: [w])) }
-            return replaced(tag, src, name: "src", with: l.url)
+            return replaced(tag, attrs, src, with: l.url)
         }
+        guard ContinuousClock.now < deadline else { return nil }
         let (css, cr) = imports(out)
         r.merge(cr)
+        guard ContinuousClock.now < deadline else { return nil }
         r.merge(Report(remote: remote(css)))
+        guard ContinuousClock.now < deadline else { return nil }
         return (css, r)
     }
 
@@ -144,7 +191,7 @@ enum OfflineRewrite {
     /// `@import` of Google Fonts (in CSS or a `<style>`) → `collie-lib://fonts/css`.
     private static func imports(_ s: String) -> (String, Report) {
         var r = Report()
-        let out = s.replacing(/(?i)@import\s+(?:url\(\s*)?["']?((?:https?:)?\/\/fonts\.googleapis\.com\/[^"')\s;]+)["']?\s*\)?/) { m -> String in
+        let out = s.replacing(fontImport) { m -> String in
             guard let g = googleFonts(String(m.1)) else { return String(m.0) }
             r.merge(Report(fonts: g.fonts))
             return "@import url(\"\(g.css)\")"
@@ -156,43 +203,48 @@ enum OfflineRewrite {
     /// `<form>`, `<base>`), CSS `url()` and `@import`, JS `import`s.
     static func remote(_ s: String) -> [String] {
         var found: [(String.Index, String)] = []
-        let url = #"((?:https?:)?//[^"'\s)>]+)"#
-        for m in s.matches(of: /<([a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>/) where !["a", "area", "form", "base"].contains(m.1.lowercased()) {
-            let tag = String(m.0)
-            for a in [srcAttr, hrefAttr, posterAttr, dataAttr] {
-                if let v = value(tag, a)?.value, v.hasPrefix("//") || v.lowercased().hasPrefix("http://") || v.lowercased().hasPrefix("https://") {
-                    found.append((m.range.lowerBound, v))
-                }
+        for m in s.matches(of: anyTag) where !["a", "area", "form", "base"].contains(m.1.lowercased()) {
+            for a in attributes(String(m.0)) where ["src", "href", "poster", "data"].contains(a.name) {
+                let v = a.value.lowercased()
+                if v.hasPrefix("//") || v.hasPrefix("http://") || v.hasPrefix("https://") { found.append((m.range.lowerBound, a.value)) }
             }
         }
-        for p in [#"(?i)url\(\s*["']?"# + url, #"(?i)@import\s+["']"# + url, #"\bfrom\s*["']"# + url, #"\bimport\(\s*["']"# + url] {
-            for m in s.matches(of: try! Regex(p)) { if let u = m.output[1].substring { found.append((m.range.lowerBound, String(u))) } }
-        }
+        for re in remoteRefs { for m in s.matches(of: re) { found.append((m.range.lowerBound, String(m.1))) } }
         var out: [String] = []
         for (_, u) in found.sorted(by: { $0.0 < $1.0 }) {
             let clean = String(absolute(u).prefix { $0 != "?" && $0 != "#" })
-            if !out.contains(clean) && out.count < maxRemote { out.append(clean) }
+            if !out.contains(clean) { out.append(clean) }
+            if out.count == maxRemote { break }
         }
         return out
     }
 }
 
-/// One import's rewrite over its files (the store calls it on its io queue), the report gathered.
+/// One import's rewrite over its files (the store calls it on its io queue), the report gathered. Each page gets
+/// `budget` (2 s): past it, that file is kept as it is, with a warning.
+/// ponytail: the budget is checked between the passes (each pass is linear), not inside one.
 final class OfflineRewriter: @unchecked Sendable {
     private let libs: [WebLibEntry]
     /// A warning for a Google Fonts family the page asks for (nil: none, e.g. bundled, downloaded or about to be).
     private let fontWarning: @Sendable (String) -> String?
+    private let budget: Duration
     private let lock = NSLock()
     private var _report = OfflineRewrite.Report()
-    init(libs: [WebLibEntry], fontWarning: @escaping @Sendable (String) -> String? = { _ in nil }) { self.libs = libs; self.fontWarning = fontWarning }
+    init(libs: [WebLibEntry], budget: Duration = .seconds(2), fontWarning: @escaping @Sendable (String) -> String? = { _ in nil }) {
+        self.libs = libs; self.budget = budget; self.fontWarning = fontWarning
+    }
 
     var report: OfflineRewrite.Report { lock.withLock { _report } }
 
     /// An .html/.htm/.css file rewritten (others, and non-UTF-8 text, as they are).
     func rewrite(_ data: Data, ext: String) -> Data {
-        let e = ext.lowercased()
+        let e = ext.lowercased(), deadline = ContinuousClock.now + budget
         guard ["html", "htm", "css"].contains(e), let s = String(data: data, encoding: .utf8) else { return data }
-        let (out, r0) = e == "css" ? OfflineRewrite.css(s) : OfflineRewrite.html(s, libs: libs)
+        let done = e == "css" ? OfflineRewrite.css(s) : OfflineRewrite.html(s, libs: libs, deadline: deadline)
+        guard let (out, r0) = done, ContinuousClock.now < deadline else {
+            lock.withLock { _report.merge(OfflineRewrite.Report(warnings: ["página grande demais para deixar offline a tempo: guardada como veio"])) }
+            return data
+        }
         var r = r0
         r.warnings += r.fonts.compactMap { fontWarning($0.family) }
         lock.withLock { _report.merge(r) }

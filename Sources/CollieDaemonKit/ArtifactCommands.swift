@@ -34,8 +34,15 @@ extension CommandRouter {
                 guard l.count == 1 else { throw invalid("--source: um link só") }
                 origin = l[0]
             }
-            do { return try await addPage(r, caller: caller, origin: origin) } catch {
-                if let origin { await importFailed(origin, (error as? ProtocolError)?.message ?? "\(error)") }
+            // the asked terminal's report (the app's sheet follows only those); taken before the add clears the grant
+            let nonce = origin.flatMap { askedNonce($0, r, caller) }
+            // one add per link at a time: a version never overtakes another
+            // ponytail: 50 ms polling, as font.add
+            if let origin { while addingSources.contains(origin) { try await Task.sleep(for: .milliseconds(50)) } }
+            if let origin { addingSources.insert(origin) }
+            defer { if let origin { addingSources.remove(origin) } }
+            do { return try await addPage(r, caller: caller, origin: origin, nonce: nonce) } catch {
+                if let origin, let nonce { await importFailed(origin, (error as? ProtocolError)?.message ?? "\(error)", nonce: nonce) }
                 throw error
             }
         case "artifact.import-claude":
@@ -46,11 +53,16 @@ extension CommandRouter {
                 .object(["id": .string(t.id.uuidString.lowercased()), "name": .string(t.name), "running": .bool(running), "default": .bool(first)])
             })
         case "artifact.import-list":
+            let nonce = str(r, "nonce") ?? ""
+            guard let asked = claudeLists[nonce], caller.map({ $0.id == asked }) ?? true else {
+                throw ProtocolError(code: .unauthorized, message: "só o terminal a quem o app pediu a lista a entrega (com o --nonce do pedido)")
+            }
             let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? "/", isDirectory: true)
             let file = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
             let text = try await UnixSocketClient.offPool { try DiagramFile.readLocal(file) }
             let items = try ClaudeImport.entries(Data(text.utf8))
-            let payload = JSONValue.object(["by": .string(Self.origin(caller)), "items": .array(items.map { e in
+            claudeLists[nonce] = nil
+            let payload = JSONValue.object(["by": .string(Self.origin(caller)), "nonce": .string(nonce), "items": .array(items.map { e in
                 .object(["url": .string(e.url), "title": e.title.map { .string($0) } ?? .null])
             })])
             for p in ws.panels where p.pluginId == "artifacts" { await pluginEmitted(panel: p.id, name: "artifact.import.list", payload: payload) }
@@ -58,8 +70,11 @@ extension CommandRouter {
         case "artifact.import-failed":
             let l = try ClaudeImport.links([try need(r, "url")])
             guard l.count == 1 else { throw invalid("um link só") }
-            let reason = String(String.UnicodeScalarView((str(r, "reason") ?? "").unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }).prefix(200))
-            await importFailed(l[0], reason.isEmpty ? "o terminal não conseguiu ler o artifact" : reason)
+            guard let nonce = askedNonce(l[0], r, caller) else {
+                throw ProtocolError(code: .unauthorized, message: "só o terminal a quem o app pediu esse link relata a falha (com o --nonce do pedido)")
+            }
+            let reason = ClaudeImport.clean(str(r, "reason") ?? "")
+            await importFailed(l[0], reason.isEmpty ? "o terminal não conseguiu ler o artifact" : reason, nonce: nonce)
             return .object([:])
         case "artifact.new":
             guard let kind = ArtifactTemplates.Kind(rawValue: try need(r, "kind")) else {
@@ -158,10 +173,17 @@ extension CommandRouter {
         throw ProtocolError(code: .unauthorized, message: "um terminal importa só na pasta do seu lote ou em Sem pasta; outra pasta, só a que o app escolher")
     }
 
-    /// `artifact.import.failed` `{url, reason}` to every Artifacts panel (the import sheet's row).
-    func importFailed(_ link: String, _ reason: String) async {
+    /// The nonce of the app's ask for `link` when `r` brings it (`--nonce`) from the terminal it was asked of; nil otherwise.
+    private func askedNonce(_ link: String, _ r: Request, _ caller: TerminalRecord?) -> String? {
+        guard let g = claudeImports[link], let n = str(r, "nonce"), n == g.nonce, caller.map({ $0.id == g.terminal }) ?? true else { return nil }
+        return n
+    }
+
+    /// `artifact.import.failed` `{url, reason, nonce}` to every Artifacts panel (the import sheet's row; `url` "": its list).
+    func importFailed(_ link: String, _ reason: String, nonce: String) async {
         for p in ws.panels where p.pluginId == "artifacts" {
-            await pluginEmitted(panel: p.id, name: "artifact.import.failed", payload: .object(["url": .string(link), "reason": .string(reason)]))
+            await pluginEmitted(panel: p.id, name: "artifact.import.failed",
+                                payload: .object(["url": .string(link), "reason": .string(reason), "nonce": .string(nonce)]))
         }
     }
 
@@ -169,14 +191,14 @@ extension CommandRouter {
     /// (checked, unpacked into `<root>/.import-<uuid>`, removed after). The copy is made offline (`OfflineRewriter`);
     /// Google Fonts it asks for are downloaded in the background when that is on. `origin` (`--source`): a claude.ai
     /// link; the same link again is that artifact's next version (its folder kept unless `--folder`).
-    private func addPage(_ r: Request, caller: TerminalRecord?, origin: String?) async throws -> JSONValue {
+    private func addPage(_ r: Request, caller: TerminalRecord?, origin: String?, nonce: String?) async throws -> JSONValue {
         @Sendable func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? "/", isDirectory: true)
         let src = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
-        let known = origin == nil ? nil : try await artifacts.list().first { $0.origin == origin }
+        let known = try await artifacts.continued(origin: origin, byId: caller?.id)
         if let known, importingArtifacts.contains(known.id) { throw invalid("importação em andamento desse artifact; tente de novo em instantes") }
         let folder = r.args["folder"] == nil && known != nil ? nil : try artifactFolder(r, caller: caller)
-        if origin != nil, let me = caller { try checkImportFolder(folder, link: origin, by: me) }
+        if let me = caller { try checkImportFolder(folder, link: origin, by: me) }   // every terminal add
         let width = try DeviceService.int(r.args, "width", 320...3840) ?? 1440
         let dir = config.weblibsDir, fontDir = config.paths.root.appendingPathComponent("fonts"), google = googleFonts
         let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
@@ -233,14 +255,18 @@ extension CommandRouter {
                                                  byId: caller?.id, inFolder: folder, origin: origin, rewriter: rw)
             }
         }
-        if let origin { claudeImports[origin] = nil }
+        if let origin, nonce != nil { claudeImports[origin] = nil }   // the asked add done (another terminal's never clears it)
         let id = JSONValue.string(a.id.uuidString.lowercased())
         for p in ws.panels where p.pluginId == "artifacts" {
-            await pluginEmitted(panel: p.id, name: "artifact.added", payload: .object(["id": id, "url": origin.map { .string($0) } ?? .null]))
+            // the link only for the asked terminal's add: the sheet's row follows that one alone
+            await pluginEmitted(panel: p.id, name: "artifact.added", payload: .object(["id": id, "url": nonce == nil ? .null : origin.map { .string($0) } ?? .null,
+                                                                                       "nonce": nonce.map { .string($0) } ?? .null]))
         }
         importInBackground(a, width: width, by: Self.origin(caller))
         if google {   // the families not here yet, one after another (each within font.add's own limits)
+            // at most 6 families an import (a drop by the app: 10), through font.add's own caps
             let missing = rw.report.fonts.filter { f in !Fonts.bundled.contains { $0.family == f.family } && Fonts.downloaded(f.family, in: fontDir) == nil }
+                .prefix(caller == nil ? 10 : 6)
             if !missing.isEmpty {
                 Task { for f in missing { _ = try? await addFont(f.family, weights: f.weights ?? [400, 700], italic: false, caller: caller) } }
             }
@@ -272,7 +298,7 @@ extension CommandRouter {
         let mine = flag(r, "mine"), words = str(r, "urls") ?? ""
         if mine, !words.trimmingCharacters(in: .whitespaces).isEmpty { throw invalid("--mine lista os artifacts: sem links") }
         let links = mine ? [] : try ClaudeImport.links([words])
-        let title = str(r, "title").map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+        let title = str(r, "title").map { ClaudeImport.clean($0) }.flatMap { $0.isEmpty ? nil : $0 }
         if title != nil, links.count != 1 { throw invalid("--title vale para um link só") }
         let folder: String?, target: TerminalRecord
         if let me = caller {
@@ -299,22 +325,26 @@ extension CommandRouter {
         try await UnixSocketClient.offPool {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         }
-        let text = mine ? ClaudeImport.listRecipe(file: dir.appendingPathComponent("list.json").path)
-            : ClaudeImport.recipe(links: links, dir: dir.path, folder: folder, title: title)
+        // the app's ask carries a nonce: only that terminal's reports with it reach the sheet
+        let nonce: String? = caller == nil ? String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)).lowercased() : nil
+        let text = mine ? ClaudeImport.listRecipe(file: dir.appendingPathComponent("list.json").path, nonce: nonce)
+            : ClaudeImport.recipe(links: links, dir: dir.path, folder: folder, title: title, nonce: nonce)
         var out: [String: JSONValue] = ["links": .array(links.map { .string($0) }), "dir": .string(dir.path)]
         if caller != nil {
             out["recipe"] = .string(text)
             return .object(out)
         }
-        for l in links { claudeImports[l] = (target.id, folder) }
+        guard let nonce else { return .object(out) }
+        for l in links { claudeImports[l] = (target.id, folder, nonce) }
+        if mine { claudeLists[nonce] = target.id }
         let id = target.id
         Task {
             do throws(ProtocolError) { try await asks.inject(to: id, prompt: text) } catch {
-                for l in links { await importFailed(l, error.message) }
-                if mine { await importFailed("", error.message) }
+                for l in links { await importFailed(l, error.message, nonce: nonce) }
+                if mine { await importFailed("", error.message, nonce: nonce) }
             }
         }
-        out["terminal"] = .string(target.name)
+        out["terminal"] = .string(target.name); out["nonce"] = .string(nonce)
         return .object(out)
     }
 

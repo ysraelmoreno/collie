@@ -142,16 +142,23 @@ actor ArtifactStore {
     /// Whether `id` was removed (an export of it in flight is then dropped).
     func wasRemoved(_ id: UUID) -> Bool { removed.contains(id) }
 
-    /// The record a new agent page starts from: a new artifact, or (`origin` already kept) that artifact's next version
-    /// in `<id>/r<N>/`, its folder kept unless `inFolder` is given.
+    /// The artifact a page from `origin` added by `byId` (nil: the app) continues: an agent's page from that link that
+    /// this terminal added (the app: anyone's), the latest. Never an export (its design stays as it is).
+    func continued(origin: String?, byId: UUID?) async throws -> Artifact? {
+        guard let origin else { return nil }
+        return try await registry().last { $0.origin == origin && $0.kind == .agent && !removed.contains($0.id) && (byId == nil || $0.byId == byId) }
+    }
+
+    /// The record a new agent page starts from: a new artifact, or (`continued`) that artifact's next version in
+    /// `<id>/r<N>/`, its folder kept unless `inFolder` is given.
     private func agentRecord(title: String, paddockId: UUID?, by: String, byId: UUID?, inFolder: String?, origin: String?) async throws -> Artifact {
-        if let origin, let known = try await registry().first(where: { $0.origin == origin && !removed.contains($0.id) }) {
+        if let known = try await continued(origin: origin, byId: byId) {
             guard !converting.contains(known.id) else { throw Self.invalid("importação em andamento desse artifact; tente de novo em instantes") }
             let n = max(known.version, reserved[known.id] ?? 0) + 1
             reserved[known.id] = n
             return Artifact(id: known.id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId ?? known.paddockId, by: by, at: Date(),
                             version: n, folder: "\(Self.name(known.id))/r\(n)", stamp: nil, warnings: [], inFolder: inFolder ?? known.inFolder,
-                            byId: byId, origin: origin)
+                            byId: known.byId ?? byId, origin: origin)
         }
         let id = UUID()
         return Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
@@ -170,8 +177,9 @@ actor ArtifactStore {
                   origin: String? = nil, rewriter: OfflineRewriter? = nil) async throws -> Artifact {
         var a = try await agentRecord(title: title, paddockId: paddockId, by: by, byId: byId, inFolder: inFolder, origin: origin)
         a.source = "\(a.folder)/source.html"
-        let folder = dir.appendingPathComponent(a.folder), page = rewriter?.rewrite(page, ext: "html") ?? page
+        let folder = dir.appendingPathComponent(a.folder)
         try await onIO {
+            let page = rewriter?.rewrite(page, ext: "html") ?? page   // off the actor: a big page never stalls the store
             try? FileManager.default.removeItem(at: folder.appendingPathComponent("source.html"))   // a version never recorded
             try Self.mkdir(folder)
             let dst = folder.appendingPathComponent("source.html")

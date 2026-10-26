@@ -133,20 +133,24 @@ public enum ArtifactFolderTree {
 
     /// `links` sent to Claude terminal `terminal` (an id) to import into `folder` ("": none); true once sent.
     public func importClaude(_ links: [String], folder: String, terminal: String) async -> Bool {
-        var ok = false
+        var nonce: String?
         await run {
-            ok = await send("artifact.import-claude", ["urls": .string(links.joined(separator: " ")), "folder": .string(folder),
-                                                       "terminal": .string(terminal)]) != nil
+            let v = await send("artifact.import-claude", ["urls": .string(links.joined(separator: " ")), "folder": .string(folder),
+                                                          "terminal": .string(terminal)])
+            if case .object(let o)? = v, case .string(let n)? = o["nonce"] { nonce = n }
         }
-        if ok { claude.started(links) }
-        return ok
+        if let nonce { claude.started(links, nonce: nonce) }
+        return nonce != nil
     }
 
     /// The terminal lists the user's claude.ai artifacts (`artifact.import.list` brings them).
     public func listClaude(terminal: String) async {
-        var ok = false
-        await run { ok = await send("artifact.import-claude", ["mine": .bool(true), "terminal": .string(terminal)]) != nil }
-        claude.listing = ok
+        var nonce: String?
+        await run {
+            let v = await send("artifact.import-claude", ["mine": .bool(true), "terminal": .string(terminal)])
+            if case .object(let o)? = v, case .string(let n)? = o["nonce"] { nonce = n }
+        }
+        if let nonce { claude.listingStarted(nonce: nonce) }
     }
 
     /// Files dropped on the panel (or a folder: `into`) added as artifacts, one after another; refusals as the error.

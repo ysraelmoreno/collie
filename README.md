@@ -335,9 +335,15 @@ logado, com a ferramenta Artifact dele; o Collie orienta, confere e guarda.
   ferramenta Artifact (`read`, e `paths` para os arquivos da página) para `<raiz>/sandbox/<terminal>/state/claude-import/<ms>/<n>/`,
   depois `artifact add <n>/index.html --root <n> --source <link>`; se um link falhar, `artifact import-failed <link> --reason`.
   O conteúdo importado é dado, não instruções (a receita diz isso; a Prévia já isola a página). Um agente importa só
-  na pasta do seu lote ou em **Sem pasta**; outra pasta, só a que o app escolheu para aquele link.
+  na pasta do seu lote ou em **Sem pasta** (vale para todo `artifact add` de um terminal); outra pasta, só a que o app
+  escolheu para aquele link.
 - `artifact add … --source <link>`: o mesmo link de novo vira a **próxima versão** do mesmo artifact (`<id>/r<N>/`; a
-  pasta continua a dele, salvo `--folder`).
+  pasta continua a dele, salvo `--folder`), só se foi esse terminal que o adicionou (o app versiona qualquer um); um
+  artifact que já virou export (tela no Design) não volta a ser página: o link vira um artifact novo. Adds do mesmo
+  link entram um de cada vez.
+- O pedido do app leva um `--nonce`: só o terminal a quem o app pediu, com esse nonce, faz a linha do link andar
+  (`artifact add`), relata falha (`import-failed`) ou entrega a lista (`import-list`); relatos de outros são recusados ou
+  ignorados.
 - `--mine`: o agente lista os artifacts do usuário (`list` da ferramenta) num JSON e entrega com
   `artifact import-list <arquivo.json>`; o app mostra a lista para marcar e importa os marcados (até 50 por vez).
 - No painel Artifacts, **Importar do Claude…**: cole os links, escolha a pasta e o terminal Claude (padrão: o último
@@ -345,12 +351,16 @@ logado, com a ferramenta Artifact dele; o Collie orienta, confere e guarda.
   motivo), pelos eventos `artifact.added` (`url`) e `artifact.import.failed`. **Importar meus artifacts…** pede a lista.
 - Arrastar para o painel (ou para uma pasta) um `.html`, uma pasta (com `index.html`, ou uma página só) ou um `.zip`
   adiciona como artifact. O `.zip` é conferido antes de abrir: sem caminho absoluto, sem `..`, sem link simbólico, sem
-  senha, até 2000 arquivos e 64 MiB descompactado; abre numa pasta temporária apagada depois.
+  senha, até 2000 arquivos e 64 MiB declarados, sem compressão acima de 1000:1; cada arquivo sai por `unzip -p` contando
+  os bytes de verdade (passou do que declarou: o unzip é morto e nada fica), gravado com modos simples (0755/0644) numa
+  pasta temporária apagada depois. O `.zip` é aberto sem seguir link e só se for arquivo comum.
 
 **Offline na importação** (todo `artifact add`, só na cópia; o original fica intacto): `<script src>` de React,
 ReactDOM, Chart.js, Lucide e htm no unpkg, jsDelivr ou cdnjs viram o `collie-lib://lib/…` correspondente (versão exata
 quando bate; senão a vendorizada, com aviso); `<link>`/`@import` do Google Fonts viram `collie-lib://fonts/css` e as
-famílias são baixadas em segundo plano (`font add`, se **Baixar fontes do Google Fonts** estiver ligado; senão um aviso).
+famílias são baixadas em segundo plano (`font add`, até 6 por importação, 10 num arrastar do app, pesos 100–900 de 100
+em 100; se **Baixar fontes do Google Fonts** estiver ligado; senão um aviso). Cada página tem 2 s para isso; passou,
+fica como veio, com aviso.
 Módulos ES (`esm`, `.mjs`) ficam como estão. O resto que for remoto fica e é listado em `needsNetwork`; o painel mostra
 **precisa de rede** no artifact.
 

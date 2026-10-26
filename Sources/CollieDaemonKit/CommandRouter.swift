@@ -82,7 +82,11 @@ actor CommandRouter {
     var importingArtifacts: Set<UUID> = []
     /// claude.ai links the app sent a terminal to import, with the folder it chose: that terminal's `artifact add --source`
     /// may put the link there. ponytail: in memory, one entry per link (a later send replaces it), never pruned.
-    var claudeImports: [String: (terminal: UUID, folder: String?)] = [:]
+    var claudeImports: [String: (terminal: UUID, folder: String?, nonce: String)] = [:]
+    /// The app's `import-claude --mine` asks: nonce → the terminal asked (its `import-list` is the only one taken).
+    var claudeLists: [String: UUID] = [:]
+    /// `--source` links being added now: one at a time per link.
+    var addingSources: Set<String> = []
     /// A `herd.apply` in flight: one at a time, the next waits.
     var applyingHerd = false
     /// `font.add`: one at a time; the terminals' adds in the last hour.

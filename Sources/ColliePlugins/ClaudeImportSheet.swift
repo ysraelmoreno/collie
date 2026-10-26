@@ -19,17 +19,24 @@ public struct ClaudeImportProgress: Equatable {
     public private(set) var items: [Item] = []
     public private(set) var listed: [Item] = []
     public var ticked: Set<String> = []
-    /// Waiting for the terminal's list; why it failed.
-    public var listing = false
+    /// Waiting for the terminal's list (asked with `listNonce`); why it failed.
+    public private(set) var listing = false
     public private(set) var listError: String?
+    /// The nonces of the imports this sheet sent (`artifact.import-claude`): reports with another are not ours.
+    private var nonces: Set<String> = []
+    private var listNonce: String?
     public init() {}
 
     public var pendingCount: Int { items.filter { $0.state == .pending }.count }
     /// The ticked links, in list order, at most 50.
     public var batch: [String] { Array(listed.map(\.url).filter(ticked.contains).prefix(ClaudeLinks.maxPerImport)) }
 
-    /// Links just sent: pending (again), each once.
-    public mutating func started(_ links: [String]) {
+    /// The terminal was asked for the user's list, with `nonce`.
+    public mutating func listingStarted(nonce: String) { listing = true; listNonce = nonce; listError = nil }
+
+    /// Links just sent with `nonce`: pending (again), each once.
+    public mutating func started(_ links: [String], nonce: String) {
+        nonces.insert(nonce)
         for l in links {
             let title = listed.first { $0.url == l }?.title
             if let i = items.firstIndex(where: { $0.url == l }) { items[i].state = .pending } else { items.append(Item(url: l, title: title, state: .pending)) }
@@ -41,17 +48,19 @@ public struct ClaudeImportProgress: Equatable {
     @discardableResult public mutating func apply(_ event: String, _ payload: JSONValue) -> Bool {
         guard case .object(let o) = payload else { return false }
         func s(_ k: String) -> String? { if case .string(let v)? = o[k] { v } else { nil } }
+        // only the asked terminal's reports carry the nonce the daemon handed this sheet
+        guard let nonce = s("nonce") else { return false }
         switch event {
         case "artifact.added":
-            guard let u = s("url"), let i = items.firstIndex(where: { $0.url == u }) else { return false }
+            guard nonces.contains(nonce), let u = s("url"), let i = items.firstIndex(where: { $0.url == u }) else { return false }
             items[i].state = .imported
         case "artifact.import.failed":
             let why = s("reason") ?? "falhou"
-            if s("url") == "" { guard listing else { return false }; listing = false; listError = why; return true }
-            guard let u = s("url"), let i = items.firstIndex(where: { $0.url == u }) else { return false }
+            if s("url") == "" { guard listing, nonce == listNonce else { return false }; listing = false; listError = why; return true }
+            guard nonces.contains(nonce), let u = s("url"), let i = items.firstIndex(where: { $0.url == u }) else { return false }
             items[i].state = .failed(why)
         case "artifact.import.list":
-            guard case .array(let a)? = o["items"] else { return false }
+            guard listing, nonce == listNonce, case .array(let a)? = o["items"] else { return false }
             listed = a.compactMap { v in
                 guard case .object(let e) = v, case .string(let u)? = e["url"], ClaudeLinks.isLink(u) else { return nil }
                 if case .string(let t)? = e["title"] { return Item(url: u, title: t, state: .pending) }

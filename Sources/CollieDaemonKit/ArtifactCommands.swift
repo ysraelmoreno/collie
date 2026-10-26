@@ -28,43 +28,54 @@ extension CommandRouter {
             let a = try await artifacts.get(try id())
             return .object(try await artifactRows([a], files: try await design.list())[0].1)
         case "artifact.add":
+            var origin: String?
+            if let v = str(r, "source"), !v.isEmpty {
+                let l = try ClaudeImport.links([v])
+                guard l.count == 1 else { throw invalid("--source: um link só") }
+                origin = l[0]
+            }
+            // the asked terminal's report (the app's sheet follows only those); taken before the add clears the grant
+            let nonce = origin.flatMap { askedNonce($0, r, caller) }
+            // one add per link at a time: a version never overtakes another
+            // ponytail: 50 ms polling, as font.add
+            if let origin { while addingSources.contains(origin) { try await Task.sleep(for: .milliseconds(50)) } }
+            if let origin { addingSources.insert(origin) }
+            defer { if let origin { addingSources.remove(origin) } }
+            do { return try await addPage(r, caller: caller, origin: origin, nonce: nonce) } catch {
+                if let origin, let nonce { await importFailed(origin, (error as? ProtocolError)?.message ?? "\(error)", nonce: nonce) }
+                throw error
+            }
+        case "artifact.import-claude":
+            return try await importClaude(r, caller: caller)
+        case "artifact.import-terminals":
+            guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for the app only") }
+            return .array(try await claudeTerminals().map { t, running, first in
+                .object(["id": .string(t.id.uuidString.lowercased()), "name": .string(t.name), "running": .bool(running), "default": .bool(first)])
+            })
+        case "artifact.import-list":
+            let nonce = str(r, "nonce") ?? ""
+            guard let asked = claudeLists[nonce], caller.map({ $0.id == asked }) ?? true else {
+                throw ProtocolError(code: .unauthorized, message: "só o terminal a quem o app pediu a lista a entrega (com o --nonce do pedido)")
+            }
             let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? "/", isDirectory: true)
-            let src = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
-            guard ["html", "htm"].contains(src.pathExtension.lowercased()) else { throw invalid("'\(src.path)' is not an .html or .htm file") }
-            let title = str(r, "title").flatMap { $0.isEmpty ? nil : $0 } ?? src.lastPathComponent
-            let width = try DeviceService.int(r.args, "width", 320...3840) ?? 1440
-            let folder = try artifactFolder(r, caller: caller)
-            let a: Artifact
-            if let root = str(r, "root").flatMap({ $0.isEmpty ? nil : $0 }) {
-                a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title, noFollow: flag(r, "nofollow"),
-                                                 paddockId: caller?.paddockId, by: Self.origin(caller), byId: caller?.id, inFolder: folder)
-            } else {
-            // opened without following a link (nor blocking on a fifo), then checked and read through that descriptor
-            let cap = 8 << 20
-            let read = try await UnixSocketClient.offPool { () -> Result<Data, ProtocolError> in
-                let fd = open(src.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
-                guard fd >= 0 else {
-                    return .failure(invalid(errno == ELOOP ? "'\(src.path)' is not a regular file" : "cannot read \(src.path)"))
-                }
-                defer { close(fd) }
-                var st = stat()
-                guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return .failure(invalid("'\(src.path)' is not a regular file")) }
-                guard st.st_size <= cap else { return .failure(invalid("'\(src.path)' is over 8 MiB")) }
-                let d: Data
-                do { d = try FileHandle(fileDescriptor: fd, closeOnDealloc: false).read(upToCount: cap + 1) ?? Data() }   // nil: empty
-                catch { return .failure(invalid("cannot read \(src.path)")) }
-                guard d.count <= cap else { return .failure(invalid("'\(src.path)' is over 8 MiB")) }
-                return .success(d)
+            let file = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
+            let text = try await UnixSocketClient.offPool { try DiagramFile.readLocal(file) }
+            let items = try ClaudeImport.entries(Data(text.utf8))
+            claudeLists[nonce] = nil
+            let payload = JSONValue.object(["by": .string(Self.origin(caller)), "nonce": .string(nonce), "items": .array(items.map { e in
+                .object(["url": .string(e.url), "title": e.title.map { .string($0) } ?? .null])
+            })])
+            for p in ws.panels where p.pluginId == "artifacts" { await pluginEmitted(panel: p.id, name: "artifact.import.list", payload: payload) }
+            return .object(["count": .number(Double(items.count))])
+        case "artifact.import-failed":
+            let l = try ClaudeImport.links([try need(r, "url")])
+            guard l.count == 1 else { throw invalid("um link só") }
+            guard let nonce = askedNonce(l[0], r, caller) else {
+                throw ProtocolError(code: .unauthorized, message: "só o terminal a quem o app pediu esse link relata a falha (com o --nonce do pedido)")
             }
-            a = try await artifacts.addAgent(page: try read.get(), title: title, paddockId: caller?.paddockId, by: Self.origin(caller),
-                                             byId: caller?.id, inFolder: folder)
-            }
-            let id = JSONValue.string(a.id.uuidString.lowercased())
-            for p in ws.panels where p.pluginId == "artifacts" {
-                await pluginEmitted(panel: p.id, name: "artifact.added", payload: .object(["id": id]))
-            }
-            importInBackground(a, width: width, by: Self.origin(caller))
-            return .object(["id": id, "importing": .bool(true)])
+            let reason = ClaudeImport.clean(str(r, "reason") ?? "")
+            await importFailed(l[0], reason.isEmpty ? "o terminal não conseguiu ler o artifact" : reason, nonce: nonce)
+            return .object([:])
         case "artifact.new":
             guard let kind = ArtifactTemplates.Kind(rawValue: try need(r, "kind")) else {
                 throw invalid("kind must be " + ArtifactTemplates.Kind.allCases.map(\.rawValue).joined(separator: "|"))
@@ -143,12 +154,198 @@ extension CommandRouter {
         for p in ws.panels where p.pluginId == "artifacts" { await pluginEmitted(panel: p.id, name: "artifact.changed", payload: .object([:])) }
     }
 
-    /// The folder a new artifact goes in: `--folder` (normalized; "": none), else the caller's lot's name (a "/" in it
-    /// kept as "-"), else none.
+    /// The folder a new artifact goes in: `--folder` (normalized; "": none), else the caller's lot's (`lotFolder`).
     private func artifactFolder(_ r: Request, caller: TerminalRecord?) throws(ProtocolError) -> String? {
         if case .string(let f)? = r.args["folder"] { return try ArtifactFolder.normalize(f) }
+        return lotFolder(caller)
+    }
+
+    /// The caller's lot's name as a folder (a "/" in it kept as "-"); none outside a lot (and for the app).
+    private func lotFolder(_ caller: TerminalRecord?) -> String? {
         guard let me = caller, let lot = ws.lot(of: me.id) else { return nil }
         return try? ArtifactFolder.normalize(String(lot.name.replacingOccurrences(of: "/", with: "-").prefix(ArtifactFolder.maxName)))
+    }
+
+    /// A terminal imports into its lot's folder or none; another folder only when the app chose it for that link.
+    private func checkImportFolder(_ folder: String?, link: String?, by me: TerminalRecord) throws(ProtocolError) {
+        guard let folder, !ArtifactFolder.same(folder, lotFolder(me)) else { return }
+        if let link, let g = claudeImports[link], g.terminal == me.id, ArtifactFolder.same(g.folder, folder) { return }
+        throw ProtocolError(code: .unauthorized, message: "um terminal importa só na pasta do seu lote ou em Sem pasta; outra pasta, só a que o app escolher")
+    }
+
+    /// The nonce of the app's ask for `link` when `r` brings it (`--nonce`) from the terminal it was asked of; nil otherwise.
+    private func askedNonce(_ link: String, _ r: Request, _ caller: TerminalRecord?) -> String? {
+        guard let g = claudeImports[link], let n = str(r, "nonce"), n == g.nonce, caller.map({ $0.id == g.terminal }) ?? true else { return nil }
+        return n
+    }
+
+    /// `artifact.import.failed` `{url, reason, nonce}` to every Artifacts panel (the import sheet's row; `url` "": its list).
+    func importFailed(_ link: String, _ reason: String, nonce: String) async {
+        for p in ws.panels where p.pluginId == "artifacts" {
+            await pluginEmitted(panel: p.id, name: "artifact.import.failed",
+                                payload: .object(["url": .string(link), "reason": .string(reason), "nonce": .string(nonce)]))
+        }
+    }
+
+    /// `artifact add`: an .html/.htm page (with `--root`, its folder), a folder (its page: `ZipCheck.page`) or a .zip
+    /// (checked, unpacked into `<root>/.import-<uuid>`, removed after). The copy is made offline (`OfflineRewriter`);
+    /// Google Fonts it asks for are downloaded in the background when that is on. `origin` (`--source`): a claude.ai
+    /// link; the same link again is that artifact's next version (its folder kept unless `--folder`).
+    private func addPage(_ r: Request, caller: TerminalRecord?, origin: String?, nonce: String?) async throws -> JSONValue {
+        @Sendable func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? "/", isDirectory: true)
+        let src = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
+        let known = try await artifacts.continued(origin: origin, byId: caller?.id)
+        if let known, importingArtifacts.contains(known.id) { throw invalid("importação em andamento desse artifact; tente de novo em instantes") }
+        let folder = r.args["folder"] == nil && known != nil ? nil : try artifactFolder(r, caller: caller)
+        if let me = caller { try checkImportFolder(folder, link: origin, by: me) }   // every terminal add
+        let width = try DeviceService.int(r.args, "width", 320...3840) ?? 1440
+        let dir = config.weblibsDir, fontDir = config.paths.root.appendingPathComponent("fonts"), google = googleFonts
+        let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
+        let rw = OfflineRewriter(libs: libs) { f in
+            google || Fonts.bundled.contains { $0.family == f } || Fonts.downloaded(f, in: fontDir) != nil ? nil
+                : "fonte \(f) não baixada: ligue Baixar fontes do Google Fonts nas Preferências ou rode collie font add \"\(f)\""
+        }
+        let ext = src.pathExtension.lowercased()
+        let isDir = (try? src.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])).map { $0.isDirectory == true && $0.isSymbolicLink != true } ?? false
+        let named = str(r, "title").flatMap { $0.isEmpty ? nil : $0 }
+        let root = str(r, "root").flatMap { $0.isEmpty ? nil : $0 }
+        let a: Artifact
+        if isDir || ext == "zip" {
+            guard root == nil else { throw invalid("--root vale só com uma página .html") }
+            let title = named ?? src.deletingPathExtension().lastPathComponent
+            var scratch: URL?
+            defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
+            let (top, page): (URL, URL)
+            if isDir {
+                page = try ZipCheck.page(in: src); top = src
+            } else {
+                let tmp = config.paths.root.appendingPathComponent(".import-\(UUID().uuidString)")
+                scratch = tmp
+                page = try await ZipCheck.extract(src, into: tmp); top = tmp
+            }
+            a = try await artifacts.addAgent(root: top, page: page, title: title, noFollow: flag(r, "nofollow"), paddockId: caller?.paddockId,
+                                             by: Self.origin(caller), byId: caller?.id, inFolder: folder, origin: origin, rewriter: rw)
+        } else {
+            guard ["html", "htm"].contains(ext) else { throw invalid("'\(src.path)' is not an .html or .htm file, a folder or a .zip") }
+            let title = named ?? src.lastPathComponent
+            if let root {
+                a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title, noFollow: flag(r, "nofollow"),
+                                                 paddockId: caller?.paddockId, by: Self.origin(caller), byId: caller?.id, inFolder: folder,
+                                                 origin: origin, rewriter: rw)
+            } else {
+                // opened without following a link (nor blocking on a fifo), then checked and read through that descriptor
+                let cap = 8 << 20
+                let read = try await UnixSocketClient.offPool { () -> Result<Data, ProtocolError> in
+                    let fd = open(src.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+                    guard fd >= 0 else {
+                        return .failure(invalid(errno == ELOOP ? "'\(src.path)' is not a regular file" : "cannot read \(src.path)"))
+                    }
+                    defer { close(fd) }
+                    var st = stat()
+                    guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return .failure(invalid("'\(src.path)' is not a regular file")) }
+                    guard st.st_size <= cap else { return .failure(invalid("'\(src.path)' is over 8 MiB")) }
+                    let d: Data
+                    do { d = try FileHandle(fileDescriptor: fd, closeOnDealloc: false).read(upToCount: cap + 1) ?? Data() }   // nil: empty
+                    catch { return .failure(invalid("cannot read \(src.path)")) }
+                    guard d.count <= cap else { return .failure(invalid("'\(src.path)' is over 8 MiB")) }
+                    return .success(d)
+                }
+                a = try await artifacts.addAgent(page: try read.get(), title: title, paddockId: caller?.paddockId, by: Self.origin(caller),
+                                                 byId: caller?.id, inFolder: folder, origin: origin, rewriter: rw)
+            }
+        }
+        if let origin, nonce != nil { claudeImports[origin] = nil }   // the asked add done (another terminal's never clears it)
+        let id = JSONValue.string(a.id.uuidString.lowercased())
+        for p in ws.panels where p.pluginId == "artifacts" {
+            // the link only for the asked terminal's add: the sheet's row follows that one alone
+            await pluginEmitted(panel: p.id, name: "artifact.added", payload: .object(["id": id, "url": nonce == nil ? .null : origin.map { .string($0) } ?? .null,
+                                                                                       "nonce": nonce.map { .string($0) } ?? .null]))
+        }
+        importInBackground(a, width: width, by: Self.origin(caller))
+        if google {   // the families not here yet, one after another (each within font.add's own limits)
+            // at most 6 families an import (a drop by the app: 10), through font.add's own caps
+            let missing = rw.report.fonts.filter { f in !Fonts.bundled.contains { $0.family == f.family } && Fonts.downloaded(f.family, in: fontDir) == nil }
+                .prefix(caller == nil ? 10 : 6)
+            if !missing.isEmpty {
+                Task { for f in missing { _ = try? await addFont(f.family, weights: f.weights ?? [400, 700], italic: false, caller: caller) } }
+            }
+        }
+        return .object(["id": id, "importing": .bool(true), "version": .number(Double(a.version)), "warnings": .array(a.warnings.map { .string($0) }),
+                        "needsNetwork": .array((a.needsNetwork ?? []).map { .string($0) })])
+    }
+
+    /// Claude Code terminals, the default first (the one the user typed into last, running), then by name.
+    private func claudeTerminals() async -> [(TerminalRecord, Bool, Bool)] {
+        let last = await hub.lastInput
+        var out: [(TerminalRecord, Bool)] = []
+        for t in ws.terminals where t.preset == .claude { out.append((t, await registry.process(t.id)?.isRunning ?? false)) }
+        out.sort { a, b in
+            if a.1 != b.1 { return a.1 }
+            let x = last[a.0.id], y = last[b.0.id]
+            if x != y { return (x ?? .now - .seconds(1 << 40)) > (y ?? .now - .seconds(1 << 40)) }
+            return a.0.name.localizedCaseInsensitiveCompare(b.0.name) == .orderedAscending
+        }
+        return out.enumerated().map { i, t in (t.0, t.1, i == 0 && t.1) }
+    }
+
+    /// `artifact import-claude`: the links checked (≤ 50), then the recipe (`ClaudeImport.recipe`, or `.listRecipe` with
+    /// `--mine`) for a Claude terminal, its files going to `<root>/sandbox/<id>/state/claude-import/<ms>/`. A terminal gets
+    /// it back to follow (folder: its lot's or none); the app sends it to `--terminal` (default: the Claude terminal the
+    /// user typed into last) as an ask, in the background, its folder then allowed for those links.
+    private func importClaude(_ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
+        func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        let mine = flag(r, "mine"), words = str(r, "urls") ?? ""
+        if mine, !words.trimmingCharacters(in: .whitespaces).isEmpty { throw invalid("--mine lista os artifacts: sem links") }
+        let links = mine ? [] : try ClaudeImport.links([words])
+        let title = str(r, "title").map { ClaudeImport.clean($0) }.flatMap { $0.isEmpty ? nil : $0 }
+        if title != nil, links.count != 1 { throw invalid("--title vale para um link só") }
+        let folder: String?, target: TerminalRecord
+        if let me = caller {
+            guard str(r, "terminal") == nil else { throw ProtocolError(code: .unauthorized, message: "--terminal is for the app only") }
+            folder = try artifactFolder(r, caller: me)
+            try checkImportFolder(folder, link: nil, by: me)
+            target = me
+        } else {
+            folder = if case .string(let f)? = r.args["folder"] { try ArtifactFolder.normalize(f) } else { nil }
+            let all = await claudeTerminals()
+            if let n = str(r, "terminal"), !n.isEmpty {
+                guard let t = all.first(where: { $0.0.name.caseInsensitiveCompare(n) == .orderedSame || $0.0.id.uuidString.caseInsensitiveCompare(n) == .orderedSame }) else {
+                    throw ProtocolError(code: .notFound, message: "nenhum terminal Claude chamado \(n)")
+                }
+                guard t.1 else { throw ProtocolError(code: .notRunning, message: "o terminal \(t.0.name) não está rodando") }
+                target = t.0
+            } else {
+                guard let t = all.first(where: { $0.2 }) else { throw ProtocolError(code: .notFound, message: "nenhum terminal Claude aberto: abra um (já logado no claude.ai)") }
+                target = t.0
+            }
+        }
+        let dir = SandboxLaunch.dir(target.id, root: config.paths.root)
+            .appendingPathComponent("state/claude-import/\(Int64(Date().timeIntervalSince1970 * 1000))")
+        try await UnixSocketClient.offPool {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        }
+        // the app's ask carries a nonce: only that terminal's reports with it reach the sheet
+        let nonce: String? = caller == nil ? String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)).lowercased() : nil
+        let text = mine ? ClaudeImport.listRecipe(file: dir.appendingPathComponent("list.json").path, nonce: nonce)
+            : ClaudeImport.recipe(links: links, dir: dir.path, folder: folder, title: title, nonce: nonce)
+        var out: [String: JSONValue] = ["links": .array(links.map { .string($0) }), "dir": .string(dir.path)]
+        if caller != nil {
+            out["recipe"] = .string(text)
+            return .object(out)
+        }
+        guard let nonce else { return .object(out) }
+        for l in links { claudeImports[l] = (target.id, folder, nonce) }
+        if mine { claudeLists[nonce] = target.id }
+        let id = target.id
+        Task {
+            do throws(ProtocolError) { try await asks.inject(to: id, prompt: text) } catch {
+                for l in links { await importFailed(l, error.message, nonce: nonce) }
+                if mine { await importFailed("", error.message, nonce: nonce) }
+            }
+        }
+        out["terminal"] = .string(target.name); out["nonce"] = .string(nonce)
+        return .object(out)
     }
 
     /// `artifact new`: the starter page written (never over an existing file) into the caller's project, then a Prévia on
@@ -169,6 +366,7 @@ extension CommandRouter {
         defer { if let me = tester, let slot { releasePreview(me, slot) } }
         let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
         let folder = try artifactFolder(r, caller: caller)   // the Prévia's Salvar como artifact keeps the page there
+        if let me = caller { try checkImportFolder(folder, link: nil, by: me) }   // as an add: its lot's folder or none
         let root = try await projectRootForPanel(paddock: paddock, caller: caller)
         let slug: String
         if let n = str(r, "name") {
@@ -238,7 +436,8 @@ extension CommandRouter {
                  "source": (a.source ?? (a.kind == .agent ? page(a) : nil)).map { .string("collie-artifact://app/\($0)") } ?? .null,
                  "importError": opt(a.importError), "folder": opt(a.inFolder), "path": .string(dir.appendingPathComponent(page(a)).path),
                  "thumbnail": thumbs.contains(a.id) ? .string(dir.appendingPathComponent("\(a.folder)/thumb.png").path) : .null,
-                 "warnings": .array(a.warnings.map { .string($0) })])
+                 "warnings": .array(a.warnings.map { .string($0) }), "origin": opt(a.origin),
+                 "needsNetwork": .array((a.needsNetwork ?? []).map { .string($0) })])
         }
     }
 
@@ -306,7 +505,9 @@ extension CommandRouter {
             if await artifacts.wasRemoved(a.id) { throw try await dropped(folder) }
             throw ProtocolError(code: .internal, message: "artifacts: cannot write \(folder.path)")
         }
-        a.stamp = s.stamp; a.page = s.page; a.warnings = (importing?.warnings ?? []) + b.warnings + extra
+        a.stamp = s.stamp; a.page = s.page
+        // an import keeps the page's own warnings (its offline rewrite) before the design's
+        a.warnings = (importing.map { made.warnings + $0.warnings } ?? []) + b.warnings + extra
         guard try await artifacts.commit(a) else { throw try await dropped(folder) }
         let id = JSONValue.string(a.id.uuidString.lowercased()), version = JSONValue.number(Double(a.version))
         for p in ws.panels where p.pluginId == "artifacts" {

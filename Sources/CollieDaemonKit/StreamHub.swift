@@ -111,6 +111,9 @@ actor StreamHub {
     private let asks: AskCoordinator
     private var terminals: [UUID: Entry] = [:]
     private var badges: [UUID: StatusBadge] = [:]
+    /// When each terminal last got the user's keys (not focus reports): the "last focused" Claude terminal an import
+    /// goes to. ponytail: one instant per terminal, never pruned (tiny).
+    private(set) var lastInput: [UUID: ContinuousClock.Instant] = [:]
     private var listeners: [ObjectIdentifier: StreamConn] = [:]
     private var ticker: Task<Void, Never>?
 
@@ -229,6 +232,7 @@ actor StreamHub {
     }
 
     private func inputReceived(_ id: UUID) {   // the tracker was told already (`onInput`)
+        lastInput[id] = .now
         guard badges[id] == .attention else { return }
         badges[id] = .idle
         emit(.status(id, .idle))

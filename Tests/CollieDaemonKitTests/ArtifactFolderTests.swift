@@ -172,15 +172,21 @@ private func obj(_ r: Response) -> [String: JSONValue] { if case .object(let o)?
     @Test func addWithFolderAndLotDefault() async throws {
         try await withProject { d, p, proj in
             let a = try await spawn(d, p, "A", cwd: proj.path)
-            #expect(try await folder(d, p, try await add(p, a, proj, ["folder": "Cliente/Landing"])) == .string("Cliente/Landing"))
+            // the app files anywhere; a terminal only in its lot's folder or none (any other: refused)
+            let r = try await admin(d, p, "artifact.add", ["path": proj.appendingPathComponent("p.html").path, "folder": "Cliente/Landing"])
+            guard case .string(let byApp)? = obj(r)["id"] else { Issue.record("\(r)"); return }
+            #expect(try await folder(d, p, byApp) == .string("Cliente/Landing"))
+            #expect(try await call(p, a, "artifact.add", ["path": "p.html", "folder": "Cliente/Landing"], cwd: proj.path).error?.code == .unauthorized)
             #expect(try await folder(d, p, try await add(p, a, proj)) == .null)
             #expect(try await call(p, a, "artifact.add", ["path": "p.html", "folder": "a/b/c/d"], cwd: proj.path).error?.code == .invalidArgs)
             #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "A"]).ok)
             #expect(try await folder(d, p, try await add(p, a, proj)) == .string("Login"))
-            #expect(try await folder(d, p, try await add(p, a, proj, ["folder": "Outra"])) == .string("Outra"))   // explicit wins
+            #expect(try await folder(d, p, try await add(p, a, proj, ["folder": "login"])) == .string("Login"))
+            #expect(try await folder(d, p, try await add(p, a, proj, ["folder": ""])) == .null)
+            #expect(try await call(p, a, "artifact.add", ["path": "p.html", "folder": "Outra"], cwd: proj.path).error?.code == .unauthorized)
             let list = try await call(p, a, "artifact.folders")
             guard case .array(let fs)? = list.result else { Issue.record("\(list)"); return }
-            #expect(fs.count == 4, "\(fs)")   // Cliente, Cliente/Landing, Login, Outra
+            #expect(fs.count == 3, "\(fs)")   // Cliente, Cliente/Landing, Login
         }
     }
 
@@ -189,7 +195,9 @@ private func obj(_ r: Response) -> [String: JSONValue] { if case .object(let o)?
             let a = try await spawn(d, p, "A", cwd: proj.path)
             #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "A"]).ok)
             let r = try await call(p, a, "artifact.new", ["kind": "doc"])
-            let r2 = try await call(p, a, "artifact.new", ["kind": "doc", "folder": "Cliente"])
+            // a terminal's page goes in its lot's folder or none, as adds
+            #expect(try await call(p, a, "artifact.new", ["kind": "doc", "folder": "Cliente"]).error?.code == .unauthorized)
+            let r2 = try await admin(d, p, "artifact.new", ["kind": "doc", "folder": "Cliente"])
             #expect(r.ok && r2.ok, "\(r) \(r2)")
             let s = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "ui.snapshot"), to: p.socket, timeoutSeconds: 60)
             let snap = try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(s.result))
@@ -219,7 +227,8 @@ private func obj(_ r: Response) -> [String: JSONValue] { if case .object(let o)?
                 #expect(try await call(p, a, c, args).error?.code == .unauthorized, "\(c)")
             }
             #expect(try await admin(d, p, "artifact.folder.create", ["path": "Cliente"]).ok)
-            let id = try await add(p, a, proj, ["folder": "Cliente"])
+            let id = try await add(p, a, proj)
+            #expect(try await admin(d, p, "artifact.move", ["id": id, "folder": "Cliente"]).ok)   // a terminal files only in its lot's
             #expect(try await admin(d, p, "artifact.folder.remove", ["path": "Cliente"]).error?.code == .invalidArgs)
             #expect(try await admin(d, p, "artifact.folder.rename", ["path": "Cliente", "to": "Marca"]).ok)
             #expect(try await folder(d, p, id) == .string("Marca"))

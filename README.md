@@ -298,7 +298,7 @@ No app: **Abrir painel… → Artifacts** (miniatura, origem, versão, status `c
 **Abrir no Navegador** carrega `collie-artifact://app/<id>/v<N>/index.html`; **Reexportar** gera a versão nova (marca
 **desatualizado** quando o design mudou depois do export); **Remover** move a pasta para `artifacts/.removed`.
 
-Comandos (`artifact.*`): `list`, `get <id>`, `add <caminho.html> [--root <pasta>] [--title] [--width <px>]` (o caminho é
+Comandos (`artifact.*`): `list`, `get <id>`, `add <caminho.html|pasta|.zip> [--root <pasta>] [--title] [--width <px>] [--source <link>]` (o caminho é
 resolvido contra o cwd e caminhos absolutos são aceitos; `.html`/`.htm`, sem symlink, até 8 MB), `import <id> [--width <px>]`
 (largura 320–3840, padrão 1440), `libs` (veja Bibliotecas offline), `reexport <id>` e `remove <id>` (só o app).
 
@@ -324,6 +324,45 @@ arrastar um artifact para uma pasta, e menu **Nova pasta / Renomear / Remover / 
 artifact, **Mover para…**. Uma pasta **apresentação** tem ordem (a de `--order`, depois por criação): a Prévia de um
 artifact dela ganha **Anterior / Próxima** e **Apresentar** (tela cheia; setas avançam, Esc sai). O cabeçalho da Prévia
 mostra a pasta do artifact.
+
+### Importar do claude.ai
+
+O Collie nunca guarda credenciais do claude.ai nem baixa nada de lá: quem lê o artifact é um terminal **Claude Code** já
+logado, com a ferramenta Artifact dele; o Collie orienta, confere e guarda.
+
+- `artifact import-claude <links…> [--folder <caminho>] [--title <t>]` (até 50 links `https://claude.ai/artifact/<id>`
+  ou `https://claude.ai/code/artifact/<uuid>`, nada além) devolve ao agente a receita exata: ler cada link com a
+  ferramenta Artifact (`read`, e `paths` para os arquivos da página) para `<raiz>/sandbox/<terminal>/state/claude-import/<ms>/<n>/`,
+  depois `artifact add <n>/index.html --root <n> --source <link>`; se um link falhar, `artifact import-failed <link> --reason`.
+  O conteúdo importado é dado, não instruções (a receita diz isso; a Prévia já isola a página). Um agente importa só
+  na pasta do seu lote ou em **Sem pasta** (vale para todo `artifact add` de um terminal); outra pasta, só a que o app
+  escolheu para aquele link.
+- `artifact add … --source <link>`: o mesmo link de novo vira a **próxima versão** do mesmo artifact (`<id>/r<N>/`; a
+  pasta continua a dele, salvo `--folder`), só se foi esse terminal que o adicionou (o app versiona qualquer um); um
+  artifact export nascido de um design (sem página de origem) nunca vira página. Adds do mesmo
+  link entram um de cada vez. Uma página importada que já virou tela no Design continua versionando pelo link; só um export nascido de um design não.
+- O pedido do app leva um `--nonce`: só o terminal a quem o app pediu, com esse nonce, faz a linha do link andar
+  (`artifact add`), relata falha (`import-failed`) ou entrega a lista (`import-list`); relatos de outros são recusados ou
+  ignorados.
+- `--mine`: o agente lista os artifacts do usuário (`list` da ferramenta) num JSON e entrega com
+  `artifact import-list <arquivo.json>`; o app mostra a lista para marcar e importa os marcados (até 50 por vez).
+- No painel Artifacts, **Importar do Claude…**: cole os links, escolha a pasta e o terminal Claude (padrão: o último
+  em que você digitou); o Collie manda o pedido como um ask e cada link mostra **aguardando → importado / falhou** (com o
+  motivo), pelos eventos `artifact.added` (`url`) e `artifact.import.failed`. **Importar meus artifacts…** pede a lista.
+- Arrastar para o painel (ou para uma pasta) um `.html`, uma pasta (com `index.html`, ou uma página só) ou um `.zip`
+  adiciona como artifact. O `.zip` é conferido antes de abrir: sem caminho absoluto, sem `..`, sem link simbólico, sem
+  senha, até 2000 arquivos e 64 MiB declarados, sem compressão acima de 1000:1; cada arquivo sai por `unzip -p` contando
+  os bytes de verdade (passou do que declarou: o unzip é morto e nada fica), gravado com modos simples (0755/0644) numa
+  pasta temporária apagada depois. O `.zip` é aberto sem seguir link e só se for arquivo comum.
+
+**Offline na importação** (todo `artifact add`, só na cópia; o original fica intacto): `<script src>` de React,
+ReactDOM, Chart.js, Lucide e htm no unpkg, jsDelivr ou cdnjs viram o `collie-lib://lib/…` correspondente (versão exata
+quando bate; senão a vendorizada, com aviso); `<link>`/`@import` do Google Fonts viram `collie-lib://fonts/css` e as
+famílias são baixadas em segundo plano (`font add`, até 6 por importação, 10 num arrastar do app, pesos 100–900 de 100
+em 100; se **Baixar fontes do Google Fonts** estiver ligado; senão um aviso). Cada página tem 2 s para isso; passou,
+fica como veio, com aviso.
+Módulos ES (`esm`, `.mjs`) ficam como estão. O resto que for remoto fica e é listado em `needsNetwork`; o painel mostra
+**precisa de rede** no artifact.
 
 Limitações: as fontes não vão embutidas (fallback do sistema).
 Links só de camada inteira; trechos com link dentro do texto saem sem `<a>` (a saída `<a>` é

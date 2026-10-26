@@ -121,7 +121,7 @@ extension CommandRouter {
             await fontsChanged()
             return .object(["family": .string(f)])
         case "font.add":
-            var f = try family()
+            let f = try family()
             var weights = [400, 700]
             if let w = str(r, "weights") {
                 let parts = w.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -129,62 +129,70 @@ extension CommandRouter {
                 guard !parts.isEmpty, ns.count == parts.count, ns.count <= 9 else { throw invalid("--weights: números de 100 a 900, separados por vírgula (ex.: 400,700)") }
                 weights = Array(Set(ns)).sorted()
             }
-            guard googleFonts else {
-                throw ProtocolError(code: .unavailable, message: "Baixar fontes do Google Fonts está desligado nas Preferências do Collie; peça ao usuário para ligar")
-            }
-            // one at a time (a call's downloads held in memory): the next waits. ponytail: 100 ms polling, as herd.apply
-            while addingFont { try await Task.sleep(for: .milliseconds(100)) }
-            addingFont = true; defer { addingFont = false }
-            if caller != nil {   // terminals: 20 adds an hour, all together; the app: no limit
-                let hour = ContinuousClock.now - .seconds(3600)
-                fontAdds.removeAll { $0 < hour }
-                guard fontAdds.count < GoogleFonts.addsPerHour else {
-                    throw ProtocolError(code: .tooMany, message: "limite de \(GoogleFonts.addsPerHour) fontes por hora para os terminais; tente mais tarde ou baixe pelas Preferências")
-                }
-                fontAdds.append(.now)
-            }
-            // the folder already there under any case keeps its spelling; its faces are kept (merged), never dropped
-            let asked = f
-            let (stored, hasTTF, used) = try await UnixSocketClient.offPool { () -> (FontFamily?, Bool, (bytes: Int, families: [String: Int])) in
-                let fm = FileManager.default
-                var fams: [String: Int] = [:], bytes = 0
-                for n in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where !n.hasPrefix(".") {
-                    let sub = dir.appendingPathComponent(n)
-                    let size = ((try? fm.subpathsOfDirectory(atPath: sub.path)) ?? []).reduce(0) { t, p in
-                        t + (((try? fm.attributesOfItem(atPath: sub.appendingPathComponent(p).path))?[.size] as? Int) ?? 0)
-                    }
-                    bytes += size; fams[n] = size
-                }
-                let match = fams.keys.first { $0.caseInsensitiveCompare(asked) == .orderedSame }
-                let ttf = match.map { fm.fileExists(atPath: dir.appendingPathComponent($0).appendingPathComponent("ttf").path) } ?? false
-                return (match.flatMap { Fonts.downloaded($0, in: dir) }, ttf, (bytes, fams))
-            }
-            var italic = flag(r, "italic")
-            if let stored {
-                let have = Set(stored.faces.flatMap { $0.weight.split(separator: " ").compactMap { Int($0) } })
-                let hasItalic = stored.faces.contains { $0.style == "italic" }
-                if Set(weights).isSubset(of: have), !italic || hasItalic, hasTTF || stored.ttfSkipped == true {   // nothing new (TTFs too): no download
-                    return .object(["family": .string(stored.family), "faces": .number(Double(stored.faces.count)), "css": .string(Fonts.cssURL([stored.family])), "already": .bool(true)])
-                }
-                f = stored.family
-                weights = Array(have.union(weights).filter { (100...900).contains($0) }).sorted()
-                italic = italic || hasItalic
-                guard weights.count <= 9 else { throw invalid("\(f) já tem pesos demais; remova a família nas Preferências e baixe de novo") }
-            } else if used.families.count >= GoogleFonts.maxFamilies {
-                throw ProtocolError(code: .tooMany, message: "já há \(GoogleFonts.maxFamilies) famílias baixadas; remova algumas em Preferências → Fontes")
-            }
-            let budget = GoogleFonts.totalCap - used.bytes + (stored.map { used.families[$0.family] ?? 0 } ?? 0)
-            guard budget > 0 else {
-                throw ProtocolError(code: .tooMany, message: "as fontes baixadas já ocupam \(GoogleFonts.totalCap >> 20) MiB; remova algumas em Preferências → Fontes")
-            }
-            let (added, warning) = try await downloadFont(f, weights: weights, italic: italic, into: dir, budget: budget)
-            await fontsChanged()
-            var out: [String: JSONValue] = ["family": .string(f), "faces": .number(Double(added.faces.count)), "css": .string(Fonts.cssURL([f]))]
-            if let warning { out["warning"] = .string(warning) }
-            return .object(out)
+            return try await addFont(f, weights: weights, italic: flag(r, "italic"), caller: caller)
         default:
             throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
+    }
+
+    /// `font.add` of `family` (valid) with `weights` (100-900, at most 9): also an import's Google Fonts (its caller's
+    /// limit). One at a time; terminals: 20 adds an hour together.
+    func addFont(_ family: String, weights: [Int], italic: Bool, caller: TerminalRecord?) async throws -> JSONValue {
+        let dir = config.paths.root.appendingPathComponent("fonts")
+        func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        var f = family, weights = weights, italic = italic
+        guard googleFonts else {
+            throw ProtocolError(code: .unavailable, message: "Baixar fontes do Google Fonts está desligado nas Preferências do Collie; peça ao usuário para ligar")
+        }
+        // one at a time (a call's downloads held in memory): the next waits. ponytail: 100 ms polling, as herd.apply
+        while addingFont { try await Task.sleep(for: .milliseconds(100)) }
+        addingFont = true; defer { addingFont = false }
+        if caller != nil {   // terminals: 20 adds an hour, all together; the app: no limit
+            let hour = ContinuousClock.now - .seconds(3600)
+            fontAdds.removeAll { $0 < hour }
+            guard fontAdds.count < GoogleFonts.addsPerHour else {
+                throw ProtocolError(code: .tooMany, message: "limite de \(GoogleFonts.addsPerHour) fontes por hora para os terminais; tente mais tarde ou baixe pelas Preferências")
+            }
+            fontAdds.append(.now)
+        }
+        // the folder already there under any case keeps its spelling; its faces are kept (merged), never dropped
+        let asked = f
+        let (stored, hasTTF, used) = try await UnixSocketClient.offPool { () -> (FontFamily?, Bool, (bytes: Int, families: [String: Int])) in
+            let fm = FileManager.default
+            var fams: [String: Int] = [:], bytes = 0
+            for n in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where !n.hasPrefix(".") {
+                let sub = dir.appendingPathComponent(n)
+                let size = ((try? fm.subpathsOfDirectory(atPath: sub.path)) ?? []).reduce(0) { t, p in
+                    t + (((try? fm.attributesOfItem(atPath: sub.appendingPathComponent(p).path))?[.size] as? Int) ?? 0)
+                }
+                bytes += size; fams[n] = size
+            }
+            let match = fams.keys.first { $0.caseInsensitiveCompare(asked) == .orderedSame }
+            let ttf = match.map { fm.fileExists(atPath: dir.appendingPathComponent($0).appendingPathComponent("ttf").path) } ?? false
+            return (match.flatMap { Fonts.downloaded($0, in: dir) }, ttf, (bytes, fams))
+        }
+        if let stored {
+            let have = Set(stored.faces.flatMap { $0.weight.split(separator: " ").compactMap { Int($0) } })
+            let hasItalic = stored.faces.contains { $0.style == "italic" }
+            if Set(weights).isSubset(of: have), !italic || hasItalic, hasTTF || stored.ttfSkipped == true {   // nothing new (TTFs too): no download
+                return .object(["family": .string(stored.family), "faces": .number(Double(stored.faces.count)), "css": .string(Fonts.cssURL([stored.family])), "already": .bool(true)])
+            }
+            f = stored.family
+            weights = Array(have.union(weights).filter { (100...900).contains($0) }).sorted()
+            italic = italic || hasItalic
+            guard weights.count <= 9 else { throw invalid("\(f) já tem pesos demais; remova a família nas Preferências e baixe de novo") }
+        } else if used.families.count >= GoogleFonts.maxFamilies {
+            throw ProtocolError(code: .tooMany, message: "já há \(GoogleFonts.maxFamilies) famílias baixadas; remova algumas em Preferências → Fontes")
+        }
+        let budget = GoogleFonts.totalCap - used.bytes + (stored.map { used.families[$0.family] ?? 0 } ?? 0)
+        guard budget > 0 else {
+            throw ProtocolError(code: .tooMany, message: "as fontes baixadas já ocupam \(GoogleFonts.totalCap >> 20) MiB; remova algumas em Preferências → Fontes")
+        }
+        let (added, warning) = try await downloadFont(f, weights: weights, italic: italic, into: dir, budget: budget)
+        await fontsChanged()
+        var out: [String: JSONValue] = ["family": .string(f), "faces": .number(Double(added.faces.count)), "css": .string(Fonts.cssURL([f]))]
+        if let warning { out["warning"] = .string(warning) }
+        return .object(out)
     }
 
     /// Design panels' editors add the downloaded TTFs again (`DesignPanel`).

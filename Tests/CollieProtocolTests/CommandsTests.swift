@@ -107,7 +107,7 @@ import Foundation
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help", "design_prefer",
                          "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
                          "diagram_get", "diagram_set", "diagram_mermaid", "diagram_export", "diagram_screenshot", "preview_get", "preview_screenshot",
-                         "artifact_list", "artifact_get", "artifact_add", "artifact_import", "artifact_libs", "artifact_new",
+                         "artifact_list", "artifact_get", "artifact_add", "artifact_import-claude", "artifact_import-list", "artifact_import-failed", "artifact_import", "artifact_libs", "artifact_new",
                          "artifact_move", "artifact_folders"])
         guard case .object(let ask) = tools[1], case .object(let schema)? = ask["inputSchema"],
               case .array(let req)? = schema["required"] else { Issue.record("bad schema"); return }
@@ -127,7 +127,7 @@ import Foundation
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help", "design_prefer",
                          "design_system_list", "design_system_create", "design_system_publish", "design_system_history", "design_system_use", "design_system_undo", "design_system_revert", "design_system_tokens", "design_system_bind", "design_system_style", "design_system_place", "design_system_mode",
                          "diagram_get", "diagram_set", "diagram_mermaid", "diagram_export", "diagram_screenshot", "preview_get", "preview_screenshot",
-                         "artifact_list", "artifact_get", "artifact_add", "artifact_import", "artifact_libs", "artifact_new",
+                         "artifact_list", "artifact_get", "artifact_add", "artifact_import-claude", "artifact_import-list", "artifact_import-failed", "artifact_import", "artifact_libs", "artifact_new",
                          "artifact_move", "artifact_folders"])
         #expect(try ArgvParser.parse(["summon", "w", "--preset", "shell", "echo", "hi"]).args
                 == ["name": .string("w"), "preset": .string("shell"), "prompt": .string("echo hi")])

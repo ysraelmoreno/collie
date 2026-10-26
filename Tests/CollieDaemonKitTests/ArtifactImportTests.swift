@@ -114,8 +114,11 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
             #expect(r["kind"] == .string("export") && r["file"] == .string("index.html") && r["version"] == .number(1), "\(r)")
             #expect(r["source"] == .string("collie-artifact://app/\(id)/source/index.html"), "\(r)")
             let dir = p.root.appendingPathComponent("artifacts/\(id)")
+            // the kept copy is the page made offline (its Google Fonts link to collie-lib://), the original untouched
+            let original = try String(contentsOf: htmlImport.appendingPathComponent("landing/index.html"), encoding: .utf8)
             #expect(FileManager.default.contents(atPath: dir.appendingPathComponent("source/index.html").path)
-                    == FileManager.default.contents(atPath: htmlImport.appendingPathComponent("landing/index.html").path))
+                    == Data(OfflineRewrite.html(original, libs: []).0.utf8))
+            #expect(original.contains("fonts.googleapis.com"))
             #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("v1/index.html").path))
             #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent(".import").path))
             // the app was asked for the artifact's own page; one batch, one undo step

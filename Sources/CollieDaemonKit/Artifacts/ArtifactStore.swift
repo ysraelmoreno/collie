@@ -18,11 +18,16 @@ struct Artifact: Codable, Sendable, Equatable {
     /// or a record from before it): only that terminal (or the app) moves it.
     var inFolder: String? = nil
     var byId: UUID? = nil
+    /// The claude.ai link it was imported from (`artifact add --source`): adding that link again is its next version.
+    var origin: String? = nil
+    /// Remote resources the page still loads after the offline rewrite ("precisa de rede"); nil: none.
+    var needsNetwork: [String]? = nil
 }
 
 extension Artifact {
     private enum CodingKeys: String, CodingKey {
-        case id, kind, title, fileId, node, paddockId, by, at, version, folder, stamp, warnings, page, source, importError, inFolder, byId
+        case id, kind, title, fileId, node, paddockId, by, at, version, folder, stamp, warnings, page, source, importError, inFolder, byId,
+             origin, needsNetwork
     }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     init(from d: Decoder) throws {
@@ -35,6 +40,7 @@ extension Artifact {
         warnings = try c.decode([String].self, forKey: .warnings); page = try c.decodeIfPresent(String.self, forKey: .page)
         source = try c.decodeIfPresent(String.self, forKey: .source); importError = try c.decodeIfPresent(String.self, forKey: .importError)
         inFolder = try c.decodeIfPresent(String.self, forKey: .inFolder); byId = try c.decodeIfPresent(UUID.self, forKey: .byId)
+        origin = try c.decodeIfPresent(String.self, forKey: .origin); needsNetwork = try c.decodeIfPresent([String].self, forKey: .needsNetwork)
     }
 }
 
@@ -97,8 +103,10 @@ actor ArtifactStore {
         if known == nil { pending[key] = id }
         let n = max(known?.version ?? 0, reserved[id] ?? 0) + 1
         reserved[id] = n
-        let a = Artifact(id: id, kind: .export, title: title, fileId: fileId, node: node, paddockId: paddockId, by: by, at: Date(),
+        var a = Artifact(id: id, kind: .export, title: title, fileId: fileId, node: node, paddockId: paddockId, by: by, at: Date(),
                          version: n, folder: "\(Self.name(id))/v\(n)", stamp: nil, warnings: [], page: page)
+        // what the export does not make: kept from the record
+        a.source = known?.source; a.inFolder = known?.inFolder; a.byId = known?.byId; a.origin = known?.origin; a.needsNetwork = known?.needsNetwork
         let folder = dir.appendingPathComponent(a.folder)
         try await onIO {
             try? FileManager.default.removeItem(at: folder)   // an orphan of an earlier run, never committed
@@ -134,14 +142,37 @@ actor ArtifactStore {
     /// Whether `id` was removed (an export of it in flight is then dropped).
     func wasRemoved(_ id: UUID) -> Bool { removed.contains(id) }
 
-    /// `page` (an HTML document) kept as a new agent artifact.
-    func addAgent(page: Data, title: String, paddockId: UUID?, by: String, byId: UUID? = nil, inFolder: String? = nil) async throws -> Artifact {
+    /// The record a new agent page starts from: a new artifact, or (`origin` already kept) that artifact's next version
+    /// in `<id>/r<N>/`, its folder kept unless `inFolder` is given.
+    private func agentRecord(title: String, paddockId: UUID?, by: String, byId: UUID?, inFolder: String?, origin: String?) async throws -> Artifact {
+        if let origin, let known = try await registry().first(where: { $0.origin == origin && !removed.contains($0.id) }) {
+            guard !converting.contains(known.id) else { throw Self.invalid("importação em andamento desse artifact; tente de novo em instantes") }
+            let n = max(known.version, reserved[known.id] ?? 0) + 1
+            reserved[known.id] = n
+            return Artifact(id: known.id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId ?? known.paddockId, by: by, at: Date(),
+                            version: n, folder: "\(Self.name(known.id))/r\(n)", stamp: nil, warnings: [], inFolder: inFolder ?? known.inFolder,
+                            byId: byId, origin: origin)
+        }
         let id = UUID()
-        var a = Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
-                         version: 1, folder: Self.name(id), stamp: nil, warnings: [], inFolder: inFolder, byId: byId)
+        return Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
+                        version: 1, folder: Self.name(id), stamp: nil, warnings: [], inFolder: inFolder, byId: byId, origin: origin)
+    }
+
+    /// The rewrite's report on the record.
+    private static func noted(_ a: inout Artifact, _ rw: OfflineRewriter?) {
+        guard let r = rw?.report else { return }
+        a.warnings += r.warnings; a.needsNetwork = r.remote.isEmpty ? nil : r.remote
+    }
+
+    /// `page` (an HTML document) kept as a new agent artifact (or the next version of the one from `origin`), made
+    /// offline by `rewriter` in the copy.
+    func addAgent(page: Data, title: String, paddockId: UUID?, by: String, byId: UUID? = nil, inFolder: String? = nil,
+                  origin: String? = nil, rewriter: OfflineRewriter? = nil) async throws -> Artifact {
+        var a = try await agentRecord(title: title, paddockId: paddockId, by: by, byId: byId, inFolder: inFolder, origin: origin)
         a.source = "\(a.folder)/source.html"
-        let folder = dir.appendingPathComponent(a.folder)
+        let folder = dir.appendingPathComponent(a.folder), page = rewriter?.rewrite(page, ext: "html") ?? page
         try await onIO {
+            try? FileManager.default.removeItem(at: folder.appendingPathComponent("source.html"))   // a version never recorded
             try Self.mkdir(folder)
             let dst = folder.appendingPathComponent("source.html")
             guard FileManager.default.createFile(atPath: dst.path, contents: page, attributes: [.posixPermissions: 0o444]) else {
@@ -149,6 +180,7 @@ actor ArtifactStore {
                 throw ProtocolError(code: .internal, message: "artifacts: cannot write \(dst.path)")
             }
         }
+        Self.noted(&a, rewriter)
         try await append(&a)
         return a
     }
@@ -158,8 +190,7 @@ actor ArtifactStore {
     /// (or `page` outside `root`, or not copied) nothing is created. Read and written on the io queue.
     /// `noFollow` (the Prévia's save): `root` and the page's folder must be real paths already (no link anywhere in them).
     func addAgent(root: URL, page: URL, title: String, noFollow: Bool = false, paddockId: UUID?, by: String,
-                  byId: UUID? = nil, inFolder: String? = nil) async throws -> Artifact {
-        let id = UUID()
+                  byId: UUID? = nil, inFolder: String? = nil, origin: String? = nil, rewriter: OfflineRewriter? = nil) async throws -> Artifact {
         // links in the paths themselves resolved (the page's own name is not: a linked page is not copied)
         let rootURL = root.standardizedFileURL.resolvingSymlinksInPath()
         let pageDir = page.standardizedFileURL.deletingLastPathComponent()
@@ -170,13 +201,15 @@ actor ArtifactStore {
         let base = rootURL.path, pagePath = pageURL.path
         guard pagePath.hasPrefix(base + "/") else { throw Self.invalid("the page must be a regular file inside --root") }
         let pageRel = String(pagePath.dropFirst(base.count + 1))
-        var a = Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
-                         version: 1, folder: Self.name(id), stamp: nil, warnings: [], inFolder: inFolder, byId: byId)
+        var a = try await agentRecord(title: title, paddockId: paddockId, by: by, byId: byId, inFolder: inFolder, origin: origin)
         a.source = "\(a.folder)/source/\(pageRel)"
         let folder = dir.appendingPathComponent(a.folder), dst = folder.appendingPathComponent("source")
+        let made = a.version == 1 ? folder : dst   // what a failure removes: a new artifact's folder, else this version's copy
         try await onIO {
-            let files = try Self.readTree(rootURL, page: pageRel)
+            var files = try Self.readTree(rootURL, page: pageRel)
             guard files.contains(where: { $0.rel == pageRel }) else { throw Self.invalid("the page must be a regular file inside --root") }
+            if let rewriter { files = files.map { ($0.rel, rewriter.rewrite($0.data, ext: URL(fileURLWithPath: $0.rel).pathExtension)) } }
+            Self.purge(dst)   // a version never recorded
             do {
                 try Self.mkdir(dst)
                 var dirs: Set<String> = [dst.path]
@@ -191,10 +224,11 @@ actor ArtifactStore {
                 }
                 // read-only at the end, deepest first
                 for d in dirs.sorted(by: { $0.count > $1.count }) { try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: d) }
-            } catch { Self.purge(folder); throw error }
+            } catch { Self.purge(made); throw error }
         }
+        Self.noted(&a, rewriter)
         do { try await append(&a) }
-        catch { try? await onIO { Self.purge(folder) }; throw error }   // the copy of a record never made
+        catch { try? await onIO { Self.purge(made) }; throw error }   // the copy of a record never made
         return a
     }
 
@@ -253,10 +287,11 @@ actor ArtifactStore {
         guard !removed.contains(id) else { throw ProtocolError(code: .notFound, message: "the artifact was removed meanwhile") }
         guard a.kind == .agent else { throw Self.invalid("artifact \(Self.name(id)) is not an agent's page") }
         guard converting.insert(id).inserted else { throw Self.invalid("import already in progress") }
-        reserved[id] = 1
+        let n = max(a.version, 1)   // a page added again (`origin`) exports as its own version
+        reserved[id] = max(reserved[id] ?? 0, n)
         a.source = a.source ?? "\(a.folder)/source.html"
         a.kind = .export; a.fileId = fileId; a.node = node; a.page = page; a.importError = nil
-        a.version = 1; a.at = Date(); a.folder = "\(Self.name(id))/v1"
+        a.version = n; a.at = Date(); a.folder = "\(Self.name(id))/v\(n)"
         let folder = dir.appendingPathComponent(a.folder)
         do {
             try await onIO {
@@ -296,7 +331,12 @@ actor ArtifactStore {
         var made = a
         try await edit { list, fl in
             made.inFolder = made.inFolder.map { ArtifactFolder.canonical($0, known: Self.known(list, fl)) }
-            list.append(made)
+            if let i = list.firstIndex(where: { $0.id == made.id }) {   // the next version of one from the same origin
+                guard !removed.contains(made.id) else { throw ProtocolError(code: .notFound, message: "the artifact was removed meanwhile") }
+                if list[i].version < made.version { list[i] = made }
+            } else {
+                list.append(made)
+            }
         }
         a = made
     }

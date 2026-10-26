@@ -80,6 +80,9 @@ actor CommandRouter {
     var correctionsAt: [String: [Date]] = [:]   // "<terminal>|<user>"
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
     var importingArtifacts: Set<UUID> = []
+    /// claude.ai links the app sent a terminal to import, with the folder it chose: that terminal's `artifact add --source`
+    /// may put the link there. ponytail: in memory, one entry per link (a later send replaces it), never pruned.
+    var claudeImports: [String: (terminal: UUID, folder: String?)] = [:]
     /// A `herd.apply` in flight: one at a time, the next waits.
     var applyingHerd = false
     /// `font.add`: one at a time; the terminals' adds in the last hour.

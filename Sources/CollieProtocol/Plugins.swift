@@ -270,6 +270,8 @@ extension PluginRegistry {
         CommandSpec(name: "artifact.\(n)", summary: summary, params: params, timeoutSeconds: timeout, exposedToMCP: exposedToMCP, panelFree: true)
     }
     private static let artifactId = ParamSpec("id", .string, positional: true, required: true, help: "Artifact id (as artifact.list shows it)")
+    private static let folderParam = ParamSpec("folder", .string, help: "Folder path, up to 3 levels (Cliente/Landing/v2; default: your lot's name)")
+    private static let folderPath = ParamSpec("path", .string, positional: true, required: true, help: "Folder path (Cliente/Landing)")
 
     /// Pages Collie keeps: HTML exports of designs (`design.export --format html`) and pages agents hand in; the daemon
     /// runs the commands (named `artifact.*`, the plugin is `artifacts`). Re-export and remove are the app's.
@@ -285,7 +287,7 @@ extension PluginRegistry {
                   ParamSpec("root", .string, help: "A folder with the page's files (css, js, images, fonts), kept beside it: the page must be inside; up to 2000 files and 64 MiB, no links"),
                   ParamSpec("title", .string, help: "Title (default: the file name)"),
                   ParamSpec("width", .int, help: "Viewport width of the import in px (default 1440, 320-3840)"),
-                  ParamSpec("nofollow", .flag, help: "Refuse a path or --root that goes through a symbolic link")], timeout: 30),
+                  ParamSpec("nofollow", .flag, help: "Refuse a path or --root that goes through a symbolic link"), folderParam], timeout: 30),
             acmd("import", "Import an agent's page as a screen in a new design file (needs the Collie app); it becomes the page's export; returns {artifact, file, node, version, warnings} (ignores --panel)",
                  [artifactId, ParamSpec("width", .int, help: "Viewport width in px (default 1440, 320-3840)")], timeout: 180),
             acmd("libs", "Offline web libraries for local pages (no CDN): [{name,version,global,url,licence}], url = collie-lib://lib/<name>@<version>/<file> for a <script src> (ignores --panel)",
@@ -295,11 +297,24 @@ extension PluginRegistry {
                   ParamSpec("name", .string, positional: true, help: "Page name (slugged: a-z 0-9 -, up to 48; default <kind>-<n>)"),
                   ParamSpec("title", .string, help: "Page title (default: the name)"),
                   ParamSpec("paddock", .string, help: "Paddock whose project gets the page (app only)"),
+                  ParamSpec("folder", .string, help: "Folder the page goes in when saved as an artifact (as artifact add --folder)"),
                   ParamSpec("connect", .string, help: "Also leash the Prévia to these terminals you reach (comma list; Shepherd only)", repeatable: true)], timeout: 30),
             acmd("reexport", "Export the artifact's design again as its next version (the app only)", [artifactId], timeout: 120, exposedToMCP: false),
             acmd("remove", "Set the artifact aside (the app only)", [artifactId], timeout: 10, exposedToMCP: false),
+            acmd("move", "Move an artifact you added into a folder (\"\" for none); returns {folder} (ignores --panel)",
+                 [artifactId, ParamSpec("folder", .string, required: true, help: "Folder path, up to 3 levels (Cliente/Landing/v2); \"\" for none")], timeout: 10),
+            acmd("folders", "Artifact folders, the user's in order then the rest [{path,count,total,color,pinned,presentation,items}] (ignores --panel)", timeout: 10),
+            acmd("folder.create", "Create an empty folder (the app only)", [folderPath], timeout: 10, exposedToMCP: false),
+            acmd("folder.rename", "Rename a folder and everything in it (the app only)",
+                 [folderPath, ParamSpec("to", .string, positional: true, required: true, help: "New path")], timeout: 10, exposedToMCP: false),
+            acmd("folder.remove", "Remove a folder: only when empty, or move its artifacts with --move-to; never deletes artifacts (the app only)",
+                 [folderPath, ParamSpec("move-to", .string, help: "Where its artifacts go (\"\" for none)")], timeout: 10, exposedToMCP: false),
+            acmd("folder.set", "A folder's color, pin and presentation (ordered pages) (the app only)",
+                 [folderPath, ParamSpec("color", .string, help: "#RRGGBB (\"\" for none)"), ParamSpec("pin", .string, help: "true|false: on top"),
+                  ParamSpec("present", .string, help: "true|false: a presentation"), ParamSpec("order", .string, help: "Artifact ids in order (comma list)")],
+                 timeout: 10, exposedToMCP: false),
         ],
-        events: ["artifact.exported", "artifact.added", "artifact.imported"],
+        events: ["artifact.exported", "artifact.added", "artifact.imported", "artifact.changed"],
         runsInDaemon: true)
 }
 

@@ -152,6 +152,62 @@ import CollieProtocol
         #expect(panel.webView?.url?.scheme == "collie-artifact")
     }
 
+    /// An artifact of a presentation folder: its folder in the header, Anterior / Próxima through the folder's order.
+    @Test func presentationFolderSteps() async throws {
+        let root = try project(), data = try project(), a = UUID().uuidString.lowercased(), b = UUID().uuidString.lowercased()
+        try put("artifacts/\(a)/source.html", data, "<body>A</body>"); try put("artifacts/\(b)/source.html", data, "<body>B</body>")
+        let (panel, w) = mount(root: root, state: ["artifact": .string(a)], dataRoot: data) { cmd, args throws(ProtocolError) in
+            switch cmd {
+            case "artifact.get":
+                guard case .string(let id)? = args["id"] else { throw ProtocolError(code: .invalidArgs, message: "id") }
+                return .object(["id": .string(id), "title": .string(id == a ? "Capa" : "Fim"), "folder": .string("Cliente/Deck"),
+                                "url": .string("collie-artifact://app/\(id)/source.html")])
+            case "artifact.folders":
+                return .array([.object(["path": .string("cliente/deck"), "presentation": .bool(true), "items": .array([.string(a), .string(b)])])])
+            default: throw ProtocolError(code: .notFound, message: cmd)
+            }
+        }
+        defer { panel.close(); w.close() }
+        #expect(await pollUntil(10) { await text(panel) == "A" })
+        #expect(panel.header.folder == "Cliente/Deck" && panel.header.file == "Capa")
+        #expect(panel.header.canNext && !panel.header.canPrevious && panel.header.canPresent)
+        panel.step(1)
+        #expect(await pollUntil(10) { await text(panel) == "B" })
+        #expect(panel.shown == b && panel.header.canPrevious && !panel.header.canNext && !panel.header.canComment && panel.header.file == "Fim")
+    }
+
+    @Test func presentationStepsNextAndPrevious() {
+        let items = ["a", "b", "c"]
+        #expect(PreviewPanel.neighbor(items, of: "b", by: 1) == "c" && PreviewPanel.neighbor(items, of: "b", by: -1) == "a")
+        #expect(PreviewPanel.neighbor(items, of: "c", by: 1) == nil && PreviewPanel.neighbor(items, of: "a", by: -1) == nil)
+        #expect(PreviewPanel.neighbor(items, of: "x", by: 1) == nil)
+    }
+
+    /// Full screen left any way (not Esc): the key monitor goes with it, the arrows are the page's again.
+    @Test func presentMonitorEndsWithFullScreen() async throws {
+        let root = try project()
+        try put("t.html", root, "<body>t</body>")
+        let (panel, w) = mount(root: root, state: ["file": .string("t.html")])
+        defer { panel.close(); w.close() }
+        #expect(await pollUntil(10) { panel.loads == 1 })
+        panel.present()
+        #expect(panel.presenting)
+        panel.webView?.exitFullScreenMode(options: nil)
+        #expect(panel.handleKey(124) == false && !panel.presenting)
+        panel.present(); #expect(panel.presenting)
+        panel.close()
+        #expect(!panel.presenting)
+    }
+
+    @Test func saveKeepsTheNewPagesFolder() throws {
+        let root = try project()
+        try put("v/index.html", root, "<body>x</body>")
+        let (panel, w) = mount(root: root, state: ["file": .string("v/index.html"), "folder": .string("Cliente")])
+        defer { panel.close(); w.close() }
+        panel.startIfNeeded()
+        #expect(try panel.saveArgs()["folder"] == .string("Cliente"))
+    }
+
     @Test func themeToggleSetsDataTheme() async throws {
         let root = try project()
         try put("t.html", root, "<body>t</body>")

@@ -11,6 +11,8 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
     public let thumbnail: String?, status: String?, warnings: [String]
     /// The archived agent page (`collie-artifact://` URL); `importError` when its import failed.
     public let source: String?, importError: String?
+    /// The user folder it is in (nil: "Sem pasta").
+    public let folder: String?
     public var isExport: Bool { kind == "export" }
     public var statusLabel: String {
         ["current": "atual", "stale": "desatualizado", "missing": "origem removida", "unknown": "desconhecido",
@@ -19,11 +21,87 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
     public var origin: String { isExport ? file.map { "tela \($0)" } ?? "tela removida" : "HTML do agente" }
 }
 
+/// One `artifact.folders` entry.
+public struct ArtifactFolderRow: Decodable, Equatable, Sendable {
+    public let path: String, count: Int, total: Int, color: String?, pinned: Bool, presentation: Bool, items: [String]
+}
+
+/// One section of the folder tree: a folder (`path` nil: "Sem pasta") and its own artifacts.
+public struct FolderSection: Identifiable, Equatable {
+    public let path: String?, name: String, depth: Int
+    /// Artifacts in it and its subfolders (those matching the search).
+    public let total: Int
+    public let rows: [ArtifactRow]
+    public let pinned: Bool, presentation: Bool, color: String?, collapsed: Bool, hasChildren: Bool
+    public var id: String { path.map { ArtifactFolderTree.key($0) } ?? "\u{0}" }
+}
+
+/// The Artifacts panel's folders as a tree (pure: tested without the daemon). Siblings: pinned first, then the user's
+/// order (`artifact.folders`), then by name; "Sem pasta" last. A search hides folders without a match.
+public enum ArtifactFolderTree {
+    /// Lowercased, as the daemon's `ArtifactFolder.same`.
+    static func key(_ p: String) -> String { p.lowercased() }
+    static func under(_ p: String?, _ f: String) -> Bool { p.map { key($0) == key(f) || key($0).hasPrefix(key(f) + "/") } ?? false }
+    static func parent(_ p: String) -> String? { p.lastIndex(of: "/").map { String(p[..<$0]) } }
+
+    public static func sections(rows: [ArtifactRow], folders: [ArtifactFolderRow], query: String = "", collapsed: Set<String> = []) -> [FolderSection] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let shown = q.isEmpty ? rows : rows.filter { $0.title.lowercased().contains(q) || ($0.folder ?? "").lowercased().contains(q) }
+        var nodes: [String: (path: String, rank: Int, f: ArtifactFolderRow?)] = [:]
+        for (i, f) in folders.enumerated() where nodes[key(f.path)] == nil { nodes[key(f.path)] = (f.path, i, f) }
+        for p in rows.compactMap(\.folder) {
+            var cur: String? = p
+            while let c = cur { if nodes[key(c)] == nil { nodes[key(c)] = (c, .max, nil) }; cur = parent(c) }
+        }
+        func kids(_ of: String?) -> [(path: String, rank: Int, f: ArtifactFolderRow?)] {
+            nodes.values.filter { parent($0.path).map(key) == of.map(key) }.sorted {
+                if ($0.f?.pinned ?? false) != ($1.f?.pinned ?? false) { return $0.f?.pinned ?? false }
+                if $0.rank != $1.rank { return $0.rank < $1.rank }
+                return $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending
+            }
+        }
+        var out: [FolderSection] = []
+        func emit(_ n: (path: String, rank: Int, f: ArtifactFolderRow?), depth: Int) {
+            let total = shown.filter { under($0.folder, n.path) }.count
+            if !q.isEmpty, total == 0 { return }
+            var own = shown.filter { $0.folder.map(key) == key(n.path) }
+            if n.f?.presentation == true, let items = n.f?.items {
+                own = own.enumerated().sorted { a, b in
+                    (items.firstIndex(of: a.element.id) ?? .max, a.offset) < (items.firstIndex(of: b.element.id) ?? .max, b.offset)
+                }.map(\.element)
+            }
+            let shut = collapsed.contains(key(n.path)), children = kids(n.path)
+            out.append(FolderSection(path: n.path, name: String(n.path.split(separator: "/").last ?? ""), depth: depth, total: total, rows: own,
+                                     pinned: n.f?.pinned ?? false, presentation: n.f?.presentation ?? false, color: n.f?.color,
+                                     collapsed: shut, hasChildren: !children.isEmpty))
+            if !shut { children.forEach { emit($0, depth: depth + 1) } }
+        }
+        kids(nil).forEach { emit($0, depth: 0) }
+        let loose = shown.filter { $0.folder == nil }
+        if !loose.isEmpty {
+            out.append(FolderSection(path: nil, name: "Sem pasta", depth: 0, total: loose.count, rows: loose, pinned: false, presentation: false,
+                                     color: nil, collapsed: collapsed.contains("\u{0}"), hasChildren: false))
+        }
+        return out
+    }
+
+    /// `path` with its last name replaced by `name` (trimmed).
+    public static func renamed(_ path: String, to name: String) -> String {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        return parent(path).map { "\($0)/\(n)" } ?? n
+    }
+}
+
 /// State and daemon calls of the Artifacts panel.
 @MainActor public final class ArtifactsModel: ObservableObject {
     /// The Browser panel artifacts open in (created on first use).
     static let previewPanel = "Prévia"
     @Published public private(set) var rows: [ArtifactRow] = []
+    @Published public private(set) var folders: [ArtifactFolderRow] = []
+    /// The search and the folders shut (`FolderSection.id`s).
+    @Published public var query = ""
+    @Published public var collapsed: Set<String> = []
+    public var sections: [FolderSection] { ArtifactFolderTree.sections(rows: rows, folders: folders, query: query, collapsed: collapsed) }
     @Published public private(set) var error: String?
     @Published public private(set) var busy = false
 
@@ -57,6 +135,8 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
             let v = try await call("artifact.list", [:])
             let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
             do { rows = try d.decode([ArtifactRow].self, from: JSONEncoder().encode(v)) } catch { return "lista inválida: \(error.localizedDescription)" }
+            let f = try await call("artifact.folders", [:])
+            do { folders = try JSONDecoder().decode([ArtifactFolderRow].self, from: JSONEncoder().encode(f)) } catch { return "pastas inválidas: \(error.localizedDescription)" }
             return nil
         } catch { return error.message }
     }
@@ -113,6 +193,35 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
         if ok { await refresh() }
     }
 
+    // MARK: folders
+
+    /// Runs `command`, then refreshes on success.
+    private func change(_ command: String, _ args: [String: JSONValue]) async {
+        var ok = false
+        await run { ok = await send(command, args) != nil }
+        if ok { await refresh() }
+    }
+    /// Artifact `id` into `folder` (nil: "Sem pasta").
+    public func move(_ id: String, to folder: String?) async { await change("artifact.move", ["id": .string(id), "folder": .string(folder ?? "")]) }
+    public func createFolder(_ name: String, in parent: String?) async {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        await change("artifact.folder.create", ["path": .string(parent.map { "\($0)/\(n)" } ?? n)])
+    }
+    public func renameFolder(_ path: String, to name: String) async {
+        await change("artifact.folder.rename", ["path": .string(path), "to": .string(ArtifactFolderTree.renamed(path, to: name))])
+    }
+    /// `emptying`: its artifacts go to "Sem pasta" first (never removed).
+    public func removeFolder(_ path: String, emptying: Bool) async {
+        await change("artifact.folder.remove", ["path": .string(path)].merging(emptying ? ["move-to": .string("")] : [:]) { a, _ in a })
+    }
+    public func setFolder(_ path: String, pinned: Bool? = nil, presentation: Bool? = nil) async {
+        var args: [String: JSONValue] = ["path": .string(path)]
+        if let pinned { args["pin"] = .string("\(pinned)") }
+        if let presentation { args["present"] = .string("\(presentation)") }
+        await change("artifact.folder.set", args)
+    }
+    public func toggle(_ s: FolderSection) { if collapsed.remove(s.id) == nil { collapsed.insert(s.id) } }
+
     public func remove(_ row: ArtifactRow) async {
         var ok = false
         await run { ok = await send("artifact.remove", ["id": .string(row.id)]) != nil }
@@ -142,20 +251,30 @@ public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
 struct ArtifactsView: View {
     @ObservedObject var model: ArtifactsModel
     @State private var removing: ArtifactRow?
+    /// **Nova pasta** (in a parent, nil: top) or **Renomear** (a path): the name being typed.
+    private enum Naming: Equatable { case create(String?), rename(String) }
+    @State private var naming: Naming?
+    @State private var name = ""
+    @State private var removingFolder: FolderSection?
 
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader("Artifacts", subtitle: model.rows.count == 1 ? "1 página" : "\(model.rows.count) páginas") {
                 HStack(spacing: 8) {
                     if model.busy { ProgressView().controlSize(.small) }
+                    Button("Nova pasta") { name = ""; naming = .create(nil) }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                     Button("Atualizar") { Task { await model.refresh() } }.disabled(model.busy).buttonStyle(CollieButtonStyle(.secondary))
                 }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     if let e = model.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger) }
+                    TextField("Buscar artifacts ou pastas", text: $model.query).textFieldStyle(.roundedBorder).font(.collieUI(13))
                     if model.rows.isEmpty { Text("Nenhum artifact.").font(.collieUI(13)).foregroundStyle(Color.collieMuted) }
-                    ForEach(model.rows) { row($0) }
+                    ForEach(model.sections) { s in
+                        folderHeader(s)
+                        if !s.collapsed { ForEach(s.rows) { row($0).padding(.leading, CGFloat(s.depth) * 16) } }
+                    }
                 }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
             }
             PanelFooter("collie artifact add <página.html>")
@@ -166,6 +285,76 @@ struct ArtifactsView: View {
                             titleVisibility: .visible, presenting: removing) { r in
             Button("Remover", role: .destructive) { Task { await model.remove(r) } }
         } message: { _ in Text("A pasta vai para artifacts/.removed.") }
+        .alert(naming.map { if case .rename = $0 { "Renomear pasta" } else { "Nova pasta" } } ?? "",
+               isPresented: Binding(get: { naming != nil }, set: { if !$0 { naming = nil } })) {
+            TextField("Nome", text: $name)
+            Button("OK") {
+                let n = naming; naming = nil
+                Task {
+                    switch n {
+                    case .create(let parent)?: await model.createFolder(name, in: parent)
+                    case .rename(let path)?: await model.renameFolder(path, to: name)
+                    case nil: break
+                    }
+                }
+            }
+            Button("Cancelar", role: .cancel) { naming = nil }
+        } message: { Text("Até 3 níveis; cada nome com até 40 caracteres.") }
+        .confirmationDialog("Remover a pasta \(removingFolder?.name ?? "")?", isPresented: Binding(get: { removingFolder != nil }, set: { if !$0 { removingFolder = nil } }),
+                            titleVisibility: .visible, presenting: removingFolder) { s in
+            Button(s.total == 0 ? "Remover" : "Mover artifacts para Sem pasta e remover", role: .destructive) {
+                Task { if let p = s.path { await model.removeFolder(p, emptying: s.total > 0) } }
+            }
+        } message: { s in Text(s.total == 0 ? "A pasta está vazia." : "Nenhum artifact é apagado.") }
+    }
+
+    /// Folder paths a row can move to ("Sem pasta" first).
+    private var targets: [FolderSection] { ArtifactFolderTree.sections(rows: model.rows, folders: model.folders).filter { $0.path != nil } }
+
+    /// The folder's line: chevron, name, count; drop an artifact on it to move it there; its menu.
+    private func folderHeader(_ s: FolderSection) -> some View {
+        Button { model.toggle(s) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: s.collapsed ? "chevron.right" : "chevron.down").font(.system(size: 10, weight: .semibold)).frame(width: 12)
+                    .opacity(s.hasChildren || !s.rows.isEmpty ? 1 : 0.3).accessibilityHidden(true)
+                Image(systemName: s.path == nil ? "tray" : s.presentation ? "play.rectangle" : "folder").accessibilityHidden(true)
+                Text(s.name).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
+                if s.pinned { Image(systemName: "pin.fill").font(.system(size: 10)).accessibilityLabel("Fixada") }
+                Text("\(s.total)").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(Color.collieMuted)
+        .padding(.leading, CGFloat(s.depth) * 16).padding(.top, 4)
+        .accessibilityLabel("\(s.path ?? s.name), \(s.total) artifacts, \(s.collapsed ? "recolhida" : "aberta")")
+        .dropDestination(for: String.self) { ids, _ in
+            Task { for id in ids { await model.move(id, to: s.path) } }
+            return !ids.isEmpty
+        }
+        .contextMenu {
+            if let p = s.path {
+                if s.depth < 2 { Button("Nova pasta dentro") { name = ""; naming = .create(p) } }
+                Button("Renomear…") { name = s.name; naming = .rename(p) }
+                Button(s.pinned ? "Desafixar" : "Fixar no topo") { Task { await model.setFolder(p, pinned: !s.pinned) } }
+                Button(s.presentation ? "Deixar de ser apresentação" : "Apresentação (páginas em ordem)") {
+                    Task { await model.setFolder(p, presentation: !s.presentation) }
+                }
+                Divider()
+                Button("Remover…", role: .destructive) { removingFolder = s }
+            }
+        }
+    }
+
+    /// **Mover para…**: every folder, and "Sem pasta".
+    private func moveMenu(_ r: ArtifactRow) -> some View {
+        Menu("Mover para…") {
+            Button("Sem pasta") { Task { await model.move(r.id, to: nil) } }.disabled(r.folder == nil)
+            ForEach(targets) { t in
+                Button(String(repeating: "  ", count: t.depth) + t.name) { Task { await model.move(r.id, to: t.path) } }
+                    .disabled(t.path.map(ArtifactFolderTree.key) == r.folder.map(ArtifactFolderTree.key))
+            }
+        }
     }
 
     /// The state is text in DM Mono; its color only repeats it.
@@ -207,6 +396,7 @@ struct ArtifactsView: View {
                     HStack(spacing: 6) {
                         if r.source != nil { Button("Abrir origem") { Task { await model.openSource(r) } } }
                         if r.isExport, r.file != nil { Button("Abrir no Design") { Task { await model.openInDesign(r) } } }
+                        moveMenu(r).fixedSize()
                         Button("Remover…", role: .destructive) { removing = r }.buttonStyle(CollieButtonStyle(.quiet))
                     }
                 }
@@ -217,6 +407,8 @@ struct ArtifactsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .collieCard(highlight: r.status == "stale" ? Color.collieAttention : nil)
+        .draggable(r.id)
+        .contextMenu { moveMenu(r) }
     }
 }
 

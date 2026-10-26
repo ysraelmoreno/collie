@@ -3,12 +3,12 @@ import CollieCore
 import CollieProtocol
 
 extension CommandRouter {
-    /// `artifact.*`: the admin token or a terminal token (as `memory.*`); `reexport` and `remove` are the app's.
+    /// `artifact.*`: the admin token or a terminal token (as `memory.*`); `reexport`, `remove` and `folder.*` are the app's.
     /// `libs`: the offline web libraries (`config.weblibsDir`'s manifest) as `collie-lib://` URLs.
     func artifactCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
         @Sendable func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
-        if caller != nil, ["artifact.reexport", "artifact.remove"].contains(r.command) {
+        if caller != nil, ["artifact.reexport", "artifact.remove"].contains(r.command) || r.command.hasPrefix("artifact.folder.") {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for the app only")
         }
         func id() throws(ProtocolError) -> UUID {
@@ -33,10 +33,11 @@ extension CommandRouter {
             guard ["html", "htm"].contains(src.pathExtension.lowercased()) else { throw invalid("'\(src.path)' is not an .html or .htm file") }
             let title = str(r, "title").flatMap { $0.isEmpty ? nil : $0 } ?? src.lastPathComponent
             let width = try DeviceService.int(r.args, "width", 320...3840) ?? 1440
+            let folder = try artifactFolder(r, caller: caller)
             let a: Artifact
             if let root = str(r, "root").flatMap({ $0.isEmpty ? nil : $0 }) {
                 a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title, noFollow: flag(r, "nofollow"),
-                                                 paddockId: caller?.paddockId, by: Self.origin(caller))
+                                                 paddockId: caller?.paddockId, by: Self.origin(caller), byId: caller?.id, inFolder: folder)
             } else {
             // opened without following a link (nor blocking on a fifo), then checked and read through that descriptor
             let cap = 8 << 20
@@ -55,7 +56,8 @@ extension CommandRouter {
                 guard d.count <= cap else { return .failure(invalid("'\(src.path)' is over 8 MiB")) }
                 return .success(d)
             }
-            a = try await artifacts.addAgent(page: try read.get(), title: title, paddockId: caller?.paddockId, by: Self.origin(caller))
+            a = try await artifacts.addAgent(page: try read.get(), title: title, paddockId: caller?.paddockId, by: Self.origin(caller),
+                                             byId: caller?.id, inFolder: folder)
             }
             let id = JSONValue.string(a.id.uuidString.lowercased())
             for p in ws.panels where p.pluginId == "artifacts" {
@@ -90,9 +92,63 @@ extension CommandRouter {
         case "artifact.remove":
             try await artifacts.remove(try id())
             return .object([:])
+        case "artifact.move":
+            guard case .string(let f)? = r.args["folder"] else { throw invalid("Missing argument 'folder' (\"\" for none)") }
+            let folder = try ArtifactFolder.normalize(f), a = try await artifacts.get(try id())
+            if let me = caller, a.byId != me.id { throw ProtocolError(code: .unauthorized, message: "only the terminal that added this artifact (or the app) moves it") }
+            try await artifacts.move(a.id, to: folder)
+            await artifactsChanged()
+            return .object(["folder": folder.map { .string($0) } ?? .null])
+        case "artifact.folders":
+            return .array(try await artifacts.folders().map { f in
+                .object(["path": .string(f.path), "count": .number(Double(f.count)), "total": .number(Double(f.total)),
+                         "color": f.color.map { .string($0) } ?? .null, "pinned": .bool(f.pinned), "presentation": .bool(f.presentation),
+                         "items": .array(f.items.map { .string($0.uuidString.lowercased()) })])
+            })
+        case "artifact.folder.create", "artifact.folder.rename", "artifact.folder.remove", "artifact.folder.set":
+            guard let path = try ArtifactFolder.normalize(try need(r, "path")) else { throw invalid("Missing argument 'path'") }
+            switch r.command {
+            case "artifact.folder.create": try await artifacts.createFolder(path)
+            case "artifact.folder.rename":
+                guard let to = try ArtifactFolder.normalize(try need(r, "to")) else { throw invalid("Missing argument 'to'") }
+                try await artifacts.renameFolder(path, to: to)
+            case "artifact.folder.remove":
+                let dest: String?? = if case .string(let m)? = r.args["move-to"] { .some(try ArtifactFolder.normalize(m)) } else { nil }
+                try await artifacts.removeFolder(path, moveTo: dest)
+            default:
+                func bool(_ k: String) throws(ProtocolError) -> Bool? {
+                    guard let v = str(r, k) else { return nil }
+                    guard v == "true" || v == "false" else { throw invalid("'\(k)' must be true or false") }
+                    return v == "true"
+                }
+                let color = str(r, "color")
+                if let c = color, !c.isEmpty, c.wholeMatch(of: /#[0-9a-fA-F]{6}/) == nil { throw invalid("'color' must be #RRGGBB (\"\" for none)") }
+                let order = try str(r, "order").map { s throws(ProtocolError) in
+                    try s.split(separator: ",").map { w throws(ProtocolError) in
+                        guard let u = UUID(uuidString: w.trimmingCharacters(in: .whitespaces)) else { throw invalid("'order' must list artifact ids") }
+                        return u
+                    }
+                }
+                try await artifacts.setFolder(path, color: color, pinned: try bool("pin"), presentation: try bool("present"), order: order)
+            }
+            await artifactsChanged()
+            return .object([:])
         default:
             throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
+    }
+
+    /// `artifact.changed` to every Artifacts panel (a move or a folder change).
+    private func artifactsChanged() async {
+        for p in ws.panels where p.pluginId == "artifacts" { await pluginEmitted(panel: p.id, name: "artifact.changed", payload: .object([:])) }
+    }
+
+    /// The folder a new artifact goes in: `--folder` (normalized; "": none), else the caller's lot's name (a "/" in it
+    /// kept as "-"), else none.
+    private func artifactFolder(_ r: Request, caller: TerminalRecord?) throws(ProtocolError) -> String? {
+        if case .string(let f)? = r.args["folder"] { return try ArtifactFolder.normalize(f) }
+        guard let me = caller, let lot = ws.lot(of: me.id) else { return nil }
+        return try? ArtifactFolder.normalize(String(lot.name.replacingOccurrences(of: "/", with: "-").prefix(ArtifactFolder.maxName)))
     }
 
     /// `artifact new`: the starter page written (never over an existing file) into the caller's project, then a Prévia on
@@ -112,6 +168,7 @@ extension CommandRouter {
         let slot = try tester.map { me throws(ProtocolError) in try reservePreview(me) }   // before anything is written
         defer { if let me = tester, let slot { releasePreview(me, slot) } }
         let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
+        let folder = try artifactFolder(r, caller: caller)   // the Prévia's Salvar como artifact keeps the page there
         let root = try await projectRootForPanel(paddock: paddock, caller: caller)
         let slug: String
         if let n = str(r, "name") {
@@ -143,7 +200,8 @@ extension CommandRouter {
         try await UnixSocketClient.offPool { try DiagramFile.write(html, to: url, root: root, noun: "página", exclusive: true) }
         let name = freePanelName("preview")
         try reserve(name); defer { launching.remove(name.lowercased()) }
-        let (p, _, _) = try await openPanel(name: name, pluginId: "preview", placement: .canvas, state: ["file": .string(rel)],
+        let (p, _, _) = try await openPanel(name: name, pluginId: "preview", placement: .canvas,
+                                            state: ["file": .string(rel)].merging(folder.map { ["folder": .string($0)] } ?? [:]) { a, _ in a },
                                             file: nil, paddock: paddock, caller: caller, reservation: slot)
         do {   // re-checked after openPanel's awaits; the page stays, the panel goes
             for t in try wirer.map({ try connectTargets(r, by: $0, panels: false).terminals }) ?? [] { try await leash(t, p) }
@@ -178,7 +236,7 @@ extension CommandRouter {
                  "at": .string(iso.string(from: a.at)), "version": .number(Double(a.version)),
                  "url": .string("collie-artifact://app/\(page(a))"),
                  "source": (a.source ?? (a.kind == .agent ? page(a) : nil)).map { .string("collie-artifact://app/\($0)") } ?? .null,
-                 "importError": opt(a.importError), "path": .string(dir.appendingPathComponent(page(a)).path),
+                 "importError": opt(a.importError), "folder": opt(a.inFolder), "path": .string(dir.appendingPathComponent(page(a)).path),
                  "thumbnail": thumbs.contains(a.id) ? .string(dir.appendingPathComponent("\(a.folder)/thumb.png").path) : .null,
                  "warnings": .array(a.warnings.map { .string($0) })])
         }

@@ -106,7 +106,7 @@ extension CommandRouter {
         case "artifact.move":
             guard case .string(let f)? = r.args["folder"] else { throw invalid("Missing argument 'folder' (\"\" for none)") }
             let folder = try ArtifactFolder.normalize(f), a = try await artifacts.get(try id())
-            if let me = caller, a.byId != me.id { throw ProtocolError(code: .unauthorized, message: "only the terminal that added this artifact (or the app) moves it") }
+            if let me = caller { try await checkImportFolder(folder, link: nil, by: me) }   // user decision: any agent moves any artifact, into an existing folder
             try await artifacts.move(a.id, to: folder)
             await artifactsChanged()
             return .object(["folder": folder.map { .string($0) } ?? .null])
@@ -166,11 +166,13 @@ extension CommandRouter {
         return try? ArtifactFolder.normalize(String(lot.name.replacingOccurrences(of: "/", with: "-").prefix(ArtifactFolder.maxName)))
     }
 
-    /// A terminal imports into its lot's folder or none; another folder only when the app chose it for that link.
-    private func checkImportFolder(_ folder: String?, link: String?, by me: TerminalRecord) throws(ProtocolError) {
+    /// User decision (2026-10-26): a terminal files into any folder that already exists (the user creates folders in the app),
+    /// its lot's folder (made on first use), or none; a new path is refused.
+    private func checkImportFolder(_ folder: String?, link: String?, by me: TerminalRecord) async throws {
         guard let folder, !ArtifactFolder.same(folder, lotFolder(me)) else { return }
         if let link, let g = claudeImports[link], g.terminal == me.id, ArtifactFolder.same(g.folder, folder) { return }
-        throw ProtocolError(code: .unauthorized, message: "um terminal importa só na pasta do seu lote ou em Sem pasta; outra pasta, só a que o app escolher")
+        if try await artifacts.folders().contains(where: { ArtifactFolder.same($0.path, folder) }) { return }
+        throw ProtocolError(code: .unauthorized, message: "a pasta '\(folder)' não existe: crie no app (Artifacts → Nova pasta) ou use uma existente")
     }
 
     /// The nonce of the app's ask for `link` when `r` brings it (`--nonce`) from the terminal it was asked of; nil otherwise.
@@ -198,7 +200,7 @@ extension CommandRouter {
         let known = try await artifacts.continued(origin: origin, byId: caller?.id)
         if let known, importingArtifacts.contains(known.id) { throw invalid("importação em andamento desse artifact; tente de novo em instantes") }
         let folder = r.args["folder"] == nil && known != nil ? nil : try artifactFolder(r, caller: caller)
-        if let me = caller { try checkImportFolder(folder, link: origin, by: me) }   // every terminal add
+        if let me = caller { try await checkImportFolder(folder, link: origin, by: me) }   // every terminal add
         let width = try DeviceService.int(r.args, "width", 320...3840) ?? 1440
         let dir = config.weblibsDir, fontDir = config.paths.root.appendingPathComponent("fonts"), google = googleFonts
         let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }
@@ -304,7 +306,7 @@ extension CommandRouter {
         if let me = caller {
             guard str(r, "terminal") == nil else { throw ProtocolError(code: .unauthorized, message: "--terminal is for the app only") }
             folder = try artifactFolder(r, caller: me)
-            try checkImportFolder(folder, link: nil, by: me)
+            try await checkImportFolder(folder, link: nil, by: me)
             target = me
         } else {
             folder = if case .string(let f)? = r.args["folder"] { try ArtifactFolder.normalize(f) } else { nil }
@@ -366,7 +368,7 @@ extension CommandRouter {
         defer { if let me = tester, let slot { releasePreview(me, slot) } }
         let paddock = try canvasPaddock(str(r, "paddock"), caller: caller)
         let folder = try artifactFolder(r, caller: caller)   // the Prévia's Salvar como artifact keeps the page there
-        if let me = caller { try checkImportFolder(folder, link: nil, by: me) }   // as an add: its lot's folder or none
+        if let me = caller { try await checkImportFolder(folder, link: nil, by: me) }   // as an add: its lot's folder or none
         let root = try await projectRootForPanel(paddock: paddock, caller: caller)
         let slug: String
         if let n = str(r, "name") {

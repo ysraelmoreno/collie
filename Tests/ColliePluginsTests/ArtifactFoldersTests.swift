@@ -136,3 +136,73 @@ private func folder(_ path: String, pinned: Bool = false, presentation: Bool = f
         #expect(m.rows.map(\.folder) == [nil, "Cliente", nil])
     }
 }
+
+@Suite struct ArtifactSelectionTests {
+    @Test func toggleRangeAndCounts() {
+        var s = ArtifactSelection()
+        let order = ["a", "b", "c", "d", "e"]
+        s.toggle("b")
+        s.extend(to: "d", in: order)   // shift-click: b…d
+        #expect(s.ids == ["b", "c", "d"] && s.count == 3)
+        s.toggle("c")
+        #expect(s.ids == ["b", "d"])
+        s.extend(to: "a", in: order)   // from the last clicked (c), backwards
+        #expect(s.ids == ["a", "b", "c", "d"])
+        var t = ArtifactSelection()
+        t.extend(to: "c", in: order)   // no anchor yet: that one
+        #expect(t.ids == ["c"])
+    }
+
+    @Test func selectAllPerFolderTogglesAndPrunes() {
+        var s = ArtifactSelection()
+        let cliente = ["a", "b"], loose = ["c", "d", "e"]
+        s.toggle("a")
+        #expect(!s.all(cliente))
+        s.selectAll(cliente)
+        #expect(s.all(cliente) && s.count == 2)
+        s.selectAll(loose)
+        #expect(s.count == 5)
+        s.selectAll(cliente)   // all of it already: deselects it
+        #expect(s.ids == ["c", "d", "e"] && !s.all([]))
+        s.keep(["c", "x"])   // after a refresh: the gone ones drop out
+        #expect(s.ids == ["c"])
+    }
+
+    @Test func visibleOrderFollowsTheTreeAndSearch() {
+        let rows = [row("a", "Cliente", title: "Home"), row("b", nil, title: "Preços"), row("c", "Cliente", title: "home 2")]
+        let s = ArtifactFolderTree.sections(rows: rows, folders: [], query: "home")
+        #expect(ArtifactSelection.visible(s) == ["a", "c"])
+        #expect(ArtifactSelection.visible(ArtifactFolderTree.sections(rows: rows, folders: [], collapsed: ["cliente"])) == ["b"])
+    }
+}
+
+@MainActor @Suite struct ArtifactBatchModelTests {
+    actor Log { var calls: [(String, [String: JSONValue])] = []; func add(_ c: String, _ a: [String: JSONValue]) { calls.append((c, a)) } }
+
+    @Test func moveSelectedIsOneCallAndExits() async {
+        let log = Log()
+        let m = ArtifactsModel(call: { c, a throws(ProtocolError) in await log.add(c, a); return c == "artifact.folders" ? .array([]) : .object([:]) })
+        m.selecting = true
+        m.selection.selectAll(["a", "b", "c"])
+        await m.moveSelected(to: "Cliente")
+        let moves = await log.calls.filter { $0.0 == "artifact.move" }
+        #expect(moves.count == 1 && moves[0].1["ids"] == .array([.string("a"), .string("b"), .string("c")]) && moves[0].1["folder"] == .string("Cliente"))
+        #expect(!m.selecting && m.selection.count == 0)
+        m.selecting = true; m.selection.toggle("a")
+        await m.removeSelected()
+        #expect(await log.calls.filter { $0.0 == "artifact.remove" }.map(\.1) == [["id": .string("a")]])
+        #expect(!m.selecting)
+    }
+
+    @Test func compactChoiceIsRemembered() {
+        let d = UserDefaults(suiteName: "collie-test-\(UUID().uuidString)")!
+        let call: PanelHostContext.Call = { _, _ throws(ProtocolError) in .object([:]) }
+        let m = ArtifactsModel(call: call, defaults: d)
+        #expect(m.compact == nil && m.isCompact(rows: 31) && !m.isCompact(rows: 30))   // auto: compact past 30 in a folder
+        m.toggleCompact()
+        #expect(m.compact == true && m.isCompact(rows: 1))
+        #expect(ArtifactsModel(call: call, defaults: d).compact == true)   // remembered
+        m.toggleCompact()
+        #expect(ArtifactsModel(call: call, defaults: d).compact == false && !m.isCompact(rows: 500))
+    }
+}

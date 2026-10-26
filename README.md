@@ -335,6 +335,27 @@ responde "Bibliotecas offline ausentes" e `scripts/bundle-app.sh` para com erro 
 sem elas). Licenças: `NOTICE-weblibs` e o `LICENSE` de cada biblioteca em
 `Contents/Resources/weblibs/<nome>@<versão>/`.
 
+### Fontes
+
+As páginas usam fontes offline em `collie-lib://fonts`: `<link rel="stylesheet" href="collie-lib://fonts/css?family=Inter:400,700&family=DM%20Mono">`
+devolve as regras `@font-face` (sem `:pesos`, todos os que houver) e cada arquivo sai de
+`collie-lib://fonts/<família>/<arquivo>`. Vêm com o Collie a Space Grotesk e a DM Mono (`vendor/fonts`); as páginas de
+`artifact new` usam as fontes do design system ativo (variáveis de texto com `font` no nome; `mono`/`code`: a monoespaçada),
+senão essas duas, e avisam quando uma fonte do design system não foi baixada.
+
+Do Google Fonts: `collie font add "<Família>" [--weights 400,700] [--italic]` (agentes e o app) baixa a família uma vez;
+`collie font list` lista as baixadas e as que vêm com o Collie; remover é só no app (**Preferências → Fontes**). Quem baixa é
+o daemon, nunca uma página: a API css2 em `fonts.googleapis.com` e os woff2 em `fonts.gstatic.com`, só https, sem
+redirecionar para fora desses hosts, até 2 MiB por arquivo e 20 MiB por família, nome em `[A-Za-z0-9 ]{1,64}`. Ficam em
+`<root>/fonts/<família>/` (pasta 0700, arquivos 0600) com `font.json` e um `LICENSE.txt` que registra a URL de origem e a
+licença (SIL OFL 1.1 ou Apache 2.0, conforme a família; o texto completo fica na página da família no Google Fonts).
+**Privacidade:** só o nome da fonte e o download vão ao Google; as páginas continuam offline. A preferência **Baixar fontes
+do Google Fonts** (ligada por padrão; só o app muda, `admin.fonts`) desligada faz `font add` recusar com um aviso.
+
+O FigCraft não enxerga essas fontes: o painel Design roda o build web do figcraft, que só tem as fontes do craft-fonts
+embutidas na compilação (sem fontes do sistema nem pasta de fontes configurável, e ele não lê woff2). Para uma fonte do
+Google Fonts no design, desenhe na Prévia.
+
 ## Prévia e modelos
 
 A **Prévia** (plug-in `preview`) mostra ao vivo uma página HTML do projeto: `collie panel open preview --file <página.html>`

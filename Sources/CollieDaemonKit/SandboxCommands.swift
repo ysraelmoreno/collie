@@ -133,7 +133,8 @@ extension CommandRouter {
     func setSandboxMode(_ v: String?) async throws -> JSONValue {
         if let v {
             guard let m = SandboxMode(rawValue: v) else { throw ProtocolError(code: .invalidArgs, message: "mode must be open or strict") }
-            try CollieSettings(terminalSandbox: m).save(config.paths.root)
+            var s = CollieSettings.load(config.paths.root); s.terminalSandbox = m
+            try s.save(config.paths.root)
             sandboxPref = m
         }
         return .object(["mode": .string(sandboxMode.rawValue)])
@@ -187,13 +188,15 @@ extension CommandRouter {
 /// Collie-wide preferences the daemon keeps (`<root>/preferences.json`, closed to every terminal with the data root).
 struct CollieSettings: Codable {
     var terminalSandbox: SandboxMode?
+    /// "Baixar fontes do Google Fonts"; nil: on.
+    var googleFonts: Bool?
     static func file(_ root: URL) -> URL { root.appendingPathComponent("preferences.json") }
     /// A missing file: nothing set; one that can't be read: strict (fail closed).
     static func load(_ root: URL) -> CollieSettings {
         guard let data = try? Data(contentsOf: file(root)) else {
-            return FileManager.default.fileExists(atPath: file(root).path) ? CollieSettings(terminalSandbox: .strict) : CollieSettings()
+            return FileManager.default.fileExists(atPath: file(root).path) ? CollieSettings(terminalSandbox: .strict, googleFonts: false) : CollieSettings()
         }
-        return (try? JSONDecoder().decode(CollieSettings.self, from: data)) ?? CollieSettings(terminalSandbox: .strict)
+        return (try? JSONDecoder().decode(CollieSettings.self, from: data)) ?? CollieSettings(terminalSandbox: .strict, googleFonts: false)
     }
     func save(_ root: URL) throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

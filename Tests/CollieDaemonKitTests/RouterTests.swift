@@ -17,6 +17,7 @@ func testConfig(_ paths: Paths, _ ws: UUID = UUID()) -> DaemonConfig {
     c.xcrunPath = fixtures.appendingPathComponent("fake-xcrun.sh")
     c.axePath = fixtures.appendingPathComponent("fake-axe.sh")
     c.captureUserEnv = false   // never the developer's rc files
+    c.fontFetch = { url, _ in throw ProtocolError(code: .unavailable, message: "tests never fetch \(url)") }   // never the network
     c.localModel = FakeModel(.unavailable)   // never the real on-device model (tests that want one set it)
     let curator = FakeCurator(); curator.avail = .unavailable("claude não encontrado")
     c.curatorRunner = curator   // never the real claude (tests that want a curator set one)

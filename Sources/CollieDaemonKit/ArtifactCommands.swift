@@ -135,7 +135,11 @@ extension CommandRouter {
         } else { warnings.append("sem design system ativo: tokens padrão") }
         let title = str(r, "title").flatMap { $0.isEmpty ? nil : $0 } ?? str(r, "name") ?? kind.label
         if libs.isEmpty { warnings.append("bibliotecas offline ausentes") }
-        let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables), libs: libs)
+        let fonts = ArtifactTemplates.fonts(variables: variables), fontDir = config.paths.root.appendingPathComponent("fonts")
+        for f in Set([fonts.text, fonts.mono]).sorted() where !Fonts.bundled.contains(where: { $0.family == f }) && Fonts.downloaded(f, in: fontDir) == nil {
+            warnings.append("fonte \(f) não baixada: collie font add \"\(f)\"")
+        }
+        let html = ArtifactTemplates.render(kind, title: title, tokensCSS: ArtifactTemplates.tokensCSS(variables: variables), libs: libs, fonts: fonts)
         try await UnixSocketClient.offPool { try DiagramFile.write(html, to: url, root: root, noun: "página", exclusive: true) }
         let name = freePanelName("preview")
         try reserve(name); defer { launching.remove(name.lowercased()) }

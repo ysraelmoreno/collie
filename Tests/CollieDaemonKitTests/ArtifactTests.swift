@@ -610,6 +610,7 @@ extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSyste
             #expect(warnings(r) == ["sem design system ativo: tokens padrão", "bibliotecas offline ausentes"], "\(r)")
             let html = try String(contentsOf: proj.appendingPathComponent("docs/pages/doc-1/index.html"), encoding: .utf8)
             #expect(html.contains("<title>Notas</title>") && html.contains("[data-theme=\"dark\"]") && html.contains("[data-theme=\"light\"]"))
+            #expect(html.contains(Fonts.cssURL(["Space Grotesk", "DM Mono"])))   // the bundled fonts, offline
         }
     }
 

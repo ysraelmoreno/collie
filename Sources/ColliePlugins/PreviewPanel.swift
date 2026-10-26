@@ -225,7 +225,8 @@ import WebKit
         if artifactId == nil, let root = projectRoot { config.setURLSchemeHandler(PreviewSchemeHandler(root: root), forURLScheme: PreviewSchemeHandler.scheme) }
         config.setURLSchemeHandler(DesignSchemeHandler(root: host.root.appendingPathComponent("artifacts"), artifacts: true),
                                    forURLScheme: BrowserPanel.artifactScheme)
-        config.setURLSchemeHandler(WebLibSchemeHandler(directory: libs), forURLScheme: WebLibs.scheme)
+        config.setURLSchemeHandler(WebLibSchemeHandler(directory: libs, bundledFonts: WebLibs.fontsDirectory,
+                                                            downloadedFonts: host.root.appendingPathComponent("fonts")), forURLScheme: WebLibs.scheme)
         config.userContentController.add(rules)
         config.userContentController.add(Bridge(self), contentWorld: Self.world, name: "colliePreview")
         config.userContentController.add(PreviewComments.Bridge(comments), contentWorld: PreviewComments.world, name: "collieComments")

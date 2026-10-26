@@ -48,17 +48,18 @@ import CollieProtocol
     @Test func everyKindIsOffline() throws {
         let allowed: Set<String> = ["bg", "surface", "text", "muted", "accent", "space-s", "space-m", "space-l", "space-xl",
                                     "radius-card", "type-body", "type-h1", "type-h2", "type-h3"]
-        for kind in ArtifactTemplates.Kind.allCases { for libs in [[], Self.libs] {
-            let full = ArtifactTemplates.render(kind, title: "Título", tokensCSS: ArtifactTemplates.tokensCSS(variables: nil), libs: libs)
+        for kind in ArtifactTemplates.Kind.allCases { for libs in [[], Self.libs] { for fonts in [nil, ArtifactTemplates.fonts(variables: nil)] {
+            let full = ArtifactTemplates.render(kind, title: "Título", tokensCSS: ArtifactTemplates.tokensCSS(variables: nil), libs: libs, fonts: fonts)
             #expect(full.hasPrefix("<!doctype html>") && full.contains("<html lang=\"pt-BR\">") && full.contains("<title>Título</title>"), "\(kind)")
             // the only external sources: <script src="collie-lib://…">
             let html = full.replacing(/<script src="collie-lib:\/\/lib\/[a-z0-9.@\/-]+"><\/script>/, with: "")
+                .replacing(/<link rel="stylesheet" href="collie-lib:\/\/fonts\/css\?[A-Za-z0-9%=&]+">/, with: "")
             #expect(!html.lowercased().contains("http") && !html.contains("//"), "\(kind)")
             #expect(!html.contains("<script src") && html.components(separatedBy: "<style>").count == 2, "\(kind)")
             for m in html.matches(of: /(?:src|href)\s*=\s*["']?([^"' >]*)/) { #expect(m.1.hasPrefix("#"), "\(kind): \(m.0)") }
             let used = Set(html.matches(of: /var\(--([a-z0-9-]+)\)/).map { String($0.1) })
             #expect(used.isSubset(of: allowed), "\(kind): \(used.subtracting(allowed))")
-        } }
+        } } }
         let deck = ArtifactTemplates.render(.deck, title: "D", tokensCSS: "")
         #expect(deck.components(separatedBy: "<section class=\"slide").count == 5)
         #expect(ArtifactTemplates.render(.dashboard, title: "D", tokensCSS: "").contains("const data = ["))
@@ -68,6 +69,27 @@ import CollieProtocol
                                       ("htm", "3.1.1", "htm.umd.js", "htm"), ("chart.js", "4.4.9", "chart.umd.js", "Chart"),
                                       ("lucide", "0.469.0", "lucide.min.js", "lucide")]
         .map { WebLibEntry(name: $0.0, version: $0.1, files: [$0.2], licence: "MIT", global: $0.3) }
+
+    /// Pages load their fonts offline (collie-lib://fonts): the design system's, else the bundled Space Grotesk + DM Mono.
+    @Test func templatesReferenceFonts() {
+        let d = ArtifactTemplates.fonts(variables: nil)
+        #expect(d.text == "Space Grotesk" && d.mono == "DM Mono")
+        let html = ArtifactTemplates.render(.doc, title: "T", tokensCSS: "", fonts: (text: "Inter", mono: "DM Mono"))
+        #expect(html.contains(#"<link rel="stylesheet" href="collie-lib://fonts/css?family=Inter&family=DM%20Mono">"#), "\(html)")
+        #expect(html.contains(#"body { font-family: "Inter", system-ui"#) && html.contains(#"code, pre, kbd, samp { font-family: "DM Mono", ui-monospace"#))
+        #expect(!ArtifactTemplates.render(.doc, title: "T", tokensCSS: "").contains("collie-lib://fonts"))
+        func s(_ x: String) -> JSONValue { .string(x) }
+        func v(_ name: String, _ value: String) -> JSONValue {
+            .object(["id": s(name), "name": s(name), "collection": s("c"), "values": .object(["m": .object(["type": s("string"), "value": s(value)])])])
+        }
+        func list(_ vs: [JSONValue]) -> JSONValue {
+            .object(["collections": .array([.object(["id": s("c"), "name": s("T"), "modes": .array([.object(["id": s("m"), "name": s("Light")])])])]), "variables": .array(vs)])
+        }
+        let ds = ArtifactTemplates.fonts(variables: list([v("font/body", "Inter"), v("font/mono", "JetBrains Mono")]))
+        #expect(ds.text == "Inter" && ds.mono == "JetBrains Mono")
+        let bad = ArtifactTemplates.fonts(variables: list([v("font/body", "x;} body{"), v("Font Family/Code", "Fira Code")]))
+        #expect(bad.text == "Space Grotesk" && bad.mono == "Fira Code")
+    }
 
     @Test func templatesUseVersionedLibURLs() {
         func srcs(_ k: ArtifactTemplates.Kind) -> [String] {

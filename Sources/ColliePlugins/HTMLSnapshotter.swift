@@ -109,7 +109,8 @@ import WebKit
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list
         config.setURLSchemeHandler(DesignSchemeHandler(root: artifactsRoot, artifacts: true), forURLScheme: BrowserPanel.artifactScheme)
-        config.setURLSchemeHandler(WebLibSchemeHandler(directory: libs), forURLScheme: WebLibs.scheme)
+        config.setURLSchemeHandler(WebLibSchemeHandler(directory: libs, bundledFonts: WebLibs.fontsDirectory,
+                                                            downloadedFonts: artifactsRoot.deletingLastPathComponent().appendingPathComponent("fonts")), forURLScheme: WebLibs.scheme)
         let content = config.userContentController
         content.add(try await ruleList())
         // The script runs as a user script that posts its result, not through `callAsyncJavaScript`: WebKit keeps the

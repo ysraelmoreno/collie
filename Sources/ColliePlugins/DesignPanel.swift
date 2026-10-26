@@ -144,6 +144,10 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
     private let box = Box()
     private var started = false
     private var gen = 0   // bumped per connect: a stale `design.link` reply never loads
+    /// Bumped per page load (its FigCraft starts with only the embedded fonts); `pushedFonts`: the files it was given since.
+    private var load = 0
+    private var pushedFonts: Set<String> = []
+    nonisolated static let fontFileCap = 20 << 20, fontPushCap = 64 << 20
 
     public var view: NSView { box }
 
@@ -209,8 +213,54 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         throw ProtocolError(code: .unavailable, message: "design commands run in the daemon")
     }
 
+    /// `fonts.changed` (the daemon, after `font.add`/`font.remove`): the page gets the new TTFs.
+    public func receive(event: String, payload: JSONValue) { if event == "fonts.changed" { pushFonts() } }
+
+    /// The TTFs `font.add` keeps for FigCraft (`<root>/fonts/<family>/ttf/*.ttf|otf`) not yet given to this page, read off
+    /// the main thread: real folders and regular files only (no symlink followed), each ≤ 20 MiB, ≤ 64 MiB per push. Each
+    /// goes to `wasmBindings.collie_add_font` (patch 0005) in the page, once it has started. A removed font stays until
+    /// the page reloads.
+    func pushFonts() {
+        guard let web = webView else { return }
+        let l = load, skip = pushedFonts, dir = host.root.appendingPathComponent("fonts")
+        Task { [weak self] in
+            let files = await Task.detached { Self.fontFiles(dir, skip: skip) }.value
+            guard let self, self.load == l, self.webView === web else { return }
+            for (path, data) in files where self.pushedFonts.insert(path).inserted {
+                _ = try? await web.evaluateJavaScript(Self.addFontScript(data))
+            }
+        }
+    }
+
+    nonisolated static func fontFiles(_ dir: URL, skip: Set<String>) -> [(String, Data)] {
+        let fm = FileManager.default
+        func type(_ u: URL) -> FileAttributeType? { (try? fm.attributesOfItem(atPath: u.path))?[.type] as? FileAttributeType }   // lstat
+        var out: [(String, Data)] = [], left = fontPushCap
+        for family in ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).sorted() where !family.hasPrefix(".") {
+            let ttf = dir.appendingPathComponent(family).appendingPathComponent("ttf")
+            guard type(ttf.deletingLastPathComponent()) == .typeDirectory, type(ttf) == .typeDirectory else { continue }
+            for name in ((try? fm.contentsOfDirectory(atPath: ttf.path)) ?? []).sorted() where ["ttf", "otf"].contains((name as NSString).pathExtension.lowercased()) {
+                let f = ttf.appendingPathComponent(name)
+                guard !skip.contains(f.path), type(f) == .typeRegular,
+                      let size = (try? fm.attributesOfItem(atPath: f.path))?[.size] as? Int, size <= fontFileCap, size <= left,
+                      let d = try? Data(contentsOf: f), d.count == size else { continue }
+                left -= size; out.append((f.path, d))
+            }
+        }
+        return out
+    }
+
+    /// Base64 into a `Uint8Array`, then `collie_add_font` now or when trunk's loader says the app started.
+    static func addFontScript(_ d: Data) -> String {
+        """
+        (() => { const s = atob("\(d.base64EncodedString())"), b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);
+        const go = () => { try { window.wasmBindings.collie_add_font(b) } catch (e) {} };
+        if (window.wasmBindings) go(); else addEventListener("TrunkApplicationStarted", go, { once: true }) })()
+        """
+    }
+
     public func close() {
-        gen += 1
+        gen += 1; load += 1
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil
@@ -325,7 +375,11 @@ extension DesignPanel: WKNavigationDelegate {
         let scheme = navigationAction.request.url?.scheme?.lowercased()
         decisionHandler(scheme == DesignSchemeHandler.scheme || scheme == "about" ? .allow : .cancel)
     }
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { box.status(nil, retry: false) }
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        box.status(nil, retry: false)
+        load += 1; pushedFonts = []
+        pushFonts()
+    }
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) {
         if !BrowserPanel.isSuperseded(error) { failed(nil) }
     }

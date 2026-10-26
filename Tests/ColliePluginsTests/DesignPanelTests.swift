@@ -175,4 +175,47 @@ import CollieProtocol
         #expect(await GPUProbe.task?.value == false)
         v.close()
     }
+
+    /// The downloaded TTFs reach the page's FigCraft (`wasmBindings.collie_add_font`, patch 0005) once it starts, and on
+    /// `fonts.changed` only the new ones; never a symlink, a symlinked folder or a file over 20 MiB.
+    @Test func pushesDownloadedFontsToTheEditor() async throws {
+        let root = try webRoot()
+        try Data("""
+            <html><body><script>window.got = [];
+            setTimeout(() => { window.wasmBindings = { collie_add_font: b => { window.got.push(b.length + ":" + b[0]); return true } };
+            dispatchEvent(new CustomEvent("TrunkApplicationStarted")) }, 100)</script></body></html>
+            """.utf8).write(to: root.appendingPathComponent("index.html"))
+        let collie = root.deletingLastPathComponent().appendingPathComponent("collie")
+        let fm = FileManager.default
+        let ttf = collie.appendingPathComponent("fonts/Inter/ttf")
+        try fm.createDirectory(at: ttf, withIntermediateDirectories: true)
+        try Data([7, 1, 2]).write(to: ttf.appendingPathComponent("normal-400-0.ttf"))
+        try Data([9]).write(to: root.appendingPathComponent("outside.ttf"))
+        try fm.createSymbolicLink(at: ttf.appendingPathComponent("link.ttf"), withDestinationURL: root.appendingPathComponent("outside.ttf"))
+        fm.createFile(atPath: ttf.appendingPathComponent("big.ttf").path, contents: nil)
+        let h = try FileHandle(forWritingTo: ttf.appendingPathComponent("big.ttf")); try h.truncate(atOffset: UInt64(20 << 20) + 1); try h.close()
+        try Data("x".utf8).write(to: ttf.appendingPathComponent("notes.txt"))
+        try fm.createSymbolicLink(at: collie.appendingPathComponent("fonts/Evil"), withDestinationURL: collie.appendingPathComponent("fonts/Inter"))
+        let panel = Panel(id: UUID(), name: "d", pluginId: "design", placement: .canvas, state: ["file": .string("f")])
+        let host = PanelHostContext(panel: panel, root: collie, workspaceId: nil, call: { _, _ throws(ProtocolError) in .null }, emit: { _, _ in })
+        let v = DesignPanel(panel: panel, host: host, webRoot: root)
+        defer { v.close() }
+        let web = try #require(v.webView)
+        func got() async -> String { ((try? await web.evaluateJavaScript("window.got ? window.got.join(',') : ''")) as? String) ?? "" }
+        web.load(URLRequest(url: URL(string: "collie-design://app/index.html")!))
+        for _ in 0..<100 where await got().isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(await got() == "3:7")
+        try Data([5, 5]).write(to: ttf.appendingPathComponent("normal-700-1.ttf"))
+        v.receive(event: "fonts.changed", payload: .object([:]))
+        for _ in 0..<100 where await got() == "3:7" { try await Task.sleep(for: .milliseconds(50)) }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await got() == "3:7,2:5")
+    }
+
+    /// The figcraft web build exports `collie_add_font` (patch 0005; rebuild with scripts/build-figcraft.sh).
+    @Test func webBuildExportsAddFont() throws {
+        guard let web = DesignPanel.webDirectory else { return }   // not built here
+        let js = try FileManager.default.contentsOfDirectory(atPath: web.path).filter { $0.hasSuffix(".js") }
+        #expect(try js.contains { try String(contentsOf: web.appendingPathComponent($0), encoding: .utf8).contains("collie_add_font") }, "\(js)")
+    }
 }

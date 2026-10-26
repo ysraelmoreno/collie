@@ -76,6 +76,13 @@ import WebKit
     /// ponytail: kept by the view, not in the panel's state (no command updates a panel's state from the app); a relaunch
     /// saves again.
     private(set) var saved: String?
+    /// The artifact shown (artifact mode): the panel's own, or another of its presentation folder (**Anterior / Próxima**),
+    /// and that folder's pages in order (empty: not a presentation).
+    /// ponytail: kept by the view, not the panel's state; comments stay the panel's own artifact's (hidden on the others).
+    private(set) var shown: String?
+    private(set) var sequence: [String] = []
+    /// The key monitor while presenting (full screen: arrows step, Esc ends).
+    private var keys: Any?
     /// Pins and threads (plan 2W): the app's comments on this page.
     lazy var comments = PreviewComments(host: host, page: PreviewComments.page(of: panel), title: { [weak self] in self?.header.file ?? "" })
 
@@ -107,6 +114,8 @@ import WebKit
         header.onTheme = { [weak self] in self?.setTheme($0) }
         header.onSave = { [weak self] in Task { await self?.save() } }
         header.onImport = { [weak self] in Task { await self?.importToDesign() } }
+        header.onStep = { [weak self] in self?.step($0) }
+        header.onPresent = { [weak self] in self?.present() }
         header.canSave = artifactId == nil
         box.setHeader(header)
         header.canComment = comments.page != nil
@@ -152,6 +161,7 @@ import WebKit
     }
 
     public func close() {
+        endPresent()
         closed = true
         comments.web = nil
         watcher?.stop(); watcher = nil
@@ -177,19 +187,7 @@ import WebKit
         box.overlay("Abrindo…")
         if let id = artifactId {
             header.file = "artifact"
-            Task { [weak self] in
-                guard let self else { return }
-                let url: URL
-                do throws(ProtocolError) {
-                    let a = try await self.host.call("artifact.get", ["id": .string(id)])
-                    guard case .object(let o) = a, case .string(let s)? = o["url"], let u = URL(string: s),
-                          u.scheme == BrowserPanel.artifactScheme, u.host == "app" else { return self.fail("Artifact sem página") }
-                    if case .string(let t)? = o["title"] { self.header.file = t }
-                    url = u
-                } catch { return self.fail(error.message) }
-                guard !self.closed else { return }
-                self.open(url)
-            }
+            Task { [weak self] in await self?.show(id) }
             return
         }
         guard let root = projectRoot else { return fail("Painel sem pasta de projeto: abra-o de novo") }
@@ -206,6 +204,73 @@ import WebKit
               let page = URL(string: "\(PreviewSchemeHandler.scheme)://app/\(path)") else { return fail("Caminho inválido: \(rel)") }
         if (try? DiagramFile.readData(url, root: root, noun: "página")) ?? nil == nil { header.status = "Arquivo removido" }
         open(page)
+    }
+
+    /// Artifact `id` shown: its page, title and folder, and its folder's order when that is a presentation.
+    func show(_ id: String) async {
+        let url: URL
+        do throws(ProtocolError) {
+            let a = try await host.call("artifact.get", ["id": .string(id)])
+            guard case .object(let o) = a, case .string(let s)? = o["url"], let u = URL(string: s),
+                  u.scheme == BrowserPanel.artifactScheme, u.host == "app" else { return fail("Artifact sem página") }
+            if case .string(let t)? = o["title"] { header.file = t }
+            let folder: String? = if case .string(let f)? = o["folder"] { f } else { nil }
+            header.folder = folder
+            sequence = []
+            if let folder, case .array(let fs) = try await host.call("artifact.folders", [:]) {
+                for case .object(let f) in fs {
+                    guard case .string(let p)? = f["path"], p.caseInsensitiveCompare(folder) == .orderedSame, f["presentation"] == .bool(true),
+                          case .array(let items)? = f["items"] else { continue }
+                    sequence = items.compactMap { if case .string(let i) = $0 { i } else { nil } }
+                }
+            }
+            url = u
+        } catch { return fail(error.message) }
+        guard !closed else { return }
+        shown = id
+        header.canPrevious = Self.neighbor(sequence, of: id, by: -1) != nil
+        header.canNext = Self.neighbor(sequence, of: id, by: 1) != nil
+        header.canPresent = sequence.contains(id)
+        header.canComment = comments.page != nil && id == artifactId
+        if id != artifactId, comments.drawer { comments.drawer = false; comments.setMode(false) }
+        if let web = webView { pageURL = url; web.load(URLRequest(url: url)) } else { open(url) }
+    }
+
+    /// The page `by` places from `id` in `items` (nil: none there).
+    nonisolated static func neighbor(_ items: [String], of id: String, by step: Int) -> String? {
+        guard let i = items.firstIndex(of: id), items.indices.contains(i + step) else { return nil }
+        return items[i + step]
+    }
+
+    /// **Anterior / Próxima** (and the arrows while presenting).
+    func step(_ by: Int) {
+        guard let id = shown, let next = Self.neighbor(sequence, of: id, by: by) else { return }
+        Task { await show(next) }
+    }
+
+    /// **Apresentar**: the page full screen; ← → step through the folder, Esc ends.
+    func present() {
+        guard let web = webView, !web.isInFullScreenMode, let screen = box.window?.screen ?? NSScreen.main else { return }
+        web.enterFullScreenMode(screen, withOptions: [.fullScreenModeAllScreens: false])
+        keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            let code = e.keyCode
+            let handled = MainActor.assumeIsolated { () -> Bool in
+                guard let self else { return false }
+                switch code {
+                case 53: self.endPresent()   // Esc
+                case 123: self.step(-1)
+                case 124: self.step(1)
+                default: return false
+                }
+                return true
+            }
+            return handled ? nil : e
+        }
+    }
+    func endPresent() {
+        if let k = keys { NSEvent.removeMonitor(k); keys = nil }
+        if let web = webView, web.isInFullScreenMode { web.exitFullScreenMode(options: nil) }
+        box.needsLayout = true
     }
 
     private func open(_ url: URL) {
@@ -303,6 +368,7 @@ import WebKit
               DiagramFile.real(file.deletingLastPathComponent()) == file.deletingLastPathComponent() else { throw moved }
         guard let data = try DiagramFile.readData(file, root: root, noun: "página") else { throw ProtocolError(code: .notFound, message: "Arquivo removido") }
         var args: [String: JSONValue] = ["path": .string(file.path), "title": .string(file.lastPathComponent), "nofollow": .bool(true)]
+        if let f = string("folder") { args["folder"] = .string(f) }   // `artifact new --folder`
         if let m = String(decoding: data, as: UTF8.self).firstMatch(of: /(?is)<title[^>]*>(.*?)<\/title>/) {
             let t = m.1.trimmingCharacters(in: .whitespacesAndNewlines)
             if !t.isEmpty { args["title"] = .string(String(t.prefix(200))) }
@@ -421,7 +487,7 @@ import WebKit
             drawer?.isHidden = side == 0
             card.frame = CGRect(x: 12, y: top + 12, width: max(0, bounds.width - 24 - side), height: max(0, bounds.height - top - 24))
             drawer?.frame = CGRect(x: bounds.width - side, y: top, width: side, height: max(0, bounds.height - top))
-            web?.frame = card.bounds
+            if web?.isInFullScreenMode != true { web?.frame = card.bounds }
             let w = max(0, min(card.frame.width - 24, 360)), h = label.fittingSize.height
             label.frame = CGRect(x: card.frame.minX + (card.frame.width - w) / 2, y: card.frame.minY + (card.frame.height - h) / 2, width: w, height: h)
         }
@@ -448,6 +514,13 @@ import WebKit
     @Published var comments = 0
     @Published var canComment = false
     var onComments: () -> Void = {}
+    /// The artifact's folder; a presentation's **Anterior / Próxima** and **Apresentar**.
+    @Published var folder: String?
+    @Published var canPrevious = false
+    @Published var canNext = false
+    @Published var canPresent = false
+    var onStep: (Int) -> Void = { _ in }
+    var onPresent: () -> Void = {}
 }
 
 /// The file (relative to the project), a status over the last render, **Recarregar**, `Página | Claro | Escuro` and, for a
@@ -455,8 +528,13 @@ import WebKit
 private struct PreviewHeader: View {
     @ObservedObject var m: PreviewHeaderModel
     var body: some View {
-        PanelHeader("Prévia", subtitle: m.file) {
+        PanelHeader("Prévia", subtitle: m.folder.map { "\($0) · \(m.file ?? "")" } ?? m.file) {
             HStack(spacing: 8) {
+                if m.canPrevious || m.canNext {
+                    Button("Anterior") { m.onStep(-1) }.disabled(!m.canPrevious).buttonStyle(CollieButtonStyle(.secondary))
+                    Button("Próxima") { m.onStep(1) }.disabled(!m.canNext).buttonStyle(CollieButtonStyle(.secondary))
+                }
+                if m.canPresent { Button("Apresentar") { m.onPresent() }.buttonStyle(CollieButtonStyle(.secondary)).help("Tela cheia; setas avançam, Esc sai") }
                 if let s = m.status { Text(s).font(.collieMono(11, .medium)).foregroundStyle(Color.collieAttention) }
                 if let e = m.error { Text(e).font(.collieUI(12)).foregroundStyle(Color.collieDanger).lineLimit(2).help(e) }
                 if m.busy { ProgressView().controlSize(.small) }
@@ -496,7 +574,7 @@ extension PreviewPanel: WKNavigationDelegate, WKUIDelegate {
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { errors = [] }
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loads += 1
-        Task { await comments.drawPins() }   // re-anchored on the page just loaded
+        if shown == nil || shown == artifactId { Task { await comments.drawPins() } }   // re-anchored on the page just loaded
         guard let y = pendingScroll else { return }
         pendingScroll = nil
         webView.evaluateJavaScript("window.scrollTo(0, \(y))", in: nil, in: Self.world) { _ in }

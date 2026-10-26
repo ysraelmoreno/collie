@@ -304,6 +304,27 @@ resolvido contra o cwd e caminhos absolutos são aceitos; `.html`/`.htm`, sem sy
 
 O painel também atualiza sozinho com os eventos `artifact.*` (no máximo uma vez a cada 500 ms); falha de importação em segundo plano chega como `artifact.imported` com `error`.
 
+### Pastas
+
+Cada artifact pode ficar numa **pasta** do usuário: um caminho de até 3 níveis separados por `/` (`Cliente/Landing/v2`),
+cada nome com 1–40 caracteres, sem caracteres de controle; a grafia é mantida e a comparação ignora maiúsculas. Sem
+pasta, o artifact aparece em **Sem pasta**. A pasta fica no registro do artifact (`artifacts.json`); as pastas criadas pelo
+usuário (vazias inclusive), com ordem, cor, fixação e apresentação, ficam em `<raiz>/artifacts/folders.json`.
+
+- `artifact add … --folder <caminho>` e `artifact new … --folder <caminho>` (a Prévia guarda a pasta e o **Salvar como
+  artifact** usa). Padrão de um agente: o nome do seu lote, se estiver em um; senão nenhuma (`--folder` explícito vence).
+- `artifact move <id> --folder <caminho|"">`: o agente só move os artifacts que ele adicionou; o app move qualquer um.
+- `artifact folders`: as pastas (as do usuário na ordem dele, depois as outras) com `count`, `total` e `items`.
+- Só o app: `artifact folder create <caminho>`, `folder rename <caminho> <novo>` (move tudo dentro, de uma vez),
+  `folder remove <caminho> [--move-to <caminho|"">]` (só vazia, ou levando os artifacts; nunca apaga artifacts) e
+  `folder set <caminho> [--color #RRGGBB] [--pin true|false] [--present true|false] [--order <ids>]`.
+
+No painel Artifacts as pastas são uma árvore recolhível com contagem (fixadas no topo, **Sem pasta** por último), busca,
+arrastar um artifact para uma pasta, e menu **Nova pasta / Renomear / Remover / Fixar no topo / Apresentação**; no
+artifact, **Mover para…**. Uma pasta **apresentação** tem ordem (a de `--order`, depois por criação): a Prévia de um
+artifact dela ganha **Anterior / Próxima** e **Apresentar** (tela cheia; setas avançam, Esc sai). O cabeçalho da Prévia
+mostra a pasta do artifact.
+
 Limitações: as fontes não vão embutidas (fallback do sistema).
 Links só de camada inteira; trechos com link dentro do texto saem sem `<a>` (a saída `<a>` é
 coberta por fixtures unitárias e pelo teste com o motor real). Fundo-imagem de frame com filhos não é exportado. Todos

@@ -92,6 +92,13 @@ import CollieProtocol
         for l in t.split(separator: "\n") where l.hasPrefix("- Design panel") { #expect(l.filter { $0 == "\"" }.count == 2) }
     }
 
+    /// Plan 2X: a Shepherd delegates without blocking; blocking ask stays for when it needs the reply now.
+    @Test func shepherdHintMentionsNoWait() {
+        let t = text(shepherd: true)
+        #expect(t.contains("collie ask <name> \"<prompt>\" --no-wait (reply comes back as a message; collie ask result <id>)"), "\(t)")
+        #expect(t.contains("ask <name> \"<prompt>\" to wait for the reply"))
+    }
+
     @Test func shepherdAskLine() {
         let t = text(shepherd: true, pref: .ask)
         #expect(t.contains("and no design panel: ask the user once: a page (collie artifact new prototype <name>) or FigCraft? Save the answer: collie design prefer artifact|figcraft. Not for backend, refactors, tests, docs, invisible fixes."), "\(t)")

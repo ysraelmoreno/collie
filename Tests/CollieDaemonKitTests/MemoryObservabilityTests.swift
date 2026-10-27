@@ -259,6 +259,21 @@ private func top(_ repo: URL) -> String {
         }
     }
 
+    @Test func approvalsAreCreatedByTheUser() async throws {
+        try await withEnv { e in
+            let store = await e.d.router.memory.repo(for: e.repo.path)
+            let prop = MemoryRecord(kind: .procedure, subject: "deploy", title: "Como fazer deploy", status: .proposed, origin: "curador")
+            let act = MemoryRecord(kind: .decision, subject: "db", title: "Use Postgres")
+            try await store.run { m in try m.store.write(prop); try m.store.write(act) }
+            for id in [prop.id, act.id] {
+                #expect(try await e.call("memory.review", ["id": .string(id.uuidString), "action": .string("approve"),
+                                                           "repo": .string(e.repo.path)], admin: true).ok)
+            }
+            let made = e.logged().filter { $0.type == .created }
+            #expect(made.count == 1 && made[0].ids == [prop.id] && made[0].source == "user" && made[0].project == top(e.repo))
+        }
+    }
+
     @Test func correctionAndWorkCloseAreLogged() async throws {
         try await withEnv { e in
             _ = await MemoryHookClient.output(event: .userPromptSubmit, prompt: "não, eu disse para usar sempre o banco sqlite nos testes de integração",

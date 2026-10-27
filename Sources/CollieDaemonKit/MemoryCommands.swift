@@ -230,6 +230,7 @@ extension CommandRouter {
                 throw invalid("subject and title must not be blank")
             }
             let edited = title != nil || body != nil || subject != nil
+            let wasProposed = try await repo.run { m in m.store.all().records.first { $0.id == id }?.status == .proposed }
             let out = try await update(id) { rec, m in
                 let store = m.store
                 if let title { rec.title = title }
@@ -269,8 +270,8 @@ extension CommandRouter {
                 }
             }
             if edited, caller == nil { await memory.scores.penalize(id, ScoreStore.userEdit, reason: "editada pelo usuário") }
-            if action != "approve" {
-                var ev = MemoryEvent(type: action == "archive" ? .archived : .retracted, ids: [id], source: "user")
+            if action != "approve" || wasProposed {   // approving a proposal (a procedure too) makes it: created by the user
+                var ev = MemoryEvent(type: action == "approve" ? .created : action == "archive" ? .archived : .retracted, ids: [id], source: "user")
                 ev.place(store: repo.key)
                 memory.events.emit(ev)
             }

@@ -25,6 +25,13 @@ public enum HookPayload {
         return last
     }
 
+    /// Any Claude hook's `transcript_path` (agent-controlled: `TranscriptChunk.allowed` vets it before any read).
+    public static func transcriptPath(stdinJSON: Data) -> String? {
+        guard let o = try? JSONSerialization.jsonObject(with: stdinJSON) as? [String: Any], let p = o["transcript_path"] as? String,
+              !p.isEmpty else { return nil }
+        return p
+    }
+
     /// Claude sets `stop_hook_active` on a Stop that follows a turn a Stop hook made it continue: never block that one.
     /// nil: unreadable stdin (no block, the turn still ends).
     public static func claudeStopHookActive(stdinJSON: Data) -> Bool? {

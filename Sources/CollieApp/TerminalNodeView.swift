@@ -48,6 +48,7 @@ import CollieTheme
         title = TitleHost(rootView: NodeTitleBar(id: id, client: client, model: model,
             restart: { [weak self] in self?.restart() },
             kill: { [weak self] in self?.kill() },
+            captureMemory: { [weak self] in self?.captureMemory() },
             edit: { [weak self] in self?.edit() },
             closeNode: { [weak self] in self?.confirmClose() },
             setLot: { [weak self] in self?.setLot($0) }))
@@ -135,6 +136,7 @@ import CollieTheme
         m.addItem(ActionItem("Editar…") { [weak self] in self?.edit() })
         m.addItem(ActionItem("Reiniciar") { [weak self] in self?.restart() })
         m.addItem(ActionItem("Matar") { [weak self] in self?.kill() })
+        if isClaude { m.addItem(ActionItem("Salvar na memória") { [weak self] in self?.captureMemory() }) }
         let lots = NSMenuItem(title: "Lote", action: nil, keyEquivalent: ""), sub = NSMenu()
         let mine = client.lot(of: id)?.id
         for choice in LotChoice.all(client.lots) {
@@ -372,6 +374,13 @@ import CollieTheme
         Task { do { try await client.kill(name) } catch { Log.canvas.error("kill \(name): \(error)") } }
     }
 
+    private var isClaude: Bool { client.terminals.first { $0.id == id }?.preset == .claude }
+
+    private func captureMemory() {
+        guard let name else { return }
+        Task { do { try await client.captureMemory(name) } catch { Log.canvas.error("memory capture \(name): \(error)") } }
+    }
+
     private func confirmClose() {
         guard let name, let window else { return }
         let a = NSAlert()
@@ -468,7 +477,7 @@ struct NodeTitleBar: View {
     let id: UUID
     let client: DaemonClient
     let model: NodeModel
-    let restart: () -> Void, kill: () -> Void, edit: () -> Void, closeNode: () -> Void
+    let restart: () -> Void, kill: () -> Void, captureMemory: () -> Void, edit: () -> Void, closeNode: () -> Void
     let setLot: (Lot?) -> Void
 
     var body: some View {
@@ -493,6 +502,7 @@ struct NodeTitleBar: View {
                 Button("Editar…", action: edit)
                 Button("Reiniciar", action: restart)
                 Button("Matar", action: kill)
+                if t?.preset == .claude { Button("Salvar na memória", action: captureMemory) }
                 Menu("Lote") {
                     let mine = client.lot(of: id)?.id
                     ForEach(LotChoice.all(client.lots)) { c in

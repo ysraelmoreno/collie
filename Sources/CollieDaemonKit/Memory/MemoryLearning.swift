@@ -158,6 +158,7 @@ extension CommandRouter {
         switch job.kind {
         case .correction: try await runLearningJob(job, call: call)
         case .proposals: try await runProposalsJob(job, call: call)
+        case .conversation: try await runConversationJob(job, call: call)
         case .pitfall: try await runPitfallJob(job, call: call)
         case .consolidate: try await runConsolidateJob(job, call: call)
         case .procedure: try await runProcedureJob(job, call: call)
@@ -254,6 +255,7 @@ extension CommandRouter {
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)
         case .pitfall: throw ProtocolError(code: .internal, message: "curator: a pitfall job has its own ops (applyPitfallOps)")
         case .procedure: throw ProtocolError(code: .internal, message: "curator: a procedure job writes a proposal itself")
+        case .conversation: throw ProtocolError(code: .internal, message: "curator: a conversation job writes new records itself")
         case .consolidate:
             let p = try consolidatePayload(job)
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)

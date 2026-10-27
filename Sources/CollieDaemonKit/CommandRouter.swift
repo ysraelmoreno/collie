@@ -61,6 +61,8 @@ actor CommandRouter {
     var workStoreBroken = false
     /// Works whose proposals are being captured (MemoryCapture): one capture a work at a time.
     var capturing: Set<UUID> = []
+    /// Each Claude terminal's transcript (from its own hooks) and its pending idle capture (ConversationCapture).
+    var conversations = ConversationTriggers()
     // ponytail: not persisted. After a restart a closed work written again can be saved a second time (re-marking the
     // record unreviewed), and a crash between the close and the save loses that summary. Persist it if that matters.
     // ponytail: savedClose grows by one entry per closed work for the daemon's lifetime (tiny); prune with the works
@@ -326,6 +328,7 @@ actor CommandRouter {
                 let s = await registry.scrollback(t.id)?.tail(lines: Int(try num(req, "lines", max: 1_000_000) ?? 200)) ?? (text: "", truncated: false)
                 return Response(id: req.id, ok: true, result: .object(["output": .string(s.text), "truncated": .bool(s.truncated)]))
             case "turn.completed":
+                if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr) }   // restarts the idle capture
                 // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
                 let continued = flag(req, "continued"), capture = flag(req, "capture") && !continued
                 // a capture Stop holds the queue first: the ask it completes must not let the next one be typed before the decision

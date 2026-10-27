@@ -231,6 +231,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public func unleash(_ a: String, _ b: String) async throws { _ = try await admin("admin.unleash", ["a": .string(a), "b": .string(b)]) }
     public func kill(_ name: String) async throws { _ = try await admin("admin.kill", ["target": .string(name)]) }
     public func restart(_ name: String) async throws { _ = try await admin("admin.restart", ["name": .string(name)]) }
+    /// What the terminal's Claude conversation taught, to memory now (the curator saves it).
+    public func captureMemory(_ name: String) async throws { _ = try await admin("memory.capture", ["terminal": .string(name)]) }
     /// Edits a terminal; `restartNeeded`: launch settings changed under a running process.
     @discardableResult
     public func update(_ name: String, newName: String? = nil, shepherd: Bool? = nil, preset: Preset? = nil,

@@ -337,6 +337,18 @@ extension CommandRouter {
             await consolidate(repo)
             return .object(["queued": .number(Double(await curator.queued(kind: .consolidate).filter { $0.store == repo.key }.count))])
 
+        case "memory.capture":   // a terminal: its own conversation; the app: --terminal <name>
+            let t: TerminalRecord
+            if let me = caller { t = me } else {
+                let n = try need(r, "terminal")
+                guard let x = ws.terminals.first(where: { $0.name == n }) else { throw ProtocolError(code: .notFound, message: "Terminal '\(n)' not found") }
+                t = x
+            }
+            guard await captureConversationNow(t.id) else {
+                throw ProtocolError(code: .notFound, message: "no Claude conversation seen for '\(t.name)' yet")
+            }
+            return .object(["queued": .number(Double(await curator.queued(kind: .conversation).count))])
+
         case "memory.curator":
             if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }
             return try isoJSON(await curator.status())

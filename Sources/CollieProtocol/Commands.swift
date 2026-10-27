@@ -217,6 +217,9 @@ public enum Commands {
                              ParamSpec("action", .string, required: true, help: "confirm|discard")], timeoutSeconds: 30, exposedToMCP: false),
         CommandSpec(name: "memory.consolidate", summary: "Consolidate a memory store now (cleanup, then the curator over similar memories)",
                     params: [ParamSpec("lot", .string), ParamSpec("repo", .string)], timeoutSeconds: 60, exposedToMCP: false),
+        CommandSpec(name: "memory.capture", summary: "Save what this conversation taught to memory now",
+                    params: [ParamSpec("terminal", .string, help: "Terminal whose conversation (the app; a terminal: its own)")],
+                    timeoutSeconds: 30, exposedToMCP: false),
         CommandSpec(name: "memory.repos", summary: "Repositories with memory known from terminals and paddocks",
                     timeoutSeconds: 60, exposedToMCP: false),
         // Work log: a terminal acts on its own work; a Shepherd also on the works of terminals leashed to it (--terminal);

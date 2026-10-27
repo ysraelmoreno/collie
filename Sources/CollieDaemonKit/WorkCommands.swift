@@ -10,6 +10,10 @@ extension CommandRouter {
     /// Never fails the agent: every error is a daemon log line (no payload contents).
     func workHook(_ r: Request, from tid: UUID) async {
         let now = Date()
+        if ["precompact", "session-end"].contains(str(r, "hook") ?? ""),   // the conversation so far, before it is compacted or gone
+           let tr = HookPayload.transcriptPath(stdinJSON: Data((str(r, "payload") ?? "").utf8)) {
+            Task { await captureConversationNow(tid, transcript: tr) }
+        }
         let events = WorkHookParser.events(hook: str(r, "hook") ?? "", json: Data((str(r, "payload") ?? "").utf8), now: now)
         guard !events.isEmpty else { return }
         do {
@@ -213,6 +217,7 @@ extension CommandRouter {
                 $0.closedAt = now; $0.closedBy = by; $0.lotId = lot
             }
             Task {
+                await captureConversationNow(w.terminalId)
                 await captureProposals(w.id)   // its learnings become proposals (the model may take seconds)
                 // and the repo's new review files feed its pitfall classes
                 // (not a lot member's close: lot findings never reach the project but by promote)
@@ -383,6 +388,7 @@ extension CommandRouter {
                 x.commits += commits.filter { !x.commits.contains($0) }   // a concurrent Stop may have added them
                 if merged { x.closedAt = Date(); x.closedBy = "merge"; x.lotId = lot }
             }
+            if merged { await captureConversationNow(tid) }
         } catch { workFailed("turn end", error) }
     }
 

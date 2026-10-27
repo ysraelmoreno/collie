@@ -21,6 +21,7 @@ enum HookCommands {
             if isPrompt && prompt == nil { log("claude-prompt: no prompt in the stdin payload"); return }
             let source = isPrompt ? nil : HookPayload.claudeSessionSource(stdinJSON: stdin)
             if let out = await MemoryHookClient.output(event: isPrompt ? .userPromptSubmit : .sessionStart, prompt: prompt, source: source,
+                                                       transcript: HookPayload.transcriptPath(stdinJSON: stdin),
                                                        env: ProcessInfo.processInfo.environment, onError: { log("\(a[0]): \($0)") }) {
                 print(out)
             }

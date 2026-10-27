@@ -148,7 +148,7 @@ actor CommandRouter {
         self.assistant = WorkAssistant(model: config.localModel)
         let curatorDir = config.paths.root.appendingPathComponent("curator")
         self.curator = Curator(dir: curatorDir, runner: config.curatorRunner ?? ClaudeCuratorRunner(
-            root: config.paths.root, home: home, env: { await userEnv.current() }))
+            root: config.paths.root, home: home, env: { await userEnv.current() }), events: memory.events)
         // L3: one Collie-wide preference; a workspace's value (before) moves there once
         let settings = CollieSettings.load(root)
         self.sandboxPref = settings.terminalSandbox

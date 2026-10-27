@@ -261,6 +261,8 @@ extension CommandRouter {
         guard let w = try? await work.get(id), let closedAt = w.closedAt else { savedClose[id] = nil; return }   // reopened or gone
         guard savedClose[id] != closedAt else { return }
         savedClose[id] = closedAt   // set before any await: one save per close
+        memory.events.emit(MemoryEvent(type: .workClosed, terminal: w.terminalId, work: id, lot: w.lotId ?? ws.lot(of: w.terminalId)?.id,
+                                       reason: w.closedBy, merged: w.closedBy == "merge"))
         let removedCwd = closeCwd.removeValue(forKey: id)
         func decided(_ d: String, _ why: String? = nil) {
             summaryDecisions.append(d)

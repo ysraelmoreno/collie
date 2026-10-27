@@ -77,6 +77,10 @@ extension CommandRouter {
                                                             paddock: paddockName, lot: lot, origin: origin,
                                                             proposed: caller != nil && kind == .procedure)
             if kind == .pitfall { await enqueuePitfall(saved.id, store: target) }
+            var ev = MemoryEvent(type: .created, terminal: caller?.id, ids: [saved.id], kinds: [kind.rawValue], scopes: [saved.scope.rawValue],
+                                 source: caller == nil ? "user" : "agent")
+            ev.place(store: target.key)
+            memory.events.emit(ev)
             return try memJSON(saved, target, ["superseded": old.map { .string($0.id.uuidString) } ?? .null])
 
         case "memory.search":
@@ -101,6 +105,7 @@ extension CommandRouter {
                 }
             }
             let hits = MemoryIndex.rank(cands, lang: vector?.lang).prefix(limit).map { (hit: $0, store: from[$0.record.id]!) }   // one scale (R10)
+            if let me = caller { searched(me, hits: hits.count, lot: myLot?.id, project: project.root?.path) }
             for s in stores {
                 let ids = hits.filter { $0.store === s }.map(\.hit.record.id)
                 if !ids.isEmpty { _ = try? await s.run { m in m.index()?.noteRead(ids) } }
@@ -148,6 +153,7 @@ extension CommandRouter {
                 if let d = st?.lastReadAt { extra["lastReadAt"] = .string(isoString(d)) }
                 if let d = st?.missingSince { extra["missingSince"] = .string(isoString(d)) }
                 _ = try? await s.run { m in m.index()?.noteRead([id]) }
+                if let me = caller { searched(me, hits: 1, lot: myLot?.id, project: project.root?.path) }
                 return try memJSON(rec, s, extra)
             }
             throw ProtocolError(code: .notFound, message: "memory \(id.uuidString.lowercased()) not found")
@@ -163,6 +169,7 @@ extension CommandRouter {
 
         case "memory.hookContext", "memory.hookRelevant":
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
+            if let tr = str(r, "transcript") { await memory.noteSession(me.id, transcript: tr) }   // the session its events name
             let text: String
             if r.command == "memory.hookContext" {
                 // compact/resume: the work state (first), the board's handoff and status posts, then the memory index, in one 4096-byte budget
@@ -176,7 +183,8 @@ extension CommandRouter {
                 let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
                 await refreshSkills(me.id)   // a session (re)starts: its skills as the stores are now (a hand edit, a pull)
                 let w = try? await work.active(terminal: me.id)
-                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used)
+                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used,
+                                                source: str(r, "source"))
                 let mem = (head + [rest == MemoryService.header ? "" : rest]).filter { !$0.isEmpty }.joined(separator: "\n\n")
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
@@ -261,6 +269,11 @@ extension CommandRouter {
                 }
             }
             if edited, caller == nil { await memory.scores.penalize(id, ScoreStore.userEdit, reason: "editada pelo usuário") }
+            if action != "approve" {
+                var ev = MemoryEvent(type: action == "archive" ? .archived : .retracted, ids: [id], source: "user")
+                ev.place(store: repo.key)
+                memory.events.emit(ev)
+            }
             // L3: the user decided on a waiting quote: its correction job is moot (never a second rule)
             await cancelCorrection(quote: id)
             return out
@@ -441,4 +454,9 @@ extension CommandRouter {
     }
 
     private func isoString(_ d: Date) -> String { ISO8601DateFormatter().string(from: d) }
+
+    private func searched(_ me: TerminalRecord, hits: Int, lot: UUID?, project: String?) {
+        memory.events.emit(MemoryEvent(type: .searched, terminal: me.id, lot: lot, project: project, hits: hits))
+    }
+
 }

@@ -147,7 +147,7 @@ extension CommandRouter {
                                    reason: item.reason, store: store.key, created: [], before: [b], undone: false, resolved: false,
                                    by: item.into)
             }
-            try digest.append(entries)
+            try MemoryEventLog.$source.withValue("consolidation") { try digest.append(entries) }
         } catch { memoryLog("consolidation cleanup \(store.path): \(error)") }
 
         let recs = (try? await store.run { m in m.store.all().records.filter { MemoryService.visible($0, paddock: $0.paddock, lot: m.lotId) } }) ?? []

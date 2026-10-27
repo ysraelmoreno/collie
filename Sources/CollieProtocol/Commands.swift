@@ -182,10 +182,11 @@ public enum Commands {
                     timeoutSeconds: 30),
         // Hooks (Claude Code SessionStart / UserPromptSubmit): terminal-only, reply is the text to inject.
         CommandSpec(name: "memory.hookContext", summary: "Hook: memory summary for a new Claude session",
-                    params: [ParamSpec("source", .string, help: "startup|resume|compact|clear (compact/resume restore the work state and the board)")],
+                    params: [ParamSpec("source", .string, help: "startup|resume|compact|clear (compact/resume restore the work state and the board)"),
+                             ParamSpec("transcript", .string, help: "The hook's transcript_path (names the session in the event log)")],
                     timeoutSeconds: 5, exposedToMCP: false),
         CommandSpec(name: "memory.hookRelevant", summary: "Hook: memories relevant to a prompt, not yet injected",
-                    params: [ParamSpec("prompt", .string, required: true)], timeoutSeconds: 5, exposedToMCP: false),
+                    params: [ParamSpec("prompt", .string, required: true), ParamSpec("transcript", .string)], timeoutSeconds: 5, exposedToMCP: false),
         CommandSpec(name: "memory.review", summary: "Approve, discard or archive a memory (optionally editing it)",
                     params: [ParamSpec("id", .string, positional: true, required: true, help: "Memory id"),
                              ParamSpec("action", .string, positional: true, required: true, help: "approve|discard|archive"),

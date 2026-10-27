@@ -30,11 +30,34 @@ struct DigestEntry: Codable, Sendable, Identifiable, Equatable {
 struct MemoryDigest {
     static let cap = 2_000
     let file: URL
-    init(file: URL) { self.file = file }
+    /// Each appended row is a lifecycle event (source: `MemoryEventLog.source`, else the user's), each undo an `undone`.
+    let events: MemoryEventLog?
+    init(file: URL, events: MemoryEventLog? = nil) { self.file = file; self.events = events }
 
     func append(_ e: [DigestEntry]) throws {
         guard !e.isEmpty else { return }
         try save(Array((all() + e).suffix(Self.cap)))
+        for x in e { emit(x) }
+    }
+
+    /// aprendido|ativado → created, mesclado → merged, aposentado → superseded (with a successor) or archived,
+    /// descartado → retracted, ask|confirmar → asked.
+    static func eventKind(_ e: DigestEntry) -> MemoryEvent.Kind? {
+        switch e.action {
+        case "aprendido", "ativado": .created
+        case "mesclado": .merged
+        case "aposentado": e.by != nil ? .superseded : .archived
+        case "descartado": .retracted
+        case "ask", "confirmar": .asked
+        default: nil
+        }
+    }
+
+    private func emit(_ e: DigestEntry, as kind: MemoryEvent.Kind? = nil) {
+        guard let events, let k = kind ?? Self.eventKind(e) else { return }
+        var ev = MemoryEvent(type: k, ids: e.created.isEmpty ? e.before.map(\.id) : e.created, source: MemoryEventLog.source ?? "user")
+        ev.place(store: e.store)
+        events.emit(ev)
     }
 
     /// Entries at or after `d`, oldest first; `openAsks`: plus the asks (and confirmations) still open, however old (L4:
@@ -46,6 +69,7 @@ struct MemoryDigest {
     func mark(_ ids: [UUID], undone: Bool?, resolved: Bool?) throws {
         var es = all()
         for i in es.indices where ids.contains(es[i].id) {
+            if undone == true, !es[i].undone { emit(es[i], as: .undone) }
             if let undone { es[i].undone = undone }
             if let resolved { es[i].resolved = resolved }
         }

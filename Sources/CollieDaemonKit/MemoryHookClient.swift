@@ -42,6 +42,7 @@ public enum MemoryHookClient {
         var args: [String: JSONValue] = ["source": .string("claude")]
         if let active { args[active ? "continued" : "capture"] = .bool(true) }   // unreadable: a plain turn end, no ask
         if let m = HookPayload.claudeStopMessage(stdinJSON: stdin) { args["message"] = .string(m) }
+        if let t = HookPayload.transcriptPath(stdinJSON: stdin) { args["transcript"] = .string(t) }
         do {
             let r = try await UnixSocketClient.send(Request(id: UUID().uuidString, terminalId: tid, token: tok, command: "turn.completed", args: args),
                                                     to: URL(fileURLWithPath: sock), timeoutSeconds: 5)

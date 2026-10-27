@@ -24,26 +24,45 @@ private func talk(_ n: Int, _ extra: String = "") -> String {
 /// A daemon with a temp home (never the real ~/.claude), an available fake curator, a shell terminal "dev" in a repo,
 /// and the transcript path the terminal's hook would send.
 private struct Env {
-    var d: Daemon, fake: FakeCurator, tid: UUID, transcript: URL, store: RepoMemory, root: URL
+    var d: Daemon, p: Paths, fake: FakeCurator, tid: UUID, token: String, transcript: URL, store: RepoMemory, root: URL
     var mark: UInt64? { ConversationCapture.marks(root.appendingPathComponent("memory/capture-marks.json"))[real] }
-    var real: String { String(cString: realpath(transcript.path, nil)) }
+    var real: String {
+        guard let r = realpath(transcript.path, nil) else { return transcript.path }
+        defer { free(r) }
+        return String(cString: r)
+    }
     func records() async throws -> [MemoryRecord] { try await store.run { $0.store.all().records } }
     func size() throws -> UInt64 { UInt64(try Data(contentsOf: transcript).count) }
+    /// Claude's Stop hook, as `collie hook claude-stop` sends it.
+    func stop(_ path: String? = nil) async {
+        let stdin = try! JSONSerialization.data(withJSONObject: ["transcript_path": path ?? transcript.path, "stop_hook_active": false,
+                                                                  "last_assistant_message": "ok"])
+        _ = await MemoryHookClient.stopOutput(stdin: stdin, env: ["COLLIE_SOCKET": p.socket.path, "COLLIE_TERMINAL_ID": tid.uuidString, "COLLIE_TOKEN": token])
+    }
+    @discardableResult
+    func call(_ cmd: String, _ args: [String: String] = [:], admin: Bool = false) async throws -> Response {
+        try await send(p, Request(id: "c", terminalId: admin ? nil : tid.uuidString, token: admin ? d.adminToken : token, command: cmd,
+                                  args: args.mapValues { .string($0) }), timeoutSeconds: 30)
+    }
+    func hook(_ name: String) async throws {
+        let payload = String(decoding: try JSONSerialization.data(withJSONObject: ["transcript_path": transcript.path, "hook_event_name": name]), as: UTF8.self)
+        #expect(try await call("work.hook", ["hook": name, "payload": payload]).ok)
+    }
 }
-private func withEnv(_ body: (Env) async throws -> Void) async throws {
+private func withEnv(idle: Duration = .seconds(60), _ body: (Env) async throws -> Void) async throws {
     let home = FileManager.default.temporaryDirectory.appendingPathComponent("cc-home-\(UUID().uuidString.prefix(8))")
     let dir = home.appendingPathComponent(".claude/projects/-tmp-repo")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: home) }
     let fake = FakeCurator()
     let repo = try await makeRepo()
-    try await withDaemon(configure: { $0.curatorRunner = fake; $0.sandboxHome = home }) { d, p in
+    try await withDaemon(configure: { $0.curatorRunner = fake; $0.sandboxHome = home; $0.conversationIdle = idle }) { d, p in
         let r = try await send(p, Request(id: "x", token: d.adminToken, command: "admin.spawn", args: [
             "name": .string("dev"), "preset": .string("shell"), "cwd": .string(repo.path)]), timeoutSeconds: 60)
         guard case .object(let o)? = r.result, case .string(let id)? = o["id"], let tid = UUID(uuidString: id) else {
             throw ProtocolError(code: .internal, message: "\(r)")
         }
-        try await body(Env(d: d, fake: fake, tid: tid, transcript: dir.appendingPathComponent("s.jsonl"),
+        try await body(Env(d: d, p: p, fake: fake, tid: tid, token: try await tokenOf(d, id), transcript: dir.appendingPathComponent("s.jsonl"),
                            store: await d.router.memory.repo(for: repo.path), root: p.root))
     }
 }
@@ -213,6 +232,138 @@ private func withEnv(_ body: (Env) async throws -> Void) async throws {
             }
             #expect(await e.d.router.curator.queued(kind: .conversation).isEmpty)
             #expect(e.fake.calls == 0)
+        }
+    }
+
+    @Test func idleTenMinutesTriggers() async throws {
+        #expect(DaemonConfig(paths: Paths(root: URL(fileURLWithPath: "/tmp/x")), collieExecutable: URL(fileURLWithPath: "/tmp/c"),
+                             workspaceId: UUID()).conversationIdle == .seconds(600))
+        try await withEnv(idle: .milliseconds(300)) { e in
+            e.fake.output = out([item()])
+            try Data(talk(3).utf8).write(to: e.transcript)
+            await e.stop()
+            #expect(e.fake.calls == 0)
+            #expect(await waitFor(10) { e.fake.calls == 1 })
+            let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+        }
+    }
+
+    @Test func newTurnResetsIdle() async throws {
+        try await withEnv(idle: .milliseconds(600)) { e in
+            try Data(talk(3).utf8).write(to: e.transcript)
+            await e.stop()
+            try await Task.sleep(for: .milliseconds(300))
+            await e.stop()
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(e.fake.calls == 0)   // the first timer would have fired by now
+            #expect(await waitFor(10) { e.fake.calls == 1 })
+        }
+    }
+
+    /// Review Focus 5: a quick Q&A then idle: no model call.
+    @Test func quickTurnNoModelCall() async throws {
+        try await withEnv(idle: .milliseconds(100)) { e in
+            try Data(talk(2).utf8).write(to: e.transcript)
+            await e.stop()
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(e.fake.calls == 0 && e.mark == nil)
+            #expect(await e.d.router.curator.queued(kind: .conversation).isEmpty)
+        }
+    }
+
+    @Test func precompactTriggersForced() async throws {
+        try await withEnv { e in
+            try Data(talk(1).utf8).write(to: e.transcript)
+            try await e.hook("precompact")
+            #expect(await waitFor(10) { e.fake.calls == 1 })
+        }
+    }
+
+    @Test func sessionEndTriggersForced() async throws {
+        try await withEnv { e in
+            try Data(talk(1).utf8).write(to: e.transcript)
+            try await e.hook("session-end")
+            #expect(await waitFor(10) { e.fake.calls == 1 })
+        }
+    }
+
+    /// Review Focus 2: compaction three times, then the end: each chunk read once, nothing written twice.
+    @Test func compactionsThenEndReadEachChunkOnce() async throws {
+        try await withEnv { e in
+            e.fake.output = out([item()])
+            var all = ""
+            for i in 0..<3 {
+                all += talk(1, "parte\(i)")
+                try Data(all.utf8).write(to: e.transcript)
+                try await e.hook("precompact")
+                let size = try e.size()
+                #expect(await waitFor(10) { e.mark == size })
+            }
+            try await e.hook("session-end")   // nothing new
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(e.fake.calls == 3)
+            for (i, input) in e.fake.inputs.enumerated() {
+                #expect(input.contains("parte\(i)") && (0..<3).filter { $0 != i }.allSatisfy { !input.contains("parte\($0)") })
+            }
+            #expect(try await e.records().filter { $0.origin == "conversa (dev)" }.count == 3)
+        }
+    }
+
+    @Test func workDoneTriggersForced() async throws {
+        try await withEnv { e in
+            try Data(talk(1).utf8).write(to: e.transcript)
+            await e.stop()   // remembers the transcript (idle: 60 s)
+            #expect(try await e.call("work.start", ["title": "login"]).ok)
+            #expect(try await e.call("work.done").ok)
+            #expect(await waitFor(10) { e.fake.calls == 1 })
+        }
+    }
+
+    @Test func memoryCaptureCommandForced() async throws {
+        try await withEnv { e in
+            e.fake.output = out([])
+            try Data(talk(1).utf8).write(to: e.transcript)
+            let none = try await e.call("memory.capture")
+            #expect(!none.ok && none.error?.code == .notFound)   // no Claude conversation seen yet
+            await e.stop()
+            #expect(try await e.call("memory.capture").ok)
+            let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+            try Data((talk(1) + talk(1, "mais")).utf8).write(to: e.transcript)
+            #expect(try await e.call("memory.capture", ["terminal": "dev"], admin: true).ok)
+            #expect(await waitFor(10) { e.fake.calls == 2 })
+            #expect(try await e.call("memory.capture", ["terminal": "nobody"], admin: true).error?.code == .notFound)
+        }
+    }
+
+    /// A Codex (or shell) terminal sends no transcript: no idle capture, `memory.capture` refused, work done calls nothing.
+    @Test func codexTerminalNeverTriggers() async throws {
+        try await withEnv(idle: .milliseconds(100)) { e in
+            try Data(talk(5).utf8).write(to: e.transcript)
+            #expect(try await e.call("turn.completed", ["source": "codex", "message": "feito"]).ok)
+            #expect(try await e.call("memory.capture").error?.code == .notFound)
+            #expect(try await e.call("work.start", ["title": "x"]).ok)
+            #expect(try await e.call("work.done").ok)
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(e.fake.calls == 0)
+        }
+    }
+
+    /// Review Focus 1 through the hook: a Stop naming a symlink to a key never leads to a read or a call.
+    @Test func badTranscriptPathFromHookIgnored() async throws {
+        try await withEnv(idle: .milliseconds(100)) { e in
+            let key = FileManager.default.temporaryDirectory.appendingPathComponent("cc-key-\(UUID().uuidString.prefix(8))")
+            try Data(talk(5).utf8).write(to: key)
+            defer { try? FileManager.default.removeItem(at: key) }
+            let link = e.transcript.deletingLastPathComponent().appendingPathComponent("evil.jsonl")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: key)
+            await e.stop(link.path)
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(e.fake.calls == 0)
+            #expect(try await e.call("memory.capture").ok)   // the remembered path is still vetted
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(e.fake.calls == 0 && e.mark == nil)
         }
     }
 }

@@ -210,3 +210,35 @@ extension CommandRouter {
         }
     }
 }
+
+/// Per terminal: the transcript its last Claude hook named (in memory: the next hook names it again after a restart),
+/// and the idle capture waiting on it. ponytail: one path per terminal, never pruned (tiny).
+struct ConversationTriggers {
+    var transcripts: [UUID: String] = [:]
+    var idle: [UUID: Task<Void, Never>] = [:]
+}
+
+extension CommandRouter {
+    /// A Claude Stop: the transcript remembered, the idle capture restarted (`conversationIdle`, 10 min; a chunk of
+    /// < 3 user messages then waits for more).
+    func conversationTurnEnded(_ tid: UUID, transcript: String) {
+        conversations.transcripts[tid] = transcript
+        conversations.idle[tid]?.cancel()
+        let wait = config.conversationIdle
+        conversations.idle[tid] = Task {
+            do { try await Task.sleep(for: wait) } catch { return }
+            await self.captureConversation(tid, transcript: transcript, force: false)
+        }
+    }
+
+    /// Compaction, session end, work done or merged, `memory.capture`: the chunk now, however short. `transcript`: the
+    /// hook's own (else the last one remembered). false: no Claude transcript seen for `tid` (Codex, a shell).
+    @discardableResult
+    func captureConversationNow(_ tid: UUID, transcript: String? = nil) async -> Bool {
+        if let transcript { conversations.transcripts[tid] = transcript }
+        guard let t = conversations.transcripts[tid] else { return false }
+        conversations.idle[tid]?.cancel(); conversations.idle[tid] = nil
+        await captureConversation(tid, transcript: t, force: true)
+        return true
+    }
+}

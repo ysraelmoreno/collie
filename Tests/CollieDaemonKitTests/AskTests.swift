@@ -90,6 +90,34 @@ private func withHookDaemon(_ body: (Daemon, Paths) async throws -> Void) async 
     try await withDaemon(configure: { $0.idleQuietSeconds = 15 }, body)
 }
 
+/// `ask --no-wait`: the ask id from the immediate reply.
+private func askNoWait(_ p: Paths, _ from: Term, _ target: String, _ prompt: String, timeout: Int? = nil) async throws -> (id: String, resp: Response) {
+    var args: [String: JSONValue] = ["target": .string(target), "prompt": .string(prompt), "no-wait": .bool(true)]
+    if let timeout { args["timeout"] = .number(Double(timeout)) }
+    let r = try await send(p, Request(id: "nw", terminalId: from.id, token: from.token, command: "ask", args: args))
+    guard case .object(let o)? = r.result, case .string(let id)? = o["askId"] else { return ("", r) }
+    return (id, r)
+}
+
+private func askResult(_ p: Paths, _ from: Term, _ id: String) async throws -> Response {
+    try await send(p, Request(id: "ar", terminalId: from.id, token: from.token, command: "ask.result", args: ["id": .string(id)]))
+}
+
+private func field(_ r: Response, _ k: String) -> String? {
+    if case .object(let o)? = r.result, case .string(let s)? = o[k] { return s } else { return nil }
+}
+
+/// The target's turn ends with `message` (its Stop hook), once an ask is in flight on it.
+private func hook(_ d: Daemon, _ p: Paths, _ t: Term, _ message: String) async throws {
+    #expect(await waitFor(10) { await d.askBusy(UUID(uuidString: t.id)!) })
+    _ = try await send(p, Request(id: "h", terminalId: t.id, token: t.token, command: "turn.completed",
+                                  args: ["message": .string(message), "source": .string("claude")]))
+}
+
+/// An agent asker that reads what is typed and prints nothing (the tty's echo shows it once).
+private let quietAgent = "echo T=$COLLIE_TOKEN; exec cat >/dev/null"
+private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
+
 @Suite(.serialized) struct AskTests {
     @Test func askViaHook() async throws {
         try await withHookDaemon { d, p in
@@ -521,6 +549,159 @@ private func withHookDaemon(_ body: (Daemon, Paths) async throws -> Void) async 
                 let mem = await d.scrollbackMemoryBytes(UUID(uuidString: a.id)!)
                 #expect(mem > 0 && mem <= 1_048_576)
             }
+        }
+    }
+}
+
+// MARK: - ask --no-wait (plan 2X)
+
+extension AskTests {
+
+    @Test func noWaitReturnsImmediately() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            _ = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let t0 = ContinuousClock.now
+            let (id, r) = try await askNoWait(p, a, "B", "work on it", timeout: 30)
+            #expect(ContinuousClock.now - t0 < .milliseconds(500), "\(r)")
+            #expect(id.count == 8 && id.allSatisfy { $0.isHexDigit && !$0.isUppercase })
+            #expect(field(r, "target") == "B")
+            #expect(field(try await askResult(p, a, id), "status") == "pending")
+        }
+    }
+
+    @Test func noWaitDeliversReplyToAsker() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            try await hook(d, p, b, "done")
+            let head = "[collie] Reply from B (ask \(id)):"
+            let aid = UUID(uuidString: a.id)!
+            #expect(await waitFor(10) { await d.scrollbackText(aid).contains(head) })
+            try await Task.sleep(for: .milliseconds(500))
+            let text = await d.scrollbackText(aid)
+            #expect(text.components(separatedBy: head).count == 2)   // typed once
+            #expect(text[text.range(of: head)!.upperBound...].contains("done"))
+            let res = try await askResult(p, a, id)
+            #expect(field(res, "status") == "done" && field(res, "output") == "done")
+        }
+    }
+
+    @Test func noWaitNotTypedMidTurn() async throws {
+        try await withHookDaemon { d, p in
+            // prints for ~5 s (a turn in progress), then reads quietly
+            let busy = "echo T=$COLLIE_TOKEN; i=0; while [ $i -lt 50 ]; do echo tick; sleep 0.1; i=$((i+1)); done; exec cat >/dev/null"
+            let a = try await term(d, p, "A", preset: "claude", command: busy)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            try await hook(d, p, b, "done")
+            #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
+            let aid = UUID(uuidString: a.id)!
+            #expect(await waitFor(20) { await d.scrollbackText(aid).contains("[collie] Reply from B") })
+            let text = await d.scrollbackText(aid)
+            #expect(text.range(of: "tick", options: .backwards)!.lowerBound < text.range(of: "[collie] Reply from B")!.lowerBound)
+        }
+    }
+
+    @Test func noWaitNotDeadlockEdge() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: silentTarget)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            _ = try await askNoWait(p, a, "B", "never answered", timeout: 30)
+            #expect(await waitFor(10) { await d.askBusy(UUID(uuidString: b.id)!) })
+            let r = try await ask(p, b, "A", "back", timeout: 1)
+            #expect(r.error?.code != .deadlock, "\(r)")
+        }
+    }
+
+    @Test func noWaitFailureDelivered() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
+            _ = try await spawn(d, p, "B", preset: "claude", command: "sleep 999")
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hi", timeout: 1)
+            let aid = UUID(uuidString: a.id)!
+            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[collie] Ask \(id) to B failed: ") })
+            let res = try await askResult(p, a, id)
+            #expect(field(res, "status") == "failed" && field(res, "error") != nil)
+        }
+    }
+
+    @Test func noWaitShellAskerNotTyped() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A")
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            try await hook(d, p, b, "done")
+            #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
+            try await Task.sleep(for: .seconds(3))   // past the quiet window a delivery waits for
+            #expect(!(await d.scrollbackText(UUID(uuidString: a.id)!).contains("[collie]")))
+            #expect(field(try await askResult(p, a, id), "output") == "done")
+        }
+    }
+
+    @Test func longReplyCut() async throws {
+        let long = String(repeating: String(repeating: "x", count: 49) + "\n", count: 100)   // 5000 chars
+        let e = AskInbox.Entry(id: "ab12cd34", target: "B", status: .done, output: long)
+        let m = AskInbox.message(e)
+        let head = "[collie] Reply from B (ask ab12cd34):\n", cut = "\n[cut — full reply: collie ask result ab12cd34]"
+        #expect(m.hasPrefix(head) && m.hasSuffix(cut) && m.count == head.count + 3000 + cut.count)
+        #expect(AskInbox.message(AskInbox.Entry(id: "ab12cd34", target: "B", status: .done, output: "ok")) == head + "ok")
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "long", timeout: 30)
+            try await hook(d, p, b, long)
+            let aid = UUID(uuidString: a.id)!
+            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[cut — full reply: collie ask result \(id)]") })
+            #expect(field(try await askResult(p, a, id), "output")?.count == 5000)
+        }
+    }
+
+    @Test func resultOnlyForAsker() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A"), c = try await term(d, p, "C")
+            _ = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B"); try await connect(d, p, "C", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hi", timeout: 30)
+            #expect(try await askResult(p, c, id).error?.code == .notFound)
+            #expect(try await askResult(p, a, id).ok)
+        }
+    }
+
+    @Test func inboxKeepsTwenty() async {
+        let inbox = AskInbox(), me = UUID(), other = UUID()
+        var ids: [String] = []
+        for _ in 0..<21 { ids.append(await inbox.open(from: me, target: "B")) }
+        #expect(Set(ids).count == 21)
+        #expect(await inbox.get(id: ids[0], from: me) == nil)
+        #expect(await inbox.recent(from: me).map(\.id) == Array(ids.dropFirst().reversed()))
+        #expect(await inbox.get(id: ids[1], from: other) == nil)
+        await inbox.drop(terminal: me)
+        #expect(await inbox.close(id: ids[1], .success(AskResult(output: "x", source: .hook, truncated: false))) == nil)
+    }
+
+    /// Review Focus 4: the asker is closed before the reply: nothing typed, no crash, the target goes on.
+    @Test func askerRemovedDropsInbox() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            _ = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            #expect(await waitFor(10) { await d.askBusy(UUID(uuidString: b.id)!) })
+            let k = try await send(p, Request(id: "k", token: d.adminToken, command: "admin.kill", args: ["target": .string("A")]))
+            #expect(k.ok)
+            try await hook(d, p, b, "done")
+            #expect(await waitFor(10) { !(await d.askBusy(UUID(uuidString: b.id)!)) })
+            let l = try await send(p, Request(id: "l", terminalId: b.id, token: b.token, command: "list", args: [:]))
+            #expect(l.ok)
         }
     }
 }

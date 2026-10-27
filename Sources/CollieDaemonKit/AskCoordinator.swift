@@ -282,6 +282,8 @@ public actor AskCoordinator {
         var held = false
         /// R17: the app's work chat (`askAsUser`): the user's own text.
         var user = false
+        /// `ask --no-wait`: the asker isn't blocked, so no edge in the deadlock graph.
+        var detached = false
         var cont: CheckedContinuation<Result<AskResult, ProtocolError>, Never>?
         var timer: Task<Void, Never>?
     }
@@ -336,7 +338,7 @@ public actor AskCoordinator {
         }
     }
 
-    public func ask(from: UUID, to: UUID, prompt: String, raw: Bool, timeout: Duration) async throws(ProtocolError) -> AskResult {
+    public func ask(from: UUID, to: UUID, prompt: String, raw: Bool, timeout: Duration, detached: Bool = false) async throws(ProtocolError) -> AskResult {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
         }
@@ -345,7 +347,7 @@ public actor AskCoordinator {
                                 message: "Deadlock: '\(t.name)' is already waiting on '\(name(from))'; '\(name(from))' cannot ask '\(t.name)'")
         }
         // R7: unguarded on purpose — v1 asks answer prompts (a Shepherd's `collie ask B y`)
-        return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, cont: nil), timeout: timeout)
+        return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, detached: detached, cont: nil), timeout: timeout)
     }
 
     /// The user's ask (work chat): same FIFO, readiness gate and hook/idle completion as `ask`, but no caller
@@ -360,13 +362,14 @@ public actor AskCoordinator {
 
     /// Types `prompt` into `to` through the same readiness gate and FIFO as `ask`; returns once written,
     /// not when the turn ends. The turn still holds the queue, up to `hold`.
-    public func inject(to: UUID, prompt: String, hold: Duration = .seconds(1800)) async throws(ProtocolError) {
+    /// `afterQuiet`: typed only once `to` is idle (printed nothing for `StreamHub.workingWindow`, not waiting on an ask).
+    public func inject(to: UUID, prompt: String, hold: Duration = .seconds(1800), afterQuiet: Bool = false) async throws(ProtocolError) {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
         }
         // from == to: adds no edge to the deadlock graph
         // R10: never typed into a pending approval prompt (a summon's first prompt, a herd role)
-        _ = try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, inject: true, guardsApproval: true, cont: nil),
+        _ = try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, inject: true, afterQuiet: afterQuiet, guardsApproval: true, cont: nil),
                               timeout: hold)
     }
 
@@ -581,7 +584,7 @@ public actor AskCoordinator {
         while let n = stack.popLast() {
             if n == b { return true }
             guard seen.insert(n).inserted else { continue }
-            stack += waiters.values.filter { $0.from == n }.map(\.to)
+            stack += waiters.values.filter { $0.from == n && !$0.detached }.map(\.to)
         }
         return false
     }
@@ -603,7 +606,9 @@ public actor AskCoordinator {
         // output after an input not scanned yet may hold a prompt `pending` doesn't show: wait for the scan
         let unscanned = w.guardsApproval && t.approval.inWindow
         if unscanned { windowDeferrals += 1 }
-        if unscanned || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < StreamHub.workingWindow }) == true {
+        // an injected reply also waits while `to` itself waits on a blocking ask (quiet, but mid-turn)
+        let asking = w.inject && w.afterQuiet && waiters.values.contains { $0.from == to && $0.to != to && !$0.detached }
+        if unscanned || asking || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < StreamHub.workingWindow }) == true {
             // ponytail: 100 ms polling of lastOutputAt (what the hub's `working` badge reads); bounded by the waiter's timeout
             guard !t.quietPoll else { return }
             targets[to]?.quietPoll = true

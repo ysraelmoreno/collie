@@ -366,4 +366,47 @@ private func withEnv(idle: Duration = .seconds(60), _ body: (Env) async throws -
             #expect(e.fake.calls == 0 && e.mark == nil)
         }
     }
+
+    /// Aprendido rows in the digest, one job: Desfazer on one discards exactly the records that job created.
+    @Test func digestEntriesAndUndo() async throws {
+        try await withEnv { e in
+            let other = MemoryRecord(kind: .decision, subject: "outra", title: "Outra decisão")
+            try await e.store.run { try $0.store.write(other) }
+            e.fake.output = out([item(), item("pitfall", "Cuidado com o pool")])
+            try Data(talk(3).utf8).write(to: e.transcript)
+            await e.d.router.captureConversation(e.tid, transcript: e.transcript.path, force: false)
+            let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+            let rows = await e.d.router.digest.since(.distantPast).filter { $0.action == "aprendido" }
+            #expect(rows.count == 2 && Set(rows.compactMap(\.job)).count == 1 && rows.allSatisfy { $0.store == e.store.key })
+            let created = Set(rows.flatMap(\.created))
+            #expect(created == Set(try await e.records().filter { $0.origin == "conversa (dev)" }.map(\.id)))
+            _ = try await e.d.router.undoDigest(try #require(rows.first).id)
+            let recs = try await e.records()
+            #expect(recs.filter { created.contains($0.id) }.allSatisfy { $0.status == .discarded })
+            #expect(recs.first { $0.id == other.id }?.status == .active)
+        }
+    }
+
+    /// A trigger while that transcript's job runs is queued, not dropped: one follow-up job for the new part.
+    @Test func triggerDuringRunCoalescesIntoFollowUp() async throws {
+        try await withEnv { e in
+            e.fake.output = out([])
+            e.fake.gated = true
+            try Data(talk(3, "primeira").utf8).write(to: e.transcript)
+            await e.d.router.captureConversation(e.tid, transcript: e.transcript.path, force: true)
+            #expect(await waitFor(10) { e.fake.calls == 1 })   // running, held
+            let first = try e.size()
+            try Data((talk(3, "primeira") + talk(1, "segunda")).utf8).write(to: e.transcript)
+            await e.d.router.captureConversation(e.tid, transcript: e.transcript.path, force: true)
+            await e.d.router.captureConversation(e.tid, transcript: e.transcript.path, force: true)
+            e.fake.open()
+            let size = try e.size()
+            #expect(size > first)
+            #expect(await waitFor(10) { e.mark == size })
+            try await Task.sleep(for: .milliseconds(200))
+            #expect(e.fake.calls == 2)
+            #expect(e.fake.inputs.last?.contains("segunda") == true && e.fake.inputs.last?.contains("primeira") == false)
+        }
+    }
 }

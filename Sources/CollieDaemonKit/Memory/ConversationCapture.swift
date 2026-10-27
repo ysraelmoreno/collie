@@ -150,6 +150,10 @@ extension CommandRouter {
         guard let url = TranscriptChunk.allowed(transcript, projectsDir: projects) else {
             memoryLog("conversation capture: transcript refused for \(me.name)"); return
         }
+        // its job is running (it read the chunk already): one follow-up once it is done, for what came after
+        if conversations.running.contains(url.path) {
+            conversations.followUp[url.path] = (tid, force || conversations.followUp[url.path]?.force == true); return
+        }
         let mark = ConversationCapture.marks(captureMarksFile)[url.path] ?? 0
         guard let chunk = TranscriptChunk.read(url, from: mark, secrets: [], maxScalars: 0) else { return }
         guard chunk.end != mark, force || chunk.userMessages >= ConversationCapture.minUserMessages else { return }
@@ -172,6 +176,18 @@ extension CommandRouter {
     /// call, the new records written, then the mark. A failed call or junk answer throws (the mark stays: read again).
     func runConversationJob(_ j: CuratorJob, call: Curator.Call) async throws {
         let p = try Self.conversationPayload(j)
+        conversations.running.insert(p.transcript)
+        do { try await conversationRun(j, p, call: call) } catch { await conversationDone(p.transcript); throw error }
+        await conversationDone(p.transcript)
+    }
+
+    /// The run is over: a trigger that came meanwhile is captured now (from the new mark).
+    private func conversationDone(_ path: String) async {
+        conversations.running.remove(path)
+        if let f = conversations.followUp.removeValue(forKey: path) { await captureConversation(f.tid, transcript: path, force: f.force) }
+    }
+
+    private func conversationRun(_ j: CuratorJob, _ p: ConversationPayload, call: Curator.Call) async throws {
         guard let url = TranscriptChunk.allowed(p.transcript, projectsDir: URL(fileURLWithPath: p.projects)) else {
             memoryLog("conversation capture: transcript refused for \(p.name)"); return
         }
@@ -191,6 +207,14 @@ extension CommandRouter {
         // `write`, not `save`: a new record supersedes nothing (stored ones, pinned or edited, are never changed here)
         try await store.run { m in for r in new { try m.store.write(r) } }
         try ConversationCapture.setMark(captureMarksFile, path: url.path, to: chunk.end)
+        // Aprendizado: one row a record, one job (Desfazer on any row discards exactly what this job created)
+        let now = Date()
+        do {
+            try digest.append(new.map { r in
+                DigestEntry(id: UUID(), at: now, action: "aprendido", title: r.title, reason: "da conversa de \(p.name)", store: store.key,
+                            created: [r.id], before: [], undone: false, resolved: false, job: j.id)
+            })
+        } catch { memoryLog("digest: \(error)") }
         for r in new where r.kind == .pitfall { await enqueuePitfall(r.id, store: store) }   // a pitfall joins its class
     }
 
@@ -216,6 +240,9 @@ extension CommandRouter {
 struct ConversationTriggers {
     var transcripts: [UUID: String] = [:]
     var idle: [UUID: Task<Void, Never>] = [:]
+    /// Real transcript paths whose job is running, and the trigger that came meanwhile (coalesced: one follow-up).
+    var running: Set<String> = []
+    var followUp: [String: (tid: UUID, force: Bool)] = [:]
 }
 
 extension CommandRouter {

@@ -379,9 +379,9 @@ actor CommandRouter {
             do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true)) }
             catch { r = .failure(error) }
             // nil: the asker was removed meanwhile — nothing to type
-            // ponytail: an asker showing an approval prompt gets nothing typed (inject refuses); the reply stays in the inbox
+            // an approval prompt on the asker holds the reply until it is resolved; after 30 min it stays only in the inbox
             guard let e = await inbox.close(id: id, r), typed else { return }
-            try? await asks.inject(to: from, prompt: AskInbox.message(e), afterQuiet: true)
+            try? await asks.inject(to: from, prompt: AskInbox.message(e), hold: .seconds(1800), afterQuiet: true)
         }
         return .object(["askId": .string(id), "target": .string(t.name)])
     }

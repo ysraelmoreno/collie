@@ -602,13 +602,15 @@ public actor AskCoordinator {
     /// Starts the next queued ask for `to` if it is ready for injection and its slot is free.
     private func pump(_ to: UUID) {
         guard let t = targets[to], t.ready, t.inflight == nil, t.captureHold == nil, let id = t.queue.first, let w = waiters[id] else { return }
-        if w.guardsApproval, t.approval.pending != nil { finish(id, .failure(Self.awaitingApproval(t.name))); return }
+        // a reply delivered to its asker (`ask --no-wait`) is held instead: typed once the prompt is resolved (bounded by
+        // its hold), while `to` itself waits on a blocking ask (quiet, but mid-turn), or until `to` is quiet
+        let reply = w.inject && w.afterQuiet
+        let held = reply && (t.approval.pending != nil || waiters.values.contains { $0.from == to && $0.to != to && !$0.detached })
+        if w.guardsApproval, !reply, t.approval.pending != nil { finish(id, .failure(Self.awaitingApproval(t.name))); return }
         // output after an input not scanned yet may hold a prompt `pending` doesn't show: wait for the scan
         let unscanned = w.guardsApproval && t.approval.inWindow
         if unscanned { windowDeferrals += 1 }
-        // an injected reply also waits while `to` itself waits on a blocking ask (quiet, but mid-turn)
-        let asking = w.inject && w.afterQuiet && waiters.values.contains { $0.from == to && $0.to != to && !$0.detached }
-        if unscanned || asking || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < StreamHub.workingWindow }) == true {
+        if unscanned || held || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < StreamHub.workingWindow }) == true {
             // ponytail: 100 ms polling of lastOutputAt (what the hub's `working` badge reads); bounded by the waiter's timeout
             guard !t.quietPoll else { return }
             targets[to]?.quietPoll = true
@@ -625,7 +627,7 @@ public actor AskCoordinator {
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
         // off the cooperative pool, report failures back through finish.
         let data = PromptInjector.payload(w.prompt, raw: w.raw, bracketed: t.paste.enabled)
-        let process = t.process, name = t.name, inject = w.inject, approval = t.approval, guards = w.guardsApproval
+        let process = t.process, name = t.name, inject = w.inject, approval = t.approval, guards = w.guardsApproval, hold = reply
         DispatchQueue.global().async { [weak self] in
             // checked again at the write, in one step with counting the input: a prompt printed (or keys typed) since the
             // check above is not answered either
@@ -633,6 +635,7 @@ public actor AskCoordinator {
             if guards {
                 switch approval.inputIfClear(echo: w.prompt) {   // its echo is not a prompt
                 case .written: break
+                case .pending where hold: Task { await self?.requeue(id) }; return   // held reply: retried after the prompt
                 case .pending: Task { await self?.finish(id, .failure(Self.awaitingApproval(name))) }; return
                 case .window: Task { await self?.requeue(id) }; return
                 }

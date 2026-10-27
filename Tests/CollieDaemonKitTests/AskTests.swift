@@ -646,6 +646,28 @@ extension AskTests {
         }
     }
 
+    /// A reply due while the asker shows an approval prompt is held, then typed once the prompt is resolved.
+    @Test func noWaitHeldUntilApprovalResolved() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let aid = UUID(uuidString: a.id)!
+            let json = #"{"notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}"#
+            _ = try await send(p, Request(id: "w", terminalId: a.id, token: a.token, command: "work.hook",
+                                          args: ["hook": .string("notification"), "payload": .string(json)]))
+            let approval = try #require(await d.router.asks.pendingApproval(aid))
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            try await hook(d, p, b, "done")
+            #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
+            try await Task.sleep(for: .seconds(3))
+            #expect(!(await d.scrollbackText(aid).contains("[collie] Reply")))   // never typed into the prompt
+            let r = try await send(p, Request(id: "x", token: d.adminToken, command: "work.approval.dismiss", args: ["id": .string(approval.id.uuidString)]))
+            #expect(r.ok, "\(r)")
+            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[collie] Reply from B (ask \(id)):") })
+        }
+    }
+
     @Test func longReplyCut() async throws {
         let long = String(repeating: String(repeating: "x", count: 49) + "\n", count: 100)   // 5000 chars
         let e = AskInbox.Entry(id: "ab12cd34", target: "B", status: .done, output: long)

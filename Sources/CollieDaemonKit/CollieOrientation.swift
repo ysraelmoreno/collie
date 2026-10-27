@@ -40,9 +40,10 @@ enum CollieOrientation {
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
         func of(_ id: String) -> [String] { panels.filter { $0.pluginId == id }.map(\.name) }
         var lines = [
-            "You are running inside Collie, terminal \(quote(terminal))\(paddock.map { ", on paddock \(quote($0))" } ?? ""). Use Collie's tools (`collie` MCP server or CLI):",
-            "- Agents leashed to you: collie list / collie ask <name> \"<prompt>\" / collie check <name> (\(peers.isEmpty ? "none yet" : names(peers))).",
-            "- Project memory: collie memory search|save — check before re-reading.",
+            "You are running inside Collie, terminal \(quote(terminal))\(paddock.map { ", on paddock \(quote($0))" } ?? ""). Tools: `collie` (MCP or CLI):",
+            "- Leashed agents (\(peers.isEmpty ? "none yet" : names(peers))): collie list / check <name> / ask <name> \"<prompt>\""
+                + (tight ? " [--no-wait]." : " to wait for the reply, or collie ask <name> \"<prompt>\" --no-wait (reply comes back as a message; collie ask result <id>)."),
+            "- Memory: collie memory search|save — check before re-reading.",
             "- Work log: collie work status; collie work task defer <task> \"<reason>\" | drop …; collie work done.",
         ]
         if let lot {
@@ -52,7 +53,7 @@ enum CollieOrientation {
         }
         let d = of("design"), b = of("browser"), v = of("device")
         if !d.isEmpty { lines.append("- Design panel \(names(d)): collie design …. No other design editors, external design tools or CDNs.") }
-        if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens and checks pages.") }
+        if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens, checks pages.") }
         // panel-free: independent of reach. ponytail: the kinds and libs only while names fit (k = 3); else `--help` lists
         // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
         lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs." + (claude ? " claude.ai links: artifact import-claude." : "")
@@ -66,7 +67,7 @@ enum CollieOrientation {
             if tight {
                 lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
             } else {
-                lines.append("- As Shepherd you can open panels: collie panel open \(open) (leashed to you, on your paddock).")
+                lines.append("- As Shepherd: collie panel open \(open)")
                 // ponytail: at the length cap (orientationSanitizesNames keeps 3 names); `leash <agent> <panel>` hands one over later
                 lines.append("  Team: collie summon designer-1 --preset claude --connect design-1 | panel open design --file F --connect designer-1; leash|unleash|dismiss|paddock, panel close|move")
             }
@@ -74,19 +75,19 @@ enum CollieOrientation {
             let notFor = "Not for backend, refactors, tests, docs, invisible fixes."
             let loose = of(paddockPanels, "design").filter { !d.contains($0) }
             if !d.isEmpty {
-                lines.append("- UI work (new screen, flow or visible change): use design panel \(names(d)) first; leash it to whoever implements. \(notFor)")
+                lines.append("- UI work (screen, flow, visible change): use design panel \(names(d)) first; leash it to whoever implements. \(notFor)")
             } else if !loose.isEmpty {
-                lines.append("- UI work (new screen, flow or visible change): design panel \(names(loose)) is on your paddock but not leashed to you; ask the user to leash it to you, then design first. \(notFor)")
+                lines.append("- UI work (screen, flow, visible change): design panel \(names(loose)) is on your paddock but not leashed to you; ask the user to leash it to you, then design first. \(notFor)")
             } else {
                 // "Onde desenhar"; a bare "design X" request follows it too
                 switch designFirst {
                 case .artifact:
                     lines.append("- UI work (screen, flow, visible change; also a bare 'design X'): design it as a page first: collie artifact new prototype <name>\(tight ? "" : " (Prévia; fonts, animation, offline libs, collie font add)"). Use FigCraft only if the user asks or for design-system work. \(notFor)")
                 case .figcraft:
-                    lines.append("- UI work (new screen, flow or visible change; also a bare 'design X'): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name. \(notFor)")
+                    lines.append("- UI work (screen, flow, visible change; also a bare 'design X'): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name. \(notFor)")
                 case .ask:
                     // ponytail: `design prefer` is pasture-only; a paddock Shepherd tells the user where to set it
-                    lines.append("- UI work (new screen, flow or visible change; also a bare 'design X') and no design panel: ask the user once: a page (collie artifact new prototype <name>) or FigCraft? " + (paddock == nil ? "Save the answer: collie design prefer artifact|figcraft." : "Tell the user to set it in Collie's Preferences (Onde desenhar).") + " \(notFor)")
+                    lines.append("- UI work (screen, flow, visible change; also a bare 'design X') and no design panel: ask the user once: a page (collie artifact new prototype <name>) or FigCraft? " + (paddock == nil ? "Save the answer: collie design prefer artifact|figcraft." : "Tell the user to set it in Collie's Preferences (Onde desenhar).") + " \(notFor)")
                 }
             }
             lines.append("- Herds: collie herd list | apply <id> --name <n> | save <name> --terminals a,b")
@@ -96,8 +97,8 @@ enum CollieOrientation {
         }
         // sandbox: reads are open (secrets never); a blocked write shows the user a card; ask, don't work around it
         lines.append(tight ? "- Sandboxed: blocked write = user card; ask: collie access request <path> --write --reason \"…\"; collie open <url|app>."
-            : "- Sandboxed: reads open (not secrets); writes only in project. A blocked write = user card; don't work around it, ask: collie access request <path> --write --reason \"…\". Open URLs/apps: collie open <url|app>.")
-        if !tight { lines.append("Run `collie <group> --help` for details.") }
+            : "- Sandboxed: reads open (not secrets), writes in project only; blocked write = user card; don't work around it: collie access request <path> --write --reason \"…\". collie open <url|app>.")
+        if !tight { lines.append("More: collie <group> --help.") }
         return lines.joined(separator: "\n")
     }
 }

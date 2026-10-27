@@ -42,12 +42,15 @@ public enum Commands {
         .union(builtIn.map { String($0.name.prefix { $0 != "." }) })
     static let core: [CommandSpec] = [
         CommandSpec(name: "list", summary: "List connected agents", timeoutSeconds: 10),
-        CommandSpec(name: "ask", summary: "Send a prompt to an agent and wait for its reply",
+        CommandSpec(name: "ask", summary: "Send a prompt to an agent; wait for its reply, or --no-wait",
                     params: [ParamSpec("target", .string, positional: true, required: true, help: "Agent name"),
                              ParamSpec("prompt", .rest, positional: true, required: true, help: "Prompt text"),
                              ParamSpec("raw", .flag, help: "Return raw output"),
-                             ParamSpec("timeout", .int, help: "Timeout in seconds (default 1800)")],
+                             ParamSpec("timeout", .int, help: "Timeout in seconds (default 1800)"),
+                             ParamSpec("no-wait", .flag, help: "Return at once with an ask id; the reply is typed into your terminal when you are idle")],
                     timeoutSeconds: 1800),
+        CommandSpec(name: "ask.result", summary: "Show the reply of an ask sent with --no-wait",
+                    params: [ParamSpec("id", .string, positional: true, help: "Ask id (omit to list your recent asks)")], timeoutSeconds: 10),
         CommandSpec(name: "open", summary: "Open a http(s)/mailto URL or an installed app (the sandbox's `open`)",
                     params: [ParamSpec("target", .string, positional: true, help: "URL, or an app bundle in /Applications"),
                              ParamSpec("app", .string, help: "Application name or .app (like open -a)")],

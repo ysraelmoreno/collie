@@ -26,6 +26,14 @@ import Foundation
         #expect(o.command == "panel.open" && o.args["connect"] == .string("d1"))
     }
 
+    @Test func parsesAskResultAndNoWait() throws {
+        let r = try ArgvParser.parse(["ask", "result", "ab12cd34"])
+        #expect(r.command == "ask.result" && r.args["id"] == .string("ab12cd34"))
+        #expect(try ArgvParser.parse(["ask", "result"]).command == "ask.result")
+        let n = try ArgvParser.parse(["ask", "B", "do", "it", "--no-wait"])
+        #expect(n.command == "ask" && n.args["target"] == .string("B") && n.args["no-wait"] == .bool(true))
+    }
+
     @Test func parsesAskWithRestPrompt() throws {
         let r = try ArgvParser.parse(["ask", "Reviewer", "revise", "o", "PR", "--raw"])
         #expect(r.command == "ask")
@@ -110,7 +118,7 @@ import Foundation
         let names = tools.compactMap { t -> String? in
             if case .object(let o) = t, case .string(let n)? = o["name"] { return n } else { return nil }
         }.filter(builtInTool)
-        #expect(names == ["list", "ask", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
+        #expect(names == ["list", "ask", "ask_result", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                          "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get",
                          "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list",
@@ -129,7 +137,7 @@ import Foundation
         func names(_ m: Bool) -> [String] {
             MCPSchema.tools(shepherd: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }.filter(builtInTool)
         }
-        #expect(names(true) == ["list", "ask", "check", "summon", "dismiss", "leash", "unleash", "notify",
+        #expect(names(true) == ["list", "ask", "ask_result", "check", "summon", "dismiss", "leash", "unleash", "notify",
                                 "paddock_create", "paddock_list", "paddock_status", "paddock_land", "paddock_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                                 "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get", "work_rerail",

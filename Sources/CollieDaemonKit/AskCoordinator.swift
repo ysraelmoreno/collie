@@ -282,6 +282,8 @@ public actor AskCoordinator {
         var held = false
         /// R17: the app's work chat (`askAsUser`): the user's own text.
         var user = false
+        /// `ask --no-wait`: the asker isn't blocked, so no edge in the deadlock graph.
+        var detached = false
         var cont: CheckedContinuation<Result<AskResult, ProtocolError>, Never>?
         var timer: Task<Void, Never>?
     }
@@ -336,7 +338,7 @@ public actor AskCoordinator {
         }
     }
 
-    public func ask(from: UUID, to: UUID, prompt: String, raw: Bool, timeout: Duration) async throws(ProtocolError) -> AskResult {
+    public func ask(from: UUID, to: UUID, prompt: String, raw: Bool, timeout: Duration, detached: Bool = false) async throws(ProtocolError) -> AskResult {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
         }
@@ -345,7 +347,7 @@ public actor AskCoordinator {
                                 message: "Deadlock: '\(t.name)' is already waiting on '\(name(from))'; '\(name(from))' cannot ask '\(t.name)'")
         }
         // R7: unguarded on purpose — v1 asks answer prompts (a Shepherd's `collie ask B y`)
-        return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, cont: nil), timeout: timeout)
+        return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, detached: detached, cont: nil), timeout: timeout)
     }
 
     /// The user's ask (work chat): same FIFO, readiness gate and hook/idle completion as `ask`, but no caller
@@ -360,13 +362,14 @@ public actor AskCoordinator {
 
     /// Types `prompt` into `to` through the same readiness gate and FIFO as `ask`; returns once written,
     /// not when the turn ends. The turn still holds the queue, up to `hold`.
-    public func inject(to: UUID, prompt: String, hold: Duration = .seconds(1800)) async throws(ProtocolError) {
+    /// `afterQuiet`: typed only once `to` is idle (printed nothing for `StreamHub.workingWindow`, not waiting on an ask).
+    public func inject(to: UUID, prompt: String, hold: Duration = .seconds(1800), afterQuiet: Bool = false) async throws(ProtocolError) {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
         }
         // from == to: adds no edge to the deadlock graph
         // R10: never typed into a pending approval prompt (a summon's first prompt, a herd role)
-        _ = try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, inject: true, guardsApproval: true, cont: nil),
+        _ = try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, inject: true, afterQuiet: afterQuiet, guardsApproval: true, cont: nil),
                               timeout: hold)
     }
 
@@ -581,7 +584,7 @@ public actor AskCoordinator {
         while let n = stack.popLast() {
             if n == b { return true }
             guard seen.insert(n).inserted else { continue }
-            stack += waiters.values.filter { $0.from == n }.map(\.to)
+            stack += waiters.values.filter { $0.from == n && !$0.detached }.map(\.to)
         }
         return false
     }
@@ -599,11 +602,15 @@ public actor AskCoordinator {
     /// Starts the next queued ask for `to` if it is ready for injection and its slot is free.
     private func pump(_ to: UUID) {
         guard let t = targets[to], t.ready, t.inflight == nil, t.captureHold == nil, let id = t.queue.first, let w = waiters[id] else { return }
-        if w.guardsApproval, t.approval.pending != nil { finish(id, .failure(Self.awaitingApproval(t.name))); return }
+        // a reply delivered to its asker (`ask --no-wait`) is held instead: typed once the prompt is resolved (bounded by
+        // its hold), while `to` itself waits on a blocking ask (quiet, but mid-turn), or until `to` is quiet
+        let reply = w.inject && w.afterQuiet
+        let held = reply && (t.approval.pending != nil || waiters.values.contains { $0.from == to && $0.to != to && !$0.detached })
+        if w.guardsApproval, !reply, t.approval.pending != nil { finish(id, .failure(Self.awaitingApproval(t.name))); return }
         // output after an input not scanned yet may hold a prompt `pending` doesn't show: wait for the scan
         let unscanned = w.guardsApproval && t.approval.inWindow
         if unscanned { windowDeferrals += 1 }
-        if unscanned || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < StreamHub.workingWindow }) == true {
+        if unscanned || held || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < StreamHub.workingWindow }) == true {
             // ponytail: 100 ms polling of lastOutputAt (what the hub's `working` badge reads); bounded by the waiter's timeout
             guard !t.quietPoll else { return }
             targets[to]?.quietPoll = true
@@ -620,7 +627,7 @@ public actor AskCoordinator {
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
         // off the cooperative pool, report failures back through finish.
         let data = PromptInjector.payload(w.prompt, raw: w.raw, bracketed: t.paste.enabled)
-        let process = t.process, name = t.name, inject = w.inject, approval = t.approval, guards = w.guardsApproval
+        let process = t.process, name = t.name, inject = w.inject, approval = t.approval, guards = w.guardsApproval, hold = reply
         DispatchQueue.global().async { [weak self] in
             // checked again at the write, in one step with counting the input: a prompt printed (or keys typed) since the
             // check above is not answered either
@@ -628,6 +635,7 @@ public actor AskCoordinator {
             if guards {
                 switch approval.inputIfClear(echo: w.prompt) {   // its echo is not a prompt
                 case .written: break
+                case .pending where hold: Task { await self?.requeue(id) }; return   // held reply: retried after the prompt
                 case .pending: Task { await self?.finish(id, .failure(Self.awaitingApproval(name))) }; return
                 case .window: Task { await self?.requeue(id) }; return
                 }

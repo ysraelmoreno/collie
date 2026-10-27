@@ -11,6 +11,8 @@ actor CommandRouter {
     let registry: TerminalRegistry
     private let store: WorkspaceStore
     let asks: AskCoordinator
+    /// `ask --no-wait` replies, per asker.
+    let inbox = AskInbox()
     let hub: StreamHub
     let usage: UsageService
     var ws: Workspace
@@ -312,10 +314,15 @@ actor CommandRouter {
                 guard await registry.process(t.id)?.isRunning == true else {   // also covers records reloaded after restart
                     throw ProtocolError(code: .notRunning, message: "Terminal '\(t.name)' is not running")
                 }
-                let r = try await asks.ask(from: tid, to: t.id, prompt: try need(req, "prompt"), raw: flag(req, "raw"),
-                                           timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800))
+                let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", max: 86_400) ?? 1800)
+                if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout)) }
+                let r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout)
                 return Response(id: req.id, ok: true, result: .object([
                     "output": .string(r.output), "source": .string(r.source.rawValue), "truncated": .bool(r.truncated)]))
+            case "ask.result":   // the asker's own asks only: another terminal's id is notFound
+                guard let id = str(req, "id") else { return Response(id: req.id, ok: true, result: .array(await inbox.recent(from: tid).map(AskInbox.json))) }
+                guard let e = await inbox.get(id: id, from: tid) else { throw ProtocolError(code: .notFound, message: "No ask '\(id)'") }
+                return Response(id: req.id, ok: true, result: AskInbox.json(e))
             case "check":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
                 let s = await registry.scrollback(t.id)?.tail(lines: Int(try num(req, "lines", max: 1_000_000) ?? 200)) ?? (text: "", truncated: false)
@@ -362,6 +369,24 @@ actor CommandRouter {
         } catch {
             return Response(id: req.id, ok: false, error: ProtocolError(code: .internal, message: "\(error)"))
         }
+    }
+
+    /// `ask --no-wait`: the same ask, detached; its reply is kept in the inbox and typed into the asker once it is idle
+    /// (claude/codex only: a shell would run it).
+    private func askNoWait(from: UUID, to t: TerminalRecord, prompt: String, raw: Bool, timeout: Duration) async -> JSONValue {
+        let id = await inbox.open(from: from, target: t.name)
+        let asks = asks, inbox = inbox, target = t.id
+        let typed = ws.terminals.first { $0.id == from }.map { $0.preset == .claude || $0.preset == .codex } ?? false
+        Task {
+            let r: Result<AskResult, ProtocolError>
+            do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true)) }
+            catch { r = .failure(error) }
+            // nil: the asker was removed meanwhile — nothing to type
+            // an approval prompt on the asker holds the reply until it is resolved; after 30 min it stays only in the inbox
+            guard let e = await inbox.close(id: id, r), typed else { return }
+            try? await asks.inject(to: from, prompt: AskInbox.message(e), hold: .seconds(1800), afterQuiet: true)
+        }
+        return .object(["askId": .string(id), "target": .string(t.name)])
     }
 
     private func list(from id: UUID) async -> JSONValue {
@@ -630,6 +655,7 @@ actor CommandRouter {
     /// Kills `t` and forgets its record and leashes; emits `.disconnected` per leash, then `.removed`.
     func remove(_ t: TerminalRecord) async throws {
         await discard(t.id)
+        await inbox.drop(terminal: t.id)
         SandboxLaunch.remove(t.id, root: config.paths.root)
         await sandboxGone(t.id)
         ws.terminals.removeAll { $0.id == t.id }

@@ -834,6 +834,38 @@ A memória do Collie vive em três escopos: **global** (vale em todo lugar), **p
 
 O recado entregue na compactação não é repetido no prompt seguinte. Só o Claude recebe essa injeção (início, prompt e compactação). O Codex ainda não recebe nada no início nem no prompt (não tem esse gancho): leia os recados com `collie lot board` e os comentários com `collie comment list`. O preset do Cursor ainda não está disponível.
 
+### Observabilidade da memória
+
+Para você ver se a memória é usada, mantida e quanto custa, o daemon registra eventos em
+`~/Library/Application Support/Collie/metrics/memory-AAAA-MM-DD.jsonl` (um arquivo por dia, 0600 numa pasta 0700, só os
+últimos 90 dias). Cada linha é um evento, **nunca texto de memória nem da conversa**: ids, tipos, contagens e tokens. O
+registro é feito numa fila própria, fora do gancho: o prompt não espera por ele.
+
+- **Uso:** cada injeção (início, prompt, compactação, checklist, regra empurrada, retirada) com bytes e tokens estimados
+  (bytes ÷ 4); prompts sem nenhuma memória relevante; buscas dos agentes (`memory search`/`get`).
+- **Manutenção:** memórias criadas, mescladas, substituídas, retiradas, arquivadas, desfeitas e perguntas, com a origem
+  (correção, conversa, proposta, revisão, consolidação, agente, você); cada chamada do curador com tokens, custo e duração.
+- **Aprendizado:** cada correção detectada, com o assunto. Uma correção do mesmo assunto em até 14 dias conta como
+  **repetida** — o sinal de que a memória não evitou o erro.
+- **Tokens das sessões:** ao fim de cada turno do Claude, o uso de tokens (entrada, saída, cache lido e criado, modelo) das
+  mensagens novas da transcrição daquela sessão, pelas mesmas regras de leitura da captura de conversa (só o caminho que o
+  próprio gancho do terminal informou, sem symlink, cada linha lida uma vez). Só números; o texto não é guardado.
+
+`collie memory stats [--since 7d|24h|2w|<data ISO>] [--project <repo>] [--lot <lote>] [--terminal <nome>] [--json]` resume o
+período: cobertura (prompts com ao menos uma memória), injeções e tokens por dia, as mais usadas, as **mortas** (mais de
+30 dias sem injeção), buscas, origens, % desfeito, consolidações, perguntas abertas, idade e pontuação médias, a fila do
+curador, correções repetidas, custo do curador, tokens injetados, tokens das sessões por dia e **por tarefa concluída**, e a
+comparação desta semana com a anterior. Um agente (e o Pastor) pode rodar `collie memory stats --json`: vê só o seu lote, o
+seu projeto e o global, nunca outro lote.
+
+**Economia não é medida.** Sem comparação controlada (todas as sessões usam memória), o Collie não inventa um "economizou X
+tokens": mostra tendências (tokens por tarefa, correções repetidas, buscas por tarefa) com esse aviso.
+
+No painel Memória, a aba **Observabilidade** (ao lado de Aprendizado) mostra os cartões Uso, Manutenção, Aprendizado e Custo,
+barras por dia, as listas (mais usadas e mortas com Abrir/Arquivar, correções repetidas), filtros de período, projeto e lote,
+**Exportar JSON** e alertas: 3 ou mais correções repetidas na semana, curador falhando, fila parada há mais de 24 h, mais da
+metade das memórias mortas.
+
 ## Backup dos dados
 
 Menu **Arquivo → Exportar dados do Collie…** gera um `.zip` (0600) com `manifest.json` na raiz.

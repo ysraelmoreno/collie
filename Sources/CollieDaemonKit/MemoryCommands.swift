@@ -10,7 +10,7 @@ import CollieProtocol
 extension CommandRouter {
     /// `memory.*` commands that change no record (the rest re-render the skills dirs).
     static let memoryReads: Set<String> = ["memory.search", "memory.list", "memory.get", "memory.context", "memory.hookContext",
-                                           "memory.hookRelevant", "memory.digest", "memory.repos", "memory.curator"]
+                                           "memory.hookRelevant", "memory.digest", "memory.repos", "memory.curator", "memory.stats"]
 
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
@@ -362,6 +362,9 @@ extension CommandRouter {
             }
             return .object(["queued": .number(Double(await curator.queued(kind: .conversation).count))])
 
+        case "memory.stats":
+            return try await memoryStats(r, caller: caller, myLot: myLot, lotArg: lotArg, project: project, stores: stores, paddock: paddockName)
+
         case "memory.curator":
             if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }
             return try isoJSON(await curator.status())
@@ -459,4 +462,45 @@ extension CommandRouter {
         memory.events.emit(MemoryEvent(type: .searched, terminal: me.id, lot: lot, project: project, hits: hits))
     }
 
+    /// `memory.stats`: the period's events (and 30 days before it, for dead memories and repeats) in the caller's scope —
+    /// an agent: its lot's, its project's and the global ones, never another lot's; the app: all, or `--project`/`--lot`;
+    /// `--terminal` narrows to one terminal's. Records (dead memories, age, score) come from the stores in that scope.
+    private func memoryStats(_ r: Request, caller: TerminalRecord?, myLot: Lot?, lotArg: Lot?, project: RepoMemory, stores: [RepoMemory],
+                             paddock: String?) async throws -> JSONValue {
+        let now = Date()
+        guard let since = MemoryObservability.since(str(r, "since") ?? "7d", now: now) else {
+            throw ProtocolError(code: .invalidArgs, message: "since must be like 7d, 24h, 2w or an ISO 8601 date")
+        }
+        if caller != nil, let l = lotArg, l.id != myLot?.id { throw ProtocolError(code: .notFound, message: "Lot '\(l.name)' not found") }
+        let tid = try str(r, "terminal").map { n throws(ProtocolError) -> UUID in
+            guard let t = ws.terminals.first(where: { $0.name == n }) else { throw ProtocolError(code: .notFound, message: "Terminal '\(n)' not found") }
+            return t.id
+        }
+        let projectArg = caller == nil ? str(r, "project") : nil
+        let mine = project.root?.path
+        func placed(lot: UUID?, project p: String?) -> Bool {
+            if let l = lotArg, lot != l.id { return false }
+            if caller != nil {
+                if let lot, lot != myLot?.id { return false }
+                if let p, p != mine { return false }
+            } else if let projectArg, p != projectArg { return false }
+            return true
+        }
+        let from = min(since, now.addingTimeInterval(-Double(MemoryObservability.deadAfterDays) * 86_400))
+        let events = memory.events.read(since: from).filter { placed(lot: $0.lot, project: $0.project) && (tid == nil || $0.terminal == tid) }
+        var scoped = stores
+        if let projectArg { scoped = [await memory.repo(for: projectArg)] }
+        var records: [MemoryRecord] = []
+        for s in scoped {
+            records += try await s.run { m in m.store.all().records.filter { $0.status == .active } }
+                .filter { caller == nil || MemoryService.visible($0, paddock: paddock, lot: s.lotId) }
+        }
+        let open = digest.since(.distantPast, openAsks: true).filter {
+            var e = MemoryEvent(type: .asked); e.place(store: $0.store)
+            return placed(lot: e.lot, project: e.project)
+        }
+        let report = MemoryObservability.compute(events: events, since: since, now: now, records: records, scores: await memory.scores.all(),
+                                         openDigest: open, curator: await curator.status())
+        return try isoJSON(report)
+    }
 }

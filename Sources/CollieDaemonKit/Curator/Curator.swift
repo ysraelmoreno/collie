@@ -51,6 +51,8 @@ actor Curator {
     struct Usage: Codable { var day = ""; var today = 0; var inputTokens = 0; var outputTokens = 0; var costUSD = 0.0 }
 
     private let dir: URL, runner: any CuratorRunner, clock: any Clock<Duration>, now: @Sendable () -> Date
+    /// Each call is a `curatorRun` event (nil: not logged).
+    private let events: MemoryEventLog?
     private var jobs: [CuratorJob] = []
     private var config = Config(), usage = Usage()
     /// dedupe key → when last enqueued or finished (in memory: a restart forgets the 60 s window)
@@ -64,8 +66,9 @@ actor Curator {
     /// The file each job was loaded from or written to (a name recomputed from a decoded date could miss it).
     private var names: [UUID: String] = [:]
 
-    init(dir: URL, runner: any CuratorRunner, clock: any Clock<Duration> = ContinuousClock(), now: @escaping @Sendable () -> Date = Date.init) {
-        self.dir = dir; self.runner = runner; self.clock = clock; self.now = now
+    init(dir: URL, runner: any CuratorRunner, clock: any Clock<Duration> = ContinuousClock(), now: @escaping @Sendable () -> Date = Date.init,
+         events: MemoryEventLog? = nil) {
+        self.dir = dir; self.runner = runner; self.clock = clock; self.now = now; self.events = events
         let fm = FileManager.default
         for d in [dir, dir.appendingPathComponent("jobs"), dir.appendingPathComponent("failed")] {
             try? fm.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -220,7 +223,7 @@ actor Curator {
             guard let job = next, await runner.availability() == .available else { return }
             count(job, +1)   // R9: on disk before the run (a crash still counts)
             do {
-                try await handler(job, { c throws(ProtocolError) in try await self.call(c, kind: job.kind) })
+                try await handler(job, { c throws(ProtocolError) in try await self.call(c, job: job) })
                 remove(job)
                 recent[job.dedupe] = now()
             } catch let e as ProtocolError where e.code == .unavailable {
@@ -258,16 +261,26 @@ actor Curator {
     /// One runner call: the input cut to `inputMax` unicode scalars (≤ 48 KB of argv), counted against today's cap,
     /// usage persisted. R7: only the cap waits; any failure of the run itself (nonzero exit, `is_error`, junk, timeout)
     /// is rethrown as `.internal`, so it spends an attempt — a poison job reaches `failed/` instead of heading the queue.
-    private func call(_ c: CuratorCall, kind: CuratorJobKind) async throws(ProtocolError) -> CuratorOutput {
-        if let why = capReason(kind) { throw ProtocolError(code: .unavailable, message: why) }
+    private func call(_ c: CuratorCall, job: CuratorJob) async throws(ProtocolError) -> CuratorOutput {
+        if let why = capReason(job.kind) { throw ProtocolError(code: .unavailable, message: why) }
         var c = c
         c.input = String(String.UnicodeScalarView(c.input.unicodeScalars.prefix(Self.inputMax)))
         usage.today += 1
         write(usage, to: dir.appendingPathComponent("usage.json"))
-        let out: CuratorOutput
+        let out: CuratorOutput, started = ContinuousClock.now
+        func logged(_ ok: Bool, _ reason: String?, _ o: CuratorOutput?) {
+            let d = ContinuousClock.now - started
+            var e = MemoryEvent(type: .curatorRun, job: job.kind.rawValue, ok: ok, reason: reason, inputTokens: o?.inputTokens,
+                                outputTokens: o?.outputTokens, costUSD: o?.costUSD,
+                                durationMs: Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000))
+            e.place(store: job.store)
+            events?.emit(e)
+        }
         do { out = try await runner.run(c, model: config.model, timeout: Self.timeout) } catch {
+            logged(false, String(error.message.prefix(200)), nil)
             throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error
         }
+        logged(true, nil, out)
         usage.inputTokens += out.inputTokens; usage.outputTokens += out.outputTokens; usage.costUSD += out.costUSD
         write(usage, to: dir.appendingPathComponent("usage.json"))
         return out

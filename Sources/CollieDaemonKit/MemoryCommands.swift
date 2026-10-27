@@ -10,7 +10,7 @@ import CollieProtocol
 extension CommandRouter {
     /// `memory.*` commands that change no record (the rest re-render the skills dirs).
     static let memoryReads: Set<String> = ["memory.search", "memory.list", "memory.get", "memory.context", "memory.hookContext",
-                                           "memory.hookRelevant", "memory.digest", "memory.repos", "memory.curator"]
+                                           "memory.hookRelevant", "memory.digest", "memory.repos", "memory.curator", "memory.stats"]
 
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
@@ -77,6 +77,10 @@ extension CommandRouter {
                                                             paddock: paddockName, lot: lot, origin: origin,
                                                             proposed: caller != nil && kind == .procedure)
             if kind == .pitfall { await enqueuePitfall(saved.id, store: target) }
+            var ev = MemoryEvent(type: .created, terminal: caller?.id, ids: [saved.id], kinds: [kind.rawValue], scopes: [saved.scope.rawValue],
+                                 source: caller == nil ? "user" : "agent")
+            ev.place(store: target.key)
+            memory.events.emit(ev)
             return try memJSON(saved, target, ["superseded": old.map { .string($0.id.uuidString) } ?? .null])
 
         case "memory.search":
@@ -101,6 +105,7 @@ extension CommandRouter {
                 }
             }
             let hits = MemoryIndex.rank(cands, lang: vector?.lang).prefix(limit).map { (hit: $0, store: from[$0.record.id]!) }   // one scale (R10)
+            if let me = caller { searched(me, hits: hits.count, lot: myLot?.id, project: project.root?.path) }
             for s in stores {
                 let ids = hits.filter { $0.store === s }.map(\.hit.record.id)
                 if !ids.isEmpty { _ = try? await s.run { m in m.index()?.noteRead(ids) } }
@@ -148,6 +153,7 @@ extension CommandRouter {
                 if let d = st?.lastReadAt { extra["lastReadAt"] = .string(isoString(d)) }
                 if let d = st?.missingSince { extra["missingSince"] = .string(isoString(d)) }
                 _ = try? await s.run { m in m.index()?.noteRead([id]) }
+                if let me = caller { searched(me, hits: 1, lot: myLot?.id, project: project.root?.path) }
                 return try memJSON(rec, s, extra)
             }
             throw ProtocolError(code: .notFound, message: "memory \(id.uuidString.lowercased()) not found")
@@ -163,6 +169,7 @@ extension CommandRouter {
 
         case "memory.hookContext", "memory.hookRelevant":
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
+            if let tr = str(r, "transcript") { await memory.noteSession(me.id, transcript: tr) }   // the session its events name
             let text: String
             if r.command == "memory.hookContext" {
                 // compact/resume: the work state (first), the board's handoff and status posts, then the memory index, in one 4096-byte budget
@@ -176,7 +183,8 @@ extension CommandRouter {
                 let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
                 await refreshSkills(me.id)   // a session (re)starts: its skills as the stores are now (a hand edit, a pull)
                 let w = try? await work.active(terminal: me.id)
-                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used)
+                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used,
+                                                source: str(r, "source"))
                 let mem = (head + [rest == MemoryService.header ? "" : rest]).filter { !$0.isEmpty }.joined(separator: "\n\n")
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
@@ -222,6 +230,7 @@ extension CommandRouter {
                 throw invalid("subject and title must not be blank")
             }
             let edited = title != nil || body != nil || subject != nil
+            let wasProposed = try await repo.run { m in m.store.all().records.first { $0.id == id }?.status == .proposed }
             let out = try await update(id) { rec, m in
                 let store = m.store
                 if let title { rec.title = title }
@@ -261,6 +270,11 @@ extension CommandRouter {
                 }
             }
             if edited, caller == nil { await memory.scores.penalize(id, ScoreStore.userEdit, reason: "editada pelo usuário") }
+            if action != "approve" || wasProposed {   // approving a proposal (a procedure too) makes it: created by the user
+                var ev = MemoryEvent(type: action == "approve" ? .created : action == "archive" ? .archived : .retracted, ids: [id], source: "user")
+                ev.place(store: repo.key)
+                memory.events.emit(ev)
+            }
             // L3: the user decided on a waiting quote: its correction job is moot (never a second rule)
             await cancelCorrection(quote: id)
             return out
@@ -348,6 +362,9 @@ extension CommandRouter {
                 throw ProtocolError(code: .notFound, message: "no Claude conversation seen for '\(t.name)' yet")
             }
             return .object(["queued": .number(Double(await curator.queued(kind: .conversation).count))])
+
+        case "memory.stats":
+            return try await memoryStats(r, caller: caller, myLot: myLot, lotArg: lotArg, project: project, stores: stores, paddock: paddockName)
 
         case "memory.curator":
             if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }
@@ -441,4 +458,50 @@ extension CommandRouter {
     }
 
     private func isoString(_ d: Date) -> String { ISO8601DateFormatter().string(from: d) }
+
+    private func searched(_ me: TerminalRecord, hits: Int, lot: UUID?, project: String?) {
+        memory.events.emit(MemoryEvent(type: .searched, terminal: me.id, lot: lot, project: project, hits: hits))
+    }
+
+    /// `memory.stats`: the period's events (and 30 days before it, for dead memories and repeats) in the caller's scope —
+    /// an agent: its lot's, its project's and the global ones, never another lot's; the app: all, or `--project`/`--lot`;
+    /// `--terminal` narrows to one terminal's. Records (dead memories, age, score) come from the stores in that scope.
+    private func memoryStats(_ r: Request, caller: TerminalRecord?, myLot: Lot?, lotArg: Lot?, project: RepoMemory, stores: [RepoMemory],
+                             paddock: String?) async throws -> JSONValue {
+        let now = Date()
+        guard let since = MemoryObservability.since(str(r, "since") ?? "7d", now: now) else {
+            throw ProtocolError(code: .invalidArgs, message: "since must be like 7d, 24h, 2w or an ISO 8601 date")
+        }
+        if caller != nil, let l = lotArg, l.id != myLot?.id { throw ProtocolError(code: .notFound, message: "Lot '\(l.name)' not found") }
+        let tid = try str(r, "terminal").map { n throws(ProtocolError) -> UUID in
+            guard let t = ws.terminals.first(where: { $0.name == n }) else { throw ProtocolError(code: .notFound, message: "Terminal '\(n)' not found") }
+            return t.id
+        }
+        let projectArg = caller == nil ? str(r, "project") : nil
+        let mine = project.root?.path
+        func placed(lot: UUID?, project p: String?) -> Bool {
+            if let l = lotArg, lot != l.id { return false }
+            if caller != nil {
+                if let lot, lot != myLot?.id { return false }
+                if let p, p != mine { return false }
+            } else if let projectArg, p != projectArg { return false }
+            return true
+        }
+        let from = min(since, now.addingTimeInterval(-Double(MemoryObservability.deadAfterDays) * 86_400))
+        let events = memory.events.read(since: from).filter { placed(lot: $0.lot, project: $0.project) && (tid == nil || $0.terminal == tid) }
+        var scoped = stores
+        if let projectArg { scoped = [await memory.repo(for: projectArg)] }
+        var records: [MemoryRecord] = []
+        for s in scoped {
+            records += try await s.run { m in m.store.all().records.filter { $0.status == .active } }
+                .filter { caller == nil || MemoryService.visible($0, paddock: paddock, lot: s.lotId) }
+        }
+        let open = digest.since(.distantPast, openAsks: true).filter {
+            var e = MemoryEvent(type: .asked); e.place(store: $0.store)
+            return placed(lot: e.lot, project: e.project)
+        }
+        let report = MemoryObservability.compute(events: events, since: since, now: now, records: records, scores: await memory.scores.all(),
+                                         openDigest: open, curator: await curator.status())
+        return try isoJSON(report)
+    }
 }

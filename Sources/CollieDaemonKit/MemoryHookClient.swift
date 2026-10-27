@@ -10,7 +10,8 @@ public enum MemoryHookClient {
 
     /// The JSON Claude Code expects on stdout, or nil when there is nothing to inject or anything went wrong
     /// (daemon down, timeout, error: `onError` gets the reason; never throws, never blocks Claude for more than 5 s).
-    public static func output(event: Event, prompt: String?, source: String? = nil, env: [String: String],
+    /// `transcript`: the hook's `transcript_path` (names the session in the memory event log; never read here).
+    public static func output(event: Event, prompt: String?, source: String? = nil, transcript: String? = nil, env: [String: String],
                               onError: (String) -> Void = { _ in }) async -> String? {
         guard let sock = env["COLLIE_SOCKET"], let tid = env["COLLIE_TERMINAL_ID"], let tok = env["COLLIE_TOKEN"] else {
             onError("COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN missing"); return nil
@@ -18,6 +19,7 @@ public enum MemoryHookClient {
         var args: [String: JSONValue] = [:]
         if event == .userPromptSubmit { args["prompt"] = .string(HookPayload.boundedPrompt(prompt ?? "")) }
         if event == .sessionStart, let source { args["source"] = .string(source) }
+        if let transcript { args["transcript"] = .string(transcript) }
         do {
             let r = try await UnixSocketClient.send(
                 Request(id: UUID().uuidString, terminalId: tid, token: tok,

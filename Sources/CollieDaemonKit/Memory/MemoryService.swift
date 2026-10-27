@@ -174,10 +174,18 @@ actor MemoryService {
     nonisolated let embedder: (any MemoryEmbedder)?
     /// Outcome scores (`<root>/learning/scores.json`, beside `memory/`): multiply relevance, feed cleanup.
     nonisolated let scores: ScoreStore
+    /// `<root>/metrics`: what is injected, searched and maintained (`MemoryEventLog`).
+    nonisolated let events: MemoryEventLog
+    /// Each terminal's Claude session (its transcript's name), from its hooks: the injection events carry it.
+    private var sessions: [UUID: String] = [:]
+    func noteSession(_ terminal: UUID, transcript: String) {
+        sessions[terminal] = URL(fileURLWithPath: transcript).deletingPathExtension().lastPathComponent
+    }
 
     init(globalDir: URL, embedder: (any MemoryEmbedder)? = nil) {
         self.globalDir = globalDir; self.embedder = embedder
         scores = ScoreStore(file: globalDir.deletingLastPathComponent().appendingPathComponent("learning/scores.json"))
+        events = MemoryEventLog(dir: globalDir.deletingLastPathComponent().appendingPathComponent("metrics"))
         lotsDir = globalDir.deletingLastPathComponent().appendingPathComponent("lots")   // beside `work/`
         global = RepoMemory(root: nil, storeDir: globalDir,
                             dbFile: globalDir.deletingLastPathComponent().appendingPathComponent("cache/memory.sqlite"), commonDir: nil,
@@ -271,11 +279,28 @@ actor MemoryService {
 
     /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set) and,
     /// for scoring, for its open `work`.
-    func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, limit: Int = 4096) async -> String {
+    /// `source`: the SessionStart's (compact|resume are logged as `compact`, anything else as `start`).
+    func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, limit: Int = 4096,
+                 source: String? = nil) async -> String {
         let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
         injected[terminal] = (lot, c.ids.merging(skills[terminal]?.ids ?? [:]) { a, _ in a })
         if let work { await scores.noteInjected(Set(c.ids.keys), work: work) }
+        if !c.text.isEmpty {
+            let project = await repo(for: cwd).root?.path
+            let main = c.recs.filter { c.checklist[$0.id] == nil }, list = c.recs.filter { c.checklist[$0.id] != nil }
+            let listBytes = c.checklistText.utf8.count
+            note(terminal, ["compact", "resume"].contains(source ?? "") ? "compact" : "start", main, bytes: c.text.utf8.count - listBytes,
+                 work: work, lot: lot, project: project)
+            if !list.isEmpty { note(terminal, "checklist", list, bytes: listBytes, work: work, lot: lot, project: project) }
+        }
         return c.text
+    }
+
+    /// One `injected` event: the memories in full (an index of titles counts in `bytes` only).
+    private func note(_ terminal: UUID, _ place: String, _ recs: [MemoryRecord], bytes: Int, work: UUID?, lot: UUID?, project: String?) {
+        events.emit(MemoryEvent(type: .injected, terminal: terminal, session: sessions[terminal], work: work, lot: lot, project: project,
+                                ids: recs.map(\.id), kinds: recs.map(\.kind.rawValue), scopes: recs.map(\.scope.rawValue),
+                                bytes: bytes, tokens: MemoryEvent.estimate(bytes: bytes), where: place))
     }
 
     /// Pinned memories of every readable store in full, then an index (titles) of the rest of the lot's — or, outside a
@@ -285,8 +310,10 @@ actor MemoryService {
         return (c.text, Set(c.ids.keys))
     }
 
+    private struct ContextParts { var text = "", ids: [UUID: String] = [:], recs: [MemoryRecord] = [], checklist: [UUID: String] = [:], checklistText = "" }
+
     /// `contextText`, with each injected id's store key: header, pinned, the pitfall checklist (≤ 1 200 B), the index.
-    private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int) async -> (text: String, ids: [UUID: String]) {
+    private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int) async -> ContextParts {
         var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = [], owner: [UUID: String] = [:]
         let (keep, asked) = await proposalState?() ?? ([], [])
         for s in await readable(cwd, lot: lot) {
@@ -302,12 +329,13 @@ actor MemoryService {
         }
         var (text, ids) = Self.renderContext(pinned, limit: limit)
         var owned = owner.filter { ids.contains($0.key) }
-        guard !text.isEmpty else { return ("", [:]) }
+        guard !text.isEmpty else { return ContextParts() }
         let room = Swift.min(Self.checklistMax, limit - text.utf8.count - 2)
-        let cl: (text: String, ids: [UUID: String]) = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: Set(pinned.map(\.id))) : ("", [:])
+        let cl = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: Set(pinned.map(\.id))) : (text: "", ids: [:], recs: [])
         if !cl.text.isEmpty { text += "\n\n" + cl.text; owned.merge(cl.ids) { a, _ in a } }
         Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil }, limit: limit)
-        return (text, owned)
+        return ContextParts(text: text, ids: owned, recs: pinned.filter { ids.contains($0.id) } + cl.recs, checklist: cl.ids,
+                            checklistText: cl.text.isEmpty ? "" : "\n\n" + cl.text)
     }
 
     /// M5: class text comes from agents' saves and review files through the curator: labelled as data.
@@ -324,14 +352,14 @@ actor MemoryService {
         return (c.text, Set(c.ids.keys))
     }
 
-    private func checklistParts(cwd: String, lot: UUID?, limit: Int, max: Int = 7, exclude: Set<UUID> = []) async -> (text: String, ids: [UUID: String]) {
+    private func checklistParts(cwd: String, lot: UUID?, limit: Int, max: Int = 7, exclude: Set<UUID> = []) async -> (text: String, ids: [UUID: String], recs: [MemoryRecord]) {
         var sections = [(Self.checklistHeader, await repo(for: cwd))]
         if let lot { sections.append((Self.lotChecklistHeader, lotStore(lot))) }
         let factors = await scores.all(), now = Date()
         func rank(_ r: MemoryRecord) -> Double {
             Double(r.hits ?? 0) * pow(0.5, Swift.max(0, now.timeIntervalSince(r.updatedAt)) / MemoryIndex.halfLife) * (factors[r.id] ?? 1)
         }
-        var out = "", ids: [UUID: String] = [:]
+        var out = "", ids: [UUID: String] = [:], picked: [MemoryRecord] = []
         for (title, s) in sections where ids.count < max {
             let recs = (try? await s.run { m in
                 m.store.all().records.filter { $0.status == .active && $0.kind == .pitfall && $0.hits != nil && !exclude.contains($0.id)
@@ -344,10 +372,10 @@ actor MemoryService {
                 if line.count > Self.checklistLineMax { line = String(line.prefix(Self.checklistLineMax - 1)) + "…" }
                 let add = (started ? "\n" : (out.isEmpty ? "" : "\n\n") + title + "\n") + line
                 guard out.utf8.count + add.utf8.count <= limit else { continue }
-                out += add; started = true; ids[r.id] = s.key
+                out += add; started = true; ids[r.id] = s.key; picked.append(r)
             }
         }
-        return (out, ids)
+        return (out, ids, picked)
     }
 
     /// Lot hits weigh ×1.5 over project/global ones.
@@ -394,6 +422,8 @@ actor MemoryService {
         if !wait.isEmpty { pending[terminal] = wait + (pending[terminal] ?? []) }
         guard !chosen.isEmpty else { return "" }
         injected[terminal, default: (lot, [:])].ids.merge(chosen) { a, _ in a }
+        note(terminal, "rule", ids.compactMap { chosen[$0] != nil ? found[$0]?.rec : nil }, bytes: out.utf8.count, work: nil, lot: lot,
+             project: await repo(for: cwd).root?.path)
         return out
     }
 
@@ -436,13 +466,19 @@ actor MemoryService {
         if said.count < gone.count { out += "\n… e mais \(gone.count - said.count)" }
         for id in said { injected[terminal]?.ids[id] = nil }
         retracted[terminal, default: []].formUnion(said)
+        note(terminal, "retraction", gone.filter { said.contains($0.id) }, bytes: out.utf8.count, work: nil, lot: lot, project: nil)
         return out
     }
 
     private func hits(for terminal: UUID, cwd: String, paddock: String?, lot: UUID?, work: UUID?, prompt: String, limit: Int, max: Int) async -> String {
         sync(terminal, lot: lot)
+        let project = await repo(for: cwd).root?.path
+        func noHit() -> String {
+            events.emit(MemoryEvent(type: .noHit, terminal: terminal, session: sessions[terminal], work: work, lot: lot, project: project))
+            return ""
+        }
         let q = Self.significantTerms(prompt).joined(separator: " ")
-        guard !q.isEmpty, max > 0 else { return "" }
+        guard !q.isEmpty, max > 0 else { return noHit() }
         let vector = await embed(prompt, wait: Self.promptEmbedWait)   // once per prompt, for every store
         let factors = await scores.all()
         var cands: [MemoryIndex.Candidate] = [], from: [UUID: RepoMemory] = [:]
@@ -455,7 +491,7 @@ actor MemoryService {
         }
         // ranked across the stores together: one scale (R10)
         let hits = MemoryIndex.rank(cands, lang: vector?.lang).map { (hit: $0, store: from[$0.record.id]!) }
-        guard let top = hits.first?.hit.score, top > 0 else { return "" }
+        guard let top = hits.first?.hit.score, top > 0 else { return noHit() }
         let seen = injected[terminal]?.ids ?? [:]
         // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor
         let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && seen[$0.hit.record.id] == nil }
@@ -465,7 +501,9 @@ actor MemoryService {
             guard used + 1 + line.utf8.count <= limit else { continue }
             lines.append(line); used += 1 + line.utf8.count; chosen.append(h)
         }
-        guard !chosen.isEmpty else { return "" }
+        guard !chosen.isEmpty else { return noHit() }
+        let text = lines.joined(separator: "\n")
+        note(terminal, "prompt", chosen.map(\.hit.record), bytes: text.utf8.count, work: work, lot: lot, project: project)
         injected[terminal, default: (lot, [:])].ids.merge(chosen.map { ($0.hit.record.id, $0.store.key) }) { a, _ in a }
         if let work { await scores.noteInjected(Set(chosen.map(\.hit.record.id)), work: work) }
         var stores: [RepoMemory] = []
@@ -474,7 +512,7 @@ actor MemoryService {
             let ids = chosen.filter { $0.store === s }.map(\.hit.record.id)
             _ = try? await s.run { m in m.index()?.noteRead(ids) }
         }
-        return lines.joined(separator: "\n")
+        return text
     }
 
     /// M2: `ids` are active again (an undo, a resolved ask): every session told they went gets them pushed back
@@ -485,7 +523,9 @@ actor MemoryService {
         }
     }
 
-    func endSession(_ terminal: UUID) { injected[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil; skills[terminal] = nil }
+    func endSession(_ terminal: UUID) {
+        injected[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil; skills[terminal] = nil; sessions[terminal] = nil
+    }
 
     // MARK: procedures as skills
 

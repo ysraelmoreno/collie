@@ -68,7 +68,7 @@ public enum MemoryDigestNotice {
 /// State and daemon calls of the Memory panel (all async; the daemon does the work). The admin picks the store with `repo`.
 @MainActor public final class MemoryPanelModel: ObservableObject {
     public enum Tab: String, CaseIterable, Sendable {
-        case learning = "Aprendizado", review = "Revisar", decisions = "Decisões", map = "Mapa", cleanup = "Limpeza"
+        case learning = "Aprendizado", observability = "Observabilidade", review = "Revisar", decisions = "Decisões", map = "Mapa", cleanup = "Limpeza"
     }
 
     @Published public private(set) var repos: [MemoryRepo] = []
@@ -97,17 +97,26 @@ public enum MemoryDigestNotice {
     @Published public private(set) var error: String?
     /// Set by the confirmation dialog; `purge()` does nothing without it.
     @Published public var purgeConfirmed = false
+    /// Observabilidade (`memory.stats`): the report, as received (Exportar JSON) and decoded, and its filters.
+    @Published public internal(set) var stats: MemoryStatsReport?
+    var statsJSON: JSONValue?
+    @Published public var statsSince = "7d"
+    /// nil: every project / every lot.
+    @Published public var statsProject: String?
+    @Published public var statsLot: String?
+    /// Lot names, for the Lote filter.
+    @Published public private(set) var lotList: [String] = []
 
     private let call: PanelHostContext.Call
     public init(call: @escaping PanelHostContext.Call) { self.call = call }
 
-    private func send(_ command: String, _ args: [String: JSONValue] = [:]) async -> JSONValue? {
+    func send(_ command: String, _ args: [String: JSONValue] = [:]) async -> JSONValue? {
         var a = args
         if let repo { a["repo"] = .string(repo) }
         do { return try await call(command, a) }
         catch { self.error = error.message; return nil }
     }
-    private func decode<T: Decodable>(_ v: JSONValue?) -> T? {
+    func decode<T: Decodable>(_ v: JSONValue?) -> T? {
         guard let v, let data = try? JSONEncoder().encode(v) else { return nil }
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
         return try? d.decode(T.self, from: data)
@@ -140,6 +149,7 @@ public enum MemoryDigestNotice {
         struct LotName: Decodable { var name: String; var id: UUID? }
         let lots: [LotName] = decode(await send("lot.list")) ?? []
         lotNames = Dictionary(lots.compactMap { l in l.id.map { ("lot:\($0.uuidString.lowercased())", l.name) } }, uniquingKeysWith: { a, _ in a })
+        lotList = lots.map(\.name).sorted()
         struct Digest: Decodable { var entries: [DigestRow]; var curator: CuratorInfo? }
         let since = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7 * 86400))
         if let dg: Digest = decode(await send("memory.digest", ["since": .string(since)])) { digest = dg.entries; curator = dg.curator }
@@ -148,6 +158,7 @@ public enum MemoryDigestNotice {
         var mem: [MemoryRow] = []
         for l in lots { mem += await list("active", lot: l.name)?.records ?? [] }
         lotMemories = mem
+        if tab == .observability { await loadStats() }
     }
 
     /// "Precisa de você" (open asks) first, then "Hoje" and "Esta semana" (the rest of the 7 days), newest first; empty
@@ -165,11 +176,7 @@ public enum MemoryDigestNotice {
     public var curatorLine: String? {
         guard let c = curator else { return nil }
         if !c.available { return "curador indisponível: \(c.reason ?? "desconhecido")" }
-        let t = c.inputTokens + c.outputTokens
-        let tokens = t < 1_000 ? "\(t)" : t < 1_000_000 ? "\(Int((Double(t) / 1_000).rounded())) mil"
-            : (Double(t) / 1_000_000).formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "pt_BR"))) + " mi"
-        let cost = c.costUSD.formatted(.number.precision(.fractionLength(2)).locale(Locale(identifier: "pt_BR")))
-        return "Curador: \(c.today)/\(c.cap) hoje · \(tokens) tokens · US$ \(cost)"
+        return "Curador: \(c.today)/\(c.cap) hoje · \(Self.tokens(c.inputTokens + c.outputTokens)) tokens · \(Self.usd(c.costUSD))"
     }
     /// Corrections that are probably the user's, waiting for Confirmar (the top of Aprendizado), newest first.
     public var toConfirm: [DigestRow] { digest.filter { $0.isConfirm && !$0.resolved && !$0.undone }.sorted { $0.at > $1.at } }
@@ -325,7 +332,10 @@ struct MemoryPanelView: View {
         }
         .background(Color.collieSurface)
         .task { await model.load() }
-        .onChange(of: model.tab) { _, t in if t == .cleanup { Task { await model.planCleanup() } } }
+        .onChange(of: model.tab) { _, t in
+            if t == .cleanup { Task { await model.planCleanup() } }
+            if t == .observability { Task { await model.loadStats() } }
+        }
         .sheet(item: $editing) { row in EditSheet(row: row) { t, b, s in Task { await model.edit(row.id, title: t, body: b, subject: s, lot: row.lot) } } }
         .confirmationDialog("Esvaziar descartadas?", isPresented: $confirmPurge, titleVisibility: .visible) {
             Button("Apagar \(model.discarded.count) arquivo(s)", role: .destructive) { model.purgeConfirmed = true; Task { await model.purge() } }
@@ -459,6 +469,7 @@ struct MemoryPanelView: View {
     @ViewBuilder private var content: some View {
         switch model.tab {
         case .learning: learning
+        case .observability: MemoryObservabilityView(model: model)
         case .review:
             if !model.proposals.isEmpty {
                 section("Propostas")

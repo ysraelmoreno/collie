@@ -85,7 +85,7 @@ enum MemoryLearning {
 }
 
 extension CommandRouter {
-    var digest: MemoryDigest { MemoryDigest(file: config.paths.root.appendingPathComponent("learning/digest.jsonl")) }
+    var digest: MemoryDigest { MemoryDigest(file: config.paths.root.appendingPathComponent("learning/digest.jsonl"), events: memory.events) }
 
     /// What a correction job may touch: its candidates and proposal, its family's scopes (+ global); it creates a feedback,
     /// a pitfall or (a stated how-to) a procedure.
@@ -127,6 +127,13 @@ extension CommandRouter {
                 hits += found.filter { MemoryService.visible($0.record, paddock: paddock, lot: s.lotId) }
             }
         }
+        // the learning signal: what this correction is about — its nearest memory's subject, else its own words
+        // ponytail: a repeat is matched on that key only; two wordings of one complaint with no memory between them stay two
+        let nearest = hits.max { $0.score < $1.score }?.record
+        var ev = MemoryEvent(type: .correction, terminal: terminal, lot: lot?.id, project: project.root?.path, ids: nearest.map { [$0.id] },
+                             mode: user ? "active" : "proposed",
+                             subject: nearest?.subject ?? MemoryService.significantTerms(prompt).map { $0.lowercased() }.sorted().prefix(6).joined(separator: " "))
+        memory.events.emit(ev)
         let candidates = hits.sorted { $0.score > $1.score }.prefix(MemoryLearning.maxCandidates).map {
             CorrectionPayload.Candidate(id: $0.record.id, kind: $0.record.kind, title: $0.record.title,
                                         body: String(String.UnicodeScalarView($0.record.body.unicodeScalars.prefix(MemoryLearning.candidateBodyMax))))
@@ -155,13 +162,23 @@ extension CommandRouter {
     /// The curator's work: one call (input fenced), then the validated ops applied, the digest written, the new rule
     /// pushed to the corrected terminal (after it is on disk).
     func curate(_ job: CuratorJob, _ call: Curator.Call) async throws {
-        switch job.kind {
-        case .correction: try await runLearningJob(job, call: call)
-        case .proposals: try await runProposalsJob(job, call: call)
-        case .conversation: try await runConversationJob(job, call: call)
-        case .pitfall: try await runPitfallJob(job, call: call)
-        case .consolidate: try await runConsolidateJob(job, call: call)
-        case .procedure: try await runProcedureJob(job, call: call)
+        // what the job writes to the digest is logged with its source
+        let source = switch job.kind {
+        case .correction: "correction"
+        case .proposals, .procedure: "proposal"
+        case .conversation: "conversation"
+        case .pitfall: "review"
+        case .consolidate: "consolidation"
+        }
+        try await MemoryEventLog.$source.withValue(source) {
+            switch job.kind {
+            case .correction: try await runLearningJob(job, call: call)
+            case .proposals: try await runProposalsJob(job, call: call)
+            case .conversation: try await runConversationJob(job, call: call)
+            case .pitfall: try await runPitfallJob(job, call: call)
+            case .consolidate: try await runConsolidateJob(job, call: call)
+            case .procedure: try await runProcedureJob(job, call: call)
+            }
         }
         await refreshSkills()   // a procedure may have been created or retired
     }

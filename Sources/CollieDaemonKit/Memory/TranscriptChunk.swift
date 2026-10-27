@@ -25,6 +25,21 @@ enum TranscriptChunk {
     /// `maxScalars` of them; `userMessages` counts the user's text messages of the whole chunk; `end`: the byte after its
     /// last complete line (a partial last line is the next chunk's). nil: cannot be opened as a regular file.
     static func read(_ url: URL, from offset: UInt64, secrets: Set<String>, maxScalars: Int) -> (text: String, userMessages: Int, end: UInt64)? {
+        var blocks: [String] = [], kept = 0, users = 0
+        guard let end = lines(url, from: offset, { raw in
+            guard let (isUser, text) = message(raw) else { return }
+            if isUser { users += 1 }
+            let b = (isUser ? "Usuário: " : "Agente: ") + LotBoards.scrub(text, secrets: secrets)
+            blocks.append(b); kept += b.unicodeScalars.count + 2
+            while kept > 2 * maxScalars, blocks.count > 1 { kept -= blocks.removeFirst().unicodeScalars.count + 2 }
+        }) else { return nil }
+        let all = blocks.joined(separator: "\n\n")
+        return (String(String.UnicodeScalarView(all.unicodeScalars.suffix(maxScalars))), users, end)
+    }
+
+    /// Each complete line after `offset` (from 0 when the file is shorter: it was rewritten), in order; the byte after the
+    /// last one (a partial last line is the next read's). nil: cannot be opened as a regular file (no symlink).
+    static func lines(_ url: URL, from offset: UInt64, _ each: (Data) -> Void) -> UInt64? {
         let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard fd >= 0 else { return nil }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
@@ -32,22 +47,15 @@ enum TranscriptChunk {
         guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return nil }
         let start = UInt64(st.st_size) < offset ? 0 : offset
         guard (try? h.seek(toOffset: start)) != nil else { return nil }
-        var blocks: [String] = [], kept = 0, users = 0, end = start, buf = Data()
+        var end = start, buf = Data()
         while let data = try? h.read(upToCount: block), !data.isEmpty {
             buf.append(data)
             guard let nl = buf.lastIndex(of: 10) else { continue }
-            for raw in buf[buf.startIndex...nl].split(separator: 10) {
-                guard let (isUser, text) = message(Data(raw)) else { continue }
-                if isUser { users += 1 }
-                let b = (isUser ? "Usuário: " : "Agente: ") + LotBoards.scrub(text, secrets: secrets)
-                blocks.append(b); kept += b.unicodeScalars.count + 2
-                while kept > 2 * maxScalars, blocks.count > 1 { kept -= blocks.removeFirst().unicodeScalars.count + 2 }
-            }
+            for raw in buf[buf.startIndex...nl].split(separator: 10) { each(Data(raw)) }
             end += UInt64(buf.distance(from: buf.startIndex, to: nl) + 1)
             buf = Data(buf[buf.index(after: nl)...])
         }
-        let all = blocks.joined(separator: "\n\n")
-        return (String(String.UnicodeScalarView(all.unicodeScalars.suffix(maxScalars))), users, end)
+        return end
     }
 
     /// (from the user, its text) for a user or assistant text message; nil for anything else or a malformed line.

@@ -243,6 +243,8 @@ struct ConversationTriggers {
     /// Real transcript paths whose job is running, and the trigger that came meanwhile (coalesced: one follow-up).
     var running: Set<String> = []
     var followUp: [String: (tid: UUID, force: Bool)] = [:]
+    /// Real transcript paths whose token usage is being read (`recordUsage`): one read at a time.
+    var usageReading: Set<String> = []
 }
 
 extension CommandRouter {
@@ -250,6 +252,7 @@ extension CommandRouter {
     /// < 3 user messages then waits for more).
     func conversationTurnEnded(_ tid: UUID, transcript: String) {
         conversations.transcripts[tid] = transcript
+        Task { await self.recordUsage(tid, transcript: transcript) }   // detached: the Stop hook never waits on the read
         conversations.idle[tid]?.cancel()
         let wait = config.conversationIdle
         conversations.idle[tid] = Task {

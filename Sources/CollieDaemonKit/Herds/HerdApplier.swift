@@ -75,17 +75,27 @@ extension CommandRouter {
             do { try reserve(n) } catch { throw invalid("o nome \(n) está sendo criado agora") }
             reserved.append(n)
         }
-        var repo: URL?
+        var repo: URL?, folder: URL?, notes: [String] = []
         if wantsPaddock {
             let slug = HerdFormat.slug(applyName), name = slug.isEmpty ? "rebanho" : slug
             do { try PaddockManager.validate(name: name) } catch { throw invalid("nome de cercado inválido: \(name)") }
             if taken(name) { throw invalid("o cercado \(name) já existe") }
             do { try claim(name) } catch { throw invalid("o cercado \(name) está ocupado") }
             claimed = name
-            let root: URL
-            do { root = try await PaddockManager.repoRoot(of: URL(fileURLWithPath: cwd)) } catch {
-                throw invalid("o pasto não é um repositório git: escolha uma pasta")
+            if let f = pt.folder, !f.isEmpty {   // the herd's folder: a folder paddock there, git or not
+                let u = URL(fileURLWithPath: f, relativeTo: URL(fileURLWithPath: cwd, isDirectory: true)).standardizedFileURL
+                guard FileManager.default.fileExists(atPath: u.path, isDirectory: &isDir), isDir.boolValue else { throw invalid("pasta \(u.path) não existe") }
+                if !(caller.map(startedOpen) ?? false), !ProjectRoot.contains(u.path, root: allowed ?? URL(fileURLWithPath: cwd)) {
+                    throw invalid("a pasta \(u.path) fica fora do projeto: o cercado seria mais largo que ele")
+                }
+                folder = u
+            } else if (try? await PaddockManager.repoRoot(of: URL(fileURLWithPath: cwd))) == nil {
+                folder = URL(fileURLWithPath: cwd)   // no git: the pasture folder itself, unisolated
+                notes.append("sem git: o cercado usa a pasta do pasto, sem branch")
             }
+        }
+        if wantsPaddock, folder == nil, let name = claimed {
+            let root = try await PaddockManager.repoRoot(of: URL(fileURLWithPath: cwd))
             if let me = caller, !(try await paddockRepoAllowed(root, for: me)) {
                 throw invalid("o repositório \(root.path) fica fora do seu projeto: o cercado seria mais largo que ele")
             }
@@ -118,9 +128,9 @@ extension CommandRouter {
         }
 
         var j = ApplyJournal()
-        var warnings: [String] = []
+        var warnings = notes
         do {
-            try await runApply(pt, made: made, played: played, member: member, cwd: cwd, paddock: claimed.map { ($0, repo!) },
+            try await runApply(pt, made: made, played: played, member: member, cwd: cwd, paddock: claimed.map { ($0, repo ?? folder!, folder != nil) },
                                onPaddock: caller == nil ? onPaddock?.name : nil, caller: caller, allowed: allowed, journal: &j, warnings: &warnings)
         } catch {
             let e = error as? ProtocolError ?? ProtocolError(code: .internal, message: error is CancellationError ? "aplicação cancelada" : "\(error)")
@@ -166,12 +176,15 @@ extension CommandRouter {
 
     /// Steps 1–6, each journaled as it succeeds: paddock, terminals, readiness, terminal leashes, panels (and their leashes), roles.
     private func runApply(_ pt: Herd, made: [HerdTerminal], played: String?, member: (String) -> String, cwd: String,
-                          paddock: (name: String, repo: URL)?, onPaddock: String?, caller: TerminalRecord?, allowed: URL?,
+                          paddock: (name: String, repo: URL, folder: Bool)?, onPaddock: String?, caller: TerminalRecord?, allowed: URL?,
                           journal j: inout ApplyJournal, warnings: inout [String]) async throws {
         // the app's apply on a paddock: that paddock (re-found by name: it may have gone meanwhile)
         let base: UUID? = try caller?.paddockId ?? onPaddock.map { n throws(ProtocolError) in try findPaddock(n).id }
         if let paddock {
-            do { j.paddock = try await createPaddock(paddock.name, repo: paddock.repo, createdBy: caller?.id) }
+            do {
+                j.paddock = paddock.folder ? try await createFolderPaddock(paddock.name, folder: paddock.repo, createdBy: caller?.id)
+                    : try await createPaddock(paddock.name, repo: paddock.repo, createdBy: caller?.id)
+            }
             catch let e as ProtocolError { throw ProtocolError(code: e.code, message: "cercado \(paddock.name): \(e.message)") }
         }
 
@@ -269,6 +282,12 @@ extension CommandRouter {
             warnings.append("cercado \(f.name) mantido: há terminal nele"); return warnings
         }
         do {
+            if f.isFolder {   // only Collie's record goes: the folder is the user's (R2)
+                ws.paddocks.removeAll { $0.id == f.id }
+                try await persist()
+                await hub.emit(.paddockRemoved(f.id))
+                return warnings
+            }
             let n = try await GitRunner.run(["rev-list", "--count", "\(f.baseBranch)..\(f.branch)"], in: URL(fileURLWithPath: f.repoRoot))
             guard n.status == 0 else { warnings.append("cercado \(f.name) mantido: o git não respondeu"); return warnings }
             guard n.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "0" else {

@@ -917,7 +917,8 @@ Um rebanho é uma equipe pronta: terminais (com preset, papel/prompt inicial e p
   *Isolar numa branch (worktree)* vem ligado e desligá-lo trabalha na pasta direto). Sem branch: não tem land nem PR, nem
   fechamento por merge, e excluí-lo remove só o registro do Collie, nunca a pasta. Um Pastor usa
   `collie paddock create <nome> --folder <pasta>` (dentro do seu projeto; qualquer pasta existente se começou aberto). Um
-  rebanho que pede cercado num pasto sem git é recusado.
+  rebanho que pede cercado num pasto sem git cria um cercado de pasta na própria pasta do pasto (a resposta avisa); o campo
+  `folder` do rebanho (relativo a onde é aplicado, dentro do projeto) escolhe outra pasta, com git ou não.
 - **Painel de uso:** os provedores ficam em `~/Library/Application Support/Collie/usage/providers/*.json` (semeados uma vez). O provedor Claude vem
   desativado: não há fonte local de uso que não envie um prompt. O provedor Codex não foi verificado contra a saída
   real do `codex`.

@@ -54,17 +54,19 @@ public struct Herd: Codable, Sendable, Equatable {
     public var name: String
     public var summary: String
     public var wantsPaddock: Bool
+    /// With `wantsPaddock`: a folder paddock on this folder (relative to where it is applied) instead of a worktree.
+    public var folder: String?
     public var terminals: [HerdTerminal]
     public var panels: [HerdPanel]
     public var leashes: [[String]]
     public var builtIn: Bool = false   // not serialized
 
-    enum CodingKeys: String, CodingKey { case format, id, name, summary, wantsPaddock, terminals, panels, leashes }
+    enum CodingKeys: String, CodingKey { case format, id, name, summary, wantsPaddock, folder, terminals, panels, leashes }
     private enum Legacy: String, CodingKey { case wantsFloor, cords }   // an .orqpartitura/.colliepartitura
 
     public init(id: String, name: String, summary: String = "", wantsPaddock: Bool = false, terminals: [HerdTerminal],
-                panels: [HerdPanel] = [], leashes: [[String]] = [], builtIn: Bool = false) {
-        self.id = id; self.name = name; self.summary = summary; self.wantsPaddock = wantsPaddock
+                panels: [HerdPanel] = [], leashes: [[String]] = [], builtIn: Bool = false, folder: String? = nil) {
+        self.id = id; self.name = name; self.summary = summary; self.wantsPaddock = wantsPaddock; self.folder = folder
         self.terminals = terminals; self.panels = panels; self.leashes = leashes; self.builtIn = builtIn
     }
     public init(from d: Decoder) throws {
@@ -74,6 +76,7 @@ public struct Herd: Codable, Sendable, Equatable {
         summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
         let l = try d.container(keyedBy: Legacy.self)
         wantsPaddock = try c.decodeIfPresent(Bool.self, forKey: .wantsPaddock) ?? l.decodeIfPresent(Bool.self, forKey: .wantsFloor) ?? false
+        folder = try c.decodeIfPresent(String.self, forKey: .folder)
         terminals = try c.decodeIfPresent([HerdTerminal].self, forKey: .terminals) ?? []
         panels = try c.decodeIfPresent([HerdPanel].self, forKey: .panels) ?? []
         leashes = try c.decodeIfPresent([[String]].self, forKey: .leashes) ?? l.decodeIfPresent([[String]].self, forKey: .cords) ?? []

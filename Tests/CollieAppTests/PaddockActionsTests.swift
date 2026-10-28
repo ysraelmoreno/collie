@@ -42,3 +42,26 @@ private let paddock = Paddock(id: UUID(), name: "api", repoRoot: "/r", path: "/r
     a.run { try await Task.sleep(for: .seconds(1)) }
     #expect(a.commands(for: paddock).map(\.title) == ["Status do cercado api…"])   // Land / Excluir wait for the running one
 }
+
+@MainActor @Test func folderPaddockHasNoLand() {
+    let a = actions()
+    #expect(a.commands(for: .folder(name: "docs", path: "/d")).map(\.title) == ["Status do cercado docs…", "Excluir cercado docs…"])
+}
+
+@Test func newPaddockForm() throws {
+    let fm = FileManager.default
+    let home = fm.temporaryDirectory.appendingPathComponent("collie-form-\(UUID())").resolvingSymlinksInPath()
+    defer { try? fm.removeItem(at: home) }
+    let plain = home.appendingPathComponent("plain"), repo = home.appendingPathComponent("repo"), sub = repo.appendingPathComponent("src")
+    for d in [plain, repo.appendingPathComponent(".git"), sub] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+    var f = NewPaddockForm()
+    #expect(!f.canCreate && !f.worktree)
+    f.name = "Meu Cercado"; f.folder = repo.path
+    #expect(f.isGit && f.worktree && f.canCreate && f.slug == "meu-cercado")   // a git folder: isolated by default
+    f.isolate = false
+    #expect(!f.worktree)
+    f.isolate = true; f.folder = plain.path
+    #expect(!f.isGit && !f.worktree && f.canCreate)   // never a worktree off a non-git folder
+    try fm.createDirectory(at: home.appendingPathComponent(".git"), withIntermediateDirectories: true)   // a dotfiles repo at home
+    #expect(!NewPaddockForm.isGit(plain.path, home: home.path) && NewPaddockForm.isGit(sub.path, home: home.path))
+}

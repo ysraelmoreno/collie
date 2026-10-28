@@ -250,8 +250,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         return (n, d)
     }
 
-    public func createPaddock(name: String, repo: String) async throws {
-        _ = try await admin("paddock.create", ["name": .string(name), "repo": .string(repo)], timeout: 300)
+    /// `worktree`: a git worktree of `folder`'s repo; else a folder paddock on `folder` itself.
+    public func createPaddock(name: String, folder: String, worktree: Bool = true) async throws {
+        _ = try await admin("paddock.create", ["name": .string(name), (worktree ? "repo" : "folder"): .string(folder)], timeout: 300)
     }
     public func setPaddockStatus(_ name: String, _ status: PaddockStatus) async throws {
         _ = try await admin("paddock.status", ["name": .string(name), "status": .string(status.rawValue)])

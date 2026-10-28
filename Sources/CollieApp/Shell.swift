@@ -293,7 +293,7 @@ private struct WorkspaceSidebar: View {
                 PaddockStatusDot(status: f?.status)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(f?.name ?? "Pasto").font(.collieUI(13, .medium)).foregroundStyle(Color.collieText).lineLimit(1)
-                    if let f { Text(f.branch).font(.collieMono(11)).foregroundStyle(Color.collieMuted).lineLimit(1).truncationMode(.middle) }
+                    if let f { Text(f.gitBranch ?? f.path).font(.collieMono(11)).foregroundStyle(Color.collieMuted).lineLimit(1).truncationMode(.middle) }
                 }
                 Spacer(minLength: 0)
                 if let f { Text(f.status.label).font(.collieMono(10)).foregroundStyle(Color.collieMuted).lineLimit(1).fixedSize() }
@@ -492,7 +492,7 @@ private struct PaddockHeader: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(paddock?.name ?? "Pasto").font(.collieUI(22, .semibold)).foregroundStyle(Color.collieText)
-                if let paddock { Text("\(paddock.branch) ← \(paddock.baseBranch)").font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
+                if let paddock { Text(paddock.isFolder ? paddock.path : "\(paddock.branch) ← \(paddock.baseBranch)").font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
             }
             Spacer()
             if let paddock {

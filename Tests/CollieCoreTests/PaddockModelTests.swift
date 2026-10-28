@@ -31,4 +31,14 @@ import Testing
         let s = WorkspaceSnapshot(terminals: [], connections: [], badges: [:], paddocks: [fl])
         #expect(try JSONDecoder().decode(WorkspaceSnapshot.self, from: JSONEncoder().encode(s)).paddocks == [fl])
     }
+
+    @Test func oldPaddocksDecodeAsWorktreesAndFolderRoundTrips() throws {
+        var o = try JSONSerialization.jsonObject(with: JSONEncoder().encode(fl)) as! [String: Any]
+        o["kind"] = nil
+        let old = try JSONDecoder().decode(Paddock.self, from: JSONSerialization.data(withJSONObject: o))
+        #expect(old == fl && old.kind == .worktree && old.gitBranch == "collie/auth")
+        let f = Paddock.folder(name: "docs", path: "/d")
+        let back = try JSONDecoder().decode(Paddock.self, from: JSONEncoder().encode(f))
+        #expect(back == f && back.isFolder && back.gitBranch == nil && back.path == "/d" && back.repoRoot == "/d")
+    }
 }

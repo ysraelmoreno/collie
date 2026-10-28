@@ -94,9 +94,10 @@ public enum Commands {
                     timeoutSeconds: 10, shepherdOnly: true),
         // Paddocks: admin token, or a terminal token with per-command rules enforced by the daemon (PaddockCommands);
         // shepherdOnly here only hides create/land/delete from non-Shepherd MCP tool lists.
-        CommandSpec(name: "paddock.create", summary: "Create a paddock (git worktree) off your repo",
+        CommandSpec(name: "paddock.create", summary: "Create a paddock: a git worktree off your repo, or (--folder) an existing folder worked in place, git or not",
                     params: [ParamSpec("name", .string, positional: true, required: true, help: "Paddock name (a-z, 0-9, '-')"),
-                             ParamSpec("repo", .string, help: "Repository path (admin only; Shepherds use their cwd)")],
+                             ParamSpec("repo", .string, help: "Repository path (admin only; Shepherds use their cwd)"),
+                             ParamSpec("folder", .string, help: "Folder paddock on this existing folder (no branch, no land; within your project unless you started open)")],
                     timeoutSeconds: 300, shepherdOnly: true),
         CommandSpec(name: "paddock.list", summary: "List paddocks", timeoutSeconds: 10),
         CommandSpec(name: "paddock.status", summary: "Set a paddock's status",

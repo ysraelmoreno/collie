@@ -746,6 +746,7 @@ actor CommandRouter {
             throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is outside your project \(allowed.path)")
         }
         if paddock == nil, let p = ws.paddocks.first(where: { p in
+            guard !p.isFolder else { return false }   // a folder paddock's folder is the pasture's too
             let w = URL(fileURLWithPath: p.path)
             return ProjectRoot.contains(cwd, root: w) && !ProjectRoot.contains(allowed.path, root: w)
         }) {
@@ -795,7 +796,7 @@ actor CommandRouter {
         e["SHELL"] = config.shell
         if rec.isShepherd { e["COLLIE_SHEPHERD"] = "1" }   // only unlocks the MCP tool list; the daemon checks isShepherd
         if let f = ws.paddocks.first(where: { $0.id == rec.paddockId }) {
-            e["COLLIE_PADDOCK_NAME"] = f.name; e["COLLIE_PADDOCK_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.branch
+            e["COLLIE_PADDOCK_NAME"] = f.name; e["COLLIE_PADDOCK_PATH"] = f.path; e["COLLIE_BRANCH_NAME"] = f.gitBranch
         }
         e = UserEnvironment.merge(user: user, collie: e, collieBin: config.collieExecutable.deletingLastPathComponent().path)
         if sandboxed(rec), let home = config.sandboxHome {
@@ -828,9 +829,10 @@ actor CommandRouter {
         URL(fileURLWithPath: rec.projectRoot ?? ProjectRoot.resolve(cwd: rec.cwd, paddock: nil, home: sandboxHomeDir).path)
     }
 
-    /// A pasture never writes its paddocks: the ones there are, and the folder new ones go into.
+    /// A pasture never writes its paddocks: the ones there are, and the folder new ones go into. A folder paddock is no
+    /// copy of the pasture: its folder stays the pasture's.
     func closedPaddocks(_ project: URL) -> [URL] {
-        ws.paddocks.map { URL(fileURLWithPath: $0.path) }
+        ws.paddocks.filter { !$0.isFolder }.map { URL(fileURLWithPath: $0.path) }
             .filter { ProjectRoot.contains($0.path, root: project) && !ProjectRoot.contains(project.path, root: $0) }
             + [project.appendingPathComponent(LegacyOrq.repoDirName(repoRoot: project)).appendingPathComponent("paddocks")]
     }

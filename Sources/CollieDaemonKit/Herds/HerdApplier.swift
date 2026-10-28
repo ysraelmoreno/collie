@@ -84,7 +84,7 @@ extension CommandRouter {
             claimed = name
             let root: URL
             do { root = try await PaddockManager.repoRoot(of: URL(fileURLWithPath: cwd)) } catch {
-                throw invalid("\(cwd) não está num repositório git: um cercado precisa de um")
+                throw invalid("o pasto não é um repositório git: escolha uma pasta")
             }
             if let me = caller, !(try await paddockRepoAllowed(root, for: me)) {
                 throw invalid("o repositório \(root.path) fica fora do seu projeto: o cercado seria mais largo que ele")

@@ -93,7 +93,7 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
             let cases: [([String: JSONValue], String)] = [
                 (["name": .string("x"), "cwd": .string("/tmp")], "o nome x-testes já está em uso"),
                 (["name": .string("y"), "cwd": .string(repo.path), "paddock": .bool(true)], "o cercado y já existe"),
-                (["name": .string("z"), "cwd": .string("/tmp"), "paddock": .bool(true)], "não está num repositório git"),
+                (["name": .string("z"), "cwd": .string("/tmp"), "paddock": .bool(true)], "o pasto não é um repositório git: escolha uma pasta"),
                 (["name": .string("z"), "cwd": .string("/nonexistent-collie")], "não existe"),
                 (["name": .string("w"), "cwd": .string(repo.path), "paddock": .bool(true)], "a branch collie/w já existe"),
                 (["name": .string("z"), "cwd": .string("/tmp"), "paddock": .string("sim")], "paddock deve ser true ou false"),

@@ -57,13 +57,18 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
 public enum PaddockStatus: String, Codable, Sendable { case working, blocked, review, done }
 public enum LandMode: String, Codable, Sendable { case merge, squash, rebase, pr }
 
+/// `worktree`: a git worktree on its own branch of the pasture. `folder`: an existing folder (git or not), worked in place:
+/// no branch, no land, and its delete never touches the folder.
+public enum PaddockKind: String, Codable, Sendable { case worktree, folder }
+
 public struct Paddock: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
-    public var repoRoot: String      // toplevel of the main repo (pasture)
-    public var path: String          // <repoRoot>/.collie/paddocks/<name>
-    public var branch: String        // "collie/<name>"
-    public var baseBranch: String    // pasture's branch at creation
+    public var kind: PaddockKind = .worktree   // missing (records before folder paddocks) = worktree
+    public var repoRoot: String      // toplevel of the main repo (pasture); a folder paddock's folder
+    public var path: String          // <repoRoot>/.collie/paddocks/<name>; a folder paddock's folder
+    public var branch: String        // "collie/<name>"; "" for a folder paddock
+    public var baseBranch: String    // pasture's branch at creation; "" for a folder paddock
     public var status: PaddockStatus
     public var createdBy: UUID?      // creating Shepherd terminal; nil = app
     public var landedAt: Date?
@@ -73,6 +78,25 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
         self.id = id; self.name = name; self.repoRoot = repoRoot; self.path = path; self.branch = branch
         self.baseBranch = baseBranch; self.status = status; self.createdBy = createdBy; self.landedAt = landedAt
         self.designSystem = designSystem
+    }
+    /// A folder paddock: `path` is the folder, no git.
+    public static func folder(id: UUID = UUID(), name: String, path: String, createdBy: UUID? = nil) -> Paddock {
+        var f = Paddock(id: id, name: name, repoRoot: path, path: path, branch: "", baseBranch: "", createdBy: createdBy)
+        f.kind = .folder
+        return f
+    }
+    public var isFolder: Bool { kind == .folder }
+    /// The branch, nil for a folder paddock.
+    public var gitBranch: String? { isFolder ? nil : branch }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id); name = try c.decode(String.self, forKey: .name)
+        kind = try c.decodeIfPresent(PaddockKind.self, forKey: .kind) ?? .worktree
+        repoRoot = try c.decode(String.self, forKey: .repoRoot); path = try c.decode(String.self, forKey: .path)
+        branch = try c.decode(String.self, forKey: .branch); baseBranch = try c.decode(String.self, forKey: .baseBranch)
+        status = try c.decode(PaddockStatus.self, forKey: .status); createdBy = try c.decodeIfPresent(UUID.self, forKey: .createdBy)
+        landedAt = try c.decodeIfPresent(Date.self, forKey: .landedAt); designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
     }
 }
 

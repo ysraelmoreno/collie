@@ -93,7 +93,6 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
             let cases: [([String: JSONValue], String)] = [
                 (["name": .string("x"), "cwd": .string("/tmp")], "o nome x-testes já está em uso"),
                 (["name": .string("y"), "cwd": .string(repo.path), "paddock": .bool(true)], "o cercado y já existe"),
-                (["name": .string("z"), "cwd": .string("/tmp"), "paddock": .bool(true)], "não está num repositório git"),
                 (["name": .string("z"), "cwd": .string("/nonexistent-collie")], "não existe"),
                 (["name": .string("w"), "cwd": .string(repo.path), "paddock": .bool(true)], "a branch collie/w já existe"),
                 (["name": .string("z"), "cwd": .string("/tmp"), "paddock": .string("sim")], "paddock deve ser true ou false"),
@@ -337,6 +336,48 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("dentro do projeto") == true, "\(r)")
             let s = try await state(d, p)
             #expect(s.panels.isEmpty && s.terminals.isEmpty, "\(s)")
+        }
+    }
+
+    /// A herd file with one shell terminal that asks for a paddock (optionally on `folder`).
+    private func folderHerd(_ p: Paths, folder: String?) throws {
+        let f = folder.map { #","folder":"\#($0)""# } ?? ""
+        let herd = #"{"format":1,"id":"pasta","name":"Pasta","summary":"","wantsPaddock":true\#(f),"terminals":[{"key":"a","preset":"shell","isShepherd":false}],"panels":[],"leashes":[]}"#
+        let file = p.root.appendingPathComponent("herds/pasta.collieherd")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(herd.utf8).write(to: file)
+    }
+
+    /// No git: the paddock is a folder paddock on the pasture folder itself, and the reply says so.
+    @Test func herdOnNonGitPastureMakesFolderPaddock() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("collie-pasto-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try await withDaemon { d, p in
+            try folderHerd(p, folder: nil)
+            let r = try await apply(d, p, ["id": .string("pasta"), "name": .string("v"), "cwd": .string(dir.path)])
+            guard case .object(let o)? = r.result, case .array(let w)? = o["warnings"] else { Issue.record("\(r)"); return }
+            #expect(w.contains(.string("sem git: o cercado usa a pasta do pasto, sem branch")), "\(w)")
+            let s = try await state(d, p)
+            let f = try #require(s.paddocks.first)
+            #expect(f.isFolder && f.path == SignedAppCheck.realPath(dir) && s.terminals.allSatisfy { $0.paddockId == f.id && $0.cwd == f.path }, "\(s)")
+        }
+    }
+
+    /// The herd's `folder`: a folder paddock there (git or not), within the pasture.
+    @Test func herdFolderFieldMakesFolderPaddock() async throws {
+        let repo = try await makeRepo()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("sub"), withIntermediateDirectories: true)
+        try await withDaemon { d, p in
+            try folderHerd(p, folder: "..")
+            let out = try await apply(d, p, ["id": .string("pasta"), "name": .string("v"), "cwd": .string(repo.path)])
+            #expect(out.error?.message.contains("fora do projeto") == true, "\(out)")
+            try folderHerd(p, folder: "sub")
+            let r = try await apply(d, p, ["id": .string("pasta"), "name": .string("v"), "cwd": .string(repo.path)])
+            #expect(r.ok, "\(r)")
+            let f = try #require(try await state(d, p).paddocks.first)
+            #expect(f.isFolder && f.path == SignedAppCheck.realPath(repo.appendingPathComponent("sub")), "\(f)")
+            #expect(try await GitRunner.run(["show-ref", "--verify", "--quiet", "refs/heads/collie/v"], in: repo).status != 0)
         }
     }
 

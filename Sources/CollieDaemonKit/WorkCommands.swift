@@ -38,7 +38,7 @@ extension CommandRouter {
         if let w = try await work.active(terminal: me.id) { return w }
         let paddock = ws.paddocks.first { $0.id == me.paddockId }
         let day = Date.ISO8601FormatStyle(timeZone: .current).year().month().day().dateSeparator(.dash)
-        do { return try await work.start(title: "\(me.name) — \(now.formatted(day))", terminal: me.id, paddockId: paddock?.id, branch: paddock?.branch) }
+        do { return try await work.start(title: "\(me.name) — \(now.formatted(day))", terminal: me.id, paddockId: paddock?.id, branch: paddock?.gitBranch) }
         catch { if let w = try await work.active(terminal: me.id) { return w }; throw error }   // a concurrent call opened it first
     }
 
@@ -204,7 +204,7 @@ extension CommandRouter {
             let branch = str(r, "branch").flatMap { $0.isEmpty ? nil : $0 }
             if let b = branch, !(await Self.validBranch(b, in: URL(fileURLWithPath: t.cwd))) { throw invalid("invalid branch '\(b)'") }   // git arg
             let paddock = ws.paddocks.first { $0.id == t.paddockId }
-            let w = try await work.start(title: try text("title"), terminal: t.id, paddockId: paddock?.id, branch: branch ?? paddock?.branch)
+            let w = try await work.start(title: try text("title"), terminal: t.id, paddockId: paddock?.id, branch: branch ?? paddock?.gitBranch)
             return .object(["id": .string(w.id.uuidString.lowercased())])
 
         case "work.done":   // --id: any work the caller sees, also one whose terminal was removed
@@ -363,7 +363,7 @@ extension CommandRouter {
     /// Never fails the land.
     func closeMerged(_ f: Paddock) async {
         do {
-            for w in try await work.list(includeClosed: false) where w.paddockId.map({ $0 == f.id }) ?? (w.branch == f.branch) {
+            for w in try await work.list(includeClosed: false) where w.paddockId.map({ $0 == f.id }) ?? (w.branch == f.gitBranch) {
                 let lot = ws.lot(of: w.terminalId)?.id
                 try await work.update(w.id) { if $0.closedAt == nil { $0.closedAt = Date(); $0.closedBy = "merge"; $0.lotId = lot } }
             }

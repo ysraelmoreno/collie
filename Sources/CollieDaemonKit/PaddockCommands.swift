@@ -30,17 +30,16 @@ extension CommandRouter {
         case "paddock.create":
             let name = try need(r, "name")
             try PaddockManager.validate(name: name)
-            let repo: URL
-            if let me = caller {
-                guard me.isShepherd else { throw refuse("'paddock.create' is Shepherd-only") }
-                repo = URL(fileURLWithPath: me.cwd)
-            } else {
-                repo = URL(fileURLWithPath: try need(r, "repo"))
-            }
+            if let me = caller, !me.isShepherd { throw refuse("'paddock.create' is Shepherd-only") }
+            // --folder: a folder paddock there (relative to the CLI's cwd); else a worktree of the repo
+            let base = (r.cwd ?? caller?.cwd).map { URL(fileURLWithPath: $0, isDirectory: true) }
+            let folder = str(r, "folder").flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, relativeTo: base).standardizedFileURL }
+            let repo = try caller.map { URL(fileURLWithPath: $0.cwd) } ?? folder ?? URL(fileURLWithPath: try need(r, "repo"))
             if ws.paddocks.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
                 throw ProtocolError(code: .invalidArgs, message: "paddock '\(name)' already exists")
             }
             try claim(name); defer { paddockBusy.remove(name.lowercased()) }
+            if let folder { return try isoJSON(try await createFolderPaddock(name, folder: folder, createdBy: caller?.id)) }
             return try isoJSON(try await createPaddock(name, repo: repo, createdBy: caller?.id))
         case "paddock.status":
             var f = try findPaddock(try need(r, "name"))
@@ -59,6 +58,7 @@ extension CommandRouter {
             }
             if mode == .pr && caller != nil { throw refuse("pr land is user-only") }   // pushes to a remote
             var f = try findPaddock(try need(r, "name"))
+            try PaddockManager.refuseFolder(f)
             guard isCreator(f) else { throw refuse("only the Shepherd that created paddock '\(f.name)' can land it") }
             try claim(f.name); defer { paddockBusy.remove(f.name.lowercased()) }
             let res = try await PaddockManager.land(&f, mode: mode, message: str(r, "message"))
@@ -77,8 +77,8 @@ extension CommandRouter {
                     throw ProtocolError(code: .invalidArgs, message: "paddock has running terminals")
                 }
             }
-            try await PaddockManager.delete(f, force: flag(r, "force"))
-            await memory.evict(under: f.path)
+            try await PaddockManager.delete(f, force: flag(r, "force"))   // a folder paddock's folder stays (R2)
+            if !f.isFolder { await memory.evict(under: f.path) }   // a folder's memory is the folder's, still in use
             ws.paddocks.removeAll { $0.id == f.id }
             for i in ws.terminals.indices where ws.terminals[i].paddockId == f.id {   // stopped records leave the paddock
                 ws.terminals[i].paddockId = nil; ws.terminals[i].cwd = f.repoRoot
@@ -108,6 +108,19 @@ extension CommandRouter {
             try? await PaddockManager.delete(f, force: true)
             throw error
         }
+        await hub.emit(.paddock(f))
+        return f
+    }
+
+    /// A folder paddock on `folder`: a Shepherd's lies within its project (any existing folder when it started open).
+    func createFolderPaddock(_ name: String, folder: URL, createdBy: UUID?) async throws -> Paddock {
+        if let me = ws.terminals.first(where: { $0.id == createdBy }), !startedOpen(me),
+           !ProjectRoot.contains(folder.path, root: try await projectRoot(of: me)) {
+            throw ProtocolError(code: .invalidArgs, message: "a pasta \(folder.path) fica fora do seu projeto: o cercado seria mais largo que ele")
+        }
+        let f = try PaddockManager.createFolder(name: name, folder: folder, createdBy: createdBy)
+        ws.paddocks.append(f)
+        do { try await persist() } catch { ws.paddocks.removeAll { $0.id == f.id }; throw error }
         await hub.emit(.paddock(f))
         return f
     }

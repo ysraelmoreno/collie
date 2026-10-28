@@ -226,4 +226,71 @@ private func paddockList(_ r: Response) -> [[String: JSONValue]] {
         } catch { await d2.stop(); throw error }
         await d2.stop()
     }
+
+    private func plainDir() throws -> URL {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-folder-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        let real = d.resolvingSymlinksInPath()
+        try "keep\n".write(to: real.appendingPathComponent("keep.txt"), atomically: true, encoding: .utf8)
+        return real
+    }
+
+    /// A folder paddock on a non-git folder: its terminals work there; no land/PR; its delete leaves every file.
+    @Test func folderPaddockOnPlainFolder() async throws {
+        let dir = try plainDir()
+        try await withDaemon { d, p in
+            #expect(try await admin(d, p, "paddock.create", ["name": .string("docs"), "folder": .string(dir.appendingPathComponent("nope").path)]).error?.code == .invalidArgs)
+            #expect(try await admin(d, p, "paddock.create", ["name": .string("docs"), "folder": .string(dir.path)]).ok)
+            let f = try #require(try await snapshot(d, p).paddocks.first)
+            let real = SignedAppCheck.realPath(dir)
+            #expect(f.isFolder && f.path == real && f.gitBranch == nil, "\(f)")
+            #expect(try await admin(d, p, "admin.spawn", ["name": .string("S"), "preset": .string("custom"),
+                                                          "command": .string("exit 0"), "paddock": .string("docs")]).ok)
+            let s = try #require(try await snapshot(d, p).terminals.first { $0.name == "S" })
+            #expect(s.paddockId == f.id && s.cwd == real && s.projectRoot == real, "\(s)")
+            #expect(await waitFor(10) { await d.process(s.id)?.isRunning == false })
+            for mode in ["merge", "pr"] {
+                let r = try await admin(d, p, "paddock.land", ["name": .string("docs"), "mode": .string(mode)])
+                #expect(r.error?.message == "o cercado docs é uma pasta, sem branch: não tem land nem PR", "\(r)")
+            }
+            #expect(try await admin(d, p, "paddock.delete", ["name": .string("docs"), "force": .bool(true)]).ok)
+            let snap = try await snapshot(d, p)
+            #expect(snap.paddocks.isEmpty && snap.terminals.first { $0.name == "S" }?.paddockId == nil)
+            #expect(try String(contentsOf: dir.appendingPathComponent("keep.txt"), encoding: .utf8) == "keep\n")
+        }
+    }
+
+    /// On a git repo with isolation off: no worktree, no branch; the delete leaves the repo as it was.
+    @Test func folderPaddockOnGitRepoDoesNotIsolate() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let c = try await admin(d, p, "paddock.create", ["name": .string("here"), "folder": .string(repo.path)])
+            #expect(c.ok, "\(c)")
+            #expect(!FileManager.default.fileExists(atPath: repo.appendingPathComponent(".collie/paddocks").path))
+            #expect(try await GitRunner.run(["show-ref", "--verify", "--quiet", "refs/heads/collie/here"], in: repo).status != 0)
+            #expect(try await admin(d, p, "paddock.create", ["name": .string("iso"), "repo": .string(repo.path)]).ok)   // isolation on: as before
+            #expect(try await admin(d, p, "paddock.delete", ["name": .string("here")]).ok)
+            #expect(FileManager.default.fileExists(atPath: repo.appendingPathComponent("f.txt").path))
+            #expect(try await GitRunner.run(["status", "--porcelain"], in: repo).stdout.isEmpty)
+            #expect(try await snapshot(d, p).paddocks.map(\.name) == ["iso"])
+        }
+    }
+
+    /// A Shepherd's --folder: within its project when strict (relative to its cwd); any existing folder when it started open.
+    @Test func shepherdFolderPaddockStrictVsOpen() async throws {
+        let repo = try await makeRepo(), outside = try plainDir()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("sub"), withIntermediateDirectories: true)
+        try await withDaemon { d, p in
+            let m = try await term(d, p, "M", cwd: repo, shepherd: true)
+            let out = try await call(p, m, "paddock.create", ["name": "out", "folder": outside.path])
+            #expect(out.error?.message.contains("fora do seu projeto") == true, "\(out)")
+            let sub = try await call(p, m, "paddock.create", ["name": "sub", "folder": "sub"])
+            guard case .object(let o)? = sub.result else { Issue.record("\(sub)"); return }
+            #expect(o["path"] == .string(SignedAppCheck.realPath(repo.appendingPathComponent("sub"))) && o["kind"] == .string("folder"), "\(o)")
+            #expect(try await admin(d, p, "admin.sandbox", ["mode": .string("open")]).ok)
+            let open = try await term(d, p, "O", cwd: repo, shepherd: true)
+            #expect(try await call(p, open, "paddock.create", ["name": "out", "folder": outside.path]).ok)
+            #expect(try await call(p, open, "paddock.create", ["name": "gone", "folder": "/nonexistent-collie"]).error?.code == .invalidArgs)
+        }
+    }
 }

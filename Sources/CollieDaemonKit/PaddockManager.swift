@@ -8,7 +8,7 @@ struct LandResult: Codable, Sendable {
     var prURL: String?
 }
 
-/// Worktree-based paddocks over a git repo (the "pasture"). No workspace state.
+/// Worktree-based paddocks over a git repo (the "pasture"), and folder paddocks (no git). No workspace state.
 enum PaddockManager {
     static func validate(name: String) throws(ProtocolError) {
         guard name.range(of: "^[a-z0-9][a-z0-9-]{0,39}$", options: .regularExpression) != nil else {
@@ -62,7 +62,22 @@ enum PaddockManager {
                      baseBranch: base, createdBy: createdBy)
     }
 
+    /// A folder paddock on the existing directory `folder` (git or not): nothing is created on disk.
+    static func createFolder(name: String, folder: URL, createdBy: UUID?) throws(ProtocolError) -> Paddock {
+        try validate(name: name)
+        var dir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &dir), dir.boolValue else {
+            throw fail("a pasta \(folder.path) não existe")
+        }
+        return .folder(name: name, path: SignedAppCheck.realPath(folder), createdBy: createdBy)
+    }
+
+    static func refuseFolder(_ f: Paddock) throws(ProtocolError) {
+        if f.isFolder { throw fail("o cercado \(f.name) é uma pasta, sem branch: não tem land nem PR") }
+    }
+
     static func land(_ f: inout Paddock, mode: LandMode, message: String?) async throws(ProtocolError) -> LandResult {
+        try refuseFolder(f)
         let fl = f
         let pasture = URL(fileURLWithPath: fl.repoRoot), paddock = URL(fileURLWithPath: fl.path)
         let msg = message ?? "Land paddock \(fl.name)"
@@ -131,7 +146,9 @@ enum PaddockManager {
         try await git(identity + ["commit", "-m", "collie: memory", "--", mem], in: paddock)
     }
 
+    /// R2: a folder paddock's delete never touches its folder (only Collie's record goes, by the caller).
     static func delete(_ f: Paddock, force: Bool) async throws(ProtocolError) {
+        if f.isFolder { return }
         let pasture = URL(fileURLWithPath: f.repoRoot)
         let exists = FileManager.default.fileExists(atPath: f.path)
         // a branch deleted by hand: nothing to check or delete (else the paddock could never be deleted)

@@ -170,9 +170,11 @@ private struct FlowDetailView: View {
                 Text(Self.timing(f)).font(.collieMono(11)).foregroundStyle(Color.collieMuted).lineLimit(1)
             }
             HStack(spacing: 8) {
-                Button("Copiar URL") { model.copyURL() }.buttonStyle(CollieButtonStyle(.quiet)).accessibilityLabel("Copiar URL")
-                Button("Copiar como cURL") { Task { await model.copyCurl() } }.buttonStyle(CollieButtonStyle(.secondary))
-                    .accessibilityLabel("Copiar como cURL")
+                // short labels: the detail column is narrow and "Copiar…" truncated both to the same text
+                Button("URL") { model.copyURL() }.buttonStyle(CollieButtonStyle(.quiet)).accessibilityLabel("Copiar URL")
+                    .help("Copiar URL")
+                Button("cURL") { Task { await model.copyCurl() } }.buttonStyle(CollieButtonStyle(.secondary))
+                    .accessibilityLabel("Copiar como cURL").help("Copiar como cURL")
                 Spacer()
                 Picker("", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     .pickerStyle(.segmented).labelsHidden().frame(width: 200).accessibilityLabel("Request ou Response")

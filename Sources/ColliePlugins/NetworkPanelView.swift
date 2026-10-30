@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import CollieNetwork
 import CollieTheme
@@ -10,7 +11,7 @@ struct NetworkView: View {
     var body: some View {
         VStack(spacing: 0) {
             bar
-            if let e = model.error { notice(e, tone: .collieDanger, icon: "exclamationmark.triangle") }
+            if let e = model.error ?? model.pollError { notice(e, tone: .collieDanger, icon: "exclamationmark.triangle") }
             if !model.restartSuggested.isEmpty {
                 notice("Reinicie \(model.restartSuggested.joined(separator: ", ")) no emulador para que leia a CA do Collie.",
                        tone: .collieAttention, icon: "arrow.clockwise")
@@ -22,6 +23,7 @@ struct NetworkView: View {
             }
         }
         .background(Color.collieSurface)
+        .task { await model.pollLoop() }   // on screen only: cancelled when the view leaves its window
     }
 
     private var bar: some View {
@@ -33,11 +35,16 @@ struct NetworkView: View {
             }
             .labelsHidden().frame(width: 160).disabled(model.busy || model.attached)
             .accessibilityLabel("Emulador")
+            Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                .buttonStyle(CollieButtonStyle(.quiet)).disabled(model.busy)
+                .accessibilityLabel("Recarregar emuladores")
             Button(model.attached ? "Parar" : "Interceptar") { Task { await model.toggle() } }
                 .buttonStyle(CollieButtonStyle(model.attached ? .secondary : .primary))
                 .disabled(model.serial == nil || model.busy)
                 .accessibilityLabel(model.attached ? "Parar a interceptação" : "Interceptar o tráfego do emulador")
             status
+            if model.pendingDetach { CollieTag("restaurando emulador", tone: .attention) }
+            if model.dropped > 0 { CollieTag("\(model.dropped) perdidas", tone: .attention) }
             Spacer(minLength: 8)
             TextField("Filtrar host, caminho, método, status", text: $model.filter)
                 .collieField().frame(maxWidth: 280).accessibilityLabel("Filtrar requisições")
@@ -172,13 +179,10 @@ private struct FlowDetailView: View {
             }
             if case .failed(let m) = f.state { Text(m).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
             let (headers, body, text, preview) = tab == .request ? (f.reqHeaders, f.reqBody, d.reqText, d.reqPreview) : (f.resHeaders, f.resBody, d.resText, d.resPreview)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    HeadersTable(headers: headers)
-                    BodyPane(captured: body, preview: preview) { if let s = NetworkPanelModel.fullBody(body, text: text) { NetworkPanelModel.copy(s) } }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            // ponytail: ~21 pt per header line; a value that wraps scrolls inside the cap
+            ScrollView { HeadersTable(headers: headers).frame(maxWidth: .infinity, alignment: .leading) }
+                .frame(height: min(max(CGFloat(headers.count), 1) * 21, 160))
+            BodyPane(captured: body, preview: preview) { if let s = NetworkPanelModel.fullBody(body, text: text) { NetworkPanelModel.copy(s) } }
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -229,17 +233,38 @@ private struct BodyPane: View {
                 }
             }
             switch preview.view {
-            case .empty: Text("Sem corpo").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
-            case .text(let s): content(s, label: "Corpo")
-            case .hex(let s): content(s, label: "Corpo em hexadecimal")
+            case .empty: Text("Sem corpo").font(.collieUI(12)).foregroundStyle(Color.collieMuted).frame(maxHeight: .infinity, alignment: .top)
+            case .text(let s): BodyText(text: s, wraps: true, label: "Corpo")
+            case .hex(let s): BodyText(text: s, wraps: false, label: "Corpo em hexadecimal")
             }
         }
     }
+}
 
-    private func content(_ s: String, label: String) -> some View {
-        Text(s).font(.collieMono(12)).foregroundStyle(Color.collieText).textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.collieSunken))
-            .accessibilityLabel(label)
+/// `NSTextView`, not `Text`: SwiftUI lays out the whole string on the main thread (64 KB of hex took ~100 s in a debug
+/// build); this one lays out what is on screen.
+private struct BodyText: NSViewRepresentable {
+    let text: String, wraps: Bool, label: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSTextView.scrollableTextView()
+        let t = scroll.documentView as! NSTextView
+        t.isEditable = false; t.isSelectable = true; t.isRichText = false
+        t.font = CollieFont.mono(12); t.textColor = CollieColor.text; t.backgroundColor = CollieColor.sunken
+        t.textContainerInset = NSSize(width: 6, height: 8)
+        scroll.drawsBackground = false; scroll.hasHorizontalScroller = !wraps
+        if !wraps {
+            t.isHorizontallyResizable = true; t.autoresizingMask = [.height]
+            t.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+            t.textContainer?.widthTracksTextView = false
+            t.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        }
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let t = scroll.documentView as? NSTextView else { return }
+        t.setAccessibilityLabel(label)
+        if t.string != text { t.string = text; t.scroll(.zero) }
     }
 }

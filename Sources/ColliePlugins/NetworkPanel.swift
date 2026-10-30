@@ -55,7 +55,13 @@ public struct BodyPreview: Equatable, Sendable {
     @Published public private(set) var port: Int?
     /// Packages that must restart to read the CA (attach's `restartSuggested`).
     @Published public private(set) var restartSuggested: [String] = []
+    /// A detach failed on the device; the daemon retries it (`network.status`).
+    @Published public private(set) var pendingDetach = false
+    /// Addon lines the proxy lost (`network.status`).
+    @Published public private(set) var dropped = 0
     @Published public private(set) var error: String?
+    /// The last poll's failure; the next good one clears it.
+    @Published public private(set) var pollError: String?
     @Published public private(set) var busy = false
     /// Oldest first, every serial.
     @Published public private(set) var rows: [FlowRow] = []
@@ -67,8 +73,14 @@ public struct BodyPreview: Equatable, Sendable {
     static let maxRows = 2000
     nonisolated static let textPreviewLimit = 256 * 1024, hexPreviewLimit = 64 * 1024
     private let call: PanelHostContext.Call
+    private let pollInterval: Duration
+    /// Bumped by commands that change the capture: a status or list asked for before one is stale.
+    private var captureGen = 0
+    private var stopped = false
 
-    public init(call: @escaping PanelHostContext.Call, serial: String? = nil) { self.call = call; self.serial = serial }
+    public init(call: @escaping PanelHostContext.Call, serial: String? = nil, pollInterval: Duration = .seconds(5)) {
+        self.call = call; self.serial = serial; self.pollInterval = pollInterval
+    }
 
     /// The selected emulator's rows matching `filter` (method, host, path or status; case-insensitive).
     public var visible: [FlowRow] {
@@ -92,36 +104,69 @@ public struct BodyPreview: Equatable, Sendable {
 
     // MARK: commands
 
-    /// Emulators, then the selected one's capture state (and its flows when attached).
-    public func refresh() async {
+    /// While the view is on screen (its `.task`): `attached` follows a detach from the CLI, a daemon restart…
+    public func pollLoop() async {
+        while !Task.isCancelled, !stopped {
+            await poll()
+            try? await Task.sleep(for: pollInterval)
+        }
+    }
+
+    /// The panel closed.
+    public func stop() { stopped = true }
+
+    /// One pass: status always; the emulators only while idle (the picker is locked during a capture, and `device.list`
+    /// runs adb and simctl).
+    public func poll() async { if !busy { await refresh(devices: !attached) } }
+
+    /// Emulators, then the selected one's capture state.
+    public func refresh(devices: Bool = true) async {
         struct Dev: Decodable { let serial: String; let state: String; let platform: String? }
-        do throws(ProtocolError) {
-            emulators = try await fetch([Dev].self, "device.list", [:])
-                .filter { $0.platform != "ios" && $0.state == "device" && $0.serial.hasPrefix("emulator-") }.map(\.serial)
-        } catch { self.error = Self.describe(error) }
-        if serial == nil || !emulators.contains(serial!) && !attached { serial = emulators.first }
-        await loadStatus()
+        var failure: String?
+        if devices {
+            do throws(ProtocolError) {
+                emulators = try await fetch([Dev].self, "device.list", [:])
+                    .filter { $0.platform != "ios" && $0.state == "device" && $0.serial.hasPrefix("emulator-") }.map(\.serial)
+                if !attached, serial.map({ !emulators.contains($0) }) ?? true, serial != emulators.first {
+                    serial = emulators.first; selected = nil; detail = nil
+                }
+            } catch { failure = Self.describe(error) }
+        }
+        let status = await loadStatus()
+        pollError = status ?? failure
     }
 
     public func select(serial s: String) async {
         serial = s; selected = nil; detail = nil; restartSuggested = []; error = nil
-        await loadStatus()
+        captureGen += 1
+        pollError = await loadStatus()
     }
 
-    func loadStatus() async {
-        guard let serial else { attached = false; port = nil; return }
-        struct Status: Decodable { let attached: Bool; let port: Int? }
-        do throws(ProtocolError) {
-            let s = try await fetch(Status.self, "network.status", ["serial": .string(serial)])
-            attached = s.attached; port = s.port
-            if s.attached { await loadList() }
-        } catch { self.error = Self.describe(error) }
+    /// nil, or why the status could not be read.
+    func loadStatus() async -> String? {
+        guard let serial else { attached = false; port = nil; pendingDetach = false; dropped = 0; return nil }
+        struct Status: Decodable { let attached: Bool; let port: Int?; let pendingDetach: Bool?; let dropped: Int? }
+        let gen = captureGen
+        let s: Status
+        do throws(ProtocolError) { s = try await fetch(Status.self, "network.status", ["serial": .string(serial)]) }
+        catch { return Self.describe(error) }
+        guard gen == captureGen, serial == self.serial else { return nil }
+        let was = attached
+        attached = s.attached; port = s.port; pendingDetach = s.pendingDetach ?? false; dropped = s.dropped ?? 0
+        if s.attached {
+            if !was { await loadList() }
+        } else {
+            restartSuggested = []
+            if was { dropRows(serial) }
+        }
+        return nil
     }
 
     /// Seeds the rows with what the daemon already captured (events only bring what comes next).
     private func loadList() async {
-        guard let serial, let list = try? await fetch([FlowSummary].self, "network.list", ["serial": .string(serial), "limit": .number(Double(Self.maxRows))])
-        else { return }
+        let gen = captureGen
+        guard let serial, let list = try? await fetch([FlowSummary].self, "network.list", ["serial": .string(serial), "limit": .number(Double(Self.maxRows))]),
+              gen == captureGen, serial == self.serial else { return }
         rows = Self.merged(rows, list, serial: serial)
     }
 
@@ -143,23 +188,26 @@ public struct BodyPreview: Equatable, Sendable {
         if s == serial { selected = nil; detail = nil }
     }
 
-    /// Interceptar / Parar.
+    /// Interceptar / Parar. A failure may have changed the capture (a detach stays pending): the status says.
     public func toggle() async {
         guard let serial, !busy else { return }
         busy = true; error = nil
-        defer { busy = false }
+        captureGen += 1
         struct Attach: Decodable { let port: Int?; let restartSuggested: [String]? }
+        var failed = false
         do throws(ProtocolError) {
             if attached {
                 _ = try await call("network.detach", ["serial": .string(serial)])
-                attached = false; port = nil; restartSuggested = []
+                attached = false; port = nil; restartSuggested = []; pendingDetach = false; dropped = 0
                 dropRows(serial)
             } else {
                 let a = try await fetch(Attach.self, "network.attach", ["serial": .string(serial)])
-                attached = true; port = a.port; restartSuggested = a.restartSuggested ?? []
+                attached = true; port = a.port; restartSuggested = a.restartSuggested ?? []; pendingDetach = false
                 await loadList()
             }
-        } catch { self.error = Self.describe(error) }
+        } catch { self.error = Self.describe(error); failed = true }
+        busy = false
+        if failed { pollError = await loadStatus() }
     }
 
     public func clear() async {
@@ -311,11 +359,10 @@ public struct BodyPreview: Equatable, Sendable {
         let serial: String? = if case .string(let v)? = panel.state["serial"] { v } else { nil }
         model = NetworkPanelModel(call: host.call, serial: serial)
         view = NSHostingView(rootView: NetworkView(model: model))
-        Task { [model] in await model.refresh() }
     }
     public func handle(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         throw ProtocolError(code: .unavailable, message: "network commands run in the daemon")
     }
-    public func close() {}
+    public func close() { model.stop() }
     public func receive(event: String, payload: JSONValue) { model.apply(event: event, payload: payload) }
 }

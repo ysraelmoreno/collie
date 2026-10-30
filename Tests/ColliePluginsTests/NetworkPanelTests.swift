@@ -37,18 +37,31 @@ private actor Fake {
     var attachResult: JSONValue = .object(["attached": .bool(true), "port": .number(8090), "restartSuggested": .array([.string("com.android.chrome")])])
     var failure: ProtocolError?
     func set(failure: ProtocolError?) { self.failure = failure }
+    var capturing = false, pendingDetach = false, dropped = 0
+    var emulators = ["emulator-5554"]
+    func set(capturing: Bool, dropped: Int = 0) { self.capturing = capturing; self.dropped = dropped }
+    func add(emulator: String) { emulators.append(emulator) }
+    /// The next detach fails on the device: the session is gone, the daemon retries.
+    var detachFails = false
+    func failDetach() { detachFails = true }
     func handle(_ cmd: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         calls.append((cmd, a))
         if let failure { throw failure }
+        if cmd == "network.detach" {
+            capturing = false
+            if detachFails { pendingDetach = true; throw ProtocolError(code: .unavailable, message: "adb: device offline") }
+        }
+        if cmd == "network.attach" { capturing = true }
         switch cmd {
         case "device.list":
-            return .array([
-                .object(["serial": .string("emulator-5554"), "state": .string("device"), "platform": .string("android")]),
+            return .array(emulators.map { .object(["serial": .string($0), "state": .string("device"), "platform": .string("android")]) } + [
                 .object(["serial": .string("R58M123"), "state": .string("device"), "platform": .string("android")]),
                 .object(["serial": .string("avd:Pixel"), "state": .string("off"), "platform": .string("android")]),
                 .object(["serial": .string("ABCD-1234"), "state": .string("Booted"), "platform": .string("ios")]),
             ])
-        case "network.status": return .object(["attached": .bool(false)])
+        case "network.status":
+            return capturing ? .object(["attached": .bool(true), "port": .number(8090), "dropped": .number(Double(dropped))])
+                : .object(["attached": .bool(false), "pendingDetach": .bool(pendingDetach)])
         case "network.attach": return attachResult
         case "network.list": return .array([summary("old")])
         case "network.get":
@@ -196,6 +209,54 @@ private actor Fake {
         await fake.set(failure: ProtocolError(code: .notFound, message: "No flow 'a' on emulator-5554"))
         await m.select(flow: "a")
         #expect(m.selected == nil && m.detail == nil && m.error == "No flow 'a' on emulator-5554")
+    }
+
+    @Test func pollFollowsADetachFromOutside() async {
+        let fake = Fake(), m = model(fake)
+        await m.refresh(); await m.toggle()
+        await m.select(flow: "old")
+        await fake.set(capturing: false)
+        await m.poll()
+        #expect(!m.attached && m.port == nil && m.rows.isEmpty && m.selected == nil && m.restartSuggested.isEmpty)
+    }
+
+    @Test func pollFollowsAnAttachFromOutsideAndDroppedLines() async {
+        let fake = Fake(), m = model(fake)
+        await m.refresh()
+        await fake.set(capturing: true, dropped: 3)
+        await m.poll()
+        #expect(m.attached && m.port == 8090 && m.dropped == 3 && m.visible.map(\.id) == ["old"])
+    }
+
+    @Test func pollListsEmulatorsOnlyWhileIdle() async {
+        let fake = Fake(), m = model(fake)
+        await m.refresh()
+        await fake.add(emulator: "emulator-5556")
+        await m.poll()
+        #expect(m.emulators == ["emulator-5554", "emulator-5556"] && m.serial == "emulator-5554")
+        await m.toggle()
+        let before = await fake.commands().count
+        await m.poll()
+        #expect(await fake.commands().dropFirst(before) == ["network.status"])
+    }
+
+    @Test func failedDetachShowsErrorAndPendingState() async {
+        let fake = Fake(), m = model(fake)
+        await m.refresh(); await m.toggle()
+        await fake.failDetach()
+        await m.toggle()
+        #expect(!m.attached && m.pendingDetach && m.rows.isEmpty && m.error == "adb: device offline")
+    }
+
+    @Test func pollErrorClearsOnTheNextGoodPoll() async {
+        let fake = Fake(), m = model(fake)
+        await m.refresh()
+        await fake.set(failure: ProtocolError(code: .unavailable, message: "daemon gone"))
+        await m.poll()
+        #expect(m.pollError == "daemon gone")
+        await fake.set(failure: nil)
+        await m.poll()
+        #expect(m.pollError == nil)
     }
 
     @Test func clearDropsOnlyThatSerialsRows() async {

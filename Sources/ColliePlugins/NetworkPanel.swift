@@ -9,14 +9,22 @@ import SwiftUI
 public struct FlowDetail: Decodable, Equatable, Sendable {
     public let flow: Flow
     public let reqText: String?, resText: String?
+    /// Computed once, off the main actor when decoded: a view body must not touch up to 10 MiB per render.
+    public let reqPreview: BodyPreview, resPreview: BodyPreview
     enum K: String, CodingKey { case reqBodyText, resBodyText }
     public init(from d: Decoder) throws {
         flow = try Flow(from: d)
         let c = try d.container(keyedBy: K.self)
         reqText = try c.decodeIfPresent(String.self, forKey: .reqBodyText)
         resText = try c.decodeIfPresent(String.self, forKey: .resBodyText)
+        reqPreview = NetworkPanelModel.body(flow.reqBody, text: reqText)
+        resPreview = NetworkPanelModel.body(flow.resBody, text: resText)
     }
-    public init(flow: Flow, reqText: String? = nil, resText: String? = nil) { self.flow = flow; self.reqText = reqText; self.resText = resText }
+    public init(flow: Flow, reqText: String? = nil, resText: String? = nil) {
+        self.flow = flow; self.reqText = reqText; self.resText = resText
+        reqPreview = NetworkPanelModel.body(flow.reqBody, text: reqText)
+        resPreview = NetworkPanelModel.body(flow.resBody, text: resText)
+    }
 }
 
 /// A `network.flow` row: the summary and the emulator it came from (panels are not bound to a serial).
@@ -31,6 +39,12 @@ public enum FlowTone: Equatable, Sendable { case success, redirect, clientError,
 
 /// What the body pane shows.
 public enum BodyView: Equatable, Sendable { case empty, text(String), hex(String) }
+
+/// The start of a body, small enough for one `Text`; `shown` and `total` in bytes (of the text, or of the raw body in hex).
+public struct BodyPreview: Equatable, Sendable {
+    public let view: BodyView, shown: Int, total: Int
+    public var isPartial: Bool { shown < total }
+}
 
 /// State and daemon calls of the Network panel: `device.list`, `network.*` and the `network.flow` events.
 @MainActor public final class NetworkPanelModel: ObservableObject {
@@ -51,6 +65,7 @@ public enum BodyView: Equatable, Sendable { case empty, text(String), hex(String
 
     // ponytail: same cap as the daemon's store; older rows go first
     static let maxRows = 2000
+    nonisolated static let textPreviewLimit = 256 * 1024, hexPreviewLimit = 64 * 1024
     private let call: PanelHostContext.Call
 
     public init(call: @escaping PanelHostContext.Call, serial: String? = nil) { self.call = call; self.serial = serial }
@@ -144,7 +159,11 @@ public enum BodyView: Equatable, Sendable { case empty, text(String), hex(String
     private func loadDetail() async {
         guard let id = selected, let serial else { return }
         do throws(ProtocolError) {
-            let d = try await fetch(FlowDetail.self, "network.get", ["serial": .string(serial), "id": .string(id)])
+            let v = try await call("network.get", ["serial": .string(serial), "id": .string(id)])
+            // off main: base64 of up to 20 MB of bodies, and the previews
+            guard let d = await Task.detached(operation: { Self.decode(FlowDetail.self, v) }).value else {
+                throw ProtocolError(code: .internal, message: "Resposta inválida de network.get.")
+            }
             if selected == id { detail = d }
         } catch { self.error = Self.describe(error) }
     }
@@ -201,17 +220,37 @@ public enum BodyView: Equatable, Sendable { case empty, text(String), hex(String
         return ms < 1000 ? "\(ms) ms" : String(format: "%.2f s", Double(ms) / 1000)
     }
 
-    /// Decoded text when the daemon had it; otherwise UTF-8 of an unencoded body, else a hex dump.
-    public static func body(_ b: Body?, text: String?) -> BodyView {
-        if let text { return .text(text) }
-        guard let b, !b.data.isEmpty else { return .empty }
-        if b.contentEncoding == nil || b.contentEncoding == "identity", let s = String(data: b.data, encoding: .utf8) { return .text(s) }
-        return .hex(hex(b.data))
+    /// Decoded text when the daemon had it; otherwise UTF-8 of an unencoded body.
+    private nonisolated static func text(_ b: Body?, _ text: String?) -> String? {
+        if let text { return text }
+        guard let b, b.contentEncoding == nil || b.contentEncoding == "identity" else { return nil }
+        return String(data: b.data, encoding: .utf8)
+    }
+
+    /// The text up to `textPreviewLimit` (cut on a character), else a hex dump up to `hexPreviewLimit`.
+    public nonisolated static func body(_ b: Body?, text t: String?) -> BodyPreview {
+        if let s = text(b, t), !s.isEmpty {
+            let total = s.utf8.count
+            guard total > textPreviewLimit else { return BodyPreview(view: .text(s), shown: total, total: total) }
+            var end = s.utf8.index(s.startIndex, offsetBy: textPreviewLimit)
+            while end.samePosition(in: s.unicodeScalars) == nil { end = s.utf8.index(before: end) }
+            let cut = String(s[..<end])
+            return BodyPreview(view: .text(cut), shown: cut.utf8.count, total: total)
+        }
+        guard let b, !b.data.isEmpty else { return BodyPreview(view: .empty, shown: 0, total: 0) }
+        let shown = min(b.data.count, hexPreviewLimit)
+        return BodyPreview(view: .hex(hex(b.data.prefix(shown))), shown: shown, total: b.data.count)
+    }
+
+    /// What "Copiar body" copies: the whole text, base64 if binary; nil when there is no body.
+    public nonisolated static func fullBody(_ b: Body?, text t: String?) -> String? {
+        if let s = text(b, t), !s.isEmpty { return s }
+        guard let b, !b.data.isEmpty else { return nil }
+        return b.data.base64EncodedString()
     }
 
     /// 16 bytes per line: offset, hex, ASCII.
-    // ponytail: the whole captured body (the addon caps it); page it if big bodies make the view slow
-    public static func hex(_ d: Data) -> String {
+    public nonisolated static func hex(_ d: Data) -> String {
         let bytes = [UInt8](d)
         return stride(from: 0, to: bytes.count, by: 16).map { o in
             let line = bytes[o..<min(o + 16, bytes.count)]
@@ -238,7 +277,7 @@ public enum BodyView: Equatable, Sendable { case empty, text(String), hex(String
     }
 
     /// Dates in epoch seconds (the daemon's `NetworkService.json`).
-    static func decode<T: Decodable>(_ t: T.Type, _ v: JSONValue) -> T? {
+    nonisolated static func decode<T: Decodable>(_ t: T.Type, _ v: JSONValue) -> T? {
         let d = JSONDecoder(); d.dateDecodingStrategy = .secondsSince1970
         return try? d.decode(t, from: JSONEncoder().encode(v))
     }

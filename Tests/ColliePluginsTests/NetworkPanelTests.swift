@@ -51,7 +51,9 @@ private actor Fake {
         case "network.status": return .object(["attached": .bool(false)])
         case "network.attach": return attachResult
         case "network.list": return .array([summary("old")])
-        case "network.get": return flowJSON(str(a["id"]), text: "{\n  \"ok\" : true\n}")
+        case "network.get":
+            if str(a["id"]) == "big" { return flowJSON("big", resBody: Data(repeating: 0xAB, count: 200 * 1024), encoding: "gzip") }
+            return flowJSON(str(a["id"]), text: "{\n  \"ok\" : true\n}")
         case "network.curl": return .object(["curl": .string("curl 'https://api.example.com/v1/items?page=2'")])
         default: return .object([:])
         }
@@ -138,15 +140,34 @@ private actor Fake {
         let d = try #require(m.detail)
         #expect(d.flow.url == "https://api.example.com/v1/items?page=2" && d.flow.reason == "OK" && d.flow.httpVersion == "HTTP/2.0")
         #expect(d.flow.timing.ttfb != nil && d.flow.reqHeaders.first?.name == "accept")
-        #expect(NetworkPanelModel.body(d.flow.resBody, text: d.resText) == .text("{\n  \"ok\" : true\n}"))
+        #expect(d.resPreview.view == .text("{\n  \"ok\" : true\n}") && !d.resPreview.isPartial)
     }
 
     @Test func bodyFallsBackToUTF8ThenHex() throws {
         let plain = try #require(NetworkPanelModel.decode(Flow.self, flowJSON("a", resBody: Data("hi".utf8))))
-        #expect(NetworkPanelModel.body(plain.resBody, text: nil) == .text("hi"))
+        #expect(NetworkPanelModel.body(plain.resBody, text: nil).view == .text("hi"))
         let gz = try #require(NetworkPanelModel.decode(Flow.self, flowJSON("a", resBody: Data([0x1f, 0x8b, 0x08, 0x41]), encoding: "gzip")))
-        #expect(NetworkPanelModel.body(gz.resBody, text: nil) == .hex("00000000  1f 8b 08 41" + String(repeating: " ", count: 36) + "  ...A"))
-        #expect(NetworkPanelModel.body(nil, text: nil) == .empty)
+        #expect(NetworkPanelModel.body(gz.resBody, text: nil).view == .hex("00000000  1f 8b 08 41" + String(repeating: " ", count: 36) + "  ...A"))
+        #expect(NetworkPanelModel.body(nil, text: nil).view == .empty)
+    }
+
+    @Test func longTextPreviewIsCutOnACharacterAndCopiesWhole() {
+        let limit = NetworkPanelModel.textPreviewLimit, long = String(repeating: "a", count: limit - 1) + "é" + "bbb"
+        let p = NetworkPanelModel.body(nil, text: long)
+        #expect(p.isPartial && p.shown == limit - 1 && p.total == long.utf8.count)
+        #expect(p.view == .text(String(repeating: "a", count: limit - 1)))
+        #expect(NetworkPanelModel.fullBody(nil, text: long) == long)
+    }
+
+    @Test func binaryPreviewIsCappedAndCopiesBase64() throws {
+        let raw = Data(repeating: 0xAB, count: NetworkPanelModel.hexPreviewLimit + 16)
+        let f = try #require(NetworkPanelModel.decode(Flow.self, flowJSON("a", resBody: raw, encoding: "gzip")))
+        let p = NetworkPanelModel.body(f.resBody, text: nil)
+        #expect(p.isPartial && p.shown == NetworkPanelModel.hexPreviewLimit && p.total == raw.count)
+        guard case .hex(let h) = p.view else { Issue.record("not hex"); return }
+        #expect(h.split(separator: "\n").count == NetworkPanelModel.hexPreviewLimit / 16)
+        #expect(NetworkPanelModel.fullBody(f.resBody, text: nil) == raw.base64EncodedString())
+        #expect(NetworkPanelModel.fullBody(nil, text: nil) == nil)
     }
 
     @Test func clearDropsOnlyThatSerialsRows() async {
@@ -171,8 +192,7 @@ private actor Fake {
                        summary("7", host: "api.example.com", path: "/v1/stream", status: nil, state: .object(["pending": .object([:])]))] {
             m.apply(event: "network.flow", payload: s)
         }
-        await m.select(flow: "3")
-        for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+        func render(_ name: String, _ look: NSAppearance.Name) async throws {
             let v = NSHostingView(rootView: NetworkView(model: m))
             let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1100, height: 520), styleMask: [.borderless], backing: .buffered, defer: false)
             w.appearance = NSAppearance(named: look)
@@ -184,5 +204,9 @@ private actor Fake {
             v.cacheDisplay(in: v.bounds, to: rep)
             try rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: dir).appendingPathComponent("network-panel-\(name).png"))
         }
+        await m.select(flow: "3")
+        try await render("light", .aqua); try await render("dark", .darkAqua)
+        await m.select(flow: "big")
+        try await render("big-body", .darkAqua)
     }
 }

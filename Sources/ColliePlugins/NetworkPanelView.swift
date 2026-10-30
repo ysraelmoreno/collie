@@ -171,11 +171,11 @@ private struct FlowDetailView: View {
                     .pickerStyle(.segmented).labelsHidden().frame(width: 200).accessibilityLabel("Request ou Response")
             }
             if case .failed(let m) = f.state { Text(m).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
-            let (headers, body, text) = tab == .request ? (f.reqHeaders, f.reqBody, d.reqText) : (f.resHeaders, f.resBody, d.resText)
+            let (headers, body, text, preview) = tab == .request ? (f.reqHeaders, f.reqBody, d.reqText, d.reqPreview) : (f.resHeaders, f.resBody, d.resText, d.resPreview)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     HeadersTable(headers: headers)
-                    BodyPane(captured: body, view: NetworkPanelModel.body(body, text: text))
+                    BodyPane(captured: body, preview: preview) { if let s = NetworkPanelModel.fullBody(body, text: text) { NetworkPanelModel.copy(s) } }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -211,21 +211,35 @@ private struct HeadersTable: View {
 }
 
 private struct BodyPane: View {
-    let captured: Body?, view: BodyView
+    let captured: Body?, preview: BodyPreview, copy: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let b = captured, b.truncated {
                 Label("Corpo truncado: \(NetworkPanelModel.size(b.data.count)) de \(NetworkPanelModel.size(b.size)) capturados.",
                       systemImage: "scissors").font(.collieUI(12)).foregroundStyle(Color.collieAttention)
             }
-            switch view {
+            if preview.view != .empty {
+                HStack(spacing: 8) {
+                    if preview.isPartial {
+                        Text("Mostrando \(NetworkPanelModel.size(preview.shown)) de \(NetworkPanelModel.size(preview.total))")
+                            .font(.collieUI(12)).foregroundStyle(Color.collieAttention)
+                    }
+                    Spacer()
+                    Button("Copiar body", action: copy).buttonStyle(CollieButtonStyle(.quiet)).accessibilityLabel("Copiar body inteiro")
+                }
+            }
+            switch preview.view {
             case .empty: Text("Sem corpo").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
-            case .text(let s), .hex(let s):
-                Text(s).font(.collieMono(12)).foregroundStyle(Color.collieText).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.collieSunken))
-                    .accessibilityLabel(view == .text(s) ? "Corpo" : "Corpo em hexadecimal")
+            case .text(let s): content(s, label: "Corpo")
+            case .hex(let s): content(s, label: "Corpo em hexadecimal")
             }
         }
+    }
+
+    private func content(_ s: String, label: String) -> some View {
+        Text(s).font(.collieMono(12)).foregroundStyle(Color.collieText).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.collieSunken))
+            .accessibilityLabel(label)
     }
 }

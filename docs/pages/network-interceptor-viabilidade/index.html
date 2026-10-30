@@ -427,6 +427,16 @@ CollieApp ─ NetworkPanel   lista (filtro host/status) · detalhe (headers/body
       <li>O SDK não tem <code>avdmanager</code>: o AVD descartável foi criado escrevendo <code>config.ini</code> à mão (já apagado). Para repetir, instalar cmdline-tools.</li>
     </ul>
 
+    <h3>Script de attach/detach (referência do DeviceSetup)</h3>
+    <p><code>scripts/spike/network/netsetup.sh attach|detach|status &lt;serial&gt; [porta] [ca.pem]</code> + <code>netsetup-device.sh</code>. O README traz cada comando com a saída esperada. Validado no AVD <code>spike-net-api37</code> (API 37, GPU do host):</p>
+    <ul>
+      <li><strong>attach</strong> em ~4 s: <code>system: mounted 146 CAs · apex: 56 bound · user: added · proxy: 127.0.0.1:8899 (was null) · reverse: tcp:8899</code>.</li>
+      <li><strong>Idempotente:</strong> o 2º attach dá <code>system: present · apex: 0 bound, 58 already · user: present</code>, mantém 1 camada só e não sobrescreve o <code>prev-proxy</code>. O 2º detach dá <code>proxy: left :0 · reverse: absent · ca: absent</code>.</li>
+      <li><strong>Tráfego:</strong> Chrome <code>GET https://example.com/?e2e=chrome2 200 HTTP/1.1</code>. Probe OkHttp embutido <code>0 200 … via HTTP @ /127.0.0.1:8899</code>.</li>
+      <li><strong>Órfão detectado</strong> pelo <code>status</code> depois de <code>adb reconnect</code> e de reboot. O attach repara só o que falta.</li>
+      <li><strong>Reboot:</strong> a CA no store de usuário <em>sobrevive</em> (fica em <code>/data</code>), assim como o <code>http_proxy</code>. Um detach direto depois do reboot limpa tudo: <code>user: removed</code>, 0 camadas, 145 CAs, staging vazio.</li>
+    </ul>
+
     <h3>Go / no-go</h3>
     <p><strong>GO para o MVP com mitmdump como backend</strong>, com três ajustes no plano:</p>
     <ol>

@@ -123,7 +123,10 @@ actor NetworkService {
             attaching[serial] = (id, t)
         }
         do { try await t.value } catch let e as ProtocolError { throw e } catch { throw ProtocolError(code: .internal, message: "\(error)") }
-        return status(serial)
+        // the hint belongs to this attach's answer only (the panel shows it once), not to every later status
+        guard case .object(var o) = status(serial), let hint = sessions[serial]?.attach.restartSuggested, !hint.isEmpty else { return status(serial) }
+        o["restartSuggested"] = .array(hint.map { .string($0) })
+        return .object(o)
     }
 
     /// The proxy, then the device. A device attach that fails is rolled back (it may have mounted the CA or set the

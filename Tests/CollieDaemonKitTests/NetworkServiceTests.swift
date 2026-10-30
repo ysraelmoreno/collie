@@ -47,7 +47,8 @@ private final class FakeDevice: NetworkDevice, @unchecked Sendable {
         calls.withLock { $0.append("attach \(serial) \(port)") }
         while knobs.withLock({ $0.holdAttach }) { try? await Task.sleep(for: .milliseconds(5)) }
         if failAttach { throw ProtocolError(code: .unavailable, message: "not rootable") }
-        return .init(sdk: 37, hash: "c8750f0d", system: "mounted 146 CAs", user: "added", previousProxy: "null")
+        return .init(sdk: 37, hash: "c8750f0d", system: "mounted 146 CAs", user: "added", previousProxy: "null",
+                     restartSuggested: serial == "emulator-5562" ? ["com.android.chrome"] : [])
     }
     func detach(serial: String, port: Int?) async throws(ProtocolError) -> [String] {
         calls.withLock { $0.append("detach \(serial) \(port.map(String.init) ?? "nil")") }
@@ -129,6 +130,16 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
         #expect(od["attached"] == .bool(false) && r.proxy.stopped)
         #expect(r.device.log.last == "detach emulator-5560 40001")
         await #expect(throws: ProtocolError.self) { try await r.service.list("emulator-5560") }
+    }
+
+    @Test func attachAnswerCarriesTheRestartHintOnce() async throws {
+        let r = rig()
+        guard case .object(let first) = try await r.service.attach("emulator-5562") else { Issue.record("attach"); return }
+        #expect(first["restartSuggested"] == .array([.string("com.android.chrome")]))
+        guard case .object(let later) = await r.service.status("emulator-5562") else { Issue.record("status"); return }
+        #expect(later["restartSuggested"] == nil)
+        guard case .object(let quiet) = try await r.service.attach("emulator-5560") else { Issue.record("attach"); return }
+        #expect(quiet["restartSuggested"] == nil)
     }
 
     @Test func attachTwiceKeepsOneProxyAndRepairs() async throws {
@@ -256,9 +267,10 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
 }
 
 /// The whole path on a real emulator, through a test daemon (what `collie network …` sends):
-/// `COLLIE_E2E_SERIAL=emulator-5560 swift test --filter NetworkDaemonE2ETests`. Needs mitmdump, a rootable emulator and
-/// Chrome past its first-run screen; leaves the emulator as it found it.
-@Suite struct NetworkDaemonE2ETests {
+/// `COLLIE_E2E_SERIAL=emulator-5560 swift test --filter NetworkSetupTests`. Needs mitmdump, a rootable emulator and
+/// Chrome past its first-run screen; leaves the emulator as it found it. Nested in the serialized `NetworkSetupTests`:
+/// two attaches on one emulator at once would undo each other.
+extension NetworkSetupTests { @Suite struct DaemonE2E {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["COLLIE_E2E_SERIAL"] != nil), .timeLimit(.minutes(3)))
     func attachBrowseListCurlDetach() async throws {
         let serial = ProcessInfo.processInfo.environment["COLLIE_E2E_SERIAL"]!
@@ -303,4 +315,4 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
         let proxy = try await adb.run(["shell", "settings get global http_proxy"], serial: serial, timeout: .seconds(10)).stdout
         #expect(proxy.trimmingCharacters(in: .whitespacesAndNewlines) == ":0")
     }
-}
+} }

@@ -19,10 +19,15 @@ struct DeviceNetworkSetup: Sendable {
         var system: String
         /// Namespaces bound now, already bound, gone before they could be: all 0 below Android 14 (no APEX).
         var apexBound = 0, apexAlready = 0, apexGone = 0
-        /// "added" | "present" | "preexisting (left alone)"
+        /// "added" | "replaced" | "present" | "preexisting (left alone)"
         var user: String
         /// The device's http_proxy before the first attach ("null": none).
         var previousProxy: String
+        /// File names our CA got (`<hash>.<n>`: the first free suffix, as another CA with the same subject may hold `.0`).
+        var systemFile = "", userFile = ""
+        /// Running apps that read the user store only when they start (Chrome) and must be restarted to see a CA that
+        /// was just added or replaced. Never restarted by us.
+        var restartSuggested: [String] = []
     }
 
     enum Reconcile: Sendable, Equatable { case none, reverseRestored, reattached, detached }
@@ -39,14 +44,27 @@ struct DeviceNetworkSetup: Sendable {
         let probe = try await self.probe(serial)
         _ = try await shell(serial, "mkdir -p \(NetShell.stage)")
         _ = try await adb.run(["push", caCert.path, "\(NetShell.stage)/\(hash).0"], serial: serial, timeout: Self.step)
-        let system = NetShell.value("system", in: try await shell(serial, NetShell.systemInject(hash: hash)))
+        let listing = NetShell.parseListing(try await shell(serial, NetShell.listing(hash: hash)))
+        guard let caMD5 = listing.ours else { throw ProtocolError(code: .internal, message: "CA not staged on \(serial)") }
+        let sysFile = NetShell.slot(hash: hash, ours: caMD5, existing: listing.system).name
+        let system = NetShell.value("system", in: try await shell(serial, NetShell.systemInject(hash: hash, file: sysFile)))
         guard let system, !system.hasPrefix("failed") else { throw ProtocolError(code: .internal, message: "CA tmpfs mount failed on \(serial)") }
-        var r = AttachResult(sdk: probe.sdk, hash: hash, system: system, user: "", previousProxy: probe.proxy)
+        var r = AttachResult(sdk: probe.sdk, hash: hash, system: system, user: "", previousProxy: probe.proxy, systemFile: sysFile)
         if probe.apex {
             let c = NetShell.counts(try await shell(serial, NetShell.apexBind(pids: try await targets(serial))))
             (r.apexBound, r.apexAlready, r.apexGone) = (c["bound"] ?? 0, c["already"] ?? 0, c["gone"] ?? 0)
         }
-        r.user = NetShell.value("user", in: try await shell(serial, NetShell.userInject(hash: hash))) ?? "?"
+        switch NetShell.userPlan(hash: hash, ours: caMD5, existing: listing.user, added: probe.userAdded) {
+        case .present(let f): r.user = "present"; r.userFile = f
+        case .preexisting(let f): r.user = "preexisting (left alone)"; r.userFile = f
+        case .write(let f, let replacing):
+            let out = NetShell.value("user", in: try await shell(serial, NetShell.userInject(hash: hash, file: f)))
+            guard out == "added" else { throw ProtocolError(code: .internal, message: "user-store CA failed on \(serial)") }
+            r.user = replacing ? "replaced" : "added"; r.userFile = f
+            if try await !shell(serial, "pidof com.android.chrome || true").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                r.restartSuggested = ["com.android.chrome"]
+            }
+        }
         // a second attach (or one after a daemon restart, on another port) must not save our own value as "previous"
         let ours = NetShell.proxy(port), stale = probe.port.map(NetShell.proxy)
         if probe.proxy != ours, probe.proxy != stale { _ = try await shell(serial, NetShell.savePrevious(probe.proxy)) }
@@ -110,6 +128,8 @@ struct DeviceNetworkSetup: Sendable {
         var uid: Int, sdk: Int, proxy: String
         /// What `attach` left in the staging dir (survives reboots): CA hash, our port, the proxy before us.
         var hash: String?, port: Int?, previous: String?
+        /// The user-store file we wrote (`<hash>.<n>`), nil when we wrote none.
+        var userAdded: String? = nil
         /// Our tmpfs is on the system store (gone after a reboot); the device has the APEX store (Android 14+).
         var layer: Bool, apex: Bool
     }
@@ -177,29 +197,80 @@ enum NetShell {
     static let probe = """
         echo "uid: $(id -u)"; echo "sdk: $(getprop ro.build.version.sdk)"; echo "proxy: $(settings get global http_proxy)"; \
         echo "hash: $(cat \(stage)/hash 2>/dev/null)"; echo "port: $(cat \(stage)/port 2>/dev/null)"; \
-        echo "previous: $(cat \(stage)/prev-proxy 2>/dev/null)"; echo "layer: $(grep -c '^collie-ca \(system) ' /proc/mounts)"; \
+        echo "previous: $(cat \(stage)/prev-proxy 2>/dev/null)"; echo "userAdded: $(cat \(stage)/user-added 2>/dev/null)"; \
+        echo "layer: $(grep -c '^collie-ca \(system) ' /proc/mounts)"; \
         if [ -d \(apex) ]; then echo 'apex: 1'; else echo 'apex: 0'; fi
         """
 
     static func parseProbe(_ out: String) -> DeviceNetworkSetup.Probe {
         func v(_ k: String) -> String? { value(k, in: out).flatMap { $0.isEmpty ? nil : $0 } }
         return .init(uid: v("uid").flatMap(Int.init) ?? -1, sdk: v("sdk").flatMap(Int.init) ?? 0, proxy: v("proxy") ?? "null",
-                     hash: v("hash"), port: v("port").flatMap(Int.init), previous: v("previous"),
+                     hash: v("hash"), port: v("port").flatMap(Int.init), previous: v("previous"), userAdded: v("userAdded"),
                      layer: (v("layer").flatMap(Int.init) ?? 0) > 0, apex: v("apex") == "1")
     }
 
-    /// tmpfs over the system store holding the live CAs (the APEX set on 14+) plus ours; a CA rotated since is added to
-    /// the existing layer.
-    static func systemInject(hash: String) -> String {
+    /// tmpfs over the system store holding the live CAs (the APEX set on 14+) plus ours as `file`; a CA rotated since is
+    /// added to the existing layer. `file` comes from `slot` (another CA with the same subject may hold `<hash>.0`).
+    static func systemInject(hash: String, file: String) -> String {
         let ca = "\(stage)/\(hash).0", all = "\(stage)/all"
         return """
-            if grep -q '^collie-ca \(system) ' /proc/mounts; then [ -f \(system)/\(hash).0 ] || cp \(ca) \(system)/; echo 'system: present'; \
+            if grep -q '^collie-ca \(system) ' /proc/mounts; then cp \(ca) \(system)/\(file) && chmod 644 \(system)/\(file) \
+            && chcon u:object_r:system_file:s0 \(system)/\(file); echo 'system: present'; \
             else src=\(system); [ -d \(apex) ] && src=\(apex); \
-            rm -rf \(all) && mkdir -p \(all) && cp $src/* \(all)/ && cp \(ca) \(all)/ \
+            rm -rf \(all) && mkdir -p \(all) && cp $src/* \(all)/ && cp \(ca) \(all)/\(file) \
             && mount -t tmpfs -o mode=755 collie-ca \(system) && cp \(all)/* \(system)/ && rm -rf \(all) \
             && chown root:root \(system)/* && chmod 644 \(system)/* && chcon u:object_r:system_file:s0 \(system) \(system)/* \
-            && echo "system: mounted $(ls \(system) | wc -l) CAs" || echo 'system: failed'; fi
+            && echo "system: mounted $(ls \(system) | wc -l) CAs" || echo 'system: failed'; fi; echo \(file) > \(stage)/sys-file
             """
+    }
+
+    /// `name md5` of our staged CA and of every `<hash>.*` in the live system store (our layer if mounted, else APEX on
+    /// 14+, else the stock dir) and in the user store.
+    static func listing(hash: String) -> String {
+        """
+        echo "ours $(md5sum \(stage)/\(hash).0 | cut -d' ' -f1)"; \
+        src=\(system); if ! grep -q '^collie-ca \(system) ' /proc/mounts && [ -d \(apex) ]; then src=\(apex); fi; \
+        for f in $src/\(hash).*; do [ -f "$f" ] && echo "system ${f##*/} $(md5sum "$f" | cut -d' ' -f1)"; done; \
+        for f in \(user)/\(hash).*; do [ -f "$f" ] && echo "user ${f##*/} $(md5sum "$f" | cut -d' ' -f1)"; done; true
+        """
+    }
+
+    struct Listing: Equatable { var ours: String?; var system: [String: String] = [:], user: [String: String] = [:] }
+
+    static func parseListing(_ out: String) -> Listing {
+        var l = Listing(ours: nil)
+        for line in lines(out) {
+            let f = line.split(separator: " ").map(String.init)
+            switch (f.first, f.count) {
+            case ("ours", 2): l.ours = f[1]
+            case ("system", 3): l.system[f[1]] = f[2]
+            case ("user", 3): l.user[f[1]] = f[2]
+            default: break
+            }
+        }
+        return l
+    }
+
+    /// The file our CA goes to among `existing` (name → md5): the one already holding it, else the first free
+    /// `<hash>.<n>`.
+    static func slot(hash: String, ours: String, existing: [String: String]) -> (name: String, present: Bool) {
+        if let hit = existing.filter({ $0.value == ours }).keys.min(by: { suffix($0) < suffix($1) }) { return (hit, true) }
+        var n = 0
+        while existing["\(hash).\(n)"] != nil { n += 1 }
+        return ("\(hash).\(n)", false)
+    }
+
+    private static func suffix(_ name: String) -> Int { name.split(separator: ".").last.flatMap { Int($0) } ?? .max }
+
+    enum UserPlan: Equatable { case present(String), preexisting(String), write(String, replacing: Bool) }
+
+    /// The user store: ours already there (we wrote it: present; the user did: left alone), the file we wrote before now
+    /// holding an older CA (replaced in place), or a new file in the first free slot.
+    static func userPlan(hash: String, ours: String, existing: [String: String], added: String?) -> UserPlan {
+        let s = slot(hash: hash, ours: ours, existing: existing)
+        if s.present { return s.name == added ? .present(s.name) : .preexisting(s.name) }
+        if let added, existing[added] != nil { return .write(added, replacing: true) }
+        return .write(s.name, replacing: false)
     }
 
     static let ps = "ps -A -o PID,PPID,NAME"
@@ -239,15 +310,14 @@ enum NetShell {
             """
     }
 
-    /// The CA in the user store (Chrome), remembering that we added it so eject never removes one the user installed.
-    static func userInject(hash: String) -> String {
-        let f = "\(user)/\(hash).0"
+    /// Our CA into the user store (Chrome) as `file`, remembering that file so eject removes only ours.
+    static func userInject(hash: String, file: String) -> String {
+        let f = "\(user)/\(file)"
         return """
-            if [ -f \(f) ]; then if [ -f \(stage)/user-added ]; then echo 'user: present'; else echo 'user: preexisting (left alone)'; fi; \
-            else mkdir -p \(user) && chown system:system \(user) && chmod 755 \(user) \
+            mkdir -p \(user) && chown system:system \(user) && chmod 755 \(user) \
             && cp \(stage)/\(hash).0 \(f) && chown system:system \(f) && chmod 644 \(f) \
-            && chcon u:object_r:misc_user_data_file:s0 \(user) \(f) && echo \(hash) > \(stage)/user-added \
-            && echo 'user: added' || echo 'user: failed'; fi
+            && chcon u:object_r:misc_user_data_file:s0 \(user) \(f) && echo \(file) > \(stage)/user-added \
+            && echo 'user: added' || echo 'user: failed'
             """
     }
 
@@ -257,7 +327,7 @@ enum NetShell {
     /// The system tmpfs, the user-store CA we added, the staging dir (APEX binds go first, `apexUnbind`).
     static let eject = """
         if grep -q '^collie-ca \(system) ' /proc/mounts; then umount \(system) && echo 'system: unmounted'; else echo 'system: absent'; fi; \
-        if [ -f \(stage)/user-added ]; then rm -f \(user)/$(cat \(stage)/user-added).0; echo 'user: removed'; else echo 'user: untouched'; fi; \
+        if [ -f \(stage)/user-added ]; then rm -f \(user)/$(cat \(stage)/user-added); echo 'user: removed'; else echo 'user: untouched'; fi; \
         rm -rf \(stage); echo 'staging: removed'
         """
 

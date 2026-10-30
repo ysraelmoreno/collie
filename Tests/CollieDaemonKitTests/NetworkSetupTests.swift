@@ -35,7 +35,8 @@ private let negativeSerialCA = """
     -----END CERTIFICATE-----
     """
 
-@Suite struct NetworkSetupTests {
+/// Serialized: its device end-to-end tests (here and `DaemonE2E`, nested) share one emulator.
+@Suite(.serialized) struct NetworkSetupTests {
     @Test func subjectHashMatchesOpenSSL() {
         #expect(SubjectHash.old(pem: utf8CA) == "d6849034")
         #expect(SubjectHash.old(pem: negativeSerialCA) == "c1fbc18e")
@@ -63,21 +64,23 @@ private let negativeSerialCA = """
     @Test func probeParsesWithAndWithoutState() {
         let fresh = NetShell.parseProbe("uid: 2000\nsdk: 37\nproxy: null\nhash: \nport: \nprevious: \nlayer: 0\napex: 1\n")
         #expect(fresh == .init(uid: 2000, sdk: 37, proxy: "null", hash: nil, port: nil, previous: nil, layer: false, apex: true))
-        let attached = NetShell.parseProbe("uid: 0\r\nsdk: 33\r\nproxy: 127.0.0.1:8899\r\nhash: c8750f0d\r\nport: 8899\r\nprevious: 192.168.1.2:9090\r\nlayer: 1\r\napex: 0\r\n")
-        #expect(attached == .init(uid: 0, sdk: 33, proxy: "127.0.0.1:8899", hash: "c8750f0d", port: 8899, previous: "192.168.1.2:9090", layer: true, apex: false))
+        let attached = NetShell.parseProbe("uid: 0\r\nsdk: 33\r\nproxy: 127.0.0.1:8899\r\nhash: c8750f0d\r\nport: 8899\r\nprevious: 192.168.1.2:9090\r\nuserAdded: c8750f0d.1\r\nlayer: 1\r\napex: 0\r\n")
+        #expect(attached == .init(uid: 0, sdk: 33, proxy: "127.0.0.1:8899", hash: "c8750f0d", port: 8899, previous: "192.168.1.2:9090",
+                                   userAdded: "c8750f0d.1", layer: true, apex: false))
     }
 
     @Test func injectCommandsTargetOurLayerOnly() {
-        let sys = NetShell.systemInject(hash: "c8750f0d")
+        let sys = NetShell.systemInject(hash: "c8750f0d", file: "c8750f0d.1")
         #expect(sys.contains("grep -q '^collie-ca /system/etc/security/cacerts ' /proc/mounts"))   // idempotent: present → no second mount
         #expect(sys.contains("mount -t tmpfs -o mode=755 collie-ca /system/etc/security/cacerts"))
         #expect(sys.contains("[ -d /apex/com.android.conscrypt/cacerts ] && src=/apex/com.android.conscrypt/cacerts"))
-        #expect(sys.contains("cp /data/local/tmp/collie-ca/c8750f0d.0 "))
+        #expect(sys.contains("cp /data/local/tmp/collie-ca/c8750f0d.0 /data/local/tmp/collie-ca/all/c8750f0d.1"))
+        #expect(sys.contains("echo c8750f0d.1 > /data/local/tmp/collie-ca/sys-file"))
         #expect(sys.contains("chcon u:object_r:system_file:s0"))
-        let user = NetShell.userInject(hash: "c8750f0d")
-        #expect(user.contains("/data/misc/user/0/cacerts-added/c8750f0d.0"))
-        #expect(user.contains("preexisting (left alone)") && user.contains("> /data/local/tmp/collie-ca/user-added"))
-        #expect(NetShell.eject.contains("rm -f /data/misc/user/0/cacerts-added/$(cat /data/local/tmp/collie-ca/user-added).0"))
+        let user = NetShell.userInject(hash: "c8750f0d", file: "c8750f0d.2")
+        #expect(user.contains("cp /data/local/tmp/collie-ca/c8750f0d.0 /data/misc/user/0/cacerts-added/c8750f0d.2"))
+        #expect(user.contains("echo c8750f0d.2 > /data/local/tmp/collie-ca/user-added"))
+        #expect(NetShell.eject.contains("rm -f /data/misc/user/0/cacerts-added/$(cat /data/local/tmp/collie-ca/user-added);"))
     }
 
     @Test func apexCommandsLoopOverPids() {
@@ -105,6 +108,33 @@ private let negativeSerialCA = """
         #expect(!NetShell.hasReverse("", port: 8899))
         #expect(NetShell.value("system", in: "system: mounted 146 CAs\n") == "mounted 146 CAs")
         #expect(NetShell.value("user", in: "system: present\n") == nil)
+    }
+
+    @Test func listingParses() {
+        let out = "ours aaa\nsystem c8750f0d.0 bbb\nsystem c8750f0d.1 aaa\nuser c8750f0d.0 ccc\ngarbage\n"
+        #expect(NetShell.parseListing(out) == .init(ours: "aaa", system: ["c8750f0d.0": "bbb", "c8750f0d.1": "aaa"], user: ["c8750f0d.0": "ccc"]))
+        #expect(NetShell.parseListing("") == .init(ours: nil))
+        #expect(NetShell.listing(hash: "c8750f0d").contains("for f in /data/misc/user/0/cacerts-added/c8750f0d.*"))
+    }
+
+    /// Every mitmproxy CA has the subject "CN=mitmproxy, O=mitmproxy", so `c8750f0d.0` may hold someone else's.
+    @Test func slotSkipsAnotherCAWithTheSameHash() {
+        #expect(NetShell.slot(hash: "c8750f0d", ours: "aaa", existing: [:]) == ("c8750f0d.0", false))
+        #expect(NetShell.slot(hash: "c8750f0d", ours: "aaa", existing: ["c8750f0d.0": "bbb"]) == ("c8750f0d.1", false))
+        #expect(NetShell.slot(hash: "c8750f0d", ours: "aaa", existing: ["c8750f0d.0": "bbb", "c8750f0d.1": "ccc", "c8750f0d.3": "ddd"]) == ("c8750f0d.2", false))
+        #expect(NetShell.slot(hash: "c8750f0d", ours: "aaa", existing: ["c8750f0d.0": "bbb", "c8750f0d.1": "aaa"]) == ("c8750f0d.1", true))
+    }
+
+    @Test func userPlanLeavesOtherCAsAlone() {
+        // none there: a new file
+        #expect(NetShell.userPlan(hash: "h", ours: "aaa", existing: [:], added: nil) == .write("h.0", replacing: false))
+        // the user's own mitmproxy CA holds h.0: ours goes next to it
+        #expect(NetShell.userPlan(hash: "h", ours: "aaa", existing: ["h.0": "bbb"], added: nil) == .write("h.1", replacing: false))
+        // ours, written by us: present; the same CA installed by the user: left alone (and never removed by eject)
+        #expect(NetShell.userPlan(hash: "h", ours: "aaa", existing: ["h.0": "bbb", "h.1": "aaa"], added: "h.1") == .present("h.1"))
+        #expect(NetShell.userPlan(hash: "h", ours: "aaa", existing: ["h.0": "aaa"], added: nil) == .preexisting("h.0"))
+        // the file we wrote before holds our previous CA (rotated): replaced in place
+        #expect(NetShell.userPlan(hash: "h", ours: "aaa", existing: ["h.0": "bbb", "h.1": "old"], added: "h.1") == .write("h.1", replacing: true))
     }
 
     @Test func emulatorsOnly() {

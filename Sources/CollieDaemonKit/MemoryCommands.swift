@@ -172,6 +172,7 @@ extension CommandRouter {
             if let tr = str(r, "transcript") { await memory.noteSession(me.id, transcript: tr) }   // the session its events name
             let text: String
             if r.command == "memory.hookContext" {
+                await asks.sessionHooked(me.id)
                 // compact/resume: the work state (first), the board's handoff and status posts, then the memory index, in one 4096-byte budget
                 let recall = ["compact", "resume"].contains(str(r, "source") ?? "")
                 var head: [String] = []
@@ -200,6 +201,7 @@ extension CommandRouter {
                 let prompt = HookPayload.boundedPrompt(try need(r, "prompt"))
                 // a likely correction goes to the curator detached: the hook never waits for it
                 // R12: taken at every submit (it starts over); the user's own keystrokes, or a proposal at most
+                await asks.promptSubmitted(me.id)
                 let (user, likely) = asks.provenance.submit(me.id, prompt: prompt)
                 let correction = CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id])
                 if correction || CorrectionDetector.isProcedure(prompt) {

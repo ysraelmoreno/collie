@@ -18,7 +18,7 @@ struct FakeAgents {   // also SandboxRootsTests
             try ("#!/bin/sh\n" + body + "\n").write(to: url, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         }
-        try script(bin.appendingPathComponent("claude"), prelude + "\nexec '\(fixtures.appendingPathComponent("fake-agent.sh").path)'")
+        try script(bin.appendingPathComponent("claude"), prelude + "\nprintf '\\033[?2004h'\nexec '\(fixtures.appendingPathComponent("fake-agent.sh").path)'")
         try script(dir.appendingPathComponent("sh"), #"if [ "$1" = "-lc" ]; then exec /bin/sh -c "$2"; fi; exec /bin/sh "$@""#)
     }
     func configure(_ c: inout DaemonConfig) {

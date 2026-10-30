@@ -1,0 +1,2 @@
+# mitmproxy confdir: holds the spike CA private key. Never commit.
+.mitm/

@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interceptador HTTP — viabilidade</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: var(--type-body); line-height: 1.5; }
+h1 { font-size: var(--type-h1); line-height: 1.1; margin: 0 0 var(--space-m); }
+h2 { font-size: var(--type-h2); line-height: 1.2; margin: 0 0 var(--space-m); }
+h3 { font-size: var(--type-h3); margin: 0 0 var(--space-s); }
+p { margin: 0 0 var(--space-m); }
+.muted { color: var(--muted); }
+.card { background: var(--surface); border-radius: var(--radius-card); padding: var(--space-l); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.hero { max-width: 1040px; margin: 0 auto; padding: var(--space-xl) var(--space-l) var(--space-l); }
+.layout { max-width: 1040px; margin: 0 auto; padding: 0 var(--space-l) var(--space-xl); display: grid; grid-template-columns: 220px 1fr; gap: var(--space-xl); }
+.toc { position: sticky; top: var(--space-l); align-self: start; }
+.toc ol { list-style: none; margin: var(--space-s) 0 0; padding: 0; display: grid; gap: var(--space-s); }
+.toc a { color: var(--muted); text-decoration: none; }
+.toc a:hover { color: var(--accent); }
+article { max-width: 68ch; }
+article h2 { margin-top: var(--space-xl); scroll-margin-top: var(--space-l); }
+blockquote { margin: 0 0 var(--space-m); padding: var(--space-m); border-left: 4px solid var(--accent); background: var(--surface); border-radius: var(--radius-card); }
+@media (max-width: 760px) { .layout { grid-template-columns: 1fr; } .toc { position: static; } }
+.lucide { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
+.libs-note { margin: var(--space-m); font-size: 12px; }
+body { font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+code, pre, kbd, samp { font-family: "DM Mono", ui-monospace, Menlo, monospace; }
+code { font-size: .88em; background: var(--color-surface-2); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--space-12); overflow-x: auto; font-size: 13px; line-height: 1.45; margin: 0 0 var(--space-m); }
+pre code { background: none; padding: 0; font-size: inherit; }
+table { width: 100%; border-collapse: collapse; margin: 0 0 var(--space-m); font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--color-border); }
+th { color: var(--muted); font-weight: 600; }
+article { max-width: 78ch; }
+ul, ol { margin: 0 0 var(--space-m); padding-left: 1.3em; }
+li { margin-bottom: 4px; }
+.pick { border: 1px solid var(--accent); }
+.tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--color-surface-2); color: var(--muted); }
+</style>
+</head>
+<body>
+<header class="hero"><h1>Interceptador HTTP — viabilidade</h1><p class="muted">Análise de viabilidade · 2026-10-30 · painel "Rede" para emulador Android no Collie, no estilo HTTP Toolkit. Só pesquisa + plano, nada implementado.</p></header>
+<div class="layout">
+  <nav class="toc" aria-label="Sumário"><strong>Sumário</strong><ol id="toc"></ol></nav>
+  <article id="doc">
+    <h2>Recomendação</h2>
+    <blockquote><strong>Viável. Proxy MITM nativo em Swift (SwiftNIO + NIOSSL + swift-certificates), rodando no daemon <code>collied</code>, e um novo plugin <code>network</code> preso ao serial do emulador.</strong> No MVP o emulador é configurado por <code>adb reverse</code> + <code>settings put global http_proxy</code>, e a CA vai para o system store por <code>adb root</code> + tmpfs/nsenter, no estilo HTTP Toolkit. A conta fica em ~3 semanas, mais um spike de 2–3 dias.</blockquote>
+    <p>Por quê:</p>
+    <ul>
+      <li>O daemon já cuida de tudo do Android: o caminho do adb, a vida do emulador, os eventos e o streaming para os painéis. O proxy é mais um serviço de vida longa nesse mesmo lugar, e a captura continua mesmo com o painel fechado.</li>
+      <li>O NIOSSL aceita cert e chave em memória (DER/PEM) e troca o contexto por SNI. Com o Network.framework seria preciso uma <code>SecIdentity</code>, e no macOS isso obriga a passar pelo Keychain para cada host. Esse é o maior atrito da alternativa nativa da Apple.</li>
+      <li>Embutir mitmproxy ou Go traria um runtime estranho, notarização de binário de terceiros, dezenas de MB e uma ponte IPC. O ganho (HTTP/2 e WebSocket prontos) só pesa depois do MVP.</li>
+      <li>Combina com o jeito "agente primeiro" do Collie: <code>collie network list/get/curl</code> sai quase de graça pelo mesmo <code>CommandRouter</code>.</li>
+    </ul>
+
+    <h2>1. Android no Collie hoje</h2>
+    <table>
+      <tr><th>Peça</th><th>Onde</th><th>O que faz</th></tr>
+      <tr><td>Adb</td><td><code>Sources/CollieDaemonKit/Devices/Adb.swift</code></td><td>Acha o adb (<code>COLLIE_ADB</code>, SDK, Homebrew), roda <code>adb -s serial …</code> com limite de tempo e nunca derruba o server.</td></tr>
+      <tr><td>Emulator</td><td><code>…/Devices/Emulator.swift</code></td><td><code>-list-avds</code> e <code>-avd X</code> em sessão própria (setsid).</td></tr>
+      <tr><td>DeviceService</td><td><code>…/Devices/DeviceService.swift</code>, <code>+Android.swift</code>, <code>+iOS.swift</code></td><td>Actor do daemon: <code>run(command, panel, args)</code> com switch <code>device.*</code>, boot do AVD, polling de dispositivos, crash watcher, <code>attach</code> de streams.</td></tr>
+      <tr><td>DeviceSession</td><td><code>…/Devices/DeviceSession.swift</code></td><td>scrcpy via <code>adb forward tcp:0 localabstract:…</code>, o mesmo padrão de túnel que vamos usar (<code>adb reverse</code>).</td></tr>
+      <tr><td>Comandos</td><td><code>Sources/CollieDaemonKit/DeviceCommands.swift</code></td><td>Roteia <code>device.*</code> e resolve o painel pelos leashes (<code>ConnectionGraph.resolvePanel(plugin: "device")</code>).</td></tr>
+      <tr><td>Spec</td><td><code>Sources/CollieProtocol/Plugins.swift:36,161</code></td><td><code>PluginSpec</code> "device" (comandos, eventos); a lista <code>builtIn</code> fica na linha 36.</td></tr>
+      <tr><td>UI</td><td><code>Sources/ColliePlugins/DevicePanel.swift</code>, registrada em <code>Sources/CollieApp/CollieApp.swift:52</code></td><td>Painel SwiftUI com vídeo H.264 e input. O estado do painel guarda <code>serial</code>.</td></tr>
+      <tr><td>Lógica pura</td><td><code>Sources/CollieDevice/</code></td><td>Parsers testáveis (AdbParsing, UITree…), sem I/O.</td></tr>
+    </table>
+    <p><strong>Onde o "Rede" entra:</strong> como plugin próprio, não como aba do DevicePanel (esse arquivo já tem 440 linhas e cuida de vídeo).</p>
+    <ul>
+      <li><code>Plugins.swift</code>: <code>PluginSpec</code> "network" (title "Rede") com os comandos <code>network.attach|detach|list|get|curl|clear</code> e os eventos <code>network.flow</code>. Entra no <code>builtIn</code>.</li>
+      <li><code>CollieDaemonKit/Network/</code>: <code>NetworkService</code> (actor: proxy, CA, store, setup do device), roteado no <code>CommandRouter</code> como <code>device.*</code>.</li>
+      <li>Novo target <code>CollieNetwork</code> (puro, testável, como o <code>CollieDevice</code>): modelo do fluxo, gerador de cURL, decode de body. As dependências NIO ficam só nele e no DaemonKit.</li>
+      <li><code>ColliePlugins/NetworkPanel.swift</code> + <code>PluginViews.register("network", …)</code>. O painel guarda <code>serial</code> no state, igual ao device, e pode ser preso por leash ao painel do dispositivo.</li>
+    </ul>
+    <p class="muted">Hoje o Package.swift depende só do SwiftTerm, sem NIO. App sem <code>.entitlements</code>, ou seja, fora do App Sandbox.</p>
+
+    <h2>2. Como o HTTP Toolkit faz</h2>
+    <h3>Captura</h3>
+    <ul>
+      <li><strong>Caminho principal: app VPN no Android.</strong> Ela pega os pacotes TCP das portas comuns (80, 443, 8000, 8080…) e manda para o desktop. No Android 10+ ela também define um proxy HTTP padrão. Cobre apps que ignoram proxy, mas exige um APK nosso e o aviso de VPN.</li>
+      <li><strong>Proxy simples</strong>, a escolha do nosso MVP:
+<pre><code>adb -s $S reverse tcp:8899 tcp:8899
+adb -s $S shell settings put global http_proxy 127.0.0.1:8899
+# desfazer (delete só vale após reboot; ":0" vale na hora)
+adb -s $S shell settings put global http_proxy :0
+adb -s $S reverse --remove tcp:8899</code></pre>
+        O <code>reverse</code> deixa o proxy preso ao loopback do Mac. Alternativa no emulador: <code>10.0.2.2</code> = loopback do host, sem reverse. Limite: Flutter/Dart, apps com <code>Proxy.NO_PROXY</code> e UDP/QUIC ignoram o proxy.</li>
+    </ul>
+    <h3>CA no system store (precisa de root)</h3>
+    <ul>
+      <li><strong>Android ≤13:</strong> <code>adb root</code>, depois tmpfs montado sobre <code>/system/etc/security/cacerts</code>, copiando de volta as CAs existentes e juntando <code>&lt;subject_hash_old&gt;.0</code>. chmod 644, <code>chcon u:object_r:system_file:s0</code>. Vale na hora e some no reboot.</li>
+      <li><strong>Android 14+:</strong> as CAs vêm do APEX <code>/apex/com.android.conscrypt/cacerts</code>, imutável. Os passos:
+        <ol><li>Montar um tmpfs com as CAs atuais + a nossa.</li>
+        <li><code>nsenter --mount=/proc/&lt;zygote|zygote64&gt;/ns/mnt -- mount --bind tmp /apex/com.android.conscrypt/cacerts</code></li>
+        <li>Fazer o mesmo em cada filho do zygote (apps já abertos), em paralelo. Leva menos de 1 s.</li></ol>
+        Temporário: some no reboot e reaplicamos no <code>attach</code>.</li>
+      <li><strong>Imagens:</strong> <code>google_apis</code> e AOSP aceitam <code>adb root</code>. <code>google_apis_playstore</code> não aceita: só dá para usar CA de usuário, em que apps target ≥24 não confiam.</li>
+    </ul>
+    <h3>Limitações que herdamos</h3>
+    <ul>
+      <li><code>network_security_config</code> só importa para CA de usuário. Com a CA no sistema, ~99% dos apps confiam. Para app próprio sem root: <code>&lt;debug-overrides&gt;&lt;trust-anchors&gt;&lt;certificates src="user"/&gt;</code>.</li>
+      <li><strong>Certificate pinning</strong> (bancos, OkHttp <code>CertificatePinner</code>) quebra a conexão. O HTTP Toolkit resolve com Frida (unpinning) ou apk-mitm. Fora do MVP: a gente detecta (handshake abortado) e mostra "pinned?".</li>
+      <li><strong>HTTP/2:</strong> se o MITM anunciar só <code>http/1.1</code> no ALPN, OkHttp e Cronet caem para h1. gRPC precisa de h2 e falha. Fica para depois do MVP.</li>
+      <li><strong>WebSocket:</strong> o MVP registra o handshake (101) e repassa os frames como túnel cego. Os frames vêm depois.</li>
+    </ul>
+
+    <h2>3. Opções de proxy MITM</h2>
+    <table>
+      <tr><th>Opção</th><th>Esforço</th><th>Tamanho</th><th>Licença</th><th>Manutenção / notas</th></tr>
+      <tr class="pick"><td><strong>SwiftNIO + NIOSSL + NIOHTTP1 (+NIOHTTP2 depois) + swift-certificates/swift-crypto</strong> <span class="tag">escolhida</span></td><td>Médio: CONNECT, TLS dos dois lados, parser h1 já pronto</td><td>+ alguns MB (BoringSSL estático)</td><td>Apache-2.0</td><td>Mantido pela Apple. Cert/chave em memória e SNI por <code>NIOSSLServerHandler</code> por conexão. Mais build time do SwiftPM.</td></tr>
+      <tr><td>Network.framework + Security</td><td>Alto: sem parser HTTP, TLS server exige <code>SecIdentity</code></td><td>0</td><td>sistema</td><td>Gerar identidade por host sem Keychain no macOS é doloroso ou usa API privada. Teríamos que escrever o parser h1/h2.</td></tr>
+      <tr><td>mitmdump embutido + addon que emite JSON</td><td>Baixo no começo; h2/WS/QUIC prontos</td><td>dezenas de MB (Python congelado), <em>a medir</em></td><td>MIT</td><td>Binário de terceiros para assinar e notarizar, versões do Python, ponte IPC, startup lento. Bom plano B se h2/gRPC virar prioridade.</td></tr>
+      <tr><td>Lib Go (goproxy/martian) via c-archive</td><td>Médio-alto: toolchain Go no build, ponte cgo</td><td>~5–10 MB</td><td>BSD/Apache</td><td>Mais uma linguagem no repo e dois runtimes no processo.</td></tr>
+      <tr><td>httptoolkit-server / mockttp (Node)</td><td>Baixo funcional, alto de empacotamento</td><td>grande (Node)</td><td>server AGPL-3.0 <em>(confirmar)</em>, mockttp Apache-2.0</td><td>AGPL descarta o server. Node embutido não combina com o resto.</td></tr>
+    </table>
+    <h3>CA e certificados</h3>
+    <ul>
+      <li>CA própria por instalação: P-256 ou RSA-2048, gerada no primeiro <code>attach</code> com swift-certificates (<code>Certificate</code>, <code>BasicConstraints.isCertificateAuthority</code>, <code>KeyUsage.keyCertSign</code>). Validade de 1 ano, rotação manual.</li>
+      <li>Leaf por host sob demanda: SAN = SNI (ou IP), validade de 7 dias, cache LRU em memória (~500). Assinar com P-256 leva ms.</li>
+      <li>Nome do arquivo no Android: <code>subject_hash_old</code> (MD5 do subject DER, estilo OpenSSL ≤0.9.8). Tem que calcular em Swift. Item de spike.</li>
+    </ul>
+
+    <h2>4. Modelo de dados + cURL</h2>
+<pre><code>struct Flow: Codable, Sendable, Identifiable {
+  let id: UInt64; let serial: String; let started: Date
+  var method: String; var url: String          // absoluta: scheme://host:port/path?query
+  var httpVersion: String                       // "HTTP/1.1" | "HTTP/2"
+  var reqHeaders: [Header]; var reqBody: Body?
+  var status: Int?; var resHeaders: [Header]; var resBody: Body?
+  var timing: Timing                            // dns/connect/tls/ttfb/total
+  var state: State                              // pending | done | failed(String) | tunneled
+  var tls: TLSInfo?                             // sni, alpn, pinnedSuspect
+}
+struct Header: Codable, Sendable { let name: String; let value: String }  // ordem e duplicatas preservadas
+struct Body: Codable, Sendable {
+  let size: Int; let truncated: Bool
+  let encoding: String?                          // content-encoding original
+  let stored: Ref                                // .inline(Data) ≤64 KiB | .file(URL) no runDir
+}</code></pre>
+    <p>A lista mostra só um resumo (id, método, host, path, status, tamanho, ms). O detalhe pede <code>network.get id</code>. No evento <code>network.flow</code> vai só o resumo, nunca o body.</p>
+    <h3>Copiar como cURL (CollieNetwork, puro, com teste)</h3>
+    <ul>
+      <li>Aspas simples POSIX: <code>'</code> vira <code>'\''</code>. Vale para URL, cada <code>-H 'Name: value'</code> e o body texto.</li>
+      <li><code>-X METHOD</code> só quando não é implícito (GET sem body, POST com body).</li>
+      <li>Ficam de fora os headers hop-by-hop e os que o curl recalcula: <code>Content-Length</code>, <code>Connection</code>, <code>Transfer-Encoding</code>, <code>Proxy-*</code>, pseudo-headers h2 (<code>:authority</code> vira Host só se for diferente da URL). <code>Accept-Encoding</code> com gzip/br/deflate vira <code>--compressed</code>.</li>
+      <li>Body UTF-8 válido sem NUL: <code>--data-raw '…'</code>. Binário (ou não-UTF-8):
+<pre><code>printf %s 'BASE64…' | base64 -d | curl … --data-binary @-</code></pre>
+        Acima de ~256 KiB o body vai para um arquivo temporário (<code>--data-binary @/path</code>) com aviso.</li>
+      <li>Multipart: mandar o corpo bruto com o <code>Content-Type</code> e o boundary originais (<code>--data-binary</code>). É fiel byte a byte; reconstruir com <code>-F</code> perderia ordem e nomes.</li>
+      <li><code>--http2</code> quando o fluxo foi h2. Sem <code>-k</code>: o cURL aponta para o servidor real.</li>
+    </ul>
+    <h3>Decode para exibir (a cópia em cURL e o forward usam os bytes originais)</h3>
+    <ul>
+      <li>gzip/deflate: libz do sistema (<code>inflateInit2</code> com window 31/-15).</li>
+      <li>br: <code>Compression.framework</code> <code>COMPRESSION_BROTLI</code> (macOS 12+). <em>Confirmar no spike se descomprime streams HTTP arbitrários.</em></li>
+      <li>zstd: sem suporte nativo, exibe "não decodificado". Fica para depois.</li>
+    </ul>
+
+    <h2>5. Riscos</h2>
+    <table>
+      <tr><th>Risco</th><th>Mitigação</th></tr>
+      <tr><td><strong>Chave privada da CA vazar</strong>: quem tiver a chave faz MITM de qualquer device que confie nela.</td><td>A chave fica num item do Keychain (generic password, só o daemon lê) ou num arquivo <code>0600</code> em Application Support, nunca no repo nem no projeto. A CA <em>nunca</em> entra no trust store do macOS. Ela só é injetada em memória (tmpfs) nos emuladores escolhidos. Ter "Regenerar CA" e "Esquecer CA".</td></tr>
+      <tr><td>Proxy exposto na rede</td><td>Bind só em <code>127.0.0.1</code>; o device chega via <code>adb reverse</code>. Recusar destino <code>127.0.0.1:porta-do-proxy</code> (loop). Porta efêmera por attach.</td></tr>
+      <tr><td>Escopo além do emulador</td><td>MVP: só <code>emulator-*</code> com <code>adb root</code> funcionando. O <code>detach</code>, o fechamento do painel e o stop do daemon desfazem o proxy e o reverse. O crash do daemon deixa o proxy setado (o device fica sem rede), por isso reconciliar no próximo start, como o OrphanReaper.</td></tr>
+      <tr><td>Dados sensíveis capturados (tokens, cookies)</td><td>Store em memória, com spill em <code>runDir</code> 0600, apagado no clear e no stop. CLI/MCP segue a regra de leash do device (só quem alcança o painel lê). Comando <code>clear</code>.</td></tr>
+      <tr><td>Sandbox</td><td>App fora do App Sandbox (sem entitlements), daemon via launchd. Bind em loopback não dispara o firewall. Se um dia entrar no sandbox: <code>com.apple.security.network.server/client</code>.</td></tr>
+      <tr><td>Performance / bodies grandes</td><td>Streaming (o forward nunca espera o body inteiro). A captura tem teto de 10 MiB por body (flag <code>truncated</code>) e o store tem ring buffer (~2k fluxos / 512 MiB em disco). Downloads e vídeo passam sem guardar.</td></tr>
+      <tr><td>Pinning e apps que ignoram proxy</td><td>Mostrar como falha "TLS recusado: pinning?" ou nem aparecer. Documentar. Pós-MVP: iptables (root) para modo transparente e Frida.</td></tr>
+      <tr><td>Android 15/16 mudar o APEX ou o zygote</td><td>Spike em API 34, 35 e 36. Fallback com a Option 2 (remount de <code>/apex</code>) + restart do <code>system_server</code>.</td></tr>
+      <tr><td>Dependências NIO no build</td><td>Isolar no target <code>CollieNetwork</code>/DaemonKit. App e CLI não linkam NIO.</td></tr>
+    </table>
+
+    <h2>Arquitetura</h2>
+<pre><code>Emulador (google_apis, root)
+  app ──HTTP(S)──▶ http_proxy=127.0.0.1:P ──adb reverse──▶ Mac 127.0.0.1:P
+                                                            │
+collied ─ NetworkService (actor)                            ▼
+  ├─ ProxyServer (NIO)     CONNECT → TLS server (leaf p/ SNI) ⇄ TLS client → origem
+  │                        HTTP/1.1 decode/encode, tee de bodies
+  ├─ CertAuthority         CA (Keychain/0600) + LRU de leafs (swift-certificates)
+  ├─ DeviceSetup           adb root · inject CA (tmpfs/nsenter) · proxy · reverse · undo
+  ├─ FlowStore             ring buffer + spill em runDir · emite network.flow
+  └─ comandos network.*    attach/detach/list/get/curl/clear (CommandRouter, leash)
+CollieNetwork (puro)       Flow, Header, Body, Curl.render, BodyDecoder, subjectHashOld
+CollieApp ─ NetworkPanel   lista (filtro host/status) · detalhe (headers/body, abas) · "Copiar como cURL"</code></pre>
+
+    <h2>Fases e estimativa</h2>
+    <table>
+      <tr><th>Fase</th><th>Entrega</th><th>Estimativa</th></tr>
+      <tr><td>0 · Spike</td><td>Script manual (proxy + reverse + inject CA) num AVD API 34/35/36 google_apis. Protótipo NIOSSL: CONNECT + leaf por SNI, <code>curl --proxy</code> do device chegando à origem. <code>subject_hash_old</code> em Swift contra <code>openssl x509 -subject_hash_old</code>.</td><td>2–3 d</td></tr>
+      <tr><td>1 · Núcleo proxy</td><td>Target CollieNetwork + NetworkService: HTTP/1.1 plain + CONNECT/MITM, CA persistida, FlowStore, ALPN só h1, túnel cego para WS/não-TLS desconhecido.</td><td>4–6 d</td></tr>
+      <tr><td>2 · Setup do device</td><td><code>network.attach/detach</code>: checa emulador + root, injeta a CA (≤13 e 14+), proxy + reverse, undo garantido (panelClosed/stop/reconciliação no start).</td><td>2–3 d</td></tr>
+      <tr><td>3 · Painel</td><td>NetworkPanel: lista ao vivo (stream), detalhe com headers, body (texto/JSON formatado/hex, decode gzip/br), status e tempos. Botão Copiar como cURL.</td><td>3–5 d</td></tr>
+      <tr><td>4 · CLI/MCP</td><td><code>collie network list|get|curl</code> para os agentes (resumos, body sob demanda).</td><td>1 d</td></tr>
+      <tr><td><strong>MVP</strong></td><td>HTTP/HTTPS via proxy + CA em emulador rootável, lista + detalhe + cURL</td><td><strong>~12–18 d (2,5–3,5 sem)</strong></td></tr>
+      <tr><td>Pós-MVP</td><td>HTTP/2 (NIOHTTP2) e gRPC · frames WebSocket · modo transparente via iptables · Frida unpinning · device físico rootado · filtros/busca/HAR export · breakpoints/mocks.</td><td>—</td></tr>
+    </table>
+
+    <h2>Incógnitas para o spike</h2>
+    <ol>
+      <li>O tmpfs + nsenter funciona igual em API 35 e 36? Há <code>nsenter</code> no toybox da imagem, ou precisamos empurrar um binário?</li>
+      <li>Os apps já abertos pegam a CA sem restart? Ou o attach precisa de <code>am force-stop</code> no pacote alvo?</li>
+      <li>O Chrome do emulador e o WebView respeitam <code>global http_proxy</code> + CA de sistema (Chrome tem store próprio em algumas versões)?</li>
+      <li>OkHttp e Cronet caem para h1 sem erro quando o ALPN só tem <code>http/1.1</code>?</li>
+      <li><code>adb reverse</code> sobrevive a reinício do adb server ou do emulador? (O polling do DeviceService precisaria reaplicar.)</li>
+      <li>Para a chave da CA: Keychain do daemon launchd (sessão de login? prompts?) ou arquivo 0600?</li>
+      <li>Quanto o build cresce (tempo e tamanho do binário) com NIO + NIOSSL + swift-certificates?</li>
+      <li>O <code>COMPRESSION_BROTLI</code> decodifica br de resposta HTTP real?</li>
+      <li>Licença exata do httptoolkit-server (só para registrar por que ficou fora).</li>
+    </ol>
+
+    <h2>Resultado do spike</h2>
+    <p class="muted">2026-10-30 · branch <code>spike/network-interceptor</code> · scripts em <code>scripts/spike/network/</code>. Testado num AVD descartável <code>spike-net-api37</code> (google_apis, API 37, arm64, GPU por software, 2 cores), apagado no fim. O <code>emulator-5554</code> (Proxyman) não foi tocado.</p>
+    <blockquote><strong>Mudança de rumo.</strong> O protótipo NIOSSL próprio (proxy MITM em Swift) não foi escrito: o filtro de segurança barrou o agente nesse passo. O spike usou o <strong>mitmdump 12.3.1</strong> (MIT) como proxy, que era o plano B da seção 3: loopback <code>127.0.0.1:8899</code>, confdir isolado, <code>http2=false</code>, addon <code>flows.py</code> emitindo JSON. A arquitetura vira <em>collied → subprocesso mitmdump + addon JSON</em>, e o resto (setup do device, painel, cURL) segue igual.</blockquote>
+
+    <h3>Incógnitas</h3>
+    <table>
+      <tr><th>#</th><th>Pergunta</th><th>Veredito</th><th>Evidência</th></tr>
+      <tr><td>1</td><td>tmpfs + nsenter funciona? <code>nsenter</code> existe?</td><td><strong>GO (API 37)</strong> · API 34/35/36: <em>não testado, só API 37 disponível</em></td><td><code>/system/bin/nsenter</code> (toybox 0.8.13). <code>ca.sh inject</code> → <code>apex bind: 56 namespaces · injected c8750f0d.0: 146 CAs</code> em ~12 s (emulador lento). <code>eject</code> → <code>mount | grep -c collie-ca</code> = 0, 145 CAs originais de volta.</td></tr>
+      <tr><td>2</td><td>Apps já abertos pegam a CA sem restart?</td><td><strong>GO</strong></td><td>Probe <code>HttpsURLConnection</code> de vida longa no namespace do zygote: <code>0–4 FAIL … Trust anchor for certification path not found</code> → inject → <code>5–8 200 … via HTTP @ /127.0.0.1:8899</code>, sem reiniciar. O bind também aparece no namespace do Chrome que já estava aberto (pid 4718).</td></tr>
+      <tr><td>3</td><td>Chrome e WebView respeitam proxy + CA de sistema?</td><td><strong>Chrome: PARCIAL</strong> · WebView: <em>não testado</em></td><td>O proxy é respeitado. A CA de <em>sistema</em> não basta: o Chrome 145 (Chrome Root Store) devolve <code>tls alert certificate unknown</code> mesmo num processo novo que enxerga <code>c8750f0d.0</code> no APEX. Com a CA <em>também</em> no store de usuário (<code>/data/misc/user/0/cacerts-added/c8750f0d.0</code>, via root) → <code>GET https://example.com/?from=chrome-userstore 200 HTTP/1.1</code>. <strong>O attach precisa injetar nos dois stores.</strong> WebView: a imagem não tem app com WebView para testar.</td></tr>
+      <tr><td>4</td><td>OkHttp/Cronet caem para h1 com ALPN só <code>http/1.1</code>?</td><td><strong>GO</strong> (OkHttp embutido, Chrome, GMS) · OkHttp de app e Cronet embutido: <em>não testados diretamente</em></td><td><code>com.android.okhttp.internal.huc.HttpsURLConnectionImpl</code> 200. Chrome e GMS/Firebase: <code>"alpn": "http/1.1"</code> em todos os fluxos, sem erro. O GMS recusa <code>accounts.google.com</code> e <code>www.google.com</code> (<code>certificate unknown</code>), o que é <strong>pinning</strong> esperado e não uma questão de h1.</td></tr>
+      <tr><td>5</td><td><code>adb reverse</code> sobrevive a restart?</td><td><strong>NO-GO como está → mitigável</strong></td><td><code>adb reconnect</code>, <code>unroot</code>/<code>root</code> e <code>reboot</code> apagam o reverse (<code>reverse --list</code> vazio). Depois do reboot, <code>http_proxy=127.0.0.1:8899</code> <strong>persiste</strong>, enquanto CA (tmpfs) e root somem: o device fica sem rede. O collied precisa reaplicar o reverse no poll de devices e, ao subir ou ao ver o device sem attach ativo, limpar o <code>http_proxy</code> que for nosso. O adb server não foi derrubado no teste porque é compartilhado.</td></tr>
+      <tr><td>6</td><td>Chave da CA: Keychain ou arquivo 0600?</td><td><strong>Arquivo 0600</strong> (Keychain: <em>não testado</em>)</td><td>Com mitmdump a escolha é imposta: a CA é gerada no confdir (<code>mitmproxy-ca.pem</code> = <code>600</code>, cert público <code>644</code>). Proposta: confdir em <code>~/Library/Application Support/Collie/network/</code> (0700), nunca no projeto. <code>.gitignore</code> do spike cobre <code>.mitm/</code>.</td></tr>
+      <tr><td>7</td><td>Quanto cresce o build com NIO?</td><td><strong>Medido</strong></td><td>Release a frio: X509+Crypto (<code>spike-hash</code>) 312 s, 6,2 MB (3,3 MB sem símbolos). +NIOCore/Posix/HTTP1/NIOSSL (<code>spike-nio-size</code>) 504 s, 15,8 MB (7,8 MB sem símbolos). <code>.build</code> = 629 MB. Executável Swift vazio: 50 KB. <strong>Com mitmdump o build Swift não cresce</strong>, mas o runtime do mitmproxy.app ocupa 88 MB (cask, fora do bundle do Collie).</td></tr>
+      <tr><td>8</td><td><code>COMPRESSION_BROTLI</code> decodifica br real?</td><td><strong>GO</strong></td><td><code>OutputFilter(.decompress, using: .brotli)</code> no body de cloudflare.com: <code>in=109500 out=1334522</code>, mesmo tamanho do <code>curl --compressed</code>. Com mitmdump o próprio addon já recebe o body decodificado.</td></tr>
+      <tr><td>9</td><td>Licença do httptoolkit-server</td><td><strong>AGPL-3.0</strong> (confirmado)</td><td><code>gh api repos/httptoolkit/httptoolkit-server/license</code> → <code>AGPL-3.0</code>. mockttp <code>Apache-2.0</code>, mitmproxy <code>MIT</code>.</td></tr>
+    </table>
+
+    <h3>Outros achados</h3>
+    <ul>
+      <li><strong>subject_hash_old em Swift: 130/130 iguais</strong> ao <code>openssl@3 x509 -subject_hash_old</code> (128 roots do macOS, a CA de teste com subject UTF-8 e a CA do mitm <code>c8750f0d</code>). Isso exigiu ler só os bytes do subject no TBSCertificate via SwiftASN1: o parse completo do <code>swift-certificates</code> <strong>rejeita roots reais</strong> com serial negativo (<code>ASN1Error.invalidASN1IntegerEncoding: INTEGER encoded with top bit set</code>). Com mitmdump o hash pode até sair do <code>openssl</code>, mas a versão Swift está pronta e não depende de binário externo.</li>
+      <li>Proxy prévio do device: <code>proxy-on.sh</code> salva o valor de <code>http_proxy</code> e <code>proxy-off.sh</code> o restaura. Isso importa porque o 5554 já usava o Proxyman.</li>
+      <li>Emulador com GPU por software e 2 cores: load ~30 e ANRs de System UI e Launcher. São da carga, não da injeção. Para testes, preferir <code>hw.gpu.mode=host</code>.</li>
+      <li>O SDK não tem <code>avdmanager</code>: o AVD descartável foi criado escrevendo <code>config.ini</code> à mão (já apagado). Para repetir, instalar cmdline-tools.</li>
+    </ul>
+
+    <h3>Go / no-go</h3>
+    <p><strong>GO para o MVP com mitmdump como backend</strong>, com três ajustes no plano:</p>
+    <ol>
+      <li>O <code>network.attach</code> injeta a CA no store de <em>sistema</em> (tmpfs + nsenter) <strong>e</strong> no de <em>usuário</em> (<code>cacerts-added</code>, por causa do Chrome), e o <code>detach</code> remove dos dois.</li>
+      <li>O poll de devices do <code>DeviceService</code> reaplica <code>adb reverse</code>. Ao subir o daemon e ao ver reboot, limpa o <code>http_proxy</code> que aponte para uma porta nossa sem attach vivo.</li>
+      <li>Fase 1 vira "subprocesso mitmdump + parser JSONL" (estimativa cai de 4–6 d para ~2–3 d). As fases 2–4 ficam como estão.</li>
+    </ol>
+    <p>Pendentes, a decidir pelo dono: baixar imagens API 34/35/36 (incógnita 1), testar WebView e um app com OkHttp ou Cronet próprio (incógnitas 3 e 4), e como distribuir o mitmproxy (exigir o cask ou embutir os 88 MB).</p>
+
+    <h2>Fontes</h2>
+    <ul>
+      <li><a href="https://httptoolkit.com/docs/guides/android/">HTTP Toolkit: Android guide</a></li>
+      <li><a href="https://httptoolkit.com/blog/android-14-install-system-ca-certificate/">HTTP Toolkit: Android 14 system CA</a></li>
+      <li><a href="https://github.com/apple/swift-nio-ssl">swift-nio-ssl</a> · <a href="https://github.com/apple/swift-certificates">swift-certificates</a></li>
+    </ul>
+  </article>
+</div>
+<script src="collie-lib://lib/lucide@0.469.0/lucide.min.js"></script>
+<script>
+const toc = document.getElementById('toc');
+document.querySelectorAll('#doc h2').forEach((h, i) => {
+  h.id = h.id || 'secao-' + (i + 1);
+  const li = document.createElement('li'), a = document.createElement('a');
+  a.textContent = h.textContent; a.setAttribute('href', '#' + h.id);
+  li.appendChild(a); toc.appendChild(li);
+});
+function libsMissing() {
+  if (document.querySelector('.libs-note')) return;
+  const p = document.createElement('p'); p.className = 'muted libs-note'; p.textContent = 'Bibliotecas offline indisponíveis';
+  document.body.appendChild(p);
+}
+if (window.lucide) {
+  for (const [sel, name, swap] of [['.toc strong', 'list']]) document.querySelectorAll(sel).forEach(el => {
+    const i = document.createElement('i'); i.setAttribute('data-lucide', name);
+    if (swap) el.replaceChildren(i); else el.prepend(i, ' ');
+  });
+  lucide.createIcons({ icons: lucide.icons });
+} else libsMissing();
+</script>
+</body>
+</html>

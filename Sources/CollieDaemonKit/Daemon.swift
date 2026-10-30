@@ -22,6 +22,8 @@ public struct DaemonConfig: Sendable {
     public var adbPath: URL?
     /// The Android `emulator` binary; nil = `Emulator.locate` (tests point it at a fake).
     public var emulatorPath: URL?
+    /// mitmproxy's `mitmdump`; nil = `MitmTool.locate` (COLLIE_MITMDUMP, then Homebrew).
+    public var mitmdumpPath: URL?
     /// How long a launched emulator may take to finish booting (tests shorten it).
     public var emulatorBoot: Duration = .seconds(180)
     /// The launched emulator's environment; nil = the daemon's minus `COLLIE_*` (tests pass their fakes' inputs).
@@ -206,6 +208,8 @@ public final class Daemon: Sendable {
         try await auth.persist()
         await hub.start()
         await router.watchDevices()
+        let network = router.network
+        Task { await network.reconcileAtStart() }   // a crashed daemon's capture left on an emulator: undone, off the start path
         await router.userEnv.warm()
         await router.startJobSweep()
         await router.memory.setProposalState { [weak router] in await router?.proposalState() ?? ([], []) }
@@ -226,6 +230,7 @@ public final class Daemon: Sendable {
         await router.stopConsolidation()
         await router.curator.stop()
         await router.host.stop()
+        await router.network.stop()   // before devices: it detaches through adb
         await router.devices.stop()
         await router.design.stop()
         await router.figcraft.stop()

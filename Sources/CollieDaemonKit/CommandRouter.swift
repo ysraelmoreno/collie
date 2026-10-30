@@ -33,6 +33,8 @@ actor CommandRouter {
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
     nonisolated let devices: DeviceService
+    /// HTTP(S) capture of Android emulators (`network.*`), through mitmdump.
+    nonisolated let network: NetworkService
     /// The design engine's server; started by the first design command.
     nonisolated let figcraft: FigcraftServer
     /// Design files and the callers' figcraft clients.
@@ -129,6 +131,10 @@ actor CommandRouter {
             xcrun: config.xcrunPath, axe: { axePath ?? Simulator.locateAXe(env: ProcessInfo.processInfo.environment) },
             crashReports: config.crashReportsDir, logCap: config.deviceLogCap,
             emit: { p, n, pl in await me.router?.pluginEmitted(panel: p, name: n, payload: pl) })
+        let mitmdumpPath = config.mitmdumpPath
+        self.network = NetworkService(root: config.paths.root, runDir: config.paths.runDir, devices: devices,
+            mitmdump: { mitmdumpPath ?? MitmTool.locate(env: ProcessInfo.processInfo.environment) },
+            emit: { s, n, pl in await me.router?.networkEmitted(serial: s, name: n, payload: pl) })
         // no figcraftDir: a binary path that never exists, so the first design command reports `notBundled`
         self.figcraft = FigcraftServer(
             binary: (config.figcraftDir ?? URL(fileURLWithPath: "/nonexistent")).appendingPathComponent("bin/figcraft-server"),
@@ -293,6 +299,7 @@ actor CommandRouter {
             if let (plugin, spec) = PluginRegistry.command(req.command) {   // admin or terminal; reach rules in resolvePanel
                 let result = plugin.id == "design" ? try await designCommand(req, peer: peer)
                     : plugin.id == "artifacts" ? try await artifactCommand(req, peer: peer)
+                    : plugin.id == "network" ? try await networkCommand(req, peer: peer)
                     : plugin.runsInDaemon ? try await deviceCommand(req, peer: peer)
                     : try await pluginCommand(req, plugin: plugin, spec: spec, peer: peer)
                 // R6: an external plug-in's file comes only from its own plugins-out dir, for every caller (and --out)

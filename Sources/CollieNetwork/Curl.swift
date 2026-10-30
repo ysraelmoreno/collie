@@ -16,12 +16,14 @@ public enum Curl {
         default: args.append("-X " + quote(flow.method))
         }
         if flow.httpVersion.uppercased().hasPrefix("HTTP/2") { args.append("--http2") }
+        // --compressed sends curl's own Accept-Encoding (only what it can decode, e.g. no zstd): the original goes
+        let compressed = flow.reqHeaders.contains { $0.name.lowercased() == "accept-encoding" }
         for h in flow.reqHeaders {
             let n = h.name.lowercased()
-            guard !n.hasPrefix(":"), !n.hasPrefix("proxy-"), !dropped.contains(n) else { continue }
+            guard !n.hasPrefix(":"), !n.hasPrefix("proxy-"), !dropped.contains(n), n != "accept-encoding" else { continue }
             args.append("-H " + quote("\(h.name): \(h.value)"))
         }
-        if flow.reqHeaders.contains(where: { $0.name.lowercased() == "accept-encoding" }) { args.append("--compressed") }
+        if compressed { args.append("--compressed") }
 
         var prefix = ""
         if let body {

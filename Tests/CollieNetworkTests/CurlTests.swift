@@ -30,9 +30,9 @@ private func text(_ s: String) -> Body { Body(size: s.utf8.count, data: Data(s.u
         (":authority", "api.example.com"), (":path", "/v1/x"), ("Host", "api.example.com"), ("Connection", "keep-alive"),
         ("Keep-Alive", "5"), ("Transfer-Encoding", "chunked"), ("Content-Length", "3"), ("Proxy-Connection", "x"),
         ("Proxy-Authorization", "y"), ("TE", "trailers"), ("Upgrade", "h2c"), ("Cookie", "a=1"), ("cookie", "b=2"),
-        ("Accept-Encoding", "gzip, br")]))
+        ("Accept-Encoding", "gzip, deflate, br, zstd")]))
     let headers = c.components(separatedBy: "-H ").dropFirst().map { $0.prefix { $0 != ":" } }
-    #expect(headers == ["'Cookie", "'cookie", "'Accept-Encoding"])
+    #expect(headers == ["'Cookie", "'cookie"])   // Accept-Encoding: --compressed sends curl's own
     #expect(c.contains("--http2") && c.contains("--compressed"))
     #expect(!Curl.render(flow("GET")).contains("--compressed") && !Curl.render(flow("GET")).contains("--http2"))
 }
@@ -86,7 +86,8 @@ for _ in range(int(sys.argv[1])):
     let flows = [
         flow("POST", "http://127.0.0.1:\(port)/items?q=it's", headers: [
             ("Host", "127.0.0.1:\(port)"), ("Content-Type", "application/json"), ("X-Quote", "it's"),
-            ("Connection", "keep-alive"), ("Content-Length", "999"), ("Proxy-Connection", "x")], body: text(json)),
+            ("Connection", "keep-alive"), ("Content-Length", "999"), ("Proxy-Connection", "x"),
+            ("Accept-Encoding", "gzip, zstd")], body: text(json)),
         flow("PATCH", "http://127.0.0.1:\(port)/bin", headers: [("Content-Type", "application/octet-stream")],
              body: Body(size: binary.count, data: binary)),
     ]
@@ -100,10 +101,12 @@ for _ in range(int(sys.argv[1])):
         let path = String(f.url.split(separator: "/", maxSplits: 3).last!)
         #expect(got["line"] as? String == "\(f.method) /\(path) HTTP/1.1")
         let hs = (got["headers"] as? [[String]] ?? []).map { ($0[0].lowercased(), $0[1]) }
-        for h in f.reqHeaders where !["connection", "content-length", "proxy-connection", "host"].contains(h.name.lowercased()) {
+        for h in f.reqHeaders where !["connection", "content-length", "proxy-connection", "host", "accept-encoding"].contains(h.name.lowercased()) {
             #expect(hs.contains { $0 == (h.name.lowercased(), h.value) }, "\(h.name)")
         }
         #expect(!hs.contains { $0.0 == "proxy-connection" } && hs.first { $0.0 == "content-length" }?.1 == "\(sent.count)")
+        let ae = hs.filter { $0.0 == "accept-encoding" }.map(\.1)   // curl's own, once, never the client's zstd
+        #expect(f.reqHeaders.contains { $0.name == "Accept-Encoding" } ? ae.count == 1 && !ae[0].contains("zstd") : ae.isEmpty)
         #expect(Data(base64Encoded: got["body"] as? String ?? "") == sent)
     }
 }

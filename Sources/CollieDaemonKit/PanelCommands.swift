@@ -325,6 +325,7 @@ extension CommandRouter {
         await devices.panelClosed(p.id)
         await design.panelClosed(p.id, openFiles: openDesignFiles)
         if p.pluginId == "device" { await watchDevices() }
+        if p.pluginId == "network" { await networkPanelClosed(p) }
         let gone = ws.connections.filter { $0.a == p.id || $0.b == p.id }
         ws.connections.removeAll { $0.a == p.id || $0.b == p.id }
         try await persist()

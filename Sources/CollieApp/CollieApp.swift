@@ -50,10 +50,19 @@ enum Config {
              _consented = State(initialValue: UserDefaults.standard.bool(forKey: Config.consentKey))   // after the migration
              PluginViews.register("browser", BrowserPanel.self); PluginViews.register("memory", MemoryPanel.self)
              PluginViews.register("device", DevicePanel.self); PluginViews.register("design", DesignPanel.self)
+             PluginViews.register("network", NetworkPanel.self)
              PluginViews.register("diagram", DiagramPanel.self); PluginViews.register("preview", PreviewPanel.self)
              PluginViews.register("designsystems", DesignSystemsPanel.self)
              PluginViews.register("artifacts", ArtifactsPanel.self); PluginViews.register("work", WorkPanel.self)   // before any panel view is made
-             Self.applyTheme() }
+             Self.applyTheme()
+             #if DEBUG
+             // Unbundled `.build/debug/CollieApp` from a shell: no Dock icon and the window stays behind; make it a regular app.
+             if Bundle.main.bundleIdentifier == nil {
+                 NSApplication.shared.setActivationPolicy(.regular)
+                 DispatchQueue.main.async { NSApp.activate() }
+             }
+             #endif
+           }
 
     static let legacyDefaultsDomain = "dev.orq.app"
     static let migratedKey = "collie.migratedFromOrq"

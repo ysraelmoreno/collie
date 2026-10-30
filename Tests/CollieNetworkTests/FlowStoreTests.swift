@@ -64,3 +64,22 @@ private func request(_ id: String) -> FlowEvent {
     let f = try #require(store.flow("f1"))
     #expect(try JSONDecoder().decode(Flow.self, from: JSONEncoder().encode(f)) == f)
 }
+
+@Test func storeByteBudgetEvictsOldest() {
+    func req(_ id: String, _ n: Int) -> FlowEvent {
+        .request(.init(id: id, ts: .now, method: "POST", url: "http://h/", httpVersion: "HTTP/1.1", headers: [],
+                       body: Body(size: n, data: Data(count: n))))
+    }
+    var store = FlowStore(byteBudget: 100)
+    store.apply(req("a", 40)); store.apply(req("b", 40))
+    #expect(store.bytes == 80 && store.summaries.map(\.id) == ["a", "b"])
+    store.apply(req("c", 40))   // 120 > 100: "a" goes
+    #expect(store.bytes == 80 && store.summaries.map(\.id) == ["b", "c"])
+    // a response on the oldest flow grows it past budget: the others go, never the one just touched
+    store.apply(.response(.init(id: "b", ts: .now, status: 200, headers: [], body: Body(size: 50, data: Data(count: 50)))))
+    #expect(store.bytes == 90 && store.summaries.map(\.id) == ["b"])
+    store.apply(req("huge", 500))   // alone over budget: kept
+    #expect(store.summaries.map(\.id) == ["huge"] && store.bytes == 500)
+    store.clear()
+    #expect(store.bytes == 0)
+}

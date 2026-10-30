@@ -55,9 +55,9 @@ extension CommandRouter {
 
     /// The last network panel closed: every capture stops and its device is restored (in the background: closing a
     /// panel must not wait on adb). Captures the app started with no panel open are left alone.
-    func networkPanelClosed(_ p: Panel) {
+    func networkPanelClosed(_ p: Panel) async {
         guard !ws.panels.contains(where: { $0.pluginId == "network" }) else { return }
-        let network = network
-        Task { for s in await network.attached { _ = try? await network.detach(s) } }
+        let network = network, serials = await network.attached   // these, not whatever is attached when the task runs
+        Task { for s in serials { _ = try? await network.detach(s) } }
     }
 }

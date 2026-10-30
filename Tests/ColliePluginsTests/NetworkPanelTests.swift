@@ -122,7 +122,7 @@ private actor Fake {
         #expect(m.attached && m.port == 8090 && m.restartSuggested == ["com.android.chrome"])
         #expect(m.visible.map(\.id) == ["old"])
         await m.toggle()
-        #expect(!m.attached && m.port == nil && m.restartSuggested.isEmpty)
+        #expect(!m.attached && m.port == nil && m.restartSuggested.isEmpty && m.visible.isEmpty)
         #expect(await fake.commands().suffix(3) == ["network.attach", "network.list", "network.detach"])
     }
 
@@ -168,6 +168,34 @@ private actor Fake {
         #expect(h.split(separator: "\n").count == NetworkPanelModel.hexPreviewLimit / 16)
         #expect(NetworkPanelModel.fullBody(f.resBody, text: nil) == raw.base64EncodedString())
         #expect(NetworkPanelModel.fullBody(nil, text: nil) == nil)
+    }
+
+    @Test func listMergeKeepsEventsThatArrivedDuringTheFetch() throws {
+        let done = try #require(NetworkPanelModel.decode(FlowSummary.self, summary("a", status: 200)))
+        let pending = try #require(NetworkPanelModel.decode(FlowSummary.self, summary("a", status: nil, state: .object(["pending": .object([:])]))))
+        let new = try #require(NetworkPanelModel.decode(FlowSummary.self, summary("new")))
+        let other = FlowRow(serial: "emulator-5556", summary: done), s = "emulator-5554"
+        let local = [other, FlowRow(serial: s, summary: done), FlowRow(serial: s, summary: new)]
+        let m = NetworkPanelModel.merged(local, [pending], serial: s)
+        #expect(m.map(\.id) == ["a", "a", "new"] && m[0].serial == "emulator-5556")
+        #expect(m[1].summary.status == 200)   // not back to pending
+        #expect(NetworkPanelModel.merged([FlowRow(serial: s, summary: pending)], [done], serial: s)[0].summary.status == 200)
+    }
+
+    @Test func stopClearsTheSelection() async {
+        let m = model(Fake())
+        await m.refresh(); await m.toggle()
+        await m.select(flow: "old")
+        #expect(m.detail != nil)
+        await m.toggle()
+        #expect(m.selected == nil && m.detail == nil && m.rows.isEmpty)
+    }
+
+    @Test func detailErrorClearsTheSelectionAndShowsIt() async {
+        let fake = Fake(), m = model(fake); m.serial = "emulator-5554"
+        await fake.set(failure: ProtocolError(code: .notFound, message: "No flow 'a' on emulator-5554"))
+        await m.select(flow: "a")
+        #expect(m.selected == nil && m.detail == nil && m.error == "No flow 'a' on emulator-5554")
     }
 
     @Test func clearDropsOnlyThatSerialsRows() async {

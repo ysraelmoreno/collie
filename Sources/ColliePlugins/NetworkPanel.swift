@@ -122,8 +122,25 @@ public struct BodyPreview: Equatable, Sendable {
     private func loadList() async {
         guard let serial, let list = try? await fetch([FlowSummary].self, "network.list", ["serial": .string(serial), "limit": .number(Double(Self.maxRows))])
         else { return }
-        rows.removeAll { $0.serial == serial }
-        rows += list.map { FlowRow(serial: serial, summary: $0) }
+        rows = Self.merged(rows, list, serial: serial)
+    }
+
+    /// `fetched` over the serial's rows: an event that arrived during the fetch stays (a row the list doesn't have yet, or
+    /// one the list still has as pending).
+    nonisolated static func merged(_ rows: [FlowRow], _ fetched: [FlowSummary], serial: String) -> [FlowRow] {
+        let mine = Dictionary(rows.filter { $0.serial == serial }.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
+        let listed = Set(fetched.map(\.id))
+        let merged = fetched.map { f -> FlowRow in
+            if let r = mine[f.id], f.state == .pending, r.summary.state != .pending { return r }
+            return FlowRow(serial: serial, summary: f)
+        }
+        return rows.filter { $0.serial != serial } + merged + rows.filter { $0.serial == serial && !listed.contains($0.id) }
+    }
+
+    /// The daemon dropped the serial's flows with its session.
+    private func dropRows(_ s: String) {
+        rows.removeAll { $0.serial == s }
+        if s == serial { selected = nil; detail = nil }
     }
 
     /// Interceptar / Parar.
@@ -136,6 +153,7 @@ public struct BodyPreview: Equatable, Sendable {
             if attached {
                 _ = try await call("network.detach", ["serial": .string(serial)])
                 attached = false; port = nil; restartSuggested = []
+                dropRows(serial)
             } else {
                 let a = try await fetch(Attach.self, "network.attach", ["serial": .string(serial)])
                 attached = true; port = a.port; restartSuggested = a.restartSuggested ?? []
@@ -147,8 +165,7 @@ public struct BodyPreview: Equatable, Sendable {
     public func clear() async {
         guard let serial else { return }
         do throws(ProtocolError) { _ = try await call("network.clear", ["serial": .string(serial)]) } catch { self.error = Self.describe(error); return }
-        rows.removeAll { $0.serial == serial }
-        selected = nil; detail = nil
+        dropRows(serial)
     }
 
     public func select(flow id: String?) async {
@@ -165,7 +182,10 @@ public struct BodyPreview: Equatable, Sendable {
                 throw ProtocolError(code: .internal, message: "Resposta inválida de network.get.")
             }
             if selected == id { detail = d }
-        } catch { self.error = Self.describe(error) }
+        } catch {   // evicted, or the session ended: not "Carregando…" forever
+            self.error = Self.describe(error)
+            if selected == id { selected = nil; detail = nil }
+        }
     }
 
     /// The selected flow's request as cURL, on the pasteboard.

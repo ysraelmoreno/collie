@@ -33,7 +33,7 @@ public struct PluginSpec: Sendable, Equatable {
 
 public enum PluginRegistry {
     /// The plug-ins compiled into Collie, in palette order.
-    public static let builtIn: [PluginSpec] = [browser, memory, device, design, diagram, preview, designsystems, artifacts, work]
+    public static let builtIn: [PluginSpec] = [browser, memory, device, network, design, diagram, preview, designsystems, artifacts, work]
     /// Built-ins, then the external plug-ins this process knows (`setExternal`).
     public static var all: [PluginSpec] { builtIn + external.withLock { $0.specs } }
     public static var externalSpecs: [PluginSpec] { external.withLock { $0.specs } }
@@ -182,6 +182,33 @@ extension PluginRegistry {
                   ParamSpec("activity", .string, help: "Activity (default: the launcher one; Android only)")], timeout: 30),
         ],
         events: ["device.connected", "device.disconnected", "device.crash", "device.app_launched"],
+        runsInDaemon: true)
+}
+
+extension PluginRegistry {
+    private static func ncmd(_ n: String, _ summary: String, _ params: [ParamSpec] = [], timeout: Double = 15) -> CommandSpec {
+        CommandSpec(name: "network.\(n)", summary: summary, params: params, timeoutSeconds: timeout, panelFree: true)
+    }
+    private static let flowId = ParamSpec("id", .string, positional: true, required: true, help: "Flow id (from network.list)")
+
+    /// HTTP(S) interceptor for an Android emulator: collied runs mitmdump and points the emulator at it.
+    /// `network.flow` carries a CollieNetwork.FlowSummary.
+    static let network = PluginSpec(
+        id: "network", title: "Rede",
+        placements: [.dockBottom, .dockRight, .dockLeft], defaultPlacement: .dockBottom,
+        commands: [
+            ncmd("attach", "Intercept an Android emulator's HTTP(S): start the proxy, install its CA and set the emulator's proxy",
+                 [ParamSpec("serial", .string, help: "Emulator serial (default: the only one running)")], timeout: 120),
+            ncmd("detach", "Stop intercepting: clear the emulator's proxy and stop the proxy",
+                 [ParamSpec("serial", .string, help: "Emulator serial (default: the attached one)")], timeout: 60),
+            ncmd("status", "Interceptor state {attached,serial,port,flows}"),
+            ncmd("list", "Captured flows, oldest first [{id,method,host,path,status,size,durationMs,state}]",
+                 [ParamSpec("limit", .int, help: "Newest N flows (default 100)"), ParamSpec("host", .string, help: "Keep flows whose host contains this text")]),
+            ncmd("get", "One flow with headers and bodies (decoded when possible)", [flowId]),
+            ncmd("curl", "The flow's request as a cURL command", [flowId]),
+            ncmd("clear", "Forget the captured flows"),
+        ],
+        events: ["network.flow"],
         runsInDaemon: true)
 }
 

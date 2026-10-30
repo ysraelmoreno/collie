@@ -35,19 +35,20 @@ final class MitmProcess: Sendable {
         self.tool = tool; self.addon = addon; self.runDir = runDir
     }
 
-    /// Writes `addonSource` to `<runDir>/network/addon.py`, prepares `confdir`, starts mitmdump on `port` (nil: a free
-    /// one) and waits until it listens and the CA exists. Exiting or not ready within `ready`: the error, process stopped.
+    /// Writes `addonSource` to `<runDir>/network/addon-<port>.py` (one per running mitmdump), prepares `confdir`, starts
+    /// mitmdump on `port` (nil: a free one) and waits until it listens and the CA exists. Exiting or not ready within
+    /// `ready`: the error, process stopped. `runDir` is the daemon's: the orphan reap looks for the pidfile there.
     static func start(tool: MitmTool, addonSource: String, confdir: URL, runDir: URL, port: Int? = nil,
                       ready: Duration = .seconds(20)) async throws(ProtocolError) -> MitmProcess {
-        let dir = runDir.appendingPathComponent("network"), addon = dir.appendingPathComponent("addon.py")
+        let p: Int
+        if let port { p = port } else { p = try freePort() }
+        let dir = runDir.appendingPathComponent("network"), addon = dir.appendingPathComponent("addon-\(p).py")
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try Data(addonSource.utf8).write(to: addon, options: .atomic)
             try prepareConfdir(confdir)
         } catch { throw ProtocolError(code: .internal, message: "cannot prepare mitmdump files: \(error.localizedDescription)") }
         let env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") }   // no tokens or socket
-        let p: Int
-        if let port { p = port } else { p = try freePort() }
         let m = try MitmProcess(tool: tool, port: p, confdir: confdir, addon: addon, runDir: runDir, env: env)
         let deadline = ContinuousClock.now + ready
         while true {
@@ -65,15 +66,15 @@ final class MitmProcess: Sendable {
 
     /// A new mitmdump on the same port, confdir and addon (this one is stopped first).
     func restarted(ready: Duration = .seconds(20)) async throws(ProtocolError) -> MitmProcess {
+        let source = (try? String(contentsOf: addon, encoding: .utf8)) ?? ""   // before stop() removes it
         stop()
         let deadline = ContinuousClock.now + .seconds(3)   // the port frees once the old group is gone (TERM, KILL after 1 s)
         while Self.listening(port: port), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(100)) }
-        let source = (try? String(contentsOf: addon, encoding: .utf8)) ?? ""
         return try await Self.start(tool: tool, addonSource: source, confdir: confdir, runDir: runDir, port: port, ready: ready)
     }
 
-    /// Idempotent, never blocks (`LongProcess.terminate`).
-    func stop() { proc.terminate() }
+    /// Idempotent, never blocks (`LongProcess.terminate`). Its addon file goes with it.
+    func stop() { proc.terminate(); try? FileManager.default.removeItem(at: addon) }
 
     /// Creates `url` (and parents) and forces it to 0700: it holds the CA's private key.
     static func prepareConfdir(_ url: URL) throws {

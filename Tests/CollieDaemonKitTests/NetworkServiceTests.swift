@@ -179,3 +179,51 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
         #expect(await r.service.attached.isEmpty)
     }
 }
+
+/// The whole path on a real emulator, through a test daemon (what `collie network …` sends):
+/// `COLLIE_E2E_SERIAL=emulator-5560 swift test --filter NetworkDaemonE2ETests`. Needs mitmdump, a rootable emulator and
+/// Chrome past its first-run screen; leaves the emulator as it found it.
+@Suite struct NetworkDaemonE2ETests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["COLLIE_E2E_SERIAL"] != nil), .timeLimit(.minutes(3)))
+    func attachBrowseListCurlDetach() async throws {
+        let serial = ProcessInfo.processInfo.environment["COLLIE_E2E_SERIAL"]!
+        let adb = Adb(url: try #require(Adb.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory())))
+        try await withDaemon { d, p in
+            func call(_ command: String, _ args: [String: JSONValue] = [:]) async throws -> JSONValue {
+                var args = args; args["serial"] = .string(serial)
+                let r = try await send(p, Request(id: command, token: d.adminToken, command: command, args: args), timeoutSeconds: 120)
+                guard r.ok, let v = r.result else { throw r.error ?? ProtocolError(code: .internal, message: "\(command) failed") }
+                return v
+            }
+            guard case .object(let st) = try await call("network.attach") else { Issue.record("attach"); return }
+            #expect(st["attached"] == .bool(true))
+            let marker = "collie-e2e-\(UUID().uuidString.prefix(8))"
+            _ = try await adb.run(["shell", "am start -a android.intent.action.VIEW -d 'https://example.com/?\(marker)' com.android.chrome"],
+                                  serial: serial, timeout: .seconds(20))
+            var id: String?
+            for _ in 0..<60 where id == nil {
+                if case .array(let rows) = try await call("network.list", ["host": "example.com"]) {
+                    id = rows.compactMap { r -> String? in
+                        guard case .object(let o) = r, case .string(let path)? = o["path"], path.contains(marker), o["status"] == .number(200),
+                              case .string(let i)? = o["id"] else { return nil }
+                        return i
+                    }.first
+                }
+                if id == nil { try await Task.sleep(for: .milliseconds(500)) }
+            }
+            let flowId = try #require(id, "Chrome's request never showed up in network.list")
+            guard case .object(let flow) = try await call("network.get", ["id": .string(flowId)]),
+                  case .string(let html)? = flow["resBodyText"] else { Issue.record("get"); return }
+            #expect(html.contains("Example Domain"))
+            guard case .object(let c) = try await call("network.curl", ["id": .string(flowId)]), case .string(let curl)? = c["curl"] else {
+                Issue.record("curl"); return
+            }
+            #expect(curl.hasPrefix("curl ") && curl.contains("https://example.com/?\(marker)"))
+            print("E2E curl: \(curl.prefix(300))")
+            guard case .object(let off) = try await call("network.detach") else { Issue.record("detach"); return }
+            #expect(off["attached"] == .bool(false))
+        }
+        let proxy = try await adb.run(["shell", "settings get global http_proxy"], serial: serial, timeout: .seconds(10)).stdout
+        #expect(proxy.trimmingCharacters(in: .whitespacesAndNewlines) == ":0")
+    }
+}

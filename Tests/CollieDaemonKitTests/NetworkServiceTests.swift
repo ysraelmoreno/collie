@@ -11,6 +11,9 @@ private final class FakeProxy: NetworkProxy, @unchecked Sendable {
     let lines: AsyncStream<String>
     private let cont: AsyncStream<String>.Continuation
     private let state = OSAllocatedUnfairLock(initialState: (exited: Int32?.none, stopped: false))
+    let droppedCount = OSAllocatedUnfairLock(initialState: 0)
+    var dropped: Int { droppedCount.withLock { $0 } }
+    func consumed(_ line: String) {}
     let restarts: OSAllocatedUnfairLock<[FakeProxy]>
 
     init(port: Int, restarts: OSAllocatedUnfairLock<[FakeProxy]> = .init(initialState: [])) {
@@ -30,24 +33,32 @@ private final class FakeProxy: NetworkProxy, @unchecked Sendable {
     }
 }
 
-/// Records every call; `failAttach` makes attach throw.
+/// Records every call. `failAttach`: attach throws; `failDetach`/`failReconcile`: adb "gone" until cleared;
+/// `holdAttach`: attach waits until released; `detachDelay`: detach takes that long.
 private final class FakeDevice: NetworkDevice, @unchecked Sendable {
+    struct Knobs { var failDetach = false, failReconcile = false, holdAttach = false }
     let calls = OSAllocatedUnfairLock(initialState: [String]())
-    let failAttach: Bool
-    init(failAttach: Bool = false) { self.failAttach = failAttach }
+    let knobs = OSAllocatedUnfairLock(initialState: Knobs())
+    let failAttach: Bool, detachDelay: Duration
+    init(failAttach: Bool = false, detachDelay: Duration = .zero) { self.failAttach = failAttach; self.detachDelay = detachDelay }
     var log: [String] { calls.withLock { $0 } }
+    func set(_ f: @Sendable (inout Knobs) -> Void) { knobs.withLock { f(&$0) } }
     func attach(serial: String, port: Int, caCert: URL) async throws(ProtocolError) -> DeviceNetworkSetup.AttachResult {
         calls.withLock { $0.append("attach \(serial) \(port)") }
+        while knobs.withLock({ $0.holdAttach }) { try? await Task.sleep(for: .milliseconds(5)) }
         if failAttach { throw ProtocolError(code: .unavailable, message: "not rootable") }
         return .init(sdk: 37, hash: "c8750f0d", system: "mounted 146 CAs", user: "added", previousProxy: "null")
     }
     func detach(serial: String, port: Int?) async throws(ProtocolError) -> [String] {
         calls.withLock { $0.append("detach \(serial) \(port.map(String.init) ?? "nil")") }
+        if detachDelay > .zero { try? await Task.sleep(for: detachDelay) }
+        if knobs.withLock({ $0.failDetach }) { throw ProtocolError(code: .unavailable, message: "adb not found") }
         return ["proxy: restored :0"]
     }
     func reconcile(serial: String, activePort: Int?, caCert: URL?) async throws(ProtocolError) -> DeviceNetworkSetup.Reconcile {
         calls.withLock { $0.append("reconcile \(serial) \(activePort.map(String.init) ?? "nil")") }
-        return .none
+        if knobs.withLock({ $0.failReconcile }) { throw ProtocolError(code: .unavailable, message: "device offline") }
+        return activePort == nil ? .detached : .none
     }
 }
 
@@ -66,11 +77,11 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
         }
     }
 
-    private func rig(device: FakeDevice = FakeDevice(), online: [String] = []) -> Rig {
+    private func rig(device: FakeDevice = FakeDevice(), online: [String] = [], stopBudget: Duration = .seconds(15)) -> Rig {
         let proxies = OSAllocatedUnfairLock(initialState: [FakeProxy]())
         let events = OSAllocatedUnfairLock(initialState: [(String, String, JSONValue)]())
         let ports = OSAllocatedUnfairLock(initialState: 40000)   // first proxy: 40001
-        let s = NetworkService(pollInterval: .seconds(3600),
+        let s = NetworkService(pollInterval: .seconds(3600), stopBudget: stopBudget,
             startProxy: { _ throws(ProtocolError) in
                 let p = FakeProxy(port: ports.withLock { $0 += 1; return $0 }, restarts: proxies)
                 proxies.withLock { $0.append(p) }
@@ -136,11 +147,75 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
         #expect(r.proxies.withLock { $0.count } == 1)
     }
 
-    @Test func failedDeviceAttachStopsTheProxy() async throws {
+    @Test func failedDeviceAttachIsRolledBack() async throws {
         let r = rig(device: FakeDevice(failAttach: true))
         await #expect(throws: ProtocolError.self) { try await r.service.attach("emulator-5560") }
         #expect(r.proxy.stopped)
+        #expect(r.device.log == ["attach emulator-5560 40001", "detach emulator-5560 40001"])   // whatever it did before failing is undone
         #expect(await r.service.attached.isEmpty)
+    }
+
+    @Test func failedDetachStaysPendingUntilThePollerSucceeds() async throws {
+        let r = rig()
+        _ = try await r.service.attach("emulator-5560")
+        r.device.set { $0.failDetach = true; $0.failReconcile = true }
+        await #expect(throws: ProtocolError.self) { try await r.service.detach("emulator-5560") }
+        let attached = await r.service.attached
+        #expect(r.proxy.stopped && attached.isEmpty)
+        guard case .object(let st) = await r.service.status("emulator-5560") else { Issue.record("status"); return }
+        #expect(st["pendingDetach"] == .bool(true))
+        await r.service.reconcileSessions()   // still failing: kept
+        guard case .object(let still) = await r.service.status("emulator-5560") else { Issue.record("status"); return }
+        #expect(still["pendingDetach"] == .bool(true))
+        r.device.set { $0.failReconcile = false }
+        await r.service.reconcileSessions()
+        guard case .object(let done) = await r.service.status("emulator-5560") else { Issue.record("status"); return }
+        #expect(done["pendingDetach"] == nil)
+        #expect(r.device.log.filter { $0 == "reconcile emulator-5560 nil" }.count == 2)
+    }
+
+    @Test func detachDuringAttachCancelsIt() async throws {
+        let device = FakeDevice()
+        device.set { $0.holdAttach = true }
+        let r = rig(device: device)
+        let attach = Task { try await r.service.attach("emulator-5560") }
+        for _ in 0..<200 where device.log.isEmpty { try await Task.sleep(for: .milliseconds(5)) }   // attach is on the device
+        _ = try await r.service.detach("emulator-5560")
+        device.set { $0.holdAttach = false }
+        await #expect(throws: ProtocolError.self) { try await attach.value }
+        #expect(await r.service.attached.isEmpty)
+        #expect(r.proxy.stopped)
+        #expect(device.log.last == "detach emulator-5560 40001")   // the cancelled attach undid its device side
+    }
+
+    @Test func startReconcileSkipsAnEmulatorBeingAttached() async throws {
+        let device = FakeDevice()
+        device.set { $0.holdAttach = true }
+        let r = rig(device: device, online: ["emulator-5554", "emulator-5560"])
+        let attach = Task { try await r.service.attach("emulator-5560") }
+        for _ in 0..<200 where device.log.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        await r.service.reconcileAtStart()
+        #expect(device.log == ["attach emulator-5560 40001", "reconcile emulator-5554 nil"])
+        device.set { $0.holdAttach = false }
+        _ = try await attach.value
+    }
+
+    @Test func statusReportsDroppedLines() async throws {
+        let r = rig()
+        _ = try await r.service.attach("emulator-5560")
+        r.proxy.droppedCount.withLock { $0 = 3 }
+        guard case .object(let st) = await r.service.status("emulator-5560") else { Issue.record("status"); return }
+        #expect(st["dropped"] == .number(3))
+    }
+
+    @Test func stopIsBoundedWhenAdbHangs() async throws {
+        let r = rig(device: FakeDevice(detachDelay: .seconds(30)), stopBudget: .milliseconds(200))
+        _ = try await r.service.attach("emulator-5560")
+        _ = try await r.service.attach("emulator-5562")
+        let t0 = ContinuousClock.now
+        await r.service.stop()
+        #expect(ContinuousClock.now - t0 < .seconds(3))
+        #expect(r.device.log.filter { $0.hasPrefix("detach") }.count == 2)   // both started, in parallel
     }
 
     @Test func emulatorsOnly() async {
@@ -198,6 +273,8 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
             guard case .object(let st) = try await call("network.attach") else { Issue.record("attach"); return }
             #expect(st["attached"] == .bool(true))
             let marker = "collie-e2e-\(UUID().uuidString.prefix(8))"
+            // this test daemon made a new CA; a running Chrome still holds the user store it read at its start
+            _ = try await adb.run(["shell", "am force-stop com.android.chrome"], serial: serial, timeout: .seconds(10))
             _ = try await adb.run(["shell", "am start -a android.intent.action.VIEW -d 'https://example.com/?\(marker)' com.android.chrome"],
                                   serial: serial, timeout: .seconds(20))
             var id: String?

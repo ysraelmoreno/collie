@@ -187,7 +187,7 @@ extension PluginRegistry {
 
 extension PluginRegistry {
     private static func ncmd(_ n: String, _ summary: String, _ params: [ParamSpec] = [], timeout: Double = 15) -> CommandSpec {
-        CommandSpec(name: "network.\(n)", summary: summary, params: params, timeoutSeconds: timeout, panelFree: true)
+        CommandSpec(name: "network.\(n)", summary: summary, params: params, timeoutSeconds: timeout)
     }
     private static let flowId = ParamSpec("id", .string, positional: true, required: true, help: "Flow id (from network.list)")
 

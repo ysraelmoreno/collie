@@ -134,6 +134,14 @@ import Foundation
         #expect(req.contains(.string("target")) && req.contains(.string("prompt")))
     }
 
+    @Test func mcpSchemaHidesNetworkToolsWithoutAReachablePanel() {
+        func names(_ plugins: Set<String>) -> [String] {
+            MCPSchema.tools(plugins: plugins).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }
+        }
+        #expect(!names([]).contains { $0.hasPrefix("network_") })   // captured traffic: only with a network panel leashed
+        #expect(names(["network"]).filter { $0.hasPrefix("network_") }.count == 7)
+    }
+
     @Test func mcpSchemaListsShepherdToolsOnlyForShepherd() throws {
         func names(_ m: Bool) -> [String] {
             MCPSchema.tools(shepherd: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }.filter(builtInTool)

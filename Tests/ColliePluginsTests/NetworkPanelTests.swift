@@ -44,9 +44,21 @@ private actor Fake {
     /// The next detach fails on the device: the session is gone, the daemon retries.
     var detachFails = false
     func failDetach() { detachFails = true }
+    var clearFails = false
+    func failClear() { clearFails = true }
+    /// The next call of a held command waits for `release`.
+    var held: Set<String> = [], waiters: [String: CheckedContinuation<Void, Never>] = [:]
+    func hold(_ cmd: String) { held.insert(cmd) }
+    func release(_ cmd: String) { waiters.removeValue(forKey: cmd)?.resume() }
+    func isWaiting(_ cmd: String) -> Bool { waiters[cmd] != nil }
     func handle(_ cmd: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         calls.append((cmd, a))
         if let failure { throw failure }
+        if held.remove(cmd) != nil {
+            await withCheckedContinuation { waiters[cmd] = $0 }
+            if cmd == "network.get" { return flowJSON(str(a["id"]), text: "stale") }
+        }
+        if cmd == "network.clear", clearFails { throw ProtocolError(code: .unavailable, message: "clear failed") }
         if cmd == "network.detach" {
             capturing = false
             if detachFails { pendingDetach = true; throw ProtocolError(code: .unavailable, message: "adb: device offline") }
@@ -257,6 +269,49 @@ private actor Fake {
         await fake.set(failure: nil)
         await m.poll()
         #expect(m.pollError == nil)
+    }
+
+    @Test func olderDetailResponseArrivingLastIsIgnored() async throws {
+        let fake = Fake(), m = model(fake); m.serial = "emulator-5554"
+        await fake.hold("network.get")
+        let first = Task { await m.select(flow: "a") }
+        #expect(await pollUntil { await fake.isWaiting("network.get") })
+        m.apply(event: "network.flow", payload: summary("a"))   // reloads the selected flow
+        #expect(await pollUntil { m.detail != nil })
+        await fake.release("network.get")
+        await first.value
+        #expect(m.detail?.resText != "stale" && m.detail != nil)
+    }
+
+    @Test func flowCapturedDuringAClearStays() async {
+        let fake = Fake(), m = model(fake); m.serial = "emulator-5554"
+        m.apply(event: "network.flow", payload: summary("a"))
+        await fake.hold("network.clear")
+        let clear = Task { await m.clear() }
+        #expect(await pollUntil { await fake.isWaiting("network.clear") })
+        #expect(m.rows.isEmpty)
+        m.apply(event: "network.flow", payload: summary("b"))
+        await fake.release("network.clear")
+        await clear.value
+        #expect(m.rows.map(\.id) == ["b"])
+    }
+
+    @Test func failedClearReloadsTheList() async {
+        let fake = Fake(), m = model(fake); m.serial = "emulator-5554"
+        m.apply(event: "network.flow", payload: summary("a"))
+        await fake.failClear()
+        await m.clear()
+        #expect(m.error == "clear failed" && m.visible.map(\.id) == ["old"])
+    }
+
+    @Test func selectingAFlowClearsTheLastError() async {
+        let fake = Fake(), m = model(fake); m.serial = "emulator-5554"
+        await fake.set(failure: ProtocolError(code: .notFound, message: "gone"))
+        await m.select(flow: "a")
+        #expect(m.error == "gone")
+        await fake.set(failure: nil)
+        await m.select(flow: "b")
+        #expect(m.error == nil && m.detail != nil)
     }
 
     @Test func clearDropsOnlyThatSerialsRows() async {

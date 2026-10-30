@@ -77,6 +77,8 @@ public struct BodyPreview: Equatable, Sendable {
     /// Bumped by commands that change the capture: a status or list asked for before one is stale.
     private var captureGen = 0
     private var stopped = false
+    /// Bumped per `loadDetail`: only the latest response applies.
+    private var detailGen = 0
 
     public init(call: @escaping PanelHostContext.Call, serial: String? = nil, pollInterval: Duration = .seconds(5)) {
         self.call = call; self.serial = serial; self.pollInterval = pollInterval
@@ -212,16 +214,21 @@ public struct BodyPreview: Equatable, Sendable {
 
     public func clear() async {
         guard let serial else { return }
-        do throws(ProtocolError) { _ = try await call("network.clear", ["serial": .string(serial)]) } catch { self.error = Self.describe(error); return }
-        dropRows(serial)
+        dropRows(serial)   // before the call: a flow captured meanwhile is newer than the clear
+        do throws(ProtocolError) { _ = try await call("network.clear", ["serial": .string(serial)]) } catch {
+            self.error = Self.describe(error)
+            await loadList()
+        }
     }
 
     public func select(flow id: String?) async {
-        selected = id; detail = nil
+        selected = id; detail = nil; error = nil
         await loadDetail()
     }
 
     private func loadDetail() async {
+        detailGen += 1
+        let gen = detailGen
         guard let id = selected, let serial else { return }
         do throws(ProtocolError) {
             let v = try await call("network.get", ["serial": .string(serial), "id": .string(id)])
@@ -229,16 +236,18 @@ public struct BodyPreview: Equatable, Sendable {
             guard let d = await Task.detached(operation: { Self.decode(FlowDetail.self, v) }).value else {
                 throw ProtocolError(code: .internal, message: "Resposta inválida de network.get.")
             }
-            if selected == id { detail = d }
+            if gen == detailGen, selected == id { detail = d }
         } catch {   // evicted, or the session ended: not "Carregando…" forever
+            guard gen == detailGen, selected == id else { return }
             self.error = Self.describe(error)
-            if selected == id { selected = nil; detail = nil }
+            selected = nil; detail = nil
         }
     }
 
     /// The selected flow's request as cURL, on the pasteboard.
     public func copyCurl() async {
         guard let id = selected, let serial else { return }
+        error = nil
         struct C: Decodable { let curl: String }
         do throws(ProtocolError) {
             Self.copy(try await fetch(C.self, "network.curl", ["serial": .string(serial), "id": .string(id)]).curl)

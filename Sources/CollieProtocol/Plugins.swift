@@ -195,7 +195,7 @@ extension PluginRegistry {
     /// `network.flow` carries a CollieNetwork.FlowSummary.
     static let network = PluginSpec(
         id: "network", title: "Rede",
-        placements: [.dockBottom, .dockRight, .dockLeft], defaultPlacement: .dockBottom,
+        placements: [.dockBottom, .dockRight, .dockLeft, .canvas], defaultPlacement: .dockBottom,
         commands: [
             ncmd("attach", "Intercept an Android emulator's HTTP(S): start the proxy, install its CA and set the emulator's proxy",
                  [ParamSpec("serial", .string, help: "Emulator serial (default: the only one running)")], timeout: 120),

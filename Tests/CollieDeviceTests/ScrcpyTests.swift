@@ -5,24 +5,28 @@ import Foundation
 private func bytes(_ a: [UInt8]) -> Data { Data(a) }
 
 @Test func packetReaderSplitsAcrossChunks() throws {
-    func pkt(pts: UInt64, len: Int, fill: UInt8) -> Data {
+    func pkt(flags: UInt64, len: Int, fill: UInt8) -> Data {
         var d = Data()
-        withUnsafeBytes(of: pts.bigEndian) { d.append(contentsOf: $0) }
+        withUnsafeBytes(of: flags.bigEndian) { d.append(contentsOf: $0) }
         withUnsafeBytes(of: UInt32(len).bigEndian) { d.append(contentsOf: $0) }
         d.append(Data(repeating: fill, count: len))
         return d
     }
-    let all = pkt(pts: 1 << 63, len: 20, fill: 1) + pkt(pts: (1 << 62) | 7, len: 50, fill: 2)
+    // session 1080×2400 as the server writes it, then config (bit 62), then key (bit 61) with pts 7
+    let session = bytes([0x80, 0, 0, 0, 0, 0, 4, 0x38, 0, 0, 9, 0x60])
+    let all = session + pkt(flags: 1 << 62, len: 20, fill: 1) + pkt(flags: (1 << 61) | 7, len: 50, fill: 2)
     var r = Scrcpy.PacketReader()
-    var out: [Scrcpy.Packet] = []
+    var out: [Scrcpy.Event] = []
     var i = 0
     while i < all.count {
         out += try r.feed(all.subdata(in: i..<min(i + 7, all.count)))
         i += 7
     }
-    #expect(out.count == 2)
-    #expect(out[0].config && !out[0].key && out[0].data.count == 20)
-    #expect(!out[1].config && out[1].key && out[1].pts == 7 && out[1].data.count == 50)
+    #expect(out.count == 3)
+    #expect(out[0] == .session(width: 1080, height: 2400))
+    guard case .packet(let c) = out[1], case .packet(let k) = out[2] else { Issue.record("\(out)"); return }
+    #expect(c.config && !c.key && c.data.count == 20)
+    #expect(!k.config && k.key && k.pts == 7 && k.data.count == 50)
 }
 
 @Test func packetTooLargeThrows() {
@@ -32,10 +36,9 @@ private func bytes(_ a: [UInt8]) -> Data { Data(a) }
     #expect(throws: ScrcpyError.packetTooLarge(16 * 1024 * 1024 + 1)) { try r.feed(h) }
 }
 
-@Test func codecMetaParses() {
-    let m = Scrcpy.codecMeta(bytes([0x68, 0x32, 0x36, 0x34, 0, 0, 4, 0x38, 0, 0, 9, 0x60]))
-    #expect(m == Scrcpy.CodecMeta(codec: 0x68323634, width: 1080, height: 2400))
-    #expect(Scrcpy.codecMeta(Data(count: 11)) == nil)
+@Test func codecIdParses() {
+    #expect(Scrcpy.codecId(bytes([0x68, 0x32, 0x36, 0x34])) == 0x68323634)
+    #expect(Scrcpy.codecId(Data(count: 3)) == nil)
 }
 
 @Test func touchLayout() {
@@ -78,8 +81,8 @@ private func bytes(_ a: [UInt8]) -> Data { Data(a) }
 @Test func serverArgsShape() {
     let a = Scrcpy.serverArgs(scid: "0000abcd")
     #expect(a[0] == "CLASSPATH=/data/local/tmp/collie-scrcpy-server.jar")
-    #expect(a[4] == "3.3.1" && a[5] == "scid=0000abcd")
-    #expect(a.contains("tunnel_forward=true") && a.contains("send_dummy_byte=true"))
+    #expect(a[4] == "5.0.1" && a[5] == "scid=0000abcd")
+    #expect(a.contains("tunnel_forward=true") && a.contains("send_dummy_byte=true") && a.contains("send_stream_meta=true"))
 }
 
 @Test func keyNames() {

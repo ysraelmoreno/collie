@@ -2,31 +2,42 @@ import Foundation
 
 public enum ScrcpyError: Error, Equatable, Sendable { case packetTooLarge(Int) }  // > 16 MiB
 
-/// scrcpy v3.3.1 wire protocol (client side): video packets in, control messages out. All integers big-endian.
+/// scrcpy v5.0.1 wire protocol (client side): video packets in, control messages out. All integers big-endian.
 public enum Scrcpy {
-    public static let version = "3.3.1"
+    public static let version = "5.0.1"
     public static let remoteJar = "/data/local/tmp/collie-scrcpy-server.jar"
     static let maxPacket = 16 * 1024 * 1024
 
-    public struct CodecMeta: Equatable, Sendable { public var codec: UInt32; public var width: UInt32; public var height: UInt32 }
+    /// What the video socket carries after its u32 codec id.
+    public enum Event: Equatable, Sendable {
+        /// A capture session starts (at startup and after a rotation): the video size until the next one.
+        case session(width: UInt32, height: UInt32)
+        case packet(Packet)
+    }
     public struct Packet: Equatable, Sendable { public var pts: UInt64; public var config: Bool; public var key: Bool; public var data: Data }
 
-    /// Incremental: feed bytes, get whole packets (12-byte header: u64 pts_and_flags — bit63 config, bit62 key — then u32 len).
+    /// Incremental: feed bytes, get whole events. Every header is 12 bytes. Bit 63 set: session packet (u32 flags, u32 width,
+    /// u32 height, no body). Clear: media packet (u64: bit 62 config, bit 61 key, 61-bit pts; u32 len, then the body).
     public struct PacketReader: Sendable {
         private var buf = [UInt8]()
         public init() {}
-        public mutating func feed(_ d: Data) throws(ScrcpyError) -> [Packet] {
+        public mutating func feed(_ d: Data) throws(ScrcpyError) -> [Event] {
             buf.append(contentsOf: d)
-            var out: [Packet] = []
+            var out: [Event] = []
             var pos = 0
             while buf.count - pos >= 12 {
                 let flags = be(buf, pos, 8)
+                if flags >> 63 == 1 {
+                    out.append(.session(width: UInt32(be(buf, pos + 4, 4)), height: UInt32(be(buf, pos + 8, 4))))
+                    pos += 12
+                    continue
+                }
                 let len = Int(be(buf, pos + 8, 4))
                 if len > Scrcpy.maxPacket { throw .packetTooLarge(len) }
                 guard buf.count - pos - 12 >= len else { break }
-                out.append(Packet(pts: flags & ~(3 << 62),
-                                  config: flags >> 63 & 1 == 1, key: flags >> 62 & 1 == 1,
-                                  data: Data(buf[(pos + 12)..<(pos + 12 + len)])))
+                out.append(.packet(Packet(pts: flags & ~(7 << 61),
+                                          config: flags >> 62 & 1 == 1, key: flags >> 61 & 1 == 1,
+                                          data: Data(buf[(pos + 12)..<(pos + 12 + len)]))))
                 pos += 12 + len
             }
             buf.removeFirst(pos)
@@ -34,10 +45,10 @@ public enum Scrcpy {
         }
     }
 
-    public static func codecMeta(_ d: Data) -> CodecMeta? {
-        guard d.count == 12 else { return nil }
-        let b = [UInt8](d)
-        return CodecMeta(codec: UInt32(be(b, 0, 4)), width: UInt32(be(b, 4, 4)), height: UInt32(be(b, 8, 4)))
+    /// The u32 codec id that opens the video socket (0 or 1: the device disabled the stream).
+    public static func codecId(_ d: Data) -> UInt32? {
+        guard d.count == 4 else { return nil }
+        return UInt32(be([UInt8](d), 0, 4))
     }
 
     public enum Action: UInt8, Sendable { case down = 0, up = 1, move = 2 }
@@ -91,7 +102,7 @@ public enum Scrcpy {
         ["CLASSPATH=\(remoteJar)", "app_process", "/", "com.genymobile.scrcpy.Server", version, "scid=\(scid)",
          "log_level=info", "tunnel_forward=true", "audio=false", "control=true", "cleanup=true", "video_codec=h264",
          "max_size=1280", "max_fps=30", "video_bit_rate=4000000", "send_device_meta=false", "send_dummy_byte=true",
-         "send_codec_meta=true", "send_frame_meta=true", "clipboard_autosync=false"]
+         "send_stream_meta=true", "send_frame_meta=true", "clipboard_autosync=false"]
     }
 }
 

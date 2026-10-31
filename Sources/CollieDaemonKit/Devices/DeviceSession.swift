@@ -156,29 +156,47 @@ final class DeviceSession: @unchecked Sendable {   // state under `lock`; contro
         guard c >= 0 else { return end("error", "Could not open the scrcpy control socket") }
         guard own({ self.control = c }) else { Darwin.close(c); return }
         Thread { [self] in drainControl(c) }.start()
-        guard let m = Self.read(v, 12, timeout: 5), let meta = Scrcpy.codecMeta(m) else {
+        guard let id = Self.read(v, 4, timeout: 5).flatMap(Scrcpy.codecId) else {
             return end("error", "The scrcpy server sent no video header")
         }
-        guard meta.codec == 0x68323634 else { return end("error", String(format: "Unsupported video codec 0x%08x", meta.codec)) }
+        guard id == 0x68323634 else { return end("error", String(format: "Unsupported video codec 0x%08x", id)) }
+        var reader = Scrcpy.PacketReader()
+        guard let first = Self.read(v, 12, timeout: 5), case .session(let w, let h)? = (try? reader.feed(first))?.first else {
+            return end("error", "The scrcpy server sent no video session")
+        }
         Self.setTimeout(v, 0)
         guard own({
             state = "streaming"
-            let f = StreamFrame.videoMeta(width: meta.width, height: meta.height)
+            let f = StreamFrame.videoMeta(width: w, height: h)
             self.meta = f
             for x in viewers.values { x.conn.send(f); x.conn.send(.deviceStatus(state: "streaming", message: nil)) }
         }) else { return }
 
-        var reader = Scrcpy.PacketReader()
         var buf = [UInt8](repeating: 0, count: 256 * 1024)
         while true {
             let n = Darwin.read(v, &buf, buf.count)
             if n < 0 && errno == EINTR { continue }
             if n <= 0 { return end("ended", "Device disconnected") }
             do {
-                for p in try reader.feed(Data(buf[0..<n])) { deliver(p) }
+                for e in try reader.feed(Data(buf[0..<n])) {
+                    switch e {
+                    case .packet(let p): deliver(p)
+                    case .session(let w, let h): newSession(width: w, height: h)
+                    }
+                }
             } catch {
                 return end("error", "Bad video stream: \(error)")
             }
+        }
+    }
+
+    /// A rotation: viewers and later joiners get the new size (its config and keyframe follow).
+    private func newSession(width: UInt32, height: UInt32) {
+        lock.withLock {
+            guard !ended else { return }
+            let f = StreamFrame.videoMeta(width: width, height: height)
+            meta = f
+            for x in viewers.values { x.conn.send(f) }
         }
     }
 

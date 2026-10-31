@@ -101,7 +101,7 @@ comandos `collie device …` via adb, rodados pelo daemon.
 1. Instale o adb: `brew install --cask android-platform-tools`.
 2. No aparelho, ative **Opções do desenvolvedor → Depuração USB**, conecte por USB e aceite a chave do Mac (ou use
    um emulador). `adb devices` deve mostrar o aparelho como `device`.
-3. Antes do bundle, baixe o servidor do scrcpy (fixado em v3.3.1, conferido por SHA-256):
+3. Antes do bundle, baixe o servidor do scrcpy (fixado em v5.0.1, conferido por SHA-256):
 
    ```sh
    scripts/fetch-scrcpy-server.sh   # vendor/scrcpy-server

@@ -3,9 +3,9 @@
 # bundle-app.sh copies it into Collie.app. Fails if the download does not match the pinned SHA-256.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-VERSION=3.3.1
-# Matches PREBUILT_SERVER_SHA256 in upstream install_release.sh at tag v3.3.1.
-SHA256=a0f70b20aa4998fbf658c94118cd6c8dab6abbb0647a3bdab344d70bc1ebcbb8
+VERSION=5.0.1
+# Matches PREBUILT_SERVER_SHA256 in upstream install_release.sh at tag v5.0.1.
+SHA256=764eb6f79811d5211fe9df341120882ba9994c7a61b897d7bf3fb662e53bc536
 URL="https://github.com/Genymobile/scrcpy/releases/download/v$VERSION/scrcpy-server-v$VERSION"
 mkdir -p vendor
 tmp="$(mktemp vendor/scrcpy-server.XXXXXX)"

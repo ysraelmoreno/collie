@@ -101,7 +101,7 @@ public enum Scrcpy {
     public static func serverArgs(scid: String) -> [String] {
         ["CLASSPATH=\(remoteJar)", "app_process", "/", "com.genymobile.scrcpy.Server", version, "scid=\(scid)",
          "log_level=info", "tunnel_forward=true", "audio=false", "control=true", "cleanup=true", "video_codec=h264",
-         "max_size=1280", "max_fps=30", "video_bit_rate=4000000", "send_device_meta=false", "send_dummy_byte=true",
+         "max_size=1280", "max_fps=60", "video_bit_rate=4000000", "send_device_meta=false", "send_dummy_byte=true",
          "send_stream_meta=true", "send_frame_meta=true", "clipboard_autosync=false"]
     }
 }

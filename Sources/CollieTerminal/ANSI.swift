@@ -1,5 +1,6 @@
 public enum ANSI {
-    /// Removes CSI, OSC, simple ESC sequences and carriage returns.
+    /// Removes CSI, OSC, simple ESC sequences and carriage returns. A cursor move along the line (CUF, CHA) becomes one
+    /// space: Claude's dialogs put their words apart with them, and the words must stay apart for whoever reads the text.
     public static func strip(_ s: String) -> String {
         var out = String.UnicodeScalarView()
         var it = s.unicodeScalars.makeIterator()
@@ -9,7 +10,11 @@ public enum ANSI {
             case 0x1B:
                 guard let n = it.next() else { return String(out) }
                 if n == "[" {  // CSI: until final byte 0x40...0x7E
-                    while let x = it.next(), !(0x40...0x7E).contains(x.value) {}
+                    while let x = it.next() {
+                        guard (0x40...0x7E).contains(x.value) else { continue }
+                        if x == "C" || x == "G", let l = out.last, !l.properties.isWhitespace { out.append(" ") }
+                        break
+                    }
                 } else if n == "]" {  // OSC: until BEL or ESC \
                     var prevEsc = false
                     while let x = it.next() {

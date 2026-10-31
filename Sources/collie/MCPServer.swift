@@ -131,7 +131,10 @@ enum MCPServer {
             if case .object(let r) = result, case .string(let out)? = r["output"] {
                 return content(r["truncated"] == .bool(true) ? out + "\n[collie: output truncated]" : out, isError: false)
             }
-            return content(CLI.jsonString(result), isError: false)
+            // a summon whose first prompt was not delivered: the agent exists, but the caller must not take it as working
+            var failed = false
+            if case .object(let r) = result, r["promptError"] != nil { failed = true }
+            return content(CLI.jsonString(result), isError: failed)
         } catch {
             return content("\(error.code.rawValue): \(error.message)", isError: true)
         }

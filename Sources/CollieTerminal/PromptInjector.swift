@@ -11,11 +11,16 @@ public enum PromptInjector {
         return s
     }
 
+    /// The Enter of a non-raw prompt, written apart from `payload`: a TUI takes text and Enter arriving as one chunk as a
+    /// paste, so unbracketed the Enter is a line break and the prompt stays in its input (claude 2.1.314: 3 of 3).
+    public static let submit = Data("\r".utf8)
+    public static let submitDelay: TimeInterval = 0.2
+
     /// `bracketed`: wrap in bracketed-paste markers; only when the target enabled `ESC[?2004h`.
     public static func payload(_ prompt: String, raw: Bool, bracketed: Bool = true) -> Data {
         if !raw {
             let s = sanitize(prompt)
-            return Data(((bracketed ? pasteStart + s + pasteEnd : s) + "\r").utf8)
+            return Data((bracketed ? pasteStart + s + pasteEnd : s).utf8)
         }
         var out = Data()
         let b = Array(prompt.utf8)

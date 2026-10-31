@@ -97,6 +97,11 @@ enum CLI {
             let result = try await Client.call(cmd.command, cmd.args)
             print(render(cmd.command, result, json: json), terminator: "")
             if case .object(let o) = result, case .bool(true)? = o["truncated"] { err("output truncated") }
+            // the agent exists, its first prompt didn't get there: not a success, and a retried summon would say "already exists"
+            if case .object(let o) = result, case .string(let e)? = o["promptError"] {
+                err("agent started, but its first prompt was not delivered: \(e). Send it with `collie ask`")
+                return 1
+            }
             return 0
         } catch {
             err(error.message)

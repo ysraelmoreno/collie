@@ -42,8 +42,10 @@ struct AttentionDetector {
         switch reason {
         case "(y/n)", "[y/n]": .yesNo
         case "press enter to continue": .enter
-        case QuietDetector.overflowReason: .unknown
-        default: .menu   // the trust dialog and the permission dialogs: numbered options, Enter = "Yes"
+        // claude 2.1.314's trust dialog: no numbers ("1" is ignored) and the cursor on "No, exit" (Enter ends the terminal):
+        // only the user's own keys answer it
+        case QuietDetector.overflowReason, "do you trust the files in this folder", "trust this folder": .unknown
+        default: .menu   // the permission dialogs: numbered options, "1" is "Yes"
         }
     }
 }

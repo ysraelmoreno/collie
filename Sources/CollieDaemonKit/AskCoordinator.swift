@@ -267,6 +267,12 @@ public actor AskCoordinator {
         /// Claude's Stop may answer with a capture block: no queued ask is typed until the daemon decided, and, when it
         /// blocked, until the continued Stop (or `captureHoldMax`): the capture turn never takes, or answers, an ask.
         var captureHold: UUID?
+        /// Claude as launched by Collie (no custom command): it enables bracketed paste and has our hooks.
+        var claudeTUI = false
+        /// A prompt was written: `ask`'s fresh-agent guard is over.
+        var typed = false
+        var sessionHooked = false   // SessionStart reached the daemon: this Claude's hooks work
+        var submits = 0             // UserPromptSubmit hooks seen
     }
     private struct Waiter {
         var from: UUID, to: UUID, prompt: String, raw: Bool
@@ -293,6 +299,12 @@ public actor AskCoordinator {
     static let readyQuiet: Duration = .milliseconds(300)
     static let readyMax: Duration = .seconds(10)
     static let readyPoll: Duration = .milliseconds(50)
+    /// A Claude prompt written and no UserPromptSubmit after this: not submitted, if the agent is quiet too.
+    static let submitConfirm: Duration = .seconds(8)
+    /// A Claude still printing at `submitConfirm` may be mid-turn (it queues the prompt): given up on, unreported, here.
+    static let submitConfirmMax: Duration = .seconds(30)
+    /// Longer than this, an `ask` to a fresh agent is a task, not the answer to its dialog (`ask B y`).
+    static let dialogAnswerMax = 8
 
     private let idleQuiet: Duration
     /// R12: what the app typed into each terminal, tainted by every write made here (asks, injects, the chat).
@@ -307,8 +319,11 @@ public actor AskCoordinator {
     /// Guarded prompts held back because output after an input was not scanned yet (tests).
     private(set) var windowDeferrals = 0
     private let captureHoldMax: Duration
-    public init(idleQuietSeconds: Double, heldMaxSeconds: Double = 600, captureHoldSeconds: Double = 120) {
+    private let submitConfirm: Duration
+    public init(idleQuietSeconds: Double, heldMaxSeconds: Double = 600, captureHoldSeconds: Double = 120,
+                submitConfirmSeconds: Double? = nil) {
         idleQuiet = .seconds(idleQuietSeconds); heldMax = .seconds(heldMaxSeconds); captureHoldMax = .seconds(captureHoldSeconds)
+        submitConfirm = submitConfirmSeconds.map { .seconds($0) } ?? Self.submitConfirm
         (approvalEvents, approvalSink) = AsyncStream.makeStream(of: ApprovalEvent.self, bufferingPolicy: .bufferingNewest(100))
     }
 
@@ -325,6 +340,7 @@ public actor AskCoordinator {
         process.serialized { approval.feed(Data(scrollback.snapshot().data.suffix(4096))) }
         targets[rec.id] = Target(name: rec.name, preset: rec.preset, process: process, scrollback: scrollback, paste: paste,
                                  approval: approval)
+        targets[rec.id]?.claudeTUI = rec.command == nil && rec.preset == .claude
         let id = rec.id, me = ObjectIdentifier(process)
         // replays if already exited; ignored once the terminal was replaced by a new launch with the same id
         let prevExit = process.onExit
@@ -346,8 +362,10 @@ public actor AskCoordinator {
             throw ProtocolError(code: .deadlock,
                                 message: "Deadlock: '\(t.name)' is already waiting on '\(name(from))'; '\(name(from))' cannot ask '\(t.name)'")
         }
-        // R7: unguarded on purpose — v1 asks answer prompts (a Shepherd's `collie ask B y`)
-        return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, detached: detached, cont: nil), timeout: timeout)
+        // R7: unguarded on purpose — v1 asks answer prompts (a Shepherd's `collie ask B y`); but a task sent to an agent
+        // still opening must not answer its trust dialog with an Enter and be lost
+        let task = t.claudeTUI && !t.typed && prompt.count > Self.dialogAnswerMax
+        return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, guardsApproval: task, detached: detached, cont: nil), timeout: timeout)
     }
 
     /// The user's ask (work chat): same FIFO, readiness gate and hook/idle completion as `ask`, but no caller
@@ -497,7 +515,8 @@ public actor AskCoordinator {
         guard let t = targets[terminal], ObjectIdentifier(t.process) == process, t.process.isRunning else { return false }
         let now = ContinuousClock.now
         let quiet = t.process.lastOutputAt.map { now - $0 >= Self.readyQuiet } ?? false
-        guard quiet || now - t.attachedAt >= Self.readyMax else { return true }
+        // Claude quiet before enabling paste is still opening (a pause in its boot)
+        guard quiet && (!t.claudeTUI || t.paste.enabled) || now - t.attachedAt >= Self.readyMax else { return true }
         targets[terminal]?.ready = true
         pump(terminal)
         return false
@@ -624,6 +643,10 @@ public actor AskCoordinator {
         let mark = t.scrollback.mark()
         targets[to]?.inflight = (id, mark)
         targets[to]?.swallowedFor = nil
+        targets[to]?.typed = true
+        // a dialog's answer and these never raise UserPromptSubmit
+        let confirm = t.claudeTUI && !w.raw && t.approval.pending == nil && !w.prompt.hasPrefix("/") && !w.prompt.hasPrefix("!")
+        let submits = t.submits, raw = w.raw
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
         // off the cooperative pool, report failures back through finish.
         let data = PromptInjector.payload(w.prompt, raw: w.raw, bracketed: t.paste.enabled)
@@ -642,7 +665,13 @@ public actor AskCoordinator {
             } else { approval.input(echo: w.prompt) }
             do {
                 try process.write(data, origin: w.user ? .user : .collie)   // R17: the user's own chat text is theirs
-                if inject { Task { await self?.delivered(id) } }
+                if !raw {
+                    // ponytail: a dialog drawn within this delay takes the Enter; the input's window hides it from us
+                    Thread.sleep(forTimeInterval: PromptInjector.submitDelay)
+                    try process.write(PromptInjector.submit, origin: w.user ? .user : .collie)
+                }
+                if confirm { Task { await self?.confirmSubmit(id, to, after: submits) } }
+                else if inject { Task { await self?.delivered(id) } }
             } catch {
                 let e = (error as? PTYError) == .stalled
                     ? ProtocolError(code: .timeout, message: "target '\(name)' is not accepting input")
@@ -752,6 +781,31 @@ public actor AskCoordinator {
     private func delivered(_ id: UUID) {
         waiters[id]?.cont?.resume(returning: .success(AskResult(output: "", source: .hook, truncated: false)))
         waiters[id]?.cont = nil
+    }
+
+    /// Hook: this Claude's SessionStart reached the daemon.
+    func sessionHooked(_ terminal: UUID) { targets[terminal]?.sessionHooked = true }
+    /// Hook: this Claude submitted a prompt.
+    func promptSubmitted(_ terminal: UUID) { targets[terminal]?.submits += 1 }
+
+    /// A Claude prompt was written: an inject's caller hears of it only once submitted. No UserPromptSubmit and a quiet
+    /// agent: it is stuck in the input, no turn will end, so the queue is freed and the caller told, instead of holding
+    /// the slot up to the hold. Without proof either way (hooks not seen, a dialog open, always printing): as written.
+    private func confirmSubmit(_ id: UUID, _ to: UUID, after submits: Int) async {
+        let start = ContinuousClock.now
+        while true {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard let t = targets[to], t.inflight?.id == id else { return }   // its turn ended, or it failed
+            if t.submits > submits { delivered(id); return }
+            let now = ContinuousClock.now
+            guard now - start >= submitConfirm else { continue }
+            let printing = t.process.lastOutputAt.map { now - $0 < StreamHub.workingWindow } ?? false
+            if printing && now - start < Self.submitConfirmMax { continue }
+            if printing || !t.sessionHooked || t.approval.pending != nil { delivered(id); return }
+            finish(id, .failure(ProtocolError(code: .unavailable, message:
+                "'\(t.name)' did not submit the prompt; it may still be in its input. Check it with `collie check`")))
+            return
+        }
     }
 
     /// Idle fallback; returns false once `id` is no longer in flight (stops the poller).

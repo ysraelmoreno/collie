@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emulador interno no Collie: viabilidade</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: var(--type-body); line-height: 1.5; }
+h1 { font-size: var(--type-h1); line-height: 1.1; margin: 0 0 var(--space-m); }
+h2 { font-size: var(--type-h2); line-height: 1.2; margin: 0 0 var(--space-m); }
+h3 { font-size: var(--type-h3); margin: 0 0 var(--space-s); }
+p { margin: 0 0 var(--space-m); }
+.muted { color: var(--muted); }
+.card { background: var(--surface); border-radius: var(--radius-card); padding: var(--space-l); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.hero { max-width: 1040px; margin: 0 auto; padding: var(--space-xl) var(--space-l) var(--space-l); }
+.layout { max-width: 1040px; margin: 0 auto; padding: 0 var(--space-l) var(--space-xl); display: grid; grid-template-columns: 220px 1fr; gap: var(--space-xl); }
+.toc { position: sticky; top: var(--space-l); align-self: start; }
+.toc ol { list-style: none; margin: var(--space-s) 0 0; padding: 0; display: grid; gap: var(--space-s); }
+.toc a { color: var(--muted); text-decoration: none; }
+.toc a:hover { color: var(--accent); }
+article { max-width: 68ch; }
+article h2 { margin-top: var(--space-xl); scroll-margin-top: var(--space-l); }
+blockquote { margin: 0 0 var(--space-m); padding: var(--space-m); border-left: 4px solid var(--accent); background: var(--surface); border-radius: var(--radius-card); }
+@media (max-width: 760px) { .layout { grid-template-columns: 1fr; } .toc { position: static; } }
+article a { color: var(--color-accent-text); }
+article ul, article ol { padding-left: 1.25em; margin: 0 0 var(--space-m); display: grid; gap: var(--space-s); }
+article code { font-size: .88em; overflow-wrap: anywhere; }
+table { width: 100%; border-collapse: collapse; margin: 0 0 var(--space-m); font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--color-border); }
+th { color: var(--muted); font-weight: 600; }
+.scroll { overflow-x: auto; }
+.tag { font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--color-border); white-space: nowrap; }
+.tag.fact { color: var(--color-success); }
+.tag.hyp { color: var(--color-warn); }
+@media (max-width: 760px) { h1 { font-size: 34px; } .hero, .layout { padding-left: var(--space-m); padding-right: var(--space-m); } }
+.lucide { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
+.libs-note { margin: var(--space-m); font-size: 12px; }
+body { font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+code, pre, kbd, samp { font-family: "DM Mono", ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<header class="hero"><h1>Emulador interno no Collie: viabilidade</h1><p class="muted">Análise de viabilidade · 31/10/2026 · nada implementado</p></header>
+<div class="layout">
+  <nav class="toc" aria-label="Sumário"><strong>Sumário</strong><ol id="toc"></ol></nav>
+  <article id="doc">
+    <blockquote><strong>Recomendação:</strong> no painel, trocar o scrcpy pelo gRPC do emulador, com o emulador em <code>-no-window</code>. Some a janela e o ícone do Dock, e o canvas sobe de 19 para cerca de 50 fps nas medições. O emulador continua sendo um processo separado. Rodar dentro do processo do Collie não compensa. Antes disso há um defeito a resolver: no AVD testado, o painel atual nem chegou a transmitir.</blockquote>
+
+    <h2>O que achei primeiro</h2>
+    <p>A pergunta era sobre lentidão, mas apareceram duas falhas de funcionamento, reproduzidas num AVD API 37 (<code>spike-net-api37</code>). Os três AVDs da máquina são API 37.</p>
+    <ul>
+      <li><span class="tag fact">fato</span> <strong>Ordem do handshake.</strong> <code>DeviceSession.swift:154-161</code> espera o cabeçalho de vídeo antes de abrir o socket de controle. O servidor só envia o cabeçalho depois que os dois sockets conectam. Um daemon construído deste checkout, com o jar fixado, respondeu em 6 s: <code>The scrcpy server sent no video header</code>.</li>
+      <li><span class="tag fact">fato</span> <strong>Crash do scrcpy 3.3.1 no API 37.</strong> Corrigida a ordem no meu harness, o servidor aborta em menos de 2 s, depois de 3 a 4 pacotes: <code>AbstractMethodError … onDisplayAnimationsDisabledChanged</code>, código de saída 134. Aconteceu com <code>-no-window</code> e com <code>-qt-hide-window</code>. O projeto scrcpy registra a <a href="https://github.com/Genymobile/scrcpy/issues/6362">mesma falha no Android 16 QPR2, corrigida na 3.3.3</a>.</li>
+    </ul>
+    <p><strong>O que não fecha:</strong> o dono descreve imagem lenta, e eu obtive erro. O jar do app instalado tem o mesmo hash do testado, mas não testei o app instalado nem o <code>emulator-5554</code>. Não sei explicar essa diferença. Abrir o painel num AVD desligado e ver se a imagem acompanha o toque responde em um minuto.</p>
+
+    <h2>Como funciona hoje</h2>
+    <h3>Quadro, do emulador à tela</h3>
+    <ol>
+      <li>O guest compõe a tela (GPU do host via Metal, 60 Hz).</li>
+      <li>O <code>scrcpy-server</code> captura e codifica em H.264, limitado a 1280 px, 30 fps e 4 Mbit/s (<code>ScrcpyProtocol.swift:92-93</code>). <span class="tag fact">fato</span> Neste emulador só existem encoders de software, como <code>c2.android.avc.encoder</code>: a compressão roda nos vCPUs do guest.</li>
+      <li>O vídeo passa por <code>adb forward</code> até o <code>collied</code>, numa thread dedicada (<code>DeviceSession.swift:172</code>).</li>
+      <li>O daemon reenvia cada pacote como uma linha JSON com base64 (<code>StreamFrames.swift</code>) pelo socket Unix.</li>
+      <li>O app decodifica o JSON, entrega o quadro à main thread e o enfileira em <code>AVSampleBufferDisplayLayer</code> (<code>DevicePanel.swift:193,231-232</code>).</li>
+    </ol>
+    <h3>Toque</h3>
+    <p><code>NSEvent</code> vira uma mensagem scrcpy de 32 bytes (<code>DevicePanel.swift:258</code>), segue como frame JSON pelo socket até o daemon (<code>DeviceSession.swift:78</code>), passa pelo socket de controle e pelo adb, e o servidor a injeta no Android.</p>
+    <h3>Onde está a latência</h3>
+    <table>
+      <tr><th>Trecho</th><th>Medido</th><th>Peso</th></tr>
+      <tr><td>Guest: compor + codificar + entregar (aproximação com <code>screenrecord</code>)</td><td>44,7 ms de mediana; 18,6 fps; QEMU a 305%</td><td>Dominante</td></tr>
+      <tr><td>JSON + base64 no daemon, por pacote</td><td>0,33 a 0,86 ms; quadro-chave de 200 KB: 6,8 ms</td><td>Pequeno</td></tr>
+      <tr><td>Decodificar o JSON no app</td><td>0,07 a 0,17 ms; quadro-chave: 1,3 ms</td><td>Desprezível</td></tr>
+      <tr><td>Decodificar H.264 no Mac (VideoToolbox via ffmpeg, em lote)</td><td>cerca de 1,8 ms por quadro</td><td>Pequeno</td></tr>
+      <tr><td>Main thread e apresentação na layer</td><td>Não medido</td><td>Hipótese: até 1 vsync</td></tr>
+    </table>
+    <p><span class="tag hyp">hipótese</span> O gargalo é codificar em software dentro do guest, e não o lado do Mac. A conta do lado do Mac está medida, mas o encoder do guest foi medido por aproximação: o scrcpy 3.3.1 não fica de pé no API 37 e o download de uma versão nova foi barrado pela permissão desta sessão.</p>
+
+    <h2>Medições</h2>
+    <p class="muted">M1, 16 GB, macOS 15.6.1, emulador 36.5.10, tela 1080×2400. Latência: do envio do toque até a chegada do primeiro quadro novo ao cliente, 40 toques, sem apresentação na tela. Fps e CPU: 10 s de arrasto contínuo. Uma rodada por linha, então trate diferenças pequenas como ruído.</p>
+    <div class="scroll"><table>
+      <tr><th>Caminho</th><th>Mediana</th><th>p95</th><th>Fps</th><th>Banda</th><th>QEMU</th></tr>
+      <tr><td>H.264 no guest, 576×1280 (aproximação)</td><td>44,7 ms</td><td>93 ms</td><td>18,6</td><td>0,14 MB/s</td><td>305%</td></tr>
+      <tr><td>gRPC RGB888, 576×1280, janela oculta *</td><td>26,2 ms</td><td>360 ms</td><td>52,3</td><td>116 MB/s</td><td>182%</td></tr>
+      <tr><td>gRPC RGB888, 1080×2400, janela oculta *</td><td>33,8 ms</td><td>125 ms</td><td>51,6</td><td>403 MB/s</td><td>239%</td></tr>
+      <tr><td>gRPC RGB888, 576×1280, <code>-no-window</code> *</td><td>40,2 ms</td><td>180 ms</td><td>48,8</td><td>108 MB/s</td><td>200%</td></tr>
+      <tr><td>gRPC RGB888, 1080×2400, <code>-no-window</code> *</td><td>30,2 ms</td><td>98 ms</td><td>55,6</td><td>434 MB/s</td><td>251%</td></tr>
+      <tr><td>gRPC MMAP, 576×1280, janela oculta</td><td>19,5 ms</td><td>33 ms</td><td>52,2</td><td>0,01 MB/s</td><td>266%</td></tr>
+      <tr><td>gRPC PNG, 576×1280, janela oculta</td><td>42,7 ms</td><td>73 ms</td><td>33,6</td><td>3,1 MB/s</td><td>315%</td></tr>
+      <tr><td>gRPC MMAP, 1080×2400</td><td colspan="5"><strong>Derrubou o emulador 2 de 2 vezes</strong> (SIGSEGV)</td></tr>
+    </table></div>
+    <p class="muted">* Latência validada por mudança de pixels em torno do ponto do toque. Nas outras linhas conta qualquer quadro novo, então o número pode sair otimista. O cliente de teste gastou 15% de CPU em 576×1280, 46 a 48% em 1080×2400 e 6% com MMAP. O adb ficou em 0%.</p>
+    <p><strong>Leitura honesta:</strong> o ganho sólido é fluidez e CPU, com 49 a 56 fps contra 19 e QEMU de 182 a 251% contra 305%. Na latência, a vantagem é de 5 a 19 ms na mediana, e o p95 do gRPC oscilou muito entre as rodadas. Não prometa "toque instantâneo".</p>
+
+    <h2>Opções</h2>
+    <div class="scroll"><table>
+      <tr><th>Opção</th><th>Veredito</th><th>Esforço</th><th>Risco</th><th>Ganho esperado</th></tr>
+      <tr><td>A. <code>-no-window</code> + gRPC RGB888</td><td><strong>Recomendada</strong></td><td>Spike de 1 a 2 dias; produto de 1 a 2 semanas (estimativa)</td><td>Médio</td><td>Sem janela nem Dock; cerca de 50 fps; imagem nítida</td></tr>
+      <tr><td>B. Consertar scrcpy e ajustar</td><td><strong>Fazer de qualquer forma</strong>, pelos aparelhos físicos</td><td>Horas a 1 dia</td><td>Baixo</td><td>Painel volta a funcionar; no emulador, no máximo 60 fps de configuração</td></tr>
+      <tr><td>C. MMAP / memória compartilhada</td><td>Depois, se a CPU pesar</td><td>Pequeno sobre A</td><td>Alto hoje</td><td>Menos CPU no cliente; crash a esclarecer</td></tr>
+      <tr><td>D. Embutir a janela</td><td>Inviável</td><td>Não se aplica</td><td>Não se aplica</td><td>Nenhum</td></tr>
+      <tr><td>E. Virtualization.framework</td><td>Descartar</td><td>Meses, sem garantia</td><td>Muito alto</td><td>Sem GPU 3D conhecida; pior que hoje</td></tr>
+      <tr><td>F. QEMU in-process</td><td>Descartar</td><td>Meses e manutenção contínua</td><td>Muito alto</td><td>Um crash do QEMU derruba o Collie</td></tr>
+    </table></div>
+
+    <h3>A. Emulador headless com gRPC</h3>
+    <ul>
+      <li><span class="tag fact">fato</span> <code>-no-window</code> executa outro binário, <code>qemu-system-aarch64-headless</code>, que não aparece em <code>lsappinfo</code>. Boot em cerca de 20 s, e captura e toque via gRPC funcionaram.</li>
+      <li><span class="tag fact">fato</span> O <a href="https://android.googlesource.com/platform/tools/adt/idea/+/refs/heads/mirror-goog-studio-main/streaming/src/com/android/tools/idea/streaming/emulator/EmulatorView.kt">código atual do Running Devices</a> pede <code>RGB888</code> via <code>streamScreenshot</code> e redimensiona ao tamanho do painel. Nos dois arquivos que li, <code>EmulatorView.kt</code> e <code>EmulatorController.kt</code>, não há MMAP nem shmem. A premissa de que o Studio usa memória compartilhada não se confirmou nesses arquivos.</li>
+      <li><span class="tag fact">fato</span> O Studio inicia o emulador com <a href="https://developer.android.com/studio/run/emulator-commandline"><code>-qt-hide-window -grpc-use-token -idle-grpc-timeout 300</code></a>. Um <a href="https://android.googlesource.com/platform/tools/adt/idea/+/studio-master-dev%5E1..studio-master-dev/">commit antigo</a> trocou <code>-no-window</code> por esses flags. <span class="tag hyp">hipótese</span> Não sei o motivo, e o spike deve comparar os dois modos.</li>
+      <li><span class="tag fact">fato</span> O <a href="https://android.googlesource.com/platform/tools/base/+/studio-master-dev/emulator/proto/emulator_controller.proto">proto</a> está no SDK local e oferece <code>streamScreenshot</code>, <code>sendTouch</code>, <code>sendKey</code>, <code>injectWheel</code> e <code>streamInputEvent</code>. Meu cliente HTTP/2 de teste usou só a stdlib do Python. <span class="tag hyp">hipótese</span> Em Swift dá para evitar a dependência <code>grpc-swift</code>, a decidir no spike.</li>
+      <li><strong>Desenho:</strong> o daemon continua cuidando do ciclo de vida e dos comandos <code>device.*</code> via adb. O app fala direto com o emulador, porque 116 MB/s não devem passar por JSON e base64. O painel pede a resolução do próprio tamanho e converte RGB para um <code>CVPixelBuffer</code>/IOSurface.</li>
+    </ul>
+
+    <h3>B. scrcpy otimizado</h3>
+    <ul>
+      <li><strong>Conserto obrigatório:</strong> abrir o socket de controle antes de ler o cabeçalho e atualizar o jar para 3.3.3 ou mais nova. A <a href="https://github.com/Genymobile/scrcpy/releases">versão atual é a 5.0.1</a>, e as notas da 4.0 citam prioridade e latência mínimas no MediaCodec. <span class="tag hyp">hipótese</span> Nenhuma versão nova foi testada.</li>
+      <li><strong>Codec e bitrate:</strong> como só há encoder de software no emulador, H.265, AV1 ou bitrate maior tendem a custar mais CPU no guest. Subir para 60 fps tira o limite de 30 fps, mas o encoder aproximado rendeu 18,6 fps. <span class="tag hyp">hipótese</span></li>
+      <li><strong>Decodificação por hardware e Metal:</strong> o painel já usa <code>AVSampleBufferDisplayLayer</code>. A decodificação custa cerca de 1,8 ms, então sobra pouco a ganhar.</li>
+      <li><strong>Papel que continua:</strong> aparelho físico, que tem encoder de hardware e não tem gRPC de emulador.</li>
+    </ul>
+
+    <h3>C. MMAP e <code>-share-vid</code></h3>
+    <p><span class="tag fact">fato</span> O MMAP funcionou em 576×1280, com o cliente a 6% de CPU contra 15% e banda quase zero no gRPC. Sem largura e altura explícitas, em 1080×2400, o emulador caiu com SIGSEGV duas vezes, com arquivo de 7,78 MB e RGB888. <span class="tag hyp">hipótese</span> Pode ser defeito do emulador ou do tamanho que escolhi para o arquivo; o relatório aponta a thread de vCPU, sem relação direta. O proto avisa que <code>file:///</code> pode gerar tearing. Não testei shmem nem <code>-share-vid</code>, que aparece no <code>-help</code> como região <code>videmulatorXXXX</code>. Como o Studio aparentemente não usa esse caminho, ele também é menos exercitado.</p>
+
+    <h3>D. Embutir a janela</h3>
+    <p>Confirmado até onde a documentação pública alcança: o AppKit não tem API pública para adotar a janela de outro processo. Os <a href="https://developer.apple.com/forums/thread/680330">fóruns da Apple</a> e a <a href="https://lists.apple.com/archives/Cocoa-dev/2005/May/msg01342.html">lista Cocoa-dev</a> apontam IOSurface ou captura. Capturar a janela é exatamente o screen recording que o dono quer evitar. Não há declaração oficial de impossibilidade, só a ausência de API.</p>
+
+    <h3>E. Virtualization.framework</h3>
+    <ul>
+      <li>A Apple oferece <a href="https://www.infoq.com/news/2022/06/apple-virtualization-framework">VirtioGPU 2D</a> para Linux. Um <a href="https://github.com/utmapp/UTM/issues/5602">relato no UTM</a> mostra o Mesa caindo em llvmpipe. O Android moderno depende de GLES/Vulkan, então a interface ficaria em CPU. <span class="tag hyp">hipótese</span> Não achei documentação de Android nesse framework, e as páginas da Apple não abriram na ferramenta de leitura.</li>
+      <li>O <a href="https://source.android.com/docs/devices/cuttlefish">Cuttlefish</a> documenta execução local em Linux, não em macOS.</li>
+      <li>Play Store: os <a href="https://developer.android.com/topic/generic-system-image/releases">termos do GSI com GMS</a> limitam o uso a testes de compatibilidade e proíbem distribuir o GMS. As imagens do SDK caem no <a href="https://developer.android.com/studio/terms">contrato do SDK</a>, §3.1 e §3.4. Sem jurídico, trate AOSP puro como a única via, o que significa ficar sem Play. O Collie também precisaria da entitlement <code>com.apple.security.virtualization</code>.</li>
+    </ul>
+
+    <h3>F. QEMU in-process</h3>
+    <p>O emulador <a href="https://developer.android.com/studio/run/emulator-acceleration">já usa Hypervisor.framework</a> no macOS, então não há ganho de virtualização. O SDK é um executável, não uma biblioteca, e o <a href="https://developer.android.com/studio/terms">§3.4</a> proíbe modificar ou criar derivados. O caminho seria manter um fork do emulador open source, com suas licenças. <span class="tag fact">fato</span> Durante esta análise o QEMU caiu duas vezes. Como processo separado, o Collie nem notaria; dentro do processo, levaria junto canvas e terminais.</p>
+
+    <h3>Esconder o ícone do Dock</h3>
+    <div class="scroll"><table>
+      <tr><th>Modo</th><th>Resultado</th><th>Status</th></tr>
+      <tr><td><code>emulator -avd X</code> (hoje, <code>Emulator.swift:51</code>)</td><td>Janela e ícone, segundo o dono</td><td>Não testei, para não abrir janela na sua tela</td></tr>
+      <tr><td><code>-qt-hide-window</code></td><td><code>lsappinfo</code>: <code>type="UIElement"</code>, ou seja, agente sem Dock. Apareceu como <code>(in front)</code>, o que pode indicar roubo de foco</td><td>Fato; foco não confirmado</td></tr>
+      <tr><td><code>-no-window</code></td><td>Binário headless, ausente de <code>lsappinfo</code></td><td>Fato</td></tr>
+    </table></div>
+    <p>Não é preciso nenhum truque de <code>LSUIElement</code> ou <code>setActivationPolicy</code>: o binário do SDK não tem bundle próprio para receber essa chave, e alterá-lo esbarraria no §3.4.</p>
+
+    <h2>Recomendação</h2>
+    <p><strong>Fazer B agora e A depois do spike.</strong> Emulador iniciado pelo Collie roda em <code>-no-window</code> e fala gRPC. Aparelho físico fica no scrcpy consertado.</p>
+    <h3>O que o dono ganha</h3>
+    <ul>
+      <li>Sem janela e sem ícone do Dock quando o Collie liga o emulador.</li>
+      <li>Cerca de 50 fps no canvas, contra 19 na aproximação e 30 no limite atual.</li>
+      <li>Imagem na resolução do painel, em vez de 576×1280 fixos.</li>
+      <li>Menos CPU no QEMU, de 182 a 251% contra 305% em arrasto contínuo.</li>
+      <li>Um pouco menos de latência, de 5 a 19 ms na mediana. Não é esse o grande ganho.</li>
+    </ul>
+    <h3>O que o dono perde ou não ganha</h3>
+    <ul>
+      <li>Não é "dentro do Collie": o processo continua existindo, com o mesmo consumo de RAM, e segue visível no Monitor de Atividade.</li>
+      <li>Sem a barra lateral e os controles estendidos da janela (GPS, sensores, câmera). Seria preciso recriar o que importa pelo gRPC.</li>
+      <li>Mais CPU no app para receber pixels crus: 15% no cliente Python em 576×1280 e 46 a 48% em 1080×2400. Em Swift deve ser outro número, ainda não medido.</li>
+      <li>Áudio passaria a exigir <code>streamAudio</code> no app. O painel atual já roda sem áudio.</li>
+      <li>Dois caminhos de vídeo para manter, gRPC e scrcpy.</li>
+      <li>Emulador já aberto com janela, como um usado com Proxyman, continua com janela. O Collie pode adotá-lo, mas não escondê-lo sem reiniciar.</li>
+    </ul>
+    <h3>Risco de segurança a tratar</h3>
+    <p><span class="tag fact">fato</span> Com <code>-grpc &lt;porta&gt;</code>, o emulador escutou em <code>*:8580</code> e registrou <code>security: Insecure, auth: none</code>. Qualquer máquina na rede com acesso à porta consegue ver a tela e injetar toques. O produto precisa de <code>-grpc-use-token</code> ou JWT, e o spike deve checar se é possível restringir ao loopback. Minhas medições rodaram assim por cerca de 30 min, num AVD de teste; a porta já está fechada.</p>
+
+    <h2>Spike que decide</h2>
+    <p>Dois dias, numa branch, sem mexer no painel atual:</p>
+    <ol>
+      <li><strong>Baseline real (1 hora):</strong> corrigir handshake e jar em branch, e medir o scrcpy do mesmo jeito. Isso substitui a aproximação e pode mudar a conclusão: se a versão nova chegar perto de 50 fps, a opção A deixa de valer o custo.</li>
+      <li><strong>Protótipo:</strong> um <code>NSView</code> em Swift, com gRPC direto, RGB888 para <code>CVPixelBuffer</code> na layer, e <code>-no-window</code> contra <code>-qt-hide-window</code>, com token.</li>
+      <li><strong>Medição até a tela:</strong> gravar a tela do Mac em 120 fps ou usar instrumentação de apresentação, e comparar com o baseline do item 1.</li>
+    </ol>
+    <p><strong>Segue para produto se:</strong> pelo menos 45 fps sustentados, toque até a tela sem piora em relação ao scrcpy consertado, soma de CPU de app e QEMU menor ou igual, e nenhum crash em 30 min de uso. Se não passar, fica o scrcpy consertado com <code>-qt-hide-window</code> ou <code>-no-window</code>, que já elimina a janela e o Dock.</p>
+
+    <h2>Fatos, hipóteses e limites</h2>
+    <h3>Verificado nesta máquina</h3>
+    <ul>
+      <li>Falha do handshake num daemon deste checkout, crash do scrcpy 3.3.1, encoders só de software, ausência no Dock, fps e latência da tabela, crash de MMAP.</li>
+    </ul>
+    <h3>Hipótese ou não medido</h3>
+    <ul>
+      <li>Comportamento do Collie instalado e do <code>emulator-5554</code>. Nunca os toquei.</li>
+      <li>scrcpy funcionando no API 37. O <code>screenrecord</code> é uma aproximação, com outro cliente e outra configuração.</li>
+      <li>Falha de handshake em API diferente da 37 e em aparelho físico. A lógica não depende do API, mas só testei este AVD.</li>
+      <li>Latência até o fóton. Todos os números param na chegada ao cliente.</li>
+      <li>A linha <code>idle</code> de CPU variou de 11 a 18% com janela oculta e deu 276% logo após o boot headless, então não a uso como comparação.</li>
+      <li>AVD com Play Store (<code>Pixel_9_Pro</code>) e páginas de 16 KB: não testados.</li>
+    </ul>
+    <h3>Como medi e o que ficou</h3>
+    <ul>
+      <li>Usei só <code>spike-net-api37</code>, com <code>-read-only</code> e console na porta 5580. O <code>emulator-5554</code> não estava ligado durante o teste. O <code>collied</code> instalado e o daemon dev já em execução não foram tocados.</li>
+      <li>O AVD está intacto: tamanho e data dos qcow2 iguais ao início. Ele já tinha <code>http_proxy=127.0.0.1:54595</code> sobrando de uma sessão anterior, e não alterei isso.</li>
+      <li>Subi um daemon próprio em <code>/tmp/cb1</code> para reproduzir o erro, já removido. O emulador de teste está parado.</li>
+      <li>A permissão da sessão barrou o download dos jars 3.3.4 e 5.0.1 e um <code>kill</code> amplo demais. Não contornei o download; encerrei só o PID do meu emulador.</li>
+      <li>Sobraram o harness e os dados no scratchpad, e um relatório de crash do QEMU em <code>~/Library/Logs/DiagnosticReports</code>. Nenhum código de produto mudou e não houve commit; esta página é o único arquivo novo no projeto.</li>
+    </ul>
+  </article>
+</div>
+<script src="collie-lib://lib/lucide@0.469.0/lucide.min.js"></script>
+<script>
+const toc = document.getElementById('toc');
+document.querySelectorAll('#doc h2').forEach((h, i) => {
+  h.id = h.id || 'secao-' + (i + 1);
+  const li = document.createElement('li'), a = document.createElement('a');
+  a.textContent = h.textContent; a.setAttribute('href', '#' + h.id);
+  li.appendChild(a); toc.appendChild(li);
+});
+function libsMissing() {
+  if (document.querySelector('.libs-note')) return;
+  const p = document.createElement('p'); p.className = 'muted libs-note'; p.textContent = 'Bibliotecas offline indisponíveis';
+  document.body.appendChild(p);
+}
+if (window.lucide) {
+  for (const [sel, name, swap] of [['.toc strong', 'list']]) document.querySelectorAll(sel).forEach(el => {
+    const i = document.createElement('i'); i.setAttribute('data-lucide', name);
+    if (swap) el.replaceChildren(i); else el.prepend(i, ' ');
+  });
+  lucide.createIcons({ icons: lucide.icons });
+} else libsMissing();
+</script>
+</body>
+</html>

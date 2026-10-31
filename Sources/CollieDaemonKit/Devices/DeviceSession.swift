@@ -151,15 +151,16 @@ final class DeviceSession: @unchecked Sendable {   // state under `lock`; contro
         }
         guard own({ self.video = v }) else { Darwin.close(v); return }
         defer { lock.withLock { Darwin.close(video); video = -1 } }   // `end` only shuts it down
+        // The server accepts every socket before it sends anything else: the header only comes once control is connected.
+        let c = Self.connect(port, dummy: false, deadline: Date().addingTimeInterval(5))
+        guard c >= 0 else { return end("error", "Could not open the scrcpy control socket") }
+        guard own({ self.control = c }) else { Darwin.close(c); return }
+        Thread { [self] in drainControl(c) }.start()
         guard let m = Self.read(v, 12, timeout: 5), let meta = Scrcpy.codecMeta(m) else {
             return end("error", "The scrcpy server sent no video header")
         }
         guard meta.codec == 0x68323634 else { return end("error", String(format: "Unsupported video codec 0x%08x", meta.codec)) }
         Self.setTimeout(v, 0)
-        let c = Self.connect(port, dummy: false, deadline: Date().addingTimeInterval(5))
-        guard c >= 0 else { return end("error", "Could not open the scrcpy control socket") }
-        guard own({ self.control = c }) else { Darwin.close(c); return }
-        Thread { [self] in drainControl(c) }.start()
         guard own({
             state = "streaming"
             let f = StreamFrame.videoMeta(width: meta.width, height: meta.height)

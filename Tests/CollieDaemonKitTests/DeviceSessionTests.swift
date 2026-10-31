@@ -37,8 +37,8 @@ private struct Fx {
     func cleanup() { servers.forEach { kill(-$0, SIGKILL) }; try? FileManager.default.removeItem(at: dir) }
 }
 
-/// scrcpy-server stand-in on 127.0.0.1: the first connection is video (dummy byte, h264 64×64 codec meta, then
-/// `video`), the second control (its bytes are kept). `video` runs on its own thread; the fd stays open after it.
+/// scrcpy-server stand-in on 127.0.0.1, in the real server's order: accept video, dummy byte, accept control (its bytes
+/// are kept), and only then the h264 64×64 codec meta and `video`, on its own thread; the fd stays open after it.
 private final class FakeScrcpy: @unchecked Sendable {
     let port: UInt16
     private let lfd: Int32
@@ -62,10 +62,11 @@ private final class FakeScrcpy: @unchecked Sendable {
             guard v >= 0 else { return }
             var one: Int32 = 1; setsockopt(v, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
             lock.withLock { vfd = v }
-            send(v, Data([0]) + Self.meta(width: 64, height: 64))
+            send(v, Data([0]))   // the dummy byte comes with the video socket's accept; nothing else until control connects
+            let c = accept(lfd, nil, nil)
+            guard c >= 0 else { return }
+            send(v, Self.meta(width: 64, height: 64))
             Thread { [self] in
-                let c = accept(lfd, nil, nil)
-                guard c >= 0 else { return }
                 var b = [UInt8](repeating: 0, count: 4096)
                 while true {
                     let n = read(c, &b, b.count)

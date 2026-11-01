@@ -257,26 +257,26 @@ extension DeviceCommandTests { @Suite struct SimSessionTests {
         }
     }
 }
-}
 
-/// The real incident: `axe stream-video` grows inside, with its stdout being read. The session must stop it.
-@Test func streamOverMemoryLimitIsStopped() async throws {
-    let fx = try Fx(); defer { fx.cleanup() }
-    let ended = OSAllocatedUnfairLock(initialState: false)
-    let s = SimSession(panel: UUID(), udid: udid, memoryLimit: 100, memoryOf: { _ in 200 }, onEnd: { _ in ended.withLock { $0 = true } })
-    let run = fx.dir.appendingPathComponent("run")
-    try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
-    let tools = Simulator(xcrun: fixtures.appendingPathComponent("fake-xcrun.sh"), axe: fixtures.appendingPathComponent("fake-axe.sh"))
-    await s.start(sim: tools, runDir: run)
-    let leader = try #require(s.pid)
-    let stop = Date().addingTimeInterval(10)
-    while !(ended.withLock { $0 } && kill(-leader, 0) != 0), Date() < stop { try await Task.sleep(for: .milliseconds(50)) }
-    #expect(ended.withLock { $0 })
-    #expect(s.isEnded)
-    #expect(kill(-leader, 0) != 0, "the stream's group must be gone")
-}
+    /// The real incident: `axe stream-video` grows inside, with its stdout being read. The session must stop it.
+    @Test func streamOverMemoryLimitIsStopped() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        let ended = OSAllocatedUnfairLock(initialState: false)
+        let s = SimSession(panel: UUID(), udid: udid, memoryLimit: 100, memoryOf: { _ in 200 }, onEnd: { _ in ended.withLock { $0 = true } })
+        let run = fx.dir.appendingPathComponent("run")
+        try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        let tools = Simulator(xcrun: fixtures.appendingPathComponent("fake-xcrun.sh"), axe: fixtures.appendingPathComponent("fake-axe.sh"))
+        await s.start(sim: tools, runDir: run)
+        let leader = try #require(s.pid)
+        let stop = Date().addingTimeInterval(10)
+        while !(ended.withLock { $0 } && kill(-leader, 0) != 0), Date() < stop { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(ended.withLock { $0 })
+        #expect(s.isEnded)
+        #expect(kill(-leader, 0) != 0, "the stream's group must be gone")
+    }
 
-@Test func footprintReadsARealProcess() {
-    #expect((SimSession.footprint(getpid()) ?? 0) > 0)
-    #expect(SimSession.footprint(-1) == nil)
+    @Test func footprintReadsARealProcess() {
+        #expect((SimSession.footprint(getpid()) ?? 0) > 0)
+        #expect(SimSession.footprint(-1) == nil)
+    }
 }

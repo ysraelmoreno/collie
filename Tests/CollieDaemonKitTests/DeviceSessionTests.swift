@@ -37,8 +37,8 @@ private struct Fx {
     func cleanup() { servers.forEach { kill(-$0, SIGKILL) }; try? FileManager.default.removeItem(at: dir) }
 }
 
-/// scrcpy-server stand-in on 127.0.0.1: the first connection is video (dummy byte, h264 64×64 codec meta, then
-/// `video`), the second control (its bytes are kept). `video` runs on its own thread; the fd stays open after it.
+/// scrcpy-server stand-in on 127.0.0.1, in the real server's order: accept video, dummy byte, accept control (its bytes
+/// are kept), and only then the h264 codec id, a 64×64 session packet and `video`, on its own thread; the fd stays open after it.
 private final class FakeScrcpy: @unchecked Sendable {
     let port: UInt16
     private let lfd: Int32
@@ -62,10 +62,11 @@ private final class FakeScrcpy: @unchecked Sendable {
             guard v >= 0 else { return }
             var one: Int32 = 1; setsockopt(v, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
             lock.withLock { vfd = v }
-            send(v, Data([0]) + Self.meta(width: 64, height: 64))
+            send(v, Data([0]))   // the dummy byte comes with the video socket's accept; nothing else until control connects
+            let c = accept(lfd, nil, nil)
+            guard c >= 0 else { return }
+            send(v, Self.header + Self.session(width: 64, height: 64))
             Thread { [self] in
-                let c = accept(lfd, nil, nil)
-                guard c >= 0 else { return }
                 var b = [UInt8](repeating: 0, count: 4096)
                 while true {
                     let n = read(c, &b, b.count)
@@ -79,14 +80,15 @@ private final class FakeScrcpy: @unchecked Sendable {
         }.start()
     }
 
-    static func meta(width: UInt32, height: UInt32) -> Data {
+    static let header = Data([0x68, 0x32, 0x36, 0x34])
+    static func session(width: UInt32, height: UInt32) -> Data {
         var d = Data()
-        for v in [0x68323634, width, height] as [UInt32] { withUnsafeBytes(of: v.bigEndian) { d.append(contentsOf: $0) } }
+        for v in [0x8000_0000, width, height] as [UInt32] { withUnsafeBytes(of: v.bigEndian) { d.append(contentsOf: $0) } }
         return d
     }
     static func packet(pts: UInt64, config: Bool = false, key: Bool = false, _ body: Data) -> Data {
         var d = Data()
-        let flags = pts | (config ? 1 << 63 : 0) | (key ? 1 << 62 : 0)
+        let flags = pts | (config ? 1 << 62 : 0) | (key ? 1 << 61 : 0)
         withUnsafeBytes(of: flags.bigEndian) { d.append(contentsOf: $0) }
         withUnsafeBytes(of: UInt32(body.count).bigEndian) { d.append(contentsOf: $0) }
         return d + body
@@ -188,7 +190,20 @@ extension DeviceCommandTests { @Suite struct DeviceSessionTests {
             let l = fx.lines
             #expect(l.contains("-s emulator-5554 push \(fx.jar.path) /data/local/tmp/collie-scrcpy-server.jar"), "\(l)")
             #expect(l.contains { $0.wholeMatch(of: /-s emulator-5554 forward tcp:0 localabstract:scrcpy_[0-9a-f]{8}/) != nil }, "\(l)")
-            #expect(l.contains { $0.hasPrefix("-s emulator-5554 shell CLASSPATH=/data/local/tmp/collie-scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 3.3.1 scid=") }, "\(l)")
+            #expect(l.contains { $0.hasPrefix("-s emulator-5554 shell CLASSPATH=/data/local/tmp/collie-scrcpy-server.jar app_process / com.genymobile.scrcpy.Server 5.0.1 scid=") }, "\(l)")
+        }
+    }
+
+    @Test func rotationSendsNewSize() async throws {
+        let srv = try FakeScrcpy { s, fd in
+            s.opening(fd)
+            s.send(fd, FakeScrcpy.session(width: 128, height: 64))
+        }
+        defer { srv.stop() }
+        let fx = try Fx(port: srv.port); defer { fx.cleanup() }
+        try await withSession(fx) { d, p in
+            let c = try await view(d, p, try await openPanel(d, p))
+            _ = try await read(c, until: { $0 == .videoMeta(width: 128, height: 64) })
         }
     }
 

@@ -35,6 +35,9 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
     static let maxPending = 32
     /// Longest text a run of typed characters is coalesced into.
     static let maxText = 1000
+    /// `axe stream-video` queues captured frames without limit when it encodes slower than it captures: measured at
+    /// 230 MB/s with a fast reader, and once 27 GB on a 16 GB Mac, taking the window server down. Normal runs stay under 200 MB.
+    static let memoryLimit: UInt64 = 512 << 20
 
     private let lock = NSLock()
     private var viewers: [ObjectIdentifier: StreamConn] = [:]
@@ -48,9 +51,35 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
     private var running = false
     private var reader = MJPEGReader()
     private let onEnd: @Sendable (SimSession) -> Void
+    private let memoryLimit: UInt64
+    private let memoryOf: @Sendable (pid_t) -> UInt64?
 
-    init(panel: UUID, udid: String, onEnd: @escaping @Sendable (SimSession) -> Void) {
-        self.panel = panel; self.udid = udid; self.onEnd = onEnd
+    init(panel: UUID, udid: String, memoryLimit: UInt64 = SimSession.memoryLimit,
+         memoryOf: @escaping @Sendable (pid_t) -> UInt64? = SimSession.footprint, onEnd: @escaping @Sendable (SimSession) -> Void) {
+        self.panel = panel; self.udid = udid; self.memoryLimit = memoryLimit; self.memoryOf = memoryOf; self.onEnd = onEnd
+    }
+
+    /// What the process costs the machine, compressed pages included (a resident size shrinks just when memory runs out).
+    static func footprint(_ pid: pid_t) -> UInt64? {
+        var info = rusage_info_v4()
+        let rc = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
+        }
+        return rc == 0 ? info.ri_phys_footprint : nil
+    }
+
+    /// Ends the session once the stream passes `memoryLimit`. The panel offers to reconnect, which starts a fresh stream.
+    /// ponytail: the group's leader only; `axe` from Homebrew is a wrapper that `exec`s, so the leader is the one that grows
+    private func watchMemory(_ pid: pid_t) {
+        Task { [weak self] in
+            while let self, !self.isEnded {
+                if let used = self.memoryOf(pid), used > self.memoryLimit {
+                    self.end("error", "axe stream-video was stopped at \(used >> 20) MB of memory (limit \(self.memoryLimit >> 20) MB)")
+                    return
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
     }
 
     var isEnded: Bool { lock.withLock { ended } }
@@ -143,6 +172,7 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
                                     onData: { [weak self] d in self?.feed(d) },
                                     onExit: { [weak self] code in self?.streamExited(code) })
             guard own({ proc = p }) else { p.terminate(); return }
+            watchMemory(p.pid)
         } catch {
             end("error", error.message)
         }

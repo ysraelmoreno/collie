@@ -25,8 +25,9 @@ extension DeviceSession: ViewerSession {}
 /// One iOS Simulator panel's live screen: `axe stream-video` (MJPEG on stdout, a `LongProcess`) split into JPEGs and fanned
 /// out to the panel's `ui.device` viewers. `videoMeta` is the screen in points (from `describe-ui`), what input uses.
 /// Viewers' `in` frames are `SimInput` JSON, each run as one `axe` invocation, in order.
-/// Ends once (stream exit, panel closed, daemon stop, idle grace): status to the viewers, stream terminated. Never restarted.
-final class SimSession: ViewerSession, @unchecked Sendable {   // state under `lock`; `reader` on the stdout thread only
+/// Ends once (stream exit, panel closed, daemon stop, idle grace): status to the viewers, stream terminated.
+/// The stream alone is replaced when it passes `memoryLimit`; viewers keep the last frame meanwhile.
+final class SimSession: ViewerSession, @unchecked Sendable {   // state under `lock`
     let panel: UUID
     let udid: String
     /// A viewer with more than this queued (unsent) skips frames until it is back under (each JPEG stands alone).
@@ -38,6 +39,10 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
     /// `axe stream-video` queues captured frames without limit when it encodes slower than it captures: measured at
     /// 230 MB/s with a fast reader, and once 27 GB on a 16 GB Mac, taking the window server down. Normal runs stay under 200 MB.
     static let memoryLimit: UInt64 = 512 << 20
+    /// A stream reaching the limit sooner than this is a runaway (seen at 230 MB/s; the panel's settings under load: ~70 MB/s).
+    static let minStreamLife: TimeInterval = 3
+    /// Runaways in a row before the session ends with an error instead of starting another stream.
+    static let maxRunaways = 3
 
     private let lock = NSLock()
     private var viewers: [ObjectIdentifier: StreamConn] = [:]
@@ -49,7 +54,8 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
     private var sim: Simulator?
     private var queue: [[String]] = []   // `axe` arguments not started yet; one runner drains them in order
     private var running = false
-    private var reader = MJPEGReader()
+    private var stream = 0               // the current `axe stream-video`; an older one's frames and exit are ignored
+    private var runaways = 0
     private let onEnd: @Sendable (SimSession) -> Void
     private let memoryLimit: UInt64
     private let memoryOf: @Sendable (pid_t) -> UInt64?
@@ -68,18 +74,35 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
         return rc == 0 ? info.ri_phys_footprint : nil
     }
 
-    /// Ends the session once the stream passes `memoryLimit`. The panel offers to reconnect, which starts a fresh stream.
+    /// Replaces the stream once it passes `memoryLimit`.
     /// ponytail: the group's leader only; `axe` from Homebrew is a wrapper that `exec`s, so the leader is the one that grows
-    private func watchMemory(_ pid: pid_t) {
+    private func watchMemory(_ pid: pid_t, stream id: Int, axe: URL, runDir: URL) {
+        let started = Date()
         Task { [weak self] in
-            while let self, !self.isEnded {
+            while let self, self.lock.withLock({ !self.ended && self.stream == id }) {
                 if let used = self.memoryOf(pid), used > self.memoryLimit {
-                    self.end("error", "axe stream-video was stopped at \(used >> 20) MB of memory (limit \(self.memoryLimit >> 20) MB)")
+                    self.replaceStream(used: used, life: Date().timeIntervalSince(started), axe: axe, runDir: runDir)
                     return
                 }
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+    }
+
+    /// The old stream goes first: two at once would cost the memory this exists to save.
+    private func replaceStream(used: UInt64, life: TimeInterval, axe: URL, runDir: URL) {
+        let (old, giveUp): (LongProcess?, Bool) = lock.withLock {
+            runaways = life < Self.minStreamLife ? runaways + 1 : 0
+            guard runaways < Self.maxRunaways else { return (nil, true) }
+            stream += 1
+            defer { proc = nil }
+            return (proc, false)
+        }
+        if giveUp {
+            return end("error", "axe stream-video was stopped at \(used >> 20) MB of memory (limit \(memoryLimit >> 20) MB)")
+        }
+        old?.terminate()
+        launchStream(axe: axe, runDir: runDir)
     }
 
     var isEnded: Bool { lock.withLock { ended } }
@@ -165,28 +188,34 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
         guard let screen, screen.width >= 1, screen.height >= 1 else { return end("error", failure) }
         let f = StreamFrame.videoMeta(width: UInt32(screen.width.rounded()), height: UInt32(screen.height.rounded()))
         guard own({ meta = f; for c in viewers.values { c.send(f) } }) else { return }
+        launchStream(axe: axe, runDir: runDir)
+    }
+
+    private func launchStream(axe: URL, runDir: URL) {
+        let id = lock.withLock { stream += 1; return stream }
+        let reader = StreamReader()
         do throws(ProtocolError) {
             let p = try LongProcess(executable: axe, args: ["stream-video", "--format", "mjpeg", "--fps", "15", "--quality", "70",
                                                             "--scale", "0.5", "--udid", udid],
                                     env: ProcessInfo.processInfo.environment, runDir: runDir,
-                                    onData: { [weak self] d in self?.feed(d) },
-                                    onExit: { [weak self] code in self?.streamExited(code) })
+                                    onData: { [weak self] d in self?.feed(d, reader, stream: id) },
+                                    onExit: { [weak self] code in self?.streamExited(code, stream: id) })
             guard own({ proc = p }) else { p.terminate(); return }
-            watchMemory(p.pid)
+            watchMemory(p.pid, stream: id, axe: axe, runDir: runDir)
         } catch {
             end("error", error.message)
         }
     }
 
-    /// Stdout thread.
-    private func feed(_ d: Data) {
-        for j in reader.feed(d) { deliver(StreamFrame.jpeg(j).line) }
+    /// Stdout thread of stream `id`.
+    private func feed(_ d: Data, _ reader: StreamReader, stream id: Int) {
+        for j in reader.mjpeg.feed(d) { deliver(StreamFrame.jpeg(j).line, stream: id) }
     }
 
     /// The first frame makes the session `streaming`. A viewer over `dropAbove` misses this one.
-    private func deliver(_ line: Data) {
+    private func deliver(_ line: Data, stream id: Int) {
         lock.withLock {
-            guard !ended else { return }
+            guard !ended, stream == id else { return }
             last = line
             if state != "streaming" {
                 state = "streaming"
@@ -196,8 +225,9 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
         }
     }
 
-    private func streamExited(_ code: Int32) {
-        let streaming = lock.withLock { state == "streaming" }
+    private func streamExited(_ code: Int32, stream id: Int) {
+        let (current, streaming) = lock.withLock { (stream == id, state == "streaming") }
+        guard current else { return }
         end(streaming ? "ended" : "error", "axe stream-video exited (\(code))")
     }
 
@@ -217,3 +247,6 @@ final class SimSession: ViewerSession, @unchecked Sendable {   // state under `l
         onEnd(self)
     }
 }
+
+/// One stream's parser, used on that stream's stdout thread only.
+private final class StreamReader: @unchecked Sendable { var mjpeg = MJPEGReader() }

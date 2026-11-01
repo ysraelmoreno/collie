@@ -258,8 +258,28 @@ extension DeviceCommandTests { @Suite struct SimSessionTests {
     }
 }
 
-    /// The real incident: `axe stream-video` grows inside, with its stdout being read. The session must stop it.
-    @Test func streamOverMemoryLimitIsStopped() async throws {
+    /// Seen in the real panel: the stream passes the limit under load. The panel must stay up, on a new stream.
+    @Test func streamOverMemoryLimitIsReplaced() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        let checks = OSAllocatedUnfairLock(initialState: 0)
+        let ended = OSAllocatedUnfairLock(initialState: false)
+        let s = SimSession(panel: UUID(), udid: udid, memoryLimit: 100, memoryOf: { _ in
+            checks.withLock { $0 += 1; return $0 == 1 ? 200 : 0 }
+        }, onEnd: { _ in ended.withLock { $0 = true } })
+        defer { s.end("ended", nil) }
+        let run = fx.dir.appendingPathComponent("run")
+        try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+        let tools = Simulator(xcrun: fixtures.appendingPathComponent("fake-xcrun.sh"), axe: fixtures.appendingPathComponent("fake-axe.sh"))
+        await s.start(sim: tools, runDir: run)
+        let stop = Date().addingTimeInterval(10)
+        while checks.withLock({ $0 }) < 2, Date() < stop { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(checks.withLock { $0 } >= 2, "the new stream must be watched too")
+        #expect(!ended.withLock { $0 })
+        #expect(s.pid.map { kill($0, 0) == 0 } == true, "the new stream runs")
+    }
+
+    /// The real incident: `axe stream-video` grows inside, with its stdout being read. A runaway must end the session.
+    @Test func runawayStreamEndsTheSession() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         let ended = OSAllocatedUnfairLock(initialState: false)
         let s = SimSession(panel: UUID(), udid: udid, memoryLimit: 100, memoryOf: { _ in 200 }, onEnd: { _ in ended.withLock { $0 = true } })

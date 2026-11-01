@@ -235,6 +235,7 @@ code, pre, kbd, samp { font-family: "DM Mono", ui-monospace, Menlo, monospace; }
 <div class="layout">
   <nav class="toc" aria-label="Sumário"><strong>Sumário</strong><ol id="toc"></ol></nav>
   <article id="doc">
+    <blockquote><strong>Atualização de 01/11/2026.</strong> A branch <code>fix/device-stream</code> consertou o handshake e levou o servidor para scrcpy 5.0.1, e agora é possível medir o scrcpy real. Três pontos abaixo mudam. (1) Com pixels verificados e o daemon real, o scrcpy faz 46 a 100 ms de mediana e 22 a 35 fps; o gRPC na mesma sessão faz 20 a 22 ms e cerca de 56 fps. A migração continua valendo, por latência e fluidez. (2) A vantagem de CPU no QEMU some: 297 a 300% no gRPC contra 259 a 287% no scrcpy. (3) A latência do scrcpy não deve ser medida por "primeiro pacote", porque ele repete quadros e a tela emite pacotes em repouso. Além disso, com <code>-grpc-use-token</code> o gRPC escuta só em <code>127.0.0.1</code>, com token. O restante da página é o texto original.</blockquote>
     <blockquote><strong>Recomendação:</strong> no painel, trocar o scrcpy pelo gRPC do emulador, com o emulador em <code>-no-window</code>. Some a janela e o ícone do Dock, e o canvas sobe de 19 para cerca de 50 fps nas medições. O emulador continua sendo um processo separado. Rodar dentro do processo do Collie não compensa. Antes disso há um defeito a resolver: no AVD testado, o painel atual nem chegou a transmitir.</blockquote>
 
     <h2>O que achei primeiro</h2>

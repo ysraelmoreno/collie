@@ -14,7 +14,8 @@ struct SandboxInput {
     var paddockWorktrees: [URL] = []
     var home: URL
     var collieRoot: URL
-    /// Collie's generated files for this terminal (settings/hooks/MCP config): readable inside the closed Collie dir.
+    /// Collie's generated files for this terminal (settings/hooks/MCP config, Cursor's plugin dir): readable, with what
+    /// is under them, inside the closed Collie dir.
     var ownFiles: [URL] = []
     /// `<collieRoot>/sandbox/<id>`: readable (shims, zsh startup); only its `state/` is writable.
     var terminalDir: URL
@@ -210,7 +211,7 @@ enum SandboxProfile {
         }
         out.append(";; Collie: closed (data, tokens, grants, workspace.json); this terminal's files readable; only the socket")
         rule("deny", "file-read* file-write*", tagged: true, [sub(collie)])
-        rule("allow", "file-read*", i.ownFiles.map { lit(real($0)) } + [sub(tdir)])
+        rule("allow", "file-read*", i.ownFiles.map { sub(real($0)) } + [sub(tdir)])   // subpath: Cursor's plugin is a dir
         // Claude vets each component of its --settings path: the dirs from the root down to its own files can be
         // examined (stat/readlink), not listed
         var vetted: Set<String> = []

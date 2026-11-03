@@ -8,11 +8,35 @@ Daemon (`collied`), CLI (`collie`) e app de canvas (SwiftUI/AppKit) para orquest
 
 ## Build
 
+Pré-requisitos: macOS 15 e Swift 6.2 (Xcode ou toolchain). Os scripts de `scripts/` só baixam versões fixadas e
+conferem o SHA-256 de cada arquivo; tudo vai para `vendor/`, que é ignorado pelo git.
+
+**Mínimo** (app sem fontes próprias, vídeo de dispositivos, Design e Diagrama):
+
 ```sh
-swift build
-swift test
-scripts/bundle-app.sh   # gera build/Collie.app (assinado ad hoc)
+scripts/fetch-weblibs.sh   # vendor/weblibs: obrigatório, sem ele o bundle-app.sh para com erro
+scripts/bundle-app.sh      # gera build/Collie.app
 ```
+
+**Completo:**
+
+```sh
+scripts/fetch-weblibs.sh        # bibliotecas offline das páginas (React, htm, Chart.js, Lucide)
+scripts/fetch-fonts.sh          # Space Grotesk e DM Mono; sem elas, fontes do sistema
+scripts/fetch-scrcpy-server.sh  # vídeo do painel Android; sem ele, o painel mostra erro
+scripts/build-drawio.sh         # painel Diagrama (precisa de git)
+scripts/build-figcraft.sh       # motor do painel Design (precisa de rustup, ver abaixo; ~10 min na 1ª vez)
+scripts/bundle-app.sh
+```
+
+O `build-figcraft.sh` precisa do `rustup` com o alvo wasm (o Rust do Homebrew não serve):
+`brew install rustup && rustup-init -y --no-modify-path && rustup target add wasm32-unknown-unknown`.
+Cada script faltando vira um aviso no `bundle-app.sh` e o recurso correspondente fica desligado; só o `fetch-weblibs.sh`
+é obrigatório (`COLLIE_ALLOW_NO_WEBLIBS=1` empacota sem ele). Os painéis de dispositivos também pedem ferramentas
+instaladas na máquina: `adb` para Android e AXe para o Simulador iOS (ver as seções abaixo).
+
+Desenvolvimento: `swift build` e `swift test` (rode o `swift test` fora de um terminal do Collie: os testes de sandbox
+usam `sandbox-exec`, que não abre um sandbox dentro de outro).
 
 Opcional: rode `scripts/make-signing-cert.sh` uma vez para criar a identidade autoassinada "Collie Local" no keychain de
 login (o macOS pede sua senha para confiar nela). Com ela o `bundle-app.sh` assina o app sempre com a mesma identidade e

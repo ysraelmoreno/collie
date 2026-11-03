@@ -851,7 +851,7 @@ actor CommandRouter {
         let input = SandboxInput(terminal: rec.id, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
                                  paddockWorktrees: closedPaddocks(project), home: config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()),
                                  collieRoot: config.paths.root,
-                                 ownFiles: [AgentLaunch.settingsFile(rec.id, in: hooksDir), AgentLaunch.mcpFile(rec.id, in: hooksDir)],
+                                 ownFiles: AgentLaunch.ownFiles(rec.id, in: hooksDir),
                                  terminalDir: SandboxLaunch.dir(rec.id, root: config.paths.root), socket: config.paths.socket,
                                  agent: rec.preset, command: rec.command,
                                  grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, project: project.path, lot: ws.lot(of: rec.id)?.id),

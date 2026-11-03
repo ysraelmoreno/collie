@@ -32,7 +32,9 @@ final class FakeHome {
                   ".claude/CLAUDE.md", ".claude/hooks/h.sh", ".claude.json", ".codex/config.toml", "code/repo/README",
                   "code/other/x", "Library/Application Support/Collie/admin.token",
                   "Library/Application Support/Collie/workspaces/w/workspace.json",
-                  "Library/Application Support/Collie/hooks/\(id.uuidString).claude.json", "Library/Application Support/Collie/hooks/other.claude.json"] {
+                  "Library/Application Support/Collie/hooks/\(id.uuidString).claude.json", "Library/Application Support/Collie/hooks/other.claude.json",
+                  "Library/Application Support/Collie/hooks/\(id.uuidString).cursor/collie/hooks/hooks.json",
+                  "Library/Application Support/Collie/hooks/other.cursor/collie/hooks/hooks.json"] {
             try file(f, f == ".gitconfig" ? "[core]\n" : "x\n")
         }
         // what a developer's home already has (R19: the daemon makes only the agent's own dirs)
@@ -79,7 +81,7 @@ final class FakeHome {
         let g = SandboxInput.gitDirs(of: proj)
         return SandboxInput(terminal: id, project: proj, mainGitDir: g.common, worktreeGitDir: g.worktree,
                             paddockWorktrees: paddockTerminal ? [] : [repo.appendingPathComponent(".collie/paddocks")],
-                            home: home, collieRoot: collie, ownFiles: [collie.appendingPathComponent("hooks/\(id.uuidString).claude.json")],
+                            home: home, collieRoot: collie, ownFiles: AgentLaunch.ownFiles(id, in: collie.appendingPathComponent("hooks")),
                             terminalDir: SandboxLaunch.dir(id, root: collie), socket: socket, agent: agent, command: command, grants: grants)
     }
     func profile(_ i: SandboxInput) throws -> URL {
@@ -226,6 +228,10 @@ final class FakeHome {
         // examined, never listed
         #expect(try f.ok(p, "stat \(c("")) \(c("hooks")) >/dev/null && /bin/realpath \(c("hooks/\(f.id.uuidString).claude.json")) >/dev/null"))
         #expect(try !f.ok(p, "ls \(c("hooks"))"))
+        // Cursor's per-terminal plugin dir (--plugin-dir): its own is readable and listable, another's is not, none writable
+        #expect(try f.ok(p, "ls \(c("hooks/\(f.id.uuidString).cursor/collie/hooks")) >/dev/null && cat \(c("hooks/\(f.id.uuidString).cursor/collie/hooks/hooks.json"))"))
+        #expect(try !f.ok(p, "cat \(c("hooks/other.cursor/collie/hooks/hooks.json"))"))
+        #expect(try !f.ok(p, "echo x > \(c("hooks/\(f.id.uuidString).cursor/collie/hooks/hooks.json"))"))
         #expect(try f.ok(p, "cat \(c("sandbox/\(f.id.uuidString)/bin/swift")) >/dev/null"))
         #expect(try f.ok(p, "echo x > \(c("sandbox/\(f.id.uuidString)/state/history"))"))   // its own history
         #expect(try f.ok(p, "/usr/bin/nc -w 1 -U \(AgentLaunch.quote(f.socket.path)) </dev/null"))   // the daemon socket: connect OK
@@ -528,6 +534,14 @@ final class FakeHome {
         let f = try? FakeHome(git: false)
         let text = f.map { SandboxProfile.render($0.input()) } ?? ""
         #expect(text.hasPrefix("(version 1)\n(allow default)") && text.contains("collie-term:\(f?.id.uuidString ?? "")"))
+    }
+    /// Text-only (runs where sandbox-exec can't nest): Cursor's plugin dir is a readable subpath, the other files too.
+    @Test func ownFilesAreSubpaths() throws {
+        let f = try FakeHome(git: false), text = SandboxProfile.render(f.input())
+        let hooks = SignedAppCheck.realPath(f.collie.appendingPathComponent("hooks"))
+        for name in ["\(f.id.uuidString).cursor", "\(f.id.uuidString).claude.json"] {
+            #expect(text.contains("(subpath \(SandboxProfile.q(hooks + "/" + name)))"), "\(name)")
+        }
     }
 }
 

@@ -17,6 +17,10 @@ public enum AgentLaunch {
     public static func cursorPluginDir(_ id: UUID, in hooksDir: URL) -> URL {
         hooksDir.appendingPathComponent("\(id.uuidString).cursor/collie")
     }
+    /// The per-terminal files the sandbox lets the terminal read (each a subpath: Cursor's plugin is a dir).
+    public static func ownFiles(_ id: UUID, in hooksDir: URL) -> [URL] {
+        [settingsFile(id, in: hooksDir), mcpFile(id, in: hooksDir), cursorPluginDir(id, in: hooksDir).deletingLastPathComponent()]
+    }
     public static func removeHooks(for id: UUID, in hooksDir: URL) {
         try? FileManager.default.removeItem(at: settingsFile(id, in: hooksDir))
         try? FileManager.default.removeItem(at: mcpFile(id, in: hooksDir))

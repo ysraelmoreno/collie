@@ -679,8 +679,8 @@ public actor AskCoordinator {
                 Task { await self?.finish(id, .failure(e)) }
             }
         }
-        // claude/codex, and any terminal that ever sent a hook: hook only
-        guard t.preset == .shell || t.preset == .custom, !t.hookCapable else { return }
+        // claude/codex, and any terminal that ever sent a hook: hook only (cursor has no turn hook: idle, spike REPORT §7)
+        guard [.shell, .custom, .cursor].contains(t.preset), !t.hookCapable else { return }
         Task { [weak self] in
             while true {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -769,6 +769,7 @@ public actor AskCoordinator {
         switch kind {
         case .unknown: nil
         case .yesNo: Data((allow ? "y\r" : "n\r").utf8)
+        case .yesNoKey: Data((allow ? "y" : "n").utf8)
         // the digit picks option 1 ("Yes") wherever the cursor is (Claude's Select maps 1-9 to options); Esc is "No"
         case .menu: Data((allow ? "1" : "\u{1B}").utf8)
         case .enter: allow ? Data("\r".utf8) : nil

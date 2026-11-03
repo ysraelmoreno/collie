@@ -367,6 +367,7 @@ struct CanvasView: NSViewRepresentable {
         m.addItem(ActionItem(canvas.selection.isEmpty ? "Salvar canvas como rebanho…" : "Salvar seleção como rebanho…") { [weak self] in
             self?.onSaveHerd()
         })
+        m.addItem(ActionItem("Reiniciar todos os terminais…") { [weak self] in self?.confirmRestartAll() })
         m.addItem(.separator())
         m.addItem(ActionItem("Ajustar à tela") { [weak self] in
             guard let self else { return }
@@ -378,6 +379,41 @@ struct CanvasView: NSViewRepresentable {
         })
         return m
     }
+    /// Restarts this paddock's terminals (not the Shepherds, see `restartAll`) after a confirmation, then shows what happened.
+    private func confirmRestartAll() {
+        guard let window else { return }
+        let paddock = client.currentPaddock
+        let shown = visibleTerminals(client.terminals, paddock: paddock)
+        let shepherds = shown.filter(\.isShepherd).map(\.name)
+        let a = NSAlert()
+        a.messageText = "Reiniciar \(shown.count - shepherds.count) terminais deste canvas?"
+        a.informativeText = "Os processos em andamento serão encerrados e iniciados de novo."
+            + (shepherds.isEmpty ? "" : "\nO Pastor não é reiniciado: \(shepherds.joined(separator: ", ")).")
+        a.addButton(withTitle: "Reiniciar todos")
+        a.addButton(withTitle: "Cancelar")
+        a.beginSheetModal(for: window) { [weak self] r in
+            guard r == .alertFirstButtonReturn, let self else { return }
+            Task { @MainActor in await self.restartAll(paddock: paddock, in: window) }
+        }
+    }
+
+    private func restartAll(paddock: UUID?, in window: NSWindow) async {
+        let client = client
+        // admin.update with restart relaunches a running terminal too (admin.restart refuses those)
+        let r = await CollieClient.restartAll(client.terminals, paddock: paddock) { try await client.update($0, restart: true) }
+        for t in client.terminals where r.restarted.contains(t.name) {   // fresh replay, as the node's own Reiniciar
+            if let n = nodes[t.id], n.streamOpen { n.setVisible(false); n.setVisible(true) }
+        }
+        for f in r.failed { Log.canvas.error("restart all \(f.name): \(f.error)") }
+        let a = NSAlert()
+        a.messageText = r.failed.isEmpty ? "\(r.restarted.count) terminais reiniciados"
+                                         : "\(r.restarted.count) reiniciados, \(r.failed.count) com falha"
+        a.informativeText = (r.failed.map { "\($0.name): \($0.error)" }
+                             + (r.skipped.isEmpty ? [] : ["Pastor mantido: \(r.skipped.joined(separator: ", "))"]))
+            .joined(separator: "\n")
+        a.beginSheetModal(for: window) { _ in }
+    }
+
     // Dragging empty canvas pans as well.
     override func mouseDragged(with e: NSEvent) { canvas.pan(by: CGSize(width: e.deltaX, height: e.deltaY)) }
 }

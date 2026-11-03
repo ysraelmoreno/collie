@@ -120,10 +120,11 @@ extension CommandRouter {
         // the PATH the agents get (the user's, else the daemon's)
         let path = UserEnvironment.merge(user: await userEnv.current(), collie: ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"],
                                          collieBin: config.collieExecutable.deletingLastPathComponent().path)["PATH"] ?? ""
-        for preset in [Preset.claude, .codex] where made.contains(where: { $0.preset == preset && $0.command == nil }) {
+        for (preset, bin) in [(Preset.claude, "claude"), (.codex, "codex"), (.cursor, "cursor-agent")]
+        where made.contains(where: { $0.preset == preset && $0.command == nil }) {
             // ponytail: a few stat calls on the actor
-            guard path.split(separator: ":").contains(where: { FileManager.default.isExecutableFile(atPath: "\($0)/\(preset.rawValue)") }) else {
-                throw invalid("\(preset.rawValue) não encontrado")
+            guard path.split(separator: ":").contains(where: { FileManager.default.isExecutableFile(atPath: "\($0)/\(bin)") }) else {
+                throw invalid("\(bin) não encontrado")
             }
         }
 

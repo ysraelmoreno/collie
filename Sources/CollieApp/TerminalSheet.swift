@@ -133,7 +133,7 @@ struct TerminalSheet: View {
                 Text("O Claude Code pode pedir para confiar nesta pasta — o nó vai indicar 'precisa de atenção'.")
                     .font(.collieUI(12)).foregroundStyle(Color.collieMuted)
             }
-            if original != nil, preset == .claude || preset == .codex {
+            if original != nil, [.claude, .codex, .cursor].contains(preset) {
                 Text("A sessão do agente será reiniciada ao reiniciar").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
             }
             if let error { Text(error).foregroundStyle(Color.collieDanger).font(.collieUI(12)) }
@@ -213,6 +213,6 @@ struct TerminalSheet: View {
 
 /// The agent cards' copy: name (Space Grotesk) and command (DM Mono). A preset not listed shows its raw value.
 extension Preset {
-    var cardTitle: String { [.shell: "Shell", .claude: "Claude", .codex: "Codex", .custom: "Próprio"][self] ?? rawValue.capitalized }
-    var cardCommand: String { [.shell: "zsh", .custom: "comando"][self] ?? rawValue }
+    var cardTitle: String { [.shell: "Shell", .claude: "Claude", .codex: "Codex", .cursor: "Cursor", .custom: "Próprio"][self] ?? rawValue.capitalized }
+    var cardCommand: String { [.shell: "zsh", .cursor: "cursor-agent", .custom: "comando"][self] ?? rawValue }
 }

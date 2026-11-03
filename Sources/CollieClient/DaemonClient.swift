@@ -453,6 +453,23 @@ public func visibleTerminals(_ terminals: [TerminalRecord], paddock: UUID?) -> [
     terminals.filter { $0.paddockId == paddock }
 }
 
+/// Result of "Reiniciar todos": names restarted, Shepherds left alone, and failures with their error text.
+public struct RestartAllResult: Sendable {
+    public var restarted: [String] = [], skipped: [String] = [], failed: [(name: String, error: String)] = []
+}
+
+/// Restarts, one by one, every terminal of `paddock` (nil = pasture) except Shepherds: restarting the Shepherd would
+/// end the conversation that is orchestrating the others (restart it on its own node). A failure never stops the rest.
+public func restartAll(_ terminals: [TerminalRecord], paddock: UUID?, isolation: isolated (any Actor)? = #isolation,
+                       restart: (String) async throws -> Void) async -> RestartAllResult {
+    var r = RestartAllResult()
+    for t in visibleTerminals(terminals, paddock: paddock) {
+        if t.isShepherd { r.skipped.append(t.name); continue }
+        do { try await restart(t.name); r.restarted.append(t.name) } catch { r.failed.append((t.name, "\(error)")) }
+    }
+    return r
+}
+
 /// Canvas panels of this paddock (nil = pasture), plus every docked panel (docks show on every paddock).
 public func visiblePanels(_ panels: [Panel], paddock: UUID?) -> [Panel] {
     panels.filter { $0.placement != .canvas || $0.paddockId == paddock }

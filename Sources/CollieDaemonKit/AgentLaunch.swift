@@ -13,9 +13,36 @@ public enum AgentLaunch {
     public static func mcpFile(_ id: UUID, in hooksDir: URL) -> URL {
         hooksDir.appendingPathComponent("\(id.uuidString).mcp.json")
     }
+    /// Cursor's per-terminal plugin (`--plugin-dir`). Its folder name is in the MCP tools' names (`plugin-collie-collie-…`).
+    public static func cursorPluginDir(_ id: UUID, in hooksDir: URL) -> URL {
+        hooksDir.appendingPathComponent("\(id.uuidString).cursor/collie")
+    }
     public static func removeHooks(for id: UUID, in hooksDir: URL) {
         try? FileManager.default.removeItem(at: settingsFile(id, in: hooksDir))
         try? FileManager.default.removeItem(at: mcpFile(id, in: hooksDir))
+        try? FileManager.default.removeItem(at: cursorPluginDir(id, in: hooksDir).deletingLastPathComponent())
+    }
+    private static func write(_ o: [String: Any], _ to: URL) throws {
+        try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let data = try JSONSerialization.data(withJSONObject: o, options: [.withoutEscapingSlashes])
+        guard FileManager.default.createFile(atPath: to.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
+    /// Collie's orientation and MCP server for Cursor, as a plugin in Collie's data (never ~/.cursor or the repo).
+    /// sessionStart is the only plugin hook cursor-agent 2026.10.22 fires (spike REPORT §8); its `additional_context`
+    /// (max 10 000 chars) carries the text Claude gets at SessionStart. A stdio MCP child gets only HOME/LOGNAME/PATH/
+    /// SHELL/TERM/USER from cursor, so the COLLIE_* names are listed as `${env:NAME}` (cursor expands them; no values on disk).
+    static func cursorPlugin(_ id: UUID, hooksDir: URL, collie: URL) throws -> URL {
+        let dir = cursorPluginDir(id, in: hooksDir)
+        try write(["name": "collie", "version": "1.0.0", "description": "Collie orientation and tools"],
+                  dir.appendingPathComponent(".cursor-plugin/plugin.json"))
+        try write(["version": 1, "hooks": ["sessionStart": [["command": quote(collie.path) + " hook cursor-session-start"]]]],
+                  dir.appendingPathComponent("hooks/hooks.json"))
+        try write(["mcpServers": ["collie": ["command": collie.path, "args": ["mcp"],
+                                             "env": Dictionary(uniqueKeysWithValues: mcpEnv.map { ($0, "${env:\($0)}") })]]],
+                  dir.appendingPathComponent(".mcp.json"))
+        return dir
     }
     /// Env names the `collie mcp` child needs from the agent (names only: values never reach argv or files).
     static let mcpEnv = ["COLLIE_SOCKET", "COLLIE_TERMINAL_ID", "COLLIE_TOKEN", "COLLIE_TERMINAL_NAME", "COLLIE_WORKSPACE_ID", "COLLIE_SHEPHERD"]
@@ -86,12 +113,6 @@ public enum AgentLaunch {
                                                  "Notification": hook("claude-notification", 5)]]
             if innerSandboxOff { json["sandbox"] = ["enabled": false] }
             if let filesDir { json["permissions"] = ["additionalDirectories": [filesDir.path]] }
-            func write(_ o: [String: Any], _ to: URL) throws {
-                let data = try JSONSerialization.data(withJSONObject: o, options: [.withoutEscapingSlashes])
-                guard FileManager.default.createFile(atPath: to.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-                    throw CocoaError(.fileWriteUnknown)
-                }
-            }
             try write(json, f)
             // no `env`: the MCP child inherits COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN from claude, like the hooks.
             // Additive (no --strict-mcp-config): the user's own MCP servers stay.
@@ -104,12 +125,12 @@ public enum AgentLaunch {
             // M4: the program past `env VAR=…` and a path (R19/B3's detection): Claude gets Collie's settings file
             let agent = EssentialPaths.commandAgent(c)
             if isClaude(rec) { return try claude(c) }
+            guard let agent else { return spec(["-lc", c]) }
             // a custom codex/cursor-agent command: the same inner-sandbox switch, unless it picks a sandbox itself
-            if innerSandboxOff, let agent, !c.contains("--sandbox"),
-               let flag = ["codex": " -c " + quote(#"sandbox_mode="danger-full-access""#), "cursor-agent": " --sandbox disabled"][agent.name] {
-                return spec(["-lc", String(c[..<agent.end]) + flag + c[agent.end...]])
-            }
-            return spec(["-lc", c])
+            var flags = innerSandboxOff && !c.contains("--sandbox")
+                ? ["codex": " -c " + quote(#"sandbox_mode="danger-full-access""#), "cursor-agent": " --sandbox disabled"][agent.name] ?? "" : ""
+            if agent.name == "cursor-agent" { flags += " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path) }
+            return spec(["-lc", String(c[..<agent.end]) + flags + c[agent.end...]])
         }
         switch rec.preset {
         case .shell: return spec(["-l"])
@@ -124,11 +145,12 @@ public enum AgentLaunch {
             return spec(["-lc", "codex" + (innerSandboxOff ? " --sandbox danger-full-access" : "") + o.map { " -c " + quote($0) }.joined()])
         case .cursor:
             // fail fast (nothing created): `env` is the user's interactive env, so its PATH is the login shell's.
-            // No hooks: `--plugin-dir` registers only sessionStart in 2026.10.22 (spike REPORT §7), the ask ends on idle.
+            // No turn hooks: `--plugin-dir` registers only sessionStart in 2026.10.22 (spike REPORT §8), the ask ends on idle.
             guard (env["PATH"] ?? "").split(separator: ":").contains(where: { FileManager.default.isExecutableFile(atPath: "\($0)/cursor-agent") }) else {
                 throw ProtocolError(code: .invalidArgs, message: "cursor-agent não encontrado (instale com: curl https://cursor.com/install -fsS | bash)")
             }
-            return spec(["-lc", "exec cursor-agent" + (innerSandboxOff ? " --sandbox disabled" : "")])
+            return spec(["-lc", "exec cursor-agent" + (innerSandboxOff ? " --sandbox disabled" : "")
+                         + " --plugin-dir " + quote(try cursorPlugin(rec.id, hooksDir: hooksDir, collie: collie).path)])
         case .custom: throw ProtocolError(code: .invalidArgs, message: "custom preset needs a command")
         }
     }

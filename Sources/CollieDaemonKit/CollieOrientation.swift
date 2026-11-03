@@ -20,21 +20,21 @@ enum CollieOrientation {
     static func text(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                      panels: [(name: String, pluginId: String)],
                      paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .artifact,
-                     lot: (name: String, goal: String)? = nil, morePanels: Bool = false) -> String {
+                     lot: (name: String, goal: String)? = nil, morePanels: Bool = false, agent: String = "claude") -> String {
         // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
         // the claude.ai import hint first goes, before any name
         for (n, claude) in [(3, true), (3, false), (1, false), (0, false), (-1, false)] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, n, claude: claude)
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, n, claude: claude)
             if t.count <= limit { return t }
         }
-        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, -1)
+        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, -1)
     }
 
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
-                              lot: (name: String, goal: String)?, morePanels: Bool, _ k: Int, claude: Bool = false) -> String {
+                              lot: (name: String, goal: String)?, morePanels: Bool, agent: String, _ k: Int, claude: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -65,11 +65,12 @@ enum CollieOrientation {
             // ponytail: no Prévia here (length cap); the Artifacts line teaches `artifact new`, which opens one
             let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
-                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
+                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon --preset \(agent)|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
             } else {
                 lines.append("- As Shepherd: collie panel open \(open)")
                 // ponytail: at the length cap (orientationSanitizesNames keeps 3 names); `leash <agent> <panel>` hands one over later
-                lines.append("  Team: collie summon designer-1 --preset claude --connect design-1 | panel open design --file F --connect designer-1; leash|unleash|dismiss|paddock, panel close|move")
+                // the asker's own agent: "open a terminal" once summoned a plain shell from Cursor
+                lines.append("  Team: collie summon dev --preset \(agent) (yours; shell only if asked) --connect design-1 | panel open design --file F --connect dev; leash|unleash|dismiss|paddock, panel close|move")
             }
             // leashed design panels are usable; a paddock-only one is not reachable until the user leashes it
             let notFor = "Not for backend, refactors, tests, docs, invisible fixes."

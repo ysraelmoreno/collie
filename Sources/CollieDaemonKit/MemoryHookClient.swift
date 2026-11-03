@@ -11,7 +11,8 @@ public enum MemoryHookClient {
     /// The JSON Claude Code expects on stdout, or nil when there is nothing to inject or anything went wrong
     /// (daemon down, timeout, error: `onError` gets the reason; never throws, never blocks Claude for more than 5 s).
     /// `transcript`: the hook's `transcript_path` (names the session in the memory event log; never read here).
-    public static func output(event: Event, prompt: String?, source: String? = nil, transcript: String? = nil, env: [String: String],
+    /// `cursor`: Cursor's sessionStart shape, `{"additional_context": …}` (under its 10 000-char cap: orientation ≤ 1500 + 4 KiB).
+    public static func output(event: Event, prompt: String?, source: String? = nil, transcript: String? = nil, cursor: Bool = false, env: [String: String],
                               onError: (String) -> Void = { _ in }) async -> String? {
         guard let sock = env["COLLIE_SOCKET"], let tid = env["COLLIE_TERMINAL_ID"], let tok = env["COLLIE_TOKEN"] else {
             onError("COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN missing"); return nil
@@ -27,7 +28,8 @@ public enum MemoryHookClient {
                 to: URL(fileURLWithPath: sock), timeoutSeconds: 5)
             guard r.ok else { onError(r.error?.message ?? "memory hook failed"); return nil }
             guard case .object(let o)? = r.result, case .string(let text)? = o["output"], !text.isEmpty else { return nil }
-            let json: [String: Any] = ["hookSpecificOutput": ["hookEventName": event.rawValue, "additionalContext": text]]
+            let json: [String: Any] = cursor ? ["additional_context": text]
+                : ["hookSpecificOutput": ["hookEventName": event.rawValue, "additionalContext": text]]
             guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.withoutEscapingSlashes]) else { return nil }
             return String(decoding: data, as: UTF8.self)
         } catch { onError("\(error)"); return nil }

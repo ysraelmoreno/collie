@@ -121,6 +121,24 @@ private func leash(_ d: Daemon, _ p: Paths, _ a: String, _ b: String) async thro
         }
     }
 
+    /// No preset: the summon gets the Shepherd's own (a Cursor Shepherd asked for "a terminal" opened a shell).
+    @Test func summonDefaultsToTheShepherdsPreset() async throws {
+        try await withDaemon { d, p in
+            let s = try await admin(d, p, "admin.spawn", ["name": .string("C"), "preset": .string("custom"), "command": .string("/bin/sh"),
+                                                          "cwd": .string("/tmp"), "shepherd": .bool(true)])
+            guard case .object(let o)? = s.result, case .string(let id)? = o["id"] else { Issue.record("\(s)"); return }
+            let c = Term(id: id, token: try await tokenOf(d, id))
+            #expect(try await call(p, c, "summon", ["name": "W"]).ok)
+            #expect(try await call(p, c, "summon", ["name": "S", "preset": "shell"]).ok)   // an explicit preset still wins
+            guard case .array(let rows)? = try await call(p, c, "list").result else { Issue.record("list"); return }
+            let presets = Dictionary(uniqueKeysWithValues: rows.compactMap { r -> (String, String)? in
+                guard case .object(let o) = r, case .string(let n)? = o["name"], case .string(let pr)? = o["preset"] else { return nil }
+                return (n, pr)
+            })
+            #expect(presets == ["W": "custom", "S": "shell"])
+        }
+    }
+
     /// A member of the Shepherd's lot that isn't leashed to it stays out of reach.
     @Test func lotGrantsNoReach() async throws {
         try await withDaemon { d, p in

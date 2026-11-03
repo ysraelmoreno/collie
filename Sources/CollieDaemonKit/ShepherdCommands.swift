@@ -86,9 +86,11 @@ extension CommandRouter {
         try refuseFree(r)
         try refuseFreeSummoner(me)
         try reserve(name); defer { launching.remove(name.lowercased()) }
-        guard let preset = Preset(rawValue: try need(r, "preset")) else {
+        // no preset: the Shepherd's own (with its command, for a custom one); a shell only when asked for
+        guard let preset = str(r, "preset").map({ Preset(rawValue: $0) }) ?? me.preset else {
             throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
         }
+        let command = str(r, "command") ?? (str(r, "preset") == nil ? me.command : nil)
         if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists") }
         _ = try connectTargets(r, by: me)   // before the launch: a refused target creates nothing
         var paddockId = me.paddockId, cwd = me.cwd
@@ -103,7 +105,7 @@ extension CommandRouter {
         }
         cwd = SignedAppCheck.realPath(URL(fileURLWithPath: str(r, "cwd") ?? cwd))   // spawned as checked (no symlink swap)
         let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: startedOpen(me))
-        let rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: str(r, "command"),
+        let rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
         var result = try await launch(rec)
         try await ensurePaddock(of: rec)

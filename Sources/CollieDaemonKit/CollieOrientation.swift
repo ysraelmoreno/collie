@@ -65,12 +65,12 @@ enum CollieOrientation {
             // ponytail: no Prévia here (length cap); the Artifacts line teaches `artifact new`, which opens one
             let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
-                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon --preset \(agent)|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
+                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon (no --preset: \(agent))|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
             } else {
                 lines.append("- As Shepherd: collie panel open \(open)")
                 // ponytail: at the length cap (orientationSanitizesNames keeps 3 names); `leash <agent> <panel>` hands one over later
                 // the asker's own agent: "open a terminal" once summoned a plain shell from Cursor
-                lines.append("  Team: collie summon dev --preset \(agent) (yours; shell only if asked) --connect design-1 | panel open design --file F --connect dev; leash|unleash|dismiss|paddock, panel close|move")
+                lines.append("  Team: collie summon dev --connect design-1 (no --preset: \(agent), yours; shell if asked) | panel open design --file F --connect dev; leash|unleash|dismiss|paddock, panel close|move")
             }
             // leashed design panels are usable; a paddock-only one is not reachable until the user leashes it
             let notFor = "Not for backend, refactors, tests, docs, invisible fixes."

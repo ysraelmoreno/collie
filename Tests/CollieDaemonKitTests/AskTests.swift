@@ -298,6 +298,16 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
         }
     }
 
+    @Test func cursorAskCompletesOnIdle() async throws {
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A")
+            _ = try await term(d, p, "B", preset: "cursor", command: fakeAgent(hook: false))
+            try await connect(d, p, "A", "B")
+            let res = result(try await ask(p, a, "B", "hello", timeout: 15))
+            #expect(res.output.contains("answer:hello") && res.source == "idle", "\(res)")
+        }
+    }
+
     @Test func bracketedPasteOnlyWhenEnabled() async throws {
         try await withDaemon { d, p in
             let a = try await term(d, p, "A")

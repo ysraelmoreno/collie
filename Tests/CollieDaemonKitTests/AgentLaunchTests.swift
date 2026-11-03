@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import CollieCore
+import CollieProtocol
 @testable import CollieDaemonKit
 
 @Suite struct AgentLaunchTests {
@@ -125,5 +126,26 @@ import CollieCore
         let out = Pipe(); p.standardOutput = out
         try p.run(); p.waitUntilExit()
         #expect(String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "/opt/it's/collie|hook|claude-stop|")
+    }
+    /// A PATH with an executable `cursor-agent`.
+    func cursorPath() throws -> String {
+        let bin = tmp(); try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let f = bin.appendingPathComponent("cursor-agent")
+        FileManager.default.createFile(atPath: f.path, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755])
+        return "/usr/bin:" + bin.path
+    }
+    @Test func cursorLaunchSpec() throws {
+        let path = try cursorPath()
+        let s = try AgentLaunch.launchSpec(for: rec(.cursor), env: ["PATH": path], hooksDir: tmp(), collie: collie, shell: "/bin/zsh")
+        #expect(s.arguments == ["-lc", "exec cursor-agent"])
+        let sb = try AgentLaunch.launchSpec(for: rec(.cursor), env: ["PATH": path], hooksDir: tmp(), collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled"])
+        // its own command passes intact (no PATH check: the command picks its program)
+        let c = try AgentLaunch.launchSpec(for: rec(.cursor, "cursor-agent --model x"), env: [:], hooksDir: tmp(), collie: collie, shell: "/bin/zsh")
+        #expect(c.arguments == ["-lc", "cursor-agent --model x"])
+    }
+    @Test func missingBinaryFailsFast() throws {
+        #expect { try AgentLaunch.launchSpec(for: rec(.cursor), env: ["PATH": "/usr/bin:/bin"], hooksDir: tmp(), collie: collie, shell: "/bin/zsh") }
+            throws: { ($0 as? ProtocolError)?.code == .invalidArgs && ($0 as? ProtocolError)?.message.contains("cursor-agent não encontrado") == true }
     }
 }

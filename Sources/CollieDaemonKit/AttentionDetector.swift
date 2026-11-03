@@ -7,6 +7,12 @@ struct AttentionDetector {
     // ponytail: English-only, short list; extend per preset when a real prompt is missed
     private static let generic = ["(y/n)", "[y/n]", "press enter to continue"]
     private static let claude = ["do you trust the files in this folder", "trust this folder"]
+    /// cursor-agent's approval titles (2026.10.22, seen live: "Run this command?" then "→ Run (once) (y)") and its
+    /// login screen, where any key starts the browser login (spike REPORT §4).
+    private static let cursorApprovals = ["run this command?", "run this command outside the sandbox?", "write to this file?",
+                                          "delete this file?", "read this file?", "run this mcp tool?", "allow this web search?",
+                                          "allow this web fetch?", "proceed with this edit?"]
+    private static let cursorLogin = "press any key to log in"
     /// Claude Code's tool-permission dialog (checked against 2.1.307's bundle): a line "Do you want to proceed?" /
     /// "… make this edit to x?" / "… create x?" / "… overwrite x?", then within 3 lines the numbered option "1. Yes".
     // ponytail: the dialog's shape, not its whole text; an agent reply quoting such a dialog verbatim would match too
@@ -22,7 +28,7 @@ struct AttentionDetector {
 
     init(preset: Preset) {
         isClaude = preset == .claude
-        patterns = (isClaude ? Self.claude : []) + Self.generic
+        patterns = (isClaude ? Self.claude : []) + (preset == .cursor ? Self.cursorApprovals + [Self.cursorLogin] : []) + Self.generic
     }
 
     /// The reason (the matched pattern, or Claude's question as printed) when `text` completes a prompt; the buffer is
@@ -42,9 +48,10 @@ struct AttentionDetector {
         switch reason {
         case "(y/n)", "[y/n]": .yesNo
         case "press enter to continue": .enter
+        case _ where cursorApprovals.contains(reason): .yesNoKey
         // claude 2.1.314's trust dialog: no numbers ("1" is ignored) and the cursor on "No, exit" (Enter ends the terminal):
         // only the user's own keys answer it
-        case QuietDetector.overflowReason, "do you trust the files in this folder", "trust this folder": .unknown
+        case QuietDetector.overflowReason, "do you trust the files in this folder", "trust this folder", cursorLogin: .unknown
         default: .menu   // the permission dialogs: numbered options, "1" is "Yes"
         }
     }

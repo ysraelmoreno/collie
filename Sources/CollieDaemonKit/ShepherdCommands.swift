@@ -87,7 +87,7 @@ extension CommandRouter {
         try refuseFreeSummoner(me)
         try reserve(name); defer { launching.remove(name.lowercased()) }
         guard let preset = Preset(rawValue: try need(r, "preset")) else {
-            throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
+            throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
         }
         if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists") }
         _ = try connectTargets(r, by: me)   // before the launch: a refused target creates nothing

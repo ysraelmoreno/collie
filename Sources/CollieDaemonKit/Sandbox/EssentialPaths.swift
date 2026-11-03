@@ -46,6 +46,7 @@ enum EssentialPaths {
         let home: String? = switch preset {
         case .claude: ".claude"
         case .codex: ".codex"
+        case .cursor: ".cursor"
         case .custom: ["claude": ".claude", "codex": ".codex", "cursor-agent": ".cursor"][first ?? ""]
         case .shell: nil
         }

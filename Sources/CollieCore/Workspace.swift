@@ -1,6 +1,10 @@
 import Foundation
 
-public enum Preset: String, Codable, Sendable, CaseIterable { case shell, claude, codex, custom }
+public enum Preset: String, Codable, Sendable, CaseIterable {
+    case shell, claude, codex, cursor, custom
+    /// An unknown value (a newer build's preset) is `custom`: that terminal keeps its command, the workspace loads.
+    public init(from d: Decoder) throws { self = Preset(rawValue: try d.singleValueContainer().decode(String.self)) ?? .custom }
+}
 
 /// `free`: "Terminal livre (sem sandbox)", created only by the user in the app; unreachable by any leash.
 public enum TerminalSandbox: String, Codable, Sendable {

@@ -496,7 +496,7 @@ Fora do 2D: ligar tipos importados às variáveis e importar para um arquivo de 
 
 ## Ambiente dos agentes
 
-Agentes (Claude, Codex e comandos custom) rodam com o ambiente do shell interativo do usuário: o daemon executa
+Agentes (Claude, Codex, Cursor e comandos custom) rodam com o ambiente do shell interativo do usuário: o daemon executa
 `$SHELL -ilc` (lê o `.zshrc`, então o `node` do nvm e o `PATH` valem), com timeout de 5 s, e guarda o resultado por
 10 min. Quando um rc file (`.zshenv`, `.zprofile`, `.zshrc`, `.bash_profile`, `.bashrc`, `.profile`) muda de data, a
 captura é refeita antes do próximo lançamento; ao vencer o TTL, o último resultado bom segue valendo enquanto a nova
@@ -541,6 +541,15 @@ bloqueados só pelo caminho, Keychain acessível): um agente decidido ainda cons
   com `COLLIE_CODEX_MCP=1` no ambiente do daemon, vai por `-c mcp_servers.collie.*` com `env_vars` (só nomes). Essa chave vem
   da doc atual do Codex e não foi verificada contra um `codex` instalado (uma chave desconhecida poderia impedir o Codex
   de abrir).
+- **Cursor** (`cursor-agent`): instale e faça login pelo próprio CLI (`curl https://cursor.com/install -fsS | bash`,
+  `cursor-agent login`); usa o plano do Cursor do usuário, e o Collie não vê nem guarda credencial. Sem `cursor-agent` no
+  `PATH`, criar ou convocar falha na hora, sem terminal criado. Não há hook de fim de turno por terminal (o `--plugin-dir`
+  só dispara `sessionStart` na versão 2026.10.22), então a resposta do `ask` vem por ociosidade, como no shell; se um hook
+  chegar, o terminal passa a esperar só hook. Pedidos de permissão (`Run this command?`, `Write to this file?`…) viram
+  atenção e são respondidos com `y`/`n`; a tela de login (`Press any key to log in`) também vira atenção, mas o Collie nunca
+  digita nela. Sem orientação no início da sessão, sem painel de uso. O cursor-agent também roda os hooks do
+  `~/.claude/settings.json` do usuário (um `PreToolUse` de Bash vale para o Shell do Cursor). O Collie não desliga isso.
+  Detalhes: `docs/superpowers/spikes/2026-10-22-cursor/REPORT.md`.
 
 ## Sandbox dos terminais
 

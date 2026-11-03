@@ -51,7 +51,8 @@ public struct ChatMessage: Codable, Sendable, Equatable, Identifiable {
 /// How an approval prompt is answered: `yesNo` "(y/n)"/"[y/n]", `menu` Claude Code's numbered dialogs ("1" = "Yes";
 /// Esc = "No"), `enter` "press enter". `unknown`: too much output to check, nothing is ever typed — the user looks at the
 /// terminal (only their own keys clear it).
-public enum ApprovalKind: String, Codable, Sendable, Equatable { case yesNo, menu, enter, unknown }
+/// `yesNoKey`: a single `y`/`n`, no Enter (cursor-agent's menu, where Enter would land in its prompt bar).
+public enum ApprovalKind: String, Codable, Sendable, Equatable { case yesNo, yesNoKey, menu, enter, unknown }
 
 /// An agent's prompt waiting for the user (`work.approvals`). `prompt` is the screen captured when it appeared: an approval
 /// is written only while that text is still the terminal's pending prompt.

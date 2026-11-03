@@ -22,6 +22,21 @@ import CollieTerminal
         }
     }
 
+    /// cursor-agent 2026.10.19's approval titles and login screen (spike REPORT §4).
+    @Test func cursorPromptsRaiseAttention() {
+        for (s, k) in [("Run this command?\n  ls\n › Run (once) (y)", ApprovalKind.yesNoKey), ("Write to this file?", .yesNoKey),
+                       ("Run this command outside the sandbox?", .yesNoKey), ("Press any key to log in...", .unknown)] {
+            var d = AttentionDetector(preset: .cursor)
+            let hit = d.feed(s)
+            #expect(hit != nil, "\(s)")
+            #expect(hit.map(AttentionDetector.kind) == k, "\(s)")
+        }
+        var sh = AttentionDetector(preset: .shell)
+        #expect(sh.feed("Run this command?") == nil)
+        // single keys, no Enter (Enter would land in the prompt bar)
+        #expect(AskCoordinator.keys(.yesNoKey, allow: true) == Data("y".utf8) && AskCoordinator.keys(.yesNoKey, allow: false) == Data("n".utf8))
+    }
+
     @Test func noFalsePositiveOnNormalOutput() {
         var d = AttentionDetector(preset: .claude)
         for i in 0..<100 { #expect(d.feed("2026-10-19 INFO request \(i) handled in 12ms status=200\n") == nil) }

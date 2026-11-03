@@ -54,4 +54,11 @@ import Foundation
             else { #expect(w.lots.isEmpty) }
         }
     }
+    @Test func unknownPresetDecodesAsCustom() throws {
+        let t = #"{"id":"\#(UUID())","name":"w1","preset":"warp","command":"warp --x","cwd":"/tmp","isShepherd":false}"#
+        let json = #"{"schemaVersion":3,"id":"\#(UUID())","name":"keep","terminals":[\#(t)],"connections":[]}"#
+        let w = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+        #expect(w.name == "keep" && w.terminals.map(\.preset) == [.custom] && w.terminals[0].command == "warp --x")
+        #expect(try JSONDecoder().decode(Preset.self, from: Data(#""cursor""#.utf8)) == .cursor)
+    }
 }

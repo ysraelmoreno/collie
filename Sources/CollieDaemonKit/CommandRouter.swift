@@ -379,11 +379,11 @@ actor CommandRouter {
     }
 
     /// `ask --no-wait`: the same ask, detached; its reply is kept in the inbox and typed into the asker once it is idle
-    /// (claude/codex only: a shell would run it).
+    /// (claude/codex/cursor only: a shell would run it).
     private func askNoWait(from: UUID, to t: TerminalRecord, prompt: String, raw: Bool, timeout: Duration) async -> JSONValue {
         let id = await inbox.open(from: from, target: t.name)
         let asks = asks, inbox = inbox, target = t.id
-        let typed = ws.terminals.first { $0.id == from }.map { $0.preset == .claude || $0.preset == .codex } ?? false
+        let typed = ws.terminals.first { $0.id == from }.map { [.claude, .codex, .cursor].contains($0.preset) } ?? false
         Task {
             let r: Result<AskResult, ProtocolError>
             do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true)) }
@@ -469,7 +469,7 @@ actor CommandRouter {
             let name = try need("name")
             try reserve(name); defer { launching.remove(name.lowercased()) }
             guard let preset = Preset(rawValue: try need("preset")) else {
-                throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
+                throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
             }
             var fl: Paddock?
             if let f = str(r, "paddock") { fl = try findPaddock(f) }
@@ -540,7 +540,7 @@ actor CommandRouter {
             }
             if let ps = str(r, "preset") {
                 guard let preset = Preset(rawValue: ps) else {
-                    throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|custom")
+                    throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
                 }
                 t.preset = preset
             }

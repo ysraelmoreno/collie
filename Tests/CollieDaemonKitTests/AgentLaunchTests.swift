@@ -53,7 +53,7 @@ import CollieProtocol
         }
         for r in [rec(.codex), rec(.shell), rec(.custom, "cursor-agent"), rec(.custom, "codex"), rec(.claude, "echo hi")] {
             let s = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", pluginDir: plugin)
-            #expect(!s.arguments.joined(separator: " ").contains("--plugin-dir"), "\(s.arguments)")
+            #expect(!s.arguments.joined(separator: " ").contains(plugin.path), "\(s.arguments)")
         }
     }
     @Test func codexSpecUsesNotifyOverride() throws {
@@ -136,13 +136,42 @@ import CollieProtocol
     }
     @Test func cursorLaunchSpec() throws {
         let path = try cursorPath()
-        let s = try AgentLaunch.launchSpec(for: rec(.cursor), env: ["PATH": path], hooksDir: tmp(), collie: collie, shell: "/bin/zsh")
-        #expect(s.arguments == ["-lc", "exec cursor-agent"])
-        let sb = try AgentLaunch.launchSpec(for: rec(.cursor), env: ["PATH": path], hooksDir: tmp(), collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
-        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled"])
-        // its own command passes intact (no PATH check: the command picks its program)
-        let c = try AgentLaunch.launchSpec(for: rec(.cursor, "cursor-agent --model x"), env: [:], hooksDir: tmp(), collie: collie, shell: "/bin/zsh")
-        #expect(c.arguments == ["-lc", "cursor-agent --model x"])
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let r = rec(.cursor)
+        func plugin(_ r: TerminalRecord) -> String { AgentLaunch.quote(AgentLaunch.cursorPluginDir(r.id, in: dir).path) }
+        let s = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        #expect(s.arguments == ["-lc", "exec cursor-agent --plugin-dir \(plugin(r))"])
+        let sb = try AgentLaunch.launchSpec(for: r, env: ["PATH": path], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+        #expect(sb.arguments == ["-lc", "exec cursor-agent --sandbox disabled --plugin-dir \(plugin(r))"])
+        // its own command (no PATH check: the command picks its program): the plugin right after the program
+        let c = rec(.cursor, "env A=1 cursor-agent --model x")
+        let cs = try AgentLaunch.launchSpec(for: c, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        #expect(cs.arguments == ["-lc", "env A=1 cursor-agent --plugin-dir \(plugin(c)) --model x"])
+    }
+    /// Cursor gets Collie's orientation (sessionStart → additional_context) and the collie MCP server through a
+    /// per-terminal `--plugin-dir` in Collie's data; the MCP env carries names only (cursor gives a stdio MCP child
+    /// only HOME/LOGNAME/PATH/SHELL/TERM/USER, and expands `${env:X}` from its own env).
+    @Test func cursorPluginCarriesOrientationAndMCP() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let r = rec(.cursor)
+        _ = try AgentLaunch.launchSpec(for: r, env: ["PATH": try cursorPath(), "COLLIE_TOKEN": "sekret-token"], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        let plugin = AgentLaunch.cursorPluginDir(r.id, in: dir)
+        func json(_ p: String) throws -> [String: Any] {
+            try JSONSerialization.jsonObject(with: Data(contentsOf: plugin.appendingPathComponent(p))) as! [String: Any]
+        }
+        #expect(try json(".cursor-plugin/plugin.json")["name"] as? String == "collie")
+        let hooks = try json("hooks/hooks.json")
+        let start = ((hooks["hooks"] as! [String: Any])["sessionStart"] as! [[String: Any]])[0]
+        #expect(hooks["version"] as? Int == 1 && start["command"] as? String == "'/opt/o rq/collie' hook cursor-session-start")
+        let server = (try json(".mcp.json")["mcpServers"] as! [String: Any])["collie"] as! [String: Any]
+        #expect(server["command"] as? String == collie.path && server["args"] as? [String] == ["mcp"])
+        let env = try #require(server["env"] as? [String: String])
+        #expect(Set(env.keys) == Set(AgentLaunch.mcpEnv) && env["COLLIE_TOKEN"] == "${env:COLLIE_TOKEN}")
+        #expect(!String(decoding: try Data(contentsOf: plugin.appendingPathComponent(".mcp.json")), as: UTF8.self).contains("sekret"))
+        let perm = try FileManager.default.attributesOfItem(atPath: plugin.appendingPathComponent(".mcp.json").path)[.posixPermissions] as! Int
+        #expect(perm == 0o600)
+        AgentLaunch.removeHooks(for: r.id, in: dir)
+        #expect(!FileManager.default.fileExists(atPath: plugin.deletingLastPathComponent().path))
     }
     @Test func missingBinaryFailsFast() throws {
         #expect { try AgentLaunch.launchSpec(for: rec(.cursor), env: ["PATH": "/usr/bin:/bin"], hooksDir: tmp(), collie: collie, shell: "/bin/zsh") }

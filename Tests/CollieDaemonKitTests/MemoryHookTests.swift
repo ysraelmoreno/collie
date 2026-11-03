@@ -54,6 +54,19 @@ private func additional(_ json: String?, _ event: String) -> String? {
         }
     }
 
+    /// Cursor's sessionStart output: `{"additional_context": …}`, the same text Claude gets.
+    @Test func cursorSessionStartUsesAdditionalContext() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: repo)
+            try await save(p, t, "database", "Use Postgres")
+            let out = try #require(await MemoryHookClient.output(event: .sessionStart, prompt: nil, cursor: true, env: t.env(p)))
+            let o = try #require(try JSONSerialization.jsonObject(with: Data(out.utf8)) as? [String: Any])
+            let text = try #require(o["additional_context"] as? String)
+            #expect(o.count == 1 && text.hasPrefix("You are running inside Collie") && text.contains("Use Postgres"))
+        }
+    }
+
     @Test func promptHookInjectsOnlyRelevantOnce() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

@@ -71,7 +71,7 @@ public enum Commands {
         // Shepherd-only: the daemon checks isShepherd; every target must be within the Shepherd's leashes
         CommandSpec(name: "summon", summary: "Spawn an agent leashed to you",
                     params: [ParamSpec("name", .string, positional: true, required: true, help: "New agent name"),
-                             ParamSpec("preset", .string, required: true, help: "shell|claude|codex|cursor|custom"),
+                             ParamSpec("preset", .string, required: true, help: "shell|claude|codex|cursor|custom. A terminal/agent the user asks for: your own agent's preset unless they name one; shell only for a plain shell"),
                              ParamSpec("command", .string, help: "Command line (custom preset)"),
                              ParamSpec("cwd", .string, help: "Working directory within your project (default: yours, or the paddock's)"),
                              ParamSpec("paddock", .string, help: "Paddock name (default: your paddock)"),

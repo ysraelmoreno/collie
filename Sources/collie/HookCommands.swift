@@ -26,6 +26,14 @@ enum HookCommands {
                 print(out)
             }
             return
+        case "cursor-session-start":
+            // Cursor's plugin sessionStart (AgentLaunch.cursorPlugin): the same text as Claude's SessionStart
+            let stdin = FileHandle.standardInput.readDataToEndOfFile()
+            if let out = await MemoryHookClient.output(event: .sessionStart, prompt: nil, transcript: HookPayload.transcriptPath(stdinJSON: stdin),
+                                                       cursor: true, env: ProcessInfo.processInfo.environment, onError: { log("\(a[0]): \($0)") }) {
+                print(out)
+            }
+            return
         case "claude-tool", "claude-subagent-stop", "claude-precompact", "claude-session-end", "claude-notification":
             // the work registry and approvals: the raw payload goes to the daemon, which parses it (WorkHookParser, HookPayload)
             let stdin = FileHandle.standardInput

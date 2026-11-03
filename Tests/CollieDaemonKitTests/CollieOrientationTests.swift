@@ -59,8 +59,20 @@ import CollieProtocol
         let m = text(shepherd: true)
         #expect(m.contains("collie herd list") && m.contains("apply <id> --name <n>") && m.contains("save <name> --terminals"))
         #expect(!text().contains("herd"))
-        #expect(m.contains("collie summon designer-1 --preset claude --connect design-1") && m.contains("--connect designer-1"))
+        #expect(m.contains("collie summon dev --preset claude (yours; shell only if asked) --connect design-1") && m.contains("--file F --connect dev;"))
         #expect(!text().contains("--connect"))
+    }
+
+    /// "Open a terminal/agent" summons the asker's own agent; shell only for a plain shell the user asks for.
+    @Test func shepherdSummonsItsOwnAgent() {
+        let c = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: nil, peers: [], panels: [], agent: "cursor")
+        #expect(c.contains("collie summon dev --preset cursor (yours; shell only if asked) --connect design-1"), "\(c)")
+        #expect(text(shepherd: true).contains("--preset claude (yours;") && !text().contains("--preset"))
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        let lot = (name: String(repeating: "L", count: 64), goal: String(repeating: "objetivo ", count: 60))
+        let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" },
+                                           panels: ps, lot: lot, morePanels: true, agent: "cursor")
+        #expect(tight.count <= 1500 && tight.contains("summon --preset cursor"), "\(tight.count) \(tight)")
     }
 
     @Test func orientationTeachesSandboxAccess() {

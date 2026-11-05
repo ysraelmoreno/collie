@@ -28,23 +28,58 @@ final class RemotePhone: NSObject, URLSessionWebSocketDelegate, @unchecked Senda
             DispatchQueue.global().asyncAfter(deadline: .now() + 8) { c.open(false) }
         }
         guard ok else { c.close(); throw ProtocolError(code: .notConnected, message: "websocket did not open") }
+        c.receiveLoop()
         return c
     }
     func close() { task?.cancel(with: .goingAway, reason: nil); session?.invalidateAndCancel() }
 
-    /// The next JSON object the Mac sent; nil once the socket is closed.
-    func next(timeout: Double = 15) async -> [String: JSONValue]? {
-        let t = task!
-        return await withTaskGroup(of: [String: JSONValue]?.self) { g in
-            g.addTask {
-                guard case .string(let s)? = try? await t.receive(),
-                      case .object(let o)? = try? JSONDecoder().decode(JSONValue.self, from: Data(s.utf8)) else { return nil }
-                return o
+    // One receive loop feeds `inbox`: `receive()` ignores cancellation, so racing it against a timeout per call would
+    // block until the next frame (forever when none comes) and drop that frame.
+    private var inbox: [[String: JSONValue]] = []
+    private var ended = false
+    private var waiter: (id: Int, k: CheckedContinuation<[String: JSONValue]?, Never>)?
+    private var waiterSeq = 0
+
+    private func receiveLoop() {
+        task.receive { [weak self] r in
+            guard let self else { return }
+            let frame: [String: JSONValue]??
+            switch r {
+            case .failure: frame = .none
+            case .success(.string(let s)):
+                if case .object(let o)? = try? JSONDecoder().decode(JSONValue.self, from: Data(s.utf8)) { frame = .some(o) } else { frame = .some(nil) }
+            case .success: frame = .some(nil)
             }
-            g.addTask { try? await Task.sleep(for: .seconds(timeout)); return nil }
-            let r = await g.next() ?? nil
-            g.cancelAll()
-            return r
+            let k: CheckedContinuation<[String: JSONValue]?, Never>? = self.lock.withLock {
+                switch frame {
+                case .none: self.ended = true; let w = self.waiter; self.waiter = nil; return w?.k
+                case .some(nil): return nil
+                case .some(let o?):
+                    if let w = self.waiter { self.waiter = nil; w.k.resume(returning: o); return nil }
+                    self.inbox.append(o); return nil
+                }
+            }
+            k?.resume(returning: nil)
+            if case .some = frame { self.receiveLoop() }
+        }
+    }
+
+    /// The next JSON object the Mac sent; nil once the socket is closed or after `timeout`.
+    func next(timeout: Double = 15) async -> [String: JSONValue]? {
+        await withCheckedContinuation { k in
+            let id: Int? = lock.withLock {
+                if !inbox.isEmpty { k.resume(returning: inbox.removeFirst()); return nil }
+                if ended { k.resume(returning: nil); return nil }
+                waiterSeq += 1; waiter = (waiterSeq, k); return waiterSeq
+            }
+            guard let id else { return }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
+                guard let self else { return }
+                self.lock.withLock { () -> CheckedContinuation<[String: JSONValue]?, Never>? in
+                    guard let w = self.waiter, w.id == id else { return nil }
+                    self.waiter = nil; return w.k
+                }?.resume(returning: nil)
+            }
         }
     }
 

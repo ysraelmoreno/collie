@@ -26,6 +26,18 @@ import CollieProtocol
         #expect(!m.contains("Design panel"))
     }
 
+    /// DX backlog 11: agents sharing a folder are told to build apart and commit only their own hunks.
+    @Test func sharedFolderTeachesOwnBuildDirAndHunks() {
+        let shared = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [], sharedFolder: ["remote-api"])
+        #expect(shared.contains("Shared folder with \"remote-api\"") && shared.contains("--scratch-path .build/Ana")
+                && shared.contains("git diff <file>"), "\(shared)")
+        #expect(!text().contains("Shared folder"))
+        let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: (1...30).map { "agent-\($0)" },
+                                           panels: [], lot: (String(repeating: "l", count: 60), String(repeating: "g", count: 200)),
+                                           sharedFolder: ["x"])
+        #expect(tight.count <= 1500 && tight.contains("Shared folder"), "\(tight.count)")
+    }
+
     /// `artifact new` is taught to every terminal (its kinds while names fit; tight: the short form).
     @Test func orientationTeachesArtifactNew() {
         for t in [text(), text(shepherd: true, peers: ["Bob"], panels: [("Home", "design")])] {

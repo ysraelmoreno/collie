@@ -20,21 +20,23 @@ enum CollieOrientation {
     static func text(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                      panels: [(name: String, pluginId: String)],
                      paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .artifact,
-                     lot: (name: String, goal: String)? = nil, morePanels: Bool = false, agent: String = "claude") -> String {
+                     lot: (name: String, goal: String)? = nil, morePanels: Bool = false, agent: String = "claude",
+                     sharedFolder: [String] = []) -> String {
         // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
         // the claude.ai import hint first goes, before any name
         for (n, claude) in [(3, true), (3, false), (1, false), (0, false), (-1, false)] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, n, claude: claude)
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude)
             if t.count <= limit { return t }
         }
-        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, -1)
+        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1)
     }
 
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
-                              lot: (name: String, goal: String)?, morePanels: Bool, agent: String, _ k: Int, claude: Bool = false) -> String {
+                              lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
+                              _ k: Int, claude: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -99,6 +101,11 @@ enum CollieOrientation {
         // sandbox: reads are open (secrets never); a blocked write shows the user a card; ask, don't work around it
         lines.append(tight ? "- Sandboxed: blocked write = user card; ask: collie access request <path> --write --reason \"…\"; collie open <url|app>."
             : "- Sandboxed: reads open (not secrets), writes in project only; blocked write = user card; don't work around it: collie access request <path> --write --reason \"…\". collie open <url|app>.")
+        // DX backlog 11: another live terminal in this folder: its edits land mid-build and its WIP in a `git add`
+        if !sharedFolder.isEmpty {
+            lines.append(tight ? "- Shared folder: own build dir; git diff <file> before git add."
+                : "- Shared folder with \(names(sharedFolder)): build into your own dir (swift build --scratch-path .build/\(String(terminal.prefix(maxName).map { $0.isLetter || $0.isNumber ? $0 : "-" })))); before git add, check git diff <file> holds only your changes.")
+        }
         if !tight { lines.append("More: collie <group> --help.") }
         return lines.joined(separator: "\n")
     }

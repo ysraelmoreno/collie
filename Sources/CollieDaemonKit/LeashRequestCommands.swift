@@ -44,6 +44,16 @@ extension CommandRouter {
         return .object([:])
     }
 
+    /// Other running terminals working in `me`'s folder (DX backlog 11: the orientation's shared-folder line).
+    func sharedFolder(_ me: TerminalRecord) async -> [String] {
+        let mine = URL(fileURLWithPath: me.cwd).standardizedFileURL.path
+        var out: [String] = []
+        for t in ws.terminals where t.id != me.id && URL(fileURLWithPath: t.cwd).standardizedFileURL.path == mine {
+            if await registry.process(t.id)?.isRunning == true { out.append(t.name) }
+        }
+        return out
+    }
+
     /// A removed terminal's cards go (either end).
     func dropLeashRequests(_ terminal: UUID) async {
         for req in leashRequests where req.from == terminal || req.to == terminal { await hub.emit(.leashRequestRemoved(req.id)) }

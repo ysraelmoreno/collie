@@ -194,7 +194,8 @@ extension CommandRouter {
                     paddockPanels: ws.panels.filter { $0.paddockId != nil && $0.paddockId == me.paddockId }.map { ($0.name, $0.pluginId) },
                     designFirst: ws.designFirst, lot: myLot.map { ($0.name, $0.goal) }, morePanels: !PluginRegistry.externalSpecs.isEmpty,
                     // only Claude and Cursor run this hook
-                    agent: me.preset == .cursor || me.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent" ? "cursor" : "claude")
+                    agent: me.preset == .cursor || me.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent" ? "cursor" : "claude",
+                    sharedFolder: await sharedFolder(me))
                 // ponytail: the bare header (no memories) counts as empty
                 text = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
             } else {

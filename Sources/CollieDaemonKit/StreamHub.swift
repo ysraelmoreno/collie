@@ -122,6 +122,13 @@ actor StreamHub {
     /// goes to. ponytail: one instant per terminal, never pruned (tiny).
     private(set) var lastInput: [UUID: ContinuousClock.Instant] = [:]
     private var listeners: [ObjectIdentifier: StreamConn] = [:]
+    /// Every event, in order, for the remote API's projection (one consumer: the router). Bounded: the newest 4096 kept.
+    private var tap: AsyncStream<WorkspaceEvent>.Continuation?
+    func tapEvents() -> AsyncStream<WorkspaceEvent> {
+        let (s, c) = AsyncStream<WorkspaceEvent>.makeStream(bufferingPolicy: .bufferingNewest(4096))
+        tap?.finish(); tap = c
+        return s
+    }
     private var ticker: Task<Void, Never>?
 
     init(asks: AskCoordinator) { self.asks = asks }
@@ -195,6 +202,7 @@ actor StreamHub {
     var streamCount: Int { listeners.count + terminals.values.reduce(0) { $0 + $1.fan.count } }
 
     func emit(_ e: WorkspaceEvent) {
+        tap?.yield(e)
         guard !listeners.isEmpty else { return }
         let line = StreamFrame.event(e).line
         listeners.values.forEach { $0.send(line) }

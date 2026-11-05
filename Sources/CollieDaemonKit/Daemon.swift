@@ -54,6 +54,8 @@ public struct DaemonConfig: Sendable {
     public var remoteAllowLoopback = false
     /// How long a remote connection may stay without `session.hello` (tests shorten it).
     public var remoteHelloDeadline: Duration = .seconds(10)
+    /// Bytes of event frames a remote session may have unsent before its subscription is cut (overflow; tests shrink it).
+    public var remoteEventQueueBytes = 4 << 20
     /// How long a device video session outlives its last viewer.
     public var deviceGrace: Duration = .seconds(5)
     /// The bundled figcraft (`bin/figcraft-server`, `bin/figcraft-cli`, `web/`); nil/missing: design commands report it is not bundled.

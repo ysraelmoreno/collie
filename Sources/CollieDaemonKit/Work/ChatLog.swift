@@ -23,9 +23,14 @@ actor JSONLLog<M: Codable & Sendable & Identifiable> where M.ID == UUID {
     var file: URL { dir.appendingPathComponent("\(name).jsonl") }
     var archive: URL { dir.appendingPathComponent("\(name)-archive.jsonl") }
 
+    /// Told of every appended message (the remote API's `chat` events).
+    private var onAppend: (@Sendable (M) -> Void)?
+    func setOnAppend(_ f: @escaping @Sendable (M) -> Void) { onAppend = f }
+
     func append(_ m: M) async throws {
         var list = try await load()
         list.append(m)
+        onAppend?(m)
         let f = file, a = archive
         // memory is updated before the write is queued (in order, on the serial queue): a concurrent append never loses this one
         if list.count > high {

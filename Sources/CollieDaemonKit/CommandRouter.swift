@@ -119,6 +119,7 @@ actor CommandRouter {
     nonisolated let remote: RemoteGateway
     nonisolated let remoteDevices: RemoteDevices
     nonisolated let remotePairing: RemotePairing
+    nonisolated let remoteEvents: RemoteEventBus
     var remoteIdentity: RemoteIdentity?
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
@@ -158,7 +159,11 @@ actor CommandRouter {
         self.artifacts = ArtifactStore(root: config.paths.root)
         self.plugins = PluginStore(root: config.paths.root)
         let workDir = config.paths.root.appendingPathComponent("work")
-        self.work = WorkStore(dir: workDir) { id in Task { await me.router?.workChanged(id) } }
+        let remoteEvents = RemoteEventBus(); self.remoteEvents = remoteEvents
+        self.work = WorkStore(dir: workDir) { id in
+            Task { await me.router?.workChanged(id) }
+            remoteEvents.publish(.object(["t": .string("work"), "id": .string(id.uuidString.lowercased())]))   // re-read with work.get
+        }
         self.chat = ChatLog(dir: workDir, name: "work-chat-\(config.workspaceId.uuidString.lowercased())")
         self.boards = LotBoards(lotsDir: config.paths.root.appendingPathComponent("lots"))
         self.herds = HerdStore(dir: config.paths.root.appendingPathComponent("herds"))
@@ -177,7 +182,7 @@ actor CommandRouter {
             handle: { r, dev, via in
                 await me.router?.remoteRequest(r, device: dev, via: via)
                     ?? Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "daemon stopping"))
-            }))
+            }, events: remoteEvents, eventQueueBytes: config.remoteEventQueueBytes))
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {
@@ -188,7 +193,10 @@ actor CommandRouter {
         self.ws.terminalSandbox = nil
         me.router = self
         let approvals = asks.approvalEvents
-        Task { for await e in approvals { await me.router?.approvalChanged(e) } }
+        Task { for await e in approvals { await me.router?.approvalChanged(e); await me.router?.remoteApproval(e) } }
+        Task { for await e in await hub.tapEvents() { await me.router?.remoteWorkspaceEvent(e) } }   // remote API events, in order
+        let chat = chat
+        Task { await chat.setOnAppend { m in remoteEvents.publish(.object(["t": .string("chat"), "message": RemoteEventBus.iso(m)])) } }
     }
 
     /// `ui.*` streams (admin only). nil: accepted, the connection is now a stream; otherwise the refusal.

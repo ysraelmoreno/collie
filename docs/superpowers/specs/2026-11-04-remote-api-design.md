@@ -347,7 +347,8 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
 - Exact frame shapes: see "Wire details" above (they supersede the names in this list: `sandboxDenied` goes out as
   `accessCard`, `spawned`/`terminal` as `terminal`, `removed` as `terminalRemoved`, `exited` as `status: stopped`).
 - Plus work-panel events, re-shaped: `approval` (`{approval}` or `{terminalId, cleared:true}` — from
-  `approvalChanged`), `chat` (a new chat message — from the `work.chat` plugin event), `work` (a work changed —
+  `approvalChanged`; no `cleared` when the terminal stops or goes: the phone drops it on `status: stopped` /
+  `terminalRemoved`), `chat` (a new chat message — from the `work.chat` plugin event), `work` (a work changed —
   from `work.changed`).
 - Dropped: `panel*`, `pluginEvent` (others), `herdApplied`, `sandboxDetection`, `confirmCorrection`,
   `pluginsChanged`, `remotePairing`.
@@ -612,8 +613,15 @@ reachable from the network until slice 3.
    7-8. Tests: `RemoteSurfaceTests` (every non-allowlisted command incl. all `admin.*` → Unknown command; no token,
    identity file, cwd, command or root path in the snapshot; live scope/revoke). Artifact `kind` is the store's
    (`agent|export`), not the iOS mock's template kinds.
-5. **Events** — filtered `events.subscribe` incl. `approval`/`chat`/`work`. Tests: filter table, overflow → frame
-   and cut.
+5. **Events (done, 2026-11-05)** — `events.subscribe` / `events.unsubscribe` (`RemoteEventBus`): workspace events
+   from `StreamHub.tapEvents()` (in order, before the app's own filters), approvals from the ask coordinator's
+   stream, chat from `ChatLog` appends, work from `WorkStore` changes, `accessCardRemoved` diffed around the
+   access commands. Each push re-reads the device (revoked → 4001); over `remoteEventQueueBytes` (4 MiB) unsent →
+   `overflow` and the sub is cut, the session stays. Tests: `RemoteEventsTests` (terminal/status/leash/removal,
+   card + removal, approval raised/cleared, work, chat, unsubscribe, revoke, overflow). An `approval` is cleared
+   only when answered or dismissed: a terminal that stops (`status: stopped`) or goes (`terminalRemoved`) drops
+   its approval on the phone without a `cleared` frame. `admin.kill` removes the terminal (`terminalRemoved`, no
+   `stopped` first).
 6. **Terminal output** — `terminal.attach/detach` adapter over `StreamHub`, replay cut, coalescing, 4-per-connection
    cap, `in`/`resize` ignored. Tests: `RemoteAttachTests` with a fake PTY.
 7. **Mutations + audit + limits** — `approval.answer/dismiss`, `access.grant/deny` (terminal scope only), audit log,

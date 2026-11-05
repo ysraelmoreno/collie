@@ -12,6 +12,7 @@ enum RemoteSurface {
     static let commands: [String: Kind] = [
         "workspace.snapshot": .read, "terminal.screen": .read, "work.list": .read, "work.get": .read, "work.summary": .read,
         "approvals.list": .read, "access.cards": .read, "chat.history": .read, "artifact.list": .read, "artifact.get": .read,
+        "events.subscribe": .read, "events.unsubscribe": .read,   // handled by the session itself
         // behind the scope gate already; their handlers come in slices 7-8
         "approval.answer": .mutating, "approval.dismiss": .mutating, "access.grant": .mutating, "access.deny": .mutating,
         "agent.ask": .mutating, "work.rerail": .mutating, "mac.reveal": .mutating,
@@ -43,11 +44,8 @@ extension CommandRouter {
                 "mac": .object(["name": .string(Self.computerName()), "installId": .string((try? remoteInstallId()) ?? ""),
                                 "collieVersion": .string(config.version ?? "dev"), "build": .string(config.build ?? "dev"), "keyFingerprint": .string(remoteIdentity?.fingerprint ?? ""),
                                 "via": .string(via.rawValue), "pairedAt": .string(device.pairedAt.ISO8601Format())]),
-                "paddocks": .array(ws.paddocks.map { f in .object(["id": .string(f.id.uuidString.lowercased()), "name": .string(f.name),
-                    "branch": f.branch.isEmpty ? .null : .string(f.branch), "base": f.baseBranch.isEmpty ? .null : .string(f.baseBranch),
-                    "status": .string(f.status.rawValue)]) }),
-                "lots": .array(ws.lots.map { l in .object(["id": .string(l.id.uuidString.lowercased()), "name": .string(l.name),
-                    "members": .array(l.members.map { .string($0.uuidString.lowercased()) })]) }),
+                "paddocks": .array(ws.paddocks.map(remotePaddock)),
+                "lots": .array(ws.lots.map(remoteLot)),
                 "leashes": .array(ws.connections.filter { terminalIds.contains($0.a) && terminalIds.contains($0.b) }.map { c in
                     .object(["a": .string(c.a.uuidString.lowercased()), "b": .string(c.b.uuidString.lowercased())]) }),
             ]
@@ -106,6 +104,16 @@ extension CommandRouter {
         }
     }
 
+    func remotePaddock(_ f: Paddock) -> JSONValue {
+        .object(["id": .string(f.id.uuidString.lowercased()), "name": .string(f.name),
+                 "branch": f.branch.isEmpty ? .null : .string(f.branch), "base": f.baseBranch.isEmpty ? .null : .string(f.baseBranch),
+                 "status": .string(f.status.rawValue)])
+    }
+
+    func remoteLot(_ l: Lot) -> JSONValue {
+        .object(["id": .string(l.id.uuidString.lowercased()), "name": .string(l.name), "members": .array(l.members.map { .string($0.uuidString.lowercased()) })])
+    }
+
     private func remoteTerminalRecord(_ r: Request) throws -> TerminalRecord {
         guard let id = str(r, "terminal").flatMap(UUID.init(uuidString:)), let t = ws.terminals.first(where: { $0.id == id }) else {
             throw ProtocolError(code: .notFound, message: "Terminal não encontrado.")
@@ -122,7 +130,7 @@ extension CommandRouter {
 
     private func id(_ u: UUID?) -> JSONValue { u.map { .string($0.uuidString.lowercased()) } ?? .null }
 
-    private func remoteTerminal(_ t: TerminalRecord) async throws -> JSONValue {
+    func remoteTerminal(_ t: TerminalRecord) async throws -> JSONValue {
         let running = await registry.process(t.id)?.isRunning == true
         let badge = running ? (await hub.currentBadges[t.id] ?? .idle) : .stopped
         let shepherd = t.isShepherd ? nil : ConnectionGraph.reachable(from: t.id, in: ws).filter(\.isShepherd)
@@ -144,13 +152,13 @@ extension CommandRouter {
         return .string(f.name)
     }
 
-    private func remoteApprovals(_ list: [Approval]) -> JSONValue {
+    func remoteApprovals(_ list: [Approval]) -> JSONValue {
         .array(list.map { a in .object(["id": id(a.id), "terminalId": id(a.terminalId), "terminal": .string(a.terminal),
                                         "paddock": paddockName(a.terminalId), "kind": .string(a.kind.rawValue), "reason": .string(a.reason),
                                         "prompt": .string(a.prompt), "at": .string(a.at.ISO8601Format())]) })
     }
 
-    private func remoteCard(_ d: SandboxDenial) -> JSONValue {
+    func remoteCard(_ d: SandboxDenial) -> JSONValue {
         let home = sandboxHomeDir.path
         let agentConfig = [".claude", ".codex", ".cursor", ".claude.json"].contains { d.path == home + "/" + $0 || d.path.hasPrefix(home + "/" + $0 + "/") }
         return .object(["id": .string(RemoteSurface.cardId(d)), "terminalId": id(d.terminal),

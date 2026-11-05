@@ -19,6 +19,9 @@ struct RemoteContext: Sendable {
     let onClaim: @Sendable (RemotePairingRequest) -> Void
     /// An allowlisted request of a hello'd device (scope already checked): the daemon's answer.
     let handle: @Sendable (Request, RemoteDevice, RemoteVia) async -> Response
+    /// `events.subscribe`'s source, and how many unsent event bytes a session may have before its subscription is cut.
+    let events: RemoteEventBus
+    let eventQueueBytes: Int
 }
 
 /// Close codes (spec §3.2). Before the WebSocket close frame the Mac sends `{"t":"closing","code","reason"}`: a native
@@ -45,6 +48,8 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
     private var claimed: UUID?
     private var closing = false
     private var deadlineGen = 0
+    /// Event frame bytes handed to the connection and not sent yet (bounded by `ctx.eventQueueBytes`).
+    private var pendingEventBytes = 0
 
     init(conn: NWConnection, address: String, via: RemoteVia, ctx: RemoteContext, sessions: RemoteSessions, queue: DispatchQueue) {
         self.conn = conn; self.address = address; self.via = via; self.ctx = ctx; self.sessions = sessions; self.queue = queue
@@ -56,7 +61,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         conn.stateUpdateHandler = { [weak self] st in
             guard let self else { return }
             switch st {
-            case .failed, .cancelled: sessions.remove(self)
+            case .failed, .cancelled: sessions.remove(self); ctx.events.remove(ObjectIdentifier(self))
             default: break
             }
         }
@@ -117,8 +122,37 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         guard kind == .read || dev.scope == .full else {
             return reply(req.id, ProtocolError(code: .unauthorized, message: "Este aparelho é só de leitura: mude no Mac (Preferências → Celular)."))
         }
+        switch req.command {
+        case "events.subscribe":
+            ctx.events.add(ObjectIdentifier(self)) { [weak self] e in self?.event(e) }
+            return reply(req.id, .object(["sub": .string("ev")]))
+        case "events.unsubscribe":
+            ctx.events.remove(ObjectIdentifier(self))
+            return reply(req.id, .object([:]))
+        default: break
+        }
         let via = via, handle = ctx.handle
         Task { [weak self] in self?.send(await handle(req, dev, via)) }
+    }
+
+    /// One published event (any thread). The device is re-read (a revoke closes, 4001); past `eventQueueBytes` unsent,
+    /// the subscription is cut with `{"t":"overflow","sub":"ev"}` and the phone re-snapshots and subscribes again.
+    private func event(_ e: JSONValue) {
+        guard let id = deviceId, ctx.devices.device(id, fingerprint: ctx.fingerprint) != nil else { return close(.revoked) }
+        guard let frame = try? JSONEncoder().encode(JSONValue.object(["t": .string("event"), "sub": .string("ev"), "e": e])) else { return }
+        let cap = ctx.eventQueueBytes, n = frame.count
+        let over = lock.withLock { () -> Bool in
+            guard !closing else { return false }
+            if pendingEventBytes + n > cap { return true }
+            pendingEventBytes += n
+            return false
+        }
+        if over {
+            ctx.events.remove(ObjectIdentifier(self))
+            if let d = try? JSONEncoder().encode(JSONValue.object(["t": .string("overflow"), "sub": .string("ev")])) { text(d) }
+            return
+        }
+        text(frame) { [weak self] in self?.lock.withLock { self?.pendingEventBytes -= n } }
     }
 
     private func pair(_ r: Request) {
@@ -201,6 +235,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
     /// The `closing` frame, the close frame with `code`, then the socket goes. Once.
     func close(_ code: RemoteClose) {
         guard lock.withLock({ () -> Bool in defer { closing = true }; return !closing }) else { return }
+        ctx.events.remove(ObjectIdentifier(self))
         let note = (try? JSONEncoder().encode(JSONValue.object(["t": .string("closing"), "code": .number(Double(code.rawValue)),
                                                                 "reason": .string(code.reason)]))) ?? Data()
         let conn = conn

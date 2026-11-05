@@ -8,6 +8,8 @@ import CollieProtocol
 /// wider profile, resuming the conversation (Claude `--continue`); a revoke restarts the running terminals it narrows.
 extension CommandRouter {
     func accessCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
+        let cardsBefore = cardIds
+        defer { publishCardsRemoved(since: cardsBefore) }   // granted, denied or covered: phones drop the card
         let caller = try await principal(r, peer: peer)   // nil = admin (the app)
         func appOnly() throws(ProtocolError) {
             guard caller == nil else {
@@ -160,6 +162,8 @@ extension CommandRouter {
 
     /// A removed terminal: its cards, its known id and its own grants go (a lot's grants stay with the lot).
     func sandboxGone(_ id: UUID) async {
+        let cardsBefore = cardIds
+        defer { publishCardsRemoved(since: cardsBefore) }
         accessCards.forget(terminal: id)
         sandboxKnown.remove(id)
         let before = sandboxGrants

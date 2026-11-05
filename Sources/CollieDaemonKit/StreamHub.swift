@@ -117,7 +117,13 @@ actor StreamHub {
             for k in oldValue.keys where badges[k] == nil { badgeSince[k] = nil }
         }
     }
-    private(set) var badgeSince: [UUID: Date] = [:]
+    private var badgeSince: [UUID: Date] = [:]
+    /// When each terminal entered the hub (its launch), and when the hub started.
+    private var trackedAt: [UUID: Date] = [:]
+    private let started = Date()
+    /// Since when `id`'s badge holds (the remote API's `badgeSince`): its last change, else its launch (no tick yet),
+    /// else this daemon's start (a terminal not run since then: stopped at least that long).
+    func since(_ id: UUID) -> Date { badgeSince[id] ?? trackedAt[id] ?? started }
     /// When each terminal last got the user's keys (not focus reports): the "last focused" Claude terminal an import
     /// goes to. ponytail: one instant per terminal, never pruned (tiny).
     private(set) var lastInput: [UUID: ContinuousClock.Instant] = [:]
@@ -163,6 +169,7 @@ actor StreamHub {
             }
         }
         terminals[id] = Entry(fan: fan, scrollback: scrollback)
+        trackedAt[id] = Date()
         // The launch awaits between spawn and here, so a child that prints a prompt at once (`printf '(y/n)'`, a
         // trust dialog) may already have been read: scan that output and hook in on the PTY queue, atomically with
         // the reads (no attach can join before this block), or the prompt is never seen.
@@ -181,7 +188,7 @@ actor StreamHub {
     /// Killed or replaced: closes its attach streams, forgets its badge.
     func untrack(_ id: UUID) {
         terminals.removeValue(forKey: id).map { $0.fan.finishSignals(); $0.fan.closeAll() }
-        badges[id] = nil
+        badges[id] = nil; trackedAt[id] = nil
     }
 
     func attach(_ id: UUID, _ c: StreamConn, ok: Response) -> Bool {

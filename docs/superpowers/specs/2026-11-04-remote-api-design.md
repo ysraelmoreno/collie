@@ -318,8 +318,10 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
   - `shepherdId` / `shepherd` (name): the Shepherd whose leash the terminal is under — the same rule `chatSend`
     uses (`ConnectionGraph.reachable(...).filter(\.isShepherd)`, first by name); `null` for a Shepherd or a loose
     terminal. (iOS `leashedTo`.)
-  - `badgeSince`: when the badge last changed (`StreamHub` keeps `since` per entry). The phone formats "Ocioso há
-    42 min".
+  - `badgeSince`: when the badge last changed (`StreamHub.since`). The phone formats "Ocioso há 42 min". Never
+    null: a badge this daemon has not changed yet counts from the terminal's launch, and a terminal not run since the
+    daemon started (stopped before it) from the daemon's start — "at least since" (E2E finding, 2026-11-05). The
+    `status` event's `since` is the same value.
   - `activity`: from the work registry — the terminal's active work title and its first `inProgress` (else first
     `open`) task; `null` without an active work. The phone builds the line ("Revisar PR #212 · Rodar testes", or
     "Ocioso há 42 min" from `badgeSince`). ponytail: no screen scraping for activity; a terminal without a work shows

@@ -143,7 +143,7 @@ extension CommandRouter {
         return .object(["id": id(t.id), "name": .string(t.name), "preset": .string(t.preset.rawValue), "paddockId": id(t.paddockId),
                         "isShepherd": .bool(t.isShepherd), "shepherdId": id(shepherd?.id), "shepherd": shepherd.map { .string($0.name) } ?? .null,
                         "running": .bool(running), "badge": .string(badge.rawValue),
-                        "badgeSince": (await hub.badgeSince[t.id]).map { .string($0.ISO8601Format()) } ?? .null,
+                        "badgeSince": .string(await hub.since(t.id).ISO8601Format()),
                         "activity": activity, "sandbox": .string(t.sandbox == .sandboxed ? "sandboxed" : "free"), "lotId": id(ws.lot(of: t.id)?.id)])
     }
 

@@ -37,7 +37,7 @@ extension CommandRouter {
         case .removed(let id): out = .object(["t": .string("terminalRemoved"), "id": uid(id)])
         case .status(let id, let b):
             out = .object(["t": .string("status"), "terminalId": uid(id), "badge": .string(b.rawValue),
-                           "since": (await hub.badgeSince[id]).map { .string($0.ISO8601Format()) } ?? since])
+                           "since": .string(await hub.since(id).ISO8601Format())])
         case .attention(let id, let reason): out = .object(["t": .string("attention"), "terminalId": uid(id), "reason": .string(reason)])
         case .paddock(let f): out = .object(["t": .string("paddock"), "paddock": remotePaddock(f)])
         case .paddockRemoved(let id): out = .object(["t": .string("paddockRemoved"), "id": uid(id)])

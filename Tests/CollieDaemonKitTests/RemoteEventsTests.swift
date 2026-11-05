@@ -22,6 +22,25 @@ private struct Phone {
     }
 }
 
+/// Listener on, a device paired, a session with hello done: the phone and its device id.
+func helloPhone(_ d: Daemon, _ p: Paths) async throws -> (RemotePhone, String) {
+    func admin(_ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
+        try await send(p, Request(id: "a", token: d.adminToken, command: cmd, args: args), timeoutSeconds: 60)
+    }
+    guard case .object(let on)? = try await admin("admin.remote", ["action": "on", "port": 0]).result,
+          case .number(let port)? = on["listeningPort"], case .string(let pin)? = on["fingerprint"] else { throw ProtocolError(code: .internal, message: "on") }
+    guard case .object(let b)? = try await admin("admin.remote.pair.begin").result, case .string(let qr)? = b["qr"],
+          let secret = URLComponents(string: qr)?.queryItems?.first(where: { $0.name == "s" })?.value else { throw ProtocolError(code: .internal, message: "begin") }
+    let ph = try await RemotePhone.connect(port: Int(port), pin: pin)
+    let pid = obj(try await ph.call("pair", ["secret": .string(secret), "device": .object(["name": "P", "model": "M"])]).result)["pairingId"]!
+    let w = try await ph.send("pair.wait", ["pairingId": pid])
+    _ = try await admin("admin.remote.pair.confirm", ["pairingId": pid, "decision": "accept"])
+    var res: [String: JSONValue] = [:]
+    while let o = await ph.next() { if o["id"] == .string(w) { res = obj(o["result"]); break } }
+    guard try await ph.call("session.hello", ["deviceId": res["deviceId"]!, "token": res["token"]!]).ok else { throw ProtocolError(code: .internal, message: "hello") }
+    return (ph, str(res["deviceId"]))
+}
+
 @Suite(.serialized) struct RemoteEventsTests {
     private func admin(_ d: Daemon, _ p: Paths, _ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
         try await send(p, Request(id: "a", token: d.adminToken, command: cmd, args: args), timeoutSeconds: 60)
@@ -29,20 +48,10 @@ private struct Phone {
 
     /// Listener on, a device paired, a session with hello done and events subscribed.
     private func subscribed(_ d: Daemon, _ p: Paths) async throws -> Phone {
-        guard case .object(let on)? = try await admin(d, p, "admin.remote", ["action": "on", "port": 0]).result,
-              case .number(let port)? = on["listeningPort"], case .string(let pin)? = on["fingerprint"] else { throw ProtocolError(code: .internal, message: "on") }
-        guard case .object(let b)? = try await admin(d, p, "admin.remote.pair.begin").result, case .string(let qr)? = b["qr"],
-              let secret = URLComponents(string: qr)?.queryItems?.first(where: { $0.name == "s" })?.value else { throw ProtocolError(code: .internal, message: "begin") }
-        let ph = try await RemotePhone.connect(port: Int(port), pin: pin)
-        let pid = obj(try await ph.call("pair", ["secret": .string(secret), "device": .object(["name": "P", "model": "M"])]).result)["pairingId"]!
-        let w = try await ph.send("pair.wait", ["pairingId": pid])
-        _ = try await admin(d, p, "admin.remote.pair.confirm", ["pairingId": pid, "decision": "accept"])
-        var res: [String: JSONValue] = [:]
-        while let o = await ph.next() { if o["id"] == .string(w) { res = obj(o["result"]); break } }
-        guard try await ph.call("session.hello", ["deviceId": res["deviceId"]!, "token": res["token"]!]).ok else { throw ProtocolError(code: .internal, message: "hello") }
+        let (ph, id) = try await helloPhone(d, p)
         let sub = try await ph.call("events.subscribe")
         #expect(obj(sub.result)["sub"] == "ev", "\(sub)")
-        return Phone(ph: ph, id: str(res["deviceId"]))
+        return Phone(ph: ph, id: id)
     }
 
     @Test func terminalsLeashesStatusAndRemoval() async throws {
@@ -120,5 +129,33 @@ private struct Phone {
             #expect(try await phone.ph.call("workspace.snapshot").ok)   // the session stays; the phone re-snapshots and re-subscribes
             #expect(try await phone.ph.call("events.subscribe").ok)
         }
+    }
+}
+
+/// E2E finding (2026-11-05): a terminal whose badge this daemon never changed (stopped before it started) went out
+/// with `badgeSince: null`; the spec says an ISO date.
+@Suite(.serialized) struct RemoteBadgeSinceTests {
+    @Test func everyTerminalHasABadgeSince() async throws {
+        let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))"))
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        var c = testConfig(paths); c.remoteAllowLoopback = true
+        let first = try Daemon(config: c)
+        try await first.start()
+        let (old, _) = try await spawn(first, paths, "Old", preset: "custom", command: "true")
+        await first.stop()
+        let d = try Daemon(config: c)
+        try await d.start()
+        do {
+            let (ph, _) = try await helloPhone(d, paths)
+            defer { ph.close() }
+            let (live, _) = try await spawn(d, paths, "Live", preset: "custom", command: "sleep 30")
+            let snap = obj(try await ph.call("workspace.snapshot").result)
+            guard case .array(let ts)? = snap["terminals"] else { Issue.record("\(snap)"); await d.stop(); return }
+            for id in [old, live] {
+                let t = obj(ts.first { obj($0)["id"] == .string(id.lowercased()) })
+                #expect(ISO8601DateFormatter().date(from: str(t["badgeSince"])) != nil, "\(t)")
+            }
+        } catch { await d.stop(); throw error }
+        await d.stop()
     }
 }

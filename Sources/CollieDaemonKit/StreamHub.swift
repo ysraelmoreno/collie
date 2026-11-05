@@ -110,7 +110,14 @@ actor StreamHub {
     private struct Entry { var fan: Fanout; var scrollback: ScrollbackBuffer; var since = ContinuousClock.now }
     private let asks: AskCoordinator
     private var terminals: [UUID: Entry] = [:]
-    private var badges: [UUID: StatusBadge] = [:]
+    private var badges: [UUID: StatusBadge] = [:] {
+        didSet {   // when each badge last changed (the remote API's `badgeSince`: "Ocioso há 42 min")
+            let now = Date()
+            for (k, v) in badges where oldValue[k] != v { badgeSince[k] = now }
+            for k in oldValue.keys where badges[k] == nil { badgeSince[k] = nil }
+        }
+    }
+    private(set) var badgeSince: [UUID: Date] = [:]
     /// When each terminal last got the user's keys (not focus reports): the "last focused" Claude terminal an import
     /// goes to. ponytail: one instant per terminal, never pruned (tiny).
     private(set) var lastInput: [UUID: ContinuousClock.Instant] = [:]

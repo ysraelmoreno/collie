@@ -80,7 +80,7 @@ public enum Commands {
                     params: [ParamSpec("name", .string, positional: true, required: true, help: "New agent name"),
                              ParamSpec("preset", .string, help: "Omit it to get your own preset (what \"open a terminal/agent\" means). claude|codex|cursor|custom; shell only when the user asks for a plain shell"),
                              ParamSpec("command", .string, help: "Command line (custom preset)"),
-                             ParamSpec("cwd", .string, help: "Working directory within your project (default: yours, or the paddock's)"),
+                             ParamSpec("cwd", .string, help: "Working directory (default: yours, or the paddock's). Outside your project: a card asks the user to release the folder (sandbox open mode: any folder)"),
                              ParamSpec("paddock", .string, help: "Paddock name (default: your paddock)"),
                              ParamSpec("connect", .string, help: "Connect the new agent/panel to these terminals or canvas panels you reach (comma list; repeatable)", repeatable: true),
                              ParamSpec("prompt", .rest, positional: true, help: "First prompt, sent without waiting for a reply")],

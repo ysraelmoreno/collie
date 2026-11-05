@@ -109,7 +109,21 @@ extension CommandRouter {
             paddockId = fl.id; cwd = fl.path; allowed = ProjectRoot.resolve(cwd: fl.path, paddock: fl)
         }
         cwd = SignedAppCheck.realPath(URL(fileURLWithPath: str(r, "cwd") ?? cwd))   // spawned as checked (no symlink swap)
-        let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: startedOpen(me))
+        // DX backlog 15, strict mode: outside the project only into a folder the user released to this Shepherd; else a card
+        var anywhere = startedOpen(me)
+        if !anywhere, !ProjectRoot.contains(cwd, root: allowed) {
+            let released = SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)
+                .contains { $0.access == .write && ProjectRoot.contains(cwd, root: URL(fileURLWithPath: $0.path)) }
+            guard released else {
+                // a card only for a terminal actually sandboxed (the others' denials raise none either)
+                let card = sandboxKnown.contains(me.id)
+                if card { await raise(SandboxDenial(terminal: me.id, op: "write", path: cwd, requested: true, reason: "summon \(name) em \(cwd)")) }
+                throw ProtocolError(code: .invalidArgs, message: "--cwd \(cwd) is outside your project \(allowed.path)"
+                    + (card ? ": a card asks the user to release it; summon again once they do" : ""))
+            }
+            anywhere = true
+        }
+        let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: anywhere)
         let rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
         var result = try await launch(rec)

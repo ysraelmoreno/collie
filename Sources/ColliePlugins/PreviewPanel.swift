@@ -146,6 +146,8 @@ import WebKit
             let deadline = Date().addingTimeInterval(25)
             while loads == 0, failure == nil, !closed, Date() < deadline { try? await Task.sleep(for: .milliseconds(50)) }
             guard let web = webView, loads > 0 else { throw ProtocolError(code: .unavailable, message: failure ?? "a prévia não carregou a página") }
+            // DX backlog 13: a panel never shown has a 0x0 view (nothing to capture): give it a size first
+            if web.bounds.width < 1 || web.bounds.height < 1 { web.frame = CGRect(x: 0, y: 0, width: 1280, height: 800) }
             let cg = args["full-page"] == .bool(true) ? try await BrowserPanel.fullPage(web) : try await BrowserPanel.snapshot(web, rect: nil)
             let dir = host.root.appendingPathComponent("screens", isDirectory: true), prefix = panel.id.uuidString + "-"
             return try await DiagramPanel.offMain { BrowserPanel.savePNG(cg, in: dir, prefix: prefix) }.get()

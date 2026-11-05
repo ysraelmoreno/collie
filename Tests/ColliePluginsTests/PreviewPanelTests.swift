@@ -263,6 +263,19 @@ import CollieProtocol
         #expect(abs(width - web.bounds.width * w.backingScaleFactor) < 1, "\(width) vs \(web.bounds.width)")
     }
 
+    /// DX backlog 13: a Prévia never shown (no window, a 0x0 view) still screenshots, at a default size.
+    @Test func screenshotOfAPanelNeverShown() async throws {
+        let root = try project()
+        try put("n.html", root, "<body style='background:#0c0'>n</body>")
+        let p = Panel(id: UUID(), name: "previa", pluginId: "preview", placement: .canvas, state: ["root": .string(root.path), "file": .string("n.html")])
+        let panel = PreviewPanel(panel: p, host: PanelHostContext(panel: p, root: root, workspaceId: nil, call: { _, _ throws(ProtocolError) in .null }, emit: { _, _ in }), libs: nil)
+        defer { panel.close() }
+        let (png, width, height) = try await shot(panel, [:])
+        #expect(png.prefix(4) == Data([0x89, 0x50, 0x4E, 0x47]) && width > 0 && height > 0, "\(width)x\(height)")
+        // ponytail: --full-page scrolls with JS, which a window-less WebKit view may not answer: an error, never a crash
+        do { _ = try await shot(panel, ["full-page": .bool(true)]) } catch let e as ProtocolError { #expect(e.code == .unavailable) }
+    }
+
     @Test func screenshotFullPage() async throws {
         let root = try project()
         try put("f.html", root, #"<body style="margin:0"><div style="height:3000px;background:linear-gradient(#fff,#00f)">f</div></body>"#)

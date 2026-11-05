@@ -247,16 +247,18 @@ private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: String]
     try await UnixSocketClient.send(Request(id: "m", terminalId: t.id, token: t.token, command: cmd, args: args.mapValues { .string($0) }, cwd: cwd),
                                     to: p.socket, timeoutSeconds: 120)
 }
-/// Shepherd `M`, leashed to canvas panel `design-1` on file `Site`, inside a daemon on the fake engine.
+/// Shepherd `M`, leashed to canvas panel `design-1` on file `Site`, inside a daemon on the fake engine. `timeoutCap`: for
+/// `body` only — the setup (engine start, panel open) runs uncapped, a busy machine can take longer (DX backlog 18).
 private func withPanel(_ fx: Fake, timeoutCap: Duration? = nil, before: (Daemon, Paths) async throws -> Void = { _, _ in },
                        _ body: (Daemon, Paths, Term) async throws -> Void) async throws {
-    try await withDaemon(configure: { $0.figcraftDir = fx.dir; $0.designTimeoutCap = timeoutCap }) { d, p in
+    try await withDaemon(configure: { $0.figcraftDir = fx.dir }) { d, p in
         try await before(d, p)
         let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
             args: ["name": "M", "preset": "shell", "cwd": "/tmp", "shepherd": true]), to: p.socket, timeoutSeconds: 60)
         guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
         let m = Term(id: id, token: try await tokenOf(d, id))
         #expect(try await call(p, m, "panel.open", ["plugin": "design", "file": "Site", "placement": "canvas"]).ok)
+        d.router.design.setTimeoutCap(timeoutCap)
         try await body(d, p, m)
     }
 }

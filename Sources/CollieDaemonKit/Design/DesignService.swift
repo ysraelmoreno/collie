@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import CollieCore
 import CollieDevice
 import CryptoKit
@@ -49,7 +50,8 @@ actor DesignService {
     private let cli: URL
     private let root: URL, runDir: URL
     private let idle: Duration
-    private let timeoutCap: Duration?
+    /// Tests: a shorter deadline for every design command; settable so a test's setup runs uncapped (DX backlog 18).
+    private nonisolated let timeoutCap: Mutex<Duration?>
     private var files: [File]?   // loaded on first use
     private var naming: Set<String> = []   // lowercased names being published
     private var slots: [Key: Slot] = [:]
@@ -66,7 +68,7 @@ actor DesignService {
         self.server = server
         // no figcraftDir: the server reports `notBundled` before the CLI is ever needed
         self.cli = (figcraftDir ?? URL(fileURLWithPath: "/nonexistent")).appendingPathComponent("bin/figcraft-cli")
-        self.root = root; self.runDir = runDir; self.idle = idle; self.timeoutCap = timeoutCap
+        self.root = root; self.runDir = runDir; self.idle = idle; self.timeoutCap = Mutex(timeoutCap)
     }
 
     /// Every `figcraft-cli`'s environment: the daemon's, plus `FIGCRAFT_EXTRA_FONTS_DIR=<root>/fonts` (patch 0005): its
@@ -1108,9 +1110,11 @@ actor DesignService {
     private static func epochMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
 
     /// The command's own timeout less 2 s: the answer must reach the CLI before it gives up.
+    nonisolated func setTimeoutCap(_ cap: Duration?) { timeoutCap.withLock { $0 = cap } }
+
     nonisolated func deadline(_ command: String) -> ContinuousClock.Instant {
         let own = Duration.seconds(max(1, (PluginRegistry.command(command)?.1.timeoutSeconds ?? 30) - 2))
-        return .now + min(own, timeoutCap ?? own)
+        return .now + min(own, timeoutCap.withLock { $0 } ?? own)
     }
 
     static func left(_ deadline: ContinuousClock.Instant) throws(ProtocolError) -> Duration {

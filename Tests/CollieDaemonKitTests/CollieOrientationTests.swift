@@ -29,13 +29,18 @@ import CollieProtocol
     /// DX backlog 11: agents sharing a folder are told to build apart and commit only their own hunks.
     @Test func sharedFolderTeachesOwnBuildDirAndHunks() {
         let shared = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [], sharedFolder: ["remote-api"])
-        #expect(shared.contains("Shared folder with \"remote-api\"") && shared.contains("--scratch-path .build/Ana")
+        #expect(shared.contains("Shared folder (\"remote-api\")") && shared.contains(".build/Ana (--scratch-path)")
                 && shared.contains("git diff <file>"), "\(shared)")
+        // the commit checked alone: others' WIP in the folder can hide a break
+        #expect(shared.contains("git worktree add --detach <tmp> HEAD") && shared.contains("git worktree remove <tmp>"), "\(shared)")
         #expect(!text().contains("Shared folder"))
         let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: (1...30).map { "agent-\($0)" },
                                            panels: [], lot: (String(repeating: "l", count: 60), String(repeating: "g", count: 200)),
                                            sharedFolder: ["x"])
-        #expect(tight.count <= 1500 && tight.contains("Shared folder"), "\(tight.count)")
+        #expect(tight.count <= 1500 && tight.contains("Shared folder") && tight.contains("worktree"), "\(tight.count)")
+        // a Shepherd (already near the cap) in a shared folder: still within it, with the worktree rule
+        let shep = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], sharedFolder: ["x"])
+        #expect(shep.count <= 1500 && shep.contains("git worktree add --detach <tmp> HEAD"), "\(shep.count)")
     }
 
     /// `artifact new` is taught to every terminal (its kinds while names fit; tight: the short form).

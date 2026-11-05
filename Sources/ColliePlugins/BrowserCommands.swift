@@ -230,6 +230,10 @@ extension BrowserPanel {
     /// ponytail: the height is measured once at the start (content that grows while capturing, lazy/infinite, is cut; re-measure per tile if needed); viewport width only (no horizontal tiling); fixed/sticky elements repeat per tile; scrolling inside a nested container is not followed.
     static func fullPage(_ web: WKWebView) async throws(ProtocolError) -> CGImage {
         let vh = Int(web.bounds.height)
+        // A view never laid out (panel not shown yet) is 0x0: tiling by vh would divide by zero and take the app down.
+        guard vh > 0, web.bounds.width > 0 else {
+            throw ProtocolError(code: .unavailable, message: "--full-page: the view has no size yet; show the panel and try again")
+        }
         let doc = try await Self.pageNumbers(web, "return [Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), scrollX, scrollY]")
         let height = max(doc[0], vh)
         var ctx: CGContext?

@@ -122,6 +122,13 @@ import CollieProtocol
         catch let e as ProtocolError { #expect(e.code == .invalidArgs && e.message.contains("16384")) }
     }
 
+    /// A view never laid out (a Prévia screenshotted before its panel is shown) has height 0: an error, not a crash of the app.
+    @Test func fullPageZeroSizeViewThrows() async throws {
+        let web = WKWebView(frame: .zero)
+        do { _ = try await BrowserPanel.fullPage(web); Issue.record("expected an error") }
+        catch { #expect(error.code == .unavailable) }
+    }
+
     func outDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("out-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

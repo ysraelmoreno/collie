@@ -62,6 +62,19 @@ import CollieTerminal
         #expect(await asks.isBusy(id))
     }
 
+    /// An ask (not an inject) waits for its turn's end: the submit confirmation must not resolve it with "".
+    @Test func submittedAskWaitsForTheTurnsReply() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1, submitConfirmSeconds: 5)
+        let (id, _) = try await start(asks, preset: .claude, script: "printf '\\033[?2004h'; exec cat")
+        await asks.sessionHooked(id)
+        let t = Task { try await asks.ask(from: UUID(), to: id, prompt: "y", raw: false, timeout: .seconds(10)) }
+        while !(await asks.isBusy(id)) { try await Task.sleep(for: .milliseconds(20)) }
+        await asks.promptSubmitted(id)
+        try await Task.sleep(for: .seconds(1))   // past the write, submitDelay and confirmSubmit's 100 ms poll
+        await asks.turnCompleted(terminal: id, message: "the answer")
+        #expect(try await t.value.output == "the answer")
+    }
+
     @Test func withoutHooksNothingIsReportedAsStuck() async throws {
         let asks = AskCoordinator(idleQuietSeconds: 1, submitConfirmSeconds: 0.2)
         let (id, _) = try await start(asks, preset: .claude, script: "printf '\\033[?2004h'; exec cat")

@@ -780,6 +780,8 @@ public actor AskCoordinator {
 
     /// Inject written: resume its caller now; the waiter keeps the slot until its turn ends.
     private func delivered(_ id: UUID) {
+        // an ask's caller waits for the turn's reply (hook/idle): only an inject resumes on delivery
+        guard waiters[id]?.inject == true else { return }
         waiters[id]?.cont?.resume(returning: .success(AskResult(output: "", source: .hook, truncated: false)))
         waiters[id]?.cont = nil
     }

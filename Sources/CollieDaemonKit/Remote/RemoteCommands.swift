@@ -22,7 +22,7 @@ extension CommandRouter {
             q.scheme = "collie"; q.host = "pair"
             q.queryItems = [.init(name: "v", value: "1"), .init(name: "id", value: try remoteInstallId()),
                             .init(name: "n", value: Self.computerName()),
-                            .init(name: "h", value: RemoteAddress.localHosts(tailscaleOnly: settings?.tailscaleOnly ?? false).joined(separator: ",")),
+                            .init(name: "h", value: RemoteAddress.localHosts(tailscaleOnly: settings?.tailscaleOnly ?? false).map(\.host).joined(separator: ",")),
                             .init(name: "p", value: "\(port)"), .init(name: "fp", value: fp), .init(name: "s", value: o.secret)]
             return .object(["pairingId": .string(o.pairingId.uuidString.lowercased()), "qr": .string(q.string ?? ""),
                             "expiresAt": .string(o.expiresAt.ISO8601Format())])
@@ -136,8 +136,9 @@ extension CommandRouter {
         if let e = st.error { o["error"] = .string(e) }
         // the Celular page: "Alcançável por: Wi-Fi 192.168.1.10 · Tailscale 100.x" and how many phones are on now
         o["addresses"] = .array(RemoteAddress.localHosts(tailscaleOnly: s.tailscaleOnly).map { h in
-            .object(["host": .string(h), "via": .string((RemoteAddress.via(h, tailscaleOnly: false) ?? .lan).rawValue)])
+            .object(["host": .string(h.host), "via": .string(h.via.rawValue)])
         })
+        o["bonjour"] = .bool(st.bonjour)
         o["connected"] = .number(Double(remote.sessions.connected))
         // the pairing waiting for the click (the app's dialog shows the same): lets a test compare the code without the app
         if let a = remotePairing.awaiting {

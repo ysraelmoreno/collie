@@ -24,6 +24,35 @@ import CollieProtocol
         for (ip, ts, want) in cases { #expect(RemoteAddress.via(ip, tailscaleOnly: ts) == want, "\(ip) tailscaleOnly=\(ts)") }
     }
 
+    /// Slice 11: the QR's hosts (and the Celular page's addresses) — LAN IPv4, Tailscale IPv4, the MagicDNS name,
+    /// Tailscale IPv6 in brackets; never a public, loopback or LAN IPv6 address (no scope id in a URL).
+    @Test func hostsForTheQR() {
+        let ips = ["8.8.8.8", "100.101.22.7", "127.0.0.1", "192.168.1.10", "fe80::1", "fd7a:115c:a1e0::7", "10.0.0.2", "192.168.1.10", "::1"]
+        let all = RemoteAddress.hosts(ips, magicDNS: "mac.tail1234.ts.net", tailscaleOnly: false)
+        #expect(all == [.init(host: "192.168.1.10", via: .lan), .init(host: "10.0.0.2", via: .lan), .init(host: "100.101.22.7", via: .tailscale),
+                        .init(host: "mac.tail1234.ts.net", via: .tailscale), .init(host: "[fd7a:115c:a1e0::7]", via: .tailscale)], "\(all)")
+        #expect(RemoteAddress.hosts(ips, magicDNS: nil, tailscaleOnly: true).map(\.host) == ["100.101.22.7", "[fd7a:115c:a1e0::7]"])
+        // no Tailscale address on this Mac: a MagicDNS name would not reach it
+        #expect(RemoteAddress.hosts(["192.168.1.10"], magicDNS: "mac.tail1234.ts.net", tailscaleOnly: false).map(\.host) == ["192.168.1.10"])
+    }
+
+    @Test func magicDNSFromTailscaleStatus() {
+        func name(_ s: String) -> String? { TailscaleName.parse(Data(s.utf8)) }
+        #expect(name(#"{"BackendState":"Running","Self":{"DNSName":"mac.tail1234.ts.net.","HostName":"mac"}}"#) == "mac.tail1234.ts.net")
+        #expect(name(#"{"BackendState":"Stopped","Self":{"DNSName":"mac.tail1234.ts.net."}}"#) == nil, "logged out / stopped: not reachable")
+        #expect(name(#"{"BackendState":"Running","Self":{"DNSName":""}}"#) == nil)
+        #expect(name(#"{"BackendState":"Running","Self":{"DNSName":"bad name; rm -rf"}}"#) == nil, "only a host name")
+        #expect(name("not json") == nil)
+    }
+
+    @Test func bonjourRecord() {
+        let fp = Data((0..<32).map { UInt8($0) }).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        #expect(RemoteGateway.bonjourTXT(fingerprint: fp, installId: "6F1C2A90-0000-4000-8000-000000000001")
+                == ["v": "1", "fp": "0001020304050607", "id": "6F1C2A90-0000-4000-8000-000000000001"])
+        #expect(RemoteGateway.bonjourType == "_collie._tcp")
+    }
+
     @Test func loopbackOnlyWhenAllowed() {
         #expect(RemoteAddress.via("127.0.0.1", tailscaleOnly: false, allowLoopback: true) == .lan)
         #expect(RemoteAddress.via("::1", tailscaleOnly: false, allowLoopback: true) == .lan)
@@ -145,6 +174,18 @@ private final class PinnedClient: NSObject, URLSessionWebSocketDelegate, @unchec
             guard case .array(let a)? = on["addresses"] else { Issue.record("\(on)"); return }
             #expect(a.allSatisfy { if case .object(let o) = $0 { o["host"] != nil && (o["via"] == "lan" || o["via"] == "tailscale") } else { false } })
             #expect(int(on["connected"]) == 1, "\(on)")
+        }
+    }
+
+    /// Slice 11: advertised on the LAN (Bonjour) while on, never with Só Tailscale.
+    @Test func bonjourOnlyOffTailscaleOnly() async throws {
+        try await withDaemon(configure: { $0.remoteAllowLoopback = true }) { d, p in
+            let on = try await admin(d, p, ["action": "on", "port": 0])
+            #expect(on["bonjour"] == .bool(true), "\(on)")
+            let ts = try await admin(d, p, ["tailscale-only": "on"])
+            #expect(ts["bonjour"] == .bool(false), "\(ts)")
+            let off = try await admin(d, p, ["action": "off"])
+            #expect(off["bonjour"] == .bool(false))
         }
     }
 

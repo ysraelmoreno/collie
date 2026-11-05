@@ -15,8 +15,19 @@ struct RemoteSettings: Codable, Equatable, Sendable {
 /// The optional WebSocket-over-TLS door to `collied` for paired phones (remote API spec §1): source filter before TLS,
 /// TLS 1.3 with the pinned identity, no `Origin` (no browsers); each connection is a `RemoteSession`.
 actor RemoteGateway {
-    struct Status: Sendable { var listening: Bool; var port: Int?; var error: String? }
+    /// `bonjour`: advertised as `_collie._tcp` on the LAN (on, and not Só Tailscale).
+    struct Status: Sendable { var listening: Bool; var port: Int?; var error: String?; var bonjour = false }
     static let maxMessage = 256 * 1024
+    static let bonjourType = "_collie._tcp"
+
+    /// The Bonjour TXT (spec §1, Discovery): version, the fingerprint's first 8 bytes in hex (the phone still pins all
+    /// of it on connect) and the install id it saved at pairing. No token, no secret.
+    static func bonjourTXT(fingerprint: String, installId: String) -> [String: String] {
+        var b64 = fingerprint.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
+        let hex = (Data(base64Encoded: b64) ?? Data()).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return ["v": "1", "fp": hex, "id": installId]
+    }
 
     /// What sessions need from the daemon, besides the identity and install id given at `apply`.
     struct Deps: Sendable {
@@ -47,7 +58,9 @@ actor RemoteGateway {
 
     init(allowLoopback: Bool, deps: Deps) { self.allowLoopback = allowLoopback; self.deps = deps }
 
-    var status: Status { Status(listening: listener != nil, port: listener?.port.map { Int($0.rawValue) }, error: lastError) }
+    var status: Status {
+        Status(listening: listener != nil, port: listener?.port.map { Int($0.rawValue) }, error: lastError, bonjour: listener?.service != nil)
+    }
 
     /// Listens as `s` says with `identity` (restarting when the port, filter or identity changed), or stops when off.
     /// Waits for the listener to be ready or fail (≤ 5 s); a failure is reported in `status.error`, never thrown.
@@ -65,6 +78,10 @@ actor RemoteGateway {
                                     handle: deps.handle, events: deps.events, eventQueueBytes: deps.eventQueueBytes, hub: deps.hub,
                                     audit: deps.audit, limits: deps.limits)
             l.newConnectionHandler = { c in Self.accept(c, filter: filter, ctx: ctx, sessions: sessions, queue: queue) }
+            if !s.tailscaleOnly {   // the phone finds the Mac on the LAN by the install id it saved at pairing
+                l.service = NWListener.Service(name: deps.macName, type: Self.bonjourType, domain: nil,
+                                               txtRecord: NWTXTRecord(Self.bonjourTXT(fingerprint: identity.fingerprint, installId: installId)))
+            }
             let ready = await withCheckedContinuation { (k: CheckedContinuation<String?, Never>) in
                 let once = Once(k)
                 l.stateUpdateHandler = { st in

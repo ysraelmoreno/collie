@@ -194,8 +194,11 @@ message as an unknown command, so the admin surface isn't enumerable), `tooMany`
 - **URL**: `wss://<host>:<port>/` — any path is accepted, use `/`. No subprotocol, no extra header; never send
   `Origin` (refused).
 - **QR `h=`**: comma-separated hosts, read with `URLComponents.queryItems` then split on `,`. v1 carries IPv4 only
-  (LAN, then Tailscale 100.x). When IPv6 or the MagicDNS name come (slice 11): IPv6 in brackets (`[fd7a:…]`),
-  MagicDNS as a plain host name in the same list.
+  (LAN, then Tailscale 100.x); from slice 11 also the MagicDNS name (plain host name) and Tailscale IPv6 in brackets
+  (`[fd7a:…]`), in that order after the IPv4s. `wss://[fd7a:…]:47820/` is the URL form for the IPv6 one.
+- **Bonjour** (slice 11): browse `_collie._tcp` (`NWBrowser`, `.bonjourWithTXTRecord`), match TXT `id` with the
+  install id saved at pairing, connect to the resolved endpoint and still pin the full fingerprint (TXT `fp` is only
+  a hint). The app needs `NSBonjourServices = [_collie._tcp]` and `NSLocalNetworkUsageDescription` in Info.plist.
 - **Close codes**: only 4000 `hello`, 4001 `revoked`, 4002 `replaced`, 4003 `disabled` (also sent when the daemon
   stops or restarts — there is no 1001 from the Mac). Anything else, or a socket that drops without a frame
   (sleep, network), is a network loss: reconnect with backoff. A wrong pin never reaches the Mac: it is a TLS
@@ -727,8 +730,14 @@ reachable from the network until slice 3.
     (grant line), `CelularPreferencesTests` (pair.begin parse; the QR reads back as the exact URL),
     `RemoteAdminTests.statusListsAddressesAndConnectedPhones`. Still to do by hand: a run in the dev app (this
     agent's sandbox can't open the app).
-11. **Discovery** — Bonjour advertise (`NWListener.service`, TXT), Tailscale addresses via `getifaddrs` (+ optional
-    MagicDNS via `tailscale status --json`). Tests: address classification; Bonjour checked by hand.
+11. **Discovery (done, 2026-11-05)** — `NWListener.service` `_collie._tcp` named after the Mac, TXT `{v: "1", fp:
+    <first 8 bytes of the fingerprint, hex — 16 chars>, id: <install id>}`, only while on and not Só Tailscale
+    (`admin.remote` → `bonjour: Bool`). Hosts (QR `h=` and `addresses`): LAN IPv4, Tailscale IPv4, the MagicDNS name
+    (`tailscale status --json` → `Self.DNSName`, Running only, at most once a minute, 2 s cap, only when the Mac has
+    a Tailscale address; CLI from Tailscale.app or Homebrew), Tailscale IPv6 in brackets. Never LAN IPv6 (link-local
+    needs a scope id). Tests: `RemoteAddressTests.hostsForTheQR`, `.magicDNSFromTailscaleStatus`, `.bonjourRecord`,
+    `RemoteAdminTests.bonjourOnlyOffTailscaleOnly`. Checked once with an `NWBrowser` in a throwaway test (found the
+    service with its TXT); a real phone on the same Wi-Fi is the manual check.
 12. **Keep-awake option** — IOPMAssertion held/released by state. Test: the state machine (assert when on + paired +
     working; release otherwise).
 

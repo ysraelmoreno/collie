@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preferências → Celular</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #0E1326; --surface: #161C36; --sunken: #0B1020; --raised: #1B2340; --border: #262E52; --border-soft: #1E2647;
+  --scrim: #070A16; --text: #E8ECF8; --text-2: #B6BEDB; --muted: #8C95B8; --accent: #6EE7B7; --on-accent: #0E1326;
+  --attention: #FFB86B; --secondary: #93A4FF; --danger: #FF8A8A;
+  --ui: "Space Grotesk", system-ui, sans-serif; --mono: "DM Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: #070A16; color: var(--text); font-family: var(--ui); padding: 32px; }
+h1 { font-size: 15px; font-weight: 600; color: var(--muted); letter-spacing: .02em; margin: 0 0 20px; }
+.row { display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap; }
+.label { font: 12px var(--mono); color: var(--muted); margin: 0 0 8px 2px; }
+
+/* window */
+.win { width: 560px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: 0 20px 60px #0008; }
+.hdr { padding: 14px 20px 0; border-bottom: 1px solid var(--border-soft); }
+.hdr .t { font-size: 17px; font-weight: 600; } .hdr .s { font: 12px var(--mono); color: var(--muted); margin-top: 2px; }
+.seg { display: inline-flex; background: var(--sunken); border: 1px solid var(--border); border-radius: 8px; padding: 2px; margin: 12px 0 14px; }
+.seg span { padding: 4px 12px; font-size: 12.5px; border-radius: 6px; color: var(--text-2); }
+.seg span.on { background: var(--raised); color: var(--text); box-shadow: 0 1px 0 #0006; }
+.body { padding: 18px 20px 22px; display: flex; flex-direction: column; gap: 22px; max-height: 640px; overflow: auto; }
+.sec h2 { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+.note { font: 12px/1.45 var(--mono); color: var(--muted); margin-top: 6px; }
+.toggle { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.sw { width: 32px; height: 18px; border-radius: 9px; background: var(--accent); position: relative; flex: none; }
+.sw::after { content: ""; position: absolute; right: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--on-accent); }
+.sw.off { background: var(--border); } .sw.off::after { left: 2px; right: auto; background: var(--text-2); }
+.status { display: flex; align-items: center; gap: 8px; font: 12px var(--mono); color: var(--text-2); margin-top: 8px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.dot.idle { background: var(--border); }
+.grid { display: grid; grid-template-columns: 120px 1fr; gap: 10px 14px; align-items: center; font-size: 13px; }
+.grid .k { color: var(--text-2); }
+.field { background: var(--sunken); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: 12.5px var(--mono); width: 90px; color: var(--text); }
+.mono { font: 12px var(--mono); color: var(--text); }
+.chip { display: inline-flex; gap: 6px; align-items: center; font: 11.5px var(--mono); color: var(--text-2); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; margin: 0 6px 6px 0; }
+.btn { display: inline-flex; align-items: center; gap: 6px; font: 600 12.5px var(--ui); border-radius: 7px; padding: 6px 12px; border: 1px solid var(--border); background: var(--raised); color: var(--text); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.btn.danger { color: var(--danger); background: transparent; }
+.btn.ghost { background: transparent; color: var(--text-2); }
+.devices { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.dev { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 12px 14px; background: var(--surface); }
+.dev + .dev { border-top: 1px solid var(--border-soft); }
+.dev .name { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 600; }
+.dev .meta { grid-column: 1; font: 11.5px var(--mono); color: var(--muted); }
+.dev .acts { grid-row: 1 / span 2; grid-column: 2; display: flex; align-items: center; gap: 8px; }
+.seg.small { margin: 0; } .seg.small span { padding: 3px 9px; font-size: 11.5px; }
+
+/* sheets */
+.sheet { width: 400px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 22px; box-shadow: 0 20px 60px #0008; }
+.sheet .t { font-size: 16px; font-weight: 600; margin-bottom: 4px; } .sheet .s { font-size: 13px; color: var(--text-2); }
+.qr { width: 220px; height: 220px; margin: 18px auto 14px; background: #fff; border-radius: 10px; padding: 12px; }
+.qr canvas { width: 196px; height: 196px; image-rendering: pixelated; display: block; }
+.center { text-align: center; }
+.foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.code { font: 500 34px var(--mono); letter-spacing: .12em; text-align: center; margin: 16px 0 6px; color: var(--accent); }
+.where { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+.bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 16px; overflow: hidden; } .bar i { display: block; height: 100%; width: 72%; background: var(--attention); }
+
+/* in context */
+.card { width: 360px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.grant { font: 11.5px var(--mono); color: var(--text); } .grant small { display: block; color: var(--muted); font: 10.5px var(--ui); margin-top: 3px; }
+.chat { width: 360px; display: flex; flex-direction: column; gap: 8px; }
+.msg { border-radius: 10px; padding: 8px 11px; font-size: 13px; max-width: 290px; }
+.msg.user { align-self: flex-end; background: var(--raised); border: 1px solid var(--border); }
+.msg.agent { background: var(--surface); border: 1px solid var(--border-soft); }
+.msg.col { color: var(--muted); font: 12px var(--mono); background: transparent; border: 0; padding: 0 2px; }
+.via { display: block; font: 10.5px var(--mono); color: var(--secondary); margin-top: 4px; text-align: right; }
+.who { display: block; font: 10.5px var(--mono); color: var(--muted); margin-bottom: 3px; }
+</style>
+</head>
+<body>
+<h1>Fatia 10 — Mac app · Acesso pelo iPhone (rascunho para aprovar)</h1>
+<div class="row">
+
+<div>
+<p class="label">1 · Preferências → Celular (novo terceiro item do seletor)</p>
+<div class="win">
+  <div class="hdr">
+    <div class="t">Celular</div><div class="s">Preferências</div>
+    <div class="seg"><span>Aparência</span><span>Plug-ins</span><span class="on">Celular</span></div>
+  </div>
+  <div class="body">
+    <div class="sec">
+      <h2>Acesso pelo iPhone</h2>
+      <div class="toggle"><span class="sw"></span>Permitir que iPhones pareados vejam e respondam os agentes</div>
+      <div class="status"><span class="dot"></span>Escutando na porta 47820 · 1 aparelho conectado</div>
+      <div class="note">Desligado, nada escuta na rede. Ligado, só aceita redes locais e Tailscale, e só aparelhos pareados aqui.</div>
+    </div>
+    <div class="sec">
+      <h2>Rede</h2>
+      <div class="grid">
+        <span class="k">Porta</span><span><input class="field" value="47820"></span>
+        <span class="k">Só Tailscale</span><span class="toggle"><span class="sw off"></span><span class="note" style="margin:0">recusa a rede local (Wi-Fi)</span></span>
+        <span class="k">Alcançável por</span><span><span class="chip">Wi-Fi 192.168.1.10</span><span class="chip">Tailscale 100.101.22.7</span></span>
+        <span class="k">Certificado</span><span class="mono">kJ3v…9Qe2 <span class="note" style="display:inline">(SHA-256 do Mac)</span></span>
+      </div>
+    </div>
+    <div class="sec">
+      <h2>Aparelhos</h2>
+      <div class="devices">
+        <div class="dev">
+          <div class="name"><span class="dot"></span>iPhone de Ysrael</div>
+          <div class="meta">iPhone 16 · pareado 4 nov · agora, Tailscale 100.88.1.4</div>
+          <div class="acts"><div class="seg small"><span>Leitura</span><span class="on">Completo</span></div><span class="btn danger">Revogar</span></div>
+        </div>
+        <div class="dev">
+          <div class="name"><span class="dot idle"></span>iPad da sala</div>
+          <div class="meta">iPad Air · pareado 2 nov · visto há 3 h, Wi-Fi 192.168.1.40</div>
+          <div class="acts"><div class="seg small"><span class="on">Leitura</span><span>Completo</span></div><span class="btn danger">Revogar</span></div>
+        </div>
+      </div>
+      <div class="foot" style="justify-content:space-between">
+        <span class="btn ghost">Trocar certificado…</span>
+        <span class="btn primary">Parear iPhone…</span>
+      </div>
+      <div class="note">Leitura: vê terminais, aprovações e Prévias, sem responder nada. Trocar certificado desconecta e exige parear de novo todos os aparelhos.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:28px">
+<div>
+<p class="label">2 · Parear iPhone… (folha)</p>
+<div class="sheet">
+  <div class="t">Parear iPhone</div>
+  <div class="s">No iPhone, abra o Collie e escaneie. O código vale uma vez.</div>
+  <div class="qr"><canvas id="qr" width="33" height="33"></canvas></div>
+  <div class="center note" style="margin:0">Expira em 4:52 · Wi-Fi 192.168.1.10 · Tailscale 100.101.22.7</div>
+  <div class="foot"><span class="btn">Cancelar</span></div>
+</div>
+</div>
+
+<div>
+<p class="label">3 · Confirmação (quando o iPhone lê o QR; 60 s)</p>
+<div class="sheet">
+  <div class="t">Parear “iPhone de Ysrael”?</div>
+  <div class="s">iPhone 16 · Wi-Fi 192.168.1.23</div>
+  <div class="code">482 913</div>
+  <div class="center note" style="margin:0">Confira se o iPhone mostra o mesmo código.</div>
+  <div class="bar"><i></i></div>
+  <div class="foot"><span class="btn">Recusar</span><span class="btn primary">Parear</span></div>
+</div>
+</div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:28px">
+<div>
+<p class="label">4 · Acesso do terminal: liberação feita pelo celular</p>
+<div class="card">
+  <div class="grant">~/code/app/dist <span class="btn danger" style="float:right;padding:2px 8px">Revogar</span>
+    <small>Escrita · este terminal · liberado do iPhone de Ysrael (Tailscale)</small></div>
+</div>
+</div>
+<div>
+<p class="label">5 · Chat do Trabalho: pergunta e aprovação vindas do celular</p>
+<div class="chat">
+  <div class="msg user">@Dev já subiu o build?<span class="via">do iPhone de Ysrael</span></div>
+  <div class="msg agent"><span class="who">Dev</span>Subiu: build 412 no TestFlight.</div>
+  <div class="msg col">Aprovado do iPhone de Ysrael (Tailscale)</div>
+</div>
+</div>
+<div>
+<p class="label">6 · mac.reveal</p>
+<div class="card note" style="margin:0">Sem tela própria: o canvas centraliza o terminal pedido (e o seleciona), ou abre a Prévia do artifact, como um clique na lista. O app em segundo plano não rouba o foco.</div>
+</div>
+</div>
+
+</div>
+<script>
+// a QR-like pattern (illustration only; the app draws the real one with CIQRCodeGenerator)
+const c = document.getElementById('qr').getContext('2d'), n = 33;
+let s = 7; const r = () => (s = (s * 9301 + 49297) % 233280) / 233280;
+c.fillStyle = '#fff'; c.fillRect(0, 0, n, n); c.fillStyle = '#0E1326';
+for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (r() < .47) c.fillRect(x, y, 1, 1);
+for (const [x, y] of [[0, 0], [n - 7, 0], [0, n - 7]]) {
+  c.fillStyle = '#fff'; c.fillRect(x - 1, y - 1, 9, 9);
+  c.fillStyle = '#0E1326'; c.fillRect(x, y, 7, 7); c.fillStyle = '#fff'; c.fillRect(x + 1, y + 1, 5, 5);
+  c.fillStyle = '#0E1326'; c.fillRect(x + 2, y + 2, 3, 3);
+}
+</script>
+</body>
+</html>

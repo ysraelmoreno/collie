@@ -1,0 +1,590 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collie iOS</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+/* Tokens = Sources/CollieTheme/Palette.swift (dark é o padrão do app; light em [data-theme=light]) */
+:root {
+  --background:#0E1326; --surface:#161C36; --sidebar:#121831; --sunken:#0B1020; --raised:#1B2340;
+  --border:#262E52; --border-soft:#1E2647; --grid:#151B33; --scrim:#070A16;
+  --text:#E8ECF8; --text2:#B6BEDB; --muted:#8C95B8;
+  --accent:#6EE7B7; --on-accent:#0E1326; --attention:#FFB86B; --attention-tint:#2A2418;
+  --secondary:#93A4FF; --danger:#FF8A8A; --mark:#6E9BFF;
+  --r-btn:9px; --r-field:10px; --r-card:14px; --r-tag:6px;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --background:#F3F4F1; --surface:#FFFFFF; --sidebar:#ECEDE9; --sunken:#F7F7F5; --raised:#E3E7F7;
+  --border:#D9DBD5; --border-soft:#E4E5E0; --grid:#E4E5E0; --scrim:#C9CBC5;
+  --text:#15171C; --text2:#2E323B; --muted:#5C6270;
+  --accent:#2448C9; --on-accent:#FFFFFF; --attention:#A14A06; --attention-tint:#FDF6EE;
+  --secondary:#6B3FC4; --danger:#B42318; --mark:#2F6BFF;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --background:#F3F4F1; --surface:#FFFFFF; --sidebar:#ECEDE9; --sunken:#F7F7F5; --raised:#E3E7F7;
+    --border:#D9DBD5; --border-soft:#E4E5E0; --grid:#E4E5E0; --scrim:#C9CBC5;
+    --text:#15171C; --text2:#2E323B; --muted:#5C6270;
+    --accent:#2448C9; --on-accent:#FFFFFF; --attention:#A14A06; --attention-tint:#FDF6EE;
+    --secondary:#6B3FC4; --danger:#B42318; --mark:#2F6BFF;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--sidebar); color: var(--text); font: 15px/1.4 "Space Grotesk", system-ui, -apple-system, sans-serif; min-height: 100vh; }
+.mono, code, pre { font-family: "DM Mono", ui-monospace, Menlo, monospace; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.lucide { width: 1.1em; height: 1.1em; vertical-align: -0.15em; stroke-width: 2; }
+
+/* Stage: índice de telas + iPhone */
+.stage { display: flex; gap: 32px; justify-content: center; align-items: flex-start; padding: 28px 16px 48px; }
+.index { width: 248px; position: sticky; top: 20px; }
+.index h1 { font-size: 18px; margin: 0 0 2px; display: flex; gap: 8px; align-items: center; }
+.index p { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+.index h3 { font: 500 11px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 6px; }
+.index button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 6px 10px; border-radius: 8px; color: var(--text2); font-size: 13px; }
+.index button:hover { background: var(--raised); }
+.index button.on { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
+.notes { margin-top: 18px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 12px; }
+.notes b { color: var(--text2); font-weight: 500; }
+@media (max-width: 760px) { .stage { flex-direction: column; align-items: center; } .index { width: 100%; max-width: 390px; position: static; } }
+
+.device { width: 390px; height: 844px; border-radius: 54px; padding: 12px; background: #05070F; box-shadow: 0 30px 80px rgba(0,0,0,.35), inset 0 0 0 2px #2a2f44; flex: none; max-width: 100%; }
+.screen { position: relative; width: 100%; height: 100%; border-radius: 42px; overflow: hidden; background: var(--background); display: flex; flex-direction: column; }
+.status { height: 50px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 30px 0 34px; font-weight: 600; font-size: 15px; position: relative; z-index: 5; }
+.island { position: absolute; left: 50%; top: 11px; width: 120px; height: 34px; background: #000; border-radius: 20px; transform: translateX(-50%); }
+.status .sys { display: flex; gap: 6px; align-items: center; }
+.home-ind { position: absolute; bottom: 8px; left: 50%; width: 134px; height: 5px; border-radius: 3px; background: var(--text); opacity: .5; transform: translateX(-50%); z-index: 9; }
+
+/* App chrome */
+.nav { flex: none; padding: 4px 18px 10px; display: flex; align-items: center; gap: 10px; }
+.nav h2 { font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -.01em; flex: 1; }
+.nav .back { background: none; border: 0; color: var(--accent); display: flex; align-items: center; gap: 2px; padding: 4px 0; font-size: 16px; }
+.nav.small h2 { font-size: 17px; font-weight: 600; text-align: center; }
+.iconbtn { width: 36px; height: 36px; border-radius: 18px; border: 0; background: var(--surface); display: grid; place-items: center; color: var(--text2); box-shadow: inset 0 0 0 1px var(--border); }
+.body { flex: 1; overflow-y: auto; padding: 0 16px 24px; }
+.body::-webkit-scrollbar { display: none; }
+.tabs { flex: none; display: flex; border-top: 1px solid var(--border); background: var(--sidebar); padding: 6px 4px 26px; }
+.tabs button { flex: 1; background: none; border: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10.5px; color: var(--muted); position: relative; padding: 4px 0; }
+.tabs button .lucide { width: 24px; height: 24px; }
+.tabs button.on { color: var(--accent); }
+.badge { position: absolute; top: 0; left: 50%; margin-left: 6px; min-width: 18px; height: 18px; border-radius: 9px; background: var(--attention); color: var(--background); font: 600 11px/18px "DM Mono", monospace; text-align: center; padding: 0 5px; }
+
+.section { font: 500 11px "DM Mono", monospace; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 18px 4px 8px; display: flex; align-items: center; gap: 6px; }
+.section .sp { flex: 1; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); }
+.card.att { border-color: color-mix(in srgb, var(--attention) 60%, transparent); }
+.list > * + * { border-top: 1px solid var(--border-soft); }
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; background: none; border: 0; width: 100%; text-align: left; }
+.row .main { flex: 1; min-width: 0; }
+.row .t { font-weight: 600; font-size: 15px; display: flex; gap: 6px; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .s { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chev { color: var(--muted); }
+.dot { width: 10px; height: 10px; border-radius: 5px; flex: none; }
+.dot.run { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); animation: pulse 1.6s infinite; }
+.dot.idle { background: transparent; box-shadow: inset 0 0 0 2px var(--muted); }
+.dot.att { background: var(--attention); box-shadow: 0 0 0 4px color-mix(in srgb, var(--attention) 22%, transparent); }
+.dot.dead { background: var(--danger); }
+@keyframes pulse { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent); } }
+.tag { font: 500 11px "DM Mono", monospace; padding: 2px 6px; border-radius: var(--r-tag); border: 1px solid color-mix(in srgb, currentColor 50%, transparent); white-space: nowrap; }
+.tag.accent { color: var(--accent); } .tag.att { color: var(--attention); } .tag.sec { color: var(--secondary); } .tag.danger { color: var(--danger); } .tag.neutral { color: var(--muted); }
+.avatar { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: var(--raised); color: var(--text2); flex: none; font: 600 12px "DM Mono", monospace; }
+.avatar.pastor { background: color-mix(in srgb, var(--secondary) 22%, var(--surface)); color: var(--secondary); }
+
+.btn { border: 0; border-radius: var(--r-btn); height: 40px; padding: 0 14px; font-weight: 500; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.att { background: var(--attention); color: var(--background); }
+.btn.sec { background: transparent; box-shadow: inset 0 0 0 1px var(--border); }
+.btn.danger { background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent); }
+.btn.quiet { background: transparent; color: var(--muted); }
+.btn.block { width: 100%; height: 48px; font-size: 16px; border-radius: 12px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btns { display: flex; gap: 8px; } .btns > * { flex: 1; }
+
+.banner { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; font-size: 13px; margin: 0 0 6px; }
+.banner.att { background: var(--attention-tint); color: var(--attention); border: 1px solid color-mix(in srgb, var(--attention) 40%, transparent); }
+.banner.danger { background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent); }
+.banner .lucide { flex: none; margin-top: 2px; }
+.banner b { display: block; color: var(--text); font-weight: 600; }
+
+.term { background: var(--sunken); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; font: 12px/1.55 "DM Mono", monospace; color: var(--text2); white-space: pre-wrap; word-break: break-word; }
+.term .p { color: var(--accent); } .term .m { color: var(--muted); } .term .a { color: var(--attention); } .term .s { color: var(--secondary); }
+.chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; border: 1px solid var(--border); background: var(--surface); border-radius: 16px; padding: 5px 11px; font-size: 12.5px; color: var(--text2); }
+.composer { flex: none; border-top: 1px solid var(--border); background: var(--sidebar); padding: 8px 12px 30px; }
+.composer .f { display: flex; gap: 8px; align-items: flex-end; }
+.composer textarea { flex: 1; resize: none; height: 40px; border-radius: 20px; border: 1px solid var(--border); background: var(--sunken); color: var(--text); font: 14px/1.3 "Space Grotesk", sans-serif; padding: 10px 14px; outline: none; }
+.composer textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.composer .send { width: 40px; height: 40px; border-radius: 20px; border: 0; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; flex: none; }
+.composer .hint { font-size: 11.5px; color: var(--muted); margin: 6px 4px 0; }
+.bubble { margin: 10px 0 0 40px; background: var(--raised); border-radius: 14px 14px 4px 14px; padding: 8px 12px; font-size: 14px; }
+.bubble .meta { font: 11px "DM Mono", monospace; color: var(--muted); margin-top: 4px; }
+.reply { margin: 10px 40px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 14px 14px 14px 4px; padding: 8px 12px; font-size: 13.5px; }
+.reply.collie { color: var(--muted); font-size: 13px; }
+.reply .meta { font: 11px "DM Mono", monospace; color: var(--muted); margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+
+.approval { padding: 14px; }
+.approval + .approval { margin-top: 10px; }
+.approval .hd { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.approval .hd .t { font-weight: 600; } .approval .hd .s { font-size: 12px; color: var(--muted); }
+.approval .q { font-size: 14px; margin: 0 0 10px; }
+.approval .q code { background: var(--sunken); padding: 1px 5px; border-radius: 5px; font-size: 12.5px; word-break: break-all; }
+.approval .cap { font: 11.5px/1.5 "DM Mono", monospace; background: var(--sunken); border-radius: 8px; padding: 8px 10px; color: var(--text2); margin-bottom: 12px; white-space: pre-wrap; max-height: 120px; overflow: auto; }
+.approval .opt { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text2); margin: -2px 0 12px; }
+.approval .opt input { accent-color: var(--accent); }
+.seg { display: flex; background: var(--sunken); border: 1px solid var(--border); border-radius: 10px; padding: 3px; margin-bottom: 4px; }
+.seg button { flex: 1; border: 0; background: none; padding: 6px 0; border-radius: 7px; font-size: 13px; color: var(--muted); }
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 0 var(--border); }
+
+.empty { text-align: center; padding: 70px 24px 20px; color: var(--muted); }
+.empty .ill { width: 88px; height: 88px; margin: 0 auto 18px; border-radius: 28px; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--border); color: var(--text2); }
+.empty .ill .lucide { width: 38px; height: 38px; stroke-width: 1.5; }
+.empty h4 { color: var(--text); font-size: 18px; margin: 0 0 6px; }
+.empty p { margin: 0 auto 18px; max-width: 280px; font-size: 14px; }
+
+.task { display: flex; gap: 10px; padding: 9px 14px; align-items: flex-start; font-size: 14px; }
+.task .lucide { margin-top: 2px; flex: none; }
+.task .why { display: block; font-size: 12px; color: var(--muted); }
+.task.done { color: var(--muted); } .task.done span:first-of-type { text-decoration: line-through; }
+.kv { display: flex; gap: 6px; flex-wrap: wrap; }
+.progress { height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; margin: 10px 0 2px; }
+.progress i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+
+.thumb { aspect-ratio: 4/3; border-radius: 10px; background: var(--sunken); border: 1px solid var(--border-soft); overflow: hidden; position: relative; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pcard { background: none; border: 0; padding: 0; text-align: left; }
+.pcard .t { font-weight: 600; font-size: 13.5px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcard .s { font-size: 11.5px; color: var(--muted); }
+.mini { position: absolute; inset: 0; padding: 10px; display: flex; flex-direction: column; gap: 5px; }
+.mini i { display: block; height: 6px; border-radius: 3px; background: var(--border); }
+
+.qrwrap { margin: 10px auto 0; width: 280px; height: 280px; border-radius: 28px; position: relative; background: #000; overflow: hidden; }
+.qrwrap .cam { position: absolute; inset: 0; background: radial-gradient(circle at 30% 30%, #2a3150, #0b0e18 70%); }
+.qrwrap .corner { position: absolute; width: 46px; height: 46px; border: 4px solid var(--accent); }
+.qrwrap .c1 { top: 36px; left: 36px; border-right: 0; border-bottom: 0; border-radius: 14px 0 0 0; }
+.qrwrap .c2 { top: 36px; right: 36px; border-left: 0; border-bottom: 0; border-radius: 0 14px 0 0; }
+.qrwrap .c3 { bottom: 36px; left: 36px; border-right: 0; border-top: 0; border-radius: 0 0 0 14px; }
+.qrwrap .c4 { bottom: 36px; right: 36px; border-left: 0; border-top: 0; border-radius: 0 0 14px 0; }
+.qrwrap svg { position: absolute; left: 70px; top: 70px; width: 140px; height: 140px; opacity: .9; }
+.scanline { position: absolute; left: 50px; right: 50px; height: 2px; background: var(--accent); box-shadow: 0 0 12px var(--accent); animation: scan 2.2s ease-in-out infinite; top: 60px; }
+@keyframes scan { 50% { top: 216px; } }
+.code6 { display: flex; gap: 8px; justify-content: center; margin: 18px 0 8px; }
+.code6 span { width: 42px; height: 54px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); display: grid; place-items: center; font: 500 26px "DM Mono", monospace; }
+.center { text-align: center; }
+.lead { color: var(--muted); font-size: 14.5px; margin: 6px 8px 0; }
+.steps { counter-reset: s; list-style: none; padding: 0; margin: 18px 0; }
+.steps li { counter-increment: s; display: flex; gap: 12px; padding: 8px 0; font-size: 14px; color: var(--text2); }
+.steps li::before { content: counter(s); flex: none; width: 24px; height: 24px; border-radius: 12px; background: var(--raised); color: var(--text); font: 500 12px/24px "DM Mono", monospace; text-align: center; }
+
+/* Lock screen / pushes */
+.lock { position: absolute; inset: 0; background: linear-gradient(160deg, #1a2350 0%, #0b1020 55%, #0f2a2a 100%); color: #fff; padding: 64px 12px 0; }
+.lock .clock { text-align: center; font-size: 82px; font-weight: 300; line-height: 1; letter-spacing: -.02em; }
+.lock .date { text-align: center; font-size: 18px; opacity: .85; margin-bottom: 38px; }
+.push { background: rgba(255,255,255,.14); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border-radius: 20px; padding: 11px 13px; margin-bottom: 8px; color: #fff; font-size: 14px; width: 100%; text-align: left; border: 0; display: block; }
+.push .ph { display: flex; align-items: center; gap: 8px; font-size: 12.5px; opacity: .85; margin-bottom: 3px; }
+.push .ph .ic { width: 20px; height: 20px; border-radius: 5px; background: #0E1326; display: grid; place-items: center; }
+.push .ph .tm { margin-left: auto; }
+.push b { display: block; font-weight: 600; }
+.push .acts { display: flex; gap: 6px; margin-top: 10px; }
+.push .acts span { flex: 1; text-align: center; background: rgba(255,255,255,.18); border-radius: 12px; padding: 8px; font-size: 13.5px; font-weight: 500; }
+.push.expanded { background: rgba(255,255,255,.2); }
+
+.toast { position: absolute; left: 16px; right: 16px; bottom: 100px; z-index: 20; background: var(--text); color: var(--background); border-radius: 14px; padding: 12px 14px; font-size: 14px; display: flex; gap: 10px; align-items: center; transform: translateY(20px); opacity: 0; transition: .25s; pointer-events: none; }
+.toast.show { transform: none; opacity: 1; }
+.sheetwrap { position: absolute; inset: 0; z-index: 30; background: color-mix(in srgb, var(--scrim) 60%, transparent); display: flex; align-items: flex-end; }
+.sheet { width: 100%; background: var(--surface); border-radius: 22px 22px 0 0; padding: 10px 18px 36px; border-top: 1px solid var(--border); }
+.sheet .grab { width: 36px; height: 5px; border-radius: 3px; background: var(--border); margin: 0 auto 14px; }
+.faceid { text-align: center; padding: 18px 0 8px; }
+.faceid .lucide { width: 56px; height: 56px; color: var(--accent); stroke-width: 1.4; }
+.settings .row .lucide { color: var(--muted); }
+.switch { width: 46px; height: 28px; border-radius: 14px; background: var(--accent); position: relative; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border-radius: 11px; background: #fff; }
+.switch.off { background: var(--border); } .switch.off::after { right: auto; left: 3px; }
+.stale { opacity: .5; filter: saturate(.3); pointer-events: none; }
+.frame-prev { border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: #F4F2ED; color: #15171C; }
+.frame-prev .ph { padding: 14px; }
+.frame-prev h5 { margin: 0 0 6px; font-size: 17px; }
+.frame-prev p { margin: 0 0 8px; font-size: 12px; color: #5A5D66; }
+.frame-prev .bar { height: 8px; border-radius: 4px; background: #DCD8CF; margin: 6px 0; }
+.frame-prev .hero { height: 90px; background: linear-gradient(135deg, #2D69FD, #6EE7B7); border-radius: 8px; margin: 8px 0; }
+.frame-prev.dark { background: #15171C; color: #F4F2ED; } .frame-prev.dark p { color: #8C95B8; } .frame-prev.dark .bar { background: #2E323B; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <aside class="index" id="index"></aside>
+  <div class="device"><div class="screen" id="screen"></div></div>
+</div>
+
+<script src="collie-lib://lib/lucide@0.469.0/lucide.min.js"></script>
+<script>
+// ponytail: protótipo de design, HTML puro + Lucide; sem React (template trazia, não precisa).
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const I = (n, extra = '') => `<i data-lucide="${n}" ${extra}></i>`;
+
+// ---------- Dados fictícios (vocabulário do README) ----------
+const MAC = 'MacBook Pro · collie';
+const paddocks = [
+  { name: 'pasto principal', branch: 'main', terms: [
+    { id: 'main', name: 'Collie Main', preset: 'claude', role: 'Pastor', status: 'run', line: 'Revisando PR #212 · 3 terminais na guia' },
+    { id: 'design', name: 'product design mobile', preset: 'claude', status: 'run', line: 'Escrevendo docs/pages/collie-ios/index.html', leash: 'Collie Main' },
+    { id: 'shell', name: 'shell', preset: 'zsh', status: 'idle', line: 'Ocioso há 42 min' },
+  ]},
+  { name: 'net-panel', branch: 'feat/net-panel', terms: [
+    { id: 'net', name: 'net-panel', preset: 'claude', status: 'att', line: 'Pede aprovação: Bash swift test…', leash: 'Collie Main' },
+    { id: 'rev', name: 'revisor', preset: 'codex', status: 'idle', line: 'Terminou a revisão · 2 achados', leash: 'Collie Main' },
+  ]},
+  { name: 'cursor-spike', branch: 'spike/cursor', terms: [
+    { id: 'cur', name: 'cursor-spike', preset: 'cursor', status: 'att', line: 'Bloqueado: escrever ~/.cursor/mcp.json', leash: 'Collie Main' },
+  ]},
+];
+const allTerms = paddocks.flatMap(p => p.terms.map(t => ({ ...t, paddock: p.name, branch: p.branch })));
+let approvals = [
+  { id: 'a1', kind: 'perm', term: 'net-panel', paddock: 'net-panel', when: 'há 2 min', q: 'Do you want to run <code>swift test --filter NetworkPanelTests</code>?',
+    cap: 'Bash(swift test --filter NetworkPanelTests)\n  Run the network panel tests\n\nDo you want to proceed?\n❯ 1. Yes\n  2. Yes, and don\'t ask again for swift test\n  3. No, and tell Claude what to do differently' },
+  { id: 'a2', kind: 'access', term: 'cursor-spike', paddock: 'cursor-spike', when: 'há 6 min', op: 'escrever', path: '~/.cursor/mcp.json', folder: '~/.cursor' },
+  { id: 'a3', kind: 'unknown', term: 'revisor', paddock: 'net-panel', when: 'há 11 min', cap: 'saída demais para conferir' },
+];
+const works = [
+  { id: 'w1', title: 'iOS companion — design', term: 'product design mobile', branch: 'docs/readme-build', done: 3, total: 6, jobs: 1, alert: false,
+    tasks: [['done', 'Ler README e docs (vocabulário)'], ['done', 'Mapear tokens de CollieTheme'], ['done', 'Criar Prévia collie-ios'], ['inProgress', 'Desenhar telas e estados'], ['open', 'Notificações push'], ['deferred', 'Widget e Live Activity', 'fora do escopo do primeiro corte']],
+    jobs_: [['running', 'Prévia preview-5 recarregando']], commits: [], notes: ['Tema escuro é o padrão; claro via data-theme.'] },
+  { id: 'w2', title: 'Painel Rede: interceptar HTTPS no emulador', term: 'net-panel', branch: 'feat/net-panel', done: 7, total: 11, jobs: 2, alert: true,
+    tasks: [['done', 'mitmdump com addon'], ['done', 'CA no store do sistema'], ['inProgress', 'Testes do NetworkPanel'], ['open', 'Preview de body limitado'], ['abandoned', 'Proxy via adb reverse', 'estado do adb some entre reinícios']],
+    jobs_: [['running', 'mitmdump :8080'], ['unknown', 'swift build (sem sinal há 31 min)']], commits: ['a91c2e0 fix(net): limitar preview de body', '5d10b7f feat(net): addon mitmdump'], notes: [] },
+  { id: 'w3', title: 'Cursor: plugin-dir por terminal', term: 'cursor-spike', branch: 'spike/cursor', done: 2, total: 4, jobs: 0, alert: true,
+    tasks: [['done', 'Gerar --plugin-dir'], ['done', 'Hook sessionStart'], ['inProgress', 'Registrar MCP collie'], ['open', 'Validar com sandbox real']], jobs_: [], commits: [], notes: [] },
+];
+const previews = [
+  { id: 'collie-ios', title: 'collie-ios', kind: 'prototype', term: 'product design mobile', when: 'agora', live: true },
+  { id: 'net-viab', title: 'network-interceptor-viabilidade', kind: 'doc', term: 'net-panel', when: 'ontem' },
+  { id: 'emu-viab', title: 'emulador-interno-viabilidade', kind: 'doc', term: 'Collie Main', when: '2 nov' },
+  { id: 'metrics', title: 'uso-de-memoria', kind: 'dashboard', term: 'Collie Main', when: '1 nov' },
+  { id: 'deck', title: 'collie-4r-rename', kind: 'deck', term: 'Collie Main', when: '28 out' },
+];
+
+// ---------- Estado ----------
+const S = { screen: 'home', tab: 'home', term: 'net', work: 'w1', prev: 'collie-ios', prevTheme: 'Página', offline: false, emptyInbox: false, emptyHome: false, sheet: null, chat: [] };
+
+const SCREENS = [
+  ['Pareamento', [['pair-welcome', 'Boas-vindas'], ['pair-scan', 'Escanear QR'], ['pair-confirm', 'Conferir código'], ['pair-error', 'QR expirado']]],
+  ['Pasto', [['home', 'Cercados e terminais'], ['home-empty', 'Sem terminais'], ['home-offline', 'Mac offline'], ['unreachable', 'Mac inalcançável']]],
+  ['Terminal', [['term-att', 'Pedindo aprovação'], ['term-run', 'Rodando + ask'], ['term-idle', 'Ocioso']]],
+  ['Aprovações', [['inbox', 'Pendências'], ['inbox-faceid', 'Liberar com Face ID'], ['inbox-stale', 'Pedido não pendente'], ['inbox-empty', 'Vazio']]],
+  ['Trabalho', [['work', 'Trabalhos'], ['work-detail', 'Detalhe do trabalho']]],
+  ['Prévias', [['previews', 'Prévias'], ['preview', 'Ver Prévia'], ['previews-empty', 'Sem Prévias']]],
+  ['Sistema', [['lock', 'Notificações push'], ['lock-expanded', 'Push expandido'], ['settings', 'Ajustes']]],
+];
+// cada atalho do índice ajusta o estado e cai numa tela real
+const PRESETS = {
+  'pair-welcome': { screen: 'pair-welcome' }, 'pair-scan': { screen: 'pair-scan' }, 'pair-confirm': { screen: 'pair-confirm' }, 'pair-error': { screen: 'pair-error' },
+  home: { screen: 'home', tab: 'home', offline: false, emptyHome: false }, 'home-empty': { screen: 'home', tab: 'home', emptyHome: true, offline: false },
+  'home-offline': { screen: 'home', tab: 'home', offline: true, emptyHome: false }, unreachable: { screen: 'unreachable' },
+  'term-att': { screen: 'term', term: 'net', offline: false }, 'term-run': { screen: 'term', term: 'design', offline: false }, 'term-idle': { screen: 'term', term: 'rev', offline: false },
+  inbox: { screen: 'inbox', tab: 'inbox', emptyInbox: false, offline: false }, 'inbox-faceid': { screen: 'inbox', tab: 'inbox', emptyInbox: false, sheet: 'faceid:a2' },
+  'inbox-stale': { screen: 'inbox', tab: 'inbox', emptyInbox: false, sheet: 'stale' }, 'inbox-empty': { screen: 'inbox', tab: 'inbox', emptyInbox: true },
+  work: { screen: 'work', tab: 'work' }, 'work-detail': { screen: 'work-detail', tab: 'work', work: 'w2' },
+  previews: { screen: 'previews', tab: 'prev', emptyPrev: false }, preview: { screen: 'preview', tab: 'prev', prev: 'net-viab' }, 'previews-empty': { screen: 'previews', tab: 'prev', emptyPrev: true },
+  lock: { screen: 'lock' }, 'lock-expanded': { screen: 'lock-expanded' }, settings: { screen: 'settings', tab: 'home' },
+};
+let currentPreset = 'home';
+
+// ---------- Peças ----------
+const statusBar = (light) => `<div class="status" ${light ? 'style="color:#fff"' : ''}><span>9:41</span><div class="island"></div><span class="sys">${I('signal')}${I('wifi')}${I('battery-full')}</span></div>`;
+const statusTag = s => ({ run: '<span class="tag accent">rodando</span>', idle: '<span class="tag neutral">ocioso</span>', att: '<span class="tag att">atenção</span>', dead: '<span class="tag danger">encerrado</span>' })[s];
+const initials = n => n.split(/[\s-]+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+const pendingCount = () => S.emptyInbox ? 0 : approvals.length;
+function tabs() {
+  const t = (id, icon, label, badge) => `<button class="${S.tab === id ? 'on' : ''}" data-tab="${id}">${I(icon)}${label}${badge ? `<span class="badge">${badge}</span>` : ''}</button>`;
+  return `<nav class="tabs">${t('home', 'layout-grid', 'Pasto')}${t('inbox', 'shield-check', 'Aprovações', pendingCount())}${t('work', 'list-checks', 'Trabalho')}${t('prev', 'panels-top-left', 'Prévias')}</nav>`;
+}
+const offlineBanner = () => S.offline ? `<div class="banner danger">${I('wifi-off')}<div><b>Mac offline desde 14:02</b>Mostrando o último estado conhecido. Ações voltam quando o Mac responder.</div></div>` : '';
+const nav = (title, opts = {}) => opts.back
+  ? `<div class="nav small"><button class="back" data-go="${opts.back}">${I('chevron-left')}${opts.backLabel || 'Voltar'}</button><h2>${title}</h2><span style="width:60px;text-align:right">${opts.right || ''}</span></div>`
+  : `<div class="nav"><h2>${title}</h2>${opts.right || ''}</div>`;
+
+// ---------- Telas ----------
+const V = {};
+V['pair-welcome'] = () => `${statusBar()}<div class="body" style="display:flex;flex-direction:column;padding-top:40px">
+  <div class="center"><svg width="96" height="96" viewBox="0 0 200 200" aria-hidden="true"><path d="M145.3 54.7 A64 64 0 1 0 145.3 145.3" fill="none" stroke="var(--text)" stroke-width="18" stroke-linecap="round"/><circle cx="92" cy="82" r="11" fill="var(--text)"/><circle cx="120" cy="100" r="11" fill="var(--text)"/><circle cx="92" cy="118" r="11" fill="var(--text)"/><circle cx="145.3" cy="54.7" r="16" fill="var(--mark)"/></svg>
+  <h2 style="font-size:28px;margin:14px 0 4px">Collie no bolso</h2><p class="lead">Acompanhe seus terminais, responda aprovações e mande prompts para o Mac de onde estiver.</p></div>
+  <ol class="steps"><li>No Mac, abra Collie › Ajustes › iPhone e clique em Parear.</li><li>Escaneie o QR que aparece na tela.</li><li>Confira se o código de 6 dígitos é o mesmo nos dois.</li></ol>
+  <div style="margin-top:auto"><button class="btn primary block" data-go="pair-scan">${I('scan-line')} Escanear QR</button>
+  <p class="center" style="font-size:12px;color:var(--muted);margin:10px 0 0">O iPhone nunca roda agentes: só fala com o daemon do seu Mac.</p></div></div>`;
+V['pair-scan'] = () => `${statusBar()}${nav('Parear com o Mac', { back: 'pair-welcome' })}<div class="body">
+  <div class="qrwrap"><div class="cam"></div>${qrSvg()}<span class="corner c1"></span><span class="corner c2"></span><span class="corner c3"></span><span class="corner c4"></span><div class="scanline"></div></div>
+  <p class="lead center" style="margin-top:16px">Aponte para o QR em <b style="color:var(--text)">Ajustes › iPhone</b> no Collie do Mac.</p>
+  <div style="margin-top:28px" class="btns"><button class="btn sec" data-go="pair-error">Simular QR expirado</button><button class="btn primary" data-go="pair-confirm">Simular leitura</button></div></div>`;
+V['pair-confirm'] = () => `${statusBar()}${nav('Conferir código', { back: 'pair-scan' })}<div class="body center">
+  <div class="empty" style="padding-top:24px"><div class="ill">${I('laptop')}</div><h4>MacBook Pro</h4><p>Collie 0.9 · rede local · chave nova</p></div>
+  <p class="lead">O Mac mostra este mesmo código. Só confirme se forem iguais.</p>
+  <div class="code6 mono">${'482917'.split('').map(d => `<span>${d}</span>`).join('')}</div>
+  <div style="margin-top:28px" class="btns"><button class="btn sec" data-go="pair-welcome">São diferentes</button><button class="btn primary" data-act="paired">São iguais</button></div>
+  <p style="font-size:12px;color:var(--muted);margin-top:14px">Depois do pareamento o iPhone pode ver saída de terminal e pedir ações. Revogue em Ajustes, aqui ou no Mac.</p></div>`;
+V['pair-error'] = () => `${statusBar()}${nav('Parear com o Mac', { back: 'pair-welcome' })}<div class="body"><div class="empty"><div class="ill" style="color:var(--danger)">${I('qr-code')}</div>
+  <h4>Este QR expirou</h4><p>O código vale por 2 minutos e só uma vez. No Mac, clique em <b>Gerar outro</b> e escaneie de novo.</p>
+  <button class="btn primary" data-go="pair-scan">${I('rotate-ccw')} Escanear de novo</button></div></div>`;
+
+V.home = () => {
+  const right = `<button class="iconbtn" data-go="settings" aria-label="Ajustes">${I('settings')}</button>`;
+  if (S.emptyHome) return `${statusBar()}${nav('Pasto', { right })}<div class="body"><div class="empty"><div class="ill">${I('square-terminal')}</div>
+    <h4>Nenhum terminal aberto</h4><p>O Mac está online, mas o canvas está vazio. Abra um terminal ou aplique um rebanho no Mac.</p>
+    <button class="btn sec" data-act="toast:Pedido enviado: o Mac vai mostrar ⌘K › Aplicar rebanho">${I('laptop')} Abrir no Mac</button></div></div>${tabs()}`;
+  const att = allTerms.filter(t => t.status === 'att').length, run = allTerms.filter(t => t.status === 'run').length;
+  return `${statusBar()}${nav('Pasto', { right })}<div class="body">
+    ${offlineBanner()}
+    <div class="card" style="padding:12px 14px;display:flex;gap:12px;align-items:center;margin-bottom:4px">
+      <span class="dot ${S.offline ? 'dead' : 'run'}"></span><div style="flex:1"><div style="font-weight:600">${MAC}</div><div style="font-size:12px;color:var(--muted)">${S.offline ? 'sem resposta · último contato 14:02' : 'conectado · rede local · 18 ms'}</div></div>
+      <div class="kv"><span class="tag accent">${run} rodando</span>${att ? `<span class="tag att">${att} atenção</span>` : ''}</div></div>
+    <div class="${S.offline ? 'stale' : ''}">
+    ${att && !S.offline ? `<button class="banner att" style="width:100%;text-align:left;border-style:solid;margin-top:10px" data-tab="inbox">${I('shield-alert')}<div style="flex:1"><b>${pendingCount()} pedidos esperando você</b>Aprovações de comando e cartão de acesso do sandbox.</div>${I('chevron-right')}</button>` : ''}
+    ${paddocks.map(p => `<div class="section">${I('fence')} ${esc(p.name)} <span class="sp"></span><span class="mono" style="text-transform:none">${esc(p.branch)}</span></div>
+      <div class="card list">${p.terms.map(t => `<button class="row" data-term="${t.id}">
+        <div class="avatar ${t.role ? 'pastor' : ''}">${t.role ? I('crown') : initials(t.name)}</div>
+        <div class="main"><div class="t">${esc(t.name)}${t.role ? '<span class="tag sec">Pastor</span>' : ''}</div><div class="s">${t.leash ? `${I('link-2')} ${esc(t.leash)} · ` : ''}${esc(t.line)}</div></div>
+        <span class="dot ${t.status}" title="${t.status}"></span>${I('chevron-right', 'class="chev"')}</button>`).join('')}</div>`).join('')}
+    <p style="font-size:11.5px;color:var(--muted);margin:14px 4px 0">${I('info')} Ponto cheio = rodando · aro = ocioso · laranja = precisa de você. Ícone de link = na guia de um Pastor.</p>
+    </div></div>${tabs()}`;
+};
+V.unreachable = () => `${statusBar()}${nav('Pasto')}<div class="body"><div class="empty"><div class="ill" style="color:var(--danger)">${I('unplug')}</div>
+  <h4>Não achamos o seu Mac</h4><p>Nada salvo para mostrar ainda. Confira se o Mac está ligado, acordado e com o Collie aberto.</p>
+  <div style="text-align:left;max-width:290px;margin:0 auto 18px" class="card list">
+    <div class="row">${I('check', 'style="color:var(--accent)"')}<div class="main"><div class="t" style="font-weight:500">iPhone com internet</div></div></div>
+    <div class="row">${I('x', 'style="color:var(--danger)"')}<div class="main"><div class="t" style="font-weight:500">Daemon collied respondendo</div><div class="s">última tentativa há 4 s</div></div></div>
+    <div class="row">${I('minus', 'style="color:var(--muted)"')}<div class="main"><div class="t" style="font-weight:500">Mesma rede ou relay</div><div class="s">relay desligado em Ajustes</div></div></div></div>
+  <div class="btns" style="max-width:290px;margin:0 auto"><button class="btn sec" data-go="settings">Ajustes</button><button class="btn primary" data-act="toast:Tentando de novo…">${I('refresh-cw')} Tentar</button></div></div></div>${tabs()}`;
+
+function termOutput(t) {
+  if (t.id === 'net') return `<span class="m">⏺ Rodando os testes do painel Rede</span>
+<span class="p">❯</span> Bash(swift test --filter NetworkPanelTests)
+<span class="m">  Run the network panel tests</span>
+
+<span class="a">Do you want to proceed?
+❯ 1. Yes
+  2. Yes, and don't ask again for swift test
+  3. No, and tell Claude what to do differently</span>`;
+  if (t.id === 'design') return `<span class="m">⏺ Read(Sources/CollieTheme/Palette.swift)</span>
+  ⎿  Read 160 lines
+<span class="m">⏺ Write(docs/pages/collie-ios/index.html)</span>
+  ⎿  Wrote 612 lines
+<span class="s">⏺ collie preview screenshot --full-page</span>
+  ⎿  ok · 390×844
+<span class="p">✻</span> Desenhando estados de erro… <span class="m">(2m 14s · esc to interrupt)</span>`;
+  return `<span class="m">⏺ Revisão de feat/net-panel concluída.</span>
+  2 achados:
+  1. NetworkMitmTests.swift:65 — build quebrado esconde
+     falha com --skip-build
+  2. Preview de body sem limite trava a UI
+
+<span class="p">›</span> <span class="m">_</span>`;
+}
+V.term = () => {
+  const t = allTerms.find(x => x.id === S.term), ap = !S.emptyInbox && t.id === 'net' ? approvals.find(a => a.term === t.name) : null;
+  const chat = S.chat.filter(c => c.term === t.id).map(c => c.from === 'me'
+    ? `<div class="bubble">${esc(c.text)}<div class="meta">${c.meta}</div></div>`
+    : `<div class="reply ${c.from === 'collie' ? 'collie' : ''}"><div class="meta">${c.from === 'collie' ? `${I('zap')} collie · sem tokens` : esc(t.name)}</div>${c.text}</div>`).join('');
+  const disabled = !!ap || S.offline;
+  return `${statusBar()}${nav(esc(t.name), { back: 'home', backLabel: 'Pasto', right: `<button class="iconbtn" data-act="sheet:termmenu" aria-label="Mais">${I('ellipsis')}</button>` })}
+  <div class="body">
+    <div class="kv" style="margin-bottom:10px">${statusTag(t.status)}<span class="tag neutral">${t.preset}</span><span class="tag neutral">${I('fence')} ${esc(t.paddock)}</span>${t.leash ? `<span class="tag sec">${I('link-2')} ${esc(t.leash)}</span>` : ''}</div>
+    ${ap ? `<div class="card att approval" style="margin-bottom:10px"><div class="hd">${I('shield-alert', 'style="color:var(--attention)"')}<div><div class="t">Pede aprovação</div><div class="s">${ap.when} · o texto abaixo ainda está na tela</div></div></div>
+      <p class="q">${ap.q}</p><div class="btns"><button class="btn danger" data-act="decide:${ap.id}:deny">Negar</button><button class="btn primary" data-act="decide:${ap.id}:ok">Aprovar</button></div></div>` : ''}
+    <div class="section">Saída recente <span class="sp"></span><span style="text-transform:none">últimas 40 linhas · ao vivo</span></div>
+    <div class="term">${termOutput(t)}</div>
+    ${chat}
+  </div>
+  <div class="composer">
+    <div class="chips">${['Onde estamos', 'O que travou', 'O que está rodando'].map(q => `<button class="chip" data-ask="${q}" ${S.offline ? 'disabled' : ''}>${I('zap')} ${q}</button>`).join('')}<button class="chip" data-act="sheet:rerail">${I('route')} Recolocar no trilho</button></div>
+    <div class="f"><textarea id="askbox" placeholder="${ap ? 'Responda a aprovação antes de mandar prompt' : S.offline ? 'Mac offline' : `Pedir a ${esc(t.name)}…`}" ${disabled ? 'disabled' : ''}></textarea>
+    <button class="send" data-act="send" aria-label="Enviar" ${disabled ? 'disabled style="opacity:.4"' : ''}>${I('arrow-up')}</button></div>
+    <div class="hint">${ap ? 'Com aprovação pendente, prompts não digitam no terminal (mesma regra do Mac).' : 'Entregue quando o agente ficar 2 s calado. Botões ⚡ respondem pelo registro, sem gastar tokens.'}</div>
+  </div>`;
+};
+
+function approvalCard(a) {
+  if (a.kind === 'perm') return `<div class="card att approval"><div class="hd"><div class="avatar">${initials(a.term)}</div><div style="flex:1"><div class="t">${esc(a.term)}</div><div class="s">${I('fence')} ${esc(a.paddock)} · ${a.when}</div></div><span class="tag att">comando</span></div>
+    <p class="q">${a.q}</p><div class="cap">${esc(a.cap)}</div>
+    <div class="btns"><button class="btn danger" data-act="decide:${a.id}:deny">Negar</button><button class="btn primary" data-act="decide:${a.id}:ok">Aprovar</button></div></div>`;
+  if (a.kind === 'access') return `<div class="card att approval"><div class="hd"><div class="avatar">${initials(a.term)}</div><div style="flex:1"><div class="t">${esc(a.term)}</div><div class="s">${I('fence')} ${esc(a.paddock)} · ${a.when}</div></div><span class="tag sec">sandbox</span></div>
+    <p class="q">Agente <b>${esc(a.term)}</b> tentou <b>${a.op}</b> <code>${esc(a.path)}</code></p>
+    <div class="banner att" style="font-size:12px">${I('triangle-alert')}<div>Configuração global de agente. O que for gravado aqui roda fora do sandbox nos seus outros terminais.</div></div>
+    <label class="opt"><input type="checkbox"> Para o lote (terminais atuais e futuros)</label>
+    <div class="btns" style="margin-bottom:8px"><button class="btn sec" data-act="sheet:faceid:${a.id}">Liberar este caminho</button><button class="btn sec" data-act="sheet:faceid:${a.id}">Liberar a pasta</button></div>
+    <button class="btn danger" style="width:100%" data-act="decide:${a.id}:deny">Negar</button>
+    <p style="font-size:11.5px;color:var(--muted);margin:8px 0 0">Liberar reinicia o terminal e pede Face ID.</p></div>`;
+  return `<div class="card approval"><div class="hd"><div class="avatar">${initials(a.term)}</div><div style="flex:1"><div class="t">${esc(a.term)}</div><div class="s">${I('fence')} ${esc(a.paddock)} · ${a.when}</div></div><span class="tag neutral">não conferível</span></div>
+    <p class="q">Há um pedido na tela, mas com <b>saída demais para conferir</b>. Por segurança, o Collie não responde por aqui.</p>
+    <div class="btns"><button class="btn sec" data-term="rev">${I('square-terminal')} Ver terminal</button><button class="btn quiet" data-act="decide:${a.id}:ack">Entendi</button></div></div>`;
+}
+V.inbox = () => {
+  const list = S.emptyInbox ? [] : approvals;
+  return `${statusBar()}${nav('Aprovações')}<div class="body">${offlineBanner()}
+  ${list.length ? `<p style="font-size:13px;color:var(--muted);margin:0 4px 12px">Só é respondido se o mesmo pedido ainda estiver na tela do terminal. Enter nunca aprova.</p>
+    <div class="${S.offline ? 'stale' : ''}">${list.map(approvalCard).join('')}</div>`
+  : `<div class="empty"><div class="ill" style="color:var(--accent)">${I('shield-check')}</div><h4>Nada esperando você</h4><p>Quando um agente pedir para rodar um comando ou for bloqueado pelo sandbox, o pedido aparece aqui e no seu bloqueio de tela.</p></div>`}
+  </div>${tabs()}`;
+};
+
+const taskIcon = { done: ['circle-check', 'var(--accent)'], inProgress: ['loader', 'var(--secondary)'], open: ['circle', 'var(--muted)'], deferred: ['clock', 'var(--attention)'], abandoned: ['circle-slash', 'var(--muted)'] };
+const jobIcon = { running: ['play', 'var(--accent)', 'rodando'], unknown: ['circle-help', 'var(--attention)', 'sem sinal'], gone: ['skull', 'var(--danger)', 'sumiu'], finished: ['check', 'var(--muted)', 'terminou'] };
+V.work = () => `${statusBar()}${nav('Trabalho')}<div class="body">${offlineBanner()}
+  <div class="chips">${['Onde estamos', 'O que travou', 'O que está rodando'].map(q => `<button class="chip" data-act="toast:${q}: resposta do registro, sem tokens">${I('zap')} ${q}</button>`).join('')}</div>
+  <div class="section">Ativos · ${works.length}</div>
+  ${works.map(w => `<button class="card" style="display:block;width:100%;text-align:left;padding:14px;margin-bottom:10px" data-work="${w.id}">
+    <div style="display:flex;gap:8px;align-items:flex-start"><div style="flex:1;font-weight:600">${esc(w.title)}</div>${w.alert ? I('triangle-alert', 'style="color:var(--attention)"') : ''}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:2px" class="mono">${esc(w.term)} · ${esc(w.branch)}</div>
+    <div class="progress"><i style="width:${Math.round(w.done / w.total * 100)}%"></i></div>
+    <div class="kv" style="margin-top:8px"><span class="tag accent">${w.done}/${w.total} feitas</span>${w.jobs ? `<span class="tag sec">${w.jobs} jobs</span>` : ''}${w.alert ? '<span class="tag att">precisa de atenção</span>' : ''}</div></button>`).join('')}
+  <div class="section">Fechados</div>
+  <div class="card list"><div class="row"><div class="main"><div class="t" style="font-weight:500">summon sem preset herda o do Pastor</div><div class="s">fechado por merge · d388635 · ontem</div></div></div>
+  <div class="row"><div class="main"><div class="t" style="font-weight:500">Cursor: ler o próprio plugin dir</div><div class="s">fechado por merge · aaba936 · ontem</div></div></div></div>
+  </div>${tabs()}`;
+V['work-detail'] = () => {
+  const w = works.find(x => x.id === S.work);
+  return `${statusBar()}${nav('Trabalho', { back: 'work', backLabel: 'Trabalho', right: `<button class="iconbtn" data-act="sheet:workmenu" aria-label="Mais">${I('ellipsis')}</button>` })}<div class="body">
+    <h3 style="margin:2px 0 4px;font-size:21px">${esc(w.title)}</h3>
+    <div class="mono" style="font-size:12px;color:var(--muted)">${esc(w.term)} · ${esc(w.branch)}</div>
+    <div class="progress"><i style="width:${Math.round(w.done / w.total * 100)}%"></i></div>
+    ${w.alert ? `<div class="banner att" style="margin-top:12px">${I('triangle-alert')}<div><b>${w.jobs_.some(j => j[0] === 'unknown') ? 'Job sem sinal há 31 min' : 'Bloqueado pelo sandbox'}</b>${w.term === 'net-panel' ? 'E há uma aprovação pendente no terminal.' : 'Responda o cartão em Aprovações.'}</div></div>` : ''}
+    <div class="section">Tarefas</div><div class="card list">${w.tasks.map(([s, t, why]) => `<div class="task ${s === 'done' ? 'done' : ''}">${I(taskIcon[s][0], `style="color:${taskIcon[s][1]}"`)}<span>${esc(t)}${why ? `<span class="why">${s === 'deferred' ? 'adiada' : 'abandonada'}: ${esc(why)}</span>` : ''}</span></div>`).join('')}</div>
+    ${w.jobs_.length ? `<div class="section">Jobs</div><div class="card list">${w.jobs_.map(([s, t]) => `<div class="task">${I(jobIcon[s][0], `style="color:${jobIcon[s][1]}"`)}<span style="flex:1" class="mono">${esc(t)}</span><span class="tag neutral">${jobIcon[s][2]}</span></div>`).join('')}</div>` : ''}
+    ${w.commits.length ? `<div class="section">Commits</div><div class="card list">${w.commits.map(c => `<div class="task">${I('git-commit-horizontal', 'style="color:var(--muted)"')}<span class="mono" style="font-size:12.5px">${esc(c)}</span></div>`).join('')}</div>` : ''}
+    ${w.notes.length ? `<div class="section">Notas</div><div class="card" style="padding:12px 14px;font-size:14px">${w.notes.map(esc).join('<br>')}</div>` : ''}
+    <div class="btns" style="margin-top:16px"><button class="btn sec" data-act="sheet:rerail">${I('route')} Recolocar no trilho</button><button class="btn sec" data-term="${allTerms.find(t => t.name === w.term)?.id || 'net'}">${I('square-terminal')} Terminal</button></div>
+  </div>${tabs()}`;
+};
+
+function miniFor(p) {
+  if (p.kind === 'deck') return `<div class="mini" style="justify-content:center;align-items:center"><b style="font-size:13px">Collie</b><i style="width:50%"></i></div>`;
+  if (p.kind === 'dashboard') return `<div class="mini"><div style="display:flex;gap:4px">${'<i style="flex:1;height:18px;border-radius:4px"></i>'.repeat(3)}</div><svg viewBox="0 0 100 40" style="flex:1"><polyline fill="none" stroke="var(--accent)" stroke-width="2" points="0,30 15,24 30,27 45,15 60,18 75,8 100,12"/></svg></div>`;
+  if (p.kind === 'prototype') return `<div class="mini" style="align-items:center"><div style="width:44%;height:100%;border-radius:8px;border:2px solid var(--border);padding:4px;display:flex;flex-direction:column;gap:3px"><i></i><i style="width:70%"></i><i></i><i style="width:60%"></i></div></div>`;
+  return `<div class="mini"><i style="width:60%;height:9px"></i><i></i><i></i><i style="width:80%"></i><i></i><i style="width:40%"></i></div>`;
+}
+V.previews = () => `${statusBar()}${nav('Prévias')}<div class="body">
+  ${S.emptyPrev ? `<div class="empty"><div class="ill">${I('panels-top-left')}</div><h4>Nenhuma Prévia ainda</h4><p>Quando um agente rodar <span class="mono" style="font-size:12.5px">collie artifact new</span> ou abrir uma Prévia, ela aparece aqui para você ver no celular.</p></div>` : `
+  <div class="section">Abertas agora</div>
+  ${previews.filter(p => p.live).map(p => `<button class="card row" style="margin-bottom:6px" data-prev="${p.id}"><div class="thumb" style="width:64px;flex:none">${miniFor(p)}</div><div class="main"><div class="t">${esc(p.title)}</div><div class="s">${p.kind} · ${esc(p.term)} · recarrega ao vivo</div></div><span class="dot run"></span></button>`).join('')}
+  <div class="section">Artifacts</div>
+  <div class="grid2">${previews.filter(p => !p.live).map(p => `<button class="pcard" data-prev="${p.id}"><div class="thumb">${miniFor(p)}</div><div class="t">${esc(p.title)}</div><div class="s">${p.kind} · ${p.when}</div></button>`).join('')}</div>`}
+  </div>${tabs()}`;
+V.preview = () => {
+  const p = previews.find(x => x.id === S.prev), dark = S.prevTheme === 'Escuro';
+  return `${statusBar()}${nav(esc(p.title), { back: 'previews', backLabel: 'Prévias', right: `<button class="iconbtn" data-act="sheet:share" aria-label="Compartilhar">${I('share')}</button>` })}<div class="body">
+    <div class="seg">${['Página', 'Claro', 'Escuro'].map(m => `<button class="${S.prevTheme === m ? 'on' : ''}" data-ptheme="${m}">${m}</button>`).join('')}</div>
+    <div class="kv" style="margin:8px 0 10px"><span class="tag neutral">${p.kind}</span><span class="tag neutral">somente leitura</span><span class="tag neutral">rede bloqueada</span></div>
+    <div class="frame-prev ${dark ? 'dark' : ''}"><div class="ph"><h5>${p.id === 'net-viab' ? 'Interceptador HTTP no emulador' : esc(p.title)}</h5><p>Viabilidade · 2 nov 2026 · net-panel</p><div class="hero"></div>
+    <div class="bar"></div><div class="bar" style="width:86%"></div><div class="bar" style="width:92%"></div><p style="margin-top:12px"><b>Recomendação:</b> mitmdump com addon, CA no store do sistema e preview de body limitado.</p><div class="bar"></div><div class="bar" style="width:70%"></div><div class="bar" style="width:80%"></div></div></div>
+    <div class="btns" style="margin-top:14px"><button class="btn sec" data-act="toast:Aberta no canvas do Mac">${I('laptop')} Abrir no Mac</button><button class="btn sec" data-act="toast:Comentários: ainda em aberto (ver notas)">${I('message-square')} Comentar</button></div>
+  </div>${tabs()}`;
+};
+
+V.lock = (expanded) => `<div class="lock">${statusBar(true).replace('<span>9:41</span>', '<span></span>')}<div class="clock">9:41</div><div class="date">quarta-feira, 4 de novembro</div>
+  <button class="push ${expanded ? 'expanded' : ''}" data-go="${expanded ? 'term-att' : 'lock-expanded'}"><div class="ph"><span class="ic"><svg width="14" height="14" viewBox="0 0 200 200"><path d="M145.3 54.7 A64 64 0 1 0 145.3 145.3" fill="none" stroke="#fff" stroke-width="22" stroke-linecap="round"/><circle cx="145.3" cy="54.7" r="20" fill="#6E9BFF"/></svg></span>COLLIE<span class="tm">agora</span></div>
+    <b>net-panel pede aprovação</b>Bash: swift test --filter NetworkPanelTests
+    ${expanded ? `<div class="acts"><span>Negar</span><span>Aprovar (Face ID)</span><span>Abrir</span></div>` : ''}</button>
+  ${expanded ? '' : `<div class="push"><div class="ph"><span class="ic">${I('shield', 'style="width:12px;height:12px;color:#fff"')}</span>COLLIE<span class="tm">há 6 min</span></div><b>cursor-spike bloqueado pelo sandbox</b>Tentou escrever ~/.cursor/mcp.json. Toque para decidir.</div>
+  <div class="push"><div class="ph"><span class="ic">${I('circle-check', 'style="width:12px;height:12px;color:#6EE7B7"')}</span>COLLIE<span class="tm">09:12</span></div><b>Trabalho fechado por merge</b>summon sem preset herda o do Pastor · d388635</div>
+  <div class="push"><div class="ph"><span class="ic">${I('circle-help', 'style="width:12px;height:12px;color:#FFB86B"')}</span>COLLIE<span class="tm">08:40</span></div><b>net-panel: job sem sinal há 30 min</b>swift build · pode ter travado</div>
+  <div class="push" style="opacity:.75"><div class="ph"><span class="ic">${I('wifi-off', 'style="width:12px;height:12px;color:#FF8A8A"')}</span>COLLIE<span class="tm">ontem</span></div><b>Mac sem contato há 10 min</b>3 terminais estavam rodando. Avisamos quando voltar.</div>`}
+  <p style="text-align:center;font-size:12px;opacity:.6;margin-top:14px">${expanded ? 'Pressão longa: Aprovar pede Face ID; cartões do sandbox só dentro do app.' : 'Toque no primeiro para ver as ações'}</p></div>`;
+V['lock-expanded'] = () => V.lock(true);
+
+V.settings = () => {
+  const sw = (on) => `<span class="switch ${on ? '' : 'off'}"></span>`;
+  return `${statusBar()}${nav('Ajustes', { back: 'home', backLabel: 'Pasto' })}<div class="body settings">
+    <div class="section">Mac pareado</div><div class="card list">
+      <div class="row">${I('laptop')}<div class="main"><div class="t">MacBook Pro</div><div class="s">pareado em 4 nov · chave ed25519 · …9f3a</div></div></div>
+      <div class="row">${I('wifi')}<div class="main"><div class="t" style="font-weight:500">Fora de casa (relay)</div><div class="s">Cifrado ponta a ponta; o relay só vê pacotes</div></div>${sw(false)}</div></div>
+    <div class="section">Notificações</div><div class="card list">
+      ${[['Aprovações de comando', 1], ['Cartões do sandbox', 1], ['Trabalho fechado', 1], ['Job sem sinal / terminal encerrado', 1], ['Mac sem contato', 0], ['Saída na tela de bloqueio', 0]].map(([l, on]) => `<div class="row"><div class="main"><div class="t" style="font-weight:500">${l}</div>${l.startsWith('Saída') ? '<div class="s">Desligado: o push mostra só o nome do terminal</div>' : ''}</div>${sw(on)}</div>`).join('')}</div>
+    <div class="section">Segurança</div><div class="card list">
+      <div class="row">${I('scan-face')}<div class="main"><div class="t" style="font-weight:500">Face ID para Aprovar e Liberar</div></div>${sw(true)}</div>
+      <div class="row">${I('timer')}<div class="main"><div class="t" style="font-weight:500">Bloquear o app após</div></div><span style="color:var(--muted)">5 min</span></div></div>
+    <button class="btn danger block" style="margin-top:20px" data-go="pair-welcome">Desparear este iPhone</button>
+    <p style="font-size:11.5px;color:var(--muted);text-align:center">Também revogável no Mac, em Ajustes › iPhone.</p></div>${tabs()}`;
+};
+
+// ---------- Folhas ----------
+function sheet() {
+  if (!S.sheet) return '';
+  const [kind, arg] = S.sheet.split(':');
+  let inner = '';
+  if (kind === 'faceid') inner = `<div class="faceid">${I('scan-face')}<h3 style="margin:10px 0 4px">Liberar com Face ID</h3><p style="color:var(--muted);font-size:14px;margin:0 0 6px">Escrita em <span class="mono">~/.cursor/mcp.json</span> para <b>cursor-spike</b>. O terminal reinicia.</p></div>
+    <div class="btns"><button class="btn sec" data-act="sheet:">Cancelar</button><button class="btn primary" data-act="decide:${arg}:ok">Confirmar</button></div>`;
+  if (kind === 'stale') inner = `<div class="faceid">${I('clock-alert', 'style="color:var(--attention)"')}<h3 style="margin:10px 0 4px">Pedido não está mais pendente</h3><p style="color:var(--muted);font-size:14px;margin:0 0 6px">A tela do terminal mudou (alguém respondeu no Mac, ou o agente seguiu). Nada foi digitado.</p></div>
+    <div class="btns"><button class="btn sec" data-act="sheet:">Ok</button><button class="btn primary" data-term="net">Ver terminal</button></div>`;
+  if (kind === 'rerail') inner = `<h3 style="margin:0 0 6px">Recolocar no trilho?</h3><p style="color:var(--muted);font-size:14px;margin:0 0 14px">Injeta no agente só o estado vivo: tarefas abertas, jobs rodando e as 5 decisões mais recentes (até 2000 caracteres). Recusado se houver aprovação pendente.</p>
+    <div class="btns"><button class="btn sec" data-act="sheet:">Cancelar</button><button class="btn primary" data-act="toast:Recolocado no trilho">Recolocar</button></div>`;
+  if (kind === 'termmenu' || kind === 'workmenu' || kind === 'share') inner = `<div class="card list">${(kind === 'share' ? [['laptop', 'Abrir no Mac'], ['copy', 'Copiar caminho'], ['download', 'Exportar PDF (no Mac)']] : kind === 'workmenu' ? [['route', 'Recolocar no trilho'], ['archive', 'Fechar trabalho…'], ['square-terminal', 'Abrir terminal']] : [['zap', 'Onde estamos'], ['route', 'Recolocar no trilho'], ['laptop', 'Mostrar no canvas do Mac'], ['bell-off', 'Silenciar este terminal']]).map(([i, l]) => `<button class="row" data-act="toast:${l}">${I(i)}<div class="main"><div class="t" style="font-weight:500">${l}</div></div></button>`).join('')}</div>
+    <button class="btn quiet block" data-act="sheet:" style="margin-top:8px">Cancelar</button>`;
+  return `<div class="sheetwrap" data-act="sheet:"><div class="sheet" onclick="event.stopPropagation()"><div class="grab"></div>${inner}</div></div>`;
+}
+
+// ---------- Render / eventos ----------
+const scr = document.getElementById('screen'), idx = document.getElementById('index');
+function qrSvg() { let s = '<svg viewBox="0 0 21 21" aria-hidden="true"><rect width="21" height="21" fill="#fff"/>'; let seed = 7;
+  for (let y = 0; y < 21; y++) for (let x = 0; x < 21; x++) { seed = (seed * 9301 + 49297) % 233280; const fin = (x < 7 && y < 7) || (x > 13 && y < 7) || (x < 7 && y > 13);
+    const on = fin ? ((x % 14 === 0 || x % 14 === 6 || y % 14 === 0 || y % 14 === 6 || (x % 14 > 1 && x % 14 < 5 && y % 14 > 1 && y % 14 < 5)) && !(x % 14 === 0 && false)) : seed / 233280 > .55; if (on) s += `<rect x="${x}" y="${y}" width="1" height="1" fill="#0E1326"/>`; }
+  return s + '</svg>'; }
+function renderIndex() {
+  idx.innerHTML = `<h1><svg width="22" height="22" viewBox="0 0 200 200"><path d="M145.3 54.7 A64 64 0 1 0 145.3 145.3" fill="none" stroke="var(--text)" stroke-width="18" stroke-linecap="round"/><circle cx="92" cy="82" r="11" fill="var(--text)"/><circle cx="120" cy="100" r="11" fill="var(--text)"/><circle cx="92" cy="118" r="11" fill="var(--text)"/><circle cx="145.3" cy="54.7" r="16" fill="var(--mark)"/></svg>Collie iOS</h1>
+  <p>Protótipo clicável · tokens de CollieTheme · use Claro/Escuro da Prévia</p>
+  ${SCREENS.map(([g, items]) => `<h3>${g}</h3>${items.map(([id, l]) => `<button class="${currentPreset === id ? 'on' : ''}" data-preset="${id}">${l}</button>`).join('')}`).join('')}
+  <div class="notes"><b>Dica:</b> tudo dentro do iPhone é clicável — abas, terminais, Aprovar/Negar, ⚡ e o campo de prompt.</div>`;
+}
+let toastTimer;
+function render() {
+  const fn = V[S.screen] || V.home;
+  scr.innerHTML = fn() + sheet() + '<div class="toast" id="toast"></div><div class="home-ind"></div>';
+  renderIndex();
+  if (window.lucide) lucide.createIcons({ icons: lucide.icons });
+}
+function toast(msg) { const t = document.getElementById('toast'); t.innerHTML = `${I('check')} ${esc(msg)}`; if (window.lucide) lucide.createIcons({ icons: lucide.icons }); t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1800); }
+const STATUS_ANS = {
+  'Onde estamos': t => t.id === 'net' ? '7/11 tarefas feitas. Em andamento: <b>Testes do NetworkPanel</b>. Aprovação pendente há 2 min.' : t.id === 'design' ? '3/6 feitas. Em andamento: <b>Desenhar telas e estados</b>. Adiada: Widget e Live Activity.' : 'Sem trabalho ativo. Último: revisão de feat/net-panel (2 achados).',
+  'O que travou': t => t.id === 'net' ? 'Esperando sua aprovação de <span class="mono">swift test</span>. Job <span class="mono">swift build</span> sem sinal há 31 min.' : 'Nada travado.',
+  'O que está rodando': t => t.id === 'net' ? '2 jobs: <span class="mono">mitmdump :8080</span> (rodando), <span class="mono">swift build</span> (sem sinal).' : t.id === 'design' ? '1 job: Prévia preview-5.' : 'Nada rodando.',
+};
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-preset],[data-go],[data-tab],[data-term],[data-work],[data-prev],[data-ptheme],[data-ask],[data-act]');
+  if (!el) return;
+  const d = el.dataset;
+  if (d.preset) { currentPreset = d.preset; Object.assign(S, { sheet: null }, PRESETS[d.preset]); return render(); }
+  if (d.go) { S.sheet = null; if (d.go.startsWith('term-')) Object.assign(S, PRESETS[d.go]); else S.screen = d.go; return render(); }
+  if (d.tab) { S.sheet = null; S.tab = d.tab; S.screen = { home: 'home', inbox: 'inbox', work: 'work', prev: 'previews' }[d.tab]; return render(); }
+  if (d.term) { S.sheet = null; S.term = d.term; S.screen = 'term'; return render(); }
+  if (d.work) { S.work = d.work; S.screen = 'work-detail'; return render(); }
+  if (d.prev) { S.prev = d.prev; S.screen = 'preview'; return render(); }
+  if (d.ptheme) { S.prevTheme = d.ptheme; return render(); }
+  if (d.ask) { const t = allTerms.find(x => x.id === S.term); S.chat.push({ term: t.id, from: 'me', text: d.ask, meta: 'respondido pelo registro' }, { term: t.id, from: 'collie', text: STATUS_ANS[d.ask](t) }); render(); scr.querySelector('.body').scrollTop = 1e6; return; }
+  const a = d.act;
+  if (a === 'paired') { S.screen = 'home'; S.tab = 'home'; render(); return toast('Pareado com MacBook Pro'); }
+  if (a.startsWith('toast:')) { S.sheet = null; render(); return toast(a.slice(6)); }
+  if (a.startsWith('sheet:')) { S.sheet = a.slice(6) || null; return render(); }
+  if (a.startsWith('decide:')) {
+    const [, id, v] = a.split(':'); approvals = approvals.filter(x => x.id !== id); S.sheet = null;
+    if (id === 'a1') { const t = allTerms.find(x => x.id === 'net'); t.status = v === 'ok' ? 'run' : 'idle'; t.line = v === 'ok' ? 'Rodando swift test…' : 'Negado · esperando instrução'; }
+    if (id === 'a2') { const t = allTerms.find(x => x.id === 'cur'); t.status = v === 'ok' ? 'run' : 'idle'; t.line = v === 'ok' ? 'Reiniciado com acesso liberado' : 'Escrita negada'; }
+    paddocks.forEach(p => p.terms.forEach(t => Object.assign(t, allTerms.find(x => x.id === t.id))));
+    render(); return toast(v === 'ok' ? 'Aprovado · escrito no terminal' : v === 'ack' ? 'Ok, fica para você olhar' : 'Negado');
+  }
+  if (a === 'send') {
+    const box = document.getElementById('askbox'), txt = box.value.trim(); if (!txt) return;
+    const t = allTerms.find(x => x.id === S.term);
+    S.chat.push({ term: t.id, from: 'me', text: txt, meta: 'na fila · entrega quando ficar 2 s calado' }); render(); scr.querySelector('.body').scrollTop = 1e6;
+    setTimeout(() => { const m = S.chat.findLast(c => c.from === 'me' && c.term === t.id); m.meta = 'entregue'; S.chat.push({ term: t.id, from: 'agent', text: 'Entendido. Vou seguir com isso agora.' }); if (S.screen === 'term') { render(); scr.querySelector('.body').scrollTop = 1e6; } }, 1400);
+  }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'askbox') { e.preventDefault(); document.querySelector('[data-act="send"]').click(); } });
+render();
+if (!window.lucide) { const p = document.createElement('p'); p.style.cssText = 'text-align:center;color:var(--muted);font-size:12px'; p.textContent = 'Bibliotecas offline indisponíveis'; document.body.appendChild(p); }
+</script>
+</body>
+</html>

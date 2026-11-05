@@ -107,7 +107,8 @@ a paired device —** with a fixed, small allowlist. It never exposes the admin 
 
 ### Flow
 
-1. Mac: **Preferências → Celular → Parear iPhone** (enables the listener if off). App calls
+1. Mac: **Preferências → Celular → Parear iPhone** (the app turns the listener on first: `pair.begin` refuses with
+   `unavailable` while it is off). App calls
    `admin.remote.pair.begin` → `{pairingId, qr, expiresAt}`.
 2. Daemon makes a **pairing secret**: 32 random bytes, base64url, in memory only, valid **5 min**, **single use**,
    at most **5 failed attempts**, at most one live pairing at a time (a new `begin` kills the old one).
@@ -130,8 +131,9 @@ a paired device —** with a fixed, small allowlist. It never exposes the admin 
   `[{id, name, model, scope, pairedAt, lastSeenAt, lastAddress, lastVia}]` + hash. Comparison in constant time
   (`constantTimeEqual`, already used for the admin token).
 - Scope per device: `full` (default) or `read` (no mutating command: §3 marks which). Set in the device sheet.
-- Token rotation: `session.hello` may return `rotate: <new token>` when the token is older than 90 days; the phone
-  saves it and acks with `session.rotated`. Old hash kept until the ack (one in-flight rotation).
+- Token rotation: `session.hello` returns `rotate: <new token>` when the token is older than 90 days; the phone saves
+  it and uses it from its next hello, which promotes it (the old one stops working then). No ack message. While a
+  rotated token is pending, no second one is minted (a phone that lost it keeps the old token).
 - No expiry otherwise: revocation is the off switch.
 
 ### Revocation and the device sheet (Mac app)
@@ -141,6 +143,11 @@ a paired device —** with a fixed, small allowlist. It never exposes the admin 
   and at the bottom **Trocar certificado** (re-pair all) and the on/off toggle.
 - Revogar → `admin.remote.devices.revoke {id}`: hash deleted, every live socket of that device closed at once with
   close code 4001 `revoked`. The phone wipes its credentials on 4001.
+- **Close codes** (all sessions): 4000 `hello` (no hello in time, a request before hello, a refused hello), 4001
+  `revoked`, 4002 `replaced` (a 5th session of one device closes its oldest), 4003 `disabled` (listener off, or
+  restarted by Trocar certificado). Before the close frame the Mac sends a text frame
+  `{"t":"closing","code":4001,"reason":"revoked"}`: `URLSessionWebSocketTask` only surfaces the standard close
+  codes, so the phone reads the reason from this frame.
 - The phone can also unpair itself: `device.unpair` (§3.10) — same effect as Revogar, for its own device only.
 - New app-only commands: `admin.remote`, `admin.remote.pair.begin`, `admin.remote.pair.confirm {pairingId, accept}`,
   `admin.remote.devices` (list), `admin.remote.devices.revoke {id}`, `admin.remote.devices.scope {id, scope}`,
@@ -224,8 +231,10 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
 
 - args: `{deviceId, token, app: {version, build}}` — must be the first message (else the socket closes, 4000).
   10 s to send it after the TLS handshake.
-- result: `{protocol: 1, mac: {name, installId, build}, device: {name, scope}, rotate?: "<new token>"}`
-- errors: `unauthorized` (unknown device / wrong token / revoked — one message), `unsupportedVersion`, `tooMany`.
+- result: `{protocol: 1, mac: {name, installId, build}, device: {id, name, scope}, rotate?: "<new token>"}`
+- errors: `unauthorized` (unknown device / wrong token / revoked — one message; then closing 4000),
+  `unsupportedVersion` (socket stays), `tooMany` (slice 7).
+- Records `lastSeenAt`, `lastAddress` and `lastVia` on the device (the device sheet).
 
 ### 3.3 Paddocks, terminals, status — `workspace.snapshot`
 
@@ -522,9 +531,15 @@ reachable from the network until slice 3.
    wrong, expired and used, 6-digit code, Mac accept/refuse, 60 s confirm timeout read off the clock). Tests:
    `RemoteDevicesTests`, `RemotePairingTests` (injected clock, no sleep). Moved to slice 3: the 90-day token
    rotation in `session.hello` and `lastSeenAt`/`lastAddress` (both written by hello).
-3. **Hello** — on `RemoteGateway` (slice 1): 10 s hello deadline, `pair` + `session.hello`, close codes. Tests: `RemoteAddressFilterTests` (pure ranges table),
-   `RemoteGatewayTests` with a loopback-allowed test flag driving a real TLS WebSocket client pinned to a test
-   identity: hello ok/bad/revoked, pair happy path, unknown command, admin command refused.
+3. **Pair, hello and the app's commands (done, 2026-11-04)** — `RemoteSession` per connection: 10 s hello deadline
+   (`DaemonConfig.remoteHelloDeadline`), `pair` / `pair.wait` (bound to the connection that claimed; woken by the
+   Mac's click; the accepted device is created once) / `session.hello` (lastSeen/address/via, 90-day token rotation),
+   close codes with the `closing` frame, 4 sessions per device. App commands: `admin.remote.pair.begin` (QR with
+   the Mac's LAN/Tailscale IPv4 hosts and `install-id`), `.pair.confirm`, `.devices`, `.devices.revoke` (closes
+   live sessions, 4001), `.devices.scope`, `.identity.rotate` (revokes all, restarts: 4003). Event
+   `remotePairing(RemotePairingRequest)` on `ui.events` for the app's dialog. Tests: `RemoteSessionTests` (real
+   pinned `URLSessionWebSocketTask`), `RemoteTokenRotationTests`. Left: a scope change reaches a live session at its
+   next hello (enforced with the surface, slice 4).
 4. **Principal + read surface** — `Principal` enum into the handlers; allowlist table; projections; `workspace.snapshot`
    with the derived fields (`shepherdId`, `badgeSince`, `activity`, approval `paddock`, card `id`/`refusal`/
    `folderRefusal`/`isAgentConfig`, artifact `live`), `terminal.screen`,

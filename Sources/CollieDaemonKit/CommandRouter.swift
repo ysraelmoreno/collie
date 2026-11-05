@@ -111,6 +111,8 @@ actor CommandRouter {
     var googleFonts = true
     /// The remote listener (off unless the user turned it on) and its TLS identity, loaded once needed.
     nonisolated let remote: RemoteGateway
+    nonisolated let remoteDevices: RemoteDevices
+    nonisolated let remotePairing: RemotePairing
     var remoteIdentity: RemoteIdentity?
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
@@ -160,7 +162,11 @@ actor CommandRouter {
             root: config.paths.root, home: home, env: { await userEnv.current() }), events: memory.events)
         // L3: one Collie-wide preference; a workspace's value (before) moves there once
         let settings = CollieSettings.load(root)
-        self.remote = RemoteGateway(allowLoopback: config.remoteAllowLoopback)
+        let remoteDevices = RemoteDevices(dir: root.appendingPathComponent("remote")), remotePairing = RemotePairing()
+        self.remoteDevices = remoteDevices; self.remotePairing = remotePairing
+        self.remote = RemoteGateway(allowLoopback: config.remoteAllowLoopback, deps: .init(
+            devices: remoteDevices, pairing: remotePairing, macName: Self.computerName(), build: config.build ?? "dev",
+            helloDeadline: config.remoteHelloDeadline, onClaim: { r in Task { await hub.emit(.remotePairing(r)) } }))
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {
@@ -593,7 +599,7 @@ actor CommandRouter {
             return .object([:])
         case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))
         case "admin.fonts": return try setGoogleFonts(str(r, "download"))
-        case "admin.remote": return try await remoteCommand(r)
+        case let c where c == "admin.remote" || c.hasPrefix("admin.remote."): return try await remoteCommand(r)
         case "admin.data.export", "admin.data.import":
             let key = r.command == "admin.data.export" ? "out" : "from"
             let path = try need(key)

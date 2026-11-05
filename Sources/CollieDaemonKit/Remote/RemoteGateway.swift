@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Security
+import CollieCore
 
 /// The remote listener's preference (`CollieSettings.remote`); absent = off (remote API spec §1).
 struct RemoteSettings: Codable, Equatable, Sendable {
@@ -10,30 +11,39 @@ struct RemoteSettings: Codable, Equatable, Sendable {
     var tailscaleOnly: Bool
 }
 
-/// The optional WebSocket-over-TLS door to `collied` for paired phones (remote API spec §1). Slice 1: the listener
-/// itself — source filter before TLS, TLS 1.3 with the pinned identity, no `Origin` (no browsers). The session
-/// (`pair`, `session.hello`) comes in slice 3: until then any message gets close code 4000 and the socket ends.
+/// The optional WebSocket-over-TLS door to `collied` for paired phones (remote API spec §1): source filter before TLS,
+/// TLS 1.3 with the pinned identity, no `Origin` (no browsers); each connection is a `RemoteSession`.
 actor RemoteGateway {
     struct Status: Sendable { var listening: Bool; var port: Int?; var error: String? }
-    static let maxConnections = 16
     static let maxMessage = 256 * 1024
 
+    /// What sessions need from the daemon, besides the identity and install id given at `apply`.
+    struct Deps: Sendable {
+        var devices: RemoteDevices
+        var pairing: RemotePairing
+        var macName: String
+        var build: String
+        var helloDeadline: Duration
+        var onClaim: @Sendable (RemotePairingRequest) -> Void
+    }
+
     private let allowLoopback: Bool
+    private let deps: Deps
     private let queue = DispatchQueue(label: "collie.remote")
     private var listener: NWListener?
     private var running: (settings: RemoteSettings, fingerprint: String)?
     private var lastError: String?
     /// Bumped by every apply/stop: an apply that resumes after a newer one (actor reentrancy at the await) drops its listener.
     private var generation = 0
-    private let conns = Conns()
+    nonisolated let sessions = RemoteSessions()
 
-    init(allowLoopback: Bool) { self.allowLoopback = allowLoopback }
+    init(allowLoopback: Bool, deps: Deps) { self.allowLoopback = allowLoopback; self.deps = deps }
 
     var status: Status { Status(listening: listener != nil, port: listener?.port.map { Int($0.rawValue) }, error: lastError) }
 
     /// Listens as `s` says with `identity` (restarting when the port, filter or identity changed), or stops when off.
     /// Waits for the listener to be ready or fail (≤ 5 s); a failure is reported in `status.error`, never thrown.
-    func apply(_ s: RemoteSettings, identity: RemoteIdentity?) async -> Status {
+    func apply(_ s: RemoteSettings, identity: RemoteIdentity?, installId: String = "") async -> Status {
         guard s.enabled, let identity else { stop(); return status }
         if let r = running, r.settings == s, r.fingerprint == identity.fingerprint, listener != nil { return status }
         stop()
@@ -41,8 +51,10 @@ actor RemoteGateway {
         let gen = generation
         do {
             let l = try NWListener(using: parameters(identity), on: s.port == 0 ? .any : try port(s.port))
-            let filter = (tailscaleOnly: s.tailscaleOnly, loopback: allowLoopback), conns = conns, queue = queue
-            l.newConnectionHandler = { c in Self.accept(c, filter: filter, conns: conns, queue: queue) }
+            let filter = (tailscaleOnly: s.tailscaleOnly, loopback: allowLoopback), sessions = sessions, queue = queue
+            let ctx = RemoteContext(devices: deps.devices, pairing: deps.pairing, fingerprint: identity.fingerprint, installId: installId,
+                                    macName: deps.macName, build: deps.build, helloDeadline: deps.helloDeadline, onClaim: deps.onClaim)
+            l.newConnectionHandler = { c in Self.accept(c, filter: filter, ctx: ctx, sessions: sessions, queue: queue) }
             let ready = await withCheckedContinuation { (k: CheckedContinuation<String?, Never>) in
                 let once = Once(k)
                 l.stateUpdateHandler = { st in
@@ -63,12 +75,12 @@ actor RemoteGateway {
         return status
     }
 
-    /// Stops listening and closes every remote connection.
+    /// Stops listening and closes every remote session (4003).
     func stop() {
         generation += 1
         listener?.stateUpdateHandler = nil
         listener?.cancel(); listener = nil; running = nil
-        conns.cancelAll()
+        sessions.closeAll(.disabled)
     }
 
     private func port(_ p: Int) throws -> NWEndpoint.Port {
@@ -97,33 +109,14 @@ actor RemoteGateway {
     }
 
     /// On `queue`. Refused before `start` (no TLS) when the source isn't LAN/Tailscale or the cap is reached.
-    private nonisolated static func accept(_ c: NWConnection, filter: (tailscaleOnly: Bool, loopback: Bool), conns: Conns, queue: DispatchQueue) {
-        guard case .hostPort(let host, _) = c.endpoint,
-              RemoteAddress.via("\(host)", tailscaleOnly: filter.tailscaleOnly, allowLoopback: filter.loopback) != nil,
-              conns.add(c, max: maxConnections) else { c.cancel(); return }
-        c.stateUpdateHandler = { st in
-            switch st {
-            case .failed, .cancelled: conns.remove(c)
-            default: break
-            }
-        }
-        c.start(queue: queue)
-        // ponytail: slice 1 has no session yet; slice 3 replaces this with pair / session.hello
-        c.receiveMessage { _, _, _, _ in
-            let meta = NWProtocolWebSocket.Metadata(opcode: .close)
-            meta.closeCode = .privateCode(4000)
-            let ctx = NWConnection.ContentContext(identifier: "close", metadata: [meta])
-            c.send(content: nil, contentContext: ctx, isComplete: true, completion: .contentProcessed { _ in c.cancel() })
-        }
-    }
-
-    /// Live connections, so turning the listener off closes them at once.
-    final class Conns: @unchecked Sendable {   // under `lock`
-        private let lock = NSLock()
-        private var all: [ObjectIdentifier: NWConnection] = [:]
-        func add(_ c: NWConnection, max: Int) -> Bool { lock.withLock { guard all.count < max else { return false }; all[ObjectIdentifier(c)] = c; return true } }
-        func remove(_ c: NWConnection) { lock.withLock { _ = all.removeValue(forKey: ObjectIdentifier(c)) } }
-        func cancelAll() { lock.withLock { let v = Array(all.values); all = [:]; return v }.forEach { $0.cancel() } }
+    private nonisolated static func accept(_ c: NWConnection, filter: (tailscaleOnly: Bool, loopback: Bool), ctx: RemoteContext,
+                                           sessions: RemoteSessions, queue: DispatchQueue) {
+        guard case .hostPort(let host, _) = c.endpoint else { c.cancel(); return }
+        let address = "\(host)".split(separator: "%", maxSplits: 1).first.map(String.init) ?? "\(host)"
+        guard let via = RemoteAddress.via(address, tailscaleOnly: filter.tailscaleOnly, allowLoopback: filter.loopback) else { c.cancel(); return }
+        let s = RemoteSession(conn: c, address: address, via: via, ctx: ctx, sessions: sessions, queue: queue)
+        guard sessions.add(s) else { c.cancel(); return }
+        s.start()
     }
 
     private final class Once: @unchecked Sendable {   // under `lock`

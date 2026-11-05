@@ -12,7 +12,7 @@ final class RemotePairing: @unchecked Sendable {
     struct Device: Equatable, Sendable { var name: String; var model: String; var address: String; var via: RemoteVia }
     struct Offer: Sendable { var pairingId: UUID; var secret: String; var expiresAt: Date }
     struct Claim: Sendable { var pairingId: UUID; var code: String }
-    enum Outcome: Equatable, Sendable { case pending, accepted(Device), refused, timedOut }
+    enum Outcome: Equatable, Sendable { case pending, accepted(Device), refused, timedOut, delivered }
 
     private enum State {
         case open(secret: String, expires: Date, failures: Int)
@@ -23,6 +23,8 @@ final class RemotePairing: @unchecked Sendable {
     private let lock = NSLock()
     private var id: UUID?
     private var state: State = .done(.refused)
+    /// `wait` callers, resumed by every change (begin, decide) and by their deadline.
+    private var waiters: [UUID: CheckedContinuation<Outcome?, Never>] = [:]
     /// One message for every refused secret: wrong, expired, used, none begun.
     private static let refused = ProtocolError(code: .unauthorized, message: "Código de pareamento inválido ou expirado. Gere um novo QR no Mac.")
 
@@ -33,6 +35,7 @@ final class RemotePairing: @unchecked Sendable {
         let secret = (try? RemoteDevices.randomToken()) ?? UUID().uuidString + UUID().uuidString
         let o = Offer(pairingId: UUID(), secret: secret, expiresAt: now() + Self.secretLife)
         lock.withLock { id = o.pairingId; state = .open(secret: secret, expires: o.expiresAt, failures: 0) }
+        wake()
         return o
     }
 
@@ -70,6 +73,7 @@ final class RemotePairing: @unchecked Sendable {
 
     /// The Mac's click: the device to create when accepted, nil when refused.
     func decide(_ pairingId: UUID, accept: Bool) throws(ProtocolError) -> Device? {
+        defer { wake() }
         let t = now()
         lock.lock(); defer { lock.unlock() }
         expire(t)
@@ -83,15 +87,55 @@ final class RemotePairing: @unchecked Sendable {
         }
     }
 
+    /// `pair.wait`: blocks until the pairing `pairingId` (claimed) is decided or times out. An accepted pairing is handed
+    /// out once (`.accepted`, then `.delivered`), so its device is created once.
+    func wait(_ pairingId: UUID) async -> Outcome {
+        while true {
+            let key = UUID()
+            // checked and registered under one lock: a decide in between can't be missed
+            let o: Outcome? = await withCheckedContinuation { (k: CheckedContinuation<Outcome?, Never>) in
+                let t = now()
+                let r = lock.withLock { () -> (Outcome?, Date?) in
+                    let o = outcomeLocked(pairingId, t)
+                    if case .accepted = o { state = .done(.delivered); return (o, nil) }
+                    guard o == .pending else { return (o, nil) }
+                    waiters[key] = k
+                    switch state {
+                    case .awaiting(_, _, let d): return (nil, d)
+                    case .open(_, let e, _): return (nil, e)
+                    case .done: return (nil, t)
+                    }
+                }
+                if let o = r.0 { return k.resume(returning: o) }
+                // ponytail: the deadline is the injected clock's, waited for in real time (the daemon's clock is real)
+                let after = max(0, (r.1 ?? t).timeIntervalSince(t)) + 0.05
+                DispatchQueue.global().asyncAfter(deadline: .now() + after) { [weak self] in self?.wake(key) }
+            }
+            if let o { return o }
+        }
+    }
+
+    private func wake(_ only: UUID? = nil) {
+        let ks = lock.withLock { () -> [CheckedContinuation<Outcome?, Never>] in
+            if let only { return waiters.removeValue(forKey: only).map { [$0] } ?? [] }
+            defer { waiters = [:] }
+            return Array(waiters.values)
+        }
+        ks.forEach { $0.resume(returning: nil) }
+    }
+
     func outcome(_ pairingId: UUID) -> Outcome {
         let t = now()
-        return lock.withLock {
-            expire(t)
-            guard pairingId == id else { return .refused }   // replaced by a newer pairing (or never this one)
-            switch state {
-            case .open, .awaiting: return .pending
-            case .done(let o): return o
-            }
+        return lock.withLock { outcomeLocked(pairingId, t) }
+    }
+
+    /// Under `lock`.
+    private func outcomeLocked(_ pairingId: UUID, _ t: Date) -> Outcome {
+        expire(t)
+        guard pairingId == id else { return .refused }   // replaced by a newer pairing (or never this one)
+        switch state {
+        case .open, .awaiting: return .pending
+        case .done(let o): return o
         }
     }
 

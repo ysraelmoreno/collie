@@ -48,6 +48,8 @@ public struct DaemonConfig: Sendable {
     public var adminPeerCheck: (any AdminPeerCheck)?
     /// The remote listener also accepts loopback peers (tests only; the real one refuses them).
     public var remoteAllowLoopback = false
+    /// How long a remote connection may stay without `session.hello` (tests shorten it).
+    public var remoteHelloDeadline: Duration = .seconds(10)
     /// How long a device video session outlives its last viewer.
     public var deviceGrace: Duration = .seconds(5)
     /// The bundled figcraft (`bin/figcraft-server`, `bin/figcraft-cli`, `web/`); nil/missing: design commands report it is not bundled.

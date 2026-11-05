@@ -14,11 +14,30 @@ struct RemoteDevice: Codable, Equatable, Sendable {
     /// The identity fingerprint it pinned at pairing: another identity (rotated, restored) leaves it unusable.
     var fingerprint: String
     var tokenHash: String
+    /// When the current token was handed out (nil: at `pairedAt`); past `RemoteDevices.tokenLife` hello hands a new one.
+    var tokenIssuedAt: Date?
+    /// A rotated token not yet used: both work until the new one is, which then replaces the old.
+    var pendingHash: String?
+    var lastSeenAt: Date?
+    var lastAddress: String?
+    /// lan | tailscale
+    var lastVia: String?
+
+    /// For the app's device sheet: never the hashes.
+    var publicJSON: [String: JSONValue] {
+        var o: [String: JSONValue] = ["id": .string(id.uuidString.lowercased()), "name": .string(name), "model": .string(model),
+                                      "scope": .string(scope.rawValue), "pairedAt": .string(pairedAt.ISO8601Format())]
+        if let lastSeenAt { o["lastSeenAt"] = .string(lastSeenAt.ISO8601Format()) }
+        if let lastAddress { o["lastAddress"] = .string(lastAddress) }
+        if let lastVia { o["lastVia"] = .string(lastVia) }
+        return o
+    }
 }
 
 /// The paired devices, in `<root>/remote/devices.json` (0600, dir 0700). Tokens are 32 random bytes (base64url) handed
 /// out once; only their SHA-256 is stored and compared in constant time. Under `lock`; every change is written at once.
 final class RemoteDevices: @unchecked Sendable {
+    static let tokenLife: TimeInterval = 90 * 86_400
     private let file: URL
     private let now: @Sendable () -> Date
     private let lock = NSLock()
@@ -35,8 +54,9 @@ final class RemoteDevices: @unchecked Sendable {
     /// A new device for a confirmed pairing; returns it and its token (never stored, never shown again).
     func add(_ d: RemotePairing.Device, fingerprint: String) throws -> (RemoteDevice, String) {
         let token = try Self.randomToken()
-        let dev = RemoteDevice(id: UUID(), name: d.name, model: d.model, scope: .full, pairedAt: now(), fingerprint: fingerprint,
-                               tokenHash: Self.hash(token))
+        let t = now()
+        let dev = RemoteDevice(id: UUID(), name: d.name, model: d.model, scope: .full, pairedAt: t, fingerprint: fingerprint,
+                               tokenHash: Self.hash(token), tokenIssuedAt: t, lastAddress: d.address, lastVia: d.via.rawValue)
         try change { $0.append(dev) }
         return (dev, token)
     }
@@ -44,17 +64,42 @@ final class RemoteDevices: @unchecked Sendable {
     /// The device `id` when `token` is its own and it was paired with the identity `fingerprint`. Devices of another
     /// identity are dropped here (their pins can't match this Mac any more).
     func verify(id: UUID, token: String, fingerprint: String) -> RemoteDevice? {
-        let h = Self.hash(token)
-        return lock.withLock {
-            if devices.contains(where: { $0.fingerprint != fingerprint }) {
-                let before = devices
-                devices.removeAll { $0.fingerprint != fingerprint }
-                if (try? save(devices)) == nil { devices = before }
+        lock.withLock { find(id, Self.hash(token), fingerprint).map { devices[$0.index] } }
+    }
+
+    /// `session.hello`: verifies like `verify`, records where it came from, and past `tokenLife` hands out a new token
+    /// (`rotate`). The old token keeps working until the new one is first used, which then replaces it.
+    /// ponytail: a phone that loses the rotated token keeps using the old one (no second rotation while one is pending).
+    func hello(id: UUID, token: String, fingerprint: String, address: String, via: RemoteVia) -> (device: RemoteDevice, rotate: String?)? {
+        let t = now()
+        return lock.withLock { () -> (RemoteDevice, String?)? in
+            guard let (i, pending) = find(id, Self.hash(token), fingerprint) else { return nil }
+            var next = devices, d = next[i], rotate: String?
+            if pending { d.tokenHash = d.pendingHash!; d.pendingHash = nil; d.tokenIssuedAt = t }
+            else if d.pendingHash == nil, t.timeIntervalSince(d.tokenIssuedAt ?? d.pairedAt) > Self.tokenLife,
+                    let new = try? Self.randomToken() {
+                d.pendingHash = Self.hash(new); rotate = new
             }
-            var hit: RemoteDevice?
-            for d in devices where constantTimeEqual(d.tokenHash, h) && d.id == id { hit = d }   // no early exit on the hash
-            return hit
+            d.lastSeenAt = t; d.lastAddress = address; d.lastVia = via.rawValue
+            next[i] = d
+            guard (try? save(next)) != nil else { return rotate == nil ? (devices[i], nil) : nil }   // a token never persisted is never handed out
+            devices = next
+            return (d, rotate)
         }
+    }
+
+    /// Under `lock`: the device's index and whether `hash` is its pending (rotated) token. Drops other identities' devices.
+    private func find(_ id: UUID, _ hash: String, _ fingerprint: String) -> (index: Int, pending: Bool)? {
+        if devices.contains(where: { $0.fingerprint != fingerprint }) {
+            let kept = devices.filter { $0.fingerprint == fingerprint }
+            if (try? save(kept)) != nil { devices = kept }
+        }
+        var hit: (Int, Bool)?
+        for (i, d) in devices.enumerated() {   // every hash compared: no early exit
+            let cur = constantTimeEqual(d.tokenHash, hash), pend = d.pendingHash.map { constantTimeEqual($0, hash) } ?? false
+            if d.id == id, d.fingerprint == fingerprint, cur || pend { hit = (i, pend && !cur) }
+        }
+        return hit
     }
 
     @discardableResult func revoke(_ id: UUID) throws -> Bool {

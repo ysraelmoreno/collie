@@ -20,6 +20,30 @@ enum RemoteAddress {
         return v4Via(bytes, tailscaleOnly: tailscaleOnly, allowLoopback: allowLoopback)
     }
 
+    /// This Mac's IPv4 addresses a phone may use (the QR's hosts): LAN first, then Tailscale, as the filter allows.
+    // ponytail: IPv4 only (Tailscale gives every node a 100.x too); MagicDNS name and Bonjour come in slice 11
+    static func localHosts(tailscaleOnly: Bool) -> [String] {
+        var head: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&head) == 0 else { return [] }
+        defer { freeifaddrs(head) }
+        var lan: [String] = [], ts: [String] = []
+        var p = head
+        while let a = p {
+            defer { p = a.pointee.ifa_next }
+            guard let sa = a.pointee.ifa_addr, sa.pointee.sa_family == UInt8(AF_INET) else { continue }
+            var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            var sin = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+            guard inet_ntop(AF_INET, &sin.sin_addr, &buf, socklen_t(buf.count)) != nil else { continue }
+            let ip = String(cString: buf)
+            switch via(ip, tailscaleOnly: tailscaleOnly) {
+            case .lan?: if !lan.contains(ip) { lan.append(ip) }
+            case .tailscale?: if !ts.contains(ip) { ts.append(ip) }
+            case nil: break
+            }
+        }
+        return lan + ts
+    }
+
     private static func v4Via(_ b: [UInt8], tailscaleOnly: Bool, allowLoopback: Bool) -> RemoteVia? {
         if b[0] == 100 && b[1] & 0xC0 == 64 { return .tailscale }   // 100.64.0.0/10 (Tailscale CGNAT)
         if tailscaleOnly { return nil }

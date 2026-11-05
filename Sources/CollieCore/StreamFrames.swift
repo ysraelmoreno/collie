@@ -149,7 +149,9 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
          /// A correction that is probably the user's waits for Confirmar (digest `entry`); `title` is the rule.
          confirmCorrection(terminal: UUID, entry: UUID, title: String),
          /// The loaded external plug-ins changed (install, uninstall, enable, disable): all of them, as manifests.
-         pluginsChanged([PluginSpecDTO])
+         pluginsChanged([PluginSpecDTO]),
+         /// A phone presented the pairing QR's secret and waits for the Mac's click (remote API): the app's dialog.
+         remotePairing(RemotePairingRequest)
 
     private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l, d, ok, e, m }
 
@@ -181,6 +183,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case "sandboxDetection": self = .sandboxDetection(available: try c.decode(Bool.self, forKey: .ok))
         case "confirmCorrection":
             self = .confirmCorrection(terminal: try id(), entry: try c.decode(UUID.self, forKey: .e), title: try c.decode(String.self, forKey: .name))
+        case "remotePairing": self = .remotePairing(try c.decode(RemotePairingRequest.self, forKey: .d))
         case "pluginsChanged": self = .pluginsChanged(try c.decode([Lossy<PluginSpecDTO>].self, forKey: .m).compactMap(\.value))   // one unreadable manifest loses only itself
         case let t: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "unknown event '\(t)'")
         }
@@ -214,6 +217,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .confirmCorrection(let t, let e, let title):
             try c.encode("confirmCorrection", forKey: .t); try c.encode(t, forKey: .id); try c.encode(e, forKey: .e); try c.encode(title, forKey: .name)
         case .pluginsChanged(let m): try c.encode("pluginsChanged", forKey: .t); try c.encode(m, forKey: .m)
+        case .remotePairing(let r): try c.encode("remotePairing", forKey: .t); try c.encode(r, forKey: .d)
         }
     }
 }

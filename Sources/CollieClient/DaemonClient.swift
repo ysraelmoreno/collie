@@ -208,6 +208,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .sandboxDetection(let ok): detection = ok
         case .confirmCorrection(let t, let e, let title): onConfirmCorrection?(t, e, title)
         case .pluginsChanged(let ms): setPlugins(ms)
+        case .remotePairing: break   // ponytail: the app's pairing dialog comes with the Celular preferences (remote API slice 10)
         }
     }
     private func setPlugins(_ ms: [PluginManifest]) { guard ms != plugins else { return }; plugins = ms; PluginManifest.register(ms) }   // unchanged: the registry stays

@@ -52,11 +52,27 @@ final class RemoteAudit: @unchecked Sendable {   // under `lock`
 final class RemoteLimits: @unchecked Sendable {   // under `lock`
     struct Bucket { var tokens: Double; var at: ContinuousClock.Instant }
     private let lock = NSLock()
-    private var requests: [UUID: Bucket] = [:], mutating: [UUID: Bucket] = [:]
+    private var requests: [UUID: Bucket] = [:], mutating: [UUID: Bucket] = [:], bytes: [UUID: Bucket] = [:]
     private var failures: [String: [ContinuousClock.Instant]] = [:]
     private var blocked: [String: ContinuousClock.Instant] = [:]
 
     static let rate = 30.0, burst = 60.0, mutPerMinute = 30.0, failLimit = 10, failWindow: Duration = .seconds(60), blockFor: Duration = .seconds(60)
+    static let bytesPerMinute = Double(20 << 20)   // artifact.file
+
+    /// `n` bytes of `artifact.file` for `device` (20 MiB a minute); nil: taken, else seconds until they would be.
+    func takeBytes(_ device: UUID, _ n: Int) -> Double? {
+        let now = ContinuousClock.now
+        return lock.withLock {
+            var b = bytes[device] ?? Bucket(tokens: Self.bytesPerMinute, at: now)
+            let dt = now - b.at
+            b.tokens = min(Self.bytesPerMinute, b.tokens + (Double(dt.components.seconds) + Double(dt.components.attoseconds) / 1e18) * Self.bytesPerMinute / 60)
+            b.at = now
+            defer { bytes[device] = b }
+            guard b.tokens >= Double(n) else { return (Double(n) - b.tokens) / (Self.bytesPerMinute / 60) }
+            b.tokens -= Double(n)
+            return nil
+        }
+    }
 
     /// nil: taken. Else seconds until it would be.
     func take(_ device: UUID, mutating m: Bool) -> Double? {

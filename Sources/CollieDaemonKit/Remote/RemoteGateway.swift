@@ -32,7 +32,7 @@ actor RemoteGateway {
         var eventQueueBytes: Int
         var hub: StreamHub
         var audit: RemoteAudit
-        var limits = RemoteLimits()
+        var limits: RemoteLimits
     }
 
     private let allowLoopback: Bool

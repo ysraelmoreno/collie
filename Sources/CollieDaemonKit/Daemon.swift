@@ -63,6 +63,8 @@ public struct DaemonConfig: Sendable {
     /// The offline web libraries (`manifest.json` + `<name>@<version>/`, scripts/fetch-weblibs.sh); nil/missing:
     /// `artifact.libs` reports them absent.
     public var weblibsDir: URL?
+    /// The app's bundled fonts (`Resources/Fonts`), for the remote API's `collie-lib://fonts`; nil: downloaded ones only.
+    public var bundledFontsDir: URL?
     /// `font.add`'s downloads (Google Fonts); tests inject a fake (never the network).
     public var fontFetch: FontFetch = GoogleFonts.fetch
     /// How long a caller's design client may sit unused before it is closed.

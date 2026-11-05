@@ -121,6 +121,7 @@ actor CommandRouter {
     nonisolated let remotePairing: RemotePairing
     nonisolated let remoteEvents: RemoteEventBus
     nonisolated let remoteAudit: RemoteAudit
+    nonisolated let remoteLimits = RemoteLimits()
     var remoteIdentity: RemoteIdentity?
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
@@ -185,7 +186,7 @@ actor CommandRouter {
                 await me.router?.remoteRequest(r, device: dev, via: via, address: address)
                     ?? Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "daemon stopping"))
             }, events: remoteEvents, eventQueueBytes: config.remoteEventQueueBytes, hub: hub,
-            audit: remoteAudit))
+            audit: remoteAudit, limits: remoteLimits))
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {

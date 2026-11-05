@@ -82,6 +82,8 @@ do {
     config.figcraftDir = figcraft
     config.screenRenderer = ScreenRenderer.render
     config.weblibsDir = weblibs
+    config.bundledFontsDir = ProcessInfo.processInfo.environment["COLLIE_FONTS_DIR"].map { URL(fileURLWithPath: $0) }
+        ?? collie.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/Fonts")
     let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
     config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil
     // every non-free terminal starts sandboxed (R15), whatever the root

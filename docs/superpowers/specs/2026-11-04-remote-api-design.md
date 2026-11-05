@@ -508,8 +508,10 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
   on the Mac now (from `ws.panels`).
 - `artifact.get` (R) args `{id}` → one, same projection.
 - `artifact.file` (R) args `{url}` where `url` is `collie-artifact://<id>/<relative path>` (the page and its files)
-  or `collie-lib://…` (offline libs and fonts the pages reference), `offset?: Int` (default 0) →
-  `{mime, size, offset, d: <base64>, done: Bool}`. **Chunked**: at most 512 KiB of file bytes per reply (≈ 683 KiB
+  or `collie-lib://…` (offline libs and fonts the pages reference), `offset?: Int` (default 0), `etag?` (the first
+  chunk's, on later ones) → `{mime, size, offset, d: <base64>, done: Bool, etag}`. The page to load is
+  `collie-artifact://<id>/<page>` with `page` from `artifact.list/get` (e.g. `source/index.html`); its relative
+  links resolve under the same id. **Chunked**: at most 512 KiB of file bytes per reply (≈ 683 KiB
   base64, under the 1 MiB frame); the phone asks again with `offset += decoded length` until `done`. Files up to
   8 MiB (the artifact page limit). The reply carries `etag` (version + mtime) so a file that changed between chunks
   is detected (`conflict`) and restarted. Paths resolved and confined to the artifact's folder / the lib store (no
@@ -694,8 +696,15 @@ reachable from the network until slice 3.
    lowercase ids (`id`, `workId`, `replyTo`), like `messageId`. Tests: `RemoteAskTests` (delivered → reply with
    `replyTo`, `via`, audit target without the text; failed; every refusal), `RemoteStatusTests` (status as a read,
    summary needs a work, rerail, reveal on `ui.events` + `notFound`/`invalidArgs`).
-9. **Artifact files** — `artifact.file` for `collie-artifact://` and `collie-lib://`, confinement, 8 MiB cap,
-   per-device byte budget. Tests: path-escape table, symlink out refused.
+9. **Artifact files (done, 2026-11-05)** — `artifact.file` (`RemoteFiles.swift`): `collie-artifact://<id>/<path>`
+   resolved with links inside the artifact's folder (a link out, `..`, `%2e%2e`, any dot entry, another artifact's
+   folder → `invalidArgs`; missing/folder → `notFound`); `collie-lib://lib/…` by exact manifest key and
+   `collie-lib://fonts/css?family=…` / `fonts/<family>/<file>` (downloaded, then bundled: `DaemonConfig.bundledFontsDir`
+   = the bundle's `Resources/Fonts`), as the app's `WebLibSchemeHandler`; 512 KiB chunks, 8 MiB cap (`invalidArgs`),
+   `etag` sent back on later chunks → `conflict` when the file changed; 20 MiB/min per device (`tooMany` +
+   `retryAfter`). `artifact.list/get` carry `page` (what to load, relative to the artifact) and `thumbnail`
+   (`thumb.png` or null). Tests: `RemoteArtifactFileTests` (page + css + a 3-chunk image, escape table incl.
+   symlinks out and to a sibling artifact, conflict, cap, libs + fonts + unlisted files, byte budget).
 10. **Mac app UI** — Preferências → Celular (toggle, port, Só Tailscale, reachable addresses, fingerprint), Parear
     sheet with QR (CoreImage `CIQRCodeGenerator`) + confirm dialog on `remotePairing`, Aparelhos list (revoke, scope,
     Trocar certificado), "do iPhone" in the chat. Manual check in the dev app.

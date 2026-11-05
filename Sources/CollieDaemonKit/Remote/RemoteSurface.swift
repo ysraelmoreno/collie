@@ -21,7 +21,7 @@ enum RemoteSurface {
         "workspace.snapshot": .read, "terminal.screen": .read, "work.list": .read, "work.get": .read, "work.summary": .read,
         "approvals.list": .read, "access.cards": .read, "chat.history": .read, "artifact.list": .read, "artifact.get": .read,
         "events.subscribe": .read, "events.unsubscribe": .read, "terminal.attach": .read, "terminal.detach": .read,   // handled by the session itself
-        "work.status": .read,
+        "work.status": .read, "artifact.file": .read,
         // behind the scope gate already; their handlers come in slices 7-8
         "approval.answer": .mutating, "approval.dismiss": .mutating, "access.grant": .mutating, "access.deny": .mutating,
         "agent.ask": .mutating, "work.rerail": .mutating, "mac.reveal": .mutating,
@@ -77,7 +77,8 @@ extension CommandRouter {
             let open = all.filter { $0.closedAt == nil }
             let done = all.filter { $0.closedAt != nil }.sorted { $0.closedAt! > $1.closedAt! }.prefix(closed)
             o["works"] = .array((open + done).map(remoteWorkRow))
-            o["artifacts"] = .array(try await artifacts.list().sorted { $0.at > $1.at }.prefix(arts).map(remoteArtifact))
+            let adir = await artifacts.dir
+            o["artifacts"] = .array(try await artifacts.list().sorted { $0.at > $1.at }.prefix(arts).map { remoteArtifact($0, dir: adir) })
             return .object(o)
         case "terminal.screen":
             let t = try remoteTerminalRecord(r)
@@ -112,12 +113,14 @@ extension CommandRouter {
             if str(r, "terminal") != nil { let name = try remoteTerminalRecord(r).name; page = page.filter { $0.terminal == name } }
             return .array(page.map(RemoteSurface.chat))
         case "artifact.list":
-            return .array(try await artifacts.list().sorted { $0.at > $1.at }.map(remoteArtifact))
+            let adir = await artifacts.dir
+            return .array(try await artifacts.list().sorted { $0.at > $1.at }.map { remoteArtifact($0, dir: adir) })
         case "artifact.get":
             guard let id = str(r, "id").flatMap(UUID.init(uuidString:)), let a = try await artifacts.list().first(where: { $0.id == id }) else {
                 throw ProtocolError(code: .notFound, message: "Artifact não encontrado.")
             }
-            return remoteArtifact(a)
+            return remoteArtifact(a, dir: await artifacts.dir)
+        case "artifact.file": return try await remoteFile(r, device: device)
         case "approval.answer", "approval.dismiss":
             guard let id = str(r, "id").flatMap(UUID.init(uuidString:)) else { throw ProtocolError(code: .invalidArgs, message: "Aprovação inválida.") }
             target = id.uuidString.lowercased()
@@ -282,8 +285,9 @@ extension CommandRouter {
                         "jobs": .object(["running": jobs(.running), "finished": jobs(.finished), "gone": jobs(.gone), "unknown": jobs(.unknown)])])
     }
 
-    private func remoteArtifact(_ a: Artifact) -> JSONValue {
+    private func remoteArtifact(_ a: Artifact, dir: URL) -> JSONValue {
         let key = a.id.uuidString.lowercased()
+        let page = a.kind == .export ? "\(a.folder)/index.html" : a.source ?? "\(a.folder)/source.html"   // as artifact.list's url
         // open on the artifact, or on the project page it was added from (`collie artifact new` opens the file)
         let live = ws.panels.contains { p in
             guard p.pluginId == "preview" else { return false }
@@ -292,9 +296,15 @@ extension CommandRouter {
                   let u = try? PreviewFile.resolve(f, projectRoot: URL(fileURLWithPath: root)) else { return false }
             return SignedAppCheck.realPath(u) == from
         }
-        return .object(["id": .string(key), "kind": .string(a.kind.rawValue), "title": .string(a.title), "by": .string(a.by),
-                        "at": .string(a.at.ISO8601Format()), "version": .number(Double(a.version)),
-                        "folder": a.inFolder.map { .string($0) } ?? .null, "live": .bool(live),
-                        "importing": .bool(importingArtifacts.contains(a.id)), "importError": a.importError.map { .string($0) } ?? .null])
+        var o: [String: JSONValue] = ["id": .string(key), "kind": .string(a.kind.rawValue), "title": .string(a.title), "by": .string(a.by),
+                                      "at": .string(a.at.ISO8601Format()), "version": .number(Double(a.version))]
+        o["folder"] = a.inFolder.map { .string($0) } ?? .null
+        o["live"] = .bool(live)
+        o["importing"] = .bool(importingArtifacts.contains(a.id))
+        o["importError"] = a.importError.map { .string($0) } ?? .null
+        // what to load as collie-artifact://<id>/<page>, and its thumbnail (both relative to the artifact)
+        o["page"] = .string(String(page.dropFirst(a.folder.count + 1)))
+        o["thumbnail"] = FileManager.default.fileExists(atPath: dir.appendingPathComponent(a.folder + "/thumb.png").path) ? .string("thumb.png") : .null
+        return .object(o)
     }
 }

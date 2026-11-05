@@ -21,12 +21,16 @@ private final class Box: @unchecked Sendable { var d = Data() }
 struct Run { var status: Int32; var out: String; var err: String }
 
 /// Runs `collie` off the cooperative pool and waits for exit.
+/// The test process's environment without any `COLLIE_*`: run inside a Collie terminal, its socket, token or
+/// `COLLIE_SHEPHERD` would leak into the `collie` under test (DX backlog 17).
+func cleanEnv() -> [String: String] { ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") } }
+
 func runCollie(_ args: [String], env: [String: String], stdin: String? = nil) async throws -> Run {
     try await withCheckedThrowingContinuation { c in
         Thread {
             do {
                 let p = Process(); p.executableURL = collieURL; p.arguments = args
-                p.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"].merging(env) { $1 }) { $1 }
+                p.environment = cleanEnv().merging(["COLLIE_USER_ENV": "off"].merging(env) { $1 }) { $1 }
                 let o = Pipe(), e = Pipe(), i = Pipe()
                 p.standardOutput = o; p.standardError = e; p.standardInput = i
                 try p.run()

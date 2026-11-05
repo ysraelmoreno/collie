@@ -36,7 +36,7 @@ private final class Session: @unchecked Sendable {
     var messages: [[String: Any]] { lines(String(decoding: lock.withLock { buf }, as: UTF8.self)) }
     init(env: [String: String]) throws {
         p.executableURL = collieURL; p.arguments = ["mcp"]
-        p.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"].merging(env) { $1 }) { $1 }
+        p.environment = cleanEnv().merging(["COLLIE_USER_ENV": "off"].merging(env) { $1 }) { $1 }
         p.standardInput = i; p.standardOutput = o; p.standardError = FileHandle.nullDevice
         o.fileHandleForReading.readabilityHandler = { [weak self] h in let d = h.availableData; self?.lock.withLock { self?.buf.append(d) } }
         try p.run()
@@ -79,9 +79,8 @@ private func lines(_ s: String) -> [[String: Any]] {
                          "design_files", "design_new", "design_help", "design_prefer", "design_system_list", "design_system_create", "design_system_history",
                          "design_system_use", "design_system_undo", "artifact_list", "artifact_get", "artifact_add", "artifact_import-claude", "artifact_import-list", "artifact_import-failed", "artifact_import", "artifact_new", "artifact_libs",
                          "artifact_move", "artifact_folders"].sorted())
-        if ProcessInfo.processInfo.environment["COLLIE_TOKEN"] == nil {   // no credential: one line on stderr
-            #expect(r.err.split(separator: "\n").filter { $0.contains("COLLIE_TOKEN") }.count == 1, "\(r.err)")
-        }
+        // no credential (none inherited, even inside a Collie terminal): one line on stderr
+        #expect(r.err.split(separator: "\n").filter { $0.contains("COLLIE_TOKEN") }.count == 1, "\(r.err)")
         let caps = (by(1)?["result"] as? [String: Any])?["capabilities"] as? [String: Any]
         #expect((caps?["tools"] as? [String: Any])?["listChanged"] as? Bool == true)
         #expect(((by(3)?["error"] as? [String: Any])?["code"] as? Int) == -32601)

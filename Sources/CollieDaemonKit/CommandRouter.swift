@@ -109,6 +109,9 @@ actor CommandRouter {
     var sandboxPref: SandboxMode?
     /// Preferências → "Baixar fontes do Google Fonts" (`<root>/preferences.json`; on unless turned off).
     var googleFonts = true
+    /// The remote listener (off unless the user turned it on) and its TLS identity, loaded once needed.
+    nonisolated let remote: RemoteGateway
+    var remoteIdentity: RemoteIdentity?
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
     init(config: DaemonConfig, auth: AuthRegistry, registry: TerminalRegistry, store: WorkspaceStore,
@@ -157,6 +160,7 @@ actor CommandRouter {
             root: config.paths.root, home: home, env: { await userEnv.current() }), events: memory.events)
         // L3: one Collie-wide preference; a workspace's value (before) moves there once
         let settings = CollieSettings.load(root)
+        self.remote = RemoteGateway(allowLoopback: config.remoteAllowLoopback)
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {
@@ -589,6 +593,7 @@ actor CommandRouter {
             return .object([:])
         case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))
         case "admin.fonts": return try setGoogleFonts(str(r, "download"))
+        case "admin.remote": return try await remoteCommand(r)
         case "admin.data.export", "admin.data.import":
             let key = r.command == "admin.data.export" ? "out" : "from"
             let path = try need(key)

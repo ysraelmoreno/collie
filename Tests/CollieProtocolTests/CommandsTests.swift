@@ -8,6 +8,14 @@ import Foundation
         #expect(r.command == "artifact.add" && r.args["path"] == .string("a.html"))
     }
 
+    @Test func adminRemoteFromTheCLI() throws {
+        let r = try ArgvParser.parse(["admin", "remote", "on", "--port", "47821", "--tailscale-only", "off"])
+        #expect(r.command == "admin.remote" && r.args["action"] == .string("on") && r.args["port"] == .number(47821)
+                && r.args["tailscale-only"] == .string("off"))
+        #expect(try ArgvParser.parse(["admin", "remote"]).args["action"] == nil)   // status
+        #expect(Commands.spec("admin.remote")?.exposedToMCP == false)
+    }
+
     @Test func artifactMoveTakesManyIds() throws {
         let r = try ArgvParser.parse(["artifact", "move", "a", "b", "c", "--folder", "Cliente"])
         #expect(r.args == ["ids": .array([.string("a"), .string("b"), .string("c")]), "folder": .string("Cliente")])

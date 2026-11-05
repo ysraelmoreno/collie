@@ -190,6 +190,8 @@ struct CollieSettings: Codable {
     var terminalSandbox: SandboxMode?
     /// "Baixar fontes do Google Fonts"; nil: on.
     var googleFonts: Bool?
+    /// "Acesso pelo iPhone" (remote API); nil: off.
+    var remote: RemoteSettings?
     static func file(_ root: URL) -> URL { root.appendingPathComponent("preferences.json") }
     /// A missing file: nothing set; one that can't be read: strict (fail closed).
     static func load(_ root: URL) -> CollieSettings {

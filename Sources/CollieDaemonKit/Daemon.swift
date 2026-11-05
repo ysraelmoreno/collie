@@ -46,6 +46,8 @@ public struct DaemonConfig: Sendable {
     /// Who may present the admin token besides the session check: the bundled daemon checks the app's signature
     /// (`SignedAppCheck`); nil: off (dev runs, tests).
     public var adminPeerCheck: (any AdminPeerCheck)?
+    /// The remote listener also accepts loopback peers (tests only; the real one refuses them).
+    public var remoteAllowLoopback = false
     /// How long a device video session outlives its last viewer.
     public var deviceGrace: Duration = .seconds(5)
     /// The bundled figcraft (`bin/figcraft-server`, `bin/figcraft-cli`, `web/`); nil/missing: design commands report it is not bundled.
@@ -216,6 +218,7 @@ public final class Daemon: Sendable {
         await router.migrateProposals()   // once: the proposals already waiting go through the curator
         await router.curator.start { [router] job, call in try await router.curate(job, call) }
         await router.startConsolidation()
+        await router.startRemote()
     }
 
     private func sweep(_ dir: URL, _ match: (String) -> Bool) {
@@ -225,6 +228,7 @@ public final class Daemon: Sendable {
 
     public func stop() async {
         server.stop()
+        await router.remote.stop()
         await router.stopSandboxWatch()
         await router.stopJobSweep()
         await router.stopConsolidation()

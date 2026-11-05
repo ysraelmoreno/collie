@@ -273,6 +273,11 @@ public actor AskCoordinator {
         var typed = false
         var sessionHooked = false   // SessionStart reached the daemon: this Claude's hooks work
         var submits = 0             // UserPromptSubmit hooks seen
+        /// A turn is running (UserPromptSubmit seen, its Stop not yet): a prompt written now waits in Claude's queue.
+        var inTurn = false
+        var turnEnds = 0            // Stop hooks seen (not continued)
+        /// The in-flight prompt written to this Claude whose UserPromptSubmit hasn't come: a Stop now ends an earlier turn.
+        var awaitingSubmit: UUID?
     }
     private struct Waiter {
         var from: UUID, to: UUID, prompt: String, raw: Bool
@@ -421,6 +426,7 @@ public actor AskCoordinator {
     public func turnCompleted(terminal: UUID, message: String?) -> UUID? {
         guard var t = targets[terminal] else { return nil }
         t.approval.dismiss()   // the turn ended: no dialog is open
+        t.inTurn = false; t.turnEnds += 1
         t.hookCapable = true
         // the first hook after idle-finished turns belongs to the last of them, not to the in-flight ask
         // ponytail: a Bool, not a count: a lost/coalesced hook or a hookless stretch costs at most one
@@ -449,7 +455,7 @@ public actor AskCoordinator {
             }
         }
         targets[terminal] = t
-        guard let (id, mark) = t.inflight else { return nil }
+        guard let (id, mark) = t.inflight, t.awaitingSubmit != id else { return nil }   // queued behind this turn: not its reply
         let asker = waiters[id].flatMap { $0.inject || $0.user ? nil : $0.from }
         if let message { finish(id, .success(AskResult(output: message, source: .hook, truncated: false))) }
         else {
@@ -621,6 +627,7 @@ public actor AskCoordinator {
         guard let w = waiters.removeValue(forKey: id) else { return }
         w.timer?.cancel()
         if targets[w.to]?.inflight?.id == id { targets[w.to]?.inflight = nil }
+        if targets[w.to]?.awaitingSubmit == id { targets[w.to]?.awaitingSubmit = nil }
         targets[w.to]?.queue.removeAll { $0 == id }
         w.cont?.resume(returning: r)
         pump(w.to)
@@ -654,7 +661,8 @@ public actor AskCoordinator {
         targets[to]?.typed = true
         // a dialog's answer and these never raise UserPromptSubmit
         let confirm = t.claudeTUI && !w.raw && t.approval.pending == nil && !w.prompt.hasPrefix("/") && !w.prompt.hasPrefix("!")
-        let submits = t.submits, raw = w.raw
+        let submits = t.submits, raw = w.raw, busy = t.inTurn, ends = t.turnEnds
+        if confirm { targets[to]?.awaitingSubmit = id }
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
         // off the cooperative pool, report failures back through finish.
         let data = PromptInjector.payload(w.prompt, raw: w.raw, bracketed: t.paste.enabled)
@@ -678,7 +686,7 @@ public actor AskCoordinator {
                     Thread.sleep(forTimeInterval: PromptInjector.submitDelay)
                     try process.write(PromptInjector.submit, origin: w.user ? .user : .collie)
                 }
-                if confirm { Task { await self?.confirmSubmit(id, to, after: submits) } }
+                if confirm { Task { await self?.confirmSubmit(id, to, after: submits, busy: busy, ends: ends) } }
                 else { Task { await self?.delivered(id) } }
             } catch {
                 let e = (error as? PTYError) == .stalled
@@ -795,25 +803,34 @@ public actor AskCoordinator {
         waiters[id]?.cont = nil
     }
 
+    /// Submitted (or can't tell): its turn's Stop is its reply from now on.
+    private func submitted(_ id: UUID, _ to: UUID) {
+        if targets[to]?.awaitingSubmit == id { targets[to]?.awaitingSubmit = nil }
+        delivered(id)
+    }
+
     /// Hook: this Claude's SessionStart reached the daemon.
     func sessionHooked(_ terminal: UUID) { targets[terminal]?.sessionHooked = true }
     /// Hook: this Claude submitted a prompt.
-    func promptSubmitted(_ terminal: UUID) { targets[terminal]?.submits += 1 }
+    func promptSubmitted(_ terminal: UUID) { targets[terminal]?.submits += 1; targets[terminal]?.inTurn = true }
 
     /// A Claude prompt was written: an inject's caller hears of it only once submitted. No UserPromptSubmit and a quiet
     /// agent: it is stuck in the input, no turn will end, so the queue is freed and the caller told, instead of holding
     /// the slot up to the hold. Without proof either way (hooks not seen, a dialog open, always printing): as written.
-    private func confirmSubmit(_ id: UUID, _ to: UUID, after submits: Int) async {
-        let start = ContinuousClock.now
+    /// `busy`: written mid-turn (DX backlog 16): Claude queues it until that turn ends (`ends` still the Stop count), so the
+    /// wait for its submit starts only then.
+    private func confirmSubmit(_ id: UUID, _ to: UUID, after submits: Int, busy: Bool = false, ends: Int = 0) async {
+        var start = ContinuousClock.now
         while true {
             try? await Task.sleep(for: .milliseconds(100))
             guard let t = targets[to], t.inflight?.id == id else { return }   // its turn ended, or it failed
-            if t.submits > submits { delivered(id); return }
+            if t.submits > submits { submitted(id, to); return }
             let now = ContinuousClock.now
+            if busy && t.turnEnds == ends { start = now; continue }   // ponytail: bounded by the waiter's own timeout
             guard now - start >= submitConfirm else { continue }
             let printing = t.process.lastOutputAt.map { now - $0 < StreamHub.workingWindow } ?? false
             if printing && now - start < Self.submitConfirmMax { continue }
-            if printing || !t.sessionHooked || t.approval.pending != nil { delivered(id); return }
+            if printing || !t.sessionHooked || t.approval.pending != nil { submitted(id, to); return }
             finish(id, .failure(ProtocolError(code: .unavailable, message:
                 "'\(t.name)' did not submit the prompt; it may still be in its input. Check it with `collie check`")))
             return

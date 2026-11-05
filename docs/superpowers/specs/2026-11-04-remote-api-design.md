@@ -515,9 +515,13 @@ reachable from the network until slice 3.
    `URLSessionWebSocketTask`. Tests: `RemoteAddressTests`, `RemoteIdentityTests`, `RemoteAdminTests`,
    `CommandsTests/adminRemoteFromTheCLI`. Not done here: firewall prompt check on a real install, Bonjour (slice 11),
    rotate command (`admin.remote.identity.rotate`, slice 10 with the device sheet).
-2. **Device store + pairing logic (no network)** — `RemoteDevices` (hash-only, constant-time verify, revoke, scope,
-   rotation), `PairingSession` (5 min, single use, 5 failures, confirm/refuse/timeout). Tests:
-   `RemoteDevicesTests`, `PairingSessionTests` with an injected clock.
+2. **Device store + pairing logic, no network (done, 2026-11-04)** — `RemoteDevices` (`devices.json` 0600: SHA-256 of
+   the token only, constant-time verify, revoke, scope `full|read`; each device keeps the identity fingerprint it
+   pinned, and a device of another identity is dropped at verify; `RemoteIdentity.rotate(devices:)` revokes all) and
+   `RemotePairing` (one live pairing, secret single use / 5 min / 5 failures → `tooMany`, one refusal message for
+   wrong, expired and used, 6-digit code, Mac accept/refuse, 60 s confirm timeout read off the clock). Tests:
+   `RemoteDevicesTests`, `RemotePairingTests` (injected clock, no sleep). Moved to slice 3: the 90-day token
+   rotation in `session.hello` and `lastSeenAt`/`lastAddress` (both written by hello).
 3. **Hello** — on `RemoteGateway` (slice 1): 10 s hello deadline, `pair` + `session.hello`, close codes. Tests: `RemoteAddressFilterTests` (pure ranges table),
    `RemoteGatewayTests` with a loopback-allowed test flag driving a real TLS WebSocket client pinned to a test
    identity: hello ok/bad/revoked, pair happy path, unknown command, admin command refused.

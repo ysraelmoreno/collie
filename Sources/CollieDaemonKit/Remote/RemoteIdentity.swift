@@ -28,9 +28,10 @@ final class RemoteIdentity: @unchecked Sendable {   // immutable after init
         return try load(dir: dir)
     }
 
-    /// A new key and certificate: every paired phone's pin breaks (they must pair again).
-    static func rotate(dir: URL) throws -> RemoteIdentity {
+    /// A new key and certificate: every paired phone's pin breaks, so `devices` are all revoked (they pair again).
+    static func rotate(dir: URL, devices: RemoteDevices? = nil) throws -> RemoteIdentity {
         try create(dir: dir)
+        try devices?.revokeAll()
         return try load(dir: dir)
     }
 

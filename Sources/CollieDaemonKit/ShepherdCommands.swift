@@ -91,7 +91,11 @@ extension CommandRouter {
             throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
         }
         let command = str(r, "command") ?? (str(r, "preset") == nil ? me.command : nil)
-        if let t = try lookup(name) { throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists") }
+        if let t = try lookup(name) {
+            let hint = ConnectionGraph.reachable(from: me.id, in: ws).contains { $0.id == t.id }
+                ? "it is leashed to you: collie ask \(t.name) \"…\"" : "not leashed to you. " + ConnectionGraph.leashHint(t.name, for: me.id, in: ws)
+            throw ProtocolError(code: .invalidArgs, message: "terminal '\(t.name)' already exists; \(hint)")
+        }
         _ = try connectTargets(r, by: me)   // before the launch: a refused target creates nothing
         var paddockId = me.paddockId, cwd = me.cwd
         var allowed = try await projectRoot(of: me)   // the new terminal's project stays within it

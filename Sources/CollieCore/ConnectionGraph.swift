@@ -4,6 +4,13 @@ import CollieProtocol
 public enum ConnectionGraph {
     // Every terminal, Shepherd included, reaches only the peers it is leashed to (undirected; spec §5).
     // A free terminal (no sandbox) is out of every leash, both ways: nothing reaches it, it reaches nothing.
+    /// What to do about a terminal `from` doesn't reach: a Shepherd asks the user for the leash; anyone else can't.
+    public static func leashHint(_ name: String, for from: UUID, in ws: Workspace) -> String {
+        ws.terminals.contains(where: { $0.id == from && $0.isShepherd })
+            ? "Ask the user to leash it to you: collie leash request \(name) --reason \"…\""
+            : "Only the user can leash it to you, on the canvas (or ask your Shepherd)."
+    }
+
     public static func reachable(from: UUID, in ws: Workspace) -> [TerminalRecord] {
         guard ws.terminals.contains(where: { $0.id == from && $0.sandbox == .sandboxed }) else { return [] }
         let peers = Set(ws.connections.compactMap { $0.a == from ? $0.b : $0.b == from ? $0.a : nil })
@@ -17,7 +24,7 @@ public enum ConnectionGraph {
         }
         let hits = reachable(from: from, in: ws).filter(same)
         switch hits.count {
-        case 0: throw ProtocolError(code: .notConnected, message: "No connection to '\(name)'. Connect the terminals first.")
+        case 0: throw ProtocolError(code: .notConnected, message: "No connection to '\(name)'. " + leashHint(name, for: from, in: ws))
         case 1: return hits[0]
         default: throw ProtocolError(code: .ambiguous, message: "Multiple connected terminals named '\(name)'")
         }

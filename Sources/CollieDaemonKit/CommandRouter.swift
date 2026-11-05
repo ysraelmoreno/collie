@@ -329,7 +329,7 @@ actor CommandRouter {
                 throw ProtocolError(code: .unauthorized, message: "Invalid terminal credentials")
             }
             switch req.command {
-            case "list": return Response(id: req.id, ok: true, result: await list(from: tid))
+            case "list": return Response(id: req.id, ok: true, result: await list(from: tid, all: flag(req, "all")))
             case "open":   // the sandbox's `open` shim (R4): URLs and installed apps only, opened outside the sandbox
                 let home = config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory())
                 try await config.opener(try OpenCommand.arguments(target: str(req, "target"), app: str(req, "app"), cwd: req.cwd, home: home))
@@ -472,12 +472,24 @@ actor CommandRouter {
         try? await asks.inject(to: shepherd, prompt: lines.joined(separator: "\n"), hold: .seconds(1800), afterQuiet: true)
     }
 
-    private func list(from id: UUID) async -> JSONValue {
+    /// `all`: also the caller's paddock's other (sandboxed) terminals, unreachable, with what to do about them.
+    private func list(from id: UUID, all: Bool = false) async -> JSONValue {
+        let reach = ConnectionGraph.reachable(from: id, in: ws)
+        let paddock = ws.terminals.first { $0.id == id }?.paddockId
+        let others = !all ? [] : ws.terminals.filter { t in
+            t.id != id && t.sandbox == .sandboxed && t.paddockId == paddock && !reach.contains { $0.id == t.id }
+        }
         var out: [JSONValue] = []
-        for t in ConnectionGraph.reachable(from: id, in: ws) {
+        for t in reach + others {
             let running = await registry.process(t.id)?.isRunning ?? false
-            out.append(.object(["name": .string(t.name), "preset": .string(t.preset.rawValue),
-                                "running": .bool(running), "isShepherd": .bool(t.isShepherd)]))
+            var o: [String: JSONValue] = ["name": .string(t.name), "preset": .string(t.preset.rawValue),
+                                          "running": .bool(running), "isShepherd": .bool(t.isShepherd)]
+            if all {
+                let reachable = reach.contains { $0.id == t.id }
+                o["reachable"] = .bool(reachable)
+                if !reachable { o["hint"] = .string(ConnectionGraph.leashHint(t.name, for: id, in: ws)) }
+            }
+            out.append(.object(o))
         }
         return .array(out)
     }

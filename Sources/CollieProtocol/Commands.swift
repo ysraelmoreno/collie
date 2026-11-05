@@ -41,7 +41,9 @@ public enum Commands {
     public static let reservedPluginIds: Set<String> = Set(PluginRegistry.builtIn.map(\.id))
         .union(builtIn.map { String($0.name.prefix { $0 != "." }) })
     static let core: [CommandSpec] = [
-        CommandSpec(name: "list", summary: "List connected agents", timeoutSeconds: 10),
+        CommandSpec(name: "list", summary: "List connected agents",
+                    params: [ParamSpec("all", .flag, help: "Also your paddock's terminals not leashed to you, with how to reach them")],
+                    timeoutSeconds: 10),
         CommandSpec(name: "ask", summary: "Send a prompt to an agent; wait for its reply, or --no-wait",
                     params: [ParamSpec("target", .string, positional: true, required: true, help: "Agent name"),
                              ParamSpec("prompt", .rest, positional: true, required: true, help: "Prompt text"),

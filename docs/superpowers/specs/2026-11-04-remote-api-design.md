@@ -242,7 +242,7 @@ Legend: **R** read · **M** mutating (needs `full` scope; audited §4.3).
 | `workspace.snapshot` | R | `ui.snapshot` + `work.approvals` + `access.list` + `work.list` + `artifact.list` |
 | `events.subscribe` / `events.unsubscribe` | R | `ui.events` (+ work panel events) |
 | `terminal.attach` / `terminal.detach` | R | `ui.attach` (output only) |
-| `terminal.screen` | R | `check` (scrollback tail, ANSI stripped) |
+| `terminal.screen` | R | `check --screen` (rendered screen; fallback to the scrollback tail) |
 | `agent.ask` | M | `work.chat.send` (`askAsUser`) |
 | `chat.history` | R | `work.chat.history` |
 | `work.status` | R | `work.chat.send` status questions (`StatusQuestion` → `WorkStatusText`) |
@@ -313,8 +313,9 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
 
 ### 3.3b Screen text — `terminal.screen`
 
-- args: `{terminal, lines?: Int (default 200, max 500)}` → `{text, truncated}` — the `check` path (scrollback tail,
-  ANSI stripped). For a list preview / a stopped terminal's last screen without opening a stream. (iOS `output`.)
+- args: `{terminal, lines?: Int (default 200, max 500)}` → `{text, truncated}` — rendered screen (`check --screen`:
+  its last `lines` rows, as drawn now); fallback to the scrollback (tail, ANSI stripped) when the terminal is stopped
+  or the daemon has no renderer. For a list preview / a stopped terminal's last screen without opening a stream. (iOS `output`.)
 - errors: `notFound`.
 
 ### 3.4 Events — `events.subscribe`

@@ -65,6 +65,11 @@ extension CommandRouter {
         case "terminal.screen":
             let t = try remoteTerminalRecord(r)
             let lines = Int(try num(r, "lines", max: 500) ?? 200)
+            // the rendered screen (its last `lines` rows) while it runs; no renderer (tests) or stopped: the scrollback tail
+            if config.screenRenderer != nil, await registry.process(t.id)?.isRunning == true {
+                let rows = try await screen(t).split(separator: "\n", omittingEmptySubsequences: false)
+                return .object(["text": .string(rows.suffix(lines).joined(separator: "\n")), "truncated": .bool(rows.count > lines)])
+            }
             let s = await registry.scrollback(t.id)?.tail(lines: lines) ?? (text: "", truncated: false)
             return .object(["text": .string(ANSI.strip(s.text)), "truncated": .bool(s.truncated)])
         case "work.list":

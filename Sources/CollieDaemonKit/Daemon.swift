@@ -10,6 +10,8 @@ public struct DaemonConfig: Sendable {
     public var build: String?
     public var workspaceId: UUID
     public var idleQuietSeconds: Double = 2.0
+    /// `check --screen`: a terminal's raw output → its screen as drawn now (collied's CollieScreen; nil: unavailable).
+    public var screenRenderer: (@Sendable (Data, _ cols: Int, _ rows: Int) -> String)?
     /// How long a timed-out turn keeps its target's ask slot (lost hook / hung agent).
     public var heldMaxSeconds: Double = 600
     /// How long a Claude capture block holds the terminal's queued asks when the continued Stop never comes.

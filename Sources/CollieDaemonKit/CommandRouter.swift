@@ -350,6 +350,7 @@ actor CommandRouter {
                 return Response(id: req.id, ok: true, result: AskInbox.json(e))
             case "check":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
+                if flag(req, "screen") { return Response(id: req.id, ok: true, result: .object(["output": .string(try await screen(t))])) }
                 let s = await registry.scrollback(t.id)?.tail(lines: Int(try num(req, "lines", max: 1_000_000) ?? 200)) ?? (text: "", truncated: false)
                 return Response(id: req.id, ok: true, result: .object(["output": .string(s.text), "truncated": .bool(s.truncated)]))
             case "wait":
@@ -418,6 +419,16 @@ actor CommandRouter {
             try? await asks.inject(to: from, prompt: AskInbox.message(e), hold: .seconds(1800), afterQuiet: true)
         }
         return .object(["askId": .string(id), "target": .string(t.name)])
+    }
+
+    /// `check --screen`: the terminal's screen as drawn now (its output replayed into an emulator of its size).
+    func screen(_ t: TerminalRecord) async throws(ProtocolError) -> String {
+        guard let render = config.screenRenderer else {
+            throw ProtocolError(code: .unavailable, message: "This daemon can't render screens; use `collie check` without --screen")
+        }
+        let p = await registry.process(t.id), sb = await registry.scrollback(t.id)
+        let size = p?.size ?? (120, 40)
+        return render(sb?.snapshot().data ?? Data(), size.cols, size.rows)
     }
 
     /// `wait`: an idle agent answers at once with its last turn; a working one when its turn ends (Stop hook), or when its

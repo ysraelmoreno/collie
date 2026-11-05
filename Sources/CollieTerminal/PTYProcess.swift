@@ -210,6 +210,12 @@ public final class PTYProcess: @unchecked Sendable {
     /// Runs `body` on the output queue: no output is read (scrollback append + `onOutput`) while it runs.
     public func serialized(_ body: @escaping @Sendable () -> Void) { queue.async(execute: body) }
 
+    /// The PTY's current size (nil once closed).
+    public var size: (cols: Int, rows: Int)? {
+        var ws = winsize()
+        return ioLock.withLock { !closed && ioctl(master, TIOCGWINSZ, &ws) == 0 } ? (Int(ws.ws_col), Int(ws.ws_row)) : nil
+    }
+
     public func resize(cols: UInt16, rows: UInt16) {
         var ws = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
         ioLock.withLock { if !closed { _ = ioctl(master, TIOCSWINSZ, &ws) } }

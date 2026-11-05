@@ -2,6 +2,7 @@ import Foundation
 import Dispatch
 import CollieCore
 import CollieDaemonKit
+import CollieScreen
 
 var root = Paths.defaultRoot
 var workspace: UUID?
@@ -79,6 +80,7 @@ do {
     var config = DaemonConfig(paths: Paths(root: root), collieExecutable: collie, workspaceId: workspace!)
     config.scrcpyServer = FileManager.default.fileExists(atPath: scrcpy.path) ? scrcpy : nil
     config.figcraftDir = figcraft
+    config.screenRenderer = ScreenRenderer.render
     config.weblibsDir = weblibs
     let ctty = collie.deletingLastPathComponent().appendingPathComponent("collie-ctty")
     config.cttyHelper = FileManager.default.isExecutableFile(atPath: ctty.path) ? ctty : nil

@@ -60,6 +60,11 @@ a paired device —** with a fixed, small allowlist. It never exposes the admin 
 - Fingerprint = SHA-256 of the cert DER, shown as base64url (43 chars) and, for humans, as 4 groups of the hex prefix.
 - **Rotate identity** (button in the device sheet): new key + cert; every paired device must re-pair (its pin breaks).
   That is the intended effect — it is the "I think the key leaked" button.
+- **Backups (decided 2026-11-04):** a `.colliebackup` never carries `<root>/remote/` (`identity.p12`, `identity.pass`,
+  the device store and its token hashes); an import can't plant one (`remote` isn't a backup part). Applying a restore
+  moves this Mac's `remote/` into `.replaced-<epochMs>/` with the other replaced parts: the daemon then makes a new
+  identity and every phone pairs again — the same effect as rotating the identity. (`DataBackup.applyPending`;
+  test `DataBackupTests/remoteIdentityAndDevicesStayOutAndAreRetiredOnRestore`.)
 - ponytail: key at rest in a 0600 file, not the Keychain. Ceiling: a free terminal (no sandbox) or open sandbox mode
   can read it and, with a network position, impersonate the Mac to a phone. Upgrade path: keep it in the login
   Keychain with an ACL for `collied` only.

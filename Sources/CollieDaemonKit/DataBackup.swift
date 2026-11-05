@@ -6,7 +6,8 @@ import CollieProtocol
 /// `.colliebackup` (an Orq `.orqbackup` is the same format; the extension is never checked here): a zip (`ditto -c -k --norsrc`, entries at its root) of the user's Collie data — `manifest.json`
 /// (`{format: 1, createdAt, collieVersion, parts, workspace}`) and the parts `design/` (figcraft server data, registries,
 /// systems, exports), `artifacts/` (with `.removed/`), `memory/`, `workspaces/` (without `*/terminals`, the scrollback
-/// spills), `work/`, `herds/` (with `.removed/`) `lots/` (each lot's memory and board, without `*/cache`, its index) and `comments/` (comments on pages). Machine-specific data stays out (`run/`, `hooks/`, `cache/`, `usage/`, `screens/`, `admin.token`);
+/// spills), `work/`, `herds/` (with `.removed/`) `lots/` (each lot's memory and board, without `*/cache`, its index) and `comments/` (comments on pages). Machine-specific data stays out (`run/`, `hooks/`, `cache/`, `usage/`, `screens/`, `admin.token`, `remote/`: the
+/// remote API's TLS identity and paired devices, which an import retires instead);
 /// `default-workspace` travels as the manifest's `workspace`. It holds the design files' secret links: 0600, app only.
 ///
 /// An import is checked, extracted and staged in `<root>/.import-pending/`; collied applies it at its next start, before
@@ -270,6 +271,10 @@ public enum DataBackup {
             if fm.fileExists(atPath: cur.path), !move(cur, old.appendingPathComponent(p)) { return false }
             if staged, !move(new, cur) { return false }
         }
+        // remote API: the TLS identity and paired devices never travel; a restore retires this Mac's, so a new identity
+        // is made and every phone pairs again (as Trocar certificado). Moved like a part: nothing deleted.
+        let remote = root.appendingPathComponent("remote")
+        if fm.fileExists(atPath: remote.path), !move(remote, old.appendingPathComponent("remote")) { return false }
         if let w = m.workspace {
             let f = root.appendingPathComponent("default-workspace")
             let now = (try? String(contentsOf: f, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)

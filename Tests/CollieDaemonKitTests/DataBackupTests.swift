@@ -123,6 +123,31 @@ private func manifest(_ parts: [String], format: Int = 1) -> String {
         #expect(!DataBackup.applyPending(Paths(root: a)))   // nothing pending any more
     }
 
+    /// Remote API: the TLS identity and the paired devices never travel in a backup, and a restore retires this Mac's
+    /// (into `.replaced-*`): a new identity is made, every phone pairs again — the same as rotating the identity.
+    @Test func remoteIdentityAndDevicesStayOutAndAreRetiredOnRestore() async throws {
+        let a = tempRoot(), b = tempRoot()
+        defer { for r in [a, b] { try? FileManager.default.removeItem(at: r) } }
+        populate(a, "A"); populate(b, "B")
+        let fpA = try RemoteIdentity.loadOrCreate(dir: a.appendingPathComponent("remote")).fingerprint
+        _ = try RemoteIdentity.loadOrCreate(dir: b.appendingPathComponent("remote"))
+        put(a, "remote/devices.json", "A-devices"); put(b, "remote/devices.json", "B-devices")
+        let out = b.appendingPathComponent("b.colliebackup")
+        _ = try await DataBackup.export(root: b, to: out, server: server(b), version: "t")
+        #expect(!(try await names(out)).contains { $0.hasPrefix("remote") }, "remote/ leaked")
+        _ = try await DataBackup.stage(root: a, from: out, dryRun: false)
+        #expect(DataBackup.applyPending(Paths(root: a)))
+        #expect(!exists(a, "remote"))
+        let old = try #require(try FileManager.default.contentsOfDirectory(atPath: a.path).first { $0.hasPrefix(".replaced-") })
+        #expect(read(a, "\(old)/remote/devices.json") == "A-devices" && exists(a, "\(old)/remote/identity.p12"))   // nothing deleted
+        let fpNew = try RemoteIdentity.loadOrCreate(dir: a.appendingPathComponent("remote")).fingerprint
+        #expect(fpNew != fpA)
+        // a crafted backup can't plant one either
+        let work = tempRoot(); defer { try? FileManager.default.removeItem(at: work) }
+        put(work, "manifest.json", manifest(["memory", "remote"])); put(work, "memory/x.md", "x"); put(work, "remote/devices.json", "evil")
+        await #expect(throws: ProtocolError.self) { _ = try await DataBackup.stage(root: a, from: try await zip(work), dryRun: true) }
+    }
+
     /// A lot's memory and board (written by the real stores) survive export → import into a fresh root.
     @Test func lotsRoundTrip() async throws {
         let a = tempRoot(), b = tempRoot(), lot = UUID()

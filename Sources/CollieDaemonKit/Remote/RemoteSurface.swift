@@ -12,7 +12,7 @@ enum RemoteSurface {
     static let commands: [String: Kind] = [
         "workspace.snapshot": .read, "terminal.screen": .read, "work.list": .read, "work.get": .read, "work.summary": .read,
         "approvals.list": .read, "access.cards": .read, "chat.history": .read, "artifact.list": .read, "artifact.get": .read,
-        "events.subscribe": .read, "events.unsubscribe": .read,   // handled by the session itself
+        "events.subscribe": .read, "events.unsubscribe": .read, "terminal.attach": .read, "terminal.detach": .read,   // handled by the session itself
         // behind the scope gate already; their handlers come in slices 7-8
         "approval.answer": .mutating, "approval.dismiss": .mutating, "access.grant": .mutating, "access.deny": .mutating,
         "agent.ask": .mutating, "work.rerail": .mutating, "mac.reveal": .mutating,

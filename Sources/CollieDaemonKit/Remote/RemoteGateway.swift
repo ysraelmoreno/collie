@@ -30,6 +30,7 @@ actor RemoteGateway {
         var handle: @Sendable (Request, RemoteDevice, RemoteVia) async -> Response
         var events: RemoteEventBus
         var eventQueueBytes: Int
+        var hub: StreamHub
     }
 
     private let allowLoopback: Bool
@@ -59,7 +60,7 @@ actor RemoteGateway {
             let filter = (tailscaleOnly: s.tailscaleOnly, loopback: allowLoopback), sessions = sessions, queue = queue
             let ctx = RemoteContext(devices: deps.devices, pairing: deps.pairing, fingerprint: identity.fingerprint, installId: installId,
                                     macName: deps.macName, version: deps.version, build: deps.build, helloDeadline: deps.helloDeadline, onClaim: deps.onClaim,
-                                    handle: deps.handle, events: deps.events, eventQueueBytes: deps.eventQueueBytes)
+                                    handle: deps.handle, events: deps.events, eventQueueBytes: deps.eventQueueBytes, hub: deps.hub)
             l.newConnectionHandler = { c in Self.accept(c, filter: filter, ctx: ctx, sessions: sessions, queue: queue) }
             let ready = await withCheckedContinuation { (k: CheckedContinuation<String?, Never>) in
                 let once = Once(k)

@@ -182,7 +182,7 @@ actor CommandRouter {
             handle: { r, dev, via in
                 await me.router?.remoteRequest(r, device: dev, via: via)
                     ?? Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "daemon stopping"))
-            }, events: remoteEvents, eventQueueBytes: config.remoteEventQueueBytes))
+            }, events: remoteEvents, eventQueueBytes: config.remoteEventQueueBytes, hub: hub))
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {

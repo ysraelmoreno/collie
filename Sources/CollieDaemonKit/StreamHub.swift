@@ -10,6 +10,9 @@ typealias StreamConn = UnixSocketServer.Connection
 final class Fanout: @unchecked Sendable {
     private let lock = NSLock()
     private var subs: [ObjectIdentifier: StreamConn] = [:]
+    /// Remote API watchers (`terminal.attach`): output and exit only, never input.
+    struct Tap: Sendable { let out: @Sendable (Data) -> Void; let exited: @Sendable (Int32) -> Void }
+    private var taps: [ObjectIdentifier: Tap] = [:]
     private var exitCode: Int32?
     let process: PTYProcess
     private let input = DispatchQueue(label: "collie.stream.input")   // keeps keystrokes and resizes in order, off the actor
@@ -41,17 +44,27 @@ final class Fanout: @unchecked Sendable {
             // ends (QuietDetector), and the hub reports once per held badge
             attend(quiet.feed(ANSI.strip(String(decoding: d, as: UTF8.self))))
         }
-        let cs = lock.withLock { Array(subs.values) }
+        let (cs, ts) = lock.withLock { (Array(subs.values), Array(taps.values)) }
+        ts.forEach { $0.out(d) }
         guard !cs.isEmpty else { return }
         let line = StreamFrame.out(d).line    // encoded once for every subscriber
         cs.forEach { $0.send(line) }
     }
     func exited(_ code: Int32) {
-        let cs = lock.withLock { exitCode = code; return Array(subs.values) }
+        let (cs, ts) = lock.withLock { () -> ([StreamConn], [Tap]) in
+            exitCode = code; defer { taps = [:] }
+            return (Array(subs.values), Array(taps.values))
+        }
         cs.forEach { $0.send(.exited(code: code)) }
+        ts.forEach { $0.exited(code) }
         signalSink.finish()
     }
     var count: Int { lock.withLock { subs.count } }
+    /// On the PTY queue (after the replay was cut). Already exited: not added, `exited` told at once.
+    func addTap(_ k: ObjectIdentifier, _ t: Tap) {
+        if let code = lock.withLock({ () -> Int32? in if exitCode == nil { taps[k] = t }; return exitCode }) { t.exited(code) }
+    }
+    func removeTap(_ k: ObjectIdentifier) { lock.withLock { _ = taps.removeValue(forKey: k) } }
     func remove(_ k: ObjectIdentifier) { lock.withLock { _ = subs.removeValue(forKey: k) } }
     func closeAll() { lock.withLock { let v = subs.values; subs = [:]; return Array(v) }.forEach { $0.close() } }
 
@@ -198,6 +211,24 @@ actor StreamHub {
         fan.process.serialized { fan.join(c, sb.snapshot()) }
         return true
     }
+    enum RemoteAttach: Sendable { case attached(replay: Data, truncated: Bool), notFound, notRunning }
+    /// `terminal.attach` (remote API): the scrollback's last `replayBytes`, cut on the PTY queue atomically with adding
+    /// `tap`, so the output after it starts exactly where the replay ends.
+    func attachRemote(_ id: UUID, key: ObjectIdentifier, replayBytes: Int, _ tap: Fanout.Tap) async -> RemoteAttach {
+        guard let t = terminals[id] else { return .notFound }
+        guard t.fan.process.isRunning else { return .notRunning }
+        let fan = t.fan, sb = t.scrollback
+        return await withCheckedContinuation { k in
+            fan.process.serialized {
+                let s = sb.snapshot()
+                let cut = Data(s.data.suffix(replayBytes))
+                fan.addTap(key, tap)
+                k.resume(returning: .attached(replay: cut, truncated: s.truncated || s.data.count > replayBytes))
+            }
+        }
+    }
+    func detachRemote(_ id: UUID, key: ObjectIdentifier) { terminals[id]?.fan.removeTap(key) }
+
     func listen(_ c: StreamConn, ok: Response) {
         let k = ObjectIdentifier(c)
         listeners[k] = c

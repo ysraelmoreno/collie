@@ -22,6 +22,8 @@ struct RemoteContext: Sendable {
     /// `events.subscribe`'s source, and how many unsent event bytes a session may have before its subscription is cut.
     let events: RemoteEventBus
     let eventQueueBytes: Int
+    /// `terminal.attach`'s source (output only); the same unsent-bytes cap applies to each attach.
+    let hub: StreamHub
 }
 
 /// Close codes (spec §3.2). Before the WebSocket close frame the Mac sends `{"t":"closing","code","reason"}`: a native
@@ -50,6 +52,11 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
     private var deadlineGen = 0
     /// Event frame bytes handed to the connection and not sent yet (bounded by `ctx.eventQueueBytes`).
     private var pendingEventBytes = 0
+    /// `terminal.attach` subs by name ("t-<n>"): on `queue` only.
+    private var attaches: [String: Attach] = [:]
+    private var attachSeq = 0
+    static let maxAttaches = 4, replayDefault = 64 << 10, replayMax = 256 << 10
+    static let outEvery: DispatchTimeInterval = .milliseconds(100), outChunk = 512 << 10   // ≤ 10 frames/s; < 1 MiB frames
 
     init(conn: NWConnection, address: String, via: RemoteVia, ctx: RemoteContext, sessions: RemoteSessions, queue: DispatchQueue) {
         self.conn = conn; self.address = address; self.via = via; self.ctx = ctx; self.sessions = sessions; self.queue = queue
@@ -61,7 +68,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         conn.stateUpdateHandler = { [weak self] st in
             guard let self else { return }
             switch st {
-            case .failed, .cancelled: sessions.remove(self); ctx.events.remove(ObjectIdentifier(self))
+            case .failed, .cancelled: sessions.remove(self); ctx.events.remove(ObjectIdentifier(self)); detachAll()
             default: break
             }
         }
@@ -95,6 +102,8 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
 
     /// On `queue`.
     private func handle(_ data: Data) {
+        // a client frame (`in`, `resize`: the phone's keyboard and size) is not taken: output only (spec §3.5)
+        if case .object(let o)? = try? JSONDecoder().decode(JSONValue.self, from: data), o["t"] != nil, o["command"] == nil { return }
         guard let req = try? JSONDecoder().decode(Request.self, from: data) else {
             reply("", ProtocolError(code: .invalidArgs, message: "Not a request.")); close(.protocolError); return
         }
@@ -129,6 +138,8 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         case "events.unsubscribe":
             ctx.events.remove(ObjectIdentifier(self))
             return reply(req.id, .object([:]))
+        case "terminal.attach": return attach(req)
+        case "terminal.detach": return detach(req)
         default: break
         }
         let via = via, handle = ctx.handle
@@ -153,6 +164,120 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
             return
         }
         text(frame) { [weak self] in self?.lock.withLock { self?.pendingEventBytes -= n } }
+    }
+
+    /// One `terminal.attach`: output bytes wait in `buf` and go out at most every `outEvery` (joined, nothing dropped)
+    /// once the reply and the replay went; past `eventQueueBytes` waiting or unsent, the sub is cut (`overflow`).
+    private final class Attach: @unchecked Sendable {   // on `queue` only
+        let sub: String, terminal: UUID
+        var ready = false, done = false, scheduled = false
+        var buf = Data(), unsent = 0, exitCode: Int32?
+        var last = DispatchTime(uptimeNanoseconds: 0)
+        init(sub: String, terminal: UUID) { self.sub = sub; self.terminal = terminal }
+    }
+
+    private func attach(_ r: Request) {   // on `queue`
+        guard case .string(let s)? = r.args["terminal"], let tid = UUID(uuidString: s) else {
+            return reply(r.id, ProtocolError(code: .invalidArgs, message: "terminal.attach needs terminal (its id)"))
+        }
+        var want = Self.replayDefault
+        if let v = r.args["replayBytes"] {
+            guard case .number(let n) = v, n >= 0, n == n.rounded() else {
+                return reply(r.id, ProtocolError(code: .invalidArgs, message: "replayBytes: a whole number ≥ 0"))
+            }
+            want = min(Int(n), Self.replayMax)
+        }
+        guard attaches.count < Self.maxAttaches else {
+            return reply(r.id, ProtocolError(code: .tooMany, message: "\(Self.maxAttaches) terminais já abertos nesta conexão: feche um."))
+        }
+        attachSeq += 1
+        let a = Attach(sub: "t-\(attachSeq)", terminal: tid), q = queue, hub = ctx.hub, key = ObjectIdentifier(a)
+        attaches[a.sub] = a
+        let tap = Fanout.Tap(out: { [weak self] d in q.async { self?.out(a, d) } },
+                             exited: { [weak self] c in q.async { self?.exited(a, c) } })
+        Task { [weak self] in
+            let res = await hub.attachRemote(tid, key: key, replayBytes: want, tap)
+            q.async { [weak self] in
+                guard let self else { return }
+                switch res {
+                case .notFound, .notRunning:
+                    attaches[a.sub] = nil; a.done = true
+                    if case .notFound = res { reply(r.id, ProtocolError(code: .notFound, message: "Terminal não encontrado.")) }
+                    else { reply(r.id, ProtocolError(code: .notRunning, message: "Terminal parado: sem saída ao vivo.")) }
+                case .attached(let replay, let truncated):
+                    guard !a.done, !lock.withLock({ closing }) else { Task { await hub.detachRemote(tid, key: key) }; return }
+                    reply(r.id, .object(["sub": .string(a.sub)]))
+                    frame(["t": .string("replay"), "sub": .string(a.sub), "d": .string(replay.base64EncodedString()), "truncated": .bool(truncated)])
+                    a.ready = true
+                    if let c = a.exitCode { exited(a, c) } else { schedule(a) }
+                }
+            }
+        }
+    }
+
+    private func detach(_ r: Request) {   // on `queue`
+        guard case .string(let sub)? = r.args["sub"], let a = attaches[sub] else {
+            return reply(r.id, ProtocolError(code: .notFound, message: "Assinatura não encontrada."))
+        }
+        drop(a)
+        reply(r.id, .object([:]))
+    }
+
+    private func out(_ a: Attach, _ d: Data) {   // on `queue`
+        guard !a.done else { return }
+        a.buf.append(d)
+        if a.buf.count + a.unsent > ctx.eventQueueBytes { return overflow(a) }
+        schedule(a)
+    }
+
+    private func schedule(_ a: Attach) {
+        guard a.ready, !a.done, !a.scheduled, !a.buf.isEmpty else { return }
+        a.scheduled = true
+        queue.asyncAfter(deadline: max(.now(), a.last + Self.outEvery)) { [weak self] in a.scheduled = false; self?.flush(a) }
+    }
+
+    private func flush(_ a: Attach) {
+        guard !a.done, !a.buf.isEmpty else { return }
+        guard let id = deviceId, ctx.devices.device(id, fingerprint: ctx.fingerprint) != nil else { return close(.revoked) }
+        let all = a.buf
+        a.buf = Data(); a.last = .now()
+        var i = all.startIndex
+        while i < all.endIndex {
+            let j = all.index(i, offsetBy: Self.outChunk, limitedBy: all.endIndex) ?? all.endIndex
+            let n = frame(["t": .string("out"), "sub": .string(a.sub), "d": .string(all[i..<j].base64EncodedString())]) { a.unsent -= $0 }
+            a.unsent += n
+            i = j
+        }
+    }
+
+    private func exited(_ a: Attach, _ code: Int32) {   // on `queue`
+        guard !a.done else { return }
+        guard a.ready else { a.exitCode = code; return }
+        flush(a)   // what came before the exit, now
+        a.done = true; attaches[a.sub] = nil
+        frame(["t": .string("exited"), "sub": .string(a.sub), "code": .number(Double(code))])
+    }
+
+    private func overflow(_ a: Attach) {
+        drop(a)
+        frame(["t": .string("overflow"), "sub": .string(a.sub)])
+    }
+
+    private func drop(_ a: Attach) {   // on `queue`
+        a.done = true; a.buf = Data(); attaches[a.sub] = nil
+        let hub = ctx.hub, t = a.terminal, k = ObjectIdentifier(a)
+        Task { await hub.detachRemote(t, key: k) }
+    }
+
+    private func detachAll() { attaches.values.forEach(drop) }   // on `queue`
+
+    /// A pushed frame; `sent` gets its size once the connection took it. Returns its size.
+    @discardableResult
+    private func frame(_ o: [String: JSONValue], sent: (@Sendable (Int) -> Void)? = nil) -> Int {
+        guard let d = try? JSONEncoder().encode(JSONValue.object(o)) else { return 0 }
+        let n = d.count
+        text(d) { sent?(n) }
+        return n
     }
 
     private func pair(_ r: Request) {
@@ -238,6 +363,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         ctx.events.remove(ObjectIdentifier(self))
         let note = (try? JSONEncoder().encode(JSONValue.object(["t": .string("closing"), "code": .number(Double(code.rawValue)),
                                                                 "reason": .string(code.reason)]))) ?? Data()
+        queue.async { [weak self] in self?.detachAll() }
         let conn = conn
         text(note) {
             let meta = NWProtocolWebSocket.Metadata(opcode: .close)

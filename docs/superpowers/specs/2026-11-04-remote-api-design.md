@@ -370,7 +370,11 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
 - Free terminals (`sandbox: free`) can be attached (the user's own, read-only).
 - errors: `notFound` (no such terminal), `notRunning` (a stopped terminal: no live scrollback to
   replay), `tooMany` (5th attach).
-- Derives from `StreamHub.attach` (`Fanout.join`), with a remote `StreamConn` adapter and the replay cut.
+- `terminal.detach {sub}` → `{}`; an unknown or already cut sub → `notFound`. Subs are per connection (`t-1`,
+  `t-2`, …); a closed socket detaches them all.
+- `replayBytes`: a whole number ≥ 0 (else `invalidArgs`), capped at 256 KiB. `d` is the PTY's bytes: lines end in
+  `\r\n`.
+- Implemented as a remote tap on the terminal's `Fanout` (`StreamHub.attachRemote`, slice 6), not a `StreamConn`.
 
 ### 3.6 Ask — `agent.ask` (M)
 
@@ -624,8 +628,15 @@ reachable from the network until slice 3.
    only when answered or dismissed: a terminal that stops (`status: stopped`) or goes (`terminalRemoved`) drops
    its approval on the phone without a `cleared` frame. `admin.kill` removes the terminal (`terminalRemoved`, no
    `stopped` first).
-6. **Terminal output** — `terminal.attach/detach` adapter over `StreamHub`, replay cut, coalescing, 4-per-connection
-   cap, `in`/`resize` ignored. Tests: `RemoteAttachTests` with a fake PTY.
+6. **Terminal output (done, 2026-11-05)** — `terminal.attach/detach`: a remote tap on the terminal's `Fanout`
+   (output and exit only), added by `StreamHub.attachRemote` on the PTY queue atomically with the replay cut, so
+   `out` starts exactly where `replay` ends. Output waits per sub and goes out every 100 ms at most (bytes joined,
+   frames of ≤ 512 KiB raw); more than `remoteEventQueueBytes` waiting or unsent → `overflow` and the sub is cut
+   (the session stays). `exited` comes after the last `out`. Each flush re-reads the device (revoked → 4001).
+   Client frames (`{"t":…}` without `command`) are ignored instead of closing the session. Tests:
+   `RemoteAttachTests` (replay → out → exited with raw ANSI, replay cut + `truncated`, 3000 lines ≤ 11 frames/s
+   and none lost, `notFound`/`notRunning`/`invalidArgs`/`tooMany`, detach frees a slot, `in`/`resize` ignored,
+   overflow) against real PTYs.
 7. **Mutations + audit + limits** — `approval.answer/dismiss`, `access.grant/deny` (terminal scope only), audit log,
    chat "do iPhone", `SandboxGrant.by`, token buckets, `read` scope enforcement. Tests: audit line per M command,
    stale approval, read scope refused, lot scope refused, rate-limit refusal with `retryAfter`.

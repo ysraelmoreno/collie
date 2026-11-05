@@ -40,9 +40,12 @@ public struct ChatMessage: Codable, Sendable, Equatable, Identifiable {
     public var text: String
     public var truncated: Bool
     public var replyTo: UUID?
+    /// Sent from a paired phone (remote API `agent.ask`): its name, so the Mac's chat shows "do iPhone"; nil = the Mac.
+    public var via: String?
     public init(id: UUID = UUID(), at: Date = Date(), role: ChatRole, workId: UUID? = nil, terminal: String? = nil,
-                text: String, replyTo: UUID? = nil) {
+                text: String, replyTo: UUID? = nil, via: String? = nil) {
         self.id = id; self.at = at; self.role = role; self.workId = workId; self.terminal = terminal; self.replyTo = replyTo
+        self.via = via
         self.truncated = text.count > Self.maxText
         self.text = truncated ? String(text.prefix(Self.maxText)) : text
     }

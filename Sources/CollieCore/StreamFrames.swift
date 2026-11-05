@@ -153,7 +153,10 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
          /// A phone presented the pairing QR's secret and waits for the Mac's click (remote API): the app's dialog.
          remotePairing(RemotePairingRequest),
          /// A Shepherd asks for a leash (`collie leash request`): a card; removed once answered or an end is gone.
-         leashRequest(LeashRequest), leashRequestRemoved(UUID)
+         leashRequest(LeashRequest), leashRequestRemoved(UUID),
+         /// A paired phone asks the Mac to show a terminal (centre the canvas on it) or open an artifact as a Prévia
+         /// (remote API `mac.reveal`); `device`: the phone's id. Changes nothing but the Mac's view.
+         remoteReveal(terminal: UUID?, artifact: UUID?, device: String)
 
     private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l, d, ok, e, m }
 
@@ -188,6 +191,9 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case "remotePairing": self = .remotePairing(try c.decode(RemotePairingRequest.self, forKey: .d))
         case "leashRequest": self = .leashRequest(try c.decode(LeashRequest.self, forKey: .d))
         case "leashRequestRemoved": self = .leashRequestRemoved(try id())
+        case "remoteReveal":
+            self = .remoteReveal(terminal: try c.decodeIfPresent(UUID.self, forKey: .id), artifact: try c.decodeIfPresent(UUID.self, forKey: .e),
+                                 device: try c.decode(String.self, forKey: .d))
         case "pluginsChanged": self = .pluginsChanged(try c.decode([Lossy<PluginSpecDTO>].self, forKey: .m).compactMap(\.value))   // one unreadable manifest loses only itself
         case let t: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "unknown event '\(t)'")
         }
@@ -224,6 +230,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case .remotePairing(let r): try c.encode("remotePairing", forKey: .t); try c.encode(r, forKey: .d)
         case .leashRequest(let r): try c.encode("leashRequest", forKey: .t); try c.encode(r, forKey: .d)
         case .leashRequestRemoved(let id): try c.encode("leashRequestRemoved", forKey: .t); try c.encode(id, forKey: .id)
+        case .remoteReveal(let t, let a, let dev):
+            try c.encode("remoteReveal", forKey: .t); try c.encodeIfPresent(t, forKey: .id); try c.encodeIfPresent(a, forKey: .e); try c.encode(dev, forKey: .d)
         }
     }
 }

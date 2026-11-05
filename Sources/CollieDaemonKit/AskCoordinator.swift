@@ -379,11 +379,14 @@ public actor AskCoordinator {
 
     /// The user's ask (work chat): same FIFO, readiness gate and hook/idle completion as `ask`, but no caller
     /// terminal, so no edge in the deadlock graph (`from == to`, as `inject`).
-    public func askAsUser(to: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult {
+    /// `onDelivered`: told once the prompt is written, as `ask`'s (the remote API's `askState delivered`).
+    public func askAsUser(to: UUID, prompt: String, timeout: Duration,
+                          onDelivered: (@Sendable () -> Void)? = nil) async throws(ProtocolError) -> AskResult {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
         }
-        return try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, afterQuiet: true, guardsApproval: true, user: true, cont: nil),
+        return try await enqueue(Waiter(from: to, to: to, prompt: prompt, raw: false, afterQuiet: true, guardsApproval: true, user: true,
+                                        onDelivered: onDelivered, cont: nil),
                                  timeout: timeout)
     }
 

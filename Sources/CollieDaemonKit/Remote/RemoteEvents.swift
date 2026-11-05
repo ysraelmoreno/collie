@@ -51,7 +51,7 @@ extension CommandRouter {
         case .notify(let id, let m): out = .object(["t": .string("notify"), "terminalId": uid(id), "message": .string(m)])
         case .sandboxDenied(let d): out = .object(["t": .string("accessCard"), "card": remoteCard(d)])
         case .panel, .panelRemoved, .pluginEvent, .herdApplied, .sandboxDetection, .confirmCorrection, .pluginsChanged, .remotePairing,
-             .leashRequest, .leashRequestRemoved:   // the app's own (leash requests: not on the remote surface yet)
+             .leashRequest, .leashRequestRemoved, .remoteReveal:   // the app's own (leash requests: not on the remote surface yet)
             out = nil
         }
         if let out { remoteEvents.publish(out) }

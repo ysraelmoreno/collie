@@ -230,6 +230,10 @@ message as an unknown command, so the admin surface isn't enumerable), `tooMany`
   on `code`, never on the text (slice 7). A denied "press enter" prompt answers `sent:false` without `code`
   (dismissed: nothing to type).
 - **`tooMany`**: `error.retryAfter` (seconds, e.g. `0.4`, `12.3`): wait that long before retrying.
+- **Chat messages** (`chat.history`, `chat` event): ids lowercase; `via` = the device name when sent from a phone;
+  an agent's reply `text` is its turn as the terminal printed it (it may start with the prompt's echo).
+- **`work.status`** `question`: `whereAreWe | stuck | running | summary`; `summary` needs `terminal` with an open
+  work (`invalidArgs` otherwise); a `terminal` without an open work answers "‹nome› não tem trabalho aberto.".
 - **`access.grant`** result `grant.by`: `{device, deviceName, via}` for a grant made from a phone (absent for the Mac's).
 
 ### E2E fixes (2026-11-05, simulator ↔ dev collied)
@@ -673,9 +677,17 @@ reachable from the network until slice 3.
    token; grant/deny by card, lot refused, `by`, audit targets; limits with `retryAfter`; blocked address).
    The `read` scope gate is slice 4's (`RemoteSurfaceTests.scopeAndRevokeApplyAtOnce`). Not here: showing
    `SandboxGrant.by` in Preferências → Sandbox (slice 10, with the device sheet).
-8. **Ask, status, rerail, Mac view** — factor `chatSend` delivery and its status branch; `agent.ask` by terminal id
-   with the shell/free/attention refusals; `ChatMessage.via`; `work.status`; `work.rerail`; `mac.reveal` +
-   `remoteReveal` event (the app's handler lands with slice 10). Tests: `RemoteAskTests`, `RemoteStatusTests`.
+8. **Ask, status, rerail, Mac view (done, 2026-11-05)** — `chatSend` factored into `deliver` (post, `askAsUser` in
+   the background, reply or reason posted) and `statusAnswer`; `agent.ask` (by terminal id; refusals `notFound`,
+   `invalidArgs` empty/long/shell/free, `notRunning`, `unavailable` at an approval; `work` defaults to the terminal's
+   active work) with `askState delivered` (from `askAsUser`'s new optional `onDelivered`, the hook `ask` already
+   had — no change for other callers) or `failed {reason}` (only when the prompt was never typed; a reply that
+   times out after delivery is a Collie chat message, not `failed`); `ChatMessage.via` (the device name);
+   `work.status` (R); `work.rerail` (M, `wait: true` as the app's); `mac.reveal` → `WorkspaceEvent.remoteReveal
+   (terminal|artifact, device)` on `ui.events` (the app ignores it until slice 10). Chat messages on the wire carry
+   lowercase ids (`id`, `workId`, `replyTo`), like `messageId`. Tests: `RemoteAskTests` (delivered → reply with
+   `replyTo`, `via`, audit target without the text; failed; every refusal), `RemoteStatusTests` (status as a read,
+   summary needs a work, rerail, reveal on `ui.events` + `notFound`/`invalidArgs`).
 9. **Artifact files** — `artifact.file` for `collie-artifact://` and `collie-lib://`, confinement, 8 MiB cap,
    per-device byte budget. Tests: path-escape table, symlink out refused.
 10. **Mac app UI** — Preferências → Celular (toggle, port, Só Tailscale, reachable addresses, fingerprint), Parear

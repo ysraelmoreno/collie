@@ -78,12 +78,8 @@ extension CommandRouter {
         }
 
         if let q = StatusQuestion.match(text) {
-            if q == .summary {
-                guard let w else { return try await reply("Escolha um trabalho para ver o resumo.") }
-                return try await reply(WorkSummary.make(w, terminalAlive: await registry.process(w.terminalId)?.isRunning == true, now: Date()).markdown(boldTitle: true))
-            }
-            let works = if let w { [w] } else { try await work.list(includeClosed: false) }
-            return try await reply(WorkStatusText.answer(q, works: works, names: names, badges: await hub.currentBadges, now: Date()))
+            guard q != .summary || w != nil else { return try await reply("Escolha um trabalho para ver o resumo.") }
+            return try await reply(try await statusAnswer(q, w))
         }
 
         let target: TerminalRecord, prompt: String
@@ -114,24 +110,49 @@ extension CommandRouter {
             return try await reply("\(target.name) está esperando uma aprovação; responda o pedido primeiro.")
         }
         var sent = user; sent.terminal = target.name
+        try await deliver(sent, to: target, prompt: prompt)
+        return .object(["messageId": .string(user.id.uuidString.lowercased()), "queued": .bool(true)])
+    }
+
+    /// A status question's answer (the chat's and `work.status`'s): from the registry, no tokens, nothing typed.
+    /// `w` nil: all open works (`summary` needs one).
+    func statusAnswer(_ q: StatusQuestion, _ w: Work?) async throws -> String {
+        if q == .summary, let w {
+            return WorkSummary.make(w, terminalAlive: await registry.process(w.terminalId)?.isRunning == true, now: Date()).markdown(boldTitle: true)
+        }
+        var names: [UUID: String] = [:]
+        for t in ws.terminals { names[t.id] = t.name }
+        for f in ws.paddocks { names[f.id] = f.name }
+        let works = if let w { [w] } else { try await work.list(includeClosed: false) }
+        return WorkStatusText.answer(q, works: works, names: names, badges: await hub.currentBadges, now: Date())
+    }
+
+    /// The delivery part of a chat message (the app's work chat and the phone's `agent.ask`): `sent` (the user's
+    /// message to `target`) posted, then `prompt` asked as the user in the background; the agent's reply, or why there
+    /// is none, posted as its answer. `delivered`: the prompt was typed; `failed`: it never will be (why).
+    func deliver(_ sent: ChatMessage, to target: TerminalRecord, prompt: String,
+                 delivered: (@Sendable () -> Void)? = nil, failed: (@Sendable (String) -> Void)? = nil) async throws {
         try await post(sent)
-        let id = target.id, name = target.name, workId = w?.id
+        let id = target.id, name = target.name, workId = sent.workId
+        final class Typed: @unchecked Sendable { let lock = NSLock(); var yes = false }   // delivered: a later timeout is "no reply", not "failed"
+        let typed = Typed()
+        let onDelivered: @Sendable () -> Void = { typed.lock.withLock { typed.yes = true }; delivered?() }
         Task { [weak self] in
             guard let self else { return }
             let answer: ChatMessage
             // a reply arriving after the timeout is dropped: the turn holds its slot until it ends, but nobody waits for it
             do {
-                let a = try await asks.askAsUser(to: id, prompt: prompt, timeout: Self.chatReplyTimeout)
+                let a = try await asks.askAsUser(to: id, prompt: prompt, timeout: Self.chatReplyTimeout, onDelivered: onDelivered)
                 answer = ChatMessage(role: .agent, workId: workId, terminal: name, text: a.output, replyTo: sent.id)
             } catch {
                 let text = (error as? ProtocolError) == AskCoordinator.awaitingApproval(name)
                     ? "\(name) está esperando uma aprovação; a mensagem não foi enviada."
                     : "\(name) não respondeu (\(Self.reason(error)))."
+                if !typed.lock.withLock({ typed.yes }) { failed?(Self.reason(error)) }
                 answer = ChatMessage(role: .collie, workId: workId, terminal: name, text: text, replyTo: sent.id)
             }
             do { try await post(answer) } catch { workLog("chat: \((error as? ProtocolError)?.message ?? "\(error)")") }
         }
-        return .object(["messageId": .string(user.id.uuidString.lowercased()), "queued": .bool(true)])
     }
 
     /// `work.approve`: `{sent, reason?, code?}`; the chat gets "Aprovado"/"Negado" once the prompt is answered, plus

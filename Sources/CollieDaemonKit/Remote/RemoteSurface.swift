@@ -8,11 +8,20 @@ import CollieTerminal
 /// a `read` device is refused every mutating one (checked against the store on every message: a scope change applies
 /// at once). Everything else answers "Unknown command", like a command that doesn't exist.
 enum RemoteSurface {
+    /// A chat message on the wire: ISO dates and lowercase ids like every other id here (a phone matches `replyTo` with
+    /// `agent.ask`'s `messageId`).
+    static func chat(_ m: ChatMessage) -> JSONValue {
+        guard case .object(var o) = RemoteEventBus.iso(m) else { return .null }
+        for k in ["id", "workId", "replyTo"] { if case .string(let s)? = o[k] { o[k] = .string(s.lowercased()) } }
+        return .object(o)
+    }
+
     enum Kind: Sendable { case read, mutating }
     static let commands: [String: Kind] = [
         "workspace.snapshot": .read, "terminal.screen": .read, "work.list": .read, "work.get": .read, "work.summary": .read,
         "approvals.list": .read, "access.cards": .read, "chat.history": .read, "artifact.list": .read, "artifact.get": .read,
         "events.subscribe": .read, "events.unsubscribe": .read, "terminal.attach": .read, "terminal.detach": .read,   // handled by the session itself
+        "work.status": .read,
         // behind the scope gate already; their handlers come in slices 7-8
         "approval.answer": .mutating, "approval.dismiss": .mutating, "access.grant": .mutating, "access.deny": .mutating,
         "agent.ask": .mutating, "work.rerail": .mutating, "mac.reveal": .mutating,
@@ -101,7 +110,7 @@ extension CommandRouter {
             }
             var page = try await chat.page(before: before, limit: Int(try num(r, "limit", max: 200) ?? 50))
             if str(r, "terminal") != nil { let name = try remoteTerminalRecord(r).name; page = page.filter { $0.terminal == name } }
-            return try isoJSON(page)
+            return .array(page.map(RemoteSurface.chat))
         case "artifact.list":
             return .array(try await artifacts.list().sorted { $0.at > $1.at }.map(remoteArtifact))
         case "artifact.get":
@@ -132,7 +141,65 @@ extension CommandRouter {
             guard !flag(r, "lot") else { throw ProtocolError(code: .invalidArgs, message: "Pelo iPhone só se libera para este terminal, não para o lote: use o Mac.") }
             return try await grantAccess(t, access: d.op == "read" ? .read : .write, path: d.path, folder: flag(r, "folder"), scope: .terminal,
                                          by: .init(device: device.id.uuidString.lowercased(), deviceName: device.name, via: via.rawValue))
-        default:   // allowlisted, mutating, past the scope gate: handlers in slice 8
+        case "work.status":   // the chat's status questions, as a read: nothing posted, nothing typed (§3.6b)
+            let qs: [String: StatusQuestion] = ["whereAreWe": .whereAreWe, "stuck": .whatIsStuck, "running": .whatIsRunning, "summary": .summary]
+            guard let q = str(r, "question").flatMap({ qs[$0] }) else {
+                throw ProtocolError(code: .invalidArgs, message: "question: whereAreWe, stuck, running or summary")
+            }
+            var w: Work?
+            if str(r, "terminal") != nil {
+                let t = try remoteTerminalRecord(r)
+                w = try await work.active(terminal: t.id)
+                if w == nil, q != .summary { return .object(["text": .string("\(t.name) não tem trabalho aberto.")]) }
+            }
+            guard q != .summary || w != nil else { throw ProtocolError(code: .invalidArgs, message: "O resumo é de um trabalho: escolha um terminal com trabalho aberto.") }
+            return .object(["text": .string(try await statusAnswer(q, w))])
+        case "agent.ask":   // the work chat's path (askAsUser): the prompt is the user's (§3.6)
+            let t = try remoteTerminalRecord(r)
+            target = t.id.uuidString.lowercased()
+            let text = (str(r, "text") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, text.count <= ChatMessage.maxText else { throw ProtocolError(code: .invalidArgs, message: "Mensagem vazia ou com mais de 8 000 caracteres.") }
+            // D1: a phone never types commands into a shell, nor into a terminal outside the sandbox
+            guard t.preset != .shell, t.sandbox == .sandboxed else {
+                throw ProtocolError(code: .invalidArgs, message: "Pelo iPhone só se fala com agentes: \(t.name) é um shell ou um terminal livre.")
+            }
+            guard await registry.process(t.id)?.isRunning == true else { throw ProtocolError(code: .notRunning, message: "\(t.name) não está rodando.") }
+            // a pasted text ends with Enter: at an approval prompt that Enter would answer it blindly
+            guard await hub.currentBadges[t.id] != .attention else {
+                throw ProtocolError(code: .unavailable, message: "\(t.name) está esperando uma aprovação; responda o pedido primeiro.")
+            }
+            var w: Work?
+            if let s = str(r, "work") {
+                guard let id = UUID(uuidString: s), let found = try await work.get(id) else { throw ProtocolError(code: .notFound, message: "Trabalho não encontrado.") }
+                w = found
+            } else { w = try await work.active(terminal: t.id) }
+            let sent = ChatMessage(role: .user, workId: w?.id, terminal: t.name, text: text, via: device.name)
+            let mid = JSONValue.string(sent.id.uuidString.lowercased()), bus = remoteEvents
+            try await deliver(sent, to: t, prompt: text,
+                              delivered: { bus.publish(.object(["t": .string("askState"), "messageId": mid, "state": .string("delivered")])) },
+                              failed: { why in bus.publish(.object(["t": .string("askState"), "messageId": mid, "state": .string("failed"), "reason": .string(why)])) })
+            return .object(["messageId": mid, "queued": .bool(true)])
+        case "work.rerail":   // as the app calls it: its refusals unchanged
+            let t = try remoteTerminalRecord(r)
+            target = t.id.uuidString.lowercased()
+            guard let w = try await work.active(terminal: t.id) else { throw ProtocolError(code: .invalidArgs, message: "no active work") }
+            return try await rerail(t, w, now: Date(), wait: true)
+        case "mac.reveal":   // only the Mac's view changes (§3.6c); the app handles it from slice 10
+            if str(r, "terminal") != nil {
+                let t = try remoteTerminalRecord(r)
+                target = t.id.uuidString.lowercased()
+                await hub.emit(.remoteReveal(terminal: t.id, artifact: nil, device: device.id.uuidString.lowercased()))
+            } else if let s = str(r, "artifact") {
+                target = s
+                guard let id = UUID(uuidString: s), try await artifacts.list().contains(where: { $0.id == id }) else {
+                    throw ProtocolError(code: .notFound, message: "Artifact não encontrado.")
+                }
+                await hub.emit(.remoteReveal(terminal: nil, artifact: id, device: device.id.uuidString.lowercased()))
+            } else {
+                throw ProtocolError(code: .invalidArgs, message: "mac.reveal needs terminal or artifact")
+            }
+            return .object([:])
+        default:   // allowlisted, mutating, past the scope gate: none left without a handler
             throw ProtocolError(code: .unavailable, message: "'\(r.command)' ainda não está disponível pelo iPhone.")
         }
     }

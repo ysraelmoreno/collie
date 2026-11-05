@@ -212,7 +212,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .pluginsChanged(let ms): setPlugins(ms)
         case .leashRequest(let r): if !leashRequests.contains(where: { $0.id == r.id }) { leashRequests.append(r) }
         case .leashRequestRemoved(let id): leashRequests.removeAll { $0.id == id }
-        case .remotePairing: break   // ponytail: the app's pairing dialog comes with the Celular preferences (remote API slice 10)
+        case .remotePairing, .remoteReveal: break   // ponytail: the app's pairing dialog and reveal come with remote API slice 10
         }
     }
     private func setPlugins(_ ms: [PluginManifest]) { guard ms != plugins else { return }; plugins = ms; PluginManifest.register(ms) }   // unchanged: the registry stays

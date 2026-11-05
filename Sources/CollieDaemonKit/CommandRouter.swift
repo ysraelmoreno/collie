@@ -199,7 +199,7 @@ actor CommandRouter {
         Task { for await e in approvals { await me.router?.approvalChanged(e); await me.router?.remoteApproval(e) } }
         Task { for await e in await hub.tapEvents() { await me.router?.remoteWorkspaceEvent(e) } }   // remote API events, in order
         let chat = chat
-        Task { await chat.setOnAppend { m in remoteEvents.publish(.object(["t": .string("chat"), "message": RemoteEventBus.iso(m)])) } }
+        Task { await chat.setOnAppend { m in remoteEvents.publish(.object(["t": .string("chat"), "message": RemoteSurface.chat(m)])) } }
     }
 
     /// `ui.*` streams (admin only). nil: accepted, the connection is now a stream; otherwise the refusal.

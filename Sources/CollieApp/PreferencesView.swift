@@ -5,7 +5,7 @@ import CollieClient
 import CollieProtocol
 import ColliePlugins
 
-/// Two pages, Aparência and Plug-ins (`PluginsPreferences`), picked in the header.
+/// Three pages, Aparência, Plug-ins (`PluginsPreferences`) and Celular (`CelularPreferences`), picked in the header.
 extension DesignFirst {
     var label: String { switch self { case .artifact: "Página (Prévia)"; case .figcraft: "FigCraft"; case .ask: "Perguntar" } }
     /// The `design.prefer` reply (`{designFirst}`); nil when it is anything else.
@@ -69,10 +69,12 @@ struct PreferencesView: View {
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(page, subtitle: "Preferências")
-            Picker("Página", selection: $page) { ForEach(["Aparência", "Plug-ins"], id: \.self) { Text($0).tag($0) } }
+            Picker("Página", selection: $page) { ForEach(["Aparência", "Plug-ins", "Celular"], id: \.self) { Text($0).tag($0) } }
                 .labelsHidden().pickerStyle(.segmented).fixedSize().padding(.top, 10)
             if page == "Plug-ins" {
                 ScrollView { PluginsPreferences(client: client).padding(20).frame(maxWidth: .infinity, alignment: .leading) }
+            } else if page == "Celular" {
+                ScrollView { CelularPreferences(client: client).padding(20).frame(maxWidth: .infinity, alignment: .leading) }
             } else { appearance }
         }
         .frame(width: 560, height: 560)

@@ -328,6 +328,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: herdsOpen) { _, open in if open { herdsOpen = false; sheet = .herds(nil, nil) } }
+        .modifier(PairingConfirmHost(client: client))   // a phone read the pairing QR: the Mac's click (remote API)
         .onChange(of: client.panels) { _, ps in store.sync(ps) }   // views of closed panels are released
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.closeAll() }
         .onAppear {
@@ -351,6 +352,13 @@ struct ContentView: View {
                              else { placeFrames(rel.filter { $0.key != anchor }, anchor: by == nil ? herds.takeAnchor() ?? corner : corner) }
                 for (id, r) in placed { canvas.setFrame(r, for: id) }   // the model only; views follow (layout.json too)
                 if by == nil, let paddock { paddocks.select(paddock) }   // the app's apply made a paddock: show it
+            }
+            client.onRemoteReveal = { [notifier, client] terminal, artifact in   // mac.reveal: the view only
+                if let terminal { notifier.onFocus?(terminal) }
+                if let artifact {
+                    let args: [String: JSONValue] = ["plugin": .string("preview"), "artifact": .string(artifact.uuidString.lowercased()), "placement": .string("dock.right")]
+                    Task { _ = try? await client.adminCall("panel.open", args) }
+                }
             }
             client.onNotify = { [notifier, client] id, message in
                 notifier.notify(id, title: client.terminals.first { $0.id == id }?.name ?? "Pastor", body: message)

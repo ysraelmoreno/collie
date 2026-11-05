@@ -571,6 +571,7 @@ struct WorkView: View {
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(m.role == .user ? Color.collieRaised : m.role == .agent ? Color.collieSurface : .clear, in: .rect(cornerRadius: 10))
             if m.truncated { Text("(cortada)").font(.collieMono(10)).foregroundStyle(Color.collieMuted) }
+            if let via = m.via { Text("do \(via)").font(.collieMono(10)).foregroundStyle(Color.collieSecondary) }   // sent from a paired phone
         }
         .frame(maxWidth: .infinity, alignment: m.role == .user ? .trailing : .leading)
     }

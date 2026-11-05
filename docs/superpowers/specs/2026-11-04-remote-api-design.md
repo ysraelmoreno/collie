@@ -706,9 +706,21 @@ reachable from the network until slice 3.
    `retryAfter`). `artifact.list/get` carry `page` (what to load, relative to the artifact) and `thumbnail`
    (`thumb.png` or null). Tests: `RemoteArtifactFileTests` (page + css + a 3-chunk image, escape table incl.
    symlinks out and to a sibling artifact, conflict, cap, libs + fonts + unlisted files, byte budget).
-10. **Mac app UI** — Preferências → Celular (toggle, port, Só Tailscale, reachable addresses, fingerprint), Parear
-    sheet with QR (CoreImage `CIQRCodeGenerator`) + confirm dialog on `remotePairing`, Aparelhos list (revoke, scope,
-    Trocar certificado), "do iPhone" in the chat. Manual check in the dev app.
+10. **Mac app UI (done, 2026-11-05)** — drawn first as a Prévia (`docs/pages/celular-prefs/`, approved shapes; real
+    renders `real-*.png` beside it). Preferências gets a third page **Celular** (`CelularPreferences`): Acesso pelo
+    iPhone switch + status line (port, phones connected, error), Rede (porta, Só Tailscale, Alcançável por from
+    `admin.remote`'s new `addresses [{host, via}]`, short fingerprint), Aparelhos (live dot, model, paired/seen with
+    via + address, Leitura|Completo, Revogar with a confirmation), Trocar certificado (confirmation) and Parear
+    iPhone (turns the listener on first). `PairSheet`: the QR (`CIQRCodeGenerator`, 10 px a module), countdown and
+    hosts; closes at expiry. `PairingConfirmSheet` over the main window on `remotePairing` (name, model, via +
+    address, the code as "482 913", a 60 s bar; Recusar/Parear → `admin.remote.pair.confirm`; refuses at 0).
+    `mac.reveal`: a terminal goes through the notifier's focus (its paddock, centred, selected); an artifact opens a
+    Prévia docked right, like the Artifacts panel. Grant lines end "· liberado do ‹aparelho› (Tailscale|Wi-Fi)"; the
+    work chat shows "do ‹aparelho›" under a phone's message. `admin.remote` also returns `connected` (phones on now).
+    Tests: `RemoteClientTests` (status/devices parse, copy, pairing + reveal events), `AccessStripTests`
+    (grant line), `CelularPreferencesTests` (pair.begin parse; the QR reads back as the exact URL),
+    `RemoteAdminTests.statusListsAddressesAndConnectedPhones`. Still to do by hand: a run in the dev app (this
+    agent's sandbox can't open the app).
 11. **Discovery** — Bonjour advertise (`NWListener.service`, TXT), Tailscale addresses via `getifaddrs` (+ optional
     MagicDNS via `tailscale status --json`). Tests: address classification; Bonjour checked by hand.
 12. **Keep-awake option** — IOPMAssertion held/released by state. Test: the state machine (assert when on + paired +

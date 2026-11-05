@@ -54,6 +54,11 @@ struct CanvasView: NSViewRepresentable {
     private var scrollMonitor: Any?
     private var lastVisible: Set<UUID> = []
     private var lastGrid: (CGPoint, CGFloat) = (.zero, 0)
+    // tela cheia: the bar on top, the node's grid before entering (for "era c×r"), the node last seen in fullscreen
+    private let fsInfo = FullscreenInfo()
+    private let fsBar: NSHostingView<FullscreenBar>
+    private var fsBefore: (Int, Int)?, lastFullscreen: UUID?
+    private var escMonitor: Any?
 
     // layout.json: nothing is placed or saved until it has been read (once, after the first connect).
     private var layoutLoaded = false, loadingLayout = false
@@ -68,15 +73,23 @@ struct CanvasView: NSViewRepresentable {
         self.client = client; self.canvas = canvas; self.root = root; self.store = store
         minimap = Minimap(canvas: canvas)
         leashes = LeashLayer(client: client, canvas: canvas)
+        fsBar = NSHostingView(rootView: FullscreenBar(client: client, canvas: canvas, info: fsInfo))
         super.init(frame: .zero)
         wantsLayer = true   // background and grid are drawn in draw(_:), so the dynamic tokens follow the theme
         addSubview(leashes)   // below the nodes (they are inserted under the minimap, above this)
         addSubview(minimap)
+        addSubview(fsBar)   // above everything, nodes included
+        fsBar.isHidden = true
         observe()
         // key monitors: ignore BrowserInput.sentinel events — see BrowserInput.sentinel
         // The terminal's scrollWheel is not overridable: route scrolls here unless the terminal under the cursor has focus.
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] e in
             MainActor.assumeIsolated { self?.interceptScroll(e) ?? false } ? nil : e
+        }
+        // A monitor, not keyDown: a focused page would keep the Esc. BrowserInput's sentinel keys go to its own
+        // host windows, never this one, so the window check already ignores them.
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+            MainActor.assumeIsolated { self?.escape(e) ?? false } ? nil : e
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -90,6 +103,8 @@ struct CanvasView: NSViewRepresentable {
         keyObserver = nil
         if let scrollMonitor { NSEvent.removeMonitor(scrollMonitor) }
         scrollMonitor = nil
+        if let escMonitor { NSEvent.removeMonitor(escMonitor) }
+        escMonitor = nil
         for v in views.values { v.unmount(); v.removeFromSuperview() }   // drops their defaults observers
         views = [:]
         for n in nodes.values { n.close() }
@@ -115,6 +130,7 @@ struct CanvasView: NSViewRepresentable {
         super.setFrameSize(newSize)
         leashes.frame = CGRect(origin: .zero, size: newSize)
         minimap.frame = CGRect(x: newSize.width - 180 - 12, y: newSize.height - 120 - 12, width: 180, height: 120)
+        fsBar.frame = CGRect(x: 0, y: 0, width: newSize.width, height: Self.fullscreenBarHeight)
         sync()
     }
 
@@ -147,9 +163,15 @@ struct CanvasView: NSViewRepresentable {
         let shown = Set(ids + panelIds)
         if canvas.shown != shown { canvas.shown = shown }
         for id in ids + panelIds where canvas.frames[id] == nil { canvas.place(id, viewport: size) }
+        if let f = canvas.fullscreen, !shown.contains(f), client.state == .connected { canvas.fullscreen = nil }   // closed, or another paddock
 
-        let zoom = canvas.zoom, interactive = zoom >= Self.interactiveZoom
-        let inView = size.width > 0 ? canvas.visibleNodes(viewport: size, margin: 200) : []
+        // Tela cheia: only that node, at the viewport's size (so a terminal's PTY follows); the rest is left as it was.
+        let fs = canvas.fullscreen, full = Self.fullscreenFrame(viewport: size)
+        if fs != lastFullscreen {
+            fsBefore = fs.flatMap { views[$0]?.term }.map { ($0.terminalDimensions.cols, $0.terminalDimensions.rows) }
+        }
+        let zoom = canvas.zoom, interactive = fs != nil || zoom >= Self.interactiveZoom
+        let inView = fs.map { Set([$0]) } ?? (size.width > 0 ? canvas.visibleNodes(viewport: size, margin: 200) : [])
         let visible = inView.intersection(ids)
         if visible != lastVisible {
             Log.canvas.debug("visible \(visible.count) of \(ids.count) zoom \(zoom)")
@@ -169,7 +191,8 @@ struct CanvasView: NSViewRepresentable {
                 views[id] = v
                 return v
             }()
-            v.place(CGRect(origin: canvas.toScreen(f.origin), size: CGSize(width: f.width * zoom, height: f.height * zoom)), canvasSize: f.size)
+            if id == fs { v.place(full, canvasSize: full.size) }
+            else { v.place(CGRect(origin: canvas.toScreen(f.origin), size: CGSize(width: f.width * zoom, height: f.height * zoom)), canvasSize: f.size) }
             v.setInteractive(interactive)
         }
         // Panel nodes: culled ones are detached, never released (a webview lives as long as its panel).
@@ -184,14 +207,66 @@ struct CanvasView: NSViewRepresentable {
                 panelViews[id] = v
                 return v
             }()
-            v.frame = CGRect(origin: canvas.toScreen(f.origin), size: CGSize(width: f.width * zoom, height: f.height * zoom))
+            v.frame = id == fs ? full : CGRect(origin: canvas.toScreen(f.origin), size: CGSize(width: f.width * zoom, height: f.height * zoom))
             v.setInteractive(interactive)
         }
+        syncFullscreenChrome(fs)
         if (canvas.offset, zoom) != lastGrid { lastGrid = (canvas.offset, zoom); needsDisplay = true }
         minimap.viewport = size
         minimap.needsDisplay = true
         leashes.update()
         scheduleSave()
+    }
+
+    // MARK: tela cheia
+
+    static let fullscreenBarHeight: CGFloat = 36
+
+    /// Screen frame of the fullscreen node: the whole viewport, its own title bar tucked under the fullscreen bar.
+    static func fullscreenFrame(viewport: CGSize) -> CGRect {
+        let y = fullscreenBarHeight - TerminalNodeView.titleHeight
+        return CGRect(x: 0, y: y, width: viewport.width, height: max(viewport.height - y, 0))
+    }
+
+    /// Esc belongs to a focused terminal (Claude Code interrupts with it); anywhere else it leaves fullscreen.
+    static func escExitsFullscreen(_ responder: NSResponder?) -> Bool {
+        guard let v = responder as? NSView else { return true }
+        return !sequence(first: v, next: { $0.superview }).contains { $0 is NodeTerminal }
+    }
+
+    /// The canvas node around `responder` (⌘⏎ acts on it).
+    static func node(of responder: NSResponder?) -> UUID? {
+        guard let v = responder as? NSView else { return nil }
+        for s in sequence(first: v, next: { $0.superview }) {
+            if let t = s as? TerminalNodeView { return t.id }
+            if let p = s as? PanelNodeView { return p.id }
+        }
+        return nil
+    }
+
+    private func syncFullscreenChrome(_ fs: UUID?) {
+        minimap.isHidden = fs != nil
+        leashes.isHidden = fs != nil
+        fsBar.isHidden = fs == nil
+        if let fs, let v = views[fs], let t = v.term {
+            v.layoutSubtreeIfNeeded()   // the grid for the new frame, before reading it
+            let d = t.terminalDimensions
+            fsInfo.dims = "\(d.cols)×\(d.rows)" + (fsBefore.map { " · era \($0.0)×\($0.1)" } ?? "")
+            if fs != lastFullscreen { window?.makeFirstResponder(t) }   // type straight away
+        } else { fsInfo.dims = nil }
+        lastFullscreen = fs
+    }
+
+    /// ⌘⏎ target: the fullscreen node, else the focused one, else a single selected one.
+    private var fullscreenTarget: UUID? {
+        canvas.fullscreen ?? Self.node(of: window?.firstResponder) ?? (canvas.selection.count == 1 ? canvas.selection.first : nil)
+    }
+
+    private func escape(_ e: NSEvent) -> Bool {
+        guard e.keyCode == 53, e.window === window, canvas.fullscreen != nil, window?.attachedSheet == nil,
+              Self.escExitsFullscreen(window?.firstResponder) else { return false }
+        canvas.fullscreen = nil
+        return true
     }
 
     // MARK: background
@@ -334,6 +409,12 @@ struct CanvasView: NSViewRepresentable {
     override func performKeyEquivalent(with e: NSEvent) -> Bool {
         // Caps Lock / keypad / fn flags are ignored; ⌘⇧= arrives as "+" (or "=" on some layouts)
         let mods = e.modifierFlags.intersection([.command, .shift, .option, .control])
+        if mods == .command, e.keyCode == 36 || e.keyCode == 76, let id = fullscreenTarget {   // ⌘⏎ (return or keypad enter)
+            canvas.toggleFullscreen(id); return true
+        }
+        if mods == [.command, .option], canvas.fullscreen != nil, e.keyCode == 123 || e.keyCode == 124 {   // ⌘⌥← ⌘⌥→
+            canvas.stepFullscreen(e.keyCode == 123 ? -1 : 1); return true
+        }
         guard mods == .command || mods == [.command, .shift], !Self.focusIsInPanel(window?.firstResponder)
         else { return super.performKeyEquivalent(with: e) }
         switch (e.charactersIgnoringModifiers, mods == .command) {
@@ -470,5 +551,58 @@ final class ActionItem: NSMenuItem {
         let (u, s) = mapping
         let c = CGPoint(x: u.minX + p.x / s, y: u.minY + p.y / s)
         canvas.offset = CGPoint(x: c.x - viewport.width / canvas.zoom / 2, y: c.y - viewport.height / canvas.zoom / 2)
+    }
+}
+
+/// Read by the fullscreen bar, written by the canvas on every sync.
+@MainActor @Observable final class FullscreenInfo { var dims: String? }
+
+/// Top of the canvas area in fullscreen: back to the canvas, the node picker, previous/next, the PTY size and exit.
+struct FullscreenBar: View {
+    let client: DaemonClient
+    let canvas: CanvasState
+    let info: FullscreenInfo
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button { canvas.fullscreen = nil } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.left")
+                    Text("Canvas").font(.collieUI(12.5, .medium))
+                    Text("esc").font(.collieMono(10)).foregroundStyle(Color.collieMuted)
+                }
+            }
+            .buttonStyle(CollieButtonStyle(.secondary)).controlSize(.small).help("Voltar ao canvas (Esc)")
+            if let f = canvas.fullscreen {
+                Menu {
+                    ForEach(canvas.fullscreenOrder, id: \.self) { id in
+                        Button("\(client.nodeName(id) ?? "") · \(kind(id))") { canvas.fullscreen = id }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(client.nodeName(f) ?? "").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText)
+                        Text(kind(f)).foregroundStyle(Color.collieMuted)
+                    }
+                }
+                .menuStyle(.borderlessButton).fixedSize().help("Outra janela do cercado").accessibilityLabel("Janela em tela cheia")
+            }
+            Button { canvas.stepFullscreen(-1) } label: { Image(systemName: "chevron.left") }
+                .buttonStyle(.plain).help("Anterior ⌘⌥←").accessibilityLabel("Janela anterior")
+            Button { canvas.stepFullscreen(1) } label: { Image(systemName: "chevron.right") }
+                .buttonStyle(.plain).help("Próxima ⌘⌥→").accessibilityLabel("Próxima janela")
+            Spacer(minLength: 0)
+            if let d = info.dims { Text(d).foregroundStyle(Color.collieMuted).accessibilityLabel("Tamanho do terminal") }
+            Button { canvas.fullscreen = nil } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
+                .buttonStyle(.plain).help("Sair da tela cheia ⌘⏎").accessibilityLabel("Sair da tela cheia")
+        }
+        .font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.collieSidebar)
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.collieBorder).frame(height: 1) }
+    }
+
+    private func kind(_ id: UUID) -> String {
+        client.terminals.first { $0.id == id }?.preset.rawValue ?? client.panels.first { $0.id == id }?.pluginId ?? ""
     }
 }

@@ -78,6 +78,26 @@ public final class CanvasState {
         return (0...last).lazy.map(cell).first { r in !self.frames.values.contains { $0.intersects(r) } } ?? cell(last)
     }
 
+    // MARK: tela cheia
+
+    /// The node filling the canvas area. Zoom, offset and frames are never touched, so leaving returns to the same view.
+    public var fullscreen: UUID?
+
+    public func toggleFullscreen(_ id: UUID) { fullscreen = fullscreen == id ? nil : id }
+
+    /// Shown nodes in reading order: rows top to bottom, then left to right.
+    public var fullscreenOrder: [UUID] {
+        frames.filter { shown?.contains($0.key) ?? true }
+            .sorted { ($0.value.minY, $0.value.minX) < ($1.value.minY, $1.value.minX) }.map(\.key)
+    }
+
+    /// Next (+1) or previous (-1) node in `fullscreenOrder`, wrapping; only while in fullscreen.
+    public func stepFullscreen(_ d: Int) {
+        let order = fullscreenOrder
+        guard let f = fullscreen, let i = order.firstIndex(of: f) else { return }
+        fullscreen = order[((i + d) % order.count + order.count) % order.count]
+    }
+
     public func fitAll(viewport: CGSize) {
         let rects = shownFrames
         guard let first = rects.first else { offset = .zero; zoom = 1; return }

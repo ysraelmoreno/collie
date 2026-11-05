@@ -51,7 +51,8 @@ import CollieTheme
             captureMemory: { [weak self] in self?.captureMemory() },
             edit: { [weak self] in self?.edit() },
             closeNode: { [weak self] in self?.confirmClose() },
-            setLot: { [weak self] in self?.setLot($0) }))
+            setLot: { [weak self] in self?.setLot($0) },
+            fullscreen: { [weak self] in if let self { self.canvas.toggleFullscreen(self.id) } }))
         title.onDrag = { [weak self] d in self?.move(d) }
         title.onClick = { [weak self] in self?.focus() }
         title.menuProvider = { [weak self] e in self?.menu(for: e) }
@@ -134,6 +135,8 @@ import CollieTheme
     /// Right-click on the title or border; the terminal body falls through to this menu too (apps with mouse reporting still get the right-click).
     override func menu(for event: NSEvent) -> NSMenu? {
         let m = NSMenu()
+        m.addItem(ActionItem("Tela cheia") { [weak self] in if let self { self.canvas.toggleFullscreen(self.id) } })
+        m.addItem(.separator())
         m.addItem(ActionItem("Editar…") { [weak self] in self?.edit() })
         m.addItem(ActionItem("Reiniciar") { [weak self] in self?.restart() })
         m.addItem(ActionItem("Matar") { [weak self] in self?.kill() })
@@ -480,6 +483,7 @@ struct NodeTitleBar: View {
     let model: NodeModel
     let restart: () -> Void, kill: () -> Void, captureMemory: () -> Void, edit: () -> Void, closeNode: () -> Void
     let setLot: (Lot?) -> Void
+    let fullscreen: () -> Void
 
     var body: some View {
         let t = client.terminals.first { $0.id == id }
@@ -499,7 +503,10 @@ struct NodeTitleBar: View {
             if let text = status.text { Text(text).foregroundStyle(color(status)).lineLimit(1) }
             if case .stopped = status { Button("Reiniciar", action: restart).controlSize(.mini) }
             Spacer(minLength: 0)
+            FullscreenButton(action: fullscreen)
             Menu {
+                Button("Tela cheia", action: fullscreen).keyboardShortcut(.return, modifiers: .command)
+                Divider()
                 Button("Editar…", action: edit)
                 Button("Reiniciar", action: restart)
                 Button("Matar", action: kill)

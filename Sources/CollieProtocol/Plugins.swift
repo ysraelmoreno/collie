@@ -312,7 +312,7 @@ extension PluginRegistry {
             acmd("add", "Keep an HTML page (.html/.htm up to 8 MiB, a folder or a .zip) as an artifact, made offline (known CDNs and Google Fonts to collie-lib://), and start importing it as a design screen in the background (ignores --panel); returns {id, importing, version, warnings, needsNetwork}",
                  [ParamSpec("path", .string, required: true, help: "The page, a folder with an index.html, or a .zip of one (resolved against the current directory; absolute paths are accepted)"),
                   ParamSpec("root", .string, help: "A folder with the page's files (css, js, images, fonts), kept beside it: the page must be inside; up to 2000 files and 64 MiB, no links"),
-                  ParamSpec("title", .string, help: "Title (default: the file name)"),
+                  ParamSpec("title", .string, help: "Title (default: the page's <title>, else its folder for an index.html, else the file name)"),
                   ParamSpec("width", .int, help: "Viewport width of the import in px (default 1440, 320-3840)"),
                   ParamSpec("nofollow", .flag, help: "Refuse a path or --root that goes through a symbolic link"), folderParam,
                   ParamSpec("source", .string, help: "The claude.ai artifact link it came from (artifact import-claude); the same link again is the next version of yours"),

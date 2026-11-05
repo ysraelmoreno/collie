@@ -377,7 +377,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactExportTests {
             let row = try #require(try await rows(p, m).first { $0["id"] == .string(id) })
             #expect(o["importing"] == .bool(true), "\(r)")
             // its import started at once (and fails without the app)
-            #expect(row["kind"] == .string("agent") && [.string("importing"), .string("failed")].contains(row["status"]) && row["title"] == .string("index.html"), "\(row)")
+            #expect(row["kind"] == .string("agent") && [.string("importing"), .string("failed")].contains(row["status"]) && row["title"] == .string("site"), "\(row)")   // an index page without <title>: its folder
             #expect(row["file"] == .null && row["thumbnail"] == .null && row["url"] == .string("collie-artifact://app/\(id)/source.html"))
             guard case .string(let by)? = row["by"], case .string(let path)? = row["path"] else { Issue.record("\(row)"); return }
             #expect(by.contains("M") && path == p.root.appendingPathComponent("artifacts/\(id)/source.html").path)

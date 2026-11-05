@@ -227,7 +227,6 @@ extension CommandRouter {
         let a: Artifact
         if isDir || ext == "zip" {
             guard root == nil else { throw invalid("--root vale só com uma página .html") }
-            let title = named ?? src.deletingPathExtension().lastPathComponent
             var scratch: URL?
             defer { if let scratch { try? FileManager.default.removeItem(at: scratch) } }
             let (top, page): (URL, URL)
@@ -238,11 +237,12 @@ extension CommandRouter {
                 scratch = tmp
                 page = try await ZipCheck.extract(src, into: tmp); top = tmp
             }
+            let title = named ?? Self.pageTitle(page) ?? src.deletingPathExtension().lastPathComponent
             a = try await artifacts.addAgent(root: top, page: page, title: title, noFollow: flag(r, "nofollow"), paddockId: caller?.paddockId,
                                              by: Self.origin(caller), byId: caller?.id, inFolder: folder, origin: origin, rewriter: rw)
         } else {
             guard ["html", "htm"].contains(ext) else { throw invalid("'\(src.path)' is not an .html or .htm file, a folder or a .zip") }
-            let title = named ?? src.lastPathComponent
+            let title = named ?? Self.pageTitle(src) ?? Self.fileTitle(src)
             if let root {
                 a = try await artifacts.addAgent(root: URL(fileURLWithPath: root, relativeTo: base), page: src, title: title, noFollow: flag(r, "nofollow"),
                                                  paddockId: caller?.paddockId, by: Self.origin(caller), byId: caller?.id, inFolder: folder,
@@ -266,7 +266,8 @@ extension CommandRouter {
                     return .success(d)
                 }
                 a = try await artifacts.addAgent(page: try read.get(), title: title, paddockId: caller?.paddockId, by: Self.origin(caller),
-                                                 byId: caller?.id, inFolder: folder, origin: origin, rewriter: rw)
+                                                 byId: caller?.id, inFolder: folder, origin: origin,
+                                                 from: SignedAppCheck.realPath(src), rewriter: rw)
             }
         }
         if let origin, nonce != nil { claudeImports[origin] = nil }   // the asked add done (another terminal's never clears it)
@@ -423,6 +424,24 @@ extension CommandRouter {
             out["note"] = .string("No name given: created \(rel). Name pages: collie artifact new \(kind.rawValue) <name>")
         }
         return .object(out)
+    }
+
+    /// A page's own <title> (first 64 KiB, entities &amp; &lt; &gt; &quot; &#39; decoded), nil when absent or blank.
+    static func pageTitle(_ page: URL) -> String? {
+        guard let h = FileHandle(forReadingAtPath: page.path), let d = try? h.read(upToCount: 64 << 10) else { return nil }
+        try? h.close()
+        let html = String(decoding: d, as: UTF8.self)
+        guard let r = html.range(of: #"<title[^>]*>([\s\S]*?)</title>"#, options: [.regularExpression, .caseInsensitive]) else { return nil }
+        var t = String(html[r]).replacingOccurrences(of: #"^<title[^>]*>|</title>$"#, with: "", options: [.regularExpression, .caseInsensitive])
+        for (e, c) in [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&amp;", "&")] { t = t.replacingOccurrences(of: e, with: c) }
+        t = t.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return t.isEmpty ? nil : String(t.prefix(200))
+    }
+
+    /// A page without a <title>: its folder for an index page (docs/pages/demo/index.html → "demo"), else its name.
+    static func fileTitle(_ page: URL) -> String {
+        let name = page.deletingPathExtension().lastPathComponent
+        return name.lowercased() == "index" ? page.deletingLastPathComponent().lastPathComponent : name
     }
 
     /// An export version whose artifact was removed while it was written: its folder deleted (and the artifact's, when

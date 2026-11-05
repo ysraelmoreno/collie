@@ -154,6 +154,48 @@ private func text(_ v: JSONValue?) -> String {
         }
     }
 
+    /// E2E findings 5, 6, 8: a page's title is its <title> (else its folder for an index.html), `live` follows a Prévia
+    /// opened on the page's file as well as on the artifact, and the import state travels.
+    @Test func artifactsProjection() async throws {
+        try await RemoteRig().run { rig in
+            let proj = URL(fileURLWithPath: SignedAppCheck.realPath(URL(fileURLWithPath: "/tmp/collie-rp-\(UUID().uuidString.prefix(8))")))
+            defer { try? FileManager.default.removeItem(at: proj) }
+            func page(_ rel: String, _ html: String) throws {
+                let u = proj.appendingPathComponent(rel)
+                try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try html.write(to: u, atomically: true, encoding: .utf8)
+            }
+            try page("docs/pages/demo-e2e/index.html", "<html><head><title> Demo &amp; E2E </title></head><body>x</body></html>")
+            try page("docs/pages/plain/index.html", "<html><body>y</body></html>")
+            try page("docs/pages/other/report.html", "<html><body>z</body></html>")
+            let r = try await rig.admin("admin.spawn", ["name": "W", "preset": "shell", "cwd": .string(proj.path)])
+            guard case .object(let o)? = r.result, case .string(let tid)? = o["id"] else { Issue.record("\(r)"); return }
+            let t = (id: tid, token: try await tokenOf(rig.d, tid))
+            func call(_ cmd: String, _ args: [String: JSONValue]) async throws -> Response {
+                try await send(rig.paths, Request(id: "t", terminalId: t.id, token: t.token, command: cmd, args: args, cwd: proj.path), timeoutSeconds: 60)
+            }
+            for p in ["docs/pages/demo-e2e/index.html", "docs/pages/plain/index.html", "docs/pages/other/report.html"] {
+                let add = try await call("artifact.add", ["path": .string(p)])
+                #expect(add.ok, "\(p): \(add)")
+            }
+            let open = try await call("panel.open", ["plugin": "preview", "file": "docs/pages/demo-e2e/index.html"])
+            #expect(open.ok, "\(open)")
+            let (ph, _, _, _) = try await rig.phone()
+            defer { ph.close() }
+            let rows = arr(try await ph.call("artifact.list").result).map { obj($0) }
+            let demo = try #require(rows.first { $0["title"] == "Demo & E2E" }, "\(rows)")
+            #expect(demo["live"] == .bool(true))
+            #expect(rows.first { $0["title"] == "plain" }?["live"] == .bool(false))
+            #expect(rows.contains { $0["title"] == "report" })
+            for row in rows {
+                #expect(row["importing"] == .bool(true) || row["importing"] == .bool(false), "\(row)")
+                #expect(row.keys.contains("importError"), "\(row)")
+                #expect(!text(.object(row)).contains(proj.path), "path leaked: \(row)")
+            }
+            #expect(obj(try await ph.call("artifact.get", ["id": demo["id"]!]).result)["live"] == .bool(true))
+        }
+    }
+
     /// The scope is read on every message: a change or a revoke reaches a live session at its next message.
     @Test func scopeAndRevokeApplyAtOnce() async throws {
         try await RemoteRig().run { rig in

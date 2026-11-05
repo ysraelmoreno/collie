@@ -41,7 +41,7 @@ extension CommandRouter {
             let terminalIds = Set(ws.terminals.map(\.id))
             var o: [String: JSONValue] = [
                 "mac": .object(["name": .string(Self.computerName()), "installId": .string((try? remoteInstallId()) ?? ""),
-                                "collieVersion": .string(config.build ?? "dev"), "keyFingerprint": .string(remoteIdentity?.fingerprint ?? ""),
+                                "collieVersion": .string(config.version ?? "dev"), "build": .string(config.build ?? "dev"), "keyFingerprint": .string(remoteIdentity?.fingerprint ?? ""),
                                 "via": .string(via.rawValue), "pairedAt": .string(device.pairedAt.ISO8601Format())]),
                 "paddocks": .array(ws.paddocks.map { f in .object(["id": .string(f.id.uuidString.lowercased()), "name": .string(f.name),
                     "branch": f.branch.isEmpty ? .null : .string(f.branch), "base": f.baseBranch.isEmpty ? .null : .string(f.baseBranch),
@@ -176,9 +176,17 @@ extension CommandRouter {
 
     private func remoteArtifact(_ a: Artifact) -> JSONValue {
         let key = a.id.uuidString.lowercased()
-        let live = ws.panels.contains { $0.pluginId == "preview" && $0.state["artifact"] == .string(key) }
+        // open on the artifact, or on the project page it was added from (`collie artifact new` opens the file)
+        let live = ws.panels.contains { p in
+            guard p.pluginId == "preview" else { return false }
+            if p.state["artifact"] == .string(key) { return true }
+            guard let from = a.addedFrom, case .string(let f)? = p.state["file"], case .string(let root)? = p.state["root"],
+                  let u = try? PreviewFile.resolve(f, projectRoot: URL(fileURLWithPath: root)) else { return false }
+            return SignedAppCheck.realPath(u) == from
+        }
         return .object(["id": .string(key), "kind": .string(a.kind.rawValue), "title": .string(a.title), "by": .string(a.by),
                         "at": .string(a.at.ISO8601Format()), "version": .number(Double(a.version)),
-                        "folder": a.inFolder.map { .string($0) } ?? .null, "live": .bool(live)])
+                        "folder": a.inFolder.map { .string($0) } ?? .null, "live": .bool(live),
+                        "importing": .bool(importingArtifacts.contains(a.id)), "importError": a.importError.map { .string($0) } ?? .null])
     }
 }

@@ -22,12 +22,15 @@ struct Artifact: Codable, Sendable, Equatable {
     var origin: String? = nil
     /// Remote resources the page still loads after the offline rewrite ("precisa de rede"); nil: none.
     var needsNetwork: [String]? = nil
+    /// The project page it was added from (real path), so a Prévia open on that file counts as showing it; nil: a
+    /// page handed in as bytes, an export, or a record from before it.
+    var addedFrom: String? = nil
 }
 
 extension Artifact {
     private enum CodingKeys: String, CodingKey {
         case id, kind, title, fileId, node, paddockId, by, at, version, folder, stamp, warnings, page, source, importError, inFolder, byId,
-             origin, needsNetwork
+             origin, needsNetwork, addedFrom
     }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     init(from d: Decoder) throws {
@@ -41,6 +44,7 @@ extension Artifact {
         source = try c.decodeIfPresent(String.self, forKey: .source); importError = try c.decodeIfPresent(String.self, forKey: .importError)
         inFolder = try c.decodeIfPresent(String.self, forKey: .inFolder); byId = try c.decodeIfPresent(UUID.self, forKey: .byId)
         origin = try c.decodeIfPresent(String.self, forKey: .origin); needsNetwork = try c.decodeIfPresent([String].self, forKey: .needsNetwork)
+        addedFrom = try c.decodeIfPresent(String.self, forKey: .addedFrom)
     }
 }
 
@@ -156,18 +160,19 @@ actor ArtifactStore {
 
     /// The record a new agent page starts from: a new artifact, or (`continued`) that artifact's next version in
     /// `<id>/r<N>/`, its folder kept unless `inFolder` is given.
-    private func agentRecord(title: String, paddockId: UUID?, by: String, byId: UUID?, inFolder: String?, origin: String?) async throws -> Artifact {
+    private func agentRecord(title: String, paddockId: UUID?, by: String, byId: UUID?, inFolder: String?, origin: String?,
+                             from: String? = nil) async throws -> Artifact {
         if let known = try await continued(origin: origin, byId: byId) {
             guard !converting.contains(known.id) else { throw Self.invalid("importação em andamento desse artifact; tente de novo em instantes") }
             let n = max(known.version, reserved[known.id] ?? 0) + 1
             reserved[known.id] = n
             return Artifact(id: known.id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId ?? known.paddockId, by: by, at: Date(),
                             version: n, folder: "\(Self.name(known.id))/r\(n)", stamp: nil, warnings: [], inFolder: inFolder ?? known.inFolder,
-                            byId: known.byId ?? byId, origin: origin)
+                            byId: known.byId ?? byId, origin: origin, addedFrom: from ?? known.addedFrom)
         }
         let id = UUID()
         return Artifact(id: id, kind: .agent, title: title, fileId: nil, node: nil, paddockId: paddockId, by: by, at: Date(),
-                        version: 1, folder: Self.name(id), stamp: nil, warnings: [], inFolder: inFolder, byId: byId, origin: origin)
+                        version: 1, folder: Self.name(id), stamp: nil, warnings: [], inFolder: inFolder, byId: byId, origin: origin, addedFrom: from)
     }
 
     /// The rewrite's report on the record.
@@ -179,8 +184,8 @@ actor ArtifactStore {
     /// `page` (an HTML document) kept as a new agent artifact (or the next version of the one from `origin`), made
     /// offline by `rewriter` in the copy.
     func addAgent(page: Data, title: String, paddockId: UUID?, by: String, byId: UUID? = nil, inFolder: String? = nil,
-                  origin: String? = nil, rewriter: OfflineRewriter? = nil) async throws -> Artifact {
-        var a = try await agentRecord(title: title, paddockId: paddockId, by: by, byId: byId, inFolder: inFolder, origin: origin)
+                  origin: String? = nil, from: String? = nil, rewriter: OfflineRewriter? = nil) async throws -> Artifact {
+        var a = try await agentRecord(title: title, paddockId: paddockId, by: by, byId: byId, inFolder: inFolder, origin: origin, from: from)
         a.source = "\(a.folder)/source.html"
         let folder = dir.appendingPathComponent(a.folder)
         try await onIO {
@@ -214,7 +219,7 @@ actor ArtifactStore {
         let base = rootURL.path, pagePath = pageURL.path
         guard pagePath.hasPrefix(base + "/") else { throw Self.invalid("the page must be a regular file inside --root") }
         let pageRel = String(pagePath.dropFirst(base.count + 1))
-        var a = try await agentRecord(title: title, paddockId: paddockId, by: by, byId: byId, inFolder: inFolder, origin: origin)
+        var a = try await agentRecord(title: title, paddockId: paddockId, by: by, byId: byId, inFolder: inFolder, origin: origin, from: pagePath)
         a.source = "\(a.folder)/source/\(pageRel)"
         let folder = dir.appendingPathComponent(a.folder), dst = folder.appendingPathComponent("source")
         let made = a.version == 1 ? folder : dst   // what a failure removes: a new artifact's folder, else this version's copy

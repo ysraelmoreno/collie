@@ -13,7 +13,7 @@ actor AskInbox {
         var source: AskResult.Source?
         var askedAt = Date(), deliveredAt: Date?, completedAt: Date?
     }
-    static let keep = 20, deliverMax = 3000
+    static let keep = 20, inlineMax = 300, previewMax = 120
     private var byAsker: [UUID: [Entry]] = [:]   // oldest first
 
     /// A new id (8 lowercase hex chars, unique in the inbox) for `from`'s ask to `target`.
@@ -49,12 +49,17 @@ actor AskInbox {
     func recent(from: UUID) -> [Entry] { (byAsker[from] ?? []).reversed() }
     func drop(terminal: UUID) { byAsker[terminal] = nil }
 
-    /// The text typed into the asker's terminal.
+    /// The line typed into the asker's terminal: never a pasted block (Claude shows one as "[Pasted text]", easy to leave
+    /// unsent). A short reply inline, whitespace folded; a long one as its first line and where to read it all.
     static func message(_ e: Entry) -> String {
         guard e.status == .done else { return "[collie] Ask \(e.id) to \(e.target) failed: \(e.error ?? "no reply")" }
         let out = e.output ?? ""
-        let body = out.count <= deliverMax ? out : String(out.prefix(deliverMax)) + "\n[cut — full reply: collie ask result \(e.id)]"
-        return "[collie] Reply from \(e.target) (ask \(e.id)):\n\(body)"
+        let flat = out.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        if flat.count <= inlineMax { return "[collie] Reply from \(e.target) (ask \(e.id)): \(flat)" }
+        let lines = out.split(separator: "\n", omittingEmptySubsequences: true)
+        let first = (lines.first ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let preview = first.count <= previewMax ? first : String(first.prefix(previewMax)) + "…"
+        return "[collie] Reply from \(e.target) (ask \(e.id), \(lines.count) lines): \(preview) — full reply: collie ask result \(e.id)"
     }
 
     static func json(_ e: Entry) -> JSONValue {

@@ -698,13 +698,15 @@ extension AskTests {
         }
     }
 
-    @Test func longReplyCut() async throws {
+    /// DX backlog 4: a reply is typed as one line (never a pasted block): a short one inline, a long one as a reference.
+    @Test func longReplyIsAReference() async throws {
         let long = String(repeating: String(repeating: "x", count: 49) + "\n", count: 100)   // 5000 chars
-        let e = AskInbox.Entry(id: "ab12cd34", target: "B", status: .done, output: long)
-        let m = AskInbox.message(e)
-        let head = "[collie] Reply from B (ask ab12cd34):\n", cut = "\n[cut — full reply: collie ask result ab12cd34]"
-        #expect(m.hasPrefix(head) && m.hasSuffix(cut) && m.count == head.count + 3000 + cut.count)
-        #expect(AskInbox.message(AskInbox.Entry(id: "ab12cd34", target: "B", status: .done, output: "ok")) == head + "ok")
+        let m = AskInbox.message(AskInbox.Entry(id: "ab12cd34", target: "B", status: .done, output: long))
+        #expect(!m.contains("\n") && m.count < 300, "\(m)")
+        #expect(m.hasPrefix("[collie] Reply from B (ask ab12cd34, 100 lines): " + String(repeating: "x", count: 49)), "\(m)")
+        #expect(m.hasSuffix("full reply: collie ask result ab12cd34"), "\(m)")
+        let short = AskInbox.Entry(id: "ab12cd34", target: "B", status: .done, output: "ok,\n  done\n")
+        #expect(AskInbox.message(short) == "[collie] Reply from B (ask ab12cd34): ok, done")
         try await withHookDaemon { d, p in
             let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
             let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
@@ -712,7 +714,8 @@ extension AskTests {
             let (id, _) = try await askNoWait(p, a, "B", "long", timeout: 30)
             try await hook(d, p, b, long)
             let aid = UUID(uuidString: a.id)!
-            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[cut — full reply: collie ask result \(id)]") })
+            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("full reply: collie ask result \(id)") })
+            #expect(await d.scrollbackText(aid).components(separatedBy: String(repeating: "x", count: 49)).count == 2, "body typed once, as the preview")
             #expect(field(try await askResult(p, a, id), "output")?.count == 5000)
         }
     }

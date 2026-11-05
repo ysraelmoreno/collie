@@ -171,7 +171,7 @@ actor CommandRouter {
         let remoteDevices = RemoteDevices(dir: root.appendingPathComponent("remote")), remotePairing = RemotePairing()
         self.remoteDevices = remoteDevices; self.remotePairing = remotePairing
         self.remote = RemoteGateway(allowLoopback: config.remoteAllowLoopback, deps: .init(
-            devices: remoteDevices, pairing: remotePairing, macName: Self.computerName(), build: config.build ?? "dev",
+            devices: remoteDevices, pairing: remotePairing, macName: Self.computerName(), version: config.version ?? "dev", build: config.build ?? "dev",
             helloDeadline: config.remoteHelloDeadline, onClaim: { r in Task { await hub.emit(.remotePairing(r)) } },
             handle: { r, dev, via in
                 await me.router?.remoteRequest(r, device: dev, via: via)

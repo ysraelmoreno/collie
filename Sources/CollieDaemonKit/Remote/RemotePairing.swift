@@ -62,12 +62,12 @@ final class RemotePairing: @unchecked Sendable {
     }
 
     /// The pairing waiting for the Mac's click, if any (for the app's dialog).
-    var awaiting: (pairingId: UUID, device: Device, code: String)? {
+    var awaiting: (pairingId: UUID, device: Device, code: String, deadline: Date)? {
         let t = now()
         return lock.withLock {
             expire(t)
-            guard let id, case .awaiting(let d, let code, _) = state else { return nil }
-            return (id, d, code)
+            guard let id, case .awaiting(let d, let code, let deadline) = state else { return nil }
+            return (id, d, code, deadline)
         }
     }
 

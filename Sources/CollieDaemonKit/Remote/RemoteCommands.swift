@@ -132,6 +132,12 @@ extension CommandRouter {
         if let p = st.port { o["listeningPort"] = .number(Double(p)) }
         if let f = remoteIdentity?.fingerprint { o["fingerprint"] = .string(f) }
         if let e = st.error { o["error"] = .string(e) }
+        // the pairing waiting for the click (the app's dialog shows the same): lets a test compare the code without the app
+        if let a = remotePairing.awaiting {
+            o["pairing"] = .object(["pairingId": .string(a.pairingId.uuidString.lowercased()), "code": .string(a.code),
+                                    "name": .string(a.device.name), "model": .string(a.device.model), "address": .string(a.device.address),
+                                    "via": .string(a.device.via.rawValue), "deadline": .string(a.deadline.ISO8601Format())])
+        }
         return .object(o)
     }
 }

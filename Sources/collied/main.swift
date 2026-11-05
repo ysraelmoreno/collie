@@ -98,6 +98,7 @@ do {
     config.captureUserEnv = ProcessInfo.processInfo.environment["COLLIE_USER_ENV"] != "off"   // tests: never the developer's rc files
     // hash of the file this process started from; read off the cooperative pool
     config.build = await Task.detached { selfPath().flatMap(BuildID.of) }.value
+    config.version = selfPath().flatMap(DaemonConfig.bundleVersion)
     daemon = try Daemon(config: config)
     try await daemon.start()
 } catch {

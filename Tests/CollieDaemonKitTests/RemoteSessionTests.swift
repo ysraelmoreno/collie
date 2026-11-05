@@ -73,6 +73,20 @@ final class RemotePhone: NSObject, URLSessionWebSocketDelegate, @unchecked Senda
         return nil
     }
 
+    /// A WebSocket ping like the phone's keepalive (`sendPing`): true when the pong came back within `timeout`.
+    func ping(timeout: Double = 5) async -> Bool {
+        final class Once: @unchecked Sendable {
+            let lock = NSLock(); var k: CheckedContinuation<Bool, Never>?
+            func resume(_ v: Bool) { lock.withLock { let x = k; k = nil; return x }?.resume(returning: v) }
+        }
+        let once = Once()
+        return await withCheckedContinuation { k in
+            once.lock.withLock { once.k = k }
+            task.sendPing { e in once.resume(e == nil) }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { once.resume(false) }
+        }
+    }
+
     private func open(_ v: Bool) { lock.withLock { let k = opened; opened = nil; return k }?.resume(returning: v) }
     func urlSession(_ s: URLSession, didReceive ch: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         guard ch.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = ch.protectionSpace.serverTrust,
@@ -85,6 +99,7 @@ final class RemotePhone: NSObject, URLSessionWebSocketDelegate, @unchecked Senda
 }
 
 private func obj(_ r: Response) -> [String: JSONValue] { if case .object(let o)? = r.result { o } else { [:] } }
+private func obj(_ v: JSONValue?) -> [String: JSONValue] { if case .object(let o)? = v { o } else { [:] } }
 private func str(_ v: JSONValue?) -> String { if case .string(let s)? = v { s } else { "" } }
 private func int(_ v: JSONValue?) -> Int { if case .number(let n)? = v { Int(n) } else { -1 } }
 
@@ -227,6 +242,37 @@ private func int(_ v: JSONValue?) -> Int { if case .number(let n)? = v { Int(n) 
             let n = try await RemotePhone.connect(port: newPort, pin: newPin)
             defer { n.close() }
             #expect(try await n.call("session.hello", ["deviceId": .string(id2), "token": .string(token2)]).error?.code == .unauthorized)
+        }
+    }
+
+    /// E2E findings 1-3 (2026-11-05): the version (not the build hash) as collieVersion, a ping answered before any
+    /// message, and the pairing's code visible in admin.remote for a test without the app.
+    @Test func versionPingAndPairingStatus() async throws {
+        try await withDaemon(configure: { config(&$0); $0.version = "9.9.9"; $0.build = "abc123" }) { d, p in
+            let (port, pin) = try await on(d, p)
+            let begin = obj(try await admin(d, p, "admin.remote.pair.begin"))
+            #expect(obj(try await admin(d, p, "admin.remote"))["pairing"] == nil)   // begun, not claimed yet
+            let secret = try #require(URLComponents(string: str(begin["qr"]))?.queryItems?.first { $0.name == "s" }?.value)
+            let early = try await RemotePhone.connect(port: port, pin: pin)
+            defer { early.close() }
+            let t0 = ContinuousClock.now
+            #expect(await early.ping(timeout: 1))   // before pair or hello: answered at once (not at the close), the session stays
+            #expect(ContinuousClock.now - t0 < .milliseconds(900))
+            let offer = obj(try await early.call("pair", ["secret": .string(secret), "device": device]))
+            guard case .object(let mac)? = offer["mac"] else { Issue.record("\(offer)"); return }
+            #expect(mac["collieVersion"] == "9.9.9" && mac["build"] == "abc123", "\(mac)")
+            let pairing = obj(obj(try await admin(d, p, "admin.remote"))["pairing"])
+            #expect(pairing["code"] == offer["code"] && pairing["pairingId"] == offer["pairingId"] && pairing["name"] == "iPhone de Teste"
+                    && pairing["address"] == "127.0.0.1" && pairing["via"] == "lan" && pairing["deadline"] != nil, "\(pairing)")
+            let w = try await early.send("pair.wait", ["pairingId": offer["pairingId"]!])
+            _ = try await admin(d, p, "admin.remote.pair.confirm", ["pairingId": offer["pairingId"]!, "decision": "accept"])
+            var res: [String: JSONValue] = [:]
+            while let o = await early.next() { if o["id"] == .string(w) { res = obj(o["result"]); break } }
+            #expect(obj(res["mac"])["collieVersion"] == "9.9.9" && obj(res["mac"])["build"] == "abc123")
+            let hello = obj(try await early.call("session.hello", ["deviceId": res["deviceId"]!, "token": res["token"]!]))
+            #expect(obj(hello["mac"])["collieVersion"] == "9.9.9" && obj(hello["mac"])["build"] == "abc123", "\(hello)")
+            #expect(obj(obj(try await early.call("workspace.snapshot").result)["mac"])["collieVersion"] == "9.9.9")
+            #expect(await early.ping())   // and after
         }
     }
 

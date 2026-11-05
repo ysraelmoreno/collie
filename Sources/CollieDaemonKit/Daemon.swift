@@ -8,6 +8,8 @@ public struct DaemonConfig: Sendable {
     public var collieExecutable: URL
     /// `BuildID` of the running executable, reported in `ui.snapshot` (collied computes it once at startup).
     public var build: String?
+    /// The app's version (CFBundleShortVersionString of the bundle collied ships in); nil: not bundled ("dev").
+    public var version: String?
     public var workspaceId: UUID
     public var idleQuietSeconds: Double = 2.0
     /// `check --screen`: a terminal's raw output → its screen as drawn now (collied's CollieScreen; nil: unavailable).
@@ -100,6 +102,17 @@ public struct DaemonConfig: Sendable {
         self.paths = paths; self.collieExecutable = collieExecutable; self.workspaceId = workspaceId
     }
 }
+extension DaemonConfig {
+    /// `CFBundleShortVersionString` of the app bundle a daemon at `executable` (`<X>.app/Contents/Helpers/collied`)
+    /// ships in; nil outside a bundle.
+    public static func bundleVersion(executable: URL) -> String? {
+        let plist = executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Info.plist")
+        guard let d = try? Data(contentsOf: plist),
+              let o = try? PropertyListSerialization.propertyList(from: d, format: nil) as? [String: Any] else { return nil }
+        return o["CFBundleShortVersionString"] as? String
+    }
+}
+
 
 public final class Daemon: Sendable {
     private let auth: AuthRegistry

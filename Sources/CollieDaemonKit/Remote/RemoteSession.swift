@@ -11,6 +11,8 @@ struct RemoteContext: Sendable {
     let fingerprint: String
     let installId: String
     let macName: String
+    /// The app's version ("0.1.0"; "dev" outside a bundle) and the daemon's build hash.
+    let version: String
     let build: String
     let helloDeadline: Duration
     /// A phone claimed the pairing: the app shows its dialog.
@@ -77,7 +79,11 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
             guard let self else { return }
             let meta = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
             if error != nil || meta?.opcode == .close { conn.cancel(); return }
-            if let data, !data.isEmpty { handle(data) }
+            switch meta?.opcode {
+            case .ping?: pong(data ?? Data())   // the phone's keepalive, at any time (before pair and hello too)
+            case .text?, .binary?: if let data, !data.isEmpty { handle(data) }
+            default: break   // pong, continuation
+            }
             if !lock.withLock({ closing }) { receive() }
         }
     }
@@ -129,7 +135,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
                                                  via: via.rawValue, code: claim.code, deadline: Date() + RemotePairing.confirmLife))
             }
             reply(r.id, .object(["pairingId": .string(claim.pairingId.uuidString.lowercased()), "code": .string(claim.code),
-                                 "via": .string(via.rawValue), "mac": macJSON(["collieVersion": .string(ctx.build)])]))
+                                 "via": .string(via.rawValue), "mac": macJSON([:])]))
         } catch let e as ProtocolError { reply(r.id, e) } catch { reply(r.id, ProtocolError(code: .internal, message: "\(error)")) }
     }
 
@@ -147,7 +153,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
                     let (dev, token) = try ctx.devices.add(d, fingerprint: ctx.fingerprint)
                     reply(r.id, .object(["deviceId": .string(dev.id.uuidString.lowercased()), "token": .string(token),
                                          "pairedAt": .string(dev.pairedAt.ISO8601Format()),
-                                         "mac": macJSON(["collieVersion": .string(ctx.build), "keyFingerprint": .string(ctx.fingerprint)])]))
+                                         "mac": macJSON(["keyFingerprint": .string(ctx.fingerprint)])]))
                 } catch { reply(r.id, ProtocolError(code: .internal, message: "\(error)")) }
             case .refused: reply(r.id, ProtocolError(code: .conflict, message: "Recusado no Mac."))
             case .timedOut: reply(r.id, ProtocolError(code: .timeout, message: "O Mac não confirmou a tempo: pareie de novo."))
@@ -164,7 +170,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         }
         lock.withLock { device = id }
         for old in sessions.authenticated(self, device: id) { old.close(.replaced) }
-        var o: [String: JSONValue] = ["protocol": .number(Double(Protocol.version)), "mac": macJSON(["build": .string(ctx.build)]),
+        var o: [String: JSONValue] = ["protocol": .number(Double(Protocol.version)), "mac": macJSON([:]),
                                       "device": .object(["id": .string(id.uuidString.lowercased()), "name": .string(dev.name),
                                                          "scope": .string(dev.scope.rawValue)])]
         if let rotate { o["rotate"] = .string(rotate) }
@@ -172,7 +178,15 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
     }
 
     private func macJSON(_ extra: [String: JSONValue]) -> JSONValue {
-        .object(["name": .string(ctx.macName), "installId": .string(ctx.installId)].merging(extra) { a, _ in a })
+        .object(["name": .string(ctx.macName), "installId": .string(ctx.installId), "collieVersion": .string(ctx.version),
+                 "build": .string(ctx.build)].merging(extra) { a, _ in a })
+    }
+
+    /// Answers a ping with its payload. autoReplyPing is off: with it on, Network.framework sent the pong only when the
+    /// connection closed (measured: 2 s, at the hello deadline), so the phone's keepalive saw no answer (E2E, 2026-11-05).
+    private func pong(_ payload: Data) {
+        let ctx = NWConnection.ContentContext(identifier: "pong", metadata: [NWProtocolWebSocket.Metadata(opcode: .pong)])
+        conn.send(content: payload, contentContext: ctx, isComplete: true, completion: .idempotent)
     }
 
     private func reply(_ id: String, _ result: JSONValue) { send(Response(id: id, ok: true, result: result)) }

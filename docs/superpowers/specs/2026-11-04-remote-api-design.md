@@ -229,6 +229,18 @@ message as an unknown command, so the admin surface isn't enumerable), `tooMany`
   `unknown` (too much output to check: look at the terminal), `failed` (the terminal didn't take the keys). Match
   on `code`, never on the text (slice 7).
 
+### E2E fixes (2026-11-05, simulator ↔ dev collied)
+
+- `mac.collieVersion` is the app's version (`CFBundleShortVersionString` of the bundle; "dev" unbundled) and
+  `mac.build` the daemon's build hash, in `pair`, `pair.wait`, `session.hello` and `workspace.snapshot`.
+- Pings are answered at once, before `pair`/`hello` too (`RemoteSession.pong`; `autoReplyPing` off: with it on,
+  Network.framework sent the pong only when the connection closed). A ping is never taken for a request.
+- `admin.remote` shows the pairing waiting for the click: `pairing {pairingId, code, name, model, address, via,
+  deadline}` (tests compare the code without the app).
+- Artifacts: the title is the page's `<title>` (else the folder of an `index.html`, else the file name); `live` is
+  true for a Prévia on the artifact or on the project page it was added from (`Artifact.addedFrom`); rows carry
+  `importing` and `importError`.
+
 ### Dispatch (how it maps inside the daemon)
 
 A new `RemoteGateway` in `CollieDaemonKit` owns the listener. After `session.hello` the connection carries a

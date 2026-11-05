@@ -23,6 +23,7 @@ actor RemoteGateway {
         var devices: RemoteDevices
         var pairing: RemotePairing
         var macName: String
+        var version: String
         var build: String
         var helloDeadline: Duration
         var onClaim: @Sendable (RemotePairingRequest) -> Void
@@ -55,7 +56,7 @@ actor RemoteGateway {
             let l = try NWListener(using: parameters(identity), on: s.port == 0 ? .any : try port(s.port))
             let filter = (tailscaleOnly: s.tailscaleOnly, loopback: allowLoopback), sessions = sessions, queue = queue
             let ctx = RemoteContext(devices: deps.devices, pairing: deps.pairing, fingerprint: identity.fingerprint, installId: installId,
-                                    macName: deps.macName, build: deps.build, helloDeadline: deps.helloDeadline, onClaim: deps.onClaim,
+                                    macName: deps.macName, version: deps.version, build: deps.build, helloDeadline: deps.helloDeadline, onClaim: deps.onClaim,
                                     handle: deps.handle)
             l.newConnectionHandler = { c in Self.accept(c, filter: filter, ctx: ctx, sessions: sessions, queue: queue) }
             let ready = await withCheckedContinuation { (k: CheckedContinuation<String?, Never>) in
@@ -100,7 +101,7 @@ actor RemoteGateway {
         sec_protocol_options_set_min_tls_protocol_version(sec, .TLSv13)
         if let sid = sec_identity_create(id.identity) { sec_protocol_options_set_local_identity(sec, sid) }
         let ws = NWProtocolWebSocket.Options()
-        ws.autoReplyPing = true
+        ws.autoReplyPing = false   // RemoteSession answers pings itself (see `pong`)
         ws.maximumMessageSize = Self.maxMessage
         // a browser always sends Origin; the phone's URLSessionWebSocketTask doesn't (spec §4.1)
         ws.setClientRequestHandler(queue) { _, headers in

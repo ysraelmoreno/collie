@@ -105,6 +105,19 @@ private func decisions(_ d: Daemon, _ n: Int = 1) async -> [String] {
         }
     }
 
+    /// DX backlog 8: a work with only system notes ("Context compacted") and no task, commit or decision is noise.
+    @Test func workWithOnlyNotesNotSaved() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: repo)
+            try await work(d, p, "work.start", t, ["title": "Only notes"])
+            try await work(d, p, "work.note", t, ["text": "Context compacted"])
+            try await work(d, p, "work.done", t)
+            #expect(await decisions(d) == ["empty"])
+            #expect(try await records(d, repo).isEmpty)
+        }
+    }
+
     @Test func noRepoNoSave() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("collie-norepo-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

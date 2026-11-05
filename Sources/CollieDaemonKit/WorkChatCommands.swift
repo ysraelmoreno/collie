@@ -268,7 +268,8 @@ extension CommandRouter {
             summaryDecisions.append(d)
             if let why { workLog("summary \(id.uuidString.lowercased()): \(why)") }
         }
-        guard !w.tasks.isEmpty || !w.notes.isEmpty || !w.commits.isEmpty else { return decided("empty", "empty work, not saved") }
+        // DX backlog 8: plain notes ("Context compacted") and jobs alone make a summary of noise
+        guard !w.tasks.isEmpty || !w.commits.isEmpty || w.notes.contains(where: \.decision) else { return decided("empty", "empty work, not saved") }
         let paddock = ws.paddocks.first { $0.id == w.paddockId }
         // the terminal's cwd (v1 memory resolves its git root); a removed terminal leaves its cwd, else its paddock's worktree
         guard let cwd = ws.terminals.first(where: { $0.id == w.terminalId })?.cwd ?? removedCwd ?? paddock?.path else {

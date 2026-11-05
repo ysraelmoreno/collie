@@ -52,6 +52,7 @@ private func audit(_ p: Paths) -> [[String: JSONValue]] {
             let first = lines.first ?? [:]
             #expect(first["device"] == .string(dev) && first["deviceName"] == "P" && first["via"] == "lan" && first["address"] == "127.0.0.1"
                     && first["target"] == ap["id"] && first["result"] == "ok" && first["at"] != nil, "\(first)")
+            #expect(lines.dropFirst().first?["result"] == "stale", "sent:false: the outcome, not ok (E2E finding): \(lines)")
             #expect(lines.last?["result"] == "invalidArgs")
             #expect(audit(p).contains { $0["command"] == "pair" } && audit(p).contains { $0["command"] == "session.hello" })
             let raw = (try? String(contentsOf: p.root.appendingPathComponent("remote/audit.jsonl"), encoding: .utf8)) ?? ""

@@ -44,8 +44,13 @@ extension CommandRouter {
         do { resp = Response(id: r.id, ok: true, result: try await remoteRead(r, device: device, via: via, target: &target)) }
         catch let e as ProtocolError { resp = Response(id: r.id, ok: false, error: e) }
         catch { resp = Response(id: r.id, ok: false, error: ProtocolError(code: .internal, message: "\(error)")) }
-        if RemoteSurface.commands[r.command] == .mutating {   // §4.3: who, from where, on what
-            remoteAudit.log(.init(device: device.id, deviceName: device.name, address: address, via: via), r.command, target: target, resp)
+        if RemoteSurface.commands[r.command] == .mutating {   // §4.3: who, from where, on what, and how it ended
+            let who = RemoteAudit.Who(device: device.id, deviceName: device.name, address: address, via: via)
+            // an answer that typed nothing (`sent: false`) is its code (stale, unknown, failed), or dismissed: not "ok"
+            if case .object(let o)? = resp.result, o["sent"] == .bool(false) {
+                let code = if case .string(let c)? = o["code"] { c } else { "dismissed" }
+                remoteAudit.log(who, r.command, target: target, result: code)
+            } else { remoteAudit.log(who, r.command, target: target, resp) }
         }
         return resp
     }

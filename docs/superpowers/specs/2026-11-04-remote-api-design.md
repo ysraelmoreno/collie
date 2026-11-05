@@ -552,7 +552,8 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
 
 - Every M command and every pair / hello / revoke appends one line to `<root>/remote/audit.jsonl` (0600, rotated at
   5 MiB, keep 2): `{at, device, deviceName, address, via, command, target (terminal/approval/path), result: ok|error
-  code}`. Never the token, never chat text.
+  code}`. Never the token, never chat text. An `approval.answer` that typed nothing (`sent: false`) logs its `code`
+  (`stale`, `unknown`, `failed`) or `dismissed`, not `ok` (E2E finding, 2026-11-05).
 - The decisions show where the user already looks:
   - approvals: the chat line becomes "Aprovado do iPhone de Ysrael (Tailscale)" / "Negado do …" (today:
     "Aprovado"/"Negado");

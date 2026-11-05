@@ -10,8 +10,10 @@ public enum ArgvParser {
            Commands.spec(name) == nil || next.flatMap(Commands.spec) != nil {
             guard let sub = rest.first else { throw bad("missing \(name) subcommand") }
             name = "\(name).\(sub)"; rest.removeFirst()
-            // a third word (`design system list`)
-            if Commands.spec(name) == nil, let sub = rest.first, Commands.spec("\(name).\(sub)") != nil { name += ".\(sub)"; rest.removeFirst() }
+            // more words while they name a deeper command (`design system list`, `admin remote pair begin`)
+            while let sub = rest.first, Commands.all.contains(where: { $0.name == "\(name).\(sub)" || $0.name.hasPrefix("\(name).\(sub).") }) {
+                name += ".\(sub)"; rest.removeFirst()
+            }
         }
         guard let spec = Commands.spec(name) else { throw bad("unknown command: \(name)") }
 
@@ -43,8 +45,51 @@ public enum ArgvParser {
             } else if let w = pos.popFirst() { args[p.name] = .string(w) }
         }
         if !pos.isEmpty { throw bad("unexpected argument: \(pos.joined(separator: " "))") }
-        for p in spec.params where p.required && args[p.name] == nil { throw bad("missing required: \(p.name)") }
+        let missing = spec.params.filter { $0.required && args[$0.name] == nil }
+        if !missing.isEmpty {
+            throw bad("missing required: " + missing.map { $0.positional ? "<\($0.name)>" : "--\($0.name)" }.joined(separator: ", ") + "\n" + usageLine(spec))
+        }
         return (name, args)
+    }
+
+    /// `collie <command…> --help` (or `-h`, or `collie help <command…>`): the command's usage, or a group's commands.
+    /// nil: not a help request (after `--` everything is an argument), or no such command (the full list then).
+    public static func help(_ argv: [String]) -> String? {
+        var words = Array(argv[..<(argv.firstIndex(of: "--") ?? argv.count)])
+        if words.first == "help" { words.removeFirst() } else {
+            guard let i = words.firstIndex(where: { $0 == "--help" || $0 == "-h" }) else { return nil }
+            words.remove(at: i)
+        }
+        var name = ""
+        for w in words where !w.hasPrefix("-") {
+            let n = name.isEmpty ? w : "\(name).\(w)"
+            guard Commands.all.contains(where: { $0.name == n || $0.name.hasPrefix(n + ".") }) else { break }
+            name = n
+        }
+        let group = Commands.all.filter { $0.name.hasPrefix(name + ".") && !name.isEmpty }
+        let list = group.map { "  " + usageLine($0).dropFirst("usage: ".count) + "\t" + $0.summary }.joined(separator: "\n") + "\n"
+        if let s = Commands.spec(name) {
+            var out = usageLine(s) + "\n\n" + s.summary + "\n"
+            for p in s.params {
+                out += "  " + (p.positional ? "<\(p.name)>" : "--\(p.name)") + (p.help.isEmpty ? "" : "\t\(p.help)") + "\n"
+            }
+            return group.isEmpty ? out : out + "\nalso:\n" + list   // `ask` and `ask result`
+        }
+        return group.isEmpty ? nil : list
+    }
+
+    /// `usage: collie memory save --kind <kind> --subject <subject> --title <title> [<body>…]`
+    static func usageLine(_ s: CommandSpec) -> String {
+        let words = s.params.map { p -> String in
+            let w = switch (p.positional, p.kind) {
+            case (true, .rest), (true, .list): "<\(p.name)>…"
+            case (true, _): "<\(p.name)>"
+            case (false, .flag): "--\(p.name)"
+            default: "--\(p.name) <\(p.name)>"
+            }
+            return p.required ? w : "[\(w)]"
+        }
+        return (["usage: collie " + s.name.replacingOccurrences(of: ".", with: " ")] + words).joined(separator: " ")
     }
 
     private static func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }

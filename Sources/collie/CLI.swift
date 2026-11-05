@@ -89,6 +89,7 @@ enum CLI {
         var json = false
         let end = argv.firstIndex(of: "--") ?? argv.count
         if let i = argv[..<end].firstIndex(of: "--json") { argv.remove(at: i); json = true }
+        if let h = ArgvParser.help(argv) { print(h, terminator: ""); return 0 }   // `collie summon --help`, `collie help memory`
         if argv.first == "help" || argv.first == "--help" { print(usage(), terminator: ""); return 0 }
         if argv.isEmpty { FileHandle.standardError.write(Data(usage().utf8)); return 2 }
         let cmd: (command: String, args: [String: JSONValue])

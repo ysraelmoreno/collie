@@ -593,6 +593,16 @@ extension CommandRouter { func testSetActiveSystem(_ id: UUID?) { ws.designSyste
         }
     }
 
+    /// DX backlog 7: a page made without a name says where it went and how to name the next one.
+    @Test func newWithoutANameSaysWhereItWent() async throws {
+        try await withProject { _, p, a, _ in
+            let r = result(try await call(p, a, "artifact.new", ["kind": "prototype"]))
+            guard case .string(let note)? = r["note"] else { Issue.record("no note: \(r)"); return }
+            #expect(note.contains("docs/pages/prototype-1/index.html") && note.contains("collie artifact new prototype <name>"), "\(note)")
+            #expect(result(try await call(p, a, "artifact.new", ["kind": "deck", "name": "vendas"]))["note"] == nil)
+        }
+    }
+
     @Test func newRefusesExisting() async throws {
         try await withProject { _, p, a, proj in
             let f = proj.appendingPathComponent("docs/pages/vendas/index.html")

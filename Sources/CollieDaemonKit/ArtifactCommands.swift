@@ -418,7 +418,11 @@ extension CommandRouter {
         do {   // re-checked after openPanel's awaits; the page stays, the panel goes
             for t in try wirer.map({ try connectTargets(r, by: $0, panels: false).terminals }) ?? [] { try await leash(t, p) }
         } catch { try? await remove(p); throw error }
-        return .object(["file": .string(rel), "panel": .string(p.name), "warnings": .array(warnings.map { .string($0) })])
+        var out: [String: JSONValue] = ["file": .string(rel), "panel": .string(p.name), "warnings": .array(warnings.map { .string($0) })]
+        if str(r, "name") == nil {   // DX backlog 7: a stray `<kind>-<n>` page is easy to miss
+            out["note"] = .string("No name given: created \(rel). Name pages: collie artifact new \(kind.rawValue) <name>")
+        }
+        return .object(out)
     }
 
     /// An export version whose artifact was removed while it was written: its folder deleted (and the artifact's, when

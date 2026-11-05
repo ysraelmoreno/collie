@@ -144,6 +144,28 @@ private func random(_ n: Int) -> Data { Data((0..<n).map { _ in UInt8.random(in:
         }
     }
 
+    /// Bundled fonts (the app's Resources/Fonts: `DaemonConfig.bundledFontsDir`), and a family with no font anywhere:
+    /// an empty stylesheet, not an error (the page falls back to its next font, as in the app).
+    @Test func bundledFontsAndMissingFamilies() async throws {
+        let face = try #require(Fonts.bundled.first?.faces.first)
+        let family = try #require(Fonts.bundled.first?.family)
+        let dir = URL(fileURLWithPath: "/private/tmp/collie-bf-\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("TTF".utf8).write(to: dir.appendingPathComponent(face.file))
+        try await withDaemon(configure: { $0.remoteAllowLoopback = true; $0.bundledFontsDir = dir }) { d, p in
+            let (ph, _) = try await helloPhone(d, p)
+            defer { ph.close() }
+            let q = family.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? family
+            let css = String(decoding: try await fetch(ph, "collie-lib://fonts/css?family=\(q)").data, as: UTF8.self)
+            #expect(css.contains("@font-face") && css.contains("collie-lib://fonts/"), "\(css)")
+            let file = try await fetch(ph, "collie-lib://fonts/\(q)/\(face.file.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? face.file)")
+            #expect(file.data == Data("TTF".utf8))
+            let none = try await fetch(ph, "collie-lib://fonts/css?family=Nao%20Existe")
+            #expect(none.data.isEmpty && none.first["mime"] == "text/css; charset=utf-8" && none.first["done"] == .bool(true))
+        }
+    }
+
     @Test func bytesPerMinuteAreLimited() async throws {
         try await withDaemon(configure: { $0.remoteAllowLoopback = true }) { d, p in
             let (ph, _) = try await helloPhone(d, p)

@@ -37,13 +37,18 @@ start)
   (cd "$here" && swift build --product collied && swift build --product collie) >&2
   mkdir -p "$ROOT" && chmod 700 "$ROOT"
   clean_env
+  # the offline libs and bundled fonts pages load as collie-lib:// (the app bundle's Resources/weblibs and Resources/Fonts):
+  # this checkout's vendor/, else the main checkout's (a worktree has none until scripts/fetch-weblibs.sh / fetch-fonts.sh)
+  main=$(cd "$here" && cd "$(git rev-parse --git-common-dir)/.." 2>/dev/null && pwd)
+  for d in "$here/vendor/weblibs" "$main/vendor/weblibs"; do [ -f "$d/manifest.json" ] && { export COLLIE_WEBLIBS_DIR="$d"; break; }; done
+  for d in "$here/vendor/fonts" "$main/vendor/fonts"; do ls "$d"/*.ttf >/dev/null 2>&1 && { export COLLIE_FONTS_DIR="$d"; break; }; done
   nohup "$BIN/collied" --root "$ROOT" --no-terminal-sandbox > "$LOG" 2>&1 < /dev/null &
   echo $! > "$PID"
   i=0; until [ -S "$SOCK" ] && [ -s "$ROOT/admin.token" ]; do
     running || { tail -20 "$LOG" >&2; die "collied exited"; }
     i=$((i+1)); [ $i -gt 150 ] && die "no socket at $SOCK after 30 s"; sleep 0.2
   done
-  echo "collied dev: pid $(cat "$PID"), root $ROOT, log $LOG" ;;
+  echo "collied dev: pid $(cat "$PID"), root $ROOT, log $LOG, weblibs ${COLLIE_WEBLIBS_DIR:-none}, fonts ${COLLIE_FONTS_DIR:-none}" ;;
 cli)
   shift; running || die "not running (start it first)"
   isolated_env; exec "$BIN/collie" "$@" ;;

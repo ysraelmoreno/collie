@@ -511,7 +511,13 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
   or `collie-lib://…` (offline libs and fonts the pages reference), `offset?: Int` (default 0), `etag?` (the first
   chunk's, on later ones) → `{mime, size, offset, d: <base64>, done: Bool, etag}`. The page to load is
   `collie-artifact://<id>/<page>` with `page` from `artifact.list/get` (e.g. `source/index.html`); its relative
-  links resolve under the same id. **Chunked**: at most 512 KiB of file bytes per reply (≈ 683 KiB
+  links resolve under the same id.
+- `collie-lib://fonts/css?family=…` answers `text/css` with only the families it has (downloaded, then bundled); a
+  family with no font anywhere adds nothing, so a request for none of them is an **empty stylesheet, not an error**
+  (the page falls back to its next font, as in the app). A font file or lib not there → `notFound`. Outside a bundle
+  (dev daemons) there are no bundled fonts or libs unless `COLLIE_FONTS_DIR` / `COLLIE_WEBLIBS_DIR` point at them:
+  `scripts/dev/run-isolated.sh start` sets both to `vendor/fonts` and `vendor/weblibs` (this checkout's, else the
+  main checkout's) — E2E finding, 2026-11-05. **Chunked**: at most 512 KiB of file bytes per reply (≈ 683 KiB
   base64, under the 1 MiB frame); the phone asks again with `offset += decoded length` until `done`. Files up to
   8 MiB (the artifact page limit). The reply carries `etag` (version + mtime) so a file that changed between chunks
   is detected (`conflict`) and restarted. Paths resolved and confined to the artifact's folder / the lib store (no

@@ -166,7 +166,11 @@ actor CommandRouter {
         self.remoteDevices = remoteDevices; self.remotePairing = remotePairing
         self.remote = RemoteGateway(allowLoopback: config.remoteAllowLoopback, deps: .init(
             devices: remoteDevices, pairing: remotePairing, macName: Self.computerName(), build: config.build ?? "dev",
-            helloDeadline: config.remoteHelloDeadline, onClaim: { r in Task { await hub.emit(.remotePairing(r)) } }))
+            helloDeadline: config.remoteHelloDeadline, onClaim: { r in Task { await hub.emit(.remotePairing(r)) } },
+            handle: { r, dev, via in
+                await me.router?.remoteRequest(r, device: dev, via: via)
+                    ?? Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "daemon stopping"))
+            }))
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {

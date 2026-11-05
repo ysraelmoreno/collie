@@ -131,6 +131,8 @@ a paired device —** with a fixed, small allowlist. It never exposes the admin 
   `[{id, name, model, scope, pairedAt, lastSeenAt, lastAddress, lastVia}]` + hash. Comparison in constant time
   (`constantTimeEqual`, already used for the admin token).
 - Scope per device: `full` (default) or `read` (no mutating command: §3 marks which). Set in the device sheet.
+  Every message of a session reads the device from the store: a scope change or a revoke applies at the very next
+  message (a revoked device's next message gets `unauthorized` and closing 4001).
 - Token rotation: `session.hello` returns `rotate: <new token>` when the token is older than 90 days; the phone saves
   it and uses it from its next hello, which promotes it (the old one stops working then). No ack message. While a
   rotated token is pending, no second one is minted (a phone that lost it keeps the old token).
@@ -580,14 +582,17 @@ reachable from the network until slice 3.
    the Mac's LAN/Tailscale IPv4 hosts and `install-id`), `.pair.confirm`, `.devices`, `.devices.revoke` (closes
    live sessions, 4001), `.devices.scope`, `.identity.rotate` (revokes all, restarts: 4003). Event
    `remotePairing(RemotePairingRequest)` on `ui.events` for the app's dialog. Tests: `RemoteSessionTests` (real
-   pinned `URLSessionWebSocketTask`), `RemoteTokenRotationTests`. Left: a scope change reaches a live session at its
-   next hello (enforced with the surface, slice 4).
-4. **Principal + read surface** — `Principal` enum into the handlers; allowlist table; projections; `workspace.snapshot`
-   with the derived fields (`shepherdId`, `badgeSince`, `activity`, approval `paddock`, card `id`/`refusal`/
-   `folderRefusal`/`isAgentConfig`, artifact `live`), `terminal.screen`,
-   `work.list/get/summary`, `approvals.list`, `access.cards`, `chat.history`, `artifact.list/get`. Tests: one
-   projection test per command (no paths/env leak), allowlist test iterating `Commands.all` asserting every
-   non-listed name → `invalidArgs`.
+   pinned `URLSessionWebSocketTask`), `RemoteTokenRotationTests`. Its scope is enforced from slice 4 (read live on every message).
+4. **Remote principal + read surface (done, 2026-11-04)** — `RemoteSurface.commands` (allowlist, read/mutating,
+   never `admin.*`); the session re-reads its device on every message (revoke → 4001, read scope → `unauthorized` on
+   mutating ones, both at the next message), then calls `CommandRouter.remoteRequest` in-process (no admin token).
+   Explicit projections: `workspace.snapshot` with `shepherdId`/`shepherd`, `badgeSince` (`StreamHub.badgeSince`),
+   `activity`, approval `paddock`, card `id`/`refusal`/`folderRefusal`/`isAgentConfig`, work counts, artifact
+   `live`; `terminal.screen`, `work.list/get/summary`, `approvals.list`, `access.cards`, `chat.history`
+   (`terminal` filter), `artifact.list/get`. Mutating entries pass the gate and answer `unavailable` until slices
+   7-8. Tests: `RemoteSurfaceTests` (every non-allowlisted command incl. all `admin.*` → Unknown command; no token,
+   identity file, cwd, command or root path in the snapshot; live scope/revoke). Artifact `kind` is the store's
+   (`agent|export`), not the iOS mock's template kinds.
 5. **Events** — filtered `events.subscribe` incl. `approval`/`chat`/`work`. Tests: filter table, overflow → frame
    and cut.
 6. **Terminal output** — `terminal.attach/detach` adapter over `StreamHub`, replay cut, coalescing, 4-per-connection

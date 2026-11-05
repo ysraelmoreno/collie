@@ -142,9 +142,9 @@ private func int(_ v: JSONValue?) -> Int { if case .number(let n)? = v { Int(n) 
             guard case .object(let dev)? = h["device"], case .object(let mac)? = h["mac"] else { Issue.record("\(hello)"); return }
             #expect(int(h["protocol"]) == 1 && dev["scope"] == .string("full") && dev["name"] == .string("iPhone de Teste") && h["rotate"] == nil)
             #expect(mac["installId"] != nil && mac["name"] != nil)
-            // after hello: the read surface comes in slice 4; unknown commands are refused but the socket stays
+            // after hello: commands off the allowlist are refused, the socket stays (RemoteSurfaceTests has the rest)
             #expect(try await phone.call("admin.spawn").error?.code == .invalidArgs)
-            #expect(try await phone.call("workspace.snapshot").error?.code == .invalidArgs)
+            #expect(try await phone.call("workspace.snapshot").ok)
             let list = try await admin(d, p, "admin.remote.devices")
             guard case .array(let ds)? = list.result, case .object(let row)? = ds.first else { Issue.record("\(list)"); return }
             #expect(ds.count == 1 && row["id"] == .string(id) && row["lastAddress"] == .string("127.0.0.1") && row["lastVia"] == .string("lan"))

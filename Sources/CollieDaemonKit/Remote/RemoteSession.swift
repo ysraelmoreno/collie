@@ -15,6 +15,8 @@ struct RemoteContext: Sendable {
     let helloDeadline: Duration
     /// A phone claimed the pairing: the app shows its dialog.
     let onClaim: @Sendable (RemotePairingRequest) -> Void
+    /// An allowlisted request of a hello'd device (scope already checked): the daemon's answer.
+    let handle: @Sendable (Request, RemoteDevice, RemoteVia) async -> Response
 }
 
 /// Close codes (spec §3.2). Before the WebSocket close frame the Mac sends `{"t":"closing","code","reason"}`: a native
@@ -88,7 +90,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         guard req.v == Protocol.version else {
             return reply(req.id, ProtocolError(code: .unsupportedVersion, message: "Unsupported protocol version \(req.v)"))
         }
-        guard deviceId != nil else {
+        guard let devId = deviceId else {
             switch req.command {
             case "pair": return pair(req)
             case "pair.wait": return pairWait(req)
@@ -98,8 +100,19 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
                 return close(.protocolError)
             }
         }
-        // ponytail: the allowlisted surface arrives with slice 4
-        reply(req.id, ProtocolError(code: .invalidArgs, message: "Unknown command '\(req.command)'"))
+        // the device as stored now: a revoke or a scope change made while this session is open applies here
+        guard let dev = ctx.devices.device(devId, fingerprint: ctx.fingerprint) else {
+            reply(req.id, ProtocolError(code: .unauthorized, message: "Aparelho revogado: pareie de novo."))
+            return close(.revoked)
+        }
+        guard let kind = RemoteSurface.commands[req.command] else {
+            return reply(req.id, ProtocolError(code: .invalidArgs, message: "Unknown command '\(req.command)'"))
+        }
+        guard kind == .read || dev.scope == .full else {
+            return reply(req.id, ProtocolError(code: .unauthorized, message: "Este aparelho é só de leitura: mude no Mac (Preferências → Celular)."))
+        }
+        let via = via, handle = ctx.handle
+        Task { [weak self] in self?.send(await handle(req, dev, via)) }
     }
 
     private func pair(_ r: Request) {

@@ -102,6 +102,11 @@ final class RemoteDevices: @unchecked Sendable {
         return hit
     }
 
+    /// The device as stored now (scope, revoked): read on every remote message, so a change applies at the next one.
+    func device(_ id: UUID, fingerprint: String) -> RemoteDevice? {
+        lock.withLock { devices.first { $0.id == id && $0.fingerprint == fingerprint } }
+    }
+
     @discardableResult func revoke(_ id: UUID) throws -> Bool {
         try change { ds in let n = ds.count; ds.removeAll { $0.id == id }; return ds.count != n }
     }

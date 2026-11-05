@@ -44,6 +44,7 @@ extension CommandRouter {
             } else {
                 try await unleash(try peerOrSelf(try need(r, "a")), try peerOrSelf(try need(r, "b")))
             }
+        case "leash.request": return try await requestLeash(r, by: me)
         case "notify":
             let m = try need(r, "message")
             guard m.count <= 2000 else { throw ProtocolError(code: .invalidArgs, message: "'message' exceeds 2000 characters") }

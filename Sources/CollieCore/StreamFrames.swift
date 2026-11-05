@@ -151,7 +151,9 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
          /// The loaded external plug-ins changed (install, uninstall, enable, disable): all of them, as manifests.
          pluginsChanged([PluginSpecDTO]),
          /// A phone presented the pairing QR's secret and waits for the Mac's click (remote API): the app's dialog.
-         remotePairing(RemotePairingRequest)
+         remotePairing(RemotePairingRequest),
+         /// A Shepherd asks for a leash (`collie leash request`): a card; removed once answered or an end is gone.
+         leashRequest(LeashRequest), leashRequestRemoved(UUID)
 
     private enum K: String, CodingKey { case t, r, id, code, c, reason, badge, f, message, p, name, payload, by, anchor, frames, paddock, l, d, ok, e, m }
 
@@ -184,6 +186,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
         case "confirmCorrection":
             self = .confirmCorrection(terminal: try id(), entry: try c.decode(UUID.self, forKey: .e), title: try c.decode(String.self, forKey: .name))
         case "remotePairing": self = .remotePairing(try c.decode(RemotePairingRequest.self, forKey: .d))
+        case "leashRequest": self = .leashRequest(try c.decode(LeashRequest.self, forKey: .d))
+        case "leashRequestRemoved": self = .leashRequestRemoved(try id())
         case "pluginsChanged": self = .pluginsChanged(try c.decode([Lossy<PluginSpecDTO>].self, forKey: .m).compactMap(\.value))   // one unreadable manifest loses only itself
         case let t: throw DecodingError.dataCorruptedError(forKey: .t, in: c, debugDescription: "unknown event '\(t)'")
         }
@@ -218,6 +222,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
             try c.encode("confirmCorrection", forKey: .t); try c.encode(t, forKey: .id); try c.encode(e, forKey: .e); try c.encode(title, forKey: .name)
         case .pluginsChanged(let m): try c.encode("pluginsChanged", forKey: .t); try c.encode(m, forKey: .m)
         case .remotePairing(let r): try c.encode("remotePairing", forKey: .t); try c.encode(r, forKey: .d)
+        case .leashRequest(let r): try c.encode("leashRequest", forKey: .t); try c.encode(r, forKey: .d)
+        case .leashRequestRemoved(let id): try c.encode("leashRequestRemoved", forKey: .t); try c.encode(id, forKey: .id)
         }
     }
 }

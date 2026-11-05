@@ -101,9 +101,13 @@ struct AccessStrip: View {
     let client: DaemonClient
 
     var body: some View {
+        if let req = client.leashRequests.first(where: { $0.from == id }) { LeashRequestRow(req: req, client: client) } else { cardsRow }
+    }
+
+    private var cardsRow: some View {
         let cards = client.accessCards.filter { $0.terminal == id }
         let m = Model(cards: cards)
-        HStack(spacing: 8) {
+        return HStack(spacing: 8) {
             Text(m.text).font(.collieUI(12, .medium)).lineLimit(1)
             Spacer(minLength: 0)
             switch m.kind {
@@ -120,6 +124,34 @@ struct AccessStrip: View {
         .help(isPending(m.kind) ? "" : "Pastas do próprio Collie e segredos nunca são liberadas")
     }
     private func isPending(_ k: Model.Kind) -> Bool { if case .pending = k { true } else { false } }
+}
+
+/// A Shepherd's leash request (`collie leash request`), over its node's bottom: **Conectar** leashes, **Recusar** declines.
+struct LeashRequestRow: View {
+    let req: LeashRequest
+    let client: DaemonClient
+    @State private var busy = false
+
+    var body: some View {
+        let to = client.terminals.first { $0.id == req.to }?.name ?? "?"
+        HStack(spacing: 8) {
+            Text("Quer conectar a \(Text(verbatim: to).bold())\(req.reason.map { Text(verbatim: " — " + AccessCopy.shown($0)) } ?? Text(""))")
+                .font(.collieUI(12, .medium)).lineLimit(1).truncationMode(.tail)
+                .help(req.reason.map(AccessCopy.shown) ?? "")
+            Spacer(minLength: 0)
+            Button("Recusar") { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+            Button("Conectar") { answer(true) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small).disabled(busy)
+        }
+        .foregroundStyle(Color.collieText)
+        .padding(.leading, 10).padding(.trailing, 26)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.collieAttention.opacity(0.9))
+    }
+
+    private func answer(_ allow: Bool) {
+        busy = true
+        Task { do { try await client.answerLeash(req, allow: allow) } catch { Log.canvas.error("leash request: \(error)") }; busy = false }
+    }
 }
 
 /// The node's cards (newest last) and the terminal's own grants with **Revogar**.

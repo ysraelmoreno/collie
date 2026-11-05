@@ -17,6 +17,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var lots: [Lot] = []
     /// Open access cards (sandbox denials and agents' requests), one per (terminal, op, folder).
     public private(set) var accessCards: [SandboxDenial] = []
+    /// Shepherds' open leash requests (`collie leash request`): Conectar / Recusar on the Shepherd's node.
+    public private(set) var leashRequests: [LeashRequest] = []
     /// The user's sandbox grants (per terminal and per lot).
     public private(set) var grants: [SandboxGrant] = []
     /// Whether the daemon sees sandbox denials; false: "detecção indisponível"; nil: no watcher (sandbox off).
@@ -208,6 +210,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .sandboxDetection(let ok): detection = ok
         case .confirmCorrection(let t, let e, let title): onConfirmCorrection?(t, e, title)
         case .pluginsChanged(let ms): setPlugins(ms)
+        case .leashRequest(let r): if !leashRequests.contains(where: { $0.id == r.id }) { leashRequests.append(r) }
+        case .leashRequestRemoved(let id): leashRequests.removeAll { $0.id == id }
         case .remotePairing: break   // ponytail: the app's pairing dialog comes with the Celular preferences (remote API slice 10)
         }
     }
@@ -298,6 +302,12 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         accessCards = decode(o["cards"]) ?? []
         grants = decode(o["grants"]) ?? []
         if case .bool(let b)? = o["detection"] { detection = b } else { detection = nil }
+        if let r = try? await admin("admin.leash.requests", [:]) { leashRequests = decode(r) ?? [] }
+    }
+    /// **Conectar** (`allow`) / **Recusar** a Shepherd's leash request.
+    public func answerLeash(_ r: LeashRequest, allow: Bool) async throws {
+        leashRequests.removeAll { $0.id == r.id }
+        _ = try await admin("admin.leash.answer", ["id": .string(r.id.uuidString), "allow": .bool(allow)])
     }
     /// **Liberar este caminho** / **Liberar a pasta** (`folder`), for the terminal or its lot. Restarts the terminal
     /// (resuming the conversation where its agent can). Returns whether it restarted.

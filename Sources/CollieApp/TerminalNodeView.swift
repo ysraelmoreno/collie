@@ -83,10 +83,11 @@ import CollieTheme
         }
     }
 
-    /// Shown only for a sandboxed terminal with open cards and the live terminal mounted (zoom >= 0.5).
+    /// Shown only with the live terminal mounted (zoom >= 0.5): a sandboxed terminal's open cards, or a Shepherd's leash request.
     private func updateStrip() {
         let sandboxed = client.terminals.first { $0.id == id }.map { $0.sandbox != .free } ?? false
-        let show = sandboxed && term != nil && AccessStrip.Model(cards: client.accessCards.filter { $0.terminal == id }).kind != .none
+        let show = term != nil && (sandboxed && AccessStrip.Model(cards: client.accessCards.filter { $0.terminal == id }).kind != .none
+                                   || client.leashRequests.contains { $0.from == id })
         if strip.isHidden == show { strip.isHidden = !show; needsLayout = true }
     }
 

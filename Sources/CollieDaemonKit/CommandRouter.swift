@@ -86,6 +86,8 @@ actor CommandRouter {
     var turnEnds: [UUID: Int] = [:]
     /// Turn notices waiting for each Shepherd to be idle, typed as one block (`noticeTurnEnded`).
     var turnNotices: [UUID: [String]] = [:]
+    /// Shepherds' open leash requests (cards), oldest first. ponytail: in memory, a restart drops them (asked again).
+    var leashRequests: [LeashRequest] = []
     /// R14: when each terminal's correction jobs were queued (the last hour's).
     var correctionsAt: [String: [Date]] = [:]   // "<terminal>|<user>"
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
@@ -667,6 +669,7 @@ actor CommandRouter {
             if let (t, p) = try panelPair(r, terminal: find, panel: findPanel) { try await leash(t, p); return .object([:]) }
             try await leash(try find(try need("a")), try find(try need("b")))
             return .object([:])
+        case "admin.leash.requests", "admin.leash.answer": return try await adminLeashRequest(r)
         case "admin.kill":
             let name = try need("target")
             if try lookup(name) == nil, let p = ws.panels.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
@@ -754,6 +757,7 @@ actor CommandRouter {
         await inbox.drop(terminal: t.id)
         SandboxLaunch.remove(t.id, root: config.paths.root)
         await sandboxGone(t.id)
+        await dropLeashRequests(t.id)
         ws.terminals.removeAll { $0.id == t.id }
         let gone = ws.connections.filter { $0.a == t.id || $0.b == t.id }
         ws.connections.removeAll { $0.a == t.id || $0.b == t.id }

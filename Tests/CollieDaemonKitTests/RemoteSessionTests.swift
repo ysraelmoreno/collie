@@ -20,7 +20,8 @@ final class RemotePhone: NSObject, URLSessionWebSocketDelegate, @unchecked Senda
     static func connect(port: Int, pin: String) async throws -> RemotePhone {
         let c = RemotePhone(pin: pin)
         c.session = URLSession(configuration: .ephemeral, delegate: c, delegateQueue: nil)
-        c.task = c.session.webSocketTask(with: URLRequest(url: URL(string: "wss://127.0.0.1:\(port)/")!, timeoutInterval: 10))
+        guard port > 0, let url = URL(string: "wss://127.0.0.1:\(port)/") else { throw ProtocolError(code: .invalidArgs, message: "no port \(port)") }
+        c.task = c.session.webSocketTask(with: URLRequest(url: url, timeoutInterval: 10))
         let ok = await withCheckedContinuation { k in
             c.lock.withLock { c.opened = k }
             c.task.resume()
@@ -93,6 +94,7 @@ private func int(_ v: JSONValue?) -> Int { if case .number(let n)? = v { Int(n) 
     }
     private func on(_ d: Daemon, _ p: Paths) async throws -> (port: Int, pin: String) {
         let o = obj(try await admin(d, p, "admin.remote", ["action": "on", "port": 0]))
+        guard o["listening"] == .bool(true) else { throw ProtocolError(code: .unavailable, message: "listener not up: \(o)") }
         return (int(o["listeningPort"]), str(o["fingerprint"]))
     }
     /// Hello deadline: short for the deadline test, long enough that an idle phone survives a loaded machine.

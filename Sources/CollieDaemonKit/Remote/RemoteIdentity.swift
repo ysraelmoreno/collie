@@ -21,16 +21,22 @@ final class RemoteIdentity: @unchecked Sendable {   // immutable after init
             .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
     }
 
-    /// The identity in `dir`, made on first use.
+    /// The identity in `dir`, made on first use only. One that exists but doesn't load is an error, never replaced:
+    /// a new identity breaks every phone's pin, which only Trocar certificado (`rotate`) may do.
     static func loadOrCreate(dir: URL) throws -> RemoteIdentity {
-        if let id = try? load(dir: dir) { return id }
+        let fm = FileManager.default
+        if fm.fileExists(atPath: p12(dir).path) || fm.fileExists(atPath: pass(dir).path) {
+            do { return try load(dir: dir) } catch let e as ProtocolError {
+                throw ProtocolError(code: e.code, message: e.message + " — use Trocar certificado para gerar outra")
+            }
+        }
         try create(dir: dir)
         return try load(dir: dir)
     }
 
     /// A new key and certificate: every paired phone's pin breaks, so `devices` are all revoked (they pair again).
-    static func rotate(dir: URL, devices: RemoteDevices? = nil) throws -> RemoteIdentity {
-        try create(dir: dir)
+    static func rotate(dir: URL, devices: RemoteDevices? = nil, key: P256.Signing.PrivateKey = usableKey()) throws -> RemoteIdentity {
+        try create(dir: dir, key: key)
         try devices?.revokeAll()
         return try load(dir: dir)
     }
@@ -40,12 +46,15 @@ final class RemoteIdentity: @unchecked Sendable {   // immutable after init
 
     static func load(dir: URL) throws -> RemoteIdentity {
         let data = try Data(contentsOf: p12(dir)), pw = try String(contentsOf: pass(dir), encoding: .utf8)
-        var items: CFArray?
         let opts = [kSecImportExportPassphrase: pw, kSecImportToMemoryOnly: true] as [CFString: Any] as CFDictionary
+        var items: CFArray?
         let st = SecPKCS12Import(data as CFData, opts, &items)
-        guard st == errSecSuccess, let first = (items as? [[String: Any]])?.first,
-              let any = first[kSecImportItemIdentity as String] else {
-            throw ProtocolError(code: .internal, message: "remote identity unreadable (\(st))")
+        let all = items as? [[String: Any]] ?? []
+        guard st == errSecSuccess, let any = all.first?[kSecImportItemIdentity as String] else {
+            // status 0 with no item: the key bag was dropped (e.g. a 31-byte EC key, see `usableKey`)
+            let certs = all.first?[kSecImportItemCertChain as String].map { ($0 as? [Any])?.count ?? -1 } ?? 0
+            throw ProtocolError(code: .internal, message: "remote identity unreadable (status \(st), items \(all.count), "
+                                + "certs \(certs), p12 \(data.count) bytes, pass \(pw.count) chars)")
         }
         let identity = any as! SecIdentity   // CF type: the cast can't fail once present
         var cert: SecCertificate?
@@ -57,7 +66,14 @@ final class RemoteIdentity: @unchecked Sendable {   // immutable after init
 
     /// Writes a new identity into `dir`: made in a 0700 scratch dir inside it (the PEM key never sits elsewhere), then
     /// renamed into place; the scratch dir is always removed.
-    private static func create(dir: URL) throws {
+    /// A P-256 key whose scalar doesn't start with 0x00. LibreSSL writes such a key (1 in 256) into the PKCS#12 as a
+    /// 31-byte private key (RFC 5915 wants 32), and SecPKCS12Import then drops it without an error (status 0, no
+    /// item): the identity never loads. Seen as flaky remote suites on 2026-11-05; the next key is drawn instead.
+    static func usableKey(_ next: () -> P256.Signing.PrivateKey = { P256.Signing.PrivateKey() }) -> P256.Signing.PrivateKey {
+        while true { let k = next(); if k.rawRepresentation.first != 0 { return k } }
+    }
+
+    private static func create(dir: URL, key k: P256.Signing.PrivateKey = usableKey()) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         chmod(dir.path, 0o700)
@@ -73,14 +89,15 @@ final class RemoteIdentity: @unchecked Sendable {   // immutable after init
         let cert = tmp.appendingPathComponent("cert.pem"), out = tmp.appendingPathComponent("id.p12")
         try Data(pw.utf8).write(to: passFile)
         chmod(passFile.path, 0o600)
-        try openssl(["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
-                     // named curve: LibreSSL writes explicit curve parameters by default, and Apple's TLS then fails every
-                     // handshake with -9810 (errSSLInternal) although the key itself signs
-                     "-pkeyopt", "ec_param_enc:named_curve", "-nodes", "-sha256",
-                     "-days", "3650", "-subj", "/CN=Collie", "-keyout", key.path, "-out", cert.path])
+        // the key is ours (CryptoKit, PKCS#8 with the named curve: LibreSSL's own `-newkey ec` writes explicit curve
+        // parameters, which make Apple's TLS fail every handshake with -9810); openssl only signs the certificate
+        guard FileManager.default.createFile(atPath: key.path, contents: Data(k.pemRepresentation.utf8), attributes: [.posixPermissions: 0o600]) else {
+            throw ProtocolError(code: .internal, message: "remote identity: cannot write the key")
+        }
+        try openssl(["req", "-x509", "-new", "-key", key.path, "-sha256", "-days", "3650", "-subj", "/CN=Collie", "-out", cert.path])
         try openssl(["pkcs12", "-export", "-inkey", key.path, "-in", cert.path, "-out", out.path, "-passout", "file:\(passFile.path)"])
         chmod(out.path, 0o600)
-        // the pass first: a crash between the renames leaves a pair that fails to load, and loadOrCreate makes a new one
+        // the pass first: a crash between the renames leaves a pair that fails to load (reported; Trocar certificado fixes it)
         guard rename(passFile.path, pass(dir).path) == 0, rename(out.path, p12(dir).path) == 0 else {
             throw ProtocolError(code: .internal, message: "remote identity: rename failed (\(errno))")
         }

@@ -78,6 +78,9 @@ actor RemoteGateway {
         return status
     }
 
+    /// Not listening because of `why` (an identity that can't be made or read): reported by `status`.
+    func failed(_ why: String) { stop(); lastError = why }
+
     /// Stops listening and closes every remote session (4003).
     func stop() {
         generation += 1

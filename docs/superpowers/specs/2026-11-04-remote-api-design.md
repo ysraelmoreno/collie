@@ -50,8 +50,14 @@ a paired device —** with a fixed, small allowlist. It never exposes the admin 
   (`req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -pkeyopt ec_param_enc:named_curve …`), packs it as
   PKCS#12 and loads it with `SecPKCS12Import` + `kSecImportToMemoryOnly` (macOS 15+) into a `SecIdentity` for
   `sec_protocol_options`.
-  - `ec_param_enc:named_curve` is required: macOS's `openssl` is LibreSSL 3.3.6, which writes explicit curve
-    parameters by default; Apple's TLS then fails every handshake with -9810 (errSSLInternal) although the key signs.
+  - The key is made by CryptoKit (PKCS#8 PEM, named curve) and handed to `openssl req -x509 -new -key`: macOS's
+    `openssl` is LibreSSL 3.3.6, whose own `-newkey ec` writes explicit curve parameters, and Apple's TLS then fails
+    every handshake with -9810 (errSSLInternal) although the key signs.
+  - A scalar starting with 0x00 (1 key in 256) is never used: LibreSSL writes it into the PKCS#12 as a 31-byte private
+    key and `SecPKCS12Import` drops it silently (status 0, no item), so the identity would never load
+    (`RemoteIdentity.usableKey`; found 2026-11-05 as flaky suites).
+  - An identity that exists but doesn't load is reported (`admin.remote` `error`), never replaced: only Trocar
+    certificado makes a new one (a silent new one would break every pin).
   - Why `openssl` stays (evaluated in slice 1): CryptoKit can sign a hand-built X.509, but `SecIdentity` without the
     Keychain only comes from a PKCS#12 import, and writing PKCS#12's PBE encryption by hand is more code and risk
     than one system binary. Revisit with D6 (Keychain).

@@ -91,7 +91,8 @@ extension CommandRouter {
             settings.remote = s
             try settings.save(root)
         }
-        if s.enabled, remoteIdentity == nil { remoteIdentity = try RemoteIdentity.loadOrCreate(dir: remoteDir) }
+        // on: an identity that can't be made is the answer; status only reports (the start's failure is in `error`)
+        if s.enabled, remoteIdentity == nil, action != "status" { remoteIdentity = try RemoteIdentity.loadOrCreate(dir: remoteDir) }
         if remoteIdentity == nil { remoteIdentity = try? RemoteIdentity.load(dir: remoteDir) }   // status: never makes one
         let st = action == "status" && !changed ? await remote.status
             : await remote.apply(s, identity: remoteIdentity, installId: (try? remoteInstallId()) ?? "")
@@ -101,7 +102,10 @@ extension CommandRouter {
     /// At daemon start: listen when the user left it on. A failure is only reported (in `admin.remote`).
     func startRemote() async {
         guard let s = CollieSettings.load(config.paths.root).remote, s.enabled else { return }
-        do { remoteIdentity = try RemoteIdentity.loadOrCreate(dir: remoteDir) } catch { return }
+        do { remoteIdentity = try RemoteIdentity.loadOrCreate(dir: remoteDir) } catch {
+            await remote.failed("remote identity: \((error as? ProtocolError)?.message ?? "\(error)")")
+            return
+        }
         _ = await remote.apply(s, identity: remoteIdentity, installId: (try? remoteInstallId()) ?? "")
     }
 

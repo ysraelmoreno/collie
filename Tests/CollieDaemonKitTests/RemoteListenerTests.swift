@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Security
+import CryptoKit
 import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
@@ -46,6 +47,34 @@ private func perms(_ u: URL) -> Int { ((try? FileManager.default.attributesOfIte
         let b = try RemoteIdentity.rotate(dir: dir)
         #expect(b.fingerprint != a.fingerprint)
         #expect(try RemoteIdentity.loadOrCreate(dir: dir).fingerprint == b.fingerprint)
+    }
+
+    /// Root cause of the flaky suites (2026-11-05): a P-256 scalar starting with 0x00 (1 key in 256) is written by
+    /// LibreSSL into the PKCS#12 as a 31-byte private key, and SecPKCS12Import drops it silently (status 0, no item).
+    /// Such keys are never used: the next one is drawn.
+    @Test func leadingZeroKeysAreSkipped() throws {
+        var raw = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, 31, &raw[1])
+        let zero = try P256.Signing.PrivateKey(rawRepresentation: raw), good = P256.Signing.PrivateKey()
+        var queue = [zero, zero, good]
+        let k = RemoteIdentity.usableKey { queue.removeFirst() }
+        #expect(k.rawRepresentation == good.rawRepresentation && queue.isEmpty)
+        // and why: the same key through the real path doesn't load
+        let dir = URL(fileURLWithPath: "/tmp/collie-rid-\(UUID().uuidString.prefix(8))/remote")
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        #expect(throws: ProtocolError.self) { _ = try RemoteIdentity.rotate(dir: dir, key: zero) }
+        #expect(try RemoteIdentity.rotate(dir: dir, key: good).fingerprint.count == 43)
+    }
+
+    /// An identity that exists but doesn't load is an error, never replaced: a silent new one would break every pin.
+    @Test func unreadableIdentityIsNotReplaced() throws {
+        let dir = URL(fileURLWithPath: "/tmp/collie-rid-\(UUID().uuidString.prefix(8))/remote")
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        _ = try RemoteIdentity.loadOrCreate(dir: dir)
+        let p12 = dir.appendingPathComponent("identity.p12")
+        try Data("garbage".utf8).write(to: p12)
+        #expect(throws: ProtocolError.self) { _ = try RemoteIdentity.loadOrCreate(dir: dir) }
+        #expect(try Data(contentsOf: p12) == Data("garbage".utf8))
     }
 }
 
@@ -140,5 +169,20 @@ private final class PinnedClient: NSObject, URLSessionWebSocketDelegate, @unchec
         await d.stop()
         guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
         #expect(o["listening"] == .bool(true), "\(o)")
+    }
+
+    /// A start that can't make or read the identity says why in admin.remote (it used to say only listening: false).
+    @Test func startFailureIsReported() async throws {
+        let root = URL(fileURLWithPath: "/tmp/collie-rsf-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var s = CollieSettings(); s.remote = RemoteSettings(enabled: true, port: 0, tailscaleOnly: false)
+        try s.save(root)
+        try Data("not a folder".utf8).write(to: root.appendingPathComponent("remote"))   // the identity can't be made
+        let d = try Daemon(config: testConfig(Paths(root: root)))
+        try await d.start()
+        let r = try await send(Paths(root: root), Request(id: "x", token: d.adminToken, command: "admin.remote"), timeoutSeconds: 30)
+        await d.stop()
+        guard case .object(let o)? = r.result, case .string(let e)? = o["error"] else { Issue.record("\(r)"); return }
+        #expect(o["listening"] == .bool(false) && e.contains("identity"), "\(o)")
     }
 }

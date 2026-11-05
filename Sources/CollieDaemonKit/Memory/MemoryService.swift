@@ -494,7 +494,14 @@ actor MemoryService {
         guard let top = hits.first?.hit.score, top > 0 else { return noHit() }
         let seen = injected[terminal]?.ids ?? [:]
         // ponytail: relative cut — bm25 scale depends on corpus size (tiny repos clamp idf), so no absolute floor
-        let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && seen[$0.hit.record.id] == nil }
+        // DX backlog 8: a memory about another platform than the prompt names is noise (none named: any platform goes)
+        let asked = Self.platforms(prompt)
+        func otherPlatform(_ r: MemoryRecord) -> Bool {
+            guard !asked.isEmpty else { return false }
+            let p = Self.platforms(r.title + " " + r.subject + " " + r.body)
+            return !p.isEmpty && p.isDisjoint(with: asked)
+        }
+        let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && seen[$0.hit.record.id] == nil && !otherPlatform($0.hit.record) }
         var lines = [Self.relevantHeader], used = Self.relevantHeader.utf8.count, chosen: [(hit: MemoryHit, store: RepoMemory)] = []
         for h in picked where chosen.count < max {
             let line = Self.relevantLine(h.hit.record)
@@ -572,6 +579,20 @@ actor MemoryService {
     // MARK: text
 
     static let minRelativeScore = 0.25
+    /// Words that tie a text to a platform (whole words, case and accents folded).
+    // ponytail: a fixed list; extend it when a platform's memories leak into another's prompts
+    static let platformWords: [String: String] = [
+        "android": "android", "adb": "android", "avd": "android", "apk": "android", "logcat": "android",
+        "ios": "ios", "iphone": "ios", "ipad": "ios", "simctl": "ios", "testflight": "ios",
+        "mac": "mac", "macos": "mac", "osx": "mac",
+        "windows": "windows", "win32": "windows", "powershell": "windows",
+        "web": "web", "browser": "web", "navegador": "web",
+    ]
+    static func platforms(_ text: String) -> Set<String> {
+        let words = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split { !($0.isLetter || $0.isNumber) }
+        return Set(words.compactMap { platformWords[String($0)] })
+    }
     private static let stopwords: Set<String> = [
         "the", "and", "for", "you", "are", "not", "but", "can", "how", "why", "what", "when", "where", "which", "this",
         "that", "with", "from", "have", "has", "was", "were", "will", "would", "should", "could", "there", "their",

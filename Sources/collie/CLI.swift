@@ -10,7 +10,7 @@ enum Client {
     static var socket: URL { env["COLLIE_SOCKET"].map { URL(fileURLWithPath: $0) } ?? Paths().socket }
 
     static func timeout(_ command: String, _ args: [String: JSONValue]) -> Double? {
-        if command == "ask" {
+        if command == "ask" || command == "wait" {
             if case .number(let n)? = args["timeout"] { return n + 5 }
             return 1805
         }

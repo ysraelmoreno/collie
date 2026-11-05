@@ -416,8 +416,10 @@ public actor AskCoordinator {
     }
 
     /// Hook: the terminal's agent finished its turn. No in-flight ask -> no-op.
-    public func turnCompleted(terminal: UUID, message: String?) {
-        guard var t = targets[terminal] else { return }
+    /// Returns the terminal whose ask this turn answered (not an inject's, nor the user's): its asker hears of it already.
+    @discardableResult
+    public func turnCompleted(terminal: UUID, message: String?) -> UUID? {
+        guard var t = targets[terminal] else { return nil }
         t.approval.dismiss()   // the turn ended: no dialog is open
         t.hookCapable = true
         // the first hook after idle-finished turns belongs to the last of them, not to the in-flight ask
@@ -430,7 +432,7 @@ public actor AskCoordinator {
             t.owedText = nil
             let sig = message.map(Self.signature) ?? ""
             if !sig.isEmpty, let owed, owed.contains(sig) {
-                targets[terminal] = t; return            // provably the idle turn's late hook
+                targets[terminal] = t; return nil        // provably the idle turn's late hook
             }
             // the current turn's own answer, searched after its prompt's echo (a prompt may quote the old answer);
             // unknown owed turn (cap expiry) -> never "mine": its late answer is drawn after this mark too
@@ -443,16 +445,18 @@ public actor AskCoordinator {
             } == true
             if !mine {                                   // can't tell: swallow (bounded: costs at most one ask)
                 t.swallowedFor = t.inflight?.id
-                targets[terminal] = t; return
+                targets[terminal] = t; return nil
             }
         }
         targets[terminal] = t
-        guard let (id, mark) = t.inflight else { return }
+        guard let (id, mark) = t.inflight else { return nil }
+        let asker = waiters[id].flatMap { $0.inject || $0.user ? nil : $0.from }
         if let message { finish(id, .success(AskResult(output: message, source: .hook, truncated: false))) }
         else {
             let s = t.scrollback.text(since: mark)
             finish(id, .success(AskResult(output: s.text, source: .hook, truncated: s.truncated)))
         }
+        return asker
     }
 
     /// A Stop hook made the agent go on (Claude's `stop_hook_active`): no dialog is open; the capture turn it ran is

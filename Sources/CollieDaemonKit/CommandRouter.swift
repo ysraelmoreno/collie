@@ -82,6 +82,10 @@ actor CommandRouter {
     /// The last 500 characters of each terminal's last turn (`turn.completed`): a bare "não" answering a question is a
     /// correction. ponytail: one string per terminal, never pruned (tiny).
     var lastTurn: [UUID: String] = [:]
+    /// Turns each terminal ended (`turn.completed`, not continued): `wait` sees one end. ponytail: never pruned (tiny).
+    var turnEnds: [UUID: Int] = [:]
+    /// Turn notices waiting for each Shepherd to be idle, typed as one block (`noticeTurnEnded`).
+    var turnNotices: [UUID: [String]] = [:]
     /// R14: when each terminal's correction jobs were queued (the last hour's).
     var correctionsAt: [String: [Date]] = [:]   // "<terminal>|<user>"
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
@@ -348,6 +352,9 @@ actor CommandRouter {
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
                 let s = await registry.scrollback(t.id)?.tail(lines: Int(try num(req, "lines", max: 1_000_000) ?? 200)) ?? (text: "", truncated: false)
                 return Response(id: req.id, ok: true, result: .object(["output": .string(s.text), "truncated": .bool(s.truncated)]))
+            case "wait":
+                let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
+                return Response(id: req.id, ok: true, result: try await waitTurn(t, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
             case "turn.completed":
                 if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr) }   // restarts the idle capture
                 // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
@@ -359,7 +366,9 @@ actor CommandRouter {
                     await captureContinued(tid)
                 } else {
                     if let m = str(req, "message") { lastTurn[tid] = String(m.suffix(500)) }
-                    await asks.turnCompleted(terminal: tid, message: str(req, "message"))
+                    let asker = await asks.turnCompleted(terminal: tid, message: str(req, "message"))
+                    turnEnds[tid, default: 0] += 1
+                    noticeTurnEnded(tid, message: str(req, "message"), askedBy: asker)
                 }
                 guard capture else {
                     Task { await workTurnEnded(tid) }   // git runs detached: never delays or fails the hook
@@ -409,6 +418,47 @@ actor CommandRouter {
             try? await asks.inject(to: from, prompt: AskInbox.message(e), hold: .seconds(1800), afterQuiet: true)
         }
         return .object(["askId": .string(id), "target": .string(t.name)])
+    }
+
+    /// `wait`: an idle agent answers at once with its last turn; a working one when its turn ends (Stop hook), or when its
+    /// badge leaves `working` (hookless agents, an approval prompt).
+    private func waitTurn(_ t: TerminalRecord, timeout: Duration) async throws(ProtocolError) -> JSONValue {
+        func reply(idle: Bool, _ badge: StatusBadge?) -> JSONValue {
+            var o: [String: JSONValue] = ["idle": .bool(idle), "badge": .string((badge ?? .stopped).rawValue)]
+            if let m = lastTurn[t.id] { o["message"] = .string(m) }
+            return .object(o)
+        }
+        let ends = turnEnds[t.id] ?? 0, deadline = ContinuousClock.now + timeout
+        if let b = await hub.currentBadges[t.id], b != .working { return reply(idle: true, b) }
+        // ponytail: 200 ms polling of the turn count and the hub's badge (itself polled 4/s)
+        while ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+            if Task.isCancelled { break }
+            let b = await hub.currentBadges[t.id]
+            if (turnEnds[t.id] ?? 0) != ends || b != .working { return reply(idle: false, b) }
+        }
+        throw ProtocolError(code: .timeout, message: "'\(t.name)' is still working after \(timeout.components.seconds)s")
+    }
+
+    /// DX backlog 3: a leashed agent ended a turn that wasn't the answer to its Shepherd's own ask: the Shepherd is told,
+    /// once it is idle, one line per agent (`collie check` for the rest).
+    private func noticeTurnEnded(_ tid: UUID, message: String?, askedBy asker: UUID?) {
+        guard let me = ws.terminals.first(where: { $0.id == tid }), !me.isShepherd else { return }
+        let flat = (message ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let summary = flat.isEmpty ? "(no message)" : flat.count <= 200 ? flat : String(flat.prefix(200)) + "…"
+        let line = "[collie] \(me.name) ended its turn: \(summary) (collie check \(me.name))"
+        for s in ConnectionGraph.reachable(from: tid, in: ws)
+        where s.isShepherd && s.id != asker && [.claude, .codex, .cursor].contains(s.preset) {
+            turnNotices[s.id, default: []].append(line)
+            if turnNotices[s.id]?.count == 1 { Task { await flushTurnNotices(s.id) } }
+        }
+    }
+
+    /// Waits for the Shepherd to stop working (notices arriving meanwhile join the block), then types them.
+    private func flushTurnNotices(_ shepherd: UUID) async {
+        while await hub.currentBadges[shepherd] == .working { try? await Task.sleep(for: .milliseconds(500)) }
+        guard let lines = turnNotices.removeValue(forKey: shepherd), !lines.isEmpty else { return }
+        try? await asks.inject(to: shepherd, prompt: lines.joined(separator: "\n"), hold: .seconds(1800), afterQuiet: true)
     }
 
     private func list(from id: UUID) async -> JSONValue {

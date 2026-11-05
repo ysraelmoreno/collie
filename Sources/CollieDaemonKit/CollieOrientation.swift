@@ -25,18 +25,19 @@ enum CollieOrientation {
         // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
         // the claude.ai import hint first goes, before any name
-        for (n, claude) in [(3, true), (3, false), (1, false), (0, false), (-1, false)] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude)
+        // a compact UI-work line goes before the names do (a Shepherd in a shared folder keeps them)
+        for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact)
             if t.count <= limit { return t }
         }
-        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1)
+        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true)
     }
 
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
-                              _ k: Int, claude: Bool = false) -> String {
+                              _ k: Int, claude: Bool = false, compact: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -75,7 +76,7 @@ enum CollieOrientation {
                 lines.append("  Team: collie summon dev --connect design-1 (no --preset: \(agent), yours; shell if asked) | panel open design --file F --connect dev; leash|unleash|dismiss|paddock, panel close|move")
             }
             // leashed design panels are usable; a paddock-only one is not reachable until the user leashes it
-            let notFor = "Not for backend, refactors, tests, docs, invisible fixes."
+            let notFor = compact ? "" : "Not for backend, refactors, tests, docs, invisible fixes."
             let loose = of(paddockPanels, "design").filter { !d.contains($0) }
             if !d.isEmpty {
                 lines.append("- UI work (screen, flow, visible change): use design panel \(names(d)) first; leash it to whoever implements. \(notFor)")
@@ -84,6 +85,8 @@ enum CollieOrientation {
             } else {
                 // "Onde desenhar"; a bare "design X" request follows it too
                 switch designFirst {
+                case .artifact where compact:
+                    lines.append("- UI work: design it as a page first (collie artifact new prototype <name>); FigCraft only if asked.")
                 case .artifact:
                     lines.append("- UI work (screen, flow, visible change; also a bare 'design X'): design it as a page first: collie artifact new prototype <name>\(tight ? "" : " (Prévia; fonts, animation, offline libs, collie font add)"). Use FigCraft only if the user asks or for design-system work. \(notFor)")
                 case .figcraft:
@@ -108,6 +111,6 @@ enum CollieOrientation {
                 : "- Shared folder (\(names(sharedFolder))): build in .build/\(own) (--scratch-path); git add only your hunks (git diff <file>); verify: git worktree add --detach <tmp> HEAD, swift test --filter …, git worktree remove <tmp>.")
         }
         if !tight { lines.append("More: collie <group> --help.") }
-        return lines.joined(separator: "\n")
+        return lines.map { $0.hasSuffix(" ") ? String($0.dropLast()) : $0 }.joined(separator: "\n")   // compact: no notFor
     }
 }

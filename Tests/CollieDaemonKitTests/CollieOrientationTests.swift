@@ -38,9 +38,12 @@ import CollieProtocol
                                            panels: [], lot: (String(repeating: "l", count: 60), String(repeating: "g", count: 200)),
                                            sharedFolder: ["x"])
         #expect(tight.count <= 1500 && tight.contains("Shared folder") && tight.contains("worktree"), "\(tight.count)")
-        // a Shepherd (already near the cap) in a shared folder: still within it, with the worktree rule
+        // a Shepherd (already near the cap) in a shared folder keeps peer names, the worktree rule and the --help footer:
+        // its UI-work line goes compact first
         let shep = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], sharedFolder: ["x"])
-        #expect(shep.count <= 1500 && shep.contains("git worktree add --detach <tmp> HEAD"), "\(shep.count)")
+        #expect(shep.count <= 1500 && shep.contains("git worktree add --detach <tmp> HEAD, swift test --filter")
+                && shep.contains("(\"Bob\")") && shep.contains("More: collie <group> --help.")
+                && shep.contains("collie artifact new prototype <name>"), "\(shep.count)\n\(shep)")
     }
 
     /// `artifact new` is taught to every terminal (its kinds while names fit; tight: the short form).

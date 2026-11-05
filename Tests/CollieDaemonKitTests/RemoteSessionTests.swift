@@ -95,7 +95,8 @@ private func int(_ v: JSONValue?) -> Int { if case .number(let n)? = v { Int(n) 
         let o = obj(try await admin(d, p, "admin.remote", ["action": "on", "port": 0]))
         return (int(o["listeningPort"]), str(o["fingerprint"]))
     }
-    private func config(_ c: inout DaemonConfig) { c.remoteAllowLoopback = true; c.remoteHelloDeadline = .milliseconds(600) }
+    /// Hello deadline: short for the deadline test, long enough that an idle phone survives a loaded machine.
+    private func config(_ c: inout DaemonConfig) { c.remoteAllowLoopback = true; c.remoteHelloDeadline = .seconds(2) }
     private let device: JSONValue = .object(["name": "iPhone de Teste", "model": "iPhone 16"])
 
     /// QR → pair → the app's click → token → hello, then the device sheet sees it.

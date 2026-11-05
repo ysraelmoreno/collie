@@ -308,6 +308,18 @@ extension CommandRouter {
             }
             return try memJSON(saved, target, ["promotedFrom": .string(id.uuidString)])
 
+        case "memory.supersede":   // DX backlog 9: a stale memory retired by a newer one (memory restore undoes it)
+            let id = try id()
+            guard let by = UUID(uuidString: try need(r, "by")) else { throw invalid("'by' must be a memory id") }
+            guard by != id else { throw invalid("a memory can't supersede itself") }
+            return try await update(id) { rec, m in
+                guard m.store.all().records.contains(where: { $0.id == by && $0.status == .active }) else {
+                    throw ProtocolError(code: .notFound, message: "active memory \(by.uuidString.lowercased()) not found")
+                }
+                rec.status = .superseded; rec.supersededBy = by
+                try m.store.write(rec)
+            }
+
         case "memory.restore":
             let id = try id()
             let rec = try await repo.run { m in try MemoryCleanup.restore(id, store: m.store, index: m.index()) }

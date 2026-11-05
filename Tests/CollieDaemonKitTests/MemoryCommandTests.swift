@@ -57,6 +57,21 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
         }
     }
 
+    /// DX backlog 9: an agent retires a stale memory in favour of a newer one (reversible: memory restore).
+    @Test func terminalSupersedesAStaleMemory() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: repo)
+            let old = s(obj(try await call(p, t, "memory.save", ["kind": "pitfall", "subject": "empty ask", "title": "Cause unknown"]))["id"]) ?? ""
+            let new = s(obj(try await call(p, t, "memory.save", ["kind": "decision", "subject": "empty ask cause", "title": "Cause found"]))["id"]) ?? ""
+            let r = try await call(p, t, "memory.supersede", ["id": old, "by": new])
+            #expect(r.ok && obj(r)["status"] == .string("superseded") && obj(r)["supersededBy"] == .string(new), "\(r)")
+            #expect(rows(try await call(p, t, "memory.search", ["query": "cause unknown"]).result).allSatisfy { s($0["id"]) != old })
+            #expect(try await call(p, t, "memory.supersede", ["id": new, "by": new]).error?.code == .invalidArgs)
+            #expect(try await call(p, t, "memory.supersede", ["id": new, "by": UUID().uuidString]).error?.code == .notFound)
+        }
+    }
+
     @Test func saveOutsideRepoGoesGlobal() async throws {
         let dir = URL(fileURLWithPath: FileManager.default.temporaryDirectory.appendingPathComponent("collie-nogit-\(UUID().uuidString)").path)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

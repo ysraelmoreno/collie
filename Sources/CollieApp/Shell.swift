@@ -217,12 +217,13 @@ private struct ZoomControls: View {
     let ctx: ShellContext
 
     var body: some View {
-        HStack(spacing: 8) {
+        // in fullscreen zoom and fit say nothing about what is on screen
+        if ctx.canvas.fullscreen == nil { HStack(spacing: 8) {
             let pct = Int((ctx.canvas.zoom * 100).rounded())
             Text("\(pct)%").font(.collieMono(12)).monospacedDigit()
                 .foregroundStyle(Color.collieTextSecondary).accessibilityLabel("Zoom").accessibilityValue("\(pct)%")
             Button("Ajustar à tela", action: ctx.fit).buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
-        }
+        } }
     }
 }
 
@@ -524,6 +525,7 @@ private struct StatusBar: View {
                 HStack(spacing: 6) { Circle().fill(Color.collieDanger).frame(width: 7, height: 7); Text("desconectado: \(r)").lineLimit(1) }
             }
             PanelMeter(client: ctx.client)
+            if ctx.canvas.fullscreen != nil { Text("tela cheia").foregroundStyle(Color.collieTextSecondary) }
             HostNotice(client: ctx.client)
             Spacer(minLength: 0)
         }

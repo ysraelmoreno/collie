@@ -42,7 +42,7 @@ final class PanelBody: NSView, PanelContentSizing {
         layer?.masksToBounds = true
         layer?.borderWidth = 1
         applyChrome()
-        title = TitleHost(rootView: PanelTitleBar(id: id, client: client))
+        title = TitleHost(rootView: PanelTitleBar(id: id, client: client, fullscreen: { [canvas, id] in canvas.toggleFullscreen(id) }))
         title.onDrag = { [weak self] d in self?.move(d) }
         title.onMouseUp = { [weak self] in self?.bringToFront() }
         corner.onMouseUp = { [weak self] in self?.bringToFront() }
@@ -134,6 +134,7 @@ final class PanelBody: NSView, PanelContentSizing {
 struct PanelTitleBar: View {
     let id: UUID
     let client: DaemonClient
+    let fullscreen: () -> Void
 
     var body: some View {
         let p = client.panels.first { $0.id == id }
@@ -142,7 +143,8 @@ struct PanelTitleBar: View {
             Text(p?.name ?? "").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1)
             Text(p.flatMap(Self.target) ?? p?.pluginId ?? "").foregroundStyle(Color.collieMuted).lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 0)
-            if let p { PanelMenu(panel: p, client: client) }
+            FullscreenButton(action: fullscreen)
+            if let p { PanelMenu(panel: p, client: client, fullscreen: fullscreen) }
         }
         .font(.collieMono(11))
         .padding(.horizontal, 10)
@@ -157,10 +159,22 @@ struct PanelTitleBar: View {
     }
 }
 
+/// The ⤢ in a canvas node's title bar.
+struct FullscreenButton: View {
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+            .buttonStyle(.plain).foregroundStyle(Color.collieMuted)
+            .help("Tela cheia ⌘⏎").accessibilityLabel("Tela cheia")
+    }
+}
+
 /// "Mover para ▸ …" and "Fechar…", shared by the dock tabs and the canvas title bar.
 struct PanelMenu: View {
     let panel: Panel
     let client: DaemonClient
+    /// Canvas title bar only (a docked panel has no fullscreen).
+    var fullscreen: (() -> Void)?
 
     static let labels: [PanelPlacement: String] = [.dockLeft: "Doca esquerda", .dockRight: "Doca direita",
                                                    .dockBottom: "Doca baixo", .canvas: "Canvas"]
@@ -169,6 +183,10 @@ struct PanelMenu: View {
     var body: some View {
         let allowed = PluginRegistry.spec(panel.pluginId)?.placements ?? Self.order
         Menu {
+            if let fullscreen {
+                Button("Tela cheia", action: fullscreen).keyboardShortcut(.return, modifiers: .command)
+                Divider()
+            }
             Menu("Mover para") {
                 ForEach(Self.order.filter(allowed.contains), id: \.self) { pl in
                     Button(Self.labels[pl] ?? pl.rawValue) { move(to: pl) }.disabled(pl == panel.placement)

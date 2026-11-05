@@ -43,3 +43,12 @@ private func card(_ i: Int, refused: Bool = false) -> SandboxDenial {
     s.close(id)
     #expect(!s.open.contains(id))
 }
+
+/// Remote API slice 10: a grant made from a phone says so (Preferências → Sandbox, the node's access popover).
+@Test func grantLineNamesThePhone() {
+    let at = ISO8601DateFormatter().date(from: "2026-11-05T12:00:00Z")!
+    let mac = SandboxGrant(path: "/x", access: .write, scope: .terminal, owner: UUID(), createdAt: at)
+    var phone = mac; phone.by = .init(device: "d", deviceName: "iPhone de Ana", via: "tailscale")
+    #expect(!AccessCopy.grantLine(mac).contains("liberado do"))
+    #expect(AccessCopy.grantLine(phone).hasSuffix(" · liberado do iPhone de Ana (Tailscale)"), "\(AccessCopy.grantLine(phone))")
+}

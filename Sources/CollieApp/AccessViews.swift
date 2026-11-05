@@ -29,6 +29,7 @@ enum AccessCopy {
     }
     static func grantLine(_ g: SandboxGrant) -> String {
         (g.access == .write ? "ler e escrever" : "ler") + " · " + g.createdAt.formatted(date: .abbreviated, time: .shortened)
+            + (g.by.map { " · liberado do \($0.deviceName) (\(RemoteCopy.via($0.via)))" } ?? "")   // from a paired phone
     }
 }
 

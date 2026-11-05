@@ -134,6 +134,11 @@ extension CommandRouter {
         if let p = st.port { o["listeningPort"] = .number(Double(p)) }
         if let f = remoteIdentity?.fingerprint { o["fingerprint"] = .string(f) }
         if let e = st.error { o["error"] = .string(e) }
+        // the Celular page: "Alcançável por: Wi-Fi 192.168.1.10 · Tailscale 100.x" and how many phones are on now
+        o["addresses"] = .array(RemoteAddress.localHosts(tailscaleOnly: s.tailscaleOnly).map { h in
+            .object(["host": .string(h), "via": .string((RemoteAddress.via(h, tailscaleOnly: false) ?? .lan).rawValue)])
+        })
+        o["connected"] = .number(Double(remote.sessions.connected))
         // the pairing waiting for the click (the app's dialog shows the same): lets a test compare the code without the app
         if let a = remotePairing.awaiting {
             o["pairing"] = .object(["pairingId": .string(a.pairingId.uuidString.lowercased()), "code": .string(a.code),

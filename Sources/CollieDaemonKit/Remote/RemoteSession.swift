@@ -427,6 +427,8 @@ final class RemoteSessions: @unchecked Sendable {   // under `lock`
     }
 
     func count(_ device: UUID) -> Int { lock.withLock { byDevice[device]?.count ?? 0 } }
+    /// Sessions past `session.hello`, all devices.
+    var connected: Int { lock.withLock { byDevice.values.reduce(0) { $0 + $1.count } } }
     func close(device: UUID, _ code: RemoteClose) { lock.withLock { byDevice[device] ?? [] }.forEach { $0.close(code) } }
     func closeAll(_ code: RemoteClose) { lock.withLock { () -> [RemoteSession] in defer { all = [:]; byDevice = [:] }; return Array(all.values) }.forEach { $0.close(code) } }
 }

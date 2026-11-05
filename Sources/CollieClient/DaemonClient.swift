@@ -19,6 +19,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var accessCards: [SandboxDenial] = []
     /// Shepherds' open leash requests (`collie leash request`): Conectar / Recusar on the Shepherd's node.
     public private(set) var leashRequests: [LeashRequest] = []
+    /// A phone waits for the Mac's click (remote API pairing): the confirmation dialog; nil when none.
+    public private(set) var remotePairing: RemotePairingRequest?
     /// The user's sandbox grants (per terminal and per lot).
     public private(set) var grants: [SandboxGrant] = []
     /// Whether the daemon sees sandbox denials; false: "detecção indisponível"; nil: no watcher (sandbox off).
@@ -40,6 +42,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// A new grantable access card (not an update of an open one, not a refused one).
     @ObservationIgnored public var onAccessCard: ((SandboxDenial) -> Void)?
     @ObservationIgnored public var onNotify: ((UUID, String) -> Void)?
+    /// A paired phone asks to show a terminal or open an artifact (`mac.reveal`): (terminal, artifact).
+    @ObservationIgnored public var onRemoteReveal: ((UUID?, UUID?) -> Void)?
     /// (terminal, digest entry, rule title): a correction that is probably the user's waits for Confirmar.
     @ObservationIgnored public var onConfirmCorrection: ((UUID, UUID, String) -> Void)?
     /// Called (main actor) on `herd.applied`: applying terminal (nil = the app), anchor Shepherd, frames by node id,
@@ -176,6 +180,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         }
     }
 
+    /// The pairing dialog answered or gone (only that one: a newer request stays).
+    public func clearRemotePairing(_ id: UUID) { if remotePairing?.pairingId == id { remotePairing = nil } }
+
     func apply(_ e: WorkspaceEvent) {   // internal: tests feed events directly
         switch e {
         case .spawned(let r), .terminal(let r):
@@ -212,7 +219,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .pluginsChanged(let ms): setPlugins(ms)
         case .leashRequest(let r): if !leashRequests.contains(where: { $0.id == r.id }) { leashRequests.append(r) }
         case .leashRequestRemoved(let id): leashRequests.removeAll { $0.id == id }
-        case .remotePairing, .remoteReveal: break   // ponytail: the app's pairing dialog and reveal come with remote API slice 10
+        case .remotePairing(let r): remotePairing = r
+        case .remoteReveal(let t, let a, _): onRemoteReveal?(t, a)
         }
     }
     private func setPlugins(_ ms: [PluginManifest]) { guard ms != plugins else { return }; plugins = ms; PluginManifest.register(ms) }   // unchanged: the registry stays

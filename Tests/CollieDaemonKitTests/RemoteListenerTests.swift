@@ -134,6 +134,20 @@ private final class PinnedClient: NSObject, URLSessionWebSocketDelegate, @unchec
         }
     }
 
+    /// The Celular page: where the Mac is reachable and how many phones are connected (slice 10).
+    @Test func statusListsAddressesAndConnectedPhones() async throws {
+        try await withDaemon(configure: { $0.remoteAllowLoopback = true }) { d, p in
+            let off = try await admin(d, p)
+            #expect(off["addresses"] != nil && int(off["connected"]) == 0, "\(off)")
+            let (ph, _) = try await helloPhone(d, p)
+            defer { ph.close() }
+            let on = try await admin(d, p)
+            guard case .array(let a)? = on["addresses"] else { Issue.record("\(on)"); return }
+            #expect(a.allSatisfy { if case .object(let o) = $0 { o["host"] != nil && (o["via"] == "lan" || o["via"] == "tailscale") } else { false } })
+            #expect(int(on["connected"]) == 1, "\(on)")
+        }
+    }
+
     @Test func servesPinnedWebSocketAndStops() async throws {
         try await withDaemon(configure: { $0.remoteAllowLoopback = true }) { d, p in
             let on = try await admin(d, p, ["action": "on", "port": 0])

@@ -181,6 +181,46 @@ mutating command), `notFound`, `notRunning`, `invalidArgs` (including any comman
 message as an unknown command, so the admin surface isn't enumerable), `tooMany` (rate limit, with
 `retryAfter` seconds in the message), `unavailable`, `conflict`, `timeout`, `unsupportedVersion`, `internal`.
 
+### Wire details (for the iOS client, 2026-11-04)
+
+- **URL**: `wss://<host>:<port>/` — any path is accepted, use `/`. No subprotocol, no extra header; never send
+  `Origin` (refused).
+- **QR `h=`**: comma-separated hosts, read with `URLComponents.queryItems` then split on `,`. v1 carries IPv4 only
+  (LAN, then Tailscale 100.x). When IPv6 or the MagicDNS name come (slice 11): IPv6 in brackets (`[fd7a:…]`),
+  MagicDNS as a plain host name in the same list.
+- **Close codes**: only 4000 `hello`, 4001 `revoked`, 4002 `replaced`, 4003 `disabled` (also sent when the daemon
+  stops or restarts — there is no 1001 from the Mac). Anything else, or a socket that drops without a frame
+  (sleep, network), is a network loss: reconnect with backoff. A wrong pin never reaches the Mac: it is a TLS
+  failure on the phone only.
+- **Device credentials**: v1 has no device key pair (no ed25519). The phone's Keychain keeps
+  `{deviceId, token, fp, installId, hosts, port}`; the token only travels inside the pinned TLS.
+- **Envelope**: `pair` and `pair.wait` use the same `{v, id, command, args}` envelope. `pair.wait` must come on the
+  connection that sent `pair` (whoever presented the secret gets the token); if that connection drops, the
+  pairing is lost: generate a new QR.
+- **`device.model`**: the commercial name when the app knows it ("iPhone 16 Pro"), else the identifier
+  ("iPhone17,1"); ≤ 40 chars, shown on the Mac as is.
+- **Event frames** (`{"t":"event","e":{…}}`, from slice 5): `e` is the remote projection with its own tag `t`, not
+  the internal `WorkspaceEvent` keys. Ids are lowercase UUIDs, dates ISO 8601.
+  ```json
+  {"t":"status","terminalId":"…","badge":"idle|working|attention|stopped","since":"2026-11-04T20:31:07Z"}
+  {"t":"attention","terminalId":"…","reason":"…"}
+  {"t":"approval","approval":{"id","terminalId","terminal","paddock","kind","reason","prompt","at"}}
+  {"t":"approval","terminalId":"…","cleared":true}
+  {"t":"accessCard","card":{…the §3.7 card, with id…}}          // new or updated (internally sandboxDenied)
+  {"t":"accessCardRemoved","id":"<card id>"}
+  {"t":"askState","messageId":"…","state":"delivered|failed","reason":"…?"}
+  {"t":"chat","message":{"id","at","role":"user|agent|collie","workId":null,"terminal":"Dev","text","truncated":false,"replyTo":null,"via":null}}
+  {"t":"work","id":"<work id>"}                                  // changed: re-read with work.get
+  {"t":"terminal","terminal":{…the §3.3 terminal projection…}}   // spawned or edited (upsert)
+  {"t":"terminalRemoved","id":"…"}
+  {"t":"paddock","paddock":{…}} {"t":"paddockRemoved","id"} {"t":"lot","lot":{…}} {"t":"lotRemoved","id"}
+  {"t":"leash","a","b","on":true|false} {"t":"notify","terminalId","message"}
+  ```
+  A terminal exiting arrives as `status` with `badge: stopped`.
+- **`approval.answer` with `sent: false`**: besides the pt-BR `reason`, a stable `code`: `stale` (no longer pending),
+  `unknown` (too much output to check: look at the terminal), `failed` (the terminal didn't take the keys). Match
+  on `code`, never on the text (slice 7).
+
 ### Dispatch (how it maps inside the daemon)
 
 A new `RemoteGateway` in `CollieDaemonKit` owns the listener. After `session.hello` the connection carries a
@@ -283,6 +323,8 @@ Everything else → `invalidArgs "Unknown command '<name>'"`.
   `notify`, `sandboxDenied` (an access card, new or updated — re-shaped to the §3.7 card with its `id`).
 - New: `accessCardRemoved {id}` (granted, denied, or covered by a grant — on the Mac or a phone), so the phone drops
   it without a re-snapshot.
+- Exact frame shapes: see "Wire details" above (they supersede the names in this list: `sandboxDenied` goes out as
+  `accessCard`, `spawned`/`terminal` as `terminal`, `removed` as `terminalRemoved`, `exited` as `status: stopped`).
 - Plus work-panel events, re-shaped: `approval` (`{approval}` or `{terminalId, cleared:true}` — from
   `approvalChanged`), `chat` (a new chat message — from the `work.chat` plugin event), `work` (a work changed —
   from `work.changed`).

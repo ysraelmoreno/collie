@@ -52,45 +52,13 @@ extension CommandRouter {
         case "access.grant":
             try appOnly()
             let t = try accessTerminal(r)
-            guard t.sandbox == .sandboxed else { throw ProtocolError(code: .invalidArgs, message: "'\(t.name)' é um terminal livre: não tem sandbox") }
             guard let access = SandboxGrant.Access(rawValue: try need(r, "access")) else {
                 throw ProtocolError(code: .invalidArgs, message: "access must be read or write")
             }
             guard let scope = SandboxGrant.Scope(rawValue: str(r, "scope") ?? "terminal") else {
                 throw ProtocolError(code: .invalidArgs, message: "scope must be terminal or lot")
             }
-            let raw = try need(r, "path")
-            guard raw.hasPrefix("/") else { throw ProtocolError(code: .invalidArgs, message: "'path' must be absolute") }
-            // R26: exactly the card's path (the kernel's, already resolved), or its folder: never resolved here. One that
-            // no longer resolves to itself (a symlink swapped in since the card) is refused, not followed
-            let path = flag(r, "folder") ? (raw as NSString).deletingLastPathComponent : raw   // Liberar a pasta
-            guard SignedAppCheck.realPath(URL(fileURLWithPath: path)) == path else {
-                throw ProtocolError(code: .invalidArgs, message: "O caminho mudou desde o cartão (agora é um link): nada foi liberado.")
-            }
-            if let why = SandboxGrantStore.refusal(path, op: access.rawValue, home: sandboxHomeDir, collie: config.paths.root,
-                                                   app: SandboxInput.appBundle(of: config.collieExecutable), closed: closedPaddocks(sandboxProject(t))) {
-                throw ProtocolError(code: .invalidArgs, message: why)
-            }
-            let owner: UUID
-            if scope == .lot {
-                guard let l = ws.lot(of: t.id) else { throw ProtocolError(code: .invalidArgs, message: "'\(t.name)' não está em um lote") }
-                owner = l.id
-            } else { owner = t.id }
-            try reserve(t.name); defer { launching.remove(t.name.lowercased()) }
-            let g = SandboxGrant(path: path, access: access, scope: scope, owner: owner,
-                                 project: scope == .terminal ? try await projectRoot(of: t).path : nil)
-            if !sandboxGrants.contains(where: { $0.path == g.path && $0.scope == g.scope && $0.owner == g.owner && $0.project == g.project && ($0.access == .write || g.access == .read) }) {
-                let before = sandboxGrants
-                sandboxGrants.append(g)
-                do { try saveGrants() } catch { sandboxGrants = before; throw error }
-            }
-            let members = scope == .lot ? ws.lots.first { $0.id == owner }?.members ?? [] : [t.id]
-            for m in members { accessCards.removeCovered(terminal: m, by: g) }
-            // ponytail: the lot's other running members get it at their next start (only the card's terminal restarts)
-            let running = await registry.process(t.id)?.isRunning == true
-            if running { _ = try await relaunch(t, resume: true) }
-            let env = await agentEnv(t)
-            return .object(["grant": try isoJSON(g), "restarted": .bool(running), "resumed": .bool(running && t.resumesConversation && AgentLaunch.hasClaudeConversation(cwd: t.cwd, home: sandboxHomeDir, env: env))])
+            return try await grantAccess(t, access: access, path: try need(r, "path"), folder: flag(r, "folder"), scope: scope)
         case "access.deny":
             try appOnly()
             let t = try accessTerminal(r)
@@ -117,6 +85,44 @@ extension CommandRouter {
             return .object(["restarted": .array(restarted)])
         default: throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
+    }
+
+    /// `access.grant` past its caller check (the app's admin token, or a paired phone's card): R26 path check, refusals,
+    /// the grant saved, covered cards dropped, the terminal relaunched. `by`: the phone it came from.
+    func grantAccess(_ t: TerminalRecord, access: SandboxGrant.Access, path raw: String, folder: Bool, scope: SandboxGrant.Scope,
+                     by: SandboxGrant.By? = nil) async throws -> JSONValue {
+        guard t.sandbox == .sandboxed else { throw ProtocolError(code: .invalidArgs, message: "'\(t.name)' é um terminal livre: não tem sandbox") }
+        guard raw.hasPrefix("/") else { throw ProtocolError(code: .invalidArgs, message: "'path' must be absolute") }
+        // R26: exactly the card's path (the kernel's, already resolved), or its folder: never resolved here. One that
+        // no longer resolves to itself (a symlink swapped in since the card) is refused, not followed
+        let path = folder ? (raw as NSString).deletingLastPathComponent : raw   // Liberar a pasta
+        guard SignedAppCheck.realPath(URL(fileURLWithPath: path)) == path else {
+            throw ProtocolError(code: .invalidArgs, message: "O caminho mudou desde o cartão (agora é um link): nada foi liberado.")
+        }
+        if let why = SandboxGrantStore.refusal(path, op: access.rawValue, home: sandboxHomeDir, collie: config.paths.root,
+                                               app: SandboxInput.appBundle(of: config.collieExecutable), closed: closedPaddocks(sandboxProject(t))) {
+            throw ProtocolError(code: .invalidArgs, message: why)
+        }
+        let owner: UUID
+        if scope == .lot {
+            guard let l = ws.lot(of: t.id) else { throw ProtocolError(code: .invalidArgs, message: "'\(t.name)' não está em um lote") }
+            owner = l.id
+        } else { owner = t.id }
+        try reserve(t.name); defer { launching.remove(t.name.lowercased()) }
+        let g = SandboxGrant(path: path, access: access, scope: scope, owner: owner,
+                             project: scope == .terminal ? try await projectRoot(of: t).path : nil, by: by)
+        if !sandboxGrants.contains(where: { $0.path == g.path && $0.scope == g.scope && $0.owner == g.owner && $0.project == g.project && ($0.access == .write || g.access == .read) }) {
+            let before = sandboxGrants
+            sandboxGrants.append(g)
+            do { try saveGrants() } catch { sandboxGrants = before; throw error }
+        }
+        let members = scope == .lot ? ws.lots.first { $0.id == owner }?.members ?? [] : [t.id]
+        for m in members { accessCards.removeCovered(terminal: m, by: g) }
+        // ponytail: the lot's other running members get it at their next start (only the card's terminal restarts)
+        let running = await registry.process(t.id)?.isRunning == true
+        if running { _ = try await relaunch(t, resume: true) }
+        let env = await agentEnv(t)
+        return .object(["grant": try isoJSON(g), "restarted": .bool(running), "resumed": .bool(running && t.resumesConversation && AgentLaunch.hasClaudeConversation(cwd: t.cwd, home: sandboxHomeDir, env: env))])
     }
 
     /// `terminal`: an id (the app's) or a name.

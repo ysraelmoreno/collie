@@ -39,7 +39,9 @@ extension CommandRouter {
             })
         case "admin.remote.devices.revoke":
             let id = try remoteDeviceId(r)
+            let gone = remoteDevices.all.first { $0.id == id }
             guard try remoteDevices.revoke(id) else { throw ProtocolError(code: .notFound, message: "Aparelho não encontrado.") }
+            remoteAudit.log(.init(device: id, deviceName: gone?.name, address: nil, via: nil), "device.revoke", result: "ok")   // on the Mac
             remote.sessions.close(device: id, .revoked)
             return .object([:])
         case "admin.remote.devices.scope":

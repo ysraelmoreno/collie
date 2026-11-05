@@ -120,6 +120,7 @@ actor CommandRouter {
     nonisolated let remoteDevices: RemoteDevices
     nonisolated let remotePairing: RemotePairing
     nonisolated let remoteEvents: RemoteEventBus
+    nonisolated let remoteAudit: RemoteAudit
     var remoteIdentity: RemoteIdentity?
     func setImporting(_ id: UUID, _ on: Bool) { if on { importingArtifacts.insert(id) } else { importingArtifacts.remove(id) } }
 
@@ -176,13 +177,15 @@ actor CommandRouter {
         let settings = CollieSettings.load(root)
         let remoteDevices = RemoteDevices(dir: root.appendingPathComponent("remote")), remotePairing = RemotePairing()
         self.remoteDevices = remoteDevices; self.remotePairing = remotePairing
+        let remoteAudit = RemoteAudit(dir: root.appendingPathComponent("remote")); self.remoteAudit = remoteAudit
         self.remote = RemoteGateway(allowLoopback: config.remoteAllowLoopback, deps: .init(
             devices: remoteDevices, pairing: remotePairing, macName: Self.computerName(), version: config.version ?? "dev", build: config.build ?? "dev",
             helloDeadline: config.remoteHelloDeadline, onClaim: { r in Task { await hub.emit(.remotePairing(r)) } },
-            handle: { r, dev, via in
-                await me.router?.remoteRequest(r, device: dev, via: via)
+            handle: { r, dev, via, address in
+                await me.router?.remoteRequest(r, device: dev, via: via, address: address)
                     ?? Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "daemon stopping"))
-            }, events: remoteEvents, eventQueueBytes: config.remoteEventQueueBytes, hub: hub))
+            }, events: remoteEvents, eventQueueBytes: config.remoteEventQueueBytes, hub: hub,
+            audit: remoteAudit))
         self.sandboxPref = settings.terminalSandbox
         self.googleFonts = settings.googleFonts ?? true
         if sandboxPref == nil, let w = workspace.terminalSandbox {

@@ -227,7 +227,10 @@ message as an unknown command, so the admin surface isn't enumerable), `tooMany`
   A terminal exiting arrives as `status` with `badge: stopped`.
 - **`approval.answer` with `sent: false`**: besides the pt-BR `reason`, a stable `code`: `stale` (no longer pending),
   `unknown` (too much output to check: look at the terminal), `failed` (the terminal didn't take the keys). Match
-  on `code`, never on the text (slice 7).
+  on `code`, never on the text (slice 7). A denied "press enter" prompt answers `sent:false` without `code`
+  (dismissed: nothing to type).
+- **`tooMany`**: `error.retryAfter` (seconds, e.g. `0.4`, `12.3`): wait that long before retrying.
+- **`access.grant`** result `grant.by`: `{device, deviceName, via}` for a grant made from a phone (absent for the Mac's).
 
 ### E2E fixes (2026-11-05, simulator ↔ dev collied)
 
@@ -240,6 +243,27 @@ message as an unknown command, so the admin surface isn't enumerable), `tooMany`
 - Artifacts: the title is the page's `<title>` (else the folder of an `index.html`, else the file name); `live` is
   true for a Prévia on the artifact or on the project page it was added from (`Artifact.addedFrom`); rows carry
   `importing` and `importError`.
+
+### E2E: a live approval on the dev daemon (slice 7)
+
+```sh
+scripts/dev/run-isolated.sh start                       # dev collied on /tmp/collie-dev (terminals unsandboxed)
+scripts/dev/run-isolated.sh cli admin remote on --port 47821
+scripts/dev/run-isolated.sh cli admin remote pair begin # QR / link for the simulator
+scripts/dev/run-isolated.sh cli admin remote            # after the phone's `pair`: pairing {pairingId, code}; compare the code
+scripts/dev/run-isolated.sh cli admin remote pair confirm --pairingId <id> --decision accept
+# a terminal that asks: an approval appears at once (approvals.list, `approval` event, work chat)
+scripts/dev/run-isolated.sh cli admin spawn Asker --preset custom \
+  --command "printf 'Rodar a migração? (y/n) '; read x; echo RESPOSTA=\$x; exec cat"
+# answer on the phone: approval.answer {id, allow} → the terminal prints RESPOSTA=y (terminal.attach or terminal.screen)
+# a second answer → sent:false, code:"stale"; chat: "Aprovado do <aparelho> (rede local)"
+scripts/dev/run-isolated.sh cli admin kill Asker && scripts/dev/run-isolated.sh cli admin spawn Asker …   # again
+cat /tmp/collie-dev/remote/audit.jsonl                  # who answered, from where
+```
+
+A menu-style prompt (`kind: menu`, like Claude's dialogs): `--command "printf 'Do you want to proceed?\\n❯ 1. Yes\\n  2. No\\n'; read -n1 k; echo KEY=\$k; exec cat"`.
+Access cards need a sandboxed terminal: the dev daemon runs with `--no-terminal-sandbox`, so test `access.grant/deny`
+on a daemon started without it (or rely on `RemoteMutationTests`).
 
 ### Dispatch (how it maps inside the daemon)
 
@@ -637,9 +661,18 @@ reachable from the network until slice 3.
    `RemoteAttachTests` (replay → out → exited with raw ANSI, replay cut + `truncated`, 3000 lines ≤ 11 frames/s
    and none lost, `notFound`/`notRunning`/`invalidArgs`/`tooMany`, detach frees a slot, `in`/`resize` ignored,
    overflow) against real PTYs.
-7. **Mutations + audit + limits** — `approval.answer/dismiss`, `access.grant/deny` (terminal scope only), audit log,
-   chat "do iPhone", `SandboxGrant.by`, token buckets, `read` scope enforcement. Tests: audit line per M command,
-   stale approval, read scope refused, lot scope refused, rate-limit refusal with `retryAfter`.
+7. **Mutations + audit + limits (done, 2026-11-05)** — `approval.answer/dismiss` (`work.approve` with `from`: the
+   chat says "Aprovado do P (rede local)"; `sent:false` carries `code` `stale|unknown|failed`, for the app's
+   `work.approve` too), `access.grant/deny {card}` resolved to the card's terminal/path/op (`grantAccess`, the same
+   checks as the app's; `lot: true` → `invalidArgs`; `SandboxGrant.by {device, deviceName, via}`). `RemoteAudit`
+   (`audit.jsonl`, 0600, 5 MiB × 2): every M command (`target`: the approval id, or the card's path), `pair`,
+   `pair.accepted`, `session.hello` (ok or refused) and `device.revoke` (on the Mac). `RemoteLimits`: 30 req/s
+   burst 60 and 30 M/min per device, `tooMany` + `retryAfter` (seconds, ProtocolError field); 10 failed
+   pair/hello from an address within a minute → its connections refused for 60 s (before TLS). Tests:
+   `RemoteMutationTests` (answer → keys reach the PTY, chat line, stale second answer, audit fields and 0600, no
+   token; grant/deny by card, lot refused, `by`, audit targets; limits with `retryAfter`; blocked address).
+   The `read` scope gate is slice 4's (`RemoteSurfaceTests.scopeAndRevokeApplyAtOnce`). Not here: showing
+   `SandboxGrant.by` in Preferências → Sandbox (slice 10, with the device sheet).
 8. **Ask, status, rerail, Mac view** — factor `chatSend` delivery and its status branch; `agent.ask` by terminal id
    with the shell/free/attention refusals; `ChatMessage.via`; `work.status`; `work.rerail`; `mac.reveal` +
    `remoteReveal` event (the app's handler lands with slice 10). Tests: `RemoteAskTests`, `RemoteStatusTests`.

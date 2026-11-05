@@ -29,13 +29,23 @@ enum RemoteSurface {
 /// The remote principal's requests: explicit projections (fields picked one by one, never a record dumped), so no
 /// token, path of Collie's own, cwd or command leaves the Mac.
 extension CommandRouter {
-    func remoteRequest(_ r: Request, device: RemoteDevice, via: RemoteVia) async -> Response {
-        do { return Response(id: r.id, ok: true, result: try await remoteRead(r, device: device, via: via)) }
-        catch let e as ProtocolError { return Response(id: r.id, ok: false, error: e) }
-        catch { return Response(id: r.id, ok: false, error: ProtocolError(code: .internal, message: "\(error)")) }
+    func remoteRequest(_ r: Request, device: RemoteDevice, via: RemoteVia, address: String) async -> Response {
+        var target: String?
+        let resp: Response
+        do { resp = Response(id: r.id, ok: true, result: try await remoteRead(r, device: device, via: via, target: &target)) }
+        catch let e as ProtocolError { resp = Response(id: r.id, ok: false, error: e) }
+        catch { resp = Response(id: r.id, ok: false, error: ProtocolError(code: .internal, message: "\(error)")) }
+        if RemoteSurface.commands[r.command] == .mutating {   // §4.3: who, from where, on what
+            remoteAudit.log(.init(device: device.id, deviceName: device.name, address: address, via: via), r.command, target: target, resp)
+        }
+        return resp
     }
 
-    private func remoteRead(_ r: Request, device: RemoteDevice, via: RemoteVia) async throws -> JSONValue {
+    /// "iPhone de Ana (Tailscale)": how the chat and the grants name a phone's decision.
+    static func remoteLabel(_ d: RemoteDevice, _ via: RemoteVia) -> String { "\(d.name) (\(via == .tailscale ? "Tailscale" : "rede local"))" }
+
+    /// `target`: what a mutating command acted on, for the audit line (an approval id, a card's path).
+    private func remoteRead(_ r: Request, device: RemoteDevice, via: RemoteVia, target: inout String?) async throws -> JSONValue {
         switch r.command {
         case "workspace.snapshot":
             let closed = Int(try num(r, "closedWorks", max: 100) ?? 20), arts = Int(try num(r, "artifacts", max: 200) ?? 50)
@@ -99,7 +109,30 @@ extension CommandRouter {
                 throw ProtocolError(code: .notFound, message: "Artifact não encontrado.")
             }
             return remoteArtifact(a)
-        default:   // allowlisted, mutating, past the scope gate: handlers in slices 7-8
+        case "approval.answer", "approval.dismiss":
+            guard let id = str(r, "id").flatMap(UUID.init(uuidString:)) else { throw ProtocolError(code: .invalidArgs, message: "Aprovação inválida.") }
+            target = id.uuidString.lowercased()
+            if r.command == "approval.dismiss" { return .object(["dismissed": .bool(await asks.dismissApproval(id))]) }
+            guard case .bool(let allow)? = r.args["allow"] else { throw ProtocolError(code: .invalidArgs, message: "approval.answer needs allow (true or false)") }
+            return try await approve(id, allow: allow, from: Self.remoteLabel(device, via))
+        case "access.grant", "access.deny":
+            // by card id: the phone can only open what a card shows (spec §3.7)
+            let card = str(r, "card") ?? ""
+            target = card
+            guard let d = accessCards.all.first(where: { RemoteSurface.cardId($0) == card }), let t = ws.terminals.first(where: { $0.id == d.terminal }) else {
+                throw ProtocolError(code: .notFound, message: "Cartão não encontrado: já respondido no Mac ou somado a outro.")
+            }
+            target = d.path
+            let before = cardIds
+            defer { publishCardsRemoved(since: before) }
+            if r.command == "access.deny" {
+                accessCards.deny(SandboxCards.Key(terminal: d.terminal, op: d.op, folder: d.folder))
+                return .object([:])
+            }
+            guard !flag(r, "lot") else { throw ProtocolError(code: .invalidArgs, message: "Pelo iPhone só se libera para este terminal, não para o lote: use o Mac.") }
+            return try await grantAccess(t, access: d.op == "read" ? .read : .write, path: d.path, folder: flag(r, "folder"), scope: .terminal,
+                                         by: .init(device: device.id.uuidString.lowercased(), deviceName: device.name, via: via.rawValue))
+        default:   // allowlisted, mutating, past the scope gate: handlers in slice 8
             throw ProtocolError(code: .unavailable, message: "'\(r.command)' ainda não está disponível pelo iPhone.")
         }
     }

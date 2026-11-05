@@ -17,13 +17,16 @@ struct RemoteContext: Sendable {
     let helloDeadline: Duration
     /// A phone claimed the pairing: the app shows its dialog.
     let onClaim: @Sendable (RemotePairingRequest) -> Void
-    /// An allowlisted request of a hello'd device (scope already checked): the daemon's answer.
-    let handle: @Sendable (Request, RemoteDevice, RemoteVia) async -> Response
+    /// An allowlisted request of a hello'd device (scope and limits already checked) from `address`: the daemon's answer
+    /// (it audits the mutating ones, knowing their target).
+    let handle: @Sendable (Request, RemoteDevice, RemoteVia, String) async -> Response
     /// `events.subscribe`'s source, and how many unsent event bytes a session may have before its subscription is cut.
     let events: RemoteEventBus
     let eventQueueBytes: Int
     /// `terminal.attach`'s source (output only); the same unsent-bytes cap applies to each attach.
     let hub: StreamHub
+    let audit: RemoteAudit
+    let limits: RemoteLimits
 }
 
 /// Close codes (spec §3.2). Before the WebSocket close frame the Mac sends `{"t":"closing","code","reason"}`: a native
@@ -131,6 +134,11 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         guard kind == .read || dev.scope == .full else {
             return reply(req.id, ProtocolError(code: .unauthorized, message: "Este aparelho é só de leitura: mude no Mac (Preferências → Celular)."))
         }
+        if let wait = ctx.limits.take(dev.id, mutating: kind == .mutating) {
+            let e = ProtocolError(code: .tooMany, message: "Muitos pedidos: tente de novo em instantes.", retryAfter: (wait * 10).rounded(.up) / 10)
+            if kind == .mutating { ctx.audit.log(who(dev), req.command, result: e.code.rawValue) }
+            return reply(req.id, e)
+        }
         switch req.command {
         case "events.subscribe":
             ctx.events.add(ObjectIdentifier(self)) { [weak self] e in self?.event(e) }
@@ -142,8 +150,8 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         case "terminal.detach": return detach(req)
         default: break
         }
-        let via = via, handle = ctx.handle
-        Task { [weak self] in self?.send(await handle(req, dev, via)) }
+        let via = via, address = address, handle = ctx.handle
+        Task { [weak self] in self?.send(await handle(req, dev, via, address)) }
     }
 
     /// One published event (any thread). The device is re-read (a revoke closes, 4001); past `eventQueueBytes` unsent,
@@ -193,8 +201,8 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         attachSeq += 1
         let a = Attach(sub: "t-\(attachSeq)", terminal: tid), q = queue, hub = ctx.hub, key = ObjectIdentifier(a)
         attaches[a.sub] = a
-        let tap = Fanout.Tap(out: { [weak self] d in q.async { self?.out(a, d) } },
-                             exited: { [weak self] c in q.async { self?.exited(a, c) } })
+        let tap = Fanout.Tap(out: { [weak self] d in q.async { [weak self] in self?.out(a, d) } },
+                             exited: { [weak self] c in q.async { [weak self] in self?.exited(a, c) } })
         Task { [weak self] in
             let res = await hub.attachRemote(tid, key: key, replayBytes: want, tap)
             q.async { [weak self] in
@@ -286,6 +294,9 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
             return reply(r.id, ProtocolError(code: .invalidArgs, message: "pair needs secret and device {name, model}"))
         }
         let model = if case .string(let m)? = d["model"] { m } else { "" }
+        let who = RemoteAudit.Who(device: nil, deviceName: name, address: address, via: via)
+        var failed = false
+        defer { if failed { ctx.limits.failed(address) } }
         do {
             let claim = try ctx.pairing.claim(secret: secret, device: .init(name: name, model: model, address: address, via: via))
             lock.withLock { claimed = claim.pairingId }
@@ -293,9 +304,15 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
                 ctx.onClaim(RemotePairingRequest(pairingId: claim.pairingId, name: a.device.name, model: a.device.model, address: address,
                                                  via: via.rawValue, code: claim.code, deadline: Date() + RemotePairing.confirmLife))
             }
+            ctx.audit.log(who, "pair", target: claim.pairingId.uuidString.lowercased(), result: "ok")
             reply(r.id, .object(["pairingId": .string(claim.pairingId.uuidString.lowercased()), "code": .string(claim.code),
                                  "via": .string(via.rawValue), "mac": macJSON([:])]))
-        } catch let e as ProtocolError { reply(r.id, e) } catch { reply(r.id, ProtocolError(code: .internal, message: "\(error)")) }
+        } catch {
+            let e = error
+            failed = true
+            ctx.audit.log(who, "pair", result: e.code.rawValue)
+            reply(r.id, e)
+        }
     }
 
     private func pairWait(_ r: Request) {
@@ -310,6 +327,7 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
             case .accepted(let d):
                 do {
                     let (dev, token) = try ctx.devices.add(d, fingerprint: ctx.fingerprint)
+                    ctx.audit.log(who(dev), "pair.accepted", result: "ok")
                     reply(r.id, .object(["deviceId": .string(dev.id.uuidString.lowercased()), "token": .string(token),
                                          "pairedAt": .string(dev.pairedAt.ISO8601Format()),
                                          "mac": macJSON(["keyFingerprint": .string(ctx.fingerprint)])]))
@@ -324,9 +342,13 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
     private func hello(_ r: Request) {
         guard case .string(let s)? = r.args["deviceId"], let id = UUID(uuidString: s), case .string(let token)? = r.args["token"],
               let (dev, rotate) = ctx.devices.hello(id: id, token: token, fingerprint: ctx.fingerprint, address: address, via: via) else {
+            ctx.limits.failed(address)
+            let claimed = (r.args["deviceId"]).flatMap { if case .string(let s) = $0 { UUID(uuidString: s) } else { nil } }
+            ctx.audit.log(.init(device: claimed, deviceName: nil, address: address, via: via), "session.hello", result: "unauthorized")
             reply(r.id, ProtocolError(code: .unauthorized, message: "Aparelho não reconhecido: pareie de novo."))
             return close(.protocolError)
         }
+        ctx.audit.log(who(dev), "session.hello", result: "ok")
         lock.withLock { device = id }
         for old in sessions.authenticated(self, device: id) { old.close(.replaced) }
         var o: [String: JSONValue] = ["protocol": .number(Double(Protocol.version)), "mac": macJSON([:]),
@@ -335,6 +357,8 @@ final class RemoteSession: @unchecked Sendable {   // state under `lock`
         if let rotate { o["rotate"] = .string(rotate) }
         reply(r.id, .object(o))
     }
+
+    private func who(_ d: RemoteDevice) -> RemoteAudit.Who { .init(device: d.id, deviceName: d.name, address: address, via: via) }
 
     private func macJSON(_ extra: [String: JSONValue]) -> JSONValue {
         .object(["name": .string(ctx.macName), "installId": .string(ctx.installId), "collieVersion": .string(ctx.version),

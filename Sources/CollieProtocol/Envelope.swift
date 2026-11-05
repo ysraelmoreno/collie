@@ -6,7 +6,9 @@ public enum ErrorCode: String, Codable, Sendable {
 public struct ProtocolError: Error, Codable, Sendable, Equatable {
     public var code: ErrorCode
     public var message: String
-    public init(code: ErrorCode, message: String) { self.code = code; self.message = message }
+    /// `tooMany`: seconds until the request would be taken (remote API rate limits); nil elsewhere.
+    public var retryAfter: Double?
+    public init(code: ErrorCode, message: String, retryAfter: Double? = nil) { self.code = code; self.message = message; self.retryAfter = retryAfter }
 }
 
 public struct Request: Codable, Sendable, Equatable {

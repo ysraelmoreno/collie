@@ -27,10 +27,12 @@ actor RemoteGateway {
         var build: String
         var helloDeadline: Duration
         var onClaim: @Sendable (RemotePairingRequest) -> Void
-        var handle: @Sendable (Request, RemoteDevice, RemoteVia) async -> Response
+        var handle: @Sendable (Request, RemoteDevice, RemoteVia, String) async -> Response
         var events: RemoteEventBus
         var eventQueueBytes: Int
         var hub: StreamHub
+        var audit: RemoteAudit
+        var limits = RemoteLimits()
     }
 
     private let allowLoopback: Bool
@@ -60,7 +62,8 @@ actor RemoteGateway {
             let filter = (tailscaleOnly: s.tailscaleOnly, loopback: allowLoopback), sessions = sessions, queue = queue
             let ctx = RemoteContext(devices: deps.devices, pairing: deps.pairing, fingerprint: identity.fingerprint, installId: installId,
                                     macName: deps.macName, version: deps.version, build: deps.build, helloDeadline: deps.helloDeadline, onClaim: deps.onClaim,
-                                    handle: deps.handle, events: deps.events, eventQueueBytes: deps.eventQueueBytes, hub: deps.hub)
+                                    handle: deps.handle, events: deps.events, eventQueueBytes: deps.eventQueueBytes, hub: deps.hub,
+                                    audit: deps.audit, limits: deps.limits)
             l.newConnectionHandler = { c in Self.accept(c, filter: filter, ctx: ctx, sessions: sessions, queue: queue) }
             let ready = await withCheckedContinuation { (k: CheckedContinuation<String?, Never>) in
                 let once = Once(k)
@@ -124,6 +127,7 @@ actor RemoteGateway {
         guard case .hostPort(let host, _) = c.endpoint else { c.cancel(); return }
         let address = "\(host)".split(separator: "%", maxSplits: 1).first.map(String.init) ?? "\(host)"
         guard let via = RemoteAddress.via(address, tailscaleOnly: filter.tailscaleOnly, allowLoopback: filter.loopback) else { c.cancel(); return }
+        guard !ctx.limits.isBlocked(address) else { c.cancel(); return }   // 10 failed pair/hello within a minute (§4.2)
         let s = RemoteSession(conn: c, address: address, via: via, ctx: ctx, sessions: sessions, queue: queue)
         guard sessions.add(s) else { c.cancel(); return }
         s.start()

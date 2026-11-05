@@ -13,9 +13,16 @@ public struct SandboxGrant: Codable, Sendable, Equatable, Identifiable {
     /// A terminal grant's project when it was clicked (R29): a reused id on another project loses it.
     public var project: String?
     public var createdAt: Date
-    public init(id: UUID = UUID(), path: String, access: Access, scope: Scope, owner: UUID, project: String? = nil, createdAt: Date = Date()) {
+    /// Granted from a paired phone (remote API): which one, over what; nil = on the Mac.
+    public struct By: Codable, Sendable, Equatable {
+        public var device: String, deviceName: String, via: String
+        public init(device: String, deviceName: String, via: String) { self.device = device; self.deviceName = deviceName; self.via = via }
+    }
+    public var by: By?
+    public init(id: UUID = UUID(), path: String, access: Access, scope: Scope, owner: UUID, project: String? = nil, createdAt: Date = Date(),
+                by: By? = nil) {
         self.id = id; self.path = path; self.access = access; self.scope = scope; self.owner = owner; self.project = project
-        self.createdAt = createdAt
+        self.createdAt = createdAt; self.by = by
     }
 }
 

@@ -265,7 +265,13 @@ scripts/dev/run-isolated.sh cli admin kill Asker && scripts/dev/run-isolated.sh 
 cat /tmp/collie-dev/remote/audit.jsonl                  # who answered, from where
 ```
 
-A menu-style prompt (`kind: menu`, like Claude's dialogs): `--command "printf 'Do you want to proceed?\\n❯ 1. Yes\\n  2. No\\n'; read -n1 k; echo KEY=\$k; exec cat"`.
+A menu-style prompt (`kind: menu`, like Claude's dialogs) is detected only on a Claude terminal
+(`AttentionDetector` checks menus with `isClaude`; with `--preset custom` no approval appears — E2E finding,
+2026-11-05), so it takes `--preset claude` (the `--command` runs instead of claude). Allow types `1`, deny `Esc`:
+
+```sh
+scripts/dev/run-isolated.sh cli admin spawn Menu --preset claude --command "printf 'Do you want to proceed?\\n❯ 1. Yes\\n  2. No\\n'; read -n1 k; echo KEY=\$k; exec cat"
+```
 Access cards need a sandboxed terminal: the dev daemon runs with `--no-terminal-sandbox`, so test `access.grant/deny`
 on a daemon started without it (or rely on `RemoteMutationTests`).
 

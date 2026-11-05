@@ -600,6 +600,26 @@ extension AskTests {
         }
     }
 
+    /// DX backlog 1: `ask result` tells how and when the ask ended (askedAt ≤ deliveredAt ≤ completedAt, source).
+    @Test func noWaitResultTellsHowAndWhenItEnded() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A")
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
+            #expect(await waitFor(10) { field(try! await askResult(p, a, id), "deliveredAt") != nil })
+            let pending = try await askResult(p, a, id)
+            #expect(field(pending, "status") == "pending" && field(pending, "completedAt") == nil && field(pending, "source") == nil)
+            try await hook(d, p, b, "done")
+            #expect(await waitFor(10) { field(try! await askResult(p, a, id), "status") == "done" })
+            let res = try await askResult(p, a, id)
+            #expect(field(res, "source") == "hook")
+            let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let at = ["askedAt", "deliveredAt", "completedAt"].compactMap { field(res, $0).flatMap(f.date) }
+            #expect(at.count == 3 && at == at.sorted(), "\(String(describing: res.result))")
+        }
+    }
+
     @Test func noWaitNotTypedMidTurn() async throws {
         try await withHookDaemon { d, p in
             // prints for ~5 s (a turn in progress), then reads quietly

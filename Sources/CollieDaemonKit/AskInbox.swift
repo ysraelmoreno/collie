@@ -9,6 +9,9 @@ actor AskInbox {
         var id: String, target: String
         var status: Status = .pending
         var output: String?, error: String?
+        /// How it ended (hook/idle) and when: asked, prompt delivered (submitted), reply or failure.
+        var source: AskResult.Source?
+        var askedAt = Date(), deliveredAt: Date?, completedAt: Date?
     }
     static let keep = 20, deliverMax = 3000
     private var byAsker: [UUID: [Entry]] = [:]   // oldest first
@@ -23,12 +26,17 @@ actor AskInbox {
     }
 
     /// Records the reply; nil when the ask is gone (asker removed, or pushed out by newer asks).
+    func delivered(id: String) {
+        for (from, list) in byAsker { if let i = list.firstIndex(where: { $0.id == id && $0.completedAt == nil }) { byAsker[from]![i].deliveredAt = Date() } }
+    }
+
     @discardableResult
     func close(id: String, _ r: Result<AskResult, ProtocolError>) -> Entry? {
         for (from, list) in byAsker {
             guard let i = list.firstIndex(where: { $0.id == id }) else { continue }
+            byAsker[from]![i].completedAt = Date()
             switch r {
-            case .success(let a): byAsker[from]![i].status = .done; byAsker[from]![i].output = a.output
+            case .success(let a): byAsker[from]![i].status = .done; byAsker[from]![i].output = a.output; byAsker[from]![i].source = a.source
             case .failure(let e): byAsker[from]![i].status = .failed; byAsker[from]![i].error = e.message
             }
             return byAsker[from]![i]
@@ -53,6 +61,11 @@ actor AskInbox {
         var o: [String: JSONValue] = ["askId": .string(e.id), "target": .string(e.target), "status": .string(e.status.rawValue)]
         if let out = e.output { o["output"] = .string(out) }
         if let err = e.error { o["error"] = .string(err) }
+        if let s = e.source { o["source"] = .string(s.rawValue) }
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        o["askedAt"] = .string(f.string(from: e.askedAt))
+        if let d = e.deliveredAt { o["deliveredAt"] = .string(f.string(from: d)) }
+        if let d = e.completedAt { o["completedAt"] = .string(f.string(from: d)) }
         return .object(o)
     }
 }

@@ -290,6 +290,8 @@ public actor AskCoordinator {
         var user = false
         /// `ask --no-wait`: the asker isn't blocked, so no edge in the deadlock graph.
         var detached = false
+        /// `ask --no-wait`: told once the prompt is written (and, for a Claude TUI, submitted) — the inbox's deliveredAt.
+        var onDelivered: (@Sendable () -> Void)?
         var cont: CheckedContinuation<Result<AskResult, ProtocolError>, Never>?
         var timer: Task<Void, Never>?
     }
@@ -354,7 +356,8 @@ public actor AskCoordinator {
         }
     }
 
-    public func ask(from: UUID, to: UUID, prompt: String, raw: Bool, timeout: Duration, detached: Bool = false) async throws(ProtocolError) -> AskResult {
+    public func ask(from: UUID, to: UUID, prompt: String, raw: Bool, timeout: Duration, detached: Bool = false,
+                    onDelivered: (@Sendable () -> Void)? = nil) async throws(ProtocolError) -> AskResult {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
         }
@@ -365,7 +368,8 @@ public actor AskCoordinator {
         // R7: unguarded on purpose — v1 asks answer prompts (a Shepherd's `collie ask B y`); but a task sent to an agent
         // still opening must not answer its trust dialog with an Enter and be lost
         let task = t.claudeTUI && !t.typed && prompt.count > Self.dialogAnswerMax
-        return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, guardsApproval: task, detached: detached, cont: nil), timeout: timeout)
+        return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, guardsApproval: task, detached: detached,
+                                  onDelivered: onDelivered, cont: nil), timeout: timeout)
     }
 
     /// The user's ask (work chat): same FIFO, readiness gate and hook/idle completion as `ask`, but no caller
@@ -671,7 +675,7 @@ public actor AskCoordinator {
                     try process.write(PromptInjector.submit, origin: w.user ? .user : .collie)
                 }
                 if confirm { Task { await self?.confirmSubmit(id, to, after: submits) } }
-                else if inject { Task { await self?.delivered(id) } }
+                else { Task { await self?.delivered(id) } }
             } catch {
                 let e = (error as? PTYError) == .stalled
                     ? ProtocolError(code: .timeout, message: "target '\(name)' is not accepting input")
@@ -780,6 +784,7 @@ public actor AskCoordinator {
 
     /// Inject written: resume its caller now; the waiter keeps the slot until its turn ends.
     private func delivered(_ id: UUID) {
+        waiters[id]?.onDelivered?(); waiters[id]?.onDelivered = nil
         // an ask's caller waits for the turn's reply (hook/idle): only an inject resumes on delivery
         guard waiters[id]?.inject == true else { return }
         waiters[id]?.cont?.resume(returning: .success(AskResult(output: "", source: .hook, truncated: false)))

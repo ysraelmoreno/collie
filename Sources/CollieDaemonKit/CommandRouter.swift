@@ -12,7 +12,7 @@ actor CommandRouter {
     private let store: WorkspaceStore
     let asks: AskCoordinator
     /// `ask --no-wait` replies, per asker.
-    let inbox = AskInbox()
+    let inbox: AskInbox
     let hub: StreamHub
     let usage: UsageService
     var ws: Workspace
@@ -125,6 +125,7 @@ actor CommandRouter {
     init(config: DaemonConfig, auth: AuthRegistry, registry: TerminalRegistry, store: WorkspaceStore,
          asks: AskCoordinator, hub: StreamHub, workspace: Workspace, userEnv: UserEnvironment) {
         self.config = config; self.auth = auth; self.registry = registry; self.store = store; self.userEnv = userEnv
+        self.inbox = AskInbox(file: config.paths.root.appendingPathComponent("asks/inbox.json"))   // DX backlog 14
         self.asks = asks; self.hub = hub; self.ws = workspace
         // R26: every stored grant passes the refusals again (an edited grants.json, a rule added since): refused ones go
         let home = config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()), root = config.paths.root

@@ -760,3 +760,22 @@ extension AskTests {
         }
     }
 }
+
+/// DX backlog 14: the inbox survives a daemon restart; an ask still pending then can't finish anymore.
+@Suite struct AskInboxPersistenceTests {
+    @Test func inboxSurvivesARestart() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("inbox-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let me = UUID()
+        let a = AskInbox(file: file)
+        let done = await a.open(from: me, target: "B"), pending = await a.open(from: me, target: "C")
+        await a.delivered(id: done)
+        await a.close(id: done, .success(AskResult(output: "the reply", source: .hook, truncated: false)))
+        let b = AskInbox(file: file)   // the daemon again
+        let d = try #require(await b.get(id: done, from: me))
+        #expect(d.status == .done && d.output == "the reply" && d.source == .hook && d.deliveredAt != nil && d.completedAt != nil)
+        let p = try #require(await b.get(id: pending, from: me))
+        #expect(p.status == .failed && p.error?.contains("restarted") == true, "\(p)")
+        #expect(await AskInbox(file: nil).recent(from: me).isEmpty, "no file: memory only (tests)")
+    }
+}

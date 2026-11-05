@@ -2,10 +2,11 @@ import Foundation
 import CollieProtocol
 
 /// `ask --no-wait`: each asker's recent asks and their replies, readable only by the asker (`ask.result`).
-// ponytail: memory only — a daemon restart loses pending asks and replies; persist if users hit it
+/// Kept in `file` (DX backlog 14): a restart keeps the replies; an ask still pending then can't finish (failed).
+// ponytail: the whole file rewritten on each change (≤ 20 entries per asker)
 actor AskInbox {
-    struct Entry: Sendable, Equatable {
-        enum Status: String, Sendable { case pending, done, failed }
+    struct Entry: Sendable, Equatable, Codable {
+        enum Status: String, Sendable, Codable { case pending, done, failed }
         var id: String, target: String
         var status: Status = .pending
         var output: String?, error: String?
@@ -15,6 +16,30 @@ actor AskInbox {
     }
     static let keep = 20, inlineMax = 300, previewMax = 120
     private var byAsker: [UUID: [Entry]] = [:]   // oldest first
+    private let file: URL?
+
+    init(file: URL? = nil) {
+        self.file = file
+        guard let file, let d = try? Data(contentsOf: file) else { return }
+        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
+        guard var all = try? dec.decode([UUID: [Entry]].self, from: d) else { return }
+        for (k, list) in all {
+            all[k] = list.map { e in
+                guard e.status == .pending else { return e }
+                var e = e; e.status = .failed; e.error = "the daemon restarted before the reply"; e.completedAt = Date(); return e
+            }
+        }
+        byAsker = all
+    }
+
+    private func save() {
+        guard let file else { return }
+        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
+        guard let d = try? enc.encode(byAsker) else { return }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        try? d.write(to: file, options: [.atomic])   // ponytail: a failed write loses only the persistence, never the reply
+    }
 
     /// A new id (8 lowercase hex chars, unique in the inbox) for `from`'s ask to `target`.
     func open(from: UUID, target: String) -> String {
@@ -22,12 +47,14 @@ actor AskInbox {
         repeat { id = String(UUID().uuidString.prefix(8)).lowercased() } while byAsker.values.contains { $0.contains { $0.id == id } }
         byAsker[from, default: []].append(Entry(id: id, target: target))
         if byAsker[from]!.count > Self.keep { byAsker[from]!.removeFirst() }
+        save()
         return id
     }
 
     /// Records the reply; nil when the ask is gone (asker removed, or pushed out by newer asks).
     func delivered(id: String) {
         for (from, list) in byAsker { if let i = list.firstIndex(where: { $0.id == id && $0.completedAt == nil }) { byAsker[from]![i].deliveredAt = Date() } }
+        save()
     }
 
     @discardableResult
@@ -39,6 +66,7 @@ actor AskInbox {
             case .success(let a): byAsker[from]![i].status = .done; byAsker[from]![i].output = a.output; byAsker[from]![i].source = a.source
             case .failure(let e): byAsker[from]![i].status = .failed; byAsker[from]![i].error = e.message
             }
+            save()
             return byAsker[from]![i]
         }
         return nil
@@ -47,7 +75,7 @@ actor AskInbox {
     func get(id: String, from: UUID) -> Entry? { byAsker[from]?.first { $0.id == id } }
     /// Newest first.
     func recent(from: UUID) -> [Entry] { (byAsker[from] ?? []).reversed() }
-    func drop(terminal: UUID) { byAsker[terminal] = nil }
+    func drop(terminal: UUID) { byAsker[terminal] = nil; save() }
 
     /// The line typed into the asker's terminal: never a pasted block (Claude shows one as "[Pasted text]", easy to leave
     /// unsent). A short reply inline, whitespace folded; a long one as its first line and where to read it all.
@@ -74,3 +102,5 @@ actor AskInbox {
         return .object(o)
     }
 }
+
+extension AskResult.Source: Codable {}

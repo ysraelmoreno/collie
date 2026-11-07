@@ -7,11 +7,11 @@ import CollieTheme
 
 extension PaddockStatus {
     /// Working and review share `secondary`: the symbol shape (and the label) tells them apart.
-    var color: Color { switch self { case .working, .review: .collieSecondary; case .blocked: .collieAttention; case .done: .collieAccent } }
+    var color: Color { switch self { case .working, .review: .collieSecondary; case .blocked: .collieAttention; case .done: .collieAccent; case .idle: .collieMuted } }
     /// A distinct shape per status, so a chip never shows state by color alone.
-    var symbol: String { switch self { case .working: "circle.fill"; case .review: "circle"; case .blocked: "exclamationmark.circle.fill"; case .done: "checkmark.circle.fill" } }
-    var label: String { switch self { case .working: "Trabalhando"; case .blocked: "Bloqueado"; case .review: "Em revisão"; case .done: "Concluído" } }
-    static let menuOrder: [PaddockStatus] = [.working, .blocked, .review, .done]
+    var symbol: String { switch self { case .working: "circle.fill"; case .review: "circle"; case .blocked: "exclamationmark.circle.fill"; case .done: "checkmark.circle.fill"; case .idle: "pause.circle" } }
+    var label: String { switch self { case .working: "Trabalhando"; case .blocked: "Bloqueado"; case .review: "Em revisão"; case .done: "Concluído"; case .idle: "Ocioso" } }
+    static let menuOrder: [PaddockStatus] = [.working, .blocked, .review, .idle, .done]
 }
 
 /// The paddock status mark: shape plus color (decorative; the label carries it for VoiceOver).

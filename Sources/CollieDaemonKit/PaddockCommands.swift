@@ -47,7 +47,7 @@ extension CommandRouter {
                 throw refuse("only the paddock's creator Shepherd or its terminals can set its status")
             }
             guard let s = PaddockStatus(rawValue: try need(r, "status")) else {
-                throw ProtocolError(code: .invalidArgs, message: "status must be working|blocked|review|done")
+                throw ProtocolError(code: .invalidArgs, message: "status must be working|blocked|review|idle|done")
             }
             f.status = s
             try await save(f)

@@ -25,6 +25,8 @@ actor CommandRouter {
     var paddockBusy: Set<String> = []
     /// Paddocks whose delete is in flight: a launch into one that finishes meanwhile is undone (`ensurePaddock`).
     var paddockDeleting: Set<UUID> = []
+    /// Each paddock's last computed status (PaddockAutoStatus); in memory: after a restart the first computation applies.
+    var paddockComputed: [UUID: PaddockStatus] = [:]
     /// A design system scope change (`design.system.use`/`undo`, a paddock's delete) in flight: one at a time.
     var designScopeBusy = false
     /// Recent plugin events per panel (ring of `panelEventCap`) and the last sequence number handed out.
@@ -198,7 +200,15 @@ actor CommandRouter {
         me.router = self
         let approvals = asks.approvalEvents
         Task { for await e in approvals { await me.router?.approvalChanged(e); await me.router?.remoteApproval(e) } }
-        Task { for await e in await hub.tapEvents() { await me.router?.remoteWorkspaceEvent(e) } }   // remote API events, in order
+        Task {   // remote API events, in order; terminal events also recompute the paddocks' statuses
+            for await e in await hub.tapEvents() {
+                await me.router?.remoteWorkspaceEvent(e)
+                switch e {
+                case .status, .exited, .spawned, .terminal, .removed: await me.router?.refreshPaddockStatuses()
+                default: break
+                }
+            }
+        }
         let chat = chat
         Task { await chat.setOnAppend { m in remoteEvents.publish(.object(["t": .string("chat"), "message": RemoteSurface.chat(m)])) } }
     }

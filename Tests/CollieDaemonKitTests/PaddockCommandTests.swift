@@ -181,6 +181,21 @@ private func paddockList(_ r: Response) -> [[String: JSONValue]] {
         }
     }
 
+    /// DX 19: once its agents go quiet a paddock shows review (work to land) or idle (nothing), from the badges alone.
+    @Test func statusFollowsTheTerminals() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let m = try await term(d, p, "M", cwd: repo, shepherd: true)
+            #expect(try await call(p, m, "paddock.create", ["name": "feat"]).ok)
+            #expect(try await call(p, m, "paddock.create", ["name": "calm"]).ok)
+            #expect(try await call(p, m, "summon", ["name": "dev", "preset": "shell", "paddock": "feat", "prompt": "touch new.txt"]).ok)
+            #expect(try await call(p, m, "summon", ["name": "zen", "preset": "shell", "paddock": "calm"]).ok)
+            func status(_ n: String) async throws -> PaddockStatus? { try await snapshot(d, p).paddocks.first { $0.name == n }?.status }
+            #expect(await waitFor(20) { (try? await status("feat")) == .review })
+            #expect(await waitFor(20) { (try? await status("calm")) == .idle })
+        }
+    }
+
     @Test func deleteRefusedWithRunningTerminals() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

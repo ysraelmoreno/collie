@@ -113,7 +113,7 @@ public enum Commands {
         CommandSpec(name: "paddock.list", summary: "List paddocks", timeoutSeconds: 10),
         CommandSpec(name: "paddock.status", summary: "Set a paddock's status",
                     params: [ParamSpec("name", .string, positional: true, required: true, help: "Paddock name"),
-                             ParamSpec("status", .string, positional: true, required: true, help: "working|blocked|review|done")],
+                             ParamSpec("status", .string, positional: true, required: true, help: "working|blocked|review|idle|done (computed from the terminals; a manual one holds until that changes)")],
                     timeoutSeconds: 10),
         CommandSpec(name: "paddock.land", summary: "Land a paddock back onto its base branch",
                     params: [ParamSpec("name", .string, positional: true, required: true, help: "Paddock name"),

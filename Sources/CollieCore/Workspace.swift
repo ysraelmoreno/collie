@@ -58,7 +58,8 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-public enum PaddockStatus: String, Codable, Sendable { case working, blocked, review, done }
+/// `idle`: every agent stopped and nothing to land (computed only; see PaddockAutoStatus in the daemon).
+public enum PaddockStatus: String, Codable, Sendable { case working, blocked, review, done, idle }
 public enum LandMode: String, Codable, Sendable { case merge, squash, rebase, pr }
 
 /// `worktree`: a git worktree on its own branch of the pasture. `folder`: an existing folder (git or not), worked in place:

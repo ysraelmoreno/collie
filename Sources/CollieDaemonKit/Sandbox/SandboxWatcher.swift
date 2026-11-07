@@ -82,7 +82,8 @@ enum SandboxWatcher {
             Thread {
                 var buf = Data()
                 while true {
-                    let d = h.availableData
+                    // the NSData is autoreleased and this thread's pool never drains: ~2 GB/day held without it
+                    let d = autoreleasepool { h.availableData }
                     if d.isEmpty { break }
                     buf.append(d)
                     while let i = buf.firstIndex(of: 10) {

@@ -26,6 +26,7 @@ import CollieTheme
     /// Overlay on the body's bottom edge (never part of the terminal's frame: no PTY resize when it shows).
     private let strip: NSHostingView<AccessStrip>
     private let leash = LeashHandle()
+    private let chatToggle = ChatToggle()
     /// Leash drag from this node's handle: window-space point, and whether the mouse was released.
     var onLeashDrag: ((UUID, CGPoint, Bool) -> Void)?
     private(set) var term: NodeTerminal?
@@ -67,6 +68,12 @@ import CollieTheme
         addSubview(corner)
         leash.onDrag = { [weak self] p, done in if let self { self.onLeashDrag?(self.id, p, done) } }
         addSubview(leash)
+        chatToggle.onClick = { [weak self] in
+            guard let self, let t = self.client.terminals.first(where: { $0.id == self.id }) else { return }
+            let pref = TerminalStyle(rawValue: UserDefaults.standard.string(forKey: AppearanceKeys.terminalStyle) ?? "") ?? .terminal
+            Task { try? await self.client.setStyle(t.name, (t.style ?? pref) == .chat ? .terminal : .chat) }
+        }
+        addSubview(chatToggle)
         node.onStreamChange = { [weak self] s in self?.attach(s) }
         attach(node.stream)
         // Preferences write the font to the standard defaults; any other write is ignored (no reflow).
@@ -91,6 +98,7 @@ import CollieTheme
         let r = client.terminals.first { $0.id == id }
         let pref = TerminalStyle(rawValue: UserDefaults.standard.string(forKey: AppearanceKeys.terminalStyle) ?? "") ?? .terminal
         let chat = r?.preset == .claude && (r?.style ?? pref) == .chat
+        chatToggle.isHidden = r?.preset != .claude; chatToggle.chat = chat
         if chat, chatHost == nil {
             let h = NSHostingView(rootView: ChatBodyView(id: id, client: client))
             addSubview(h, positioned: .below, relativeTo: strip)
@@ -303,6 +311,7 @@ import CollieTheme
         // Claude terminals have the extra chat-toggle icon: keep the ring clear of it.
         let icons: CGFloat = client.terminals.first { $0.id == id }?.preset == .claude ? 114 : 82
         leash.frame = CGRect(x: max(bounds.width - icons, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
+        chatToggle.frame = CGRect(x: max(bounds.width - 79, 0), y: (Self.titleHeight - 22) / 2, width: 22, height: 22)
         corner.frame = Self.cornerFrame(bounds)
         reconcileGrid()
     }
@@ -479,6 +488,23 @@ final class LeashHandle: NSView {
     override func mouseUp(with event: NSEvent) { onDrag?(event.locationInWindow, true) }
 }
 
+/// The title bar's chat/terminal switch. AppKit, like `LeashHandle`: a SwiftUI button inside the zoom-scaled title host hit-tests off its drawing.
+final class ChatToggle: NSView {
+    var onClick: (() -> Void)?
+    var chat = false { didSet { if chat != oldValue { needsDisplay = true; toolTip = chat ? "Mostrar o terminal" : "Mostrar como chat" } } }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let img = NSImage(systemSymbolName: chat ? "terminal" : "bubble.left.and.text.bubble.right", accessibilityDescription: chat ? "Mostrar o terminal" : "Mostrar como chat") else { return }
+        let tinted = img.withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) ?? img
+        let r = NSRect(x: (bounds.width - tinted.size.width) / 2, y: (bounds.height - tinted.size.height) / 2, width: tinted.size.width, height: tinted.size.height)
+        CollieColor.muted.set()
+        tinted.draw(in: r)
+        r.fill(using: .sourceIn)
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) { if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() } }
+}
+
 /// The bottom-right resize corner.
 final class DragHandle: NSView {
     var onDrag: ((CGSize) -> Void)?, onMouseUp: (() -> Void)?
@@ -525,13 +551,7 @@ struct NodeTitleBar: View {
             if case .stopped = status { Button("Reiniciar", action: restart).controlSize(.mini) }
             Spacer(minLength: 0)
             if t?.preset == .claude {
-                let chat = (t?.style ?? TerminalStyle(rawValue: stylePref) ?? .terminal) == .chat
-                Button { Task { try? await client.setStyle(t?.name ?? "", chat ? .terminal : .chat) } } label: {
-                    Image(systemName: chat ? "terminal" : "bubble.left.and.text.bubble.right")
-                }
-                .buttonStyle(.plain).foregroundStyle(Color.collieMuted)
-                .frame(width: 22, height: 22).contentShape(Rectangle())   // a plain button only hits its drawn pixels; these glyphs are hollow
-                .help(chat ? "Mostrar o terminal" : "Mostrar como chat").accessibilityLabel(chat ? "Mostrar o terminal" : "Mostrar como chat")
+                Color.clear.frame(width: 22, height: 22)   // room for the AppKit ChatToggle overlay (SwiftUI hit-testing drifts under the node's zoom)
             }
             FullscreenButton(action: fullscreen)
             Menu {

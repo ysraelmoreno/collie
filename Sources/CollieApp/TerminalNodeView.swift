@@ -34,6 +34,8 @@ import CollieTheme
     private var reader: Task<Void, Never>?
     private var fontChoice = AppearanceSettings(defaults: .standard).terminalFont
     private var defaultsObserver: NSObjectProtocol?
+    /// The chat body (Claude, style chat) over the terminal, which stays mounted and hidden: the session is kept.
+    private var chatHost: NSHostingView<ChatBodyView>?
 
     override var isFlipped: Bool { true }
 
@@ -70,7 +72,7 @@ import CollieTheme
         // Preferences write the font to the standard defaults; any other write is ignored (no reflow).
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
                                                                   queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reapplyFont() }
+            MainActor.assumeIsolated { self?.reapplyFont(); self?.updateStyle() }
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -79,8 +81,22 @@ import CollieTheme
 
     /// Re-runs `applyChrome` whenever this node's badge changes (the attention border).
     private func observeChrome() {
-        withObservationTracking { applyChrome(); updateStrip() } onChange: { [weak self] in
+        withObservationTracking { applyChrome(); updateStrip(); updateStyle() } onChange: { [weak self] in
             Task { @MainActor in self?.observeChrome() }
+        }
+    }
+
+    /// Chat body or terminal: the terminal's own style, else Preferências; Claude only (no transcript elsewhere).
+    private func updateStyle() {
+        let r = client.terminals.first { $0.id == id }
+        let pref = TerminalStyle(rawValue: UserDefaults.standard.string(forKey: AppearanceKeys.terminalStyle) ?? "") ?? .terminal
+        let chat = r?.preset == .claude && (r?.style ?? pref) == .chat
+        if chat, chatHost == nil {
+            let h = NSHostingView(rootView: ChatBodyView(id: id, client: client))
+            addSubview(h, positioned: .below, relativeTo: strip)
+            chatHost = h; term?.isHidden = true; needsLayout = true
+        } else if !chat, let h = chatHost {
+            h.removeFromSuperview(); chatHost = nil; term?.isHidden = false; needsLayout = true
         }
     }
 
@@ -281,9 +297,10 @@ import CollieTheme
             t.frame = bodyFrame
             Log.canvas.debug("grid \(self.id) frame \(self.bodyFrame.size.debugDescription, privacy: .public) dims \(t.terminalDimensions.cols)x\(t.terminalDimensions.rows) live \(self.inLiveResize)")
         }
+        chatHost?.frame = bodyFrame
         strip.frame = CGRect(x: 0, y: bounds.height - AccessStrip.height, width: bounds.width, height: AccessStrip.height)
         label?.frame = bodyFrame.insetBy(dx: 4, dy: max(bodyFrame.height / 2 - 10 / canvas.zoom, 0))
-        leash.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
+        leash.frame = CGRect(x: max(bounds.width - 82, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = Self.cornerFrame(bounds)
         reconcileGrid()
     }
@@ -484,6 +501,7 @@ struct NodeTitleBar: View {
     let restart: () -> Void, kill: () -> Void, captureMemory: () -> Void, edit: () -> Void, closeNode: () -> Void
     let setLot: (Lot?) -> Void
     let fullscreen: () -> Void
+    @AppStorage(AppearanceKeys.terminalStyle) private var stylePref = TerminalStyle.terminal.rawValue
 
     var body: some View {
         let t = client.terminals.first { $0.id == id }
@@ -496,6 +514,7 @@ struct NodeTitleBar: View {
                 Text("pastoreando \(client.connections.filter { $0.a == id || $0.b == id }.count)").foregroundStyle(Color.collieMuted)
             }
             Text(t?.preset.rawValue ?? "").foregroundStyle(Color.collieMuted).lineLimit(1)
+            if let m = t?.model { Text(m).foregroundStyle(Color.collieMuted).lineLimit(1).help("Modelo (collie model \(t?.name ?? "") <modelo>)") }
             if t?.sandbox == .free { CollieTag("livre", tone: .danger).help("Terminal livre: sem sandbox, nenhuma guia chega a ele") }
             else if t != nil { AccessBadge(id: id, client: client) }
             if let l = client.lot(of: id) { CollieTag(l.name, tone: .secondary).help(l.goal.isEmpty ? "Lote \(l.name)" : "Lote \(l.name): \(l.goal)") }
@@ -503,6 +522,13 @@ struct NodeTitleBar: View {
             if let text = status.text { Text(text).foregroundStyle(color(status)).lineLimit(1) }
             if case .stopped = status { Button("Reiniciar", action: restart).controlSize(.mini) }
             Spacer(minLength: 0)
+            if t?.preset == .claude {
+                let chat = (t?.style ?? TerminalStyle(rawValue: stylePref) ?? .terminal) == .chat
+                Button { Task { try? await client.setStyle(t?.name ?? "", chat ? .terminal : .chat) } } label: {
+                    Image(systemName: chat ? "terminal" : "bubble.left.and.text.bubble.right")
+                }
+                .buttonStyle(.plain).help(chat ? "Mostrar o terminal" : "Mostrar como chat").accessibilityLabel(chat ? "Mostrar o terminal" : "Mostrar como chat")
+            }
             FullscreenButton(action: fullscreen)
             Menu {
                 Button("Tela cheia", action: fullscreen).keyboardShortcut(.return, modifiers: .command)

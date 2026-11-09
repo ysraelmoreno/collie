@@ -150,6 +150,7 @@ private func assistant(_ id: String, model: String = "claude-opus-4", _ i: Int, 
         #expect(r.byModel["claude-opus-4"] == .init(input: 30, output: 3, cacheRead: 100, cacheCreation: 5, messages: 2))
         #expect(r.byModel["claude-haiku"] == .init(input: 3, output: 4, cacheRead: 0, cacheCreation: 0, messages: 1))
         #expect(r.byModel.count == 2)
+        #expect(r.last == "claude-haiku")   // the last counted message's model (the synthetic one isn't counted)
         #expect(r.end == UInt64(text.utf8.count - "{\"type\":\"assistant\"".utf8.count))
         #expect(try #require(SessionUsage.read(f, from: r.end)).byModel.isEmpty)   // the mark: nothing read twice
     }

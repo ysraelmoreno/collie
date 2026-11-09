@@ -44,7 +44,7 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         #expect(e?.code == .invalidArgs && e?.message.contains("precisa de um Collie mais novo") == true, "\(String(describing: e))")
         let r = refusal { var c = command("go"); c["runs"] = "helper"; $0["commands"] = [c] }
         #expect(r?.message.contains("precisa de um Collie mais novo") == true)
-        #expect(refusal { $0["apiVersion"] = 2 }?.message.contains("precisa de um Collie mais novo") == true)
+        #expect(refusal { $0["apiVersion"] = 3 }?.message.contains("precisa de um Collie mais novo") == true)
         #expect(refusal { var c = command("go"); c["runs"] = "shell"; $0["commands"] = [c] }?.code == .invalidArgs)
     }
 
@@ -139,5 +139,43 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
             var c = command("a"); c["futureFlag"] = true; $0["commands"] = [c]
         }
         #expect(m.commands.map(\.name) == ["a"])
+    }
+
+    // apiVersion 2: apps do cercado (spec 2026-11-08)
+    private func v2(_ edit: @escaping (inout [String: Any]) -> Void = { _ in }) -> (inout [String: Any]) -> Void {
+        { m in
+            m["apiVersion"] = 2; m["id"] = "kube"; m["ui"] = "http://127.0.0.1:4100/"; m["events"] = ["kube.pod.crashed"]
+            m["service"] = ["base": "http://127.0.0.1:4100", "start": "npm run serve"]
+            m["commands"] = [["name": "pods", "summary": "List pods", "runs": "http", "http": ["method": "GET", "path": "/api/pods"]],
+                             ["name": "restart", "summary": "Restart", "runs": "http", "http": ["method": "POST", "path": "/api/restart"], "confirm": true, "timeout": 60]]
+            edit(&m)
+        }
+    }
+
+    @Test func v2AppWithLoopbackServiceAndHttpCommands() throws {
+        let m = try manifest(v2())
+        #expect(m.uiIsURL && m.serviceOrigin == "http://127.0.0.1:4100")
+        #expect(m.commands.map(\.runs) == ["http", "http"] && m.commands[1].confirm && m.commands[1].http?.path == "/api/restart")
+        let spec = m.pluginSpec()
+        #expect(spec.uiURL == "http://127.0.0.1:4100/" && spec.serviceBase == "http://127.0.0.1:4100")
+        #expect(spec.commands.first { $0.name == "kube.restart" }?.timeoutSeconds == 60 + PluginManifest.confirmWait)   // the card waits first
+        #expect(try manifest(v2 { $0["service"] = ["base": "http://localhost:8080/"]; $0["ui"] = "http://localhost:8080/app/index.html" }).serviceOrigin == "http://localhost:8080")
+        #expect(try manifest(v2 { $0["service"] = ["base": "http://[::1]:9"]; $0["ui"] = "http://[::1]:9/" }).serviceOrigin == "http://[::1]:9")
+    }
+
+    @Test func v2RefusesWhatLeavesLoopbackOrItsBase() {
+        for base in ["http://10.0.0.2:4100", "http://example.com", "file:///tmp", "http://127.0.0.1:4100/api", "http://u:p@127.0.0.1:1", "http://127.0.0.1:1?x=1"] {
+            #expect(refusal(v2 { $0["service"] = ["base": base] })?.message.contains("service.base") == true, "\(base)")
+        }
+        #expect(refusal(v2 { $0["ui"] = "http://127.0.0.1:4200/" })?.message.contains("ui") == true)   // another port
+        #expect(refusal(v2 { $0["ui"] = "http://evil.test/" })?.message.contains("ui") == true)
+        for path in ["api/pods", "/api/../x", "/api?x=1", "/a#b", "//evil.test/x"] {
+            #expect(refusal(v2 { $0["commands"] = [["name": "p", "summary": "s", "runs": "http", "http": ["method": "GET", "path": path]]] }) != nil, "\(path)")
+        }
+        #expect(refusal(v2 { $0["commands"] = [["name": "p", "summary": "s", "runs": "http", "http": ["method": "TRACE", "path": "/x"]]] }) != nil)
+        #expect(refusal(v2 { $0["service"] = nil; $0["ui"] = "ui/index.html" })?.message.contains("service.base") == true)   // http without a service
+        // v1 doesn't take v2 parts
+        #expect(refusal { $0["service"] = ["base": "http://127.0.0.1:4100"] }?.message.contains("apiVersion 2") == true)
+        #expect(refusal { var c = command("go"); c["confirm"] = true; $0["commands"] = [c] }?.message.contains("apiVersion 2") == true)
     }
 }

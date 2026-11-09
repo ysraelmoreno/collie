@@ -92,6 +92,14 @@ extension CommandRouter {
             throw ProtocolError(code: .invalidArgs, message: "preset must be shell|claude|codex|cursor|custom")
         }
         let command = str(r, "command") ?? (str(r, "preset") == nil ? me.command : nil)
+        let model = str(r, "model")
+        if let model {
+            try ClaudeModel.validate(model)
+            let probe = TerminalRecord(id: UUID(), name: name, preset: preset, command: command, cwd: "/", isShepherd: false)
+            guard preset == .claude || AgentLaunch.isClaude(probe) else {
+                throw ProtocolError(code: .invalidArgs, message: "--model is for claude; '\(name)' would run \(preset.rawValue)")
+            }
+        }
         if let t = try lookup(name) {
             let hint = ConnectionGraph.reachable(from: me.id, in: ws).contains { $0.id == t.id }
                 ? "it is leashed to you: collie ask \(t.name) \"…\"" : "not leashed to you. " + ConnectionGraph.leashHint(t.name, for: me.id, in: ws)
@@ -124,8 +132,9 @@ extension CommandRouter {
             anywhere = true
         }
         let root = try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: anywhere)
-        let rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
+        var rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)
+        rec.model = model
         var result = try await launch(rec)
         try await ensurePaddock(of: rec)
         do {

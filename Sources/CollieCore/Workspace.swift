@@ -24,6 +24,8 @@ public enum SandboxMode: String, Codable, Sendable, CaseIterable {
     }
 }
 
+public enum TerminalStyle: String, Codable, Sendable { case terminal, chat }
+
 public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var name: String
@@ -37,13 +39,18 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
     public var projectRoot: String?
     /// The sandbox mode its last sandboxed start ran with (its profile, cards, cwd bounds); nil: none yet (strict rules).
     public var startMode: SandboxMode?
+    /// Claude's model: `summon --model`, `collie model`, or the transcript's last assistant message; passed as `--model`
+    /// at its next launch. nil: unknown (Claude's default).
+    public var model: String?
+    /// Chat or terminal body for this terminal (the header toggle); nil follows Preferências → Estilo do terminal.
+    public var style: TerminalStyle?
     public init(id: UUID, name: String, preset: Preset, command: String?, cwd: String, isShepherd: Bool, paddockId: UUID? = nil,
                 sandbox: TerminalSandbox = .sandboxed, projectRoot: String? = nil) {
         self.id = id; self.name = name; self.preset = preset; self.command = command
         self.cwd = cwd; self.isShepherd = isShepherd; self.paddockId = paddockId
         self.sandbox = sandbox; self.projectRoot = projectRoot
     }
-    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot, startMode }
+    private enum CodingKeys: String, CodingKey { case id, name, preset, command, cwd, isShepherd, paddockId, sandbox, projectRoot, startMode, model, style }
     private enum Legacy: String, CodingKey { case isMaestro, floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self), l = try d.container(keyedBy: Legacy.self)
@@ -55,6 +62,8 @@ public struct TerminalRecord: Codable, Sendable, Equatable, Identifiable {
         sandbox = (try? c.decodeIfPresent(TerminalSandbox.self, forKey: .sandbox)) ?? .sandboxed   // records before the sandbox
         projectRoot = try c.decodeIfPresent(String.self, forKey: .projectRoot)
         startMode = try? c.decodeIfPresent(SandboxMode.self, forKey: .startMode)
+        model = try? c.decodeIfPresent(String.self, forKey: .model)
+        style = try? c.decodeIfPresent(TerminalStyle.self, forKey: .style)
     }
 }
 
@@ -78,6 +87,9 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
     public var createdBy: UUID?      // creating Shepherd terminal; nil = app
     public var landedAt: Date?
     public var designSystem: UUID?   // the paddock's own active design system; nil = the workspace's
+    /// Apps do cercado the user approved here: id → SHA-256 of the manifest (+ its `ui/`) at approval. A changed app
+    /// asks again; the paddock's removal takes its approvals with it.
+    public var apps: [String: String]?
     public init(id: UUID, name: String, repoRoot: String, path: String, branch: String, baseBranch: String,
                 status: PaddockStatus = .working, createdBy: UUID? = nil, landedAt: Date? = nil, designSystem: UUID? = nil) {
         self.id = id; self.name = name; self.repoRoot = repoRoot; self.path = path; self.branch = branch
@@ -102,6 +114,7 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
         branch = try c.decode(String.self, forKey: .branch); baseBranch = try c.decode(String.self, forKey: .baseBranch)
         status = try c.decode(PaddockStatus.self, forKey: .status); createdBy = try c.decodeIfPresent(UUID.self, forKey: .createdBy)
         landedAt = try c.decodeIfPresent(Date.self, forKey: .landedAt); designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
+        apps = try? c.decodeIfPresent([String: String].self, forKey: .apps)   // unreadable: none approved, never the workspace lost
     }
 }
 

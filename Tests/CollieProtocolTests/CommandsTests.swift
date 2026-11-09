@@ -34,6 +34,11 @@ import Foundation
         #expect(o.command == "panel.open" && o.args["connect"] == .string("d1"))
     }
 
+    @Test func modelCommandAndSummonModel() throws {
+        let m = try ArgvParser.parse(["model", "dev", "opus", "--wait"])
+        #expect(m.command == "model" && m.args["target"] == .string("dev") && m.args["model"] == .string("opus") && m.args["wait"] == .bool(true))
+        #expect(try ArgvParser.parse(["summon", "d1", "--model", "sonnet"]).args["model"] == .string("sonnet"))
+    }
     @Test func parsesAskResultAndNoWait() throws {
         let r = try ArgvParser.parse(["ask", "result", "ab12cd34"])
         #expect(r.command == "ask.result" && r.args["id"] == .string("ab12cd34"))
@@ -126,10 +131,10 @@ import Foundation
         let names = tools.compactMap { t -> String? in
             if case .object(let o) = t, case .string(let n)? = o["name"] { return n } else { return nil }
         }.filter(builtInTool)
-        #expect(names == ["list", "ask", "wait", "ask_result", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
+        #expect(names == ["list", "ask", "wait", "model", "ask_result", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                          "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get",
-                         "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list",
+                         "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach",
                          "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
                          "network_attach", "network_detach", "network_status", "network_list", "network_get", "network_curl", "network_clear",
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help", "design_prefer",
@@ -154,11 +159,11 @@ import Foundation
         func names(_ m: Bool) -> [String] {
             MCPSchema.tools(shepherd: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }.filter(builtInTool)
         }
-        #expect(names(true) == ["list", "ask", "wait", "ask_result", "check", "summon", "dismiss", "leash", "leash_request", "unleash", "notify",
+        #expect(names(true) == ["list", "ask", "wait", "model", "ask_result", "check", "summon", "dismiss", "leash", "leash_request", "unleash", "notify",
                                 "paddock_create", "paddock_list", "paddock_status", "paddock_land", "paddock_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                                 "memory_save", "memory_search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get", "work_rerail",
-                         "herd_list", "herd_get", "herd_save", "herd_apply", "lot_create", "lot_join", "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list",
+                         "herd_list", "herd_get", "herd_save", "herd_apply", "lot_create", "lot_join", "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach",
                          "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
                          "network_attach", "network_detach", "network_status", "network_list", "network_get", "network_curl", "network_clear",
                          "design_files", "design_new", "design_run", "design_batch", "design_inspect", "design_screenshot", "design_export", "design_help", "design_prefer",

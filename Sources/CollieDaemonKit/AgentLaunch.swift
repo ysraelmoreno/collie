@@ -108,8 +108,8 @@ public enum AgentLaunch {
                 "hooks": ["Stop": hook("claude-stop", 10),
                                                  "SessionStart": hook("claude-session-start", 5),
                                                  "UserPromptSubmit": hook("claude-prompt", 5),
-                                                 // the work registry (WorkHookParser)
-                                                 "PostToolUse": hook("claude-tool", 5, matcher: "TodoWrite|Task.*|Agent|Bash|BashOutput|KillShell"),
+                                                 // the work registry (WorkHookParser; ignores tools it does not know) and the chat body (every tool call)
+                                                 "PostToolUse": hook("claude-tool", 5),
                                                  "SubagentStop": hook("claude-subagent-stop", 5),
                                                  "PreCompact": hook("claude-precompact", 5),
                                                  "SessionEnd": hook("claude-session-end", 5),
@@ -122,7 +122,9 @@ public enum AgentLaunch {
             // Additive (no --strict-mcp-config): the user's own MCP servers stay.
             let m = mcpFile(rec.id, in: hooksDir)
             try write(["mcpServers": ["collie": ["type": "stdio", "command": collie.path, "args": ["mcp"]]]], m)
-            return spec(["-lc", base + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path)
+            // the model it ran (summon --model, collie model, its transcript), unless the command picks one itself
+            let model = rec.model.flatMap { base.contains("--model") ? nil : " --model " + quote($0) } ?? ""
+            return spec(["-lc", base + model + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path)
                          + (pluginDir.map { " --plugin-dir " + quote($0.path) } ?? "") + (resume ? " --continue" : "")])
         }
         if let c = rec.command {

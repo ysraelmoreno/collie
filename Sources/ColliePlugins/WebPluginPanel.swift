@@ -92,44 +92,57 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
 
     /// Follows the registry: the installed version loads (again, if it changed); a missing plug-in shows the placeholder.
     func refresh() {
-        guard let spec, case .external(let v) = spec.source else {
+        guard let spec, case .external(let v0) = spec.source else {
             teardown("plug-in removido")
             return box.placeholder("Plug-in \(panel.pluginId) não está instalado")
         }
+        let v = spec.uiURL.map { v0 + "|" + $0 } ?? v0   // an app's page moves with its URL too
         guard v != version else { return }
         teardown("plug-in atualizado")
         crashes = 0
+        if let ui = spec.uiURL, let base = spec.serviceBase, let page = URL(string: ui) {   // an app do cercado: its own service
+            version = v
+            return load(title: spec.title, id: spec.id, page: page, origin: base)
+        }
         let folder = host.root.appendingPathComponent("plugins").appendingPathComponent(spec.id).appendingPathComponent(v)
         guard let m = try? PluginManifest.load(folder: folder), m.id == spec.id, m.version == v else {
             return box.placeholder("Plug-in \(spec.title) não pôde ser carregado")
         }
         version = v
-        load(m, folder: folder)
+        load(title: m.name, id: m.id, page: URL(string: "\(PluginSchemeHandler.scheme)://\(m.id)/\(m.ui.dropFirst("ui/".count))")!,
+             folder: folder)
     }
 
-    private func load(_ m: PluginManifest, folder: URL) {
+    /// The app do cercado's service origin while its page is loaded; nil: an installed plug-in's own `ui/`.
+    private(set) var origin: String?
+
+    /// `folder`: an installed plug-in's, served by `PluginSchemeHandler`; `origin`: an app's loopback service, the only
+    /// origin its rule list lets through and the only one that gets the bridge.
+    private func load(title: String, id: String, page: URL, folder: URL? = nil, origin: String? = nil) {
         gen += 1
         let g = gen
+        self.origin = origin
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list and the CSP
-        config.setURLSchemeHandler(PluginSchemeHandler(id: m.id, uiRoot: folder.appendingPathComponent("ui")), forURLScheme: PluginSchemeHandler.scheme)
+        if let folder {
+            config.setURLSchemeHandler(PluginSchemeHandler(id: id, uiRoot: folder.appendingPathComponent("ui")), forURLScheme: PluginSchemeHandler.scheme)
+        }
         let ucc = config.userContentController
         ucc.addScriptMessageHandler(Bridge(self), contentWorld: .page, name: WebPluginBridge.handler)
-        ucc.addUserScript(WKUserScript(source: WebPluginBridge.script(theme: themeJSON()), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        ucc.addUserScript(WKUserScript(source: WebPluginBridge.script(theme: themeJSON(), origin: origin), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let web = WKWebView(frame: box.bounds, configuration: config)
         web.navigationDelegate = self; web.uiDelegate = self
         webView = web
         box.show(web)
-        let page = URL(string: "\(PluginSchemeHandler.scheme)://\(m.id)/\(m.ui.dropFirst("ui/".count))")!
         Task { [weak self] in
-            let rules = await Self.rules()
+            let rules = if let origin { await Self.rules(origin: origin) } else { await Self.rules() }
             guard let self, self.gen == g, let web = self.webView else { return }
-            guard let rules else { self.teardown("bloqueio de rede indisponível"); return self.box.placeholder("Plug-in \(m.name): bloqueio de rede indisponível") }
+            guard let rules else { self.teardown("bloqueio de rede indisponível"); return self.box.placeholder("Plug-in \(title): bloqueio de rede indisponível") }
             web.configuration.userContentController.add(rules)
             // fail closed: the WebRTC switch is private, so check it took before the page exists
             guard await WebLockdown.peerConnectionsOff(web), self.gen == g else {
-                if self.gen == g { self.teardown(WebLockdown.failure); self.box.placeholder("Plug-in \(m.name): \(WebLockdown.failure)") }
+                if self.gen == g { self.teardown(WebLockdown.failure); self.box.placeholder("Plug-in \(title): \(WebLockdown.failure)") }
                 return
             }
             web.load(URLRequest(url: page))   // only after the rules: no load ever runs unblocked
@@ -141,7 +154,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         gen += 1
         for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: why))) }
         pending = [:]
-        ready = false; version = nil; outputs = [:]   // files stay (plugins-out keeps the newest `outputsKept`)
+        ready = false; version = nil; origin = nil; outputs = [:]   // files stay (plugins-out keeps the newest `outputsKept`)
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil; web.uiDelegate = nil
@@ -180,6 +193,35 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         let list = try? await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "collie-plugin-offline", encodedContentRuleList: ruleJSON)
         compiled = list
         return list
+    }
+
+    /// An app do cercado's page: every load blocked but its service's origin (and local data/blob URLs). One list per
+    /// origin, compiled once.
+    static func ruleJSON(origin: String) -> String {
+        // an origin holds letters, digits, ':', '/', '.', and '[' ']' (IPv6): only these three are regex syntax
+        let esc = (origin + "/").replacingOccurrences(of: ".", with: "\\.").replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")
+        let enc = JSONEncoder(); enc.outputFormatting = .withoutEscapingSlashes
+        let filter = (try? enc.encode("^" + esc)).map { String(decoding: $0, as: UTF8.self) } ?? "\"^$\""
+        return """
+            [{"trigger":{"url-filter":".*"},"action":{"type":"block"}},
+             {"trigger":{"url-filter":\(filter)},"action":{"type":"ignore-previous-rules"}},
+             {"trigger":{"url-filter":"^data:"},"action":{"type":"ignore-previous-rules"}},
+             {"trigger":{"url-filter":"^blob:"},"action":{"type":"ignore-previous-rules"}}]
+            """
+    }
+    private static var compiledApps: [String: WKContentRuleList] = [:]
+    static func rules(origin: String) async -> WKContentRuleList? {
+        if let r = compiledApps[origin] { return r }
+        let ident = "collie-app-" + origin.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? String($0) : "-" }.joined()
+        let list = try? await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: ident, encodedContentRuleList: ruleJSON(origin: origin))
+        compiledApps[origin] = list
+        return list
+    }
+    /// `http://127.0.0.1:4100`-form origin of `url`; nil: none.
+    static func origin(of url: URL?) -> String? {
+        guard let url, let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased() else { return nil }
+        let h = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        return "\(scheme)://\(h)" + (url.port.map { ":\($0)" } ?? "")
     }
 
     // MARK: commands
@@ -239,8 +281,11 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
 
     /// One `window.collie` call: (reply, error). Only the main frame of this plug-in's own origin is heard.
     func message(_ m: WKScriptMessage) async -> (Any?, String?) {
-        guard m.frameInfo.isMainFrame, m.frameInfo.securityOrigin.protocol == PluginSchemeHandler.scheme,
-              m.frameInfo.securityOrigin.host == panel.pluginId, m.webView === webView,
+        let so = m.frameInfo.securityOrigin
+        let own = if let origin {   // an app: its service's origin only
+            Self.origin(of: URL(string: "\(so.protocol)://\(so.host.contains(":") ? "[\(so.host)]" : so.host)" + (so.port == 0 ? "" : ":\(so.port)"))) == origin
+        } else { so.protocol == PluginSchemeHandler.scheme && so.host == panel.pluginId }
+        guard m.frameInfo.isMainFrame, own, m.webView === webView,
               let body = m.body as? [String: Any], let op = body["op"] as? String else { return (nil, "chamada inválida") }
         func str(_ k: String) -> String? { body[k] as? String }
         switch op {
@@ -385,6 +430,8 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     final class Box: NSView {
         weak var owner: WebPluginPanel?
         let label = NSTextField(wrappingLabelWithString: "")
+        private let retryButton = NSButton(title: "Tentar de novo", target: nil, action: nil)
+        private var retry: (() -> Void)?
         private var web: NSView?
         override var isFlipped: Bool { true }
         init() {
@@ -392,15 +439,28 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             wantsLayer = true
             label.alignment = .center; label.textColor = CollieColor.muted
             addSubview(label)
+            retryButton.target = self; retryButton.action = #selector(retryTapped); retryButton.isHidden = true
+            addSubview(retryButton)
         }
+        @objc private func retryTapped() { retry?() }
         required init?(coder: NSCoder) { fatalError() }
-        func show(_ v: NSView) { web?.removeFromSuperview(); web = v; addSubview(v); label.isHidden = true; needsLayout = true }
-        func placeholder(_ text: String) { web?.removeFromSuperview(); web = nil; label.stringValue = text; label.isHidden = false; needsLayout = true }
+        func show(_ v: NSView) {
+            web?.removeFromSuperview(); web = v; addSubview(v); label.isHidden = true; retryButton.isHidden = true; retry = nil; needsLayout = true
+        }
+        /// `retry`: a Tentar de novo button under the text (the web view, if any, stays for it).
+        func placeholder(_ text: String, retry: (() -> Void)? = nil) {
+            if retry == nil { web?.removeFromSuperview(); web = nil } else { web?.isHidden = true }
+            label.stringValue = text; label.isHidden = false
+            self.retry = retry; retryButton.isHidden = retry == nil
+            needsLayout = true
+        }
         override func layout() {
             super.layout()
             web?.frame = bounds
             let w = max(0, min(bounds.width - 24, 360)), h = label.fittingSize.height
             label.frame = CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
+            let b = retryButton.fittingSize
+            retryButton.frame = CGRect(x: (bounds.width - b.width) / 2, y: label.frame.maxY + 8, width: b.width, height: b.height)
         }
         override func viewDidChangeEffectiveAppearance() {
             super.viewDidChangeEffectiveAppearance()
@@ -425,12 +485,25 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
     public func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         let u = action.request.url
-        let own = u?.scheme?.lowercased() == PluginSchemeHandler.scheme && u?.host == panel.pluginId
+        let own = origin.map { Self.origin(of: u) == $0 } ?? (u?.scheme?.lowercased() == PluginSchemeHandler.scheme && u?.host == panel.pluginId)
         decisionHandler(own || u?.absoluteString == "about:blank" || u?.absoluteString == "about:srcdoc" ? .allow : .cancel)
     }
     /// `window.open`, `target=_blank`: never a new window.
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
+    /// An app's service that doesn't answer: the placeholder says so, with Tentar de novo.
+    public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        guard webView === self.webView, let origin else { return }
+        let at = origin.replacingOccurrences(of: "http://", with: "").replacingOccurrences(of: "https://", with: "")
+        let g = gen
+        webView.isHidden = true
+        box.placeholder("\(title) não está respondendo em \(at)", retry: { [weak self, weak webView] in
+            guard let self, self.gen == g, let webView, webView === self.webView else { return }
+            webView.isHidden = false
+            self.box.show(webView)
+            webView.reload()
+        })
+    }
     /// A process death fails the calls in flight and reloads after 0.5, 1, 2 s; the fourth one leaves the placeholder.
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard webView === self.webView else { return }

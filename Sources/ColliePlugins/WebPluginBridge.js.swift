@@ -1,3 +1,4 @@
+import Foundation
 /// `window.collie`, page API v1, injected at document start (main frame, page world) into an external plug-in's page.
 /// Everything goes through one message handler with reply (`collie`); Swift validates every call (`WebPluginPanel`).
 /// `__THEME__` is replaced with the theme JSON. The page can tamper with its own copy; it only ever reaches Swift
@@ -5,10 +6,16 @@
 enum WebPluginBridge {
     static let handler = "collie"
 
-    static func script(theme: String) -> String { source.replacingOccurrences(of: "__THEME__", with: theme) }
+    /// `origin`: an app do cercado's service (`http://127.0.0.1:4100`): `window.collie` exists only in a document of that
+    /// origin (the handler checks it again).
+    static func script(theme: String, origin: String? = nil) -> String {
+        let gate = origin.flatMap { o in (try? JSONEncoder().encode(o)).map { "if (location.origin !== \(String(decoding: $0, as: UTF8.self))) return;" } } ?? ""
+        return source.replacingOccurrences(of: "__THEME__", with: theme).replacingOccurrences(of: "__GATE__", with: gate)
+    }
 
     private static let source = #"""
     (() => {
+      __GATE__
       const post = (m) => window.webkit.messageHandlers.collie.postMessage(m);
       let handler = null, theme = __THEME__;
       const applyTheme = () => {

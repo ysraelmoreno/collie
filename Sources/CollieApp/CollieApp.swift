@@ -281,6 +281,7 @@ struct ContentView: View {
                 .banner(Color.collieDanger, fill: Color.collieSurface)
         }
         if staleDaemon { staleBanner }
+        AppCardsView(client: client)
     }
 
     var body: some View {

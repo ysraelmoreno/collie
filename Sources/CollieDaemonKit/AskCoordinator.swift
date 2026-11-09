@@ -492,6 +492,50 @@ public actor AskCoordinator {
         }
     }
 
+    /// `collie model`: something would type into, or answer from, `terminal` now: an ask in flight or queued, a capture
+    /// hold, or (hooks seen) a running turn. `hooked`: its SessionStart hook came, so `inTurn` is known.
+    func commandState(_ terminal: UUID) -> (busy: Bool, hooked: Bool)? {
+        targets[terminal].map { ($0.inflight != nil || !$0.queue.isEmpty || $0.captureHold != nil || $0.inTurn, $0.sessionHooked) }
+    }
+
+    /// `collie model`: types `text`, a Claude slash command that opens no turn (no UserPromptSubmit, no Stop), into an
+    /// idle `to` (`commandState` not busy, no approval). The queue is held, as a capture's, until `releaseCapture`: no ask
+    /// is typed while the command's answer is read. Returns the hold and the scrollback mark before the write.
+    func typeCommand(_ to: UUID, _ text: String) async throws(ProtocolError) -> (hold: UUID, mark: Int) {
+        guard let t = targets[to], t.process.isRunning else {
+            throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
+        }
+        guard t.ready else { throw ProtocolError(code: .unavailable, message: "'\(t.name)' is still starting; try again in a few seconds") }
+        if t.approval.pending != nil { throw Self.dialogOpen(t.name) }
+        if commandState(to)?.busy == true { throw Self.midTurn(t.name) }
+        let hold = UUID(), mark = t.scrollback.mark()
+        targets[to]?.captureHold = hold
+        let data = PromptInjector.payload(text, raw: false, bracketed: t.paste.enabled), process = t.process, approval = t.approval, name = t.name
+        let failed: ProtocolError? = await withCheckedContinuation { c in
+            DispatchQueue.global().async {   // PTYProcess.write may spin 2 s: off the actor and the cooperative pool
+                // output after the last input not scanned yet (the user just typed): give the scan its window, then refuse
+                var gate = approval.inputIfClear(echo: text)
+                for _ in 0..<15 where gate == .window { Thread.sleep(forTimeInterval: 0.2); gate = approval.inputIfClear(echo: text) }
+                guard gate == .written else { return c.resume(returning: gate == .pending ? Self.dialogOpen(name) : Self.midTurn(name)) }
+                do {
+                    try process.write(data, origin: .collie)
+                    Thread.sleep(forTimeInterval: PromptInjector.submitDelay)
+                    try process.write(PromptInjector.submit, origin: .collie)
+                    c.resume(returning: nil)
+                } catch { c.resume(returning: ProtocolError(code: .notRunning, message: "Terminal '\(name)' is not accepting input")) }
+            }
+        }
+        if let failed { releaseCapture(to, hold); throw failed }
+        return (hold, mark)
+    }
+
+    static func midTurn(_ name: String) -> ProtocolError {
+        ProtocolError(code: .unavailable, message: "'\(name)' is in the middle of a turn; run again with --wait to switch once it ends")
+    }
+    static func dialogOpen(_ name: String) -> ProtocolError {
+        ProtocolError(code: .unavailable, message: "'\(name)' shows a dialog or approval; it must be answered first (collie check \(name) --screen)")
+    }
+
     /// Ends hold `hold` (a later one stays) and types the next queued ask.
     func releaseCapture(_ terminal: UUID, _ hold: UUID) {
         guard targets[terminal]?.captureHold == hold else { return }

@@ -35,6 +35,11 @@ extension CommandRouter {
                 if r.args["placement"] == nil, !flag(r, "visible") { placement = .headless }
                 guard placement == .canvas || placement == .headless else { throw refuse("a terminal that isn't a Shepherd opens browsers headless or --visible on the canvas") }
             }
+            if await isPaddockApp(pluginId) {   // an app do cercado: only on the canvas of a paddock that approved it
+                guard placement == .canvas, let pid = try canvasPaddock(str(r, "paddock"), caller: caller), appManifests[pid]?[pluginId] != nil else {
+                    throw ProtocolError(code: .notConnected, message: "app '\(pluginId)' opens only on the canvas of a paddock that approved it: collie app attach \(pluginId)")
+                }
+            }
             // --connect: a Shepherd wires its new canvas panel to terminals it reaches, checked before it opens
             var wirer: TerminalRecord?
             if r.args["connect"] != nil {

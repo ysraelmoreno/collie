@@ -179,7 +179,7 @@ private func hook(_ p: Paths, _ t: Term, _ name: String, _ payload: String) asyn
         let hooks = o["hooks"] as! [String: Any]
         func entry(_ k: String) -> [String: Any]? { (hooks[k] as? [[String: Any]])?.first }
         func command(_ k: String) -> String? { ((entry(k)?["hooks"] as? [[String: Any]])?.first?["command"] as? String) }
-        #expect(entry("PostToolUse")?["matcher"] as? String == "TodoWrite|Task.*|Agent|Bash|BashOutput|KillShell")
+        #expect(entry("PostToolUse")?["matcher"] == nil)   // every tool: the chat body follows them all
         for (k, sub) in [("PostToolUse", "claude-tool"), ("SubagentStop", "claude-subagent-stop"),
                          ("PreCompact", "claude-precompact"), ("SessionEnd", "claude-session-end")] {
             #expect(command(k) == "'/opt/collie' hook \(sub)", "\(k)")

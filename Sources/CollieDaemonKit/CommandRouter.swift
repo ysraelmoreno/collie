@@ -90,6 +90,13 @@ actor CommandRouter {
     var turnNotices: [UUID: [String]] = [:]
     /// Shepherds' open leash requests (cards), oldest first. ponytail: in memory, a restart drops them (asked again).
     var leashRequests: [LeashRequest] = []
+    /// Apps do cercado: open cards (approvals, confirm calls), the confirm calls waiting on them, and the approved apps
+    /// whose files still match their pin, by paddock then id (`refreshApps`). ponytail: cards in memory, as leashRequests.
+    var appCards: [AppCard] = []
+    var appWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    var appManifests: [UUID: [String: PluginManifest]] = [:]
+    /// "Permitir nesta sessão": a confirm command allowed without a card, per caller, app, command and pin (`AppSessionAllow`).
+    var appSessionAllows: [AppSessionAllow] = []
     /// R14: when each terminal's correction jobs were queued (the last hour's).
     var correctionsAt: [String: [Date]] = [:]   // "<terminal>|<user>"
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
@@ -259,7 +266,7 @@ actor CommandRouter {
             badges[t.id.uuidString] = running ? live[t.id] : .stopped
         }
         let snap = WorkspaceSnapshot(terminals: ws.terminals, connections: ws.connections, badges: badges, paddocks: ws.paddocks, panels: ws.panels, lots: ws.lots, build: config.build,
-                                     plugins: await plugins.loaded().map(\.0))
+                                     plugins: await pluginManifests())
         return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(snap))
     }
 
@@ -303,6 +310,13 @@ actor CommandRouter {
                 try await adminOnly(req, peer: peer)
                 return Response(id: req.id, ok: true, result: try await admin(req))
             }
+            if ["terminal.chat", "terminal.style", "terminal.say"].contains(req.command) {   // the app's chat body (spec terminal-chat)
+                try await adminOnly(req, peer: peer)
+                return Response(id: req.id, ok: true, result: try await { switch req.command {
+                    case "terminal.chat": try await terminalChat(req)
+                    case "terminal.style": try await terminalStyle(req)
+                    default: try await terminalSay(req) } }())
+            }
             if req.command.hasPrefix("paddock.") {   // admin or terminal principal; rules per command
                 return Response(id: req.id, ok: true, result: try await paddockCommand(req, peer: peer))
             }
@@ -327,6 +341,9 @@ actor CommandRouter {
             if req.command.hasPrefix("comment.") {   // add/message/resolve: the app alone; reply: the addressee; rules in commentCommand
                 return Response(id: req.id, ok: true, result: try await commentCommand(req, peer: peer))
             }
+            if req.command == "model" {   // the app, or a terminal leashed to the target
+                return Response(id: req.id, ok: true, result: try await modelCommand(req, peer: peer))
+            }
             if req.command.hasPrefix("access.") {   // request/list: a terminal; grant/deny/revoke: the app alone
                 return Response(id: req.id, ok: true, result: try await accessCommand(req, peer: peer))
             }
@@ -339,12 +356,17 @@ actor CommandRouter {
             if req.command.hasPrefix("plugin.") {   // install/uninstall/enable/disable: admin only; list/specs: terminals too
                 return Response(id: req.id, ok: true, result: try await pluginAdminCommand(req, peer: peer))
             }
+            if req.command.hasPrefix("app.") {   // list/attach: admin or terminal; approve: admin only
+                return Response(id: req.id, ok: true, result: try await appCommand(req, peer: peer))
+            }
             if let (plugin, spec) = PluginRegistry.command(req.command) {   // admin or terminal; reach rules in resolvePanel
-                let result = plugin.id == "design" ? try await designCommand(req, peer: peer)
-                    : plugin.id == "artifacts" ? try await artifactCommand(req, peer: peer)
-                    : plugin.id == "network" ? try await networkCommand(req, peer: peer)
-                    : plugin.runsInDaemon ? try await deviceCommand(req, peer: peer)
-                    : try await pluginCommand(req, plugin: plugin, spec: spec, peer: peer)
+                let http = plugin.source == .builtIn ? nil : try await appHTTPCommand(req, plugin: plugin, peer: peer)
+                let result = if let http { http }
+                    else if plugin.id == "design" { try await designCommand(req, peer: peer) }
+                    else if plugin.id == "artifacts" { try await artifactCommand(req, peer: peer) }
+                    else if plugin.id == "network" { try await networkCommand(req, peer: peer) }
+                    else if plugin.runsInDaemon { try await deviceCommand(req, peer: peer) }
+                    else { try await pluginCommand(req, plugin: plugin, spec: spec, peer: peer) }
                 // R6: an external plug-in's file comes only from its own plugins-out dir, for every caller (and --out)
                 let vetted = plugin.source != .builtIn && spec.outputFile ? try vetPluginOutput(result, plugin: plugin.id) : result
                 return Response(id: req.id, ok: true, result: await handedOver(vetted, for: req))
@@ -365,6 +387,7 @@ actor CommandRouter {
                     throw ProtocolError(code: .notRunning, message: "Terminal '\(t.name)' is not running")
                 }
                 let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", max: 86_400) ?? 1800)
+                if let e = ClaudeModel.slashRefusal(prompt, target: t) { throw e }   // DX backlog 20: no turn, no reply
                 if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout)) }
                 let r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout)
                 return Response(id: req.id, ok: true, result: .object([
@@ -375,14 +398,15 @@ actor CommandRouter {
                 return Response(id: req.id, ok: true, result: AskInbox.json(e))
             case "check":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
-                if flag(req, "screen") { return Response(id: req.id, ok: true, result: .object(["output": .string(try await screen(t))])) }
+                let model: [String: JSONValue] = t.model.map { ["model": .string($0)] } ?? [:]
+                if flag(req, "screen") { return Response(id: req.id, ok: true, result: .object(model.merging(["output": .string(try await screen(t))]) { $1 })) }
                 let s = await registry.scrollback(t.id)?.tail(lines: Int(try num(req, "lines", max: 1_000_000) ?? 200)) ?? (text: "", truncated: false)
-                return Response(id: req.id, ok: true, result: .object(["output": .string(s.text), "truncated": .bool(s.truncated)]))
+                return Response(id: req.id, ok: true, result: .object(model.merging(["output": .string(s.text), "truncated": .bool(s.truncated)]) { $1 }))
             case "wait":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
                 return Response(id: req.id, ok: true, result: try await waitTurn(t, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
             case "turn.completed":
-                if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr) }   // restarts the idle capture
+                if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr); chatNote(tid, transcript: tr) }   // restarts the idle capture
                 // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
                 let continued = flag(req, "continued"), capture = flag(req, "capture") && !continued
                 // a capture Stop holds the queue first: the ask it completes must not let the next one be typed before the decision
@@ -509,6 +533,7 @@ actor CommandRouter {
             let running = await registry.process(t.id)?.isRunning ?? false
             var o: [String: JSONValue] = ["name": .string(t.name), "preset": .string(t.preset.rawValue),
                                           "running": .bool(running), "isShepherd": .bool(t.isShepherd)]
+            if let m = t.model { o["model"] = .string(m) }
             if all {
                 let reachable = reach.contains { $0.id == t.id }
                 o["reachable"] = .bool(reachable)
@@ -693,6 +718,7 @@ actor CommandRouter {
             try await leash(try find(try need("a")), try find(try need("b")))
             return .object([:])
         case "admin.leash.requests", "admin.leash.answer": return try await adminLeashRequest(r)
+        case "admin.app.cards", "admin.app.answer": return try await adminAppCard(r)
         case "admin.kill":
             let name = try need("target")
             if try lookup(name) == nil, let p = ws.panels.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {

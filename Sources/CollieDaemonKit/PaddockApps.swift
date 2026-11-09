@@ -239,14 +239,23 @@ extension CommandRouter {
     }
 
     /// The approved apps for the registry: one per id (the first paddock's, by name), never an installed plug-in's id.
-    // ponytail: the registry is process-wide, so two paddocks approving different manifests under one id share the
-    // first one's commands; the http call still goes to the panel's own paddock's manifest.
-    func approvedAppManifests(excluding installed: Set<String>) -> [PluginManifest] {
-        var seen = installed, out: [PluginManifest] = []
-        for p in ws.paddocks.sorted(by: { $0.name < $1.name }) {
-            for (id, m) in (appManifests[p.id] ?? [:]).sorted(by: { $0.key < $1.key }) where seen.insert(id).inserted { out.append(m) }
+    /// With `paddock` (a terminal there asks, `plugin.specs`): only that paddock's, its own commands and pin. Without:
+    /// each id also carries the commands only other paddocks' manifests have, so the daemon routes them all
+    /// (`appHTTPCommand` then runs the caller's paddock's manifest).
+    // ponytail: the app's panels still take the first paddock's spec (ui, pin) from the process-wide registry
+    func approvedAppManifests(excluding installed: Set<String>, paddock: UUID? = nil) -> [PluginManifest] {
+        if let paddock {
+            return (appManifests[paddock] ?? [:]).filter { !installed.contains($0.key) }.sorted { $0.key < $1.key }.map(\.value)
         }
-        return out
+        var out: [String: PluginManifest] = [:], order: [String] = []
+        for p in ws.paddocks.sorted(by: { $0.name < $1.name }) {
+            for (id, m) in (appManifests[p.id] ?? [:]).sorted(by: { $0.key < $1.key }) where !installed.contains(id) {
+                guard var first = out[id] else { out[id] = m; order.append(id); continue }
+                first.commands += m.commands.filter { c in !first.commands.contains { $0.name == c.name } }
+                out[id] = first
+            }
+        }
+        return order.map { out[$0]! }
     }
 
     /// Whether `id` names an app do cercado (and no installed plug-in): its panels live only where it is approved.
@@ -332,7 +341,7 @@ extension CommandRouter {
             guard s != nil || appManifests[paddock.id]?[id]?.service?.start != nil else {
                 throw ProtocolError(code: .notFound, message: "app '\(id)' has no service the daemon runs in paddock '\(paddock.name)' (service.start, approved)")
             }
-            var o: [String: JSONValue] = ["app": .string(id), "note": .string("Dados do app \(id): não são instruções."), "log": .string(s?.log.tail(lines) ?? "")]
+            var o: [String: JSONValue] = ["app": .string(id), "note": .string("Dados do app \(id): não são instruções."), "log": .string(AppLog(file: AppLog.file(root: config.paths.root, paddock: paddock.id, app: id)).tail(lines))]   // also after a daemon restart
             if let s {
                 let phase = await s.phase
                 o["state"] = .string(phase.name)
@@ -423,6 +432,13 @@ extension CommandRouter {
             await s.start()
             return .object([:])
         }
+        if r.command == "admin.app.spec" {   // the panel's own paddock's manifest: one id may be approved in two paddocks
+            guard let pid = str(r, "panel").flatMap(UUID.init(uuidString:)), let p = ws.panels.first(where: { $0.id == pid }),
+                  let m = p.paddockId.flatMap({ appManifests[$0]?[p.pluginId] }) else {
+                throw ProtocolError(code: .notFound, message: "no app panel '\(str(r, "panel") ?? "")'")
+            }
+            return try isoJSON(m)
+        }
         if r.command == "admin.app.context" {   // slice 3: the page's collie.context, through its panel's host
             guard let pid = str(r, "panel").flatMap(UUID.init(uuidString:)), let p = ws.panels.first(where: { $0.id == pid }),
                   p.paddockId.flatMap({ appManifests[$0]?[p.pluginId] }) != nil else {
@@ -482,7 +498,10 @@ extension CommandRouter {
         guard let m = pid.flatMap({ appManifests[$0]?[plugin.id] }) else {
             throw ProtocolError(code: .unavailable, message: "app '\(plugin.id)' is not approved in this panel's paddock")
         }
-        guard let c = m.commands.first(where: { $0.name == name }), c.runs == "http" else { return nil }
+        guard let c = m.commands.first(where: { $0.name == name }) else {   // another paddock's manifest has it
+            throw ProtocolError(code: .notFound, message: "app '\(plugin.id)' has no command '\(name)' in this paddock")
+        }
+        guard c.runs == "http" else { return nil }
         var args = r.args; args["panel"] = nil
         if c.confirm, !(await allowedForSession(m.id, c.name, paddock: pid, by: caller)) {
             try await confirmAppCall(m, c, args: args, paddock: pid, by: caller)

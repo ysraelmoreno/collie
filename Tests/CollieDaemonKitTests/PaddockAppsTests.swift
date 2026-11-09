@@ -567,18 +567,135 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
             #expect(alive(pid))   // its panel is open: idle doesn't count
             #expect(try await admin(e.d, e.p, "panel.close", ["name": .string(panel.name)]).ok)
             #expect(await waitFor(10) { !alive(pid) })
-            #expect(try await logs(e)["state"] == .string("stopped"))
+            let l = try await logs(e)   // no service in memory now (as after a daemon restart): the log file still answers
+            guard case .string(let text)? = l["log"] else { Issue.record("\(l)"); return }
+            #expect(l["state"] == .string("stopped") && text.contains("listening") && text.contains("[collie] pronto"), "\(l)")
+        }
+    }
+}
+
+/// An app with a service the daemon runs, written in `folder` (serve.py on a free port).
+private func serviceApp(in folder: URL) throws {
+    let app = folder.appendingPathComponent(".collie/apps/kube")
+    try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+    let port = freePort(), base = "http://127.0.0.1:\(port)"
+    try serve.write(to: app.appendingPathComponent("serve.py"), atomically: true, encoding: .utf8)
+    var m = try JSONSerialization.jsonObject(with: manifest(base: base)) as! [String: Any]
+    m["service"] = ["base": base, "start": "python3 serve.py \(port)", "health": "/healthz"]
+    try JSONSerialization.data(withJSONObject: m).write(to: app.appendingPathComponent("collie-plugin.json"))
+}
+
+/// The paddock's end ends its apps: land and delete drop the approvals (`Paddock.apps`) and stop the services.
+@Suite(.serialized) struct PaddockAppEndTests {
+    /// Approves kube in `name`, starts its service; its pid.
+    private func running(_ d: Daemon, _ p: Paths, _ name: String) async throws -> pid_t? {
+        #expect(try await admin(d, p, "app.approve", ["id": .string("kube"), "paddock": .string(name)]).ok)
+        guard let f = await d.router.ws.paddocks.first(where: { $0.name == name }),
+              let s = await d.router.appService(paddock: f.id, app: "kube") else { Issue.record("no service"); return nil }
+        await s.start()
+        try await s.ready()
+        return await s.pid
+    }
+
+    @Test func landDropsApprovalsAndStopsServices() async throws {
+        try await PluginRegistry.exclusively {
+            let repo = try await makeRepo()
+            defer { try? FileManager.default.removeItem(at: repo) }
+            try await withDaemon { d, p in
+                #expect(try await admin(d, p, "paddock.create", ["name": .string("feat"), "repo": .string(repo.path)]).ok)
+                let path = repo.appendingPathComponent(".collie/paddocks/feat")
+                try serviceApp(in: path)
+                for args in [["add", "-f", "."], ["commit", "-m", "app"]] { #expect(try await GitRunner.run(args, in: path).status == 0) }
+                let pid = try #require(try await running(d, p, "feat"))
+                #expect(alive(pid) && Commands.spec("kube.pods") != nil)
+                let r = try await admin(d, p, "paddock.land", ["name": .string("feat")])
+                #expect(r.ok, "\(r)")
+                #expect(await d.router.ws.paddocks.first { $0.name == "feat" }?.apps == nil)
+                #expect(Commands.spec("kube.pods") == nil)
+                #expect(await waitFor(10) { !alive(pid) })
+            }
+        }
+    }
+
+    @Test func deleteDropsApprovalsStopsServicesAndLogs() async throws {
+        try await PluginRegistry.exclusively {
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("apps-\(UUID().uuidString)").resolvingSymlinksInPath()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            try serviceApp(in: dir)
+            try await withDaemon { d, p in
+                #expect(try await admin(d, p, "paddock.create", ["name": .string("k"), "folder": .string(dir.path)]).ok)
+                let id = try #require(await d.router.ws.paddocks.first { $0.name == "k" }?.id)
+                let pid = try #require(try await running(d, p, "k"))
+                let logs = AppLog.file(root: p.root, paddock: id, app: "kube")
+                #expect(alive(pid) && FileManager.default.fileExists(atPath: logs.path))
+                let r = try await admin(d, p, "paddock.delete", ["name": .string("k")])
+                #expect(r.ok, "\(r)")
+                #expect(Commands.spec("kube.pods") == nil && !FileManager.default.fileExists(atPath: logs.deletingLastPathComponent().path))
+                #expect(await waitFor(10) { !alive(pid) })
+            }
+        }
+    }
+}
+
+/// One app id approved in two paddocks with different manifests: each paddock's terminals get their own (`plugin.specs`,
+/// what the MCP server and the CLI load), and the daemon routes every command either one has.
+@Suite(.serialized) struct PaddockAppSameIdTests {
+    @Test func eachTerminalSeesItsPaddocksApp() async throws {
+        try await PluginRegistry.exclusively {
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("apps-\(UUID().uuidString)").resolvingSymlinksInPath()
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            for (name, extra) in [("a", false), ("b", true)] {
+                let app = tmp.appendingPathComponent("\(name)/.collie/apps/kube")
+                try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+                var m = try JSONSerialization.jsonObject(with: manifest(base: "http://127.0.0.1:4999", name: "Kube \(name)")) as! [String: Any]
+                if extra {
+                    m["commands"] = (m["commands"] as! [Any]) + [["name": "deploy", "summary": "Deploy", "runs": "http",
+                                                                   "http": ["method": "POST", "path": "/api/deploy"], "params": []]]
+                }
+                try JSONSerialization.data(withJSONObject: m).write(to: app.appendingPathComponent("collie-plugin.json"))
+            }
+            try await withDaemon { d, p in
+                var terms: [String: Term] = [:]
+                for name in ["a", "b"] {
+                    #expect(try await admin(d, p, "paddock.create", ["name": .string(name), "folder": .string(tmp.appendingPathComponent(name).path)]).ok)
+                    #expect(try await admin(d, p, "app.approve", ["id": .string("kube"), "paddock": .string(name)]).ok)
+                    let s = try await admin(d, p, "admin.spawn", ["name": .string(name.uppercased()), "preset": .string("shell"), "paddock": .string(name)])
+                    guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }
+                    terms[name] = Term(id: id, token: try await tokenOf(d, id))
+                }
+                func kube(_ t: Term) async throws -> PluginManifest? {
+                    PluginManifest.fromSpecs(try await call(p, t, "plugin.specs").result ?? .null)?.first { $0.id == "kube" }
+                }
+                let a = try #require(try await kube(terms["a"]!)), b = try #require(try await kube(terms["b"]!))
+                #expect(a.name == "Kube a" && a.commands.map(\.name) == ["pods", "restart"] && a.appFolder?.hasSuffix("/a/.collie/apps/kube") == true, "\(a)")
+                #expect(b.name == "Kube b" && b.commands.map(\.name) == ["pods", "restart", "deploy"] && b.appFolder?.hasSuffix("/b/.collie/apps/kube") == true, "\(b)")
+                // the daemon knows b's extra command; a terminal of a still can't run it there
+                #expect(Commands.spec("kube.deploy") != nil)
+                #expect(try await call(p, terms["a"]!, "app.attach", ["id": .string("kube")]).ok)
+                let r = try await call(p, terms["a"]!, "kube.deploy")
+                #expect(r.error?.code == .notFound && r.error?.message.contains("no command 'deploy'") == true, "\(r)")
+            }
         }
     }
 }
 
 @Suite struct AppLogTests {
-    @Test func keepsTheLastBytesAsWholeLines() {
-        let l = AppLog()
+    @Test func rotatesAndOutlivesItsWriter() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("applog-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = AppLog.file(root: dir, paddock: UUID(), app: "kube")
+        let l = AppLog(file: file)
         for i in 0..<20_000 { l.append("line \(i) " + String(repeating: "x", count: 40)) }
+        l.close()
         #expect(l.tail(2).hasPrefix("line 19998 ") && l.tail(2).hasSuffix("x"))
-        #expect(l.tail(100_000, bytes: 1 << 30).utf8.count <= AppServices.logCap)
+        let sizes = try [file, file.appendingPathExtension("1")].map { try FileManager.default.attributesOfItem(atPath: $0.path)[.size] as! Int }
+        #expect(sizes.allSatisfy { $0 <= AppServices.logCap }, "\(sizes)")
         #expect(l.tail(100_000, bytes: 1000).utf8.count <= 1000)
+        // another writer on the same file (the daemon after a restart) reads what the first one wrote and goes on
+        let again = AppLog(file: file)
+        #expect(again.tail(1).hasPrefix("line 19999 "))
+        again.append("after")
+        #expect(again.tail(2).hasPrefix("line 19999 ") && again.tail(1) == "after")
     }
 }
 

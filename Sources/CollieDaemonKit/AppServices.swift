@@ -9,7 +9,7 @@ import CollieProtocol
 /// on demand (attach, its panel, an http command), and stops it when no panel of it is open and nothing called it for
 /// `idle`. Ready once `service.health` answers 2xx (no health: any HTTP answer) within `PluginManifest.startWait`. A
 /// death restarts it with backoff (1 s doubling to 30 s); `crashLimit` deaths in `crashWindow` give up, with the reason.
-/// Output (stdout + stderr) is kept in a bounded ring (`collie app logs`). A `LongProcess`: its own process group and
+/// Output (stdout + stderr) goes to a rotated file per paddock and app (`AppLog`, `collie app logs`). A `LongProcess`: its own process group and
 /// a pidfile, so a daemon crash leaves nothing behind (`OrphanReaper`).
 enum AppServices {
     nonisolated(unsafe) static var idle: Duration = .seconds(300)
@@ -31,26 +31,50 @@ enum AppServices {
     }
 }
 
-/// The last `AppServices.logCap` bytes a service printed, whole lines.
+/// What a service printed, in `<root>/app-logs/<paddock>/<app>.log` (kept across daemon restarts): past
+/// `AppServices.logCap` bytes the file becomes `<app>.log.1` (the previous one dropped) and a new one starts.
 final class AppLog: Sendable {
-    private let state = OSAllocatedUnfairLock(initialState: (lines: [String](), bytes: 0))
+    let file: URL
+    private let state = OSAllocatedUnfairLock<(h: FileHandle?, size: Int)>(uncheckedState: (nil, 0))
+    init(file: URL) { self.file = file }
+    static func file(root: URL, paddock: UUID, app: String) -> URL {
+        root.appendingPathComponent("app-logs").appendingPathComponent(paddock.uuidString).appendingPathComponent(app + ".log")
+    }
+    private var old: URL { file.appendingPathExtension("1") }
+
     func append(_ line: String) {
-        state.withLock { s in
-            s.lines.append(line); s.bytes += line.utf8.count + 1
-            while s.bytes > AppServices.logCap, !s.lines.isEmpty { s.bytes -= s.lines.removeFirst().utf8.count + 1 }
+        let data = Data((line + "\n").utf8)
+        state.withLockUnchecked { s in
+            if s.h == nil {
+                try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if !FileManager.default.fileExists(atPath: file.path) { FileManager.default.createFile(atPath: file.path, contents: nil) }
+                s.h = try? FileHandle(forWritingTo: file)
+                s.size = Int((try? s.h?.seekToEnd()) ?? 0)
+            }
+            if s.size > 0, s.size + data.count > AppServices.logCap {   // rotate
+                try? s.h?.close(); s.h = nil
+                try? FileManager.default.removeItem(at: old)
+                try? FileManager.default.moveItem(at: file, to: old)
+                FileManager.default.createFile(atPath: file.path, contents: nil)
+                s.h = try? FileHandle(forWritingTo: file); s.size = 0
+            }
+            try? s.h?.write(contentsOf: data); s.size += data.count
         }
     }
-    /// The last `lines` lines, at most `bytes`.
+    func close() { state.withLockUnchecked { s in try? s.h?.close(); s.h = nil } }
+
+    /// The last `lines` lines, at most `bytes` (the rotated file first).
     func tail(_ lines: Int, bytes: Int = 64 * 1024) -> String {
-        state.withLock { s in
-            var out: [String] = [], n = 0
-            for l in s.lines.reversed().prefix(lines) {
-                n += l.utf8.count + 1
-                if n > bytes { break }
-                out.append(l)
-            }
-            return out.reversed().joined(separator: "\n")
+        let text = state.withLockUnchecked { _ in
+            [old, file].compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined()
         }
+        var out: [Substring] = [], n = 0
+        for l in text.split(separator: "\n", omittingEmptySubsequences: false).reversed().drop(while: \.isEmpty).prefix(lines) {
+            n += l.utf8.count + 1
+            if n > bytes { break }
+            out.append(l)
+        }
+        return out.reversed().joined(separator: "\n")
     }
 }
 
@@ -67,7 +91,7 @@ actor AppService {
     private let title: String, origin: String, health: String?, runDir: URL
     private let launch: Launch
     private let onPhase: @Sendable (Phase) async -> Void
-    let log = AppLog()
+    let log: AppLog
     private(set) var phase: Phase = .stopped
     private(set) var lastUse = ContinuousClock.now
     private var proc: LongProcess?
@@ -75,9 +99,9 @@ actor AppService {
     private var gen = 0
     private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
-    init(paddock: UUID, manifest m: PluginManifest, pin: String, runDir: URL, launch: @escaping Launch, onPhase: @escaping @Sendable (Phase) async -> Void) {
+    init(paddock: UUID, manifest m: PluginManifest, pin: String, runDir: URL, log: AppLog, launch: @escaping Launch, onPhase: @escaping @Sendable (Phase) async -> Void) {
         self.paddock = paddock; app = m.id; self.pin = pin; title = m.name
-        origin = m.serviceOrigin ?? ""; health = m.service?.health; self.runDir = runDir
+        origin = m.serviceOrigin ?? ""; health = m.service?.health; self.runDir = runDir; self.log = log
         self.launch = launch; self.onPhase = onPhase
     }
 
@@ -124,7 +148,7 @@ actor AppService {
 
     func stop() async {
         gen += 1
-        proc?.terminate(); proc = nil
+        proc?.terminate(); proc = nil; log.close()
         guard phase != .stopped else { return }
         await set(.stopped)
     }
@@ -225,6 +249,7 @@ extension CommandRouter {
         }
         let id = AppServices.id(paddock: paddock, app: app)
         let s = AppService(paddock: paddock, manifest: m, pin: pin, runDir: config.paths.runDir,
+                           log: AppLog(file: AppLog.file(root: config.paths.root, paddock: paddock, app: app)),
                            launch: { [weak self] in
                                guard let self else { throw ProtocolError(code: .unavailable, message: "daemon stopping") }
                                return try await self.serviceLaunch(m, folder: folder, paddock: p, id: id)

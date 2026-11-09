@@ -14,7 +14,8 @@ extension CommandRouter {
             for e in await plugins.list() { rows.append(try await pluginRow(e)) }
             return .array(rows)
         case "plugin.specs":
-            return .object(["plugins": try isoJSON(await pluginManifests()), "version": .number(Double(PluginRegistry.catalogVersion))])
+            // a terminal on a paddock: that paddock's apps (two paddocks may approve different manifests under one id)
+            return .object(["plugins": try isoJSON(await pluginManifests(paddock: caller?.paddockId)), "version": .number(Double(PluginRegistry.catalogVersion))])
         default: break
         }
         guard caller == nil else {
@@ -54,9 +55,9 @@ extension CommandRouter {
     }
 
     /// The loaded installed plug-ins, then the apps do cercado approved in a paddock (`refreshApps`).
-    func pluginManifests() async -> [PluginManifest] {
+    func pluginManifests(paddock: UUID? = nil) async -> [PluginManifest] {
         let installed = await plugins.loaded().map(\.0)
-        return installed + approvedAppManifests(excluding: Set(installed.map(\.id)))
+        return installed + approvedAppManifests(excluding: Set(installed.map(\.id)), paddock: paddock)
     }
 
     private func pluginRow(_ e: InstalledPlugin) async throws -> JSONValue {

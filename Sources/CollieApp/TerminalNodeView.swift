@@ -301,7 +301,7 @@ import CollieTheme
         strip.frame = CGRect(x: 0, y: bounds.height - AccessStrip.height, width: bounds.width, height: AccessStrip.height)
         label?.frame = bodyFrame.insetBy(dx: 4, dy: max(bodyFrame.height / 2 - 10 / canvas.zoom, 0))
         // Claude terminals have the extra chat-toggle icon: keep the ring clear of it.
-        let icons: CGFloat = client.terminals.first { $0.id == id }?.preset == .claude ? 108 : 82
+        let icons: CGFloat = client.terminals.first { $0.id == id }?.preset == .claude ? 114 : 82
         leash.frame = CGRect(x: max(bounds.width - icons, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = Self.cornerFrame(bounds)
         reconcileGrid()
@@ -529,7 +529,9 @@ struct NodeTitleBar: View {
                 Button { Task { try? await client.setStyle(t?.name ?? "", chat ? .terminal : .chat) } } label: {
                     Image(systemName: chat ? "terminal" : "bubble.left.and.text.bubble.right")
                 }
-                .buttonStyle(.plain).help(chat ? "Mostrar o terminal" : "Mostrar como chat").accessibilityLabel(chat ? "Mostrar o terminal" : "Mostrar como chat")
+                .buttonStyle(.plain).foregroundStyle(Color.collieMuted)
+                .frame(width: 22, height: 22).contentShape(Rectangle())   // a plain button only hits its drawn pixels; these glyphs are hollow
+                .help(chat ? "Mostrar o terminal" : "Mostrar como chat").accessibilityLabel(chat ? "Mostrar o terminal" : "Mostrar como chat")
             }
             FullscreenButton(action: fullscreen)
             Menu {

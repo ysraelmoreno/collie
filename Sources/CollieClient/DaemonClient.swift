@@ -263,7 +263,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     }
     /// The header toggle: nil follows Preferências.
     public func setStyle(_ name: String, _ style: TerminalStyle?) async throws {
-        _ = try await admin("terminal.style", ["name": .string(name), "style": .string(style?.rawValue ?? "default")])
+        if let i = terminals.firstIndex(where: { $0.name == name }) { terminals[i].style = style }   // at once; the daemon's event confirms
+        _ = try await admin("terminal.style",["name": .string(name), "style": .string(style?.rawValue ?? "default")])
     }
     /// The chat composer: the normal prompt delivery.
     public func say(_ name: String, _ text: String) async throws {

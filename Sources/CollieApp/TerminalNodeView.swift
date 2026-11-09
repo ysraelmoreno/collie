@@ -300,7 +300,9 @@ import CollieTheme
         chatHost?.frame = bodyFrame
         strip.frame = CGRect(x: 0, y: bounds.height - AccessStrip.height, width: bounds.width, height: AccessStrip.height)
         label?.frame = bodyFrame.insetBy(dx: 4, dy: max(bodyFrame.height / 2 - 10 / canvas.zoom, 0))
-        leash.frame = CGRect(x: max(bounds.width - 82, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
+        // Claude terminals have the extra chat-toggle icon: keep the ring clear of it.
+        let icons: CGFloat = client.terminals.first { $0.id == id }?.preset == .claude ? 108 : 82
+        leash.frame = CGRect(x: max(bounds.width - icons, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = Self.cornerFrame(bounds)
         reconcileGrid()
     }

@@ -254,7 +254,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// What the terminal's Claude conversation taught, to memory now (the curator saves it).
     /// The chat body's entries after byte `since`, and where they end (`terminal.chat`).
     public func chat(_ name: String, since: UInt64) async throws -> (entries: [ChatEntry], end: UInt64) {
-        guard case .object(let o)? = try await admin("terminal.chat", ["name": .string(name), "since": .number(Double(since))]),
+        var args: [String: JSONValue] = ["name": .string(name)]
+        if since > 0 { args["since"] = .number(Double(since)) }   // the daemon's `num` rejects 0: absent = from the start
+        guard case .object(let o)? = try await admin("terminal.chat", args),
               case .array(let a)? = o["entries"], case .number(let end)? = o["end"] else { return ([], since) }
         let entries = try JSONDecoder().decode([ChatEntry].self, from: JSONEncoder().encode(JSONValue.array(a)))
         return (entries, UInt64(end))

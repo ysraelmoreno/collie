@@ -97,6 +97,10 @@ actor CommandRouter {
     var appManifests: [UUID: [String: PluginManifest]] = [:]
     /// "Permitir nesta sessão": a confirm command allowed without a card, per caller, app, command and pin (`AppSessionAllow`).
     var appSessionAllows: [AppSessionAllow] = []
+    /// Slice 2: SSE subscriptions by panel; app-event notices waiting per terminal, and when each terminal got its last.
+    var appStreams: [UUID: AppStream] = [:]
+    var appNotices: [UUID: [String]] = [:]
+    var appNoticeAt: [UUID: ContinuousClock.Instant] = [:]
     /// R14: when each terminal's correction jobs were queued (the last hour's).
     var correctionsAt: [String: [Date]] = [:]   // "<terminal>|<user>"
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).

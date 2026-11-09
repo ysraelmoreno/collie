@@ -74,6 +74,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public var stateKeys: [String]
     public var permissions: [String: JSONValue]?   // phase 3; only absent/empty accepted now
     public var service: Service?           // v2
+    public var eventStream: String?        // v2: an SSE path on service.base (slice 2)
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -91,6 +92,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         stateKeys = try c.decodeIfPresent([String].self, forKey: .stateKeys) ?? []
         permissions = try c.decodeIfPresent([String: JSONValue].self, forKey: .permissions)
         service = try c.decodeIfPresent(Service.self, forKey: .service)
+        eventStream = try c.decodeIfPresent(String.self, forKey: .eventStream)
     }
 
     /// The page is a loopback URL of the app's service (v2), not a `ui/` file.
@@ -185,8 +187,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         try Self.text(author, "author", 0...128); try Self.text(license, "license", 0...64)
         guard !placements.isEmpty, !placements.contains(.headless) else { throw Self.bad("placements: um ou mais de canvas, dock.left, dock.right, dock.bottom") }
         guard placements.contains(defaultPlacement) else { throw Self.bad("defaultPlacement precisa estar em placements") }
-        if apiVersion == 1, service != nil || commands.contains(where: { $0.http != nil || $0.confirm }) {
-            throw Self.bad("service, http e confirm pedem apiVersion 2")
+        if apiVersion == 1, service != nil || eventStream != nil || commands.contains(where: { $0.http != nil || $0.confirm }) {
+            throw Self.bad("service, eventStream, http e confirm pedem apiVersion 2")
         }
         let origin = serviceOrigin
         if service != nil, origin == nil {
@@ -239,6 +241,11 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         }
         guard stateKeys.count <= 64, stateKeys.allSatisfy({ Self.match($0, "[A-Za-z][A-Za-z0-9_-]{0,63}") }) else {
             throw Self.bad("stateKeys: até 64 nomes (letras, dígitos, _ e -)")
+        }
+        if let e = eventStream {
+            guard origin != nil, Self.safeHTTPPath(e), !events.isEmpty else {
+                throw Self.bad("eventStream '\(e)': um caminho /… do service.base, com events declarados")
+            }
         }
     }
 

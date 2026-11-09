@@ -267,6 +267,20 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public func say(_ name: String, _ text: String) async throws {
         _ = try await admin("terminal.say", ["name": .string(name), "text": .string(text)], timeout: 1800)
     }
+    /// The prompts waiting for the user (`work.approvals`); the chat body shows its terminal's as a card.
+    public func approvals() async throws -> [Approval] {
+        guard let r = try await admin("work.approvals", [:]) else { return [] }
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        return try d.decode([Approval].self, from: JSONEncoder().encode(r))
+    }
+    /// Answers an approval: `option` clicks a numbered option, else `allow`. false: not sent (stale, or the terminal only).
+    @discardableResult
+    public func answerApproval(_ a: Approval, allow: Bool, option: Int? = nil) async throws -> Bool {
+        var args: [String: JSONValue] = ["id": .string(a.id.uuidString.lowercased()), "allow": .bool(allow)]
+        if let option { args["option"] = .number(Double(option)) }
+        guard case .object(let o)? = try await admin("work.approve", args), case .bool(let sent)? = o["sent"] else { return false }
+        return sent
+    }
     public func captureMemory(_ name: String) async throws { _ = try await admin("memory.capture", ["terminal": .string(name)]) }
     /// Edits a terminal; `restartNeeded`: launch settings changed under a running process.
     @discardableResult

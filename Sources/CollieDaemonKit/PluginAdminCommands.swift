@@ -46,6 +46,7 @@ extension CommandRouter {
     /// `pluginsChanged`. At start (`atStart`) an empty store leaves the registry alone and emits nothing.
     func publishPlugins(atStart: Bool = false) async {
         refreshApps()
+        await syncAppStreams()
         let ms = await pluginManifests()
         if atStart && ms.isEmpty { return }   // ponytail: tests run many daemons in one process; one with none must not clear another's
         PluginRegistry.setExternal(ms.map { $0.pluginSpec() })

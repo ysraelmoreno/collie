@@ -163,6 +163,16 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         #expect(try manifest(v2 { $0["service"] = ["base": "http://[::1]:9"]; $0["ui"] = "http://[::1]:9/" }).serviceOrigin == "http://[::1]:9")
     }
 
+    @Test func v2EventStreamIsAPathOfItsBase() throws {   // slice 2
+        #expect(try manifest(v2 { $0["eventStream"] = "/api/events" }).eventStream == "/api/events")
+        for e in ["api/events", "/a/../b", "http://127.0.0.1:4100/api/events", "/e?x=1"] {
+            #expect(refusal(v2 { $0["eventStream"] = e })?.message.contains("eventStream") == true, "\(e)")
+        }
+        #expect(refusal(v2 { $0["eventStream"] = "/e"; $0["events"] = [String]() })?.message.contains("eventStream") == true)
+        #expect(refusal(v2 { $0["apiVersion"] = 1; $0["service"] = nil; $0["ui"] = "ui/index.html"; $0["commands"] = nil; $0["eventStream"] = "/e" })?
+            .message.contains("apiVersion 2") == true)
+    }
+
     @Test func v2RefusesWhatLeavesLoopbackOrItsBase() {
         for base in ["http://10.0.0.2:4100", "http://example.com", "file:///tmp", "http://127.0.0.1:4100/api", "http://u:p@127.0.0.1:1", "http://127.0.0.1:1?x=1"] {
             #expect(refusal(v2 { $0["service"] = ["base": base] })?.message.contains("service.base") == true, "\(base)")

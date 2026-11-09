@@ -106,7 +106,7 @@ final class PanelBody: NSView, PanelContentSizing {
         title.frame = CGRect(x: 0, y: 0, width: bounds.width, height: Self.titleHeight)
         body.frame = CGRect(x: 0, y: Self.titleHeight, width: bounds.width, height: max(bounds.height - Self.titleHeight, 0))
         label?.frame = body.bounds.insetBy(dx: 4, dy: max(body.bounds.height / 2 - 10, 0))
-        leash.frame = CGRect(x: max(bounds.width - 56, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
+        leash.frame = CGRect(x: max(bounds.width - 82, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = TerminalNodeView.cornerFrame(bounds)
     }
 

@@ -68,7 +68,7 @@ enum CollieOrientation {
             // ponytail: no Prévia here (length cap); the Artifacts line teaches `artifact new`, which opens one
             let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
-                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon (no --preset: \(agent))|panel open --connect <names>" + (morePanels ? "; +collie plugin list" : ""))
+                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon (no --preset: \(agent))|panel open --connect <names>; collie model <agent> <m> (summon --model m)" + (morePanels ? "; +collie plugin list" : ""))
             } else {
                 lines.append("- As Shepherd: collie panel open \(open)")
                 // ponytail: at the length cap (orientationSanitizesNames keeps 3 names); `leash <agent> <panel>` hands one over later

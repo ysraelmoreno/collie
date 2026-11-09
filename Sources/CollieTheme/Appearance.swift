@@ -28,7 +28,8 @@ public struct TerminalFontChoice: Sendable, Equatable {
 
 public enum AppearanceKeys {
     public static let theme = "appearance.theme", structure = "appearance.structure",
-                      terminalFamily = "appearance.terminalFamily", terminalSize = "appearance.terminalSize"
+                      terminalFamily = "appearance.terminalFamily", terminalSize = "appearance.terminalSize",
+                      terminalStyle = "appearance.terminalStyle"   // "terminal" | "chat"
 }
 
 public struct AppearanceSettings: Equatable {

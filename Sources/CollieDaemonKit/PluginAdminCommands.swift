@@ -14,7 +14,7 @@ extension CommandRouter {
             for e in await plugins.list() { rows.append(try await pluginRow(e)) }
             return .array(rows)
         case "plugin.specs":
-            return .object(["plugins": try isoJSON(await plugins.loaded().map(\.0)), "version": .number(Double(PluginRegistry.catalogVersion))])
+            return .object(["plugins": try isoJSON(await pluginManifests()), "version": .number(Double(PluginRegistry.catalogVersion))])
         default: break
         }
         guard caller == nil else {
@@ -45,10 +45,17 @@ extension CommandRouter {
     /// The store's loaded plug-ins become this process's registry (`Commands.all`, routing, help) and the app hears
     /// `pluginsChanged`. At start (`atStart`) an empty store leaves the registry alone and emits nothing.
     func publishPlugins(atStart: Bool = false) async {
-        let ms = await plugins.loaded().map(\.0)
+        refreshApps()
+        let ms = await pluginManifests()
         if atStart && ms.isEmpty { return }   // ponytail: tests run many daemons in one process; one with none must not clear another's
         PluginRegistry.setExternal(ms.map { $0.pluginSpec() })
         if !atStart { await hub.emit(.pluginsChanged(ms)) }
+    }
+
+    /// The loaded installed plug-ins, then the apps do cercado approved in a paddock (`refreshApps`).
+    func pluginManifests() async -> [PluginManifest] {
+        let installed = await plugins.loaded().map(\.0)
+        return installed + approvedAppManifests(excluding: Set(installed.map(\.id)))
     }
 
     private func pluginRow(_ e: InstalledPlugin) async throws -> JSONValue {

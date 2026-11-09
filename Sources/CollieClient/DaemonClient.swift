@@ -10,6 +10,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
 @MainActor @Observable public final class DaemonClient {
     public private(set) var state: ConnectionState = .disconnected(reason: "not started")
     public private(set) var terminals: [TerminalRecord] = []
+    /// Per Claude terminal, how far its transcript reaches (`chatChanged`): the chat body reloads when it moves.
+    public private(set) var chatEnd: [UUID: UInt64] = [:]
     public private(set) var connections: [Connection] = []
     public private(set) var badges: [UUID: StatusBadge] = [:]
     public private(set) var paddocks: [Paddock] = []
@@ -19,6 +21,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var accessCards: [SandboxDenial] = []
     /// Shepherds' open leash requests (`collie leash request`): Conectar / Recusar on the Shepherd's node.
     public private(set) var leashRequests: [LeashRequest] = []
+    /// Apps do cercado waiting for the user: approvals and confirm calls (oldest first).
+    public private(set) var appCards: [AppCard] = []
     /// A phone waits for the Mac's click (remote API pairing): the confirmation dialog; nil when none.
     public private(set) var remotePairing: RemotePairingRequest?
     /// The user's sandbox grants (per terminal and per lot).
@@ -219,6 +223,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .pluginsChanged(let ms): setPlugins(ms)
         case .leashRequest(let r): if !leashRequests.contains(where: { $0.id == r.id }) { leashRequests.append(r) }
         case .leashRequestRemoved(let id): leashRequests.removeAll { $0.id == id }
+        case .appCard(let c): if !appCards.contains(where: { $0.id == c.id }) { appCards.append(c) }
+        case .appCardRemoved(let id): appCards.removeAll { $0.id == id }
+        case .chatChanged(let id, let end): chatEnd[id] = end
         case .remotePairing(let r): remotePairing = r
         case .remoteReveal(let t, let a, _): onRemoteReveal?(t, a)
         }
@@ -245,6 +252,21 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public func kill(_ name: String) async throws { _ = try await admin("admin.kill", ["target": .string(name)]) }
     public func restart(_ name: String) async throws { _ = try await admin("admin.restart", ["name": .string(name)]) }
     /// What the terminal's Claude conversation taught, to memory now (the curator saves it).
+    /// The chat body's entries after byte `since`, and where they end (`terminal.chat`).
+    public func chat(_ name: String, since: UInt64) async throws -> (entries: [ChatEntry], end: UInt64) {
+        guard case .object(let o)? = try await admin("terminal.chat", ["name": .string(name), "since": .number(Double(since))]),
+              case .array(let a)? = o["entries"], case .number(let end)? = o["end"] else { return ([], since) }
+        let entries = try JSONDecoder().decode([ChatEntry].self, from: JSONEncoder().encode(JSONValue.array(a)))
+        return (entries, UInt64(end))
+    }
+    /// The header toggle: nil follows Preferências.
+    public func setStyle(_ name: String, _ style: TerminalStyle?) async throws {
+        _ = try await admin("terminal.style", ["name": .string(name), "style": .string(style?.rawValue ?? "default")])
+    }
+    /// The chat composer: the normal prompt delivery.
+    public func say(_ name: String, _ text: String) async throws {
+        _ = try await admin("terminal.say", ["name": .string(name), "text": .string(text)], timeout: 1800)
+    }
     public func captureMemory(_ name: String) async throws { _ = try await admin("memory.capture", ["terminal": .string(name)]) }
     /// Edits a terminal; `restartNeeded`: launch settings changed under a running process.
     @discardableResult
@@ -311,6 +333,12 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         grants = decode(o["grants"]) ?? []
         if case .bool(let b)? = o["detection"] { detection = b } else { detection = nil }
         if let r = try? await admin("admin.leash.requests", [:]) { leashRequests = decode(r) ?? [] }
+        if let r = try? await admin("admin.app.cards", [:]) { appCards = decode(r) ?? [] }
+    }
+    /// **Aprovar** / **Permitir** (`allow`), **Permitir nesta sessão** (`allow` + `session`) or **Negar** an app card.
+    public func answerApp(_ c: AppCard, allow: Bool, session: Bool = false) async throws {
+        appCards.removeAll { $0.id == c.id }
+        _ = try await admin("admin.app.answer", ["id": .string(c.id.uuidString), "allow": .bool(allow), "session": .bool(session)])
     }
     /// **Conectar** (`allow`) / **Recusar** a Shepherd's leash request.
     public func answerLeash(_ r: LeashRequest, allow: Bool) async throws {

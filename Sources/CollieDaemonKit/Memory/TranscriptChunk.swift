@@ -74,7 +74,7 @@ enum TranscriptChunk {
         return text.isEmpty ? nil : (type == "user", text)
     }
 
-    private static func clean(_ s: String) -> String {
+    static func clean(_ s: String) -> String {
         s.replacing(/(?s)<(system-reminder|local-command-stdout|local-command-stderr)>.*?<\/\1>/, with: "")
             .replacing(/(?s)<pasted_content([^>]*)>(.*?)<\/pasted_content>/) { m in
                 let body = String(m.output.2)

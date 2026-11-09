@@ -276,3 +276,73 @@ extension SandboxDenial {
     /// One card per (op, folder) of a terminal (R29: a read and a write card in one folder are two).
     var cardId: String { op + "|" + folder }
 }
+
+/// Apps do cercado waiting for the user, over the canvas: an approval (**Aprovar** pins the manifest in that paddock) or
+/// one call of a `confirm` command (**Permitir** / **Negar**). Spec 2026-11-08-paddock-apps-design.md.
+struct AppCardsView: View {
+    let client: DaemonClient
+    var body: some View {
+        if !client.appCards.isEmpty {
+            VStack(alignment: .trailing, spacing: 6) {
+                ForEach(client.appCards) { AppCardView(card: $0, client: client) }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.horizontal, 12)
+        }
+    }
+}
+
+struct AppCardView: View {
+    let card: AppCard
+    let client: DaemonClient
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        let by = card.by.flatMap { id in client.terminals.first { $0.id == id }?.name }
+        VStack(alignment: .leading, spacing: 6) {
+            if card.kind == .confirm {
+                Text("\(Text(verbatim: card.name).bold()) quer: \(Text(verbatim: AccessCopy.shown(card.call ?? "")).font(.collieMono(12)))")
+                    .font(.collieUI(13)).fixedSize(horizontal: false, vertical: true)
+                if let by { Text("Pedido por \(Text(verbatim: by).italic())").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
+            } else {
+                Text("App \(Text(verbatim: card.name).bold()) no cercado \(Text(verbatim: card.paddockName).bold())")
+                    .font(.collieUI(13)).fixedSize(horizontal: false, vertical: true)
+                if let by { Text("Pedido por \(Text(verbatim: by).italic()); um agente nunca aprova").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
+                if let base = card.base { Text("Serviço: \(Text(verbatim: base).font(.collieMono(11)))").font(.collieUI(12)) }
+                if !card.commands.isEmpty {
+                    Text("Comandos para os agentes: \(Text(verbatim: card.commands.joined(separator: ", ")).font(.collieMono(11)))")
+                        .font(.collieUI(12)).fixedSize(horizontal: false, vertical: true)
+                }
+                if !card.events.isEmpty {
+                    Text("Eventos: \(Text(verbatim: card.events.joined(separator: ", ")).font(.collieMono(11)))").font(.collieUI(12))
+                }
+                Text("Aprovar fixa este manifesto (SHA-256); se ele mudar, o Collie pergunta de novo.")
+                    .font(.collieUI(11)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
+            }
+            if let error { Text(error).font(.collieUI(11)).foregroundStyle(Color.collieDanger) }
+            HStack {
+                Spacer(minLength: 0)
+                Button("Negar") { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+                if card.kind == .confirm {
+                    Button("Permitir nesta sessão") { answer(true, session: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+                        .help("Este comando de \(card.name) roda sem cartão até a sessão do terminal acabar ou o app mudar")
+                }
+                Button(card.kind == .confirm ? "Permitir" : "Aprovar") { answer(true) }.buttonStyle(CollieButtonStyle(.primary)).controlSize(.small).disabled(busy)
+            }
+        }
+        .foregroundStyle(Color.collieText)
+        .padding(12)
+        .frame(width: 380, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.collieSurface))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.collieAttention, lineWidth: 1))
+    }
+
+    private func answer(_ allow: Bool, session: Bool = false) {
+        busy = true
+        Task {
+            do { try await client.answerApp(card, allow: allow, session: session) } catch { self.error = "\(error)"; Log.canvas.error("app card: \(error)") }
+            busy = false
+        }
+    }
+}

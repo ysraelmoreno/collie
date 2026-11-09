@@ -88,6 +88,7 @@ extension CommandRouter {
             try await persist()
             for pn in ws.panels where toPasture.contains(pn.id) { await hub.emit(.panel(pn)) }
             await hub.emit(.paddockRemoved(f.id))
+            if f.apps?.isEmpty == false { await publishPlugins() }   // its approved apps leave with it
             // its override went with it; its design files are pasture now and take the workspace's system
             return await pasturePaddockFiles(of: f, caller: caller).map { .object(["designSystem": $0]) } ?? .object([:])
         default:

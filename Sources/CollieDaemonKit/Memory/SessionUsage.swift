@@ -12,8 +12,9 @@ enum SessionUsage {
     /// Per model, the assistant messages in the complete lines after `offset`, and where they end. Claude writes a line per
     /// content block, each with its message's usage: an id counts once. ponytail: once per read — a message split across
     /// two reads (a Stop mid-write) would count twice; a Stop comes after the turn is written.
-    static func read(_ url: URL, from offset: UInt64) -> (byModel: [String: Total], end: UInt64)? {
-        var seen = Set<String>(), out: [String: Total] = [:]
+    /// `last`: the model of the last counted message (what the session runs now).
+    static func read(_ url: URL, from offset: UInt64) -> (byModel: [String: Total], end: UInt64, last: String?)? {
+        var seen = Set<String>(), out: [String: Total] = [:], last: String?
         guard let end = TranscriptChunk.lines(url, from: offset, { raw in
             guard let e = try? JSONSerialization.jsonObject(with: raw) as? [String: Any], e["type"] as? String == "assistant",
                   let msg = e["message"] as? [String: Any], let u = msg["usage"] as? [String: Any] else { return }
@@ -26,8 +27,9 @@ enum SessionUsage {
             var s = out[model] ?? Total()
             s.input += t.input; s.output += t.output; s.cacheRead += t.cacheRead; s.cacheCreation += t.cacheCreation; s.messages += 1
             out[model] = s
+            if msg["model"] is String { last = model }
         }) else { return nil }
-        return (out, end)
+        return (out, end, last)
     }
 }
 
@@ -53,5 +55,6 @@ extension CommandRouter {
                                            model: model, messages: t.messages))
         }
         do { try ConversationCapture.setMark(marks, path: url.path, to: r.end) } catch { memoryLog("usage mark: \(error)") }
+        if let m = r.last { await noteModel(tid, m) }   // the model it really ran (header, list, check, next launch)
     }
 }

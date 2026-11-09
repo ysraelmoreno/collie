@@ -72,6 +72,8 @@ actor PluginStore {
         try Self.copyTree(src, to: staging)   // holds the caps while copying
         let files = try Self.scan(staging)   // the copy is what counts: the source may have changed meanwhile
         let m = try PluginManifest.load(folder: staging)
+        // ponytail: apiVersion 2 (a loopback service, http commands) is an app do cercado's for now: approved per paddock
+        guard m.apiVersion == 1 else { throw ProtocolError(code: .invalidArgs, message: "apiVersion 2 é de app do cercado: ponha a pasta em <cercado>/.collie/apps/\(m.id)/") }
         if let expect, expect != (m.id, m.version) {
             throw ProtocolError(code: .conflict, message: "a pasta do plug-in mudou depois da confirmação (esperado \(expect.id) \(expect.version), encontrado \(m.id) \(m.version)); escolha de novo")
         }

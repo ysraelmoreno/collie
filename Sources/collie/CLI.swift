@@ -10,9 +10,10 @@ enum Client {
     static var socket: URL { env["COLLIE_SOCKET"].map { URL(fileURLWithPath: $0) } ?? Paths().socket }
 
     static func timeout(_ command: String, _ args: [String: JSONValue]) -> Double? {
-        if command == "ask" || command == "wait" {
-            if case .number(let n)? = args["timeout"] { return n + 5 }
-            return 1805
+        if command == "ask" || command == "wait" || command == "model" && args["wait"] == .bool(true) {
+            let margin: Double = command == "model" ? 20 : 5   // model: the switch itself after the wait
+            if case .number(let n)? = args["timeout"] { return n + margin }
+            return 1800 + margin
         }
         // plugin commands: the daemon times the call out itself; the margin lets its typed `.timeout` arrive first
         if PluginRegistry.command(command) != nil { return Commands.spec(command)?.timeoutSeconds.map { $0 + 5 } }
@@ -132,8 +133,12 @@ enum CLI {
                 guard case .object(let o) = row else { return "" }
                 var line = "\(str(o["name"]))\t\(str(o["preset"]))\t\(o["running"] == .bool(true) ? "running" : "stopped")"
                 if o["isShepherd"] == .bool(true) { line += "\tshepherd" }
+                if case .string(let m)? = o["model"] { line += "\tmodel=\(m)" }
                 return line + "\n"
             }.joined()
+        case ("check", .object(let o)) where o["model"] != nil:
+            let s = "[model: \(str(o["model"]))]\n" + str(o["output"]); return s.hasSuffix("\n") ? s : s + "\n"
+        case ("model", .object(let o)): return str(o["model"]) + "\n" + (o["note"].map { "note: \(str($0))\n" } ?? "")
         case (_, .object(let o)) where o["output"] != nil:
             let s = str(o["output"]); return s.hasSuffix("\n") ? s : s + "\n"
         case ("admin.spawn", .object(let o)): return str(o["id"]) + "\n"

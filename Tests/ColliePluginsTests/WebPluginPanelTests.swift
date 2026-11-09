@@ -374,3 +374,23 @@ collie.onCommand(async (name, args) => {
         }
     }
 }
+
+/// Apps do cercado (spec 2026-11-08): a URL page gets a rule list that lets through only its service's origin, and the
+/// bridge exists only in a document of that origin.
+@MainActor @Suite struct AppPanelRulesTests {
+    @Test func rulesLetOnlyTheServiceOriginThrough() async throws {
+        let json = WebPluginPanel.ruleJSON(origin: "http://127.0.0.1:4100")
+        let rules = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: [String: String]]])
+        #expect(rules.map { $0["trigger"]?["url-filter"] } == [".*", #"^http://127\.0\.0\.1:4100/"#, "^data:", "^blob:"])
+        #expect(rules.map { $0["action"]?["type"] } == ["block", "ignore-previous-rules", "ignore-previous-rules", "ignore-previous-rules"])
+        #expect(await WebPluginPanel.rules(origin: "http://127.0.0.1:4100") != nil)   // WebKit compiles it
+        #expect(WebPluginPanel.origin(of: URL(string: "http://127.0.0.1:4100/x?y")) == "http://127.0.0.1:4100")
+        #expect(WebPluginPanel.origin(of: URL(string: "http://127.0.0.1:41000/")) != "http://127.0.0.1:4100")
+    }
+
+    @Test func bridgeOnlyInTheServiceOrigin() {
+        let s = WebPluginBridge.script(theme: "{}", origin: "http://127.0.0.1:4100")
+        #expect(s.contains(#"if (location.origin !== "http:\/\/127.0.0.1:4100") return;"#) || s.contains(#"if (location.origin !== "http://127.0.0.1:4100") return;"#))
+        #expect(!WebPluginBridge.script(theme: "{}").contains("location.origin"))   // an installed plug-in's own scheme
+    }
+}

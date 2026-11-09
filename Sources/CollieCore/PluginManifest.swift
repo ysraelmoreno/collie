@@ -5,6 +5,8 @@ import CollieProtocol
 /// Phase 1 accepts web-UI plug-ins only: `apiVersion` 1, a `ui`, commands that run in the page, no helper, no
 /// permissions. Unknown keys are ignored (a newer manifest still loads); every known one is validated: the id and the
 /// version name folders, the `ui` path is served by the app.
+/// `apiVersion` 2 (spec 2026-11-08-paddock-apps-design.md) adds an app do cercado's parts: `ui` as a loopback URL of
+/// its `service.base`, commands that run as HTTP calls to that service (`runs: "http"`), and `confirm`.
 /// The wire form of an external plug-in's spec (snapshot, `pluginsChanged`, `plugin.specs`): its manifest.
 public typealias PluginSpecDTO = PluginManifest
 
@@ -23,14 +25,28 @@ public struct PluginManifest: Codable, Sendable, Equatable {
             help = try c.decodeIfPresent(String.self, forKey: .help) ?? ""
         }
     }
+    /// `runs: "http"`: `method` to `service.base + path`.
+    public struct HTTP: Codable, Sendable, Equatable {
+        public var method: String
+        public var path: String
+    }
+    /// An app's own service (v2); `start` and `health` are kept for slice 5 and not acted on yet.
+    public struct Service: Codable, Sendable, Equatable {
+        public var base: String
+        public var start: String?
+        public var health: String?
+    }
     public struct Command: Codable, Sendable, Equatable {
         public var name: String
         public var summary: String
-        public var runs: String            // ui (phase 1) | helper (phase 2)
+        public var runs: String            // ui | http (v2) | helper (phase 2)
         public var params: [Param]
         public var timeout: Double         // seconds, 1-300
         /// The result's `path` is a file made for the caller (plan 2O hand-over).
         public var outputFile: Bool
+        public var http: HTTP?
+        /// The user allows each call on a card before it runs (destructive actions).
+        public var confirm: Bool
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
             name = try c.decode(String.self, forKey: .name); summary = try c.decode(String.self, forKey: .summary)
@@ -38,6 +54,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
             params = try c.decodeIfPresent([Param].self, forKey: .params) ?? []
             timeout = try c.decodeIfPresent(Double.self, forKey: .timeout) ?? 30
             outputFile = try c.decodeIfPresent(Bool.self, forKey: .outputFile) ?? false
+            http = try c.decodeIfPresent(HTTP.self, forKey: .http)
+            confirm = try c.decodeIfPresent(Bool.self, forKey: .confirm) ?? false
         }
     }
 
@@ -55,6 +73,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public var events: [String]
     public var stateKeys: [String]
     public var permissions: [String: JSONValue]?   // phase 3; only absent/empty accepted now
+    public var service: Service?           // v2
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -71,7 +90,15 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         events = try c.decodeIfPresent([String].self, forKey: .events) ?? []
         stateKeys = try c.decodeIfPresent([String].self, forKey: .stateKeys) ?? []
         permissions = try c.decodeIfPresent([String: JSONValue].self, forKey: .permissions)
+        service = try c.decodeIfPresent(Service.self, forKey: .service)
     }
+
+    /// The page is a loopback URL of the app's service (v2), not a `ui/` file.
+    public var uiIsURL: Bool { ui.hasPrefix("http://") || ui.hasPrefix("https://") }
+    /// The service's origin (`http://127.0.0.1:4100`, no trailing slash); nil: no valid loopback base.
+    public var serviceOrigin: String? { service.flatMap { Self.loopbackOrigin($0.base) } }
+    /// Seconds a confirm command's card waits for the user (the command's own timeout comes after).
+    public static let confirmWait: Double = 120
 
     public static let fileName = "collie-plugin.json"
     static let newer = "precisa de um Collie mais novo (helpers/permissões chegam na fase 2/3)"
@@ -80,7 +107,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public static func decode(_ data: Data) throws(ProtocolError) -> PluginManifest {
         struct Version: Decodable { var apiVersion: Int }
         guard let v = try? JSONDecoder().decode(Version.self, from: data) else { throw bad("manifesto inválido: falta apiVersion (número)") }
-        guard v.apiVersion == 1 else {
+        guard (1...2).contains(v.apiVersion) else {
             throw bad(v.apiVersion > 1 ? "precisa de um Collie mais novo (apiVersion \(v.apiVersion))" : "apiVersion inválida: \(v.apiVersion)")
         }
         let m: PluginManifest
@@ -98,6 +125,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
             throw bad("\(fileName) ausente, ilegível, não é um arquivo comum ou maior que 256 KiB")
         }
         let m = try decode(data)
+        if m.uiIsURL { return m }   // served by the app's own service: nothing on disk to check
         var at = folder   // every component lstat'ed: a link anywhere on the way is refused
         for part in m.ui.split(separator: "/") {
             at.appendPathComponent(String(part))
@@ -118,9 +146,12 @@ public struct PluginManifest: Codable, Sendable, Equatable {
                 if c.outputFile, !params.contains(where: { $0.name == "out" }) {
                     params.append(ParamSpec("out", .string, help: "Copy the file here (relative to the current directory; dirs created, overwritten); returns that path"))
                 }
-                return CommandSpec(name: "\(id).\(c.name)", summary: c.summary, params: params, timeoutSeconds: c.timeout, outputFile: c.outputFile)
+                // a confirm card waits for the user before the call's own timeout starts
+                return CommandSpec(name: "\(id).\(c.name)", summary: c.summary, params: params,
+                                   timeoutSeconds: c.timeout + (c.confirm ? Self.confirmWait : 0), outputFile: c.outputFile)
             },
-            events: events, runsInDaemon: false, source: .external(version: version), stateKeys: stateKeys)
+            events: events, runsInDaemon: false, source: .external(version: version), stateKeys: stateKeys,
+            uiURL: uiIsURL ? ui : nil, serviceBase: serviceOrigin)
     }
 
     /// Makes `manifests` this process's external plug-ins (`PluginRegistry.setExternal`). Each one is validated again:
@@ -154,14 +185,36 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         try Self.text(author, "author", 0...128); try Self.text(license, "license", 0...64)
         guard !placements.isEmpty, !placements.contains(.headless) else { throw Self.bad("placements: um ou mais de canvas, dock.left, dock.right, dock.bottom") }
         guard placements.contains(defaultPlacement) else { throw Self.bad("defaultPlacement precisa estar em placements") }
-        guard Self.safeUIPath(ui) else { throw Self.bad("ui '\(ui)' inválido: um .html dentro de ui/, sem '..'") }
+        if apiVersion == 1, service != nil || commands.contains(where: { $0.http != nil || $0.confirm }) {
+            throw Self.bad("service, http e confirm pedem apiVersion 2")
+        }
+        let origin = serviceOrigin
+        if service != nil, origin == nil {
+            throw Self.bad("service.base '\(service?.base ?? "")' inválido: http://127.0.0.1, http://[::1] ou http://localhost, com porta e sem caminho")
+        }
+        if uiIsURL {
+            guard let origin, Self.loopbackOrigin(ui, page: true) == origin else {
+                throw Self.bad("ui '\(ui)': uma URL do próprio service.base (loopback)")
+            }
+        } else {
+            guard Self.safeUIPath(ui) else { throw Self.bad("ui '\(ui)' inválido: um .html dentro de ui/, sem '..'") }
+        }
         guard commands.count <= 64 else { throw Self.bad("no máximo 64 comandos") }
         var seen: Set<String> = []
         for c in commands {
             guard Self.match(c.name, "[a-z][a-z0-9-]{0,31}"), seen.insert(c.name).inserted else {
                 throw Self.bad("nome de comando '\(c.name)' inválido ou repetido: a-z, 0-9 e '-', até 32, começando com letra")
             }
-            guard c.runs == "ui" else { throw Self.bad("comando '\(c.name)': runs deve ser \"ui\"") }
+            switch c.runs {
+            case "ui": guard c.http == nil else { throw Self.bad("comando '\(c.name)': http só com runs \"http\"") }
+            case "http" where apiVersion >= 2:
+                guard origin != nil else { throw Self.bad("comando '\(c.name)': runs \"http\" precisa de service.base") }
+                guard let h = c.http, ["GET", "POST", "PUT", "PATCH", "DELETE"].contains(h.method), Self.safeHTTPPath(h.path) else {
+                    throw Self.bad("comando '\(c.name)': http {method: GET|POST|PUT|PATCH|DELETE, path: /…} sem '..', '?' ou '#'")
+                }
+                guard !c.outputFile else { throw Self.bad("comando '\(c.name)': outputFile só com runs \"ui\"") }
+            default: throw Self.bad("comando '\(c.name)': runs deve ser \"ui\"" + (apiVersion >= 2 ? " ou \"http\"" : ""))
+            }
             try Self.text(c.summary, "summary de '\(c.name)'", 1...2000)
             guard (1...300).contains(c.timeout) else { throw Self.bad("comando '\(c.name)': timeout entre 1 e 300 segundos") }
             var names: Set<String> = []
@@ -194,6 +247,20 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         let parts = p.split(separator: "/", omittingEmptySubsequences: false)
         return p.utf8.count <= 512 && parts.count >= 2 && parts[0] == "ui" && p.hasSuffix(".html")
             && parts.allSatisfy { match(String($0), "[A-Za-z0-9_][A-Za-z0-9._-]{0,127}") }
+    }
+    /// `/api/pods`: plain path segments only, ≤ 512 bytes.
+    static func safeHTTPPath(_ p: String) -> Bool {
+        p.utf8.count <= 512 && match(p, "/([A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*/?)?") && !p.split(separator: "/").contains { $0 == ".." || $0 == "." }
+    }
+    /// The origin of a loopback http(s) URL (`http://127.0.0.1:4100`): host 127.0.0.1, [::1] or localhost, no user, query
+    /// or fragment; a base (`page` false) has no path beyond "/". nil: anything else.
+    public static func loopbackOrigin(_ s: String, page: Bool = false) -> String? {
+        guard s.utf8.count <= 512, let u = URLComponents(string: s), let scheme = u.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = u.host?.lowercased(), ["127.0.0.1", "::1", "[::1]", "localhost"].contains(host),
+              u.user == nil, u.password == nil, u.query == nil, u.fragment == nil,
+              page ? !u.path.split(separator: "/").contains(where: { $0 == ".." }) : (u.path.isEmpty || u.path == "/") else { return nil }
+        let h = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        return "\(scheme)://\(h)" + (u.port.map { ":\($0)" } ?? "")
     }
     static func match(_ s: String, _ pattern: String) -> Bool { (try? Regex(pattern).wholeMatch(in: s)) != nil }
     static func text(_ s: String, _ what: String, _ len: ClosedRange<Int>) throws(ProtocolError) {

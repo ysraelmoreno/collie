@@ -22,11 +22,16 @@ public struct PluginSpec: Sendable, Equatable {
     public var source: PluginSource
     /// Panel state keys a herd may carry (external plug-ins; built-ins' are `HerdFormat.allowedState`).
     public var stateKeys: [String]
+    /// An app do cercado's page (manifest `apiVersion` 2): a loopback URL served by `serviceBase`, the only origin its
+    /// panel may load. nil: the page is the plug-in's own `ui/` file.
+    public var uiURL: String?
+    public var serviceBase: String?
     public init(id: String, title: String, placements: [PanelPlacement], defaultPlacement: PanelPlacement,
                 commands: [CommandSpec], events: [String], runsInDaemon: Bool = false, source: PluginSource = .builtIn,
-                stateKeys: [String] = []) {
+                stateKeys: [String] = [], uiURL: String? = nil, serviceBase: String? = nil) {
         self.id = id; self.title = title; self.placements = placements; self.defaultPlacement = defaultPlacement
         self.events = events; self.runsInDaemon = runsInDaemon; self.source = source; self.stateKeys = stateKeys
+        self.uiURL = uiURL; self.serviceBase = serviceBase
         self.commands = commands.map { var c = $0; c.params.append(ParamSpec("panel", .string, help: "Panel name (default: the only reachable one)")); return c }
     }
 }

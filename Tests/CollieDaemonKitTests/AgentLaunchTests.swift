@@ -34,6 +34,13 @@ import CollieProtocol
         #expect(sl["type"] as? String == "command" && sl["padding"] as? Int == 0)
         #expect(sl["command"] as? String == "'/opt/o rq/collie' hook claude-statusline")
     }
+    @Test func claudeGetsTheRecordsModel() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        var r = rec(.claude); r.model = "opus"
+        #expect(try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh").arguments[1].hasPrefix("claude --model 'opus' --settings "))
+        var c = rec(.claude, "claude --model x"); c.model = "opus"   // the command's own --model wins
+        #expect(!(try AgentLaunch.launchSpec(for: c, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh").arguments[1].contains("'opus'")))
+    }
     @Test func claudeExplicitCommandRules() throws {
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let a = try AgentLaunch.launchSpec(for: rec(.claude, "claude --model x"), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")

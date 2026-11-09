@@ -70,11 +70,13 @@ public enum PluginRegistry {
     public static let externalChanged = Notification.Name("collie.externalPluginsChanged")
 
     /// Tests only. The external list is process-wide and every suite runs in one process: a test that sets it runs its
-    /// body through this, one at a time, so another suite's `setExternal` can't change it mid-test.
+    /// body through this, one at a time, so another suite's `setExternal` can't change it mid-test. Each body starts and
+    /// ends with no external plug-ins: what the previous one registered (an app id another suite reuses) never leaks.
     // ponytail: a test hook in the product (a few lines); nothing else calls it.
     public static func exclusively<T>(isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
         await testGate.acquire()
-        do { let r = try await body(); await testGate.release(); return r } catch { await testGate.release(); throw error }
+        setExternal([])
+        do { let r = try await body(); setExternal([]); await testGate.release(); return r } catch { setExternal([]); await testGate.release(); throw error }
     }
     private static let testGate = Gate()
     private actor Gate {

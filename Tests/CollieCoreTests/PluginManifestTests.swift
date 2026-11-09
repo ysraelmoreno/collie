@@ -158,7 +158,7 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         #expect(m.commands.map(\.runs) == ["http", "http"] && m.commands[1].confirm && m.commands[1].http?.path == "/api/restart")
         let spec = m.pluginSpec()
         #expect(spec.uiURL == "http://127.0.0.1:4100/" && spec.serviceBase == "http://127.0.0.1:4100")
-        #expect(spec.commands.first { $0.name == "kube.restart" }?.timeoutSeconds == 60 + PluginManifest.confirmWait)   // the card waits first
+        #expect(spec.commands.first { $0.name == "kube.restart" }?.timeoutSeconds == 60 + PluginManifest.confirmWait + PluginManifest.startWait)   // the card, then its service's health
         #expect(try manifest(v2 { $0["service"] = ["base": "http://localhost:8080/"]; $0["ui"] = "http://localhost:8080/app/index.html" }).serviceOrigin == "http://localhost:8080")
         #expect(try manifest(v2 { $0["service"] = ["base": "http://[::1]:9"]; $0["ui"] = "http://[::1]:9/" }).serviceOrigin == "http://[::1]:9")
     }
@@ -190,6 +190,13 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         // the daemon's fields: never on an installed (v1) plug-in
         #expect(refusal { $0["appFolder"] = "/etc" }?.message.contains("apiVersion 2") == true)
         #expect(try manifest(v2 { $0["appFolder"] = "/x"; $0["appPin"] = "p" }).pluginSpec().appFolder == "/x")
+    }
+
+    @Test func v2ServiceStartAndHealth() throws {   // slice 5
+        let m = try manifest(v2 { $0["service"] = ["base": "http://127.0.0.1:4100", "start": "npm run serve", "health": "/healthz"] })
+        #expect(m.pluginSpec().commands.first { $0.name == "kube.pods" }?.timeoutSeconds == 30 + PluginManifest.startWait)
+        #expect(refusal(v2 { $0["service"] = ["base": "http://127.0.0.1:4100", "start": "npm run serve\nrm -rf ~"] })?.message.contains("service.start") == true)
+        #expect(refusal(v2 { $0["service"] = ["base": "http://127.0.0.1:4100", "health": "healthz"] })?.message.contains("service.health") == true)
     }
 
     @Test func v2RefusesWhatLeavesLoopbackOrItsBase() {

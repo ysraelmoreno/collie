@@ -310,6 +310,9 @@ struct AppCardView: View {
                     .font(.collieUI(13)).fixedSize(horizontal: false, vertical: true)
                 if let by { Text("Pedido por \(Text(verbatim: by).italic()); um agente nunca aprova").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
                 if let base = card.base { Text("Serviço: \(Text(verbatim: base).font(.collieMono(11)))").font(.collieUI(12)) }
+                if let start = card.start {   // slice 5: the daemon runs it in the app's folder, under the paddock's sandbox
+                    Text("Vai rodar: \(Text(verbatim: AccessCopy.shown(start)).font(.collieMono(11)))").font(.collieUI(12))
+                }
                 if !card.commands.isEmpty {
                     Text("Comandos para os agentes: \(Text(verbatim: card.commands.joined(separator: ", ")).font(.collieMono(11)))")
                         .font(.collieUI(12)).fixedSize(horizontal: false, vertical: true)

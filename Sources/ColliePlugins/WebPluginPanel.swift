@@ -558,6 +558,27 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
     /// `window.open`, `target=_blank`: never a new window.
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                         for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
+    /// Slice 5: the app's service, run by the daemon (`collie.service`): starting shows "iniciando", running reloads the
+    /// page, failed shows the reason with Tentar de novo (`admin.app.restart`).
+    public func receive(event: String, payload: JSONValue) {
+        guard event == "collie.service", origin != nil, case .object(let o) = payload, case .string(let state)? = o["state"] else { return }
+        switch state {
+        case "starting":
+            box.placeholder("\(title): iniciando o serviço…")   // the web view stays the panel's; running shows it again
+        case "running":
+            guard let web = webView else { return }
+            web.isHidden = false
+            box.show(web)
+            web.reload()
+        case "failed":
+            let why: String = if case .string(let r)? = o["reason"] { r } else { "o serviço parou" }
+            webView?.isHidden = true
+            let host = host, panel = panel
+            box.placeholder("\(title) parou: \(why)", retry: { Task { _ = try? await host.call("admin.app.restart", ["panel": .string(panel.id.uuidString)]) } })
+        default: break
+        }
+    }
+
     /// An app's service that doesn't answer: the placeholder says so, with Tentar de novo.
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
         guard webView === self.webView, let origin else { return }

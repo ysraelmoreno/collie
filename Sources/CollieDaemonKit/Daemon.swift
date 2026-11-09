@@ -259,6 +259,7 @@ public final class Daemon: Sendable {
         await router.devices.stop()
         await router.design.stop()
         await router.figcraft.stop()
+        await router.stopAppServices()   // apps do cercado: their services' groups
         await hub.stop()
         await registry.killAll()
         await auth.revokeAll()

@@ -108,6 +108,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public var serviceOrigin: String? { service.flatMap { Self.loopbackOrigin($0.base) } }
     /// Seconds a confirm command's card waits for the user (the command's own timeout comes after).
     public static let confirmWait: Double = 120
+    /// Seconds an app's own service (`service.start`, run by the daemon) has to answer its health check (slice 5).
+    public static let startWait: Double = 30
 
     public static let fileName = "collie-plugin.json"
     static let newer = "precisa de um Collie mais novo (helpers/permissões chegam na fase 2/3)"
@@ -157,7 +159,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
                 }
                 // a confirm card waits for the user before the call's own timeout starts
                 return CommandSpec(name: "\(id).\(c.name)", summary: c.summary, params: params,
-                                   timeoutSeconds: c.timeout + (c.confirm ? Self.confirmWait : 0), outputFile: c.outputFile)
+                                   timeoutSeconds: c.timeout + (c.confirm ? Self.confirmWait : 0) + (c.runs == "http" && service?.start != nil ? Self.startWait : 0),
+                                   outputFile: c.outputFile)
             },
             events: events, runsInDaemon: false, source: .external(version: version), stateKeys: stateKeys,
             uiURL: uiIsURL ? ui : nil, serviceBase: serviceOrigin, appFolder: appFolder, appPin: appPin)
@@ -278,6 +281,10 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         }
         guard stateKeys.count <= 64, stateKeys.allSatisfy({ Self.match($0, "[A-Za-z][A-Za-z0-9_-]{0,63}") }) else {
             throw Self.bad("stateKeys: até 64 nomes (letras, dígitos, _ e -)")
+        }
+        if let s = service {   // slice 5: the daemon runs `start` in the app's folder (the approval card shows it)
+            if let start = s.start { try Self.text(start, "service.start", 1...500) }
+            if let h = s.health, !Self.safeHTTPPath(h) { throw Self.bad("service.health '\(h)': um caminho /… do service.base") }
         }
         if let e = eventStream {
             guard origin != nil, Self.safeHTTPPath(e), !events.isEmpty else {

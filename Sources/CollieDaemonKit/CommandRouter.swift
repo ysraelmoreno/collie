@@ -103,6 +103,9 @@ actor CommandRouter {
     var appNoticeAt: [UUID: ContinuousClock.Instant] = [:]
     /// Slice 3: what the user is looking at in each app panel (`collie.context`), and when the page set it.
     var appContexts: [UUID: (value: JSONValue, at: Date)] = [:]
+    /// Slice 5: the services the daemon runs for approved apps (by paddock/app), and their idle sweep.
+    var appServices: [String: AppService] = [:]
+    var appSweep: Task<Void, Never>?
     /// R14: when each terminal's correction jobs were queued (the last hour's).
     var correctionsAt: [String: [Date]] = [:]   // "<terminal>|<user>"
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
@@ -724,7 +727,7 @@ actor CommandRouter {
             try await leash(try find(try need("a")), try find(try need("b")))
             return .object([:])
         case "admin.leash.requests", "admin.leash.answer": return try await adminLeashRequest(r)
-        case "admin.app.cards", "admin.app.answer", "admin.app.context": return try await adminAppCard(r)
+        case "admin.app.cards", "admin.app.answer", "admin.app.context", "admin.app.restart": return try await adminAppCard(r)
         case "admin.block.attach", "admin.block.refresh": return try await adminBlock(r)
         case "admin.kill":
             let name = try need("target")

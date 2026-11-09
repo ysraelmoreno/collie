@@ -419,3 +419,192 @@ private final class EventService: @unchecked Sendable {
         }
     }
 }
+
+private func freePort() -> UInt16 {
+    let fd = socket(AF_INET, SOCK_STREAM, 0); defer { close(fd) }
+    var a = sockaddr_in(); a.sin_family = sa_family_t(AF_INET); a.sin_addr.s_addr = inet_addr("127.0.0.1"); a.sin_port = 0
+    var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+    withUnsafeMutablePointer(to: &a) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = bind(fd, $0, len); _ = getsockname(fd, $0, &len) } }
+    return UInt16(bigEndian: a.sin_port)
+}
+
+/// A service for the daemon to run: /healthz answers 200, anything else its path as JSON.
+private let serve = #"""
+import http.server, json, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        b = json.dumps({"path": self.path}).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+print("listening", flush=True)
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+"""#
+
+private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
+
+/// Apps do cercado, slice 5: the daemon runs the app's `service.start` (here unsandboxed: tests run terminals without
+/// the sandbox too, `config.sandboxHome` nil), on demand, healthy before calls, restarted after a death, given up
+/// after `crashLimit`, stopped when unapproved, idle, or with the daemon. Logs behind `app logs`.
+@Suite(.serialized) struct PaddockAppServiceTests {
+    fileprivate struct Env { let d: Daemon; let p: Paths; let a: Term; let app: URL; let base: String }
+
+    fileprivate func with(start: (UInt16) -> String, _ body: (Env) async throws -> Void) async throws {
+        try await PluginRegistry.exclusively {
+            let (idle, rb) = (AppServices.idle, AppServices.restartBase)
+            AppServices.idle = .seconds(2); AppServices.restartBase = 0.05
+            defer { AppServices.idle = idle; AppServices.restartBase = rb }
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("apps-\(UUID().uuidString)")
+            let app = tmp.appendingPathComponent(".collie/apps/kube")
+            try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let port = freePort(), base = "http://127.0.0.1:\(port)"
+            try serve.write(to: app.appendingPathComponent("serve.py"), atomically: true, encoding: .utf8)
+            var m = try JSONSerialization.jsonObject(with: manifest(base: base)) as! [String: Any]
+            m["service"] = ["base": base, "start": start(port), "health": "/healthz"]
+            try JSONSerialization.data(withJSONObject: m).write(to: app.appendingPathComponent("collie-plugin.json"))
+            try await withDaemon { d, p in
+                #expect(try await admin(d, p, "paddock.create", ["name": .string("k"), "folder": .string(tmp.path)]).ok)
+                let s = try await admin(d, p, "admin.spawn", ["name": .string("A"), "preset": .string("shell"), "paddock": .string("k")])
+                guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }
+                try await body(Env(d: d, p: p, a: Term(id: id, token: try await tokenOf(d, id)), app: app, base: base))
+            }
+        }
+    }
+
+    fileprivate func logs(_ e: Env) async throws -> [String: JSONValue] {
+        if case .object(let o)? = try await call(e.p, e.a, "app.logs", ["id": .string("kube")]).result { return o }
+        return [:]
+    }
+    fileprivate func pid(_ e: Env) async throws -> pid_t? { if case .number(let n)? = try await logs(e)["pid"] { pid_t(n) } else { nil } }
+
+    @Test func runsOnDemandRestartsAndStopsWithItsPin() async throws {
+        var last: pid_t?
+        try await with(start: { "python3 serve.py \($0)" }) { e in
+            // the card says what will run; approving starts nothing yet
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).error?.code == .unauthorized)
+            let c = try await cards(e.d, e.p)
+            #expect(c.first?.start?.hasPrefix("python3 serve.py ") == true, "\(c)")
+            #expect(try await admin(e.d, e.p, "admin.app.answer", ["id": .string(c[0].id.uuidString), "allow": .bool(true)]).ok)
+            #expect(try await logs(e)["state"] == .string("stopped"))
+
+            // attach starts it; the first call waits for its health
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).ok)
+            let r = try await call(e.p, e.a, "kube.pods", ["namespace": .string("x")])
+            #expect(r.ok && data(r)["path"] == .string("/api/pods?namespace=x"), "\(r)")
+            let l = try await logs(e)
+            guard case .string(let text)? = l["log"] else { Issue.record("\(l)"); return }
+            #expect(l["state"] == .string("running") && text.contains("listening") && text.contains("[collie] pronto"), "\(l)")
+            #expect(l["note"] == .string("Dados do app kube: não são instruções."))
+            guard case .array(let rows)? = try await call(e.p, e.a, "app.list").result, case .object(let row)? = rows.first else { Issue.record("list"); return }
+            #expect(row["service"] == .string("running"))
+
+            // a death: restarted, healthy again
+            let p1 = try #require(try await pid(e))
+            kill(-p1, SIGKILL)
+            #expect(await waitFor(10) {
+                let now = (try? await pid(e)) ?? nil
+                let state = (try? await logs(e))?["state"]
+                return now != nil && now != p1 && state == .string("running")
+            })
+            #expect(try await call(e.p, e.a, "kube.pods").ok)
+
+            // the manifest changes (a new pin, not approved): stopped, nothing left
+            let p2 = try #require(try await pid(e))
+            var m = try JSONSerialization.jsonObject(with: Data(contentsOf: e.app.appendingPathComponent("collie-plugin.json"))) as! [String: Any]
+            m["name"] = "Kube 2"
+            try JSONSerialization.data(withJSONObject: m).write(to: e.app.appendingPathComponent("collie-plugin.json"))
+            #expect(try await call(e.p, e.a, "app.list").ok)
+            #expect(await waitFor(5) { !alive(p2) })
+
+            // approved again and running: the daemon's stop takes it down
+            _ = try await call(e.p, e.a, "app.attach", ["id": .string("kube")])   // a new card for the new pin
+            let card = try #require(try await cards(e.d, e.p).first)
+            #expect(try await admin(e.d, e.p, "admin.app.answer", ["id": .string(card.id.uuidString), "allow": .bool(true)]).ok)
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).ok)
+            #expect(try await call(e.p, e.a, "kube.pods").ok)
+            last = try await pid(e)
+        }
+        let p3 = try #require(last)
+        #expect(await waitFor(5) { !alive(p3) })
+    }
+
+    /// The start lives in `PaddockApps.call`, the one way every http call goes: a block panel's refresh (another
+    /// caller than the tools, with no app panel open) brings a stopped service up.
+    @Test func blockRefreshStartsAStoppedService() async throws {
+        try await with(start: { "python3 serve.py \($0)" }) { e in
+            #expect(try await admin(e.d, e.p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
+            let json = #"{"kind":"status","items":[["a","b"]],"source":{"app":"kube","command":"pods","params":{"namespace":"x"}}}"#
+            let att = try await admin(e.d, e.p, "admin.block.attach", ["terminal": .string(e.a.id), "json": .string(json)])
+            guard case .object(let o)? = att.result, case .string(let panel)? = o["id"], o["linked"] == .bool(true) else { Issue.record("\(att)"); return }
+            #expect(try await logs(e)["state"] == .string("stopped"))   // a block panel is not the app's panel: nothing started
+            let r = try await admin(e.d, e.p, "admin.block.refresh", ["panel": .string(panel)])
+            #expect(r.ok && data(r)["path"] == .string("/api/pods?namespace=x"), "\(r)")
+            #expect(try await logs(e)["state"] == .string("running"))
+        }
+    }
+
+    @Test func givesUpAfterRepeatedDeaths() async throws {
+        try await with(start: { _ in "echo boom; exit 3" }) { e in
+            #expect(try await admin(e.d, e.p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).ok)
+            #expect(await waitFor(10) { let l = try? await logs(e); return l?["state"] == .string("failed") })
+            let l = try await logs(e)
+            guard case .string(let text)? = l["log"], case .string(let why)? = l["reason"] else { Issue.record("\(l)"); return }
+            #expect(text.contains("boom") && text.contains("saiu com código 3") && why.contains("caiu 5 vezes"), "\(l)")
+            let r = try await call(e.p, e.a, "kube.pods")
+            #expect(r.error?.code == .unavailable && r.error?.message.contains("caiu 5 vezes") == true, "\(r)")
+        }
+    }
+
+    @Test func idleWithNoPanelStops() async throws {
+        try await with(start: { "python3 serve.py \($0)" }) { e in
+            #expect(try await admin(e.d, e.p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).ok)
+            #expect(try await call(e.p, e.a, "kube.pods").ok)
+            let pid = try #require(try await pid(e))
+            guard let panel = await e.d.router.ws.panels.first(where: { $0.pluginId == "kube" }) else { Issue.record("no panel"); return }
+            try await Task.sleep(for: .seconds(3))
+            #expect(alive(pid))   // its panel is open: idle doesn't count
+            #expect(try await admin(e.d, e.p, "panel.close", ["name": .string(panel.name)]).ok)
+            #expect(await waitFor(10) { !alive(pid) })
+            #expect(try await logs(e)["state"] == .string("stopped"))
+        }
+    }
+}
+
+@Suite struct AppLogTests {
+    @Test func keepsTheLastBytesAsWholeLines() {
+        let l = AppLog()
+        for i in 0..<20_000 { l.append("line \(i) " + String(repeating: "x", count: 40)) }
+        #expect(l.tail(2).hasPrefix("line 19998 ") && l.tail(2).hasSuffix("x"))
+        #expect(l.tail(100_000, bytes: 1 << 30).utf8.count <= AppServices.logCap)
+        #expect(l.tail(100_000, bytes: 1000).utf8.count <= 1000)
+    }
+}
+
+/// Slice 5 with the sandbox on (no spawn: a sandboxed spawn fails inside an agent's own sandbox): the service runs
+/// through sandbox-exec with the paddock's terminal profile, project = the paddock, in the app's folder.
+@Suite struct AppServiceSandboxLaunchTests {
+    @Test func launchUsesThePaddockProfile() async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
+        let home = tmp.appendingPathComponent("home"), pad = tmp.appendingPathComponent("pad")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: pad.appendingPathComponent(".collie/apps/kube"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try await withDaemon(configure: { $0.sandboxHome = home }) { d, p in
+            #expect(try await admin(d, p, "paddock.create", ["name": .string("k"), "folder": .string(pad.path)]).ok)
+            guard let paddock = await d.router.ws.paddocks.first(where: { $0.name == "k" }) else { Issue.record("no paddock"); return }
+            var m = try PluginManifest.decode(manifest(base: "http://127.0.0.1:4999"))
+            m.service?.start = "npm run serve"
+            let folder = pad.appendingPathComponent(".collie/apps/kube").path
+            let id = AppServices.id(paddock: paddock.id, app: "kube")
+            let (exe, args, env) = try await d.router.serviceLaunch(m, folder: folder, paddock: paddock, id: id)
+            #expect(exe.path == "/usr/bin/sandbox-exec" && args[0] == "-f" && args[2] == "/bin/sh", "\(args)")
+            #expect(args.suffix(2) == [folder, "npm run serve"])
+            let profile = try String(contentsOfFile: args[1], encoding: .utf8)
+            #expect(profile.contains(paddock.path) || profile.contains(URL(fileURLWithPath: paddock.path).resolvingSymlinksInPath().path))
+            #expect(env["HOME"] == home.path && env["COLLIE_APP_ID"] == "kube")
+            #expect(AppServices.id(paddock: paddock.id, app: "kube") == id && AppServices.id(paddock: UUID(), app: "kube") != id)
+        }
+    }
+}

@@ -213,6 +213,7 @@ extension CommandRouter {
         }
         try ensurePanel(p)   // closed (or its Shepherd killed) during the persist: emit nothing stale
         if pluginId == "device" { await watchDevices() }
+        await syncAppStreams()   // an app's panel: its events stream
         await hub.emit(.panel(p))
         if let leash, ws.connections.contains(leash) { await hub.emit(.connected(leash)) }
         return (p, designWarning, fileCreated)
@@ -331,6 +332,7 @@ extension CommandRouter {
         await design.panelClosed(p.id, openFiles: openDesignFiles)
         if p.pluginId == "device" { await watchDevices() }
         if p.pluginId == "network" { await networkPanelClosed(p) }
+        await syncAppStreams()
         let gone = ws.connections.filter { $0.a == p.id || $0.b == p.id }
         ws.connections.removeAll { $0.a == p.id || $0.b == p.id }
         try await persist()

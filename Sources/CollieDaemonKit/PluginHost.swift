@@ -140,6 +140,7 @@ extension CommandRouter {
         // ponytail: oversized payloads are dropped, not truncated; the host keeps its events small
         guard ((try? JSONEncoder().encode(payload).count) ?? Int.max) <= pluginEventPayloadCap else { return }
         record(panel: panel, name: name, payload: payload)
+        appEventNotice(panel: panel, name: name, seq: eventSeq)   // an app do cercado's: its leashed agents are told
         await hub.emit(.pluginEvent(panel: panel, name: name, payload: payload))
     }
 }

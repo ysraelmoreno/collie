@@ -52,6 +52,8 @@ struct ChatBodyView: View {
     @State private var draft = ""
     @State private var queue: [String] = []
     @State private var sendError: String?
+    @State private var approval: Approval?
+    @State private var answering = false
 
     private var name: String { client.terminals.first { $0.id == id }?.name ?? "" }
     /// A dialog (permission, question, trust folder) is on the terminal's screen: typed text must never reach it.
@@ -66,8 +68,7 @@ struct ChatBodyView: View {
                         LazyVStack(alignment: .leading, spacing: 10) {
                             ForEach(model.items) { item in ChatRow(item: item, compact: compact).id(item.id) }
                             if dialogUp {
-                                Text("O agente espera uma resposta no terminal. Alterne para Terminal para responder.")
-                                    .font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                                DialogCard(approval: approval, busy: answering) { allow, option in Task { await answer(allow: allow, option: option) } }
                             }
                             if let e = model.error { Text(e).font(.collieMono(11)).foregroundStyle(Color.collieDanger) }
                         }
@@ -80,6 +81,13 @@ struct ChatBodyView: View {
         }
         .background(Color.collieSurface)
         .task(id: client.chatEnd[id]) { await model.refresh(client, name: name) }   // first load too: chatEnd is nil until a hook
+        .task(id: dialogUp) {   // the dialog's card: the screen the daemon captured, refreshed while it is up (a redraw changes it)
+            guard dialogUp else { approval = nil; return }
+            while !Task.isCancelled {
+                approval = try? await client.approvals().first { $0.terminalId == id }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
         .onChange(of: dialogUp) { if !dialogUp { Task { await flush() } } }
     }
 
@@ -96,6 +104,17 @@ struct ChatBodyView: View {
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.collieSidebar))
         }
         .padding(10)
+    }
+
+    /// Click on the card: by the option's digit or Permitir/Negar, through the chat-approval path, never as text. The
+    /// composer's queue goes out when the badge leaves attention (`onChange` above).
+    private func answer(allow: Bool, option: Int?) async {
+        guard let a = approval, !answering else { return }
+        answering = true; defer { answering = false }
+        do {
+            if try await client.answerApproval(a, allow: allow, option: option) { approval = nil; sendError = nil }
+            else { sendError = "Não foi possível responder daqui; use o terminal." }
+        } catch { sendError = (error as? ProtocolError)?.message ?? "\(error)" }
     }
 
     private func submit() async {
@@ -190,5 +209,39 @@ private struct DiffView: View {
         let rm = (old ?? "").split(separator: "\n", omittingEmptySubsequences: false).map { ("- " + $0, false) }
         let add = new.split(separator: "\n", omittingEmptySubsequences: false).map { ("+ " + $0, true) }
         return Array((old == nil ? add : rm + add).prefix(cap)).map { (text: $0.0, add: $0.1) }
+    }
+}
+
+/// A dialog the agent waits on: permission (Permitir / nesta sessão / Negar) or a single-choice question (its options).
+/// Trust-folder, multi-select questions and anything unreadable stay terminal-only.
+private struct DialogCard: View {
+    let approval: Approval?
+    let busy: Bool
+    let answer: (_ allow: Bool, _ option: Int?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let a = approval {
+                Text(a.isQuestion ? "pergunta do agente" : "pede permissão").font(.collieMono(10)).foregroundStyle(Color.collieAttention)
+                if !a.question.isEmpty { Text(a.question).font(.collieMono(11)).foregroundStyle(Color.collieText).textSelection(.enabled) }
+                let options = a.options
+                if options.isEmpty {
+                    Text("Responda no terminal: alterne para Terminal no cabeçalho.").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
+                } else if a.isQuestion {
+                    ForEach(options) { o in Button(o.label) { answer(true, o.number) }.disabled(busy) }
+                } else {
+                    HStack {
+                        if let yes = options.first(where: { !$0.isSession && !$0.isNo }) { Button("Permitir") { answer(true, yes.number) }.disabled(busy) }
+                        if let s = options.first(where: \.isSession) { Button("Nesta sessão") { answer(true, s.number) }.disabled(busy) }
+                        Button("Negar") { answer(false, nil) }.disabled(busy)   // Esc: "No"
+                    }
+                }
+            } else {
+                Text("O agente espera uma resposta. Alterne para Terminal para responder.").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+            }
+        }
+        .controlSize(.small)
+        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.collieAttentionTint))
     }
 }

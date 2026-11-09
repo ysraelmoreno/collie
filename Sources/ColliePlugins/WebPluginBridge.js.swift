@@ -30,6 +30,7 @@ enum WebPluginBridge {
           handler = fn; post({ op: "ready" });
         },
         emit(event, payload) { return post({ op: "emit", event: String(event), payload: json(payload) }) },
+        context(obj) { return post({ op: "context", value: json(obj) }) },   // an app do cercado: what the user is looking at
         state: Object.freeze({
           get: async () => JSON.parse(await post({ op: "state.get" })),
           set: (obj) => post({ op: "state.set", value: json(obj) }),

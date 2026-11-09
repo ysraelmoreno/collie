@@ -168,7 +168,7 @@ final class ApprovalTracker: @unchecked Sendable {
     /// there was input or another prompt since.
     func reraise(_ a: Approval, ifInputs n: Int) {
         lock.withLock {
-            guard inputs == n, _pending == nil else { return }
+            guard inputs == n, _pending == nil, stillAsked(a) else { return }
             _pending = a; fromHook = false
             onEvent(.raised(a))
         }
@@ -219,6 +219,12 @@ final class ApprovalTracker: @unchecked Sendable {
             guard _pending == nil, let why = quiet.overflowCheck() else { return }
             onEvent(.raised(raise(AttentionDetector.kind(why), why, hook: false)))
         }
+    }
+
+    /// `a`'s dialog is the last thing drawn: a dialog that took the key is followed by something else.
+    private func stillAsked(_ a: Approval) -> Bool {
+        let block = a.prompt.split(separator: "\n").map(String.init)
+        return !block.isEmpty && Self.lines(scrollback, block.count) == block
     }
 
     private func onScreen(_ a: Approval) -> Bool {
@@ -788,7 +794,8 @@ public actor AskCoordinator {
     /// `work.approval.dismiss`: drops approval `id`, writing nothing; false if it is not pending.
     func dismissApproval(_ id: UUID) -> Bool { targets.values.contains { $0.approval.dismiss(id) } }
 
-    static let answerReaction: Double = 2
+    // real Claude drops keys sent in the first seconds after a dialog appears (its hooks still run): 3 s to take the key
+    static let answerReaction: Double = 3
     /// `unknown`: an approval of kind `.unknown`, which nothing answers but the user's own keys (still pending).
     enum Answer: Sendable, Equatable { case stale, unknown, sent(Approval), dismissed(Approval), failed(Approval) }
 
@@ -810,14 +817,13 @@ public actor AskCoordinator {
                 }
                 var hit: (ApprovalTracker, Approval, Int, PTYProcess, ScrollbackBuffer)?
                 for (t, p, sb) in candidates where hit == nil { hit = t.take(id).map { (t, $0.approval, $0.inputs, p, sb) } }   // take has a side effect: once each
-                guard let (tracker, a, inputs, process, sb) = hit else { return c.resume(returning: .stale) }
+                guard let (tracker, a, inputs, process, _) = hit else { return c.resume(returning: .stale) }
                 guard let keys = option.map({ Data(String($0).utf8) }) ?? Self.keys(a.kind, allow: allow) else { return c.resume(returning: .dismissed(a)) }
-                let before = sb.mark()
                 // the user's click in the app (approvals are answered only from the app's work chat)
                 do { try process.write(keys, origin: .user); c.resume(returning: .sent(a)) } catch { return c.resume(returning: .failed(a)) }
-                // R9: a dialog that took the key redraws (or echoes); no output at all means the key was ignored
+                // R9: a dialog that took the key is gone from the screen; still there (silent, or redrawn) means the key
+                // was ignored: pending again, never retried here (two keys could answer the next dialog)
                 DispatchQueue.global().asyncAfter(deadline: .now() + Self.answerReaction) { [weak self] in
-                    guard sb.mark() == before else { return }
                     Task { await self?.reraise(tracker, a, ifInputs: inputs) }
                 }
             }

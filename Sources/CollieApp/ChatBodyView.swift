@@ -54,6 +54,8 @@ struct ChatBodyView: View {
     @State private var sendError: String?
     @State private var approval: Approval?
     @State private var answering = false
+    @State private var sent: (id: UUID, prompt: String)?   // the key went out; the daemon re-raises the approval if the dialog did not take it
+    @State private var notEntered = false
 
     private var name: String { client.terminals.first { $0.id == id }?.name ?? "" }
     /// A dialog (permission, question, trust folder) is on the terminal's screen: typed text must never reach it.
@@ -66,9 +68,9 @@ struct ChatBodyView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 10) {
-                            ForEach(model.items) { item in ChatRow(item: item, compact: compact).id(item.id) }
+                            ForEach(model.items) { item in ChatRow(item: item, compact: compact) { choice in Task { await submit(choice) } }.id(item.id) }
                             if dialogUp {
-                                DialogCard(approval: approval, busy: answering) { allow, option in Task { await answer(allow: allow, option: option) } }
+                                DialogCard(approval: approval, busy: answering, waiting: sent != nil, notEntered: notEntered) { allow, option in Task { await answer(allow: allow, option: option) } }
                             }
                             if let e = model.error { Text(e).font(.collieMono(11)).foregroundStyle(Color.collieDanger) }
                         }
@@ -82,9 +84,14 @@ struct ChatBodyView: View {
         .background(Color.collieSurface)
         .task(id: client.chatEnd[id]) { await model.refresh(client, name: name) }   // first load too: chatEnd is nil until a hook
         .task(id: dialogUp) {   // the dialog's card: the screen the daemon captured, refreshed while it is up (a redraw changes it)
-            guard dialogUp else { approval = nil; return }
+            guard dialogUp else { approval = nil; sent = nil; notEntered = false; return }
             while !Task.isCancelled {
                 approval = try? await client.approvals().first { $0.terminalId == id }
+                if let s = sent, let a = approval {
+                    // back after the answer (the daemon waits 3 s for the dialog to close): the key did not go in; no retry here
+                    if a.id == s.id || a.prompt == s.prompt { notEntered = true }   // redrawn dialogs may get a new id
+                    sent = nil
+                }
                 try? await Task.sleep(for: .seconds(1))
             }
         }
@@ -112,15 +119,20 @@ struct ChatBodyView: View {
         guard let a = approval, !answering else { return }
         answering = true; defer { answering = false }
         do {
-            if try await client.answerApproval(a, allow: allow, option: option) { approval = nil; sendError = nil }
+            if try await client.answerApproval(a, allow: allow, option: option) { approval = nil; sendError = nil; notEntered = false; sent = (a.id, a.prompt) }
             else { sendError = "Não foi possível responder daqui; use o terminal." }
         } catch { sendError = (error as? ProtocolError)?.message ?? "\(error)" }
     }
 
     private func submit() async {
         let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
         draft = ""
+        await submit(t)
+    }
+
+    /// The composer's text, or a collie-ui form's choice: a normal prompt, queued while a dialog is up.
+    private func submit(_ t: String) async {
+        guard !t.isEmpty else { return }
         if dialogUp { queue.append(t); return }   // never typed into the dialog: sent when it closes
         await send(t)
     }
@@ -138,13 +150,21 @@ struct ChatBodyView: View {
 private struct ChatRow: View {
     let item: ChatItem
     let compact: Bool
+    let choose: (String) -> Void   // a collie-ui form's choice
 
     var body: some View {
         if let m = item.message {
             let user = m.kind == .user
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(user ? "você" : "agente").font(.collieMono(10)).foregroundStyle(user ? Color.collieSecondary : Color.collieAccent)
-                Text(Self.markdown(m.text)).font(.collieUI(13)).foregroundStyle(Color.collieText).textSelection(.enabled)
+                // blocks only in the agent's replies: a collie-ui fence typed by the user (or quoted back) is just text
+                ForEach(Array((user ? [ChatSegment.text(m.text)] : ChatSegment.split(m.text)).enumerated()), id: \.offset) { _, seg in
+                    switch seg {
+                    case .text(let t): Text(Self.markdown(t)).font(.collieUI(13)).foregroundStyle(Color.collieText).textSelection(.enabled)
+                    case .ui(let b, let json): UIBlockView(block: b, json: json, compact: compact, choose: choose)
+                    case .code(let c): Text(c).font(.collieMono(11)).foregroundStyle(Color.collieMuted).textSelection(.enabled)
+                    }
+                }
             }
         } else if let t = item.tool {
             ToolBlock(tool: t, result: item.result, compact: compact)
@@ -192,7 +212,7 @@ private struct ToolBlock: View {
 }
 
 /// Edit/Write: the removed lines in red, the added in green.
-private struct DiffView: View {
+struct DiffView: View {
     let old: String?, new: String
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -217,10 +237,13 @@ private struct DiffView: View {
 private struct DialogCard: View {
     let approval: Approval?
     let busy: Bool
+    let waiting: Bool       // answered; the daemon is checking that the dialog closed
+    let notEntered: Bool    // it did not: the approval is back, nothing was retried
     let answer: (_ allow: Bool, _ option: Int?) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if notEntered { Text("não entrou, tente de novo").font(.collieMono(11)).foregroundStyle(Color.collieDanger) }
             if let a = approval {
                 Text(a.isQuestion ? "pergunta do agente" : "pede permissão").font(.collieMono(10)).foregroundStyle(Color.collieAttention)
                 if !a.question.isEmpty { Text(a.question).font(.collieMono(11)).foregroundStyle(Color.collieText).textSelection(.enabled) }
@@ -236,6 +259,8 @@ private struct DialogCard: View {
                         Button("Negar") { answer(false, nil) }.disabled(busy)   // Esc: "No"
                     }
                 }
+            } else if waiting {
+                Text("resposta enviada…").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
             } else {
                 Text("O agente espera uma resposta. Alterne para Terminal para responder.").font(.collieMono(11)).foregroundStyle(Color.collieAttention)
             }

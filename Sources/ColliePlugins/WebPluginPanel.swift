@@ -227,6 +227,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     // MARK: commands
 
     public func handle(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
+        if command == "app.snapshot" { return try await snapshot() }
         let removed = ProtocolError(code: .unavailable, message: "plug-in removido")
         guard let (p, cmd) = PluginRegistry.command(command), p.id == panel.pluginId, case .external(let v) = p.source else {
             throw ProtocolError(code: .unavailable, message: "plug-in \(panel.pluginId) não está instalado")
@@ -261,6 +262,42 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             throw ProtocolError(code: .internal, message: "resultado do plug-in não é JSON")
         }
         return try outputPath(value, outputFile: cmd.outputFile)
+    }
+
+    /// Slice 3 (`collie app snapshot`): an app's page as rendered now, read by `HTMLSnapshotScript` in the isolated
+    /// `.defaultClient` world (the page's JS can't touch it). Payloads and styles are dropped: text, boxes, links,
+    /// alt; ≤ 1 MiB.
+    func snapshot() async throws(ProtocolError) -> JSONValue {
+        guard origin != nil, let web = webView else { throw ProtocolError(code: .unavailable, message: "o painel não mostra a página de um app agora") }
+        let late = ProtocolError(code: .timeout, message: "a página não terminou o snapshot em 15 s")
+        let id = UUID().uuidString
+        let r: Result<String, ProtocolError> = await withCheckedContinuation { c in
+            pending[id] = c
+            web.callAsyncJavaScript(HTMLSnapshotScript.source, arguments: [:], in: nil, in: .defaultClient) { [weak self] res in
+                switch res {
+                case .success(let v as String): self?.finish(id, .success(v))
+                default: self?.finish(id, .failure(ProtocolError(code: .internal, message: "o snapshot da página falhou")))
+                }
+            }
+            Task { [weak self] in try? await Task.sleep(for: .seconds(15)); self?.finish(id, .failure(late)) }
+        }
+        guard case .object(var o)? = try? JSONDecoder().decode(JSONValue.self, from: Data(try r.get().utf8)) else {
+            throw ProtocolError(code: .internal, message: "snapshot inválido")
+        }
+        o["root"] = o["root"].map(Self.lean)
+        let v = JSONValue.object(o)
+        guard ((try? JSONEncoder().encode(v).count) ?? Int.max) <= Self.resultCap else { throw ProtocolError(code: .invalidArgs, message: "snapshot maior que 1 MiB") }
+        return v
+    }
+
+    /// A snapshot node without its style and payloads (image bytes, svg markup).
+    nonisolated static func lean(_ v: JSONValue) -> JSONValue {
+        guard case .object(var n) = v else { return v }
+        n["style"] = nil
+        if case .object(var img)? = n["image"] { img["data"] = nil; n["image"] = .object(img) }
+        if n["svg"] != nil { n["svg"] = .string("[svg]") }
+        if case .array(let cs)? = n["children"] { n["children"] = .array(cs.map(lean)) }
+        return .object(n)
     }
 
     private func finish(_ id: String, _ r: Result<String, ProtocolError>) { pending.removeValue(forKey: id)?.resume(returning: r) }
@@ -302,6 +339,13 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             guard let raw = str("payload"), raw.utf8.count <= Self.payloadCap,
                   let payload = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, "payload inválido ou maior que 64 KiB") }
             host.emit(event, payload)
+            return (true, nil)
+        case "context":   // slice 3: an app's page only; the daemon keeps it for `collie app context`
+            guard origin != nil else { return (nil, "collie.context é só para apps do cercado") }
+            guard let raw = str("value"), raw.utf8.count <= 16 * 1024,
+                  let v = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, "contexto inválido ou maior que 16 KiB") }
+            do throws(ProtocolError) { _ = try await host.call("admin.app.context", ["panel": .string(panel.id.uuidString), "context": v]) }
+            catch { return (nil, error.message) }
             return (true, nil)
         case "state.get":
             let f = Self.stateFile(panel, root: host.root)

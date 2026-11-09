@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import Testing
 import WebKit
+import Network
 import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
@@ -392,5 +393,90 @@ collie.onCommand(async (name, args) => {
         let s = WebPluginBridge.script(theme: "{}", origin: "http://127.0.0.1:4100")
         #expect(s.contains(#"if (location.origin !== "http:\/\/127.0.0.1:4100") return;"#) || s.contains(#"if (location.origin !== "http://127.0.0.1:4100") return;"#))
         #expect(!WebPluginBridge.script(theme: "{}").contains("location.origin"))   // an installed plug-in's own scheme
+    }
+}
+
+/// Serves one HTML page on loopback (an app do cercado's service, slice 3).
+private final class PageServer: @unchecked Sendable {
+    let listener: NWListener
+    let port: UInt16
+    init(html: String) async throws {
+        let params = NWParameters.tcp
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let l = try NWListener(using: params)
+        let body = Data(html.utf8)
+        l.newConnectionHandler = { c in
+            c.start(queue: .global())
+            c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { _, _, _, _ in
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                c.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in c.cancel() })
+            }
+        }
+        port = try await withCheckedThrowingContinuation { (k: CheckedContinuation<UInt16, any Error>) in
+            let once = NSLock(); nonisolated(unsafe) var done = false
+            l.stateUpdateHandler = { [l] st in
+                once.lock(); defer { once.unlock() }
+                guard !done else { return }
+                if case .ready = st { done = true; k.resume(returning: l.port!.rawValue) }
+                if case .failed(let e) = st { done = true; k.resume(throwing: e) }
+            }
+            l.start(queue: .global())
+        }
+        listener = l
+    }
+    var base: String { "http://127.0.0.1:\(port)" }
+}
+
+/// Apps do cercado, slice 3: the page's `collie.context` reaches the daemon through the host; `app.snapshot` reads the
+/// live page in the isolated world, without styles or payloads.
+@MainActor @Suite(.serialized) struct AppPanelContextTests {
+    final class Calls: @unchecked Sendable {
+        private let lock = NSLock(); private var list: [(String, [String: JSONValue])] = []
+        func add(_ c: String, _ a: [String: JSONValue]) { lock.withLock { list.append((c, a)) } }
+        var all: [(String, [String: JSONValue])] { lock.withLock { list } }
+    }
+
+    @Test func contextAndSnapshotOfTheLivePage() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+            let page = """
+                <!doctype html><html><head><title>Kube</title><style>h1{color:red}</style></head><body>
+                <h1>Pods</h1><p id="sel">api-1 CrashLoopBackOff</p>
+                <script>window.collie.context({ selected: "api-1", ns: "default" }).then(() => document.title = "ok", e => document.title = "err " + e)</script>
+                </body></html>
+                """
+            let svc = try await PageServer(html: page)
+            defer { svc.listener.cancel() }
+            let m = try PluginManifest.decode(try JSONSerialization.data(withJSONObject: [
+                "apiVersion": 2, "id": "kube", "name": "Kube", "version": "0.1.0", "placements": ["canvas"],
+                "ui": svc.base + "/", "service": ["base": svc.base]] as [String: Any]))
+            PluginManifest.register([m])
+            _ = NSApplication.shared
+            let panel = Panel(id: UUID(), name: "kube-1", pluginId: "kube", placement: .canvas)
+            let calls = Calls()
+            let host = PanelHostContext(panel: panel, root: URL(fileURLWithPath: "/tmp/collie-ctx-\(UUID().uuidString.prefix(8))"), workspaceId: nil,
+                                        call: { c, a in calls.add(c, a); return .object([:]) }, emit: { _, _ in })
+            let p = PluginViews.make(panel, host: host) as! WebPluginPanel
+            let w = BrowserInput.HostWindow(contentRect: CGRect(x: -20000, y: -20000, width: 800, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
+            p.view.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+            w.contentView?.addSubview(p.view)
+            defer { p.close(); w.close(); PluginRegistry.setExternal([]) }
+
+            #expect(await pollUntil(10) { calls.all.contains { $0.0 == "admin.app.context" } })
+            let ctx = calls.all.first { $0.0 == "admin.app.context" }?.1
+            #expect(ctx?["panel"] == .string(panel.id.uuidString) && ctx?["context"] == .object(["selected": .string("api-1"), "ns": .string("default")]))
+
+            let snap = try await p.handle("app.snapshot", [:])
+            let text = String(decoding: try JSONEncoder().encode(snap), as: UTF8.self)
+            #expect(text.contains("api-1 CrashLoopBackOff") && text.contains("Pods"), "\(text.prefix(500))")
+            #expect(!text.contains("\"style\""))
+        }
+    }
+
+    @Test func leanDropsStylesAndPayloads() {
+        let n: JSONValue = .object(["tag": .string("div"), "style": .object(["color": .string("red")]), "children": .array([
+            .object(["tag": .string("img"), "image": .object(["data": .string("AAAA"), "w": .number(1)])]),
+            .object(["tag": .string("svg"), "svg": .string("<svg/>")])])])
+        #expect(WebPluginPanel.lean(n) == .object(["tag": .string("div"), "children": .array([
+            .object(["tag": .string("img"), "image": .object(["w": .number(1)])]), .object(["tag": .string("svg"), "svg": .string("[svg]")])])]))
     }
 }

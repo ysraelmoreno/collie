@@ -26,8 +26,9 @@ enum CollieOrientation {
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
         // the claude.ai import hint first goes, before any name
         // a compact UI-work line goes before the names do (a Shepherd in a shared folder keeps them)
-        for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact)
+        // the chat fence line goes after the claude.ai hint and before any name is cut
+        for (n, claude, compact, fence) in [(3, true, false, true), (3, false, false, true), (3, false, false, false), (1, false, false, false), (1, false, true, false), (0, false, true, false), (-1, false, true, false)] {
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, fence: fence)
             if t.count <= limit { return t }
         }
         return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true)
@@ -37,7 +38,7 @@ enum CollieOrientation {
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
-                              _ k: Int, claude: Bool = false, compact: Bool = false) -> String {
+                              _ k: Int, claude: Bool = false, compact: Bool = false, fence: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -61,6 +62,10 @@ enum CollieOrientation {
         // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
         lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs." + (claude ? " claude.ai links: artifact import-claude." : "")
             : "- Artifacts: collie artifact … (new <kind>: Prévia; --folder).")
+        // Generative UI (terminal chat): a closed set of kinds the user's chat draws as cards; anything else shows as code
+        if fence {
+            lines.append("- Chat cards: reply with a ```collie-ui fence holding JSON {kind,title,…}: table{columns,rows} diff{old,new} tasks{items:[{text,done}]} status{items:[[key,value]]} form{question,choices} chart{type:bar|line,labels,values}.")
+        }
         if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
         if isShepherd {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]

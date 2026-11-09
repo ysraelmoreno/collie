@@ -328,6 +328,7 @@ extension CommandRouter {
         ws.panels.removeAll { $0.id == p.id }
         Self.removeScreenshots(of: p.id, root: config.paths.root)
         panelEvents[p.id] = nil
+        appContexts[p.id] = nil
         await devices.panelClosed(p.id)
         await design.panelClosed(p.id, openFiles: openDesignFiles)
         if p.pluginId == "device" { await watchDevices() }

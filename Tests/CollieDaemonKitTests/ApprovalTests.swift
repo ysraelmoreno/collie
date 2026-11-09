@@ -364,6 +364,34 @@ private let dialog = "stty raw -echo; " + dialogText + "k=$(dd bs=1 count=1 2>/d
         }
     }
 
+    /// The dialog redraws but drops the key (Claude ignores keys for a few seconds after it appears): still on screen
+    /// after the wait, so the same approval is pending again — once, and the key is not sent a second time.
+    @Test func droppedKeyWithRedrawReraises() async throws {
+        try await withDaemon { d, p in
+            let script = "stty raw -echo; " + dialogText + "dd bs=1 count=1 2>/dev/null >/dev/null; " + dialogText + "exec sleep 100"
+            let t = try await term(d, p, "A", preset: "claude", script)
+            let a = try #require(await pending(d, p, t))
+            #expect(try await approve(d, p, a.id, true).sent)
+            let sentAt = await d.scrollbackTotalBytes(t.uuid)
+            #expect(await waitFor(15) { (try? await approvals(d, p))?.first { $0.terminalId == t.uuid }?.reason == a.reason })   // the redraw may carry a new id
+            try await Task.sleep(for: .milliseconds(500))
+            #expect(await d.scrollbackTotalBytes(t.uuid) >= sentAt)   // nothing retyped by the daemon
+            #expect(try await approvals(d, p).filter { $0.terminalId == t.uuid }.count == 1)
+        }
+    }
+
+    /// The dialog took the key and moved on: nothing comes back.
+    @Test func takenKeyDoesNotReraise() async throws {
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "A", preset: "claude", "stty raw -echo; " + dialogText
+                + "dd bs=1 count=1 2>/dev/null >/dev/null; stty sane; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do echo moved-on-$i; done; exec sleep 100")
+            let a = try #require(await pending(d, p, t))
+            #expect(try await approve(d, p, a.id, true).sent)
+            try await Task.sleep(for: .seconds(AskCoordinator.answerReaction + 1))
+            #expect(try await approvals(d, p).allSatisfy { $0.terminalId != t.uuid })
+        }
+    }
+
     @Test func approvalPostsToChat() async throws {
         try await withDaemon { d, p in
             let panel = await d.router.addWorkPanel()

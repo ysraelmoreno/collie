@@ -101,6 +101,8 @@ actor CommandRouter {
     var appStreams: [UUID: AppStream] = [:]
     var appNotices: [UUID: [String]] = [:]
     var appNoticeAt: [UUID: ContinuousClock.Instant] = [:]
+    /// Slice 3: what the user is looking at in each app panel (`collie.context`), and when the page set it.
+    var appContexts: [UUID: (value: JSONValue, at: Date)] = [:]
     /// R14: when each terminal's correction jobs were queued (the last hour's).
     var correctionsAt: [String: [Date]] = [:]   // "<terminal>|<user>"
     /// Artifacts being imported into a design now (in memory: an import does not outlive the daemon).
@@ -722,7 +724,7 @@ actor CommandRouter {
             try await leash(try find(try need("a")), try find(try need("b")))
             return .object([:])
         case "admin.leash.requests", "admin.leash.answer": return try await adminLeashRequest(r)
-        case "admin.app.cards", "admin.app.answer": return try await adminAppCard(r)
+        case "admin.app.cards", "admin.app.answer", "admin.app.context": return try await adminAppCard(r)
         case "admin.kill":
             let name = try need("target")
             if try lookup(name) == nil, let p = ws.panels.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {

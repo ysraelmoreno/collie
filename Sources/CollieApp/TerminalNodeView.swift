@@ -103,6 +103,7 @@ import CollieTheme
             let h = NSHostingView(rootView: ChatBodyView(id: id, client: client))
             addSubview(h, positioned: .below, relativeTo: strip)
             chatHost = h; term?.isHidden = true; needsLayout = true
+            if let t = term, window?.firstResponder === t { window?.makeFirstResponder(h) }   // keys must not go to the hidden terminal
         } else if !chat, let h = chatHost {
             h.removeFromSuperview(); chatHost = nil; term?.isHidden = false; needsLayout = true
         }
@@ -367,7 +368,7 @@ import CollieTheme
 
     // MARK: actions
 
-    private func focus() { if let term { window?.makeFirstResponder(term) } }
+    private func focus() { if let term, chatHost == nil { window?.makeFirstResponder(term) } }   // chat body: the hidden terminal must not take the keys
 
     /// On mouseUp (never mid-drag: re-adding a view cancels its mouse tracking). Re-adding drops first responder,
     /// so focus is restored when it was inside this node.

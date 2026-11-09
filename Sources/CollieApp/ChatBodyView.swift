@@ -56,6 +56,7 @@ struct ChatBodyView: View {
     @State private var answering = false
     @State private var sent: (id: UUID, prompt: String)?   // the key went out; the daemon re-raises the approval if the dialog did not take it
     @State private var notEntered = false
+    @FocusState private var composing: Bool
 
     private var name: String { client.terminals.first { $0.id == id }?.name ?? "" }
     /// A dialog (permission, question, trust folder) is on the terminal's screen: typed text must never reach it.
@@ -107,8 +108,11 @@ struct ChatBodyView: View {
             TextField(dialogUp ? "Na fila até o diálogo fechar…" : "Mensagem para \(name)…", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain).font(.collieMono(12)).lineLimit(1...5)
                 .onSubmit { Task { await submit() } }
+                .focused($composing)
                 .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.collieSidebar))
+                .contentShape(Rectangle()).onTapGesture { composing = true }   // a plain field only hits its text line: the whole box focuses it
         }
         .padding(10)
     }

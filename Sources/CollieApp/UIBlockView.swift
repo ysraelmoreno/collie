@@ -10,7 +10,10 @@ struct UIBlockView: View {
     let json: String
     let compact: Bool
     /// A form's choice, as the text of a normal prompt (the chat queues it while a dialog is up).
-    let choose: (String) -> Void
+    let choose: ((String) -> Void)?
+    /// "Anexar como painel" (chat only): opens the block as a panel; returns what to tell the user.
+    var attach: (() async -> String)?
+    @State private var note: String?
     @State private var open = false
     @State private var showJSON = false
     @State private var chosen: String?
@@ -21,9 +24,11 @@ struct UIBlockView: View {
                 Text(block.kind).font(.collieMono(10)).foregroundStyle(Color.collieAccent)
                 Text(block.title ?? "").font(.collieMono(11).weight(.semibold)).foregroundStyle(Color.collieText).lineLimit(1)
                 Spacer(minLength: 0)
+                if let attach, !compact || open { Button("Anexar como painel") { Task { note = await attach() } }.buttonStyle(.plain).font(.collieMono(10)).foregroundStyle(Color.collieAccent) }
                 if !compact || open { Button("{ } JSON") { showJSON.toggle() }.buttonStyle(.plain).font(.collieMono(10)).foregroundStyle(showJSON ? Color.collieAccent : Color.collieMuted) }
                 if compact { Button(open ? "fechar" : "abrir") { open.toggle() }.buttonStyle(.plain).font(.collieMono(10)).foregroundStyle(Color.collieAccent) }
             }
+            if let note { Text(note).font(.collieMono(10)).foregroundStyle(Color.collieMuted) }
             if !compact || open {
                 if showJSON { Text(json).font(.collieMono(11)).foregroundStyle(Color.collieMuted).textSelection(.enabled) }
                 else { content }
@@ -75,9 +80,9 @@ struct UIBlockView: View {
                 ForEach(choices, id: \.self) { c in
                     Button(c) {
                         chosen = c
-                        choose("[escolha do usuário · \(question ?? title ?? "formulário")] \(c)")
+                        choose?("[escolha do usuário · \(question ?? title ?? "formulário")] \(c)")
                     }
-                    .disabled(chosen != nil).controlSize(.small)
+                    .disabled(chosen != nil || choose == nil).controlSize(.small)
                 }
                 if let chosen { Text("Escolheu: \(chosen)").font(.collieMono(10)).foregroundStyle(Color.collieMuted) }
             }

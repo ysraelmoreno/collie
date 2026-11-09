@@ -173,6 +173,25 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
             .message.contains("apiVersion 2") == true)
     }
 
+    @Test func appFilesPinTheManifestAndUI() throws {   // slice 4
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("appfiles-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d.appendingPathComponent("ui/js"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: d) }
+        try Data("{}".utf8).write(to: d.appendingPathComponent("collie-plugin.json"))
+        try Data("<p>a</p>".utf8).write(to: d.appendingPathComponent("ui/index.html"))
+        try Data("1".utf8).write(to: d.appendingPathComponent("ui/js/app.js"))
+        let (files, sha) = try PluginManifest.appFiles(d)
+        #expect(Set(files.keys) == ["collie-plugin.json", "ui/index.html", "ui/js/app.js"] && sha.count == 64)
+        #expect(try PluginManifest.appFiles(d).sha == sha)
+        try Data("2".utf8).write(to: d.appendingPathComponent("ui/js/app.js"))
+        #expect(try PluginManifest.appFiles(d).sha != sha)
+        try FileManager.default.createSymbolicLink(atPath: d.appendingPathComponent("ui/x.js").path, withDestinationPath: "/etc/hosts")
+        #expect(throws: ProtocolError.self) { try PluginManifest.appFiles(d) }
+        // the daemon's fields: never on an installed (v1) plug-in
+        #expect(refusal { $0["appFolder"] = "/etc" }?.message.contains("apiVersion 2") == true)
+        #expect(try manifest(v2 { $0["appFolder"] = "/x"; $0["appPin"] = "p" }).pluginSpec().appFolder == "/x")
+    }
+
     @Test func v2RefusesWhatLeavesLoopbackOrItsBase() {
         for base in ["http://10.0.0.2:4100", "http://example.com", "file:///tmp", "http://127.0.0.1:4100/api", "http://u:p@127.0.0.1:1", "http://127.0.0.1:1?x=1"] {
             #expect(refusal(v2 { $0["service"] = ["base": base] })?.message.contains("service.base") == true, "\(base)")

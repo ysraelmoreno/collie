@@ -267,6 +267,14 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public func say(_ name: String, _ text: String) async throws {
         _ = try await admin("terminal.say", ["name": .string(name), "text": .string(text)], timeout: 1800)
     }
+    /// "Anexar como painel": the block opens as a panel in the terminal's paddock. `linked`: it follows an app command;
+    /// else a snapshot, and `why` says why the source was not used.
+    public func attachBlock(_ terminal: UUID, json: String) async throws -> (panel: String, linked: Bool, why: String?) {
+        guard case .object(let o)? = try await admin("admin.block.attach", ["terminal": .string(terminal.uuidString), "json": .string(json)]),
+              case .string(let panel)? = o["panel"] else { throw ProtocolError(code: .internal, message: "malformed admin.block.attach reply") }
+        let why: String? = if case .string(let w)? = o["why"] { w } else { nil }
+        return (panel, o["linked"] == .bool(true), why)
+    }
     /// The prompts waiting for the user (`work.approvals`); the chat body shows its terminal's as a card.
     public func approvals() async throws -> [Approval] {
         guard let r = try await admin("work.approvals", [:]) else { return [] }

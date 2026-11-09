@@ -26,19 +26,22 @@ public struct PluginSpec: Sendable, Equatable {
     /// panel may load. nil: the page is the plug-in's own `ui/` file.
     public var uiURL: String?
     public var serviceBase: String?
+    /// An app do cercado with a `ui/` page: its paddock folder and the pin its files must hash to (slice 4).
+    public var appFolder: String?
+    public var appPin: String?
     public init(id: String, title: String, placements: [PanelPlacement], defaultPlacement: PanelPlacement,
                 commands: [CommandSpec], events: [String], runsInDaemon: Bool = false, source: PluginSource = .builtIn,
-                stateKeys: [String] = [], uiURL: String? = nil, serviceBase: String? = nil) {
+                stateKeys: [String] = [], uiURL: String? = nil, serviceBase: String? = nil, appFolder: String? = nil, appPin: String? = nil) {
         self.id = id; self.title = title; self.placements = placements; self.defaultPlacement = defaultPlacement
         self.events = events; self.runsInDaemon = runsInDaemon; self.source = source; self.stateKeys = stateKeys
-        self.uiURL = uiURL; self.serviceBase = serviceBase
+        self.uiURL = uiURL; self.serviceBase = serviceBase; self.appFolder = appFolder; self.appPin = appPin
         self.commands = commands.map { var c = $0; c.params.append(ParamSpec("panel", .string, help: "Panel name (default: the only reachable one)")); return c }
     }
 }
 
 public enum PluginRegistry {
     /// The plug-ins compiled into Collie, in palette order.
-    public static let builtIn: [PluginSpec] = [browser, memory, device, network, design, diagram, preview, designsystems, artifacts, work]
+    public static let builtIn: [PluginSpec] = [browser, memory, device, network, design, diagram, preview, designsystems, artifacts, work, uiblock]
     /// Built-ins, then the external plug-ins this process knows (`setExternal`).
     public static var all: [PluginSpec] { builtIn + external.withLock { $0.specs } }
     public static var externalSpecs: [PluginSpec] { external.withLock { $0.specs } }
@@ -150,6 +153,15 @@ extension PluginRegistry {
     static let designsystems = PluginSpec(
         id: "designsystems", title: "Design Systems",
         placements: [.dockRight, .dockLeft, .dockBottom], defaultPlacement: .dockRight,
+        commands: [], events: [])
+}
+
+extension PluginRegistry {
+    /// A collie-ui block from the terminal chat ("Anexar como painel"): `state` holds the block's `json` and, when it
+    /// is linked to an app do cercado, `app`, `command`, `params` and `refresh`. No agent commands.
+    static let uiblock = PluginSpec(
+        id: "uiblock", title: "Bloco",
+        placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
         commands: [], events: [])
 }
 

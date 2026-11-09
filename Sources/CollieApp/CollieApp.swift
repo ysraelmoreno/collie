@@ -52,7 +52,7 @@ enum Config {
              PluginViews.register("device", DevicePanel.self); PluginViews.register("design", DesignPanel.self)
              PluginViews.register("network", NetworkPanel.self)
              PluginViews.register("diagram", DiagramPanel.self); PluginViews.register("preview", PreviewPanel.self)
-             PluginViews.register("designsystems", DesignSystemsPanel.self)
+             PluginViews.register("designsystems", DesignSystemsPanel.self); PluginViews.register("uiblock", UIBlockPanel.self)
              PluginViews.register("artifacts", ArtifactsPanel.self); PluginViews.register("work", WorkPanel.self)   // before any panel view is made
              Self.applyTheme()
              #if DEBUG

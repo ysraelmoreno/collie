@@ -725,6 +725,7 @@ actor CommandRouter {
             return .object([:])
         case "admin.leash.requests", "admin.leash.answer": return try await adminLeashRequest(r)
         case "admin.app.cards", "admin.app.answer", "admin.app.context": return try await adminAppCard(r)
+        case "admin.block.attach", "admin.block.refresh": return try await adminBlock(r)
         case "admin.kill":
             let name = try need("target")
             if try lookup(name) == nil, let p = ws.panels.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {

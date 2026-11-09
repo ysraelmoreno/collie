@@ -215,3 +215,12 @@ import CollieProtocol
         #expect(tight.count <= 1500)   // a full Shepherd drops the fence rather than a name or a rule
     }
 }
+
+/// Apps do cercado, slice 4: in a paddock, when to offer an app and that only the user approves it.
+@Suite struct CollieOrientationAppTests {
+    @Test func paddockAgentsHearWhenToOfferAnApp() {
+        let line = "offer collie app new <id>, then app attach; only the user approves"
+        #expect(CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: "P", peers: [], panels: []).contains(line))
+        #expect(!CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: []).contains("app new"))
+    }
+}

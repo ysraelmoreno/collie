@@ -480,3 +480,54 @@ private final class PageServer: @unchecked Sendable {
             .object(["tag": .string("img"), "image": .object(["w": .number(1)])]), .object(["tag": .string("svg"), "svg": .string("[svg]")])])]))
     }
 }
+
+/// Apps do cercado, slice 4: an app's `ui/` page is served from the bytes that hash to its pin, read once; a folder
+/// that no longer matches shows a placeholder instead.
+@MainActor @Suite(.serialized) struct AppFilePanelTests {
+    @Test func servesThePinnedUIFiles() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("appui-\(UUID().uuidString)").resolvingSymlinksInPath()
+            try FileManager.default.createDirectory(at: dir.appendingPathComponent("ui"), withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let mj: [String: Any] = ["apiVersion": 2, "id": "painel", "name": "Painel", "version": "0.1.0", "placements": ["canvas"], "ui": "ui/index.html",
+                                     "commands": [["name": "hello", "summary": "s", "runs": "ui"]]]
+            try JSONSerialization.data(withJSONObject: mj).write(to: dir.appendingPathComponent("collie-plugin.json"))
+            try #"<!doctype html><script src="app.js"></script>"#.write(to: dir.appendingPathComponent("ui/index.html"), atomically: true, encoding: .utf8)
+            try #"collie.onCommand(async (n) => "oi " + n)"#.write(to: dir.appendingPathComponent("ui/app.js"), atomically: true, encoding: .utf8)
+            var m = try PluginManifest.load(folder: dir)
+            m.appFolder = dir.path; m.appPin = try PluginManifest.appFiles(dir).sha
+
+            @MainActor func open(_ m: PluginManifest) -> (WebPluginPanel, NSWindow) {
+                PluginManifest.register([m])
+                _ = NSApplication.shared
+                let panel = Panel(id: UUID(), name: "painel-1", pluginId: "painel", placement: .canvas)
+                let host = PanelHostContext(panel: panel, root: dir, workspaceId: nil, call: { _, _ in .null }, emit: { _, _ in })
+                let p = PluginViews.make(panel, host: host) as! WebPluginPanel
+                let w = BrowserInput.HostWindow(contentRect: CGRect(x: -20000, y: -20000, width: 400, height: 300), styleMask: .borderless, backing: .buffered, defer: false)
+                p.view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+                w.contentView?.addSubview(p.view)
+                return (p, w)
+            }
+            let x = open(m)
+            #expect(try await x.0.handle("painel.hello", [:]) == .string("oi hello"))
+            #expect(x.0.isApp && x.0.origin == nil)
+            x.0.close(); x.1.close()
+
+            // edited after approval: not served
+            try #"collie.onCommand(async () => "changed")"#.write(to: dir.appendingPathComponent("ui/app.js"), atomically: true, encoding: .utf8)
+            let y = open(m)
+            defer { y.0.close(); y.1.close(); PluginRegistry.setExternal([]) }
+            var err: ProtocolError?
+            do { _ = try await y.0.handle("painel.hello", [:]) } catch let e as ProtocolError { err = e }
+            #expect(err?.code == .unavailable, "\(String(describing: err))")
+        }
+    }
+
+    @Test func memorySchemeServesOnlyPinnedNames() {
+        let h = PluginSchemeHandler(id: "painel", files: ["ui/index.html": Data("x".utf8), "collie-plugin.json": Data("{}".utf8)])
+        func get(_ u: String) -> Int { h.serve(URLRequest(url: URL(string: u)!)).0 }
+        #expect(get("collie-plugin://painel/index.html") == 200)
+        #expect(get("collie-plugin://painel/../collie-plugin.json") == 404 && get("collie-plugin://painel/%2e%2e/collie-plugin.json") == 404)
+        #expect(get("collie-plugin://other/index.html") == 404)
+    }
+}

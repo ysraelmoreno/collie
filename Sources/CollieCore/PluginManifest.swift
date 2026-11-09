@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import CollieProtocol
 
 /// An external plug-in's `collie-plugin.json` (spec: docs/superpowers/specs/2026-10-25-external-plugins-design.md).
@@ -75,6 +76,10 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public var permissions: [String: JSONValue]?   // phase 3; only absent/empty accepted now
     public var service: Service?           // v2
     public var eventStream: String?        // v2: an SSE path on service.base (slice 2)
+    /// Set by the daemon on an approved app do cercado (never read from its file): its folder and pin, so the panel
+    /// serves a `ui/` page from the paddock, only while the files still hash to the pin (slice 4).
+    public var appFolder: String?
+    public var appPin: String?
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -93,6 +98,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         permissions = try c.decodeIfPresent([String: JSONValue].self, forKey: .permissions)
         service = try c.decodeIfPresent(Service.self, forKey: .service)
         eventStream = try c.decodeIfPresent(String.self, forKey: .eventStream)
+        appFolder = try c.decodeIfPresent(String.self, forKey: .appFolder)
+        appPin = try c.decodeIfPresent(String.self, forKey: .appPin)
     }
 
     /// The page is a loopback URL of the app's service (v2), not a `ui/` file.
@@ -153,7 +160,37 @@ public struct PluginManifest: Codable, Sendable, Equatable {
                                    timeoutSeconds: c.timeout + (c.confirm ? Self.confirmWait : 0), outputFile: c.outputFile)
             },
             events: events, runsInDaemon: false, source: .external(version: version), stateKeys: stateKeys,
-            uiURL: uiIsURL ? ui : nil, serviceBase: serviceOrigin)
+            uiURL: uiIsURL ? ui : nil, serviceBase: serviceOrigin, appFolder: appFolder, appPin: appPin)
+    }
+
+    /// An app do cercado's pinned files: `collie-plugin.json`, then every regular file under `ui/` (sorted), bytes
+    /// read once; no links, ≤ 256 files, ≤ 16 MiB. The SHA-256 is the pin approval stores; the panel serves exactly
+    /// these bytes, and only when they hash to it.
+    public static func appFiles(_ folder: URL) throws(ProtocolError) -> (files: [String: Data], sha: String) {
+        let fm = FileManager.default
+        func type(_ rel: String) -> FileAttributeType? { try? fm.attributesOfItem(atPath: folder.appendingPathComponent(rel).path)[.type] as? FileAttributeType }   // lstat
+        guard type(fileName) == .typeRegular else { throw bad("\(fileName) ausente ou não é um arquivo comum") }
+        var rels = [fileName]
+        if let t = type("ui") {
+            guard t == .typeDirectory else { throw bad("ui não é uma pasta") }
+            for rel in ((fm.enumerator(atPath: folder.appendingPathComponent("ui").path)?.allObjects as? [String]) ?? []).sorted() {
+                switch type("ui/" + rel) {
+                case .typeDirectory?: continue
+                case .typeRegular?: rels.append("ui/" + rel)
+                default: throw bad("'ui/\(rel)' não é um arquivo comum (links não são aceitos)")
+                }
+                guard rels.count <= 256 else { throw bad("ui/ passa de 255 arquivos") }
+            }
+        }
+        var files: [String: Data] = [:], total = 0, h = SHA256()
+        for rel in rels {
+            guard let d = try? Data(contentsOf: folder.appendingPathComponent(rel)) else { throw bad("'\(rel)' ilegível") }
+            total += d.count
+            guard total <= 16 << 20 else { throw bad("o app passa de 16 MiB") }
+            files[rel] = d
+            h.update(data: Data(rel.utf8)); h.update(data: Data([0])); h.update(data: Data(SHA256.hash(data: d)))
+        }
+        return (files, h.finalize().map { String(format: "%02x", $0) }.joined())
     }
 
     /// Makes `manifests` this process's external plug-ins (`PluginRegistry.setExternal`). Each one is validated again:
@@ -187,7 +224,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         try Self.text(author, "author", 0...128); try Self.text(license, "license", 0...64)
         guard !placements.isEmpty, !placements.contains(.headless) else { throw Self.bad("placements: um ou mais de canvas, dock.left, dock.right, dock.bottom") }
         guard placements.contains(defaultPlacement) else { throw Self.bad("defaultPlacement precisa estar em placements") }
-        if apiVersion == 1, service != nil || eventStream != nil || commands.contains(where: { $0.http != nil || $0.confirm }) {
+        if apiVersion == 1, service != nil || eventStream != nil || appFolder != nil || appPin != nil || commands.contains(where: { $0.http != nil || $0.confirm }) {
             throw Self.bad("service, eventStream, http e confirm pedem apiVersion 2")
         }
         let origin = serviceOrigin

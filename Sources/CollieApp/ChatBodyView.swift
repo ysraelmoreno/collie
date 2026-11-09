@@ -68,7 +68,7 @@ struct ChatBodyView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 10) {
-                            ForEach(model.items) { item in ChatRow(item: item, compact: compact) { choice in Task { await submit(choice) } }.id(item.id) }
+                            ForEach(model.items) { item in ChatRow(item: item, compact: compact, choose: { choice in Task { await submit(choice) } }, attach: { json in await attachBlock(json) }).id(item.id) }
                             if dialogUp {
                                 DialogCard(approval: approval, busy: answering, waiting: sent != nil, notEntered: notEntered) { allow, option in Task { await answer(allow: allow, option: option) } }
                             }
@@ -137,6 +137,13 @@ struct ChatBodyView: View {
         await send(t)
     }
 
+    private func attachBlock(_ json: String) async -> String {
+        do {
+            let r = try await client.attachBlock(id, json: json)
+            return r.linked ? "Painel \(r.panel) aberto, ligado ao app" : "Painel \(r.panel) aberto (instantâneo)" + (r.why.map { ": \($0)" } ?? "")
+        } catch { return (error as? ProtocolError)?.message ?? "\(error)" }
+    }
+
     private func flush() async {
         while !queue.isEmpty, !dialogUp { await send(queue.removeFirst()) }
     }
@@ -151,6 +158,7 @@ private struct ChatRow: View {
     let item: ChatItem
     let compact: Bool
     let choose: (String) -> Void   // a collie-ui form's choice
+    let attach: (String) async -> String   // "Anexar como painel": the block's JSON → what to tell the user
 
     var body: some View {
         if let m = item.message {
@@ -161,7 +169,7 @@ private struct ChatRow: View {
                 ForEach(Array((user ? [ChatSegment.text(m.text)] : ChatSegment.split(m.text)).enumerated()), id: \.offset) { _, seg in
                     switch seg {
                     case .text(let t): Text(Self.markdown(t)).font(.collieUI(13)).foregroundStyle(Color.collieText).textSelection(.enabled)
-                    case .ui(let b, let json): UIBlockView(block: b, json: json, compact: compact, choose: choose)
+                    case .ui(let b, let json): UIBlockView(block: b, json: json, compact: compact, choose: choose, attach: { await attach(json) })
                     case .code(let c): Text(c).font(.collieMono(11)).foregroundStyle(Color.collieMuted).textSelection(.enabled)
                     }
                 }

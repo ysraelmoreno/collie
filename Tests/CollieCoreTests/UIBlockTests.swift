@@ -41,4 +41,18 @@ import Foundation
         #expect(ChatSegment.split("```swift\nlet x = 1\n```") == [.text("```swift\nlet x = 1\n```")])
         #expect(ChatSegment.split("a\n```collie-ui\n{\"kind\":\"sta") == [.text("a\n```collie-ui\n{\"kind\":\"sta")])
     }
+
+    @Test func sourceNamesAnAppCommand() {
+        let j = #"{"kind":"status","items":[["a","b"]],"source":{"app":"kube","command":"pods","params":{"namespace":"default","limit":5,"all":true},"refresh":1}}"#
+        #expect(UIBlockSource.parse(j) == UIBlockSource(app: "kube", command: "pods",
+                params: ["namespace": .string("default"), "limit": .number(5), "all": .bool(true)], refresh: 5))   // refresh: at least 5 s
+        #expect(UIBlockSource.parse(#"{"kind":"status","items":[],"source":{"app":"kube","command":"pods","refresh":99999}}"#)?.refresh == 3600)
+        #expect(UIBlockSource.parse(#"{"kind":"status","items":[],"source":{"app":"kube","command":"pods"}}"#)?.refresh == nil)
+        for bad in [#"{"kind":"status"}"#, #"{"source":{"app":"kube"}}"#, #"{"source":{"app":"a b","command":"x"}}"#, #"{"source":{"app":"k","command":"x","params":{"p":[1]}}}"#,
+                    #"{"source":{"app":"k","command":"x","params":"no"}}"#] {
+            #expect(UIBlockSource.parse(bad) == nil, "\(bad)")
+        }
+        // the block itself is unchanged by a source
+        #expect(UIBlock.parse(j) == .status(title: nil, items: [.init(key: "a", value: "b")]))
+    }
 }

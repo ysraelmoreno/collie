@@ -1,4 +1,5 @@
 import Foundation
+import CollieProtocol
 
 /// A ```collie-ui fence in an assistant reply (Generative UI, v1): one of a closed set of kinds the app draws natively.
 /// The reply is untrusted data: bad JSON, an unknown kind or a bad shape is never a block — it stays code.
@@ -118,5 +119,38 @@ public enum ChatSegment: Equatable, Sendable {
         if inside { buf = held + ["```collie-ui"] + body }   // never closed (cut off): plain text
         flush()
         return out
+    }
+}
+
+/// `"source": {"app", "command", "params", "refresh"}` in a collie-ui block: the app do cercado command that gives the
+/// block fresh data ("Anexar como painel" links the panel to it). Only a name and plain params; the daemon decides
+/// whether the app is approved and the command may run on its own.
+public struct UIBlockSource: Equatable, Sendable {
+    public var app: String, command: String
+    public var params: [String: JSONValue]
+    /// Seconds between automatic refreshes (5-3600); nil: only the ↻ button.
+    public var refresh: Int?
+    public static let minRefresh = 5, maxRefresh = 3600, maxParams = 20
+    public init(app: String, command: String, params: [String: JSONValue] = [:], refresh: Int? = nil) {
+        self.app = app; self.command = command; self.params = params; self.refresh = refresh
+    }
+
+    public static func parse(_ json: String) -> UIBlockSource? {
+        guard json.utf8.count <= UIBlock.maxJSON, let o = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
+              let s = o["source"] as? [String: Any], let app = s["app"] as? String, let command = s["command"] as? String,
+              (1...64).contains(app.count), (1...64).contains(command.count),
+              !app.contains(where: \.isWhitespace), !command.contains(where: \.isWhitespace) else { return nil }
+        var params: [String: JSONValue] = [:]
+        if let raw = s["params"] {
+            guard let d = raw as? [String: Any], d.count <= maxParams else { return nil }
+            for (k, v) in d {
+                guard k.count <= 64 else { return nil }
+                if let t = v as? String, t.count <= 500 { params[k] = .string(t) }
+                else if let n = v as? NSNumber { params[k] = n === kCFBooleanTrue ? .bool(true) : n === kCFBooleanFalse ? .bool(false) : .number(n.doubleValue) }
+                else { return nil }
+            }
+        }
+        let refresh = (s["refresh"] as? NSNumber).map { min(maxRefresh, max(minRefresh, Int($0.doubleValue.isFinite ? $0.doubleValue : 0))) }
+        return UIBlockSource(app: app, command: command, params: params, refresh: refresh)
     }
 }

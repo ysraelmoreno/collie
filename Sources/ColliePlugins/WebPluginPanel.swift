@@ -18,12 +18,20 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     static let csp = "default-src 'self' 'unsafe-inline' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; frame-src 'self'; form-action 'none'; base-uri 'none'"
     let id: String
     let root: URL
+    /// An app do cercado's `ui/` files, read and checked against its pin once (`PluginManifest.appFiles`): served from
+    /// here, never from the paddock folder, which the agent may be editing.
+    let files: [String: Data]?
 
-    init(id: String, uiRoot: URL) { self.id = id; root = uiRoot.standardizedFileURL.resolvingSymlinksInPath() }
+    init(id: String, uiRoot: URL) { self.id = id; root = uiRoot.standardizedFileURL.resolvingSymlinksInPath(); files = nil }
+    init(id: String, files: [String: Data]) { self.id = id; root = URL(fileURLWithPath: "/"); self.files = files }
 
     func serve(_ r: URLRequest) -> (Int, String, Data) {
         guard (r.httpMethod ?? "GET") == "GET" else { return (405, "text/plain", Data()) }
         guard let url = r.url, url.scheme?.lowercased() == Self.scheme, url.host == id else { return (404, "text/plain", Data()) }
+        if let files {   // `path` is percent-decoded and absolute; only an exact name in the pinned set answers
+            guard let d = files["ui" + url.path] else { return (404, "text/plain", Data()) }
+            return (200, Self.types[(url.path as NSString).pathExtension.lowercased()] ?? "application/octet-stream", d)
+        }
         // `path` is percent-decoded: `%2e%2e` is `..` here, and standardizing removes it
         let file = root.appendingPathComponent(url.path).standardizedFileURL.resolvingSymlinksInPath()
         guard file.path.hasPrefix(root.path + "/"),
@@ -96,13 +104,22 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             teardown("plug-in removido")
             return box.placeholder("Plug-in \(panel.pluginId) não está instalado")
         }
-        let v = spec.uiURL.map { v0 + "|" + $0 } ?? v0   // an app's page moves with its URL too
+        let v = spec.uiURL.map { v0 + "|" + $0 } ?? spec.appPin.map { v0 + "|" + $0 } ?? v0   // an app's page moves with its URL or pin too
         guard v != version else { return }
         teardown("plug-in atualizado")
         crashes = 0
         if let ui = spec.uiURL, let base = spec.serviceBase, let page = URL(string: ui) {   // an app do cercado: its own service
             version = v
             return load(title: spec.title, id: spec.id, page: page, origin: base)
+        }
+        if let dir = spec.appFolder, let pin = spec.appPin {   // an app do cercado's ui/ file: the bytes the user approved
+            guard let (files, sha) = try? PluginManifest.appFiles(URL(fileURLWithPath: dir)), sha == pin,
+                  let data = files[PluginManifest.fileName], let m = try? PluginManifest.decode(data), m.id == spec.id, !m.uiIsURL else {
+                return box.placeholder("\(spec.title) mudou depois da aprovação: aprove de novo (collie app attach \(spec.id))")
+            }
+            version = v
+            return load(title: m.name, id: m.id, page: URL(string: "\(PluginSchemeHandler.scheme)://\(m.id)/\(m.ui.dropFirst("ui/".count))")!,
+                        files: files, app: true)
         }
         let folder = host.root.appendingPathComponent("plugins").appendingPathComponent(spec.id).appendingPathComponent(v)
         guard let m = try? PluginManifest.load(folder: folder), m.id == spec.id, m.version == v else {
@@ -113,20 +130,26 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
              folder: folder)
     }
 
-    /// The app do cercado's service origin while its page is loaded; nil: an installed plug-in's own `ui/`.
+    /// The app do cercado's service origin while its page is loaded; nil: an installed plug-in's own `ui/`, or an
+    /// app's `ui/` file page (`isApp`).
     private(set) var origin: String?
+    /// An app do cercado's page (URL or `ui/` file): `collie.context` and `app.snapshot` are for these only.
+    private(set) var isApp = false
 
     /// `folder`: an installed plug-in's, served by `PluginSchemeHandler`; `origin`: an app's loopback service, the only
     /// origin its rule list lets through and the only one that gets the bridge.
-    private func load(title: String, id: String, page: URL, folder: URL? = nil, origin: String? = nil) {
+    private func load(title: String, id: String, page: URL, folder: URL? = nil, files: [String: Data]? = nil, origin: String? = nil, app: Bool = false) {
         gen += 1
         let g = gen
         self.origin = origin
+        isApp = app || origin != nil
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list and the CSP
         if let folder {
             config.setURLSchemeHandler(PluginSchemeHandler(id: id, uiRoot: folder.appendingPathComponent("ui")), forURLScheme: PluginSchemeHandler.scheme)
+        } else if let files {
+            config.setURLSchemeHandler(PluginSchemeHandler(id: id, files: files), forURLScheme: PluginSchemeHandler.scheme)
         }
         let ucc = config.userContentController
         ucc.addScriptMessageHandler(Bridge(self), contentWorld: .page, name: WebPluginBridge.handler)
@@ -154,7 +177,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         gen += 1
         for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: why))) }
         pending = [:]
-        ready = false; version = nil; origin = nil; outputs = [:]   // files stay (plugins-out keeps the newest `outputsKept`)
+        ready = false; version = nil; origin = nil; isApp = false; outputs = [:]   // files stay (plugins-out keeps the newest `outputsKept`)
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil; web.uiDelegate = nil
@@ -268,7 +291,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     /// `.defaultClient` world (the page's JS can't touch it). Payloads and styles are dropped: text, boxes, links,
     /// alt; ≤ 1 MiB.
     func snapshot() async throws(ProtocolError) -> JSONValue {
-        guard origin != nil, let web = webView else { throw ProtocolError(code: .unavailable, message: "o painel não mostra a página de um app agora") }
+        guard isApp, let web = webView else { throw ProtocolError(code: .unavailable, message: "o painel não mostra a página de um app agora") }
         let late = ProtocolError(code: .timeout, message: "a página não terminou o snapshot em 15 s")
         let id = UUID().uuidString
         let r: Result<String, ProtocolError> = await withCheckedContinuation { c in
@@ -341,7 +364,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
             host.emit(event, payload)
             return (true, nil)
         case "context":   // slice 3: an app's page only; the daemon keeps it for `collie app context`
-            guard origin != nil else { return (nil, "collie.context é só para apps do cercado") }
+            guard isApp else { return (nil, "collie.context é só para apps do cercado") }
             guard let raw = str("value"), raw.utf8.count <= 16 * 1024,
                   let v = try? JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)) else { return (nil, "contexto inválido ou maior que 16 KiB") }
             do throws(ProtocolError) { _ = try await host.call("admin.app.context", ["panel": .string(panel.id.uuidString), "context": v]) }

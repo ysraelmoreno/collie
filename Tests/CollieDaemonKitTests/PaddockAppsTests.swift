@@ -106,7 +106,7 @@ private func data(_ r: Response) -> [String: JSONValue] {
                 let l = try await call(p, a, "app.list")
                 #expect(l.result == .array([.object(["id": .string("kube"), "paddock": .string("k"), "state": .string("pending"), "name": .string("Kube"),
                                                      "version": .string("0.1.0"), "base": .string(svc.base),
-                                                     "commands": .array([.string("pods"), .string("restart (confirm)")])])]), "\(l)")
+                                                     "commands": .array([.string("pods"), .string("restart (confirm)")]), "ui": .string("url")])]), "\(l)")
                 let att = try await call(p, a, "app.attach", ["id": .string("kube")])
                 #expect(att.error?.code == .unauthorized && att.error?.message.contains("approval") == true, "\(att)")
                 var c = try await cards(d, p)
@@ -367,6 +367,55 @@ private final class EventService: @unchecked Sendable {
                 #expect(try await admin(d, p, "panel.close", ["name": .string(panel.name)]).ok)
                 #expect(await d.router.appContexts[panel.id] == nil)
             }
+        }
+    }
+}
+
+/// Apps do cercado, slice 4: an agent scaffolds an app (manifest + ui/index.html), the card asks the user; once
+/// approved, the registry carries its folder and pin so the panel serves the approved `ui/` bytes.
+@Suite(.serialized) struct PaddockAppNewTests {
+    @Test func agentScaffoldsUserApproves() async throws {
+        try await PluginRegistry.exclusively {
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("apps-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+            let dir = URL(fileURLWithPath: realpath(tmp.path, nil).map { p in defer { free(p) }; return String(cString: p) } ?? tmp.path)   // /var → /private/var, as the daemon sees it
+            defer { try? FileManager.default.removeItem(at: dir) }
+            try await withDaemon { d, p in
+                #expect(try await admin(d, p, "paddock.create", ["name": .string("k"), "folder": .string(dir.path)]).ok)
+                let s = try await admin(d, p, "admin.spawn", ["name": .string("A"), "preset": .string("shell"), "paddock": .string("k")])
+                guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }
+                let a = Term(id: id, token: try await tokenOf(d, id))
+
+                let r = try await call(p, a, "app.new", ["id": .string("painel"), "name": .string("Painel <b>")])
+                guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
+                let folder = dir.appendingPathComponent(".collie/apps/painel")
+                #expect(o["state"] == .string("pending") && o["folder"] == .string(folder.path), "\(r)")
+                let page = try String(contentsOf: folder.appendingPathComponent("ui/index.html"), encoding: .utf8)
+                #expect(page.contains("collie.onCommand") && page.contains("collie.context") && page.contains("Painel &lt;b>"))
+                let m = try PluginManifest.load(folder: folder)
+                #expect(m.apiVersion == 2 && m.ui == "ui/index.html" && m.commands.map(\.name) == ["hello"] && m.events == ["painel.changed"])
+                var c = try await cards(d, p)
+                #expect(c.count == 1 && c[0].kind == .approve && c[0].app == "painel" && c[0].by?.uuidString == id, "\(c)")
+                #expect(try await call(p, a, "app.new", ["id": .string("painel")]).error?.code == .conflict)
+                #expect(try await call(p, a, "app.new", ["id": .string("Bad Id")]).error?.code == .invalidArgs)
+                #expect(try await call(p, a, "app.new", ["id": .string("x"), "paddock": .string("k")]).error?.code == .unauthorized)
+                guard case .array(let rows)? = try await call(p, a, "app.list").result, case .object(let row)? = rows.first else { Issue.record("list"); return }
+                #expect(row["ui"] == .string("file") && row["state"] == .string("pending"))
+
+                // a manifest can't point the panel elsewhere: the daemon sets folder and pin
+                var raw = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("collie-plugin.json"))) as! [String: Any]
+                raw["appFolder"] = "/etc"; raw["appPin"] = "0"
+                try JSONSerialization.data(withJSONObject: raw).write(to: folder.appendingPathComponent("collie-plugin.json"))
+                #expect(try await call(p, a, "app.attach", ["id": .string("painel")]).error?.code == .unauthorized)   // changed: a new card
+                let first = c[0].sha256
+                c = try await cards(d, p).filter { $0.sha256 != first }   // the scaffold's card stays until answered
+                #expect(c.count == 1 && !c[0].sha256.isEmpty)
+                #expect(try await admin(d, p, "admin.app.answer", ["id": .string(c[0].id.uuidString), "allow": .bool(true)]).ok)
+                let spec = PluginRegistry.spec("painel")
+                #expect(spec?.appFolder == folder.path && spec?.appPin == c[0].sha256 && spec?.uiURL == nil, "\(String(describing: spec))")
+                #expect(try await call(p, a, "app.attach", ["id": .string("painel")]).ok)
+            }
+            PluginRegistry.setExternal([])
         }
     }
 }

@@ -71,7 +71,7 @@ enum CollieOrientation {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             // built-ins only: external plug-ins are user-installed text, kept out of the agent's context (one fixed line below)
             // ponytail: no Prévia here (length cap); the Artifacts line teaches `artifact new`, which opens one
-            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
+            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" && $0.id != "uiblock" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
             if tight {
                 lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon (no --preset: \(agent))|panel open --connect <names>; collie model <agent> <m> (summon --model m)" + (morePanels ? "; +collie plugin list" : ""))
             } else {
@@ -105,6 +105,10 @@ enum CollieOrientation {
             if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")
+        }
+        // Apps do cercado, slice 4: when to offer one; approving stays the user's
+        if paddock != nil && !compact {
+            lines.append("- A live tool the user will reuse in this paddock (dashboard, control panel): offer collie app new <id>, then app attach; only the user approves (a card).")
         }
         // sandbox: reads are open (secrets never); a blocked write shows the user a card; ask, don't work around it
         lines.append(tight ? "- Sandboxed: blocked write = user card; ask: collie access request <path> --write --reason \"…\"; collie open <url|app>."

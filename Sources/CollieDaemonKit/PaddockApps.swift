@@ -11,17 +11,20 @@ import CollieTerminal
 enum PaddockApps {
     static let dir = ".collie/apps"
 
-    /// One app folder: its manifest and the hash that approval pins. The folder is the id; the page is a loopback URL
-    /// (a `ui/` file page comes with slice 4).
+    /// One app folder: its manifest and the hash that approval pins (`PluginManifest.appFiles`: the manifest and
+    /// `ui/`, read once). The folder is the id; the page is a loopback URL or a file in `ui/` (slice 4).
     static func read(_ folder: URL) throws(ProtocolError) -> (PluginManifest, String) {
-        let m = try PluginManifest.load(folder: folder)
+        let (files, sha) = try PluginManifest.appFiles(folder)
+        guard let data = files[PluginManifest.fileName], data.count <= 256 * 1024 else {
+            throw ProtocolError(code: .invalidArgs, message: "\(PluginManifest.fileName) maior que 256 KiB")
+        }
+        var m = try PluginManifest.decode(data)
+        m.appFolder = nil; m.appPin = nil   // the daemon's to set, never the file's
         guard m.id == folder.lastPathComponent else {
             throw ProtocolError(code: .invalidArgs, message: "o id '\(m.id)' do manifesto difere da pasta '\(folder.lastPathComponent)'")
         }
-        guard m.uiIsURL else { throw ProtocolError(code: .invalidArgs, message: "ui: um app do cercado usa por enquanto uma URL do seu service.base") }
-        let ui = folder.appendingPathComponent("ui")
-        let uiFiles = FileManager.default.fileExists(atPath: ui.path) ? try PluginStore.scan(ui).map { "ui/" + $0 } : []
-        return (m, try PluginStore.treeHash(folder, [PluginManifest.fileName] + uiFiles))
+        guard m.uiIsURL || files[m.ui] != nil else { throw ProtocolError(code: .invalidArgs, message: "ui '\(m.ui)' não existe na pasta do app") }
+        return (m, sha)
     }
 
     /// The app folders of a paddock: id → manifest and hash, or why it can't load. Links and dot names are skipped.
@@ -84,6 +87,51 @@ enum PaddockApps {
         return v
     }
     static let bodyCap = 1 << 20
+
+    /// `collie app new`: a v2 manifest (a `ui/` page, one example command run by the page, one event) and that page,
+    /// using the bridge. Validated as any manifest (a bad id or name fails here, before anything is written).
+    static func scaffold(id: String, name: String) throws(ProtocolError) -> (manifest: Data, page: String) {
+        let m: [String: Any] = [
+            "apiVersion": 2, "id": id, "name": name, "version": "0.1.0", "author": "", "license": "private",
+            "placements": ["canvas"], "defaultPlacement": "canvas", "ui": "ui/index.html",
+            "commands": [["name": "hello", "summary": "Example: greets someone on the page and returns the greeting", "runs": "ui",
+                          "params": [["name": "name", "type": "string", "positional": true, "help": "Who to greet"]], "timeout": 10]],
+            "events": ["\(id).changed"], "stateKeys": [String](),
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: m, options: [.prettyPrinted, .sortedKeys]) else {
+            throw ProtocolError(code: .internal, message: "manifest")
+        }
+        _ = try PluginManifest.decode(data)
+        let title = name.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+        let page = """
+            <!doctype html>
+            <html lang="pt-BR"><head><meta charset="utf-8"><title>\(title)</title>
+            <style>
+              body { font: 14px -apple-system, sans-serif; margin: 16px; color: var(--collie-text, #222); background: var(--collie-bg, #fff); }
+              button { font: inherit; }
+            </style></head>
+            <body>
+              <h1>\(title)</h1>
+              <p id="out">Pronto.</p>
+              <button id="pick">Selecionar</button>
+              <script>
+                // window.collie (page API): onCommand runs this app's "runs": "ui" commands; emit sends a declared event
+                // to the agents leashed to this panel; context tells them what the user is looking at (≤ 16 KiB).
+                const out = document.getElementById("out");
+                collie.onCommand(async (name, args) => {
+                  if (name === "hello") { out.textContent = "Olá, " + (args.name || "mundo"); return { said: out.textContent }; }
+                  throw new Error("unknown command " + name);
+                });
+                document.getElementById("pick").onclick = () => {
+                  collie.context({ selected: out.textContent });
+                  collie.emit("\(id).changed", { selected: out.textContent });
+                };
+              </script>
+            </body></html>
+
+            """
+        return (data, page)
+    }
     /// Slice 3: max encoded size of a page's `collie.context`; how long `app snapshot` waits for the page.
     static let contextCap = 16 * 1024
     static let snapshotSeconds = 20.0
@@ -172,7 +220,11 @@ extension CommandRouter {
         for p in ws.paddocks {
             for (id, pin) in p.apps ?? [:] {
                 let f = URL(fileURLWithPath: p.path).appendingPathComponent(PaddockApps.dir).appendingPathComponent(id)
-                if let (m, sha) = try? PaddockApps.read(f), sha == pin { out[p.id, default: [:]][id] = m }
+                if let r = try? PaddockApps.read(f), r.1 == pin {
+                    var m = r.0
+                    m.appFolder = f.path; m.appPin = pin
+                    out[p.id, default: [:]][id] = m
+                }
             }
         }
         defer { appManifests = out }
@@ -259,9 +311,27 @@ extension CommandRouter {
                     o["state"] = .string(pin == sha ? "approved" : pin == nil ? "pending" : "changed")
                     o["name"] = .string(m.name); o["version"] = .string(m.version); o["base"] = m.serviceOrigin.map(JSONValue.string) ?? .null
                     o["commands"] = .array(m.commands.map { .string($0.name + ($0.confirm ? " (confirm)" : "")) })
+                    o["ui"] = .string(m.uiIsURL ? "url" : "file")
                 }
                 return .object(o)
             })
+        case "app.new":   // slice 4: an agent (or the user) scaffolds an app; only the user approves it (the card)
+            let id = try need(r, "id")
+            let folder = URL(fileURLWithPath: paddock.path).appendingPathComponent(PaddockApps.dir).appendingPathComponent(id)
+            let (manifest, page) = try PaddockApps.scaffold(id: id, name: str(r, "name") ?? id)
+            guard (try? FileManager.default.attributesOfItem(atPath: folder.path)) == nil else {
+                throw ProtocolError(code: .conflict, message: "\(PaddockApps.dir)/\(id) already exists: edit it, or collie app attach \(id)")
+            }
+            do {
+                try FileManager.default.createDirectory(at: folder.appendingPathComponent("ui"), withIntermediateDirectories: true)
+                try manifest.write(to: folder.appendingPathComponent(PluginManifest.fileName), options: .withoutOverwriting)
+                try Data(page.utf8).write(to: folder.appendingPathComponent("ui/index.html"), options: .withoutOverwriting)
+            } catch { throw ProtocolError(code: .internal, message: "could not write \(folder.path): \(error.localizedDescription)") }
+            let (m, sha) = try PaddockApps.read(folder)
+            await raiseApproval(m, sha: sha, in: paddock, by: caller?.id)
+            return .object(["id": .string(id), "paddock": .string(paddock.name), "folder": .string(folder.path), "state": .string("pending"),
+                            "files": .array([.string(PluginManifest.fileName), .string("ui/index.html")]),
+                            "next": .string("edit the files, then collie app attach \(id): a card asks the user to approve (again, if the files changed)")])
         case "app.attach":
             let id = try need(r, "id")
             guard let f = found.first(where: { $0.id == id }) else { throw noApp(id, paddock) }

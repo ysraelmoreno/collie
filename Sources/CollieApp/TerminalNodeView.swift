@@ -99,6 +99,7 @@ import CollieTheme
         let pref = TerminalStyle(rawValue: UserDefaults.standard.string(forKey: AppearanceKeys.terminalStyle) ?? "") ?? .terminal
         let chat = r?.preset == .claude && (r?.style ?? pref) == .chat
         chatToggle.isHidden = r?.preset != .claude; chatToggle.chat = chat
+        label?.isHidden = chat
         if chat, chatHost == nil {
             let h = NSHostingView(rootView: ChatBodyView(id: id, client: client))
             addSubview(h, positioned: .below, relativeTo: strip)
@@ -201,6 +202,7 @@ import CollieTheme
             t.onClick = { [weak self] in self?.focus() }
             t.onMouseUp = { [weak self] in self?.bringToFront() }
             addSubview(t, positioned: .below, relativeTo: strip)
+            t.isHidden = chatHost != nil   // a remount (zoom, viewport) must not cover the chat body
             term = t
             startReader()
         } else if !on, label == nil {
@@ -212,6 +214,7 @@ import CollieTheme
             l.lineBreakMode = .byTruncatingTail
             l.font = CollieFont.ui(13 / canvas.zoom, .semibold)   // counter-scaled: 13 screen pt at any zoom
             addSubview(l, positioned: .below, relativeTo: strip)
+            l.isHidden = chatHost != nil
             label = l
         }
         updateStrip()

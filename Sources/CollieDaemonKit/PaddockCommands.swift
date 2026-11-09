@@ -62,8 +62,12 @@ extension CommandRouter {
             guard isCreator(f) else { throw refuse("only the Shepherd that created paddock '\(f.name)' can land it") }
             try claim(f.name); defer { paddockBusy.remove(f.name.lowercased()) }
             let res = try await PaddockManager.land(&f, mode: mode, message: str(r, "message"))
+            let i = ws.paddocks.firstIndex { $0.id == f.id }
+            let apps = mode != .pr && i.map { ws.paddocks[$0].apps?.isEmpty == false } == true
+            if apps, let i { ws.paddocks[i].apps = nil }   // landed: its apps' approvals end (their services stop) with it
             try await save(f)
             if mode != .pr { await closeMerged(f) }   // a pr is not merged yet
+            if apps { await publishPlugins() }
             guard case .object(var o) = try isoJSON(res) else { return .null }
             o["paddock"] = try isoJSON(f)
             return .object(o)
@@ -88,7 +92,8 @@ extension CommandRouter {
             try await persist()
             for pn in ws.panels where toPasture.contains(pn.id) { await hub.emit(.panel(pn)) }
             await hub.emit(.paddockRemoved(f.id))
-            if f.apps?.isEmpty == false { await publishPlugins() }   // its approved apps leave with it
+            if f.apps?.isEmpty == false { await publishPlugins() }   // its approved apps leave with it (services stop)
+            try? FileManager.default.removeItem(at: AppLog.file(root: config.paths.root, paddock: f.id, app: "-").deletingLastPathComponent())
             // its override went with it; its design files are pasture now and take the workspace's system
             return await pasturePaddockFiles(of: f, caller: caller).map { .object(["designSystem": $0]) } ?? .object([:])
         default:

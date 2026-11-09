@@ -573,6 +573,8 @@ public enum Commands {
                     timeoutSeconds: 10, exposedToMCP: false),
         CommandSpec(name: "admin.app.restart", summary: "Start an app's service again after it gave up (the panel's Tentar de novo; app only)",
                     params: [ParamSpec("panel", .string, required: true, help: "Panel id")], timeoutSeconds: 10, exposedToMCP: false),
+        CommandSpec(name: "admin.app.spec", summary: "The app manifest of a panel's own paddock (ui, pin; app only)",
+                    params: [ParamSpec("panel", .string, required: true, help: "Panel id")], timeoutSeconds: 10, exposedToMCP: false),
         CommandSpec(name: "admin.app.cards", summary: "Open app cards: approvals and confirm calls (app only)", timeoutSeconds: 10, exposedToMCP: false),
         CommandSpec(name: "admin.app.answer", summary: "Answer an app card: --allow approves or permits, else denies; --allow --session permits that command for the caller's session (app only)",
                     params: [ParamSpec("id", .string, required: true, help: "Card id"), ParamSpec("allow", .flag, help: "Approve / permit"),

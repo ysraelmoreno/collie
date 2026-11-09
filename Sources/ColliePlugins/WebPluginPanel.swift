@@ -95,11 +95,30 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
 
     // MARK: lifecycle
 
-    private var spec: PluginSpec? { PluginRegistry.spec(panel.pluginId).flatMap { $0.source == .builtIn ? nil : $0 } }
+    private var registered: PluginSpec? { PluginRegistry.spec(panel.pluginId).flatMap { $0.source == .builtIn ? nil : $0 } }
+    /// An app do cercado's spec from the panel's own paddock (`admin.app.spec`): one id may be approved in two paddocks,
+    /// with different manifests, and the process-wide registry holds only one of them.
+    private var ownApp: PluginSpec?
+    private var specGen = 0, specTask: Task<Void, Never>?
+    private var spec: PluginSpec? { registered.flatMap { $0.appFolder != nil ? ownApp : $0 } }
     private var title: String { spec?.title ?? panel.pluginId }
 
     /// Follows the registry: the installed version loads (again, if it changed); a missing plug-in shows the placeholder.
+    /// An app do cercado first asks the daemon for its paddock's manifest.
     func refresh() {
+        specGen += 1
+        guard registered?.appFolder != nil else { ownApp = nil; specTask = nil; return apply() }
+        let g = specGen, call = host.call, id = panel.id.uuidString
+        specTask = Task { [weak self] in
+            let v = try? await call("admin.app.spec", ["panel": .string(id)])
+            let m = v.flatMap { try? JSONEncoder().encode($0) }.flatMap { try? JSONDecoder().decode(PluginManifest.self, from: $0) }
+            guard let self, g == self.specGen else { return }   // a newer refresh went on meanwhile
+            self.ownApp = m?.pluginSpec()
+            self.apply()
+        }
+    }
+
+    private func apply() {
         guard let spec, case .external(let v0) = spec.source else {
             teardown("plug-in removido")
             return box.placeholder("Plug-in \(panel.pluginId) não está instalado")
@@ -255,7 +274,9 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         guard let (p, cmd) = PluginRegistry.command(command), p.id == panel.pluginId, case .external(let v) = p.source else {
             throw ProtocolError(code: .unavailable, message: "plug-in \(panel.pluginId) não está instalado")
         }
-        if v != version { refresh() }   // the registry moved on before its notification ran: never the old page
+        // the registry moved on before its notification ran: never the old page (an app's version also carries "|pin")
+        if version.map({ $0 != v && !$0.hasPrefix(v + "|") }) ?? true { refresh() }
+        await specTask?.value   // an app's own paddock's spec, being fetched
         guard version != nil else { throw ProtocolError(code: .unavailable, message: "plug-in \(panel.pluginId) não pôde ser carregado") }
         let seconds = cmd.timeoutSeconds ?? 30
         let deadline = ContinuousClock.now + .seconds(seconds)

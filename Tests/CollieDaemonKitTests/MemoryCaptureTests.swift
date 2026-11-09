@@ -357,4 +357,14 @@ private func proposals(_ store: RepoMemory, count: Int = 1) async throws -> [Mem
         #expect(x.contains("Bearer [hidden]") && x.hasSuffix(" ok"))
         #expect(LotBoards.scrub("risk-free task-list") == "risk-free task-list")
     }
+
+    /// A long alphanumeric run (base64 blob, minified text) used to cost O(n²): 2 MB of text must finish fast, same result as small input.
+    @Test func scrubIsLinearOnBigText() {
+        let blob = String(repeating: "aB3_", count: 250_000)                 // 1 MB, one run (2 MB of text in all)
+        let t0 = ContinuousClock.now
+        let out = LotBoards.scrub(blob + " token=abc123 " + blob + " secretkey=zzz")
+        #expect(ContinuousClock.now - t0 < .seconds(5))
+        #expect(out.hasSuffix(" [hidden]") && !out.contains("abc123") && !out.contains("zzz") && out.contains(" [hidden] "))
+        #expect(LotBoards.scrub("xtoken=1 a_key=2 MY_EDIT=3 (token=4) no=5") == "[hidden] [hidden] [hidden] ([hidden]) no=5")
+    }
 }

@@ -481,6 +481,47 @@ private final class PageServer: @unchecked Sendable {
     }
 }
 
+/// An app panel: `m` in the registry; the daemon's `admin.app.spec` answers `own` (the panel's paddock's), else `m`.
+@MainActor private func openApp(_ m: PluginManifest, own: PluginManifest? = nil, root: URL) -> (WebPluginPanel, NSWindow) {
+    PluginManifest.register([m])
+    _ = NSApplication.shared
+    let panel = Panel(id: UUID(), name: "painel-1", pluginId: "painel", placement: .canvas)
+    let spec = (try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(own ?? m))) ?? .null
+    let host = PanelHostContext(panel: panel, root: root, workspaceId: nil, call: { c, _ in c == "admin.app.spec" ? spec : .null }, emit: { _, _ in })
+    let p = PluginViews.make(panel, host: host) as! WebPluginPanel
+    let w = BrowserInput.HostWindow(contentRect: CGRect(x: -20000, y: -20000, width: 400, height: 300), styleMask: .borderless, backing: .buffered, defer: false)
+    p.view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+    w.contentView?.addSubview(p.view)
+    return (p, w)
+}
+
+/// An app folder answering `hello` with `"<greeting> " + name`; its manifest with folder and pin set (as the daemon does).
+private func appFolder(_ dir: URL, greeting: String) throws -> PluginManifest {
+    try FileManager.default.createDirectory(at: dir.appendingPathComponent("ui"), withIntermediateDirectories: true)
+    let mj: [String: Any] = ["apiVersion": 2, "id": "painel", "name": "Painel", "version": "0.1.0", "placements": ["canvas"], "ui": "ui/index.html",
+                             "commands": [["name": "hello", "summary": "s", "runs": "ui"]]]
+    try JSONSerialization.data(withJSONObject: mj).write(to: dir.appendingPathComponent("collie-plugin.json"))
+    try #"<!doctype html><script src="app.js"></script>"#.write(to: dir.appendingPathComponent("ui/index.html"), atomically: true, encoding: .utf8)
+    try "collie.onCommand(async (n) => \"\(greeting) \" + n)".write(to: dir.appendingPathComponent("ui/app.js"), atomically: true, encoding: .utf8)
+    var m = try PluginManifest.load(folder: dir)
+    m.appFolder = dir.path; m.appPin = try PluginManifest.appFiles(dir).sha
+    return m
+}
+
+/// One app id approved in two paddocks: the panel runs its own paddock's ui and pin, not the registry's (the other's).
+@MainActor @Suite(.serialized) struct AppPanelOwnPaddockTests {
+    @Test func loadsItsPaddocksApp() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("appui-\(UUID().uuidString)").resolvingSymlinksInPath()
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let a = try appFolder(tmp.appendingPathComponent("a"), greeting: "oi"), b = try appFolder(tmp.appendingPathComponent("b"), greeting: "olá")
+            let x = openApp(a, own: b, root: tmp)
+            defer { x.0.close(); x.1.close() }
+            #expect(try await x.0.handle("painel.hello", [:]) == .string("olá hello"))
+        }
+    }
+}
+
 /// Apps do cercado, slice 4: an app's `ui/` page is served from the bytes that hash to its pin, read once; a folder
 /// that no longer matches shows a placeholder instead.
 @MainActor @Suite(.serialized) struct AppFilePanelTests {
@@ -497,25 +538,14 @@ private final class PageServer: @unchecked Sendable {
             var m = try PluginManifest.load(folder: dir)
             m.appFolder = dir.path; m.appPin = try PluginManifest.appFiles(dir).sha
 
-            @MainActor func open(_ m: PluginManifest) -> (WebPluginPanel, NSWindow) {
-                PluginManifest.register([m])
-                _ = NSApplication.shared
-                let panel = Panel(id: UUID(), name: "painel-1", pluginId: "painel", placement: .canvas)
-                let host = PanelHostContext(panel: panel, root: dir, workspaceId: nil, call: { _, _ in .null }, emit: { _, _ in })
-                let p = PluginViews.make(panel, host: host) as! WebPluginPanel
-                let w = BrowserInput.HostWindow(contentRect: CGRect(x: -20000, y: -20000, width: 400, height: 300), styleMask: .borderless, backing: .buffered, defer: false)
-                p.view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
-                w.contentView?.addSubview(p.view)
-                return (p, w)
-            }
-            let x = open(m)
+            let x = openApp(m, root: dir)
             #expect(try await x.0.handle("painel.hello", [:]) == .string("oi hello"))
             #expect(x.0.isApp && x.0.origin == nil)
             x.0.close(); x.1.close()
 
             // edited after approval: not served
             try #"collie.onCommand(async () => "changed")"#.write(to: dir.appendingPathComponent("ui/app.js"), atomically: true, encoding: .utf8)
-            let y = open(m)
+            let y = openApp(m, root: dir)
             defer { y.0.close(); y.1.close(); PluginRegistry.setExternal([]) }
             var err: ProtocolError?
             do { _ = try await y.0.handle("painel.hello", [:]) } catch let e as ProtocolError { err = e }

@@ -727,7 +727,7 @@ actor CommandRouter {
             try await leash(try find(try need("a")), try find(try need("b")))
             return .object([:])
         case "admin.leash.requests", "admin.leash.answer": return try await adminLeashRequest(r)
-        case "admin.app.cards", "admin.app.answer", "admin.app.context", "admin.app.restart": return try await adminAppCard(r)
+        case "admin.app.cards", "admin.app.answer", "admin.app.context", "admin.app.restart", "admin.app.spec": return try await adminAppCard(r)
         case "admin.block.attach", "admin.block.refresh": return try await adminBlock(r)
         case "admin.kill":
             let name = try need("target")

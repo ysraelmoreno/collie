@@ -1,0 +1,2983 @@
+{
+  "ok": false,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 2,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<div id=\"app\"> is a timeline element that contains nested <div id=\"sidebar\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#app",
+        "dataAttributes": {},
+        "sourceFile": "/Users/ysraelmoreno/Documents/codes/my-orchestrator-memory/.collie/paddocks/collie/docs/videos/collie-demo/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <div id=\"app\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      },
+      {
+        "code": "nested_structure_needs_subcomposition",
+        "severity": "warning",
+        "message": "<div id=\"outro\"> is a timeline element that contains nested <svg id=\"mark\">. The timeline shows one row per top-level element, and the root composition is built only from sub-compositions.",
+        "selector": "#outro",
+        "dataAttributes": {},
+        "sourceFile": "/Users/ysraelmoreno/Documents/codes/my-orchestrator-memory/.collie/paddocks/collie/docs/videos/collie-demo/index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0,
+        "fixHint": "Move <div id=\"outro\"> and its contents into a sub-composition file and mount it with data-composition-src."
+      }
+    ],
+    "filesScanned": 1
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": false,
+    "errorCount": 1,
+    "warningCount": 0,
+    "infoCount": 58,
+    "findings": [
+      {
+        "code": "content_overlap",
+        "severity": "error",
+        "time": 24.556,
+        "selector": "div.page > h2:nth-of-type(1)",
+        "message": "Two text blocks overlap and may render unreadable.",
+        "rect": {
+          "left": 1125,
+          "top": 731,
+          "right": 1333.53,
+          "bottom": 770,
+          "width": 208.53,
+          "height": 39
+        },
+        "containerSelector": "#otag",
+        "text": "Minhas tarefas",
+        "fixHint": "Give each block its own zone, or put data-layout-allow-overlap on the text or on a container inside the scene. A marker on the scene root does not apply. Decoration nobody needs to read can take data-layout-ignore.",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1125,
+          "y": 731,
+          "width": 208.53,
+          "height": 39
+        },
+        "firstSeen": 23.385,
+        "lastSeen": 26,
+        "occurrences": 20,
+        "heldMs": 2614.9999999999986,
+        "times": [
+          23.385,
+          23.531,
+          23.676,
+          23.821,
+          23.966,
+          24.112,
+          24.257,
+          24.402,
+          24.547,
+          24.556,
+          24.693,
+          24.838,
+          24.983,
+          25.128,
+          25.274,
+          25.419,
+          25.564,
+          25.709,
+          25.855,
+          26
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.brand",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 22,
+          "top": 28,
+          "right": 85.78,
+          "bottom": 62,
+          "width": 63.78,
+          "height": 34
+        },
+        "containerSelector": "#outro",
+        "text": "collie",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 22,
+          "y": 28,
+          "width": 63.78,
+          "height": 34
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.brand > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 97.78,
+          "top": 34,
+          "right": 136.52,
+          "bottom": 56,
+          "width": 38.73,
+          "height": 22
+        },
+        "containerSelector": "#outro",
+        "text": "demo",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 97.78,
+          "y": 34,
+          "width": 38.73,
+          "height": 22
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.search > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 37,
+          "top": 97.5,
+          "right": 194.78,
+          "bottom": 118.5,
+          "width": 157.78,
+          "height": 21
+        },
+        "containerSelector": "#outro",
+        "text": "Recrutar, abrir pain…",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 37,
+          "y": 97.5,
+          "width": 157.78,
+          "height": 21
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.search > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 237.83,
+          "top": 97.5,
+          "right": 262,
+          "bottom": 118.5,
+          "width": 24.17,
+          "height": 21
+        },
+        "containerSelector": "#outro",
+        "text": "⌘K",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 237.83,
+          "y": 97.5,
+          "width": 24.17,
+          "height": 21
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sidebar > div:nth-of-type(3)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 22,
+          "top": 160,
+          "right": 104.89,
+          "bottom": 178,
+          "width": 82.89,
+          "height": 18
+        },
+        "containerSelector": "#outro",
+        "text": "CERCADOS",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 22,
+          "y": 160,
+          "width": 82.89,
+          "height": 18
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.row.active",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 58,
+          "top": 197.5,
+          "right": 120.91,
+          "bottom": 220.5,
+          "width": 62.91,
+          "height": 23
+        },
+        "containerSelector": "#outro",
+        "text": "tarefas",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 58,
+          "y": 197.5,
+          "width": 62.91,
+          "height": 23
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sidebar > div:nth-of-type(5)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 36,
+          "top": 249.5,
+          "right": 167.33,
+          "bottom": 272.5,
+          "width": 131.33,
+          "height": 23
+        },
+        "containerSelector": "#outro",
+        "text": "Novo cercado…",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 36,
+          "y": 249.5,
+          "width": 131.33,
+          "height": 23
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sidebar > div:nth-of-type(6)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 22,
+          "top": 326,
+          "right": 115.25,
+          "bottom": 344,
+          "width": 93.25,
+          "height": 18
+        },
+        "containerSelector": "#outro",
+        "text": "TERMINAIS",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 22,
+          "y": 326,
+          "width": 93.25,
+          "height": 18
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sb-shep",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 58,
+          "top": 363.5,
+          "right": 114.05,
+          "bottom": 386.5,
+          "width": 56.05,
+          "height": 23
+        },
+        "containerSelector": "#outro",
+        "text": "Pastor",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 58,
+          "y": 363.5,
+          "width": 56.05,
+          "height": 23
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sb-agent",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 58,
+          "top": 415.5,
+          "right": 162.61,
+          "bottom": 438.5,
+          "width": 104.61,
+          "height": 23
+        },
+        "containerSelector": "#outro",
+        "text": "tarefas-app",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 58,
+          "y": 415.5,
+          "width": 104.61,
+          "height": 23
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sidebar > div:nth-of-type(9)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 22,
+          "top": 492,
+          "right": 94.53,
+          "bottom": 510,
+          "width": 72.53,
+          "height": 18
+        },
+        "containerSelector": "#outro",
+        "text": "JANELAS",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 22,
+          "y": 492,
+          "width": 72.53,
+          "height": 18
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sb-prev",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 58,
+          "top": 529.5,
+          "right": 227.25,
+          "bottom": 552.5,
+          "width": 169.25,
+          "height": 23
+        },
+        "containerSelector": "#outro",
+        "text": "Prévia · tarefas-app",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 58,
+          "y": 529.5,
+          "width": 169.25,
+          "height": 23
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#header > h1:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 340,
+          "top": 23,
+          "right": 455.72,
+          "bottom": 66,
+          "width": 115.72,
+          "height": 43
+        },
+        "containerSelector": "#outro",
+        "text": "Tarefas",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 340,
+          "y": 23,
+          "width": 115.72,
+          "height": 43
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.btn",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1553.5,
+          "top": 33,
+          "right": 1672.88,
+          "bottom": 56,
+          "width": 119.38,
+          "height": 23
+        },
+        "containerSelector": "#outro",
+        "text": "Novo terminal",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1553.5,
+          "y": 33,
+          "width": 119.38,
+          "height": 23
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.hbtns > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1711.88,
+          "top": 33,
+          "right": 1747.58,
+          "bottom": 56,
+          "width": 35.7,
+          "height": 23
+        },
+        "containerSelector": "#outro",
+        "text": "59%",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1711.88,
+          "y": 33,
+          "width": 35.7,
+          "height": 23
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.hbtns > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1765.58,
+          "top": 33,
+          "right": 1880,
+          "bottom": 56,
+          "width": 114.42,
+          "height": 23
+        },
+        "containerSelector": "#outro",
+        "text": "Ajustar à tela",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1765.58,
+          "y": 33,
+          "width": 114.42,
+          "height": 23
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-shep > div:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 381,
+          "top": 305,
+          "right": 440.38,
+          "bottom": 330,
+          "width": 59.38,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "Pastor",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 381,
+          "y": 305,
+          "width": 59.38,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "span.tag.acc",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 461.38,
+          "top": 309,
+          "right": 523.78,
+          "bottom": 326,
+          "width": 62.41,
+          "height": 17
+        },
+        "containerSelector": "#outro",
+        "text": "Shepherd",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 461.38,
+          "y": 309,
+          "width": 62.41,
+          "height": 17
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-shep > div:nth-of-type(1) > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 544.78,
+          "top": 308.5,
+          "right": 595.19,
+          "bottom": 326.5,
+          "width": 50.41,
+          "height": 18
+        },
+        "containerSelector": "#outro",
+        "text": "claude",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 544.78,
+          "y": 308.5,
+          "width": 50.41,
+          "height": 18
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-shep > div:nth-of-type(1) > span:nth-of-type(3)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 860,
+          "top": 305,
+          "right": 881,
+          "bottom": 330,
+          "width": 21,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "···",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 860,
+          "y": 305,
+          "width": 21,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-shep > div:nth-of-type(2) > div:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 361,
+          "top": 365,
+          "right": 714.41,
+          "bottom": 390,
+          "width": 353.41,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "Pastor pronto · cercado tarefas",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 361,
+          "y": 365,
+          "width": 353.41,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sh-sent > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 361,
+          "top": 408.44,
+          "right": 372.41,
+          "bottom": 433.44,
+          "width": 11.41,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "›",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 361,
+          "y": 408.44,
+          "width": 11.41,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sh-sent > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 383.81,
+          "top": 408.44,
+          "right": 657.42,
+          "bottom": 433.44,
+          "width": 273.61,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "Cria um app de tarefas e",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 383.81,
+          "y": 408.44,
+          "width": 273.61,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#sh-sent2",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 381,
+          "top": 437.88,
+          "right": 574.81,
+          "bottom": 462.88,
+          "width": 193.81,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "mostra uma prévia",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 381,
+          "y": 437.88,
+          "width": 193.81,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#s1",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 361,
+          "top": 481.31,
+          "right": 714.45,
+          "bottom": 506.31,
+          "width": 353.45,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "● Vou delegar a um agente novo.",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 361,
+          "y": 481.31,
+          "width": 353.45,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#s2",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 361,
+          "top": 510.75,
+          "right": 669.38,
+          "bottom": 535.75,
+          "width": 308.38,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "⏺ collie summon tarefas-app",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 361,
+          "y": 510.75,
+          "width": 308.38,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#s3",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 361,
+          "top": 540.19,
+          "right": 748.64,
+          "bottom": 565.19,
+          "width": 387.64,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "✓ terminal criado · coleira ligada",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 361,
+          "y": 540.19,
+          "width": 387.64,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#s4",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 361,
+          "top": 583.63,
+          "right": 577.64,
+          "bottom": 608.63,
+          "width": 216.64,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "● Abrindo a prévia…",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 361,
+          "y": 583.63,
+          "width": 216.64,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#s5",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 361,
+          "top": 642.06,
+          "right": 661.47,
+          "bottom": 660.06,
+          "width": 300.47,
+          "height": 18
+        },
+        "containerSelector": "#outro",
+        "text": "✓ Prévia ligada a tarefas-app",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 361,
+          "y": 642.06,
+          "width": 300.47,
+          "height": 18
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "span.pr",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 378,
+          "top": 792.5,
+          "right": 389.41,
+          "bottom": 817.5,
+          "width": 11.41,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "›",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 378,
+          "y": 792.5,
+          "width": 11.41,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-agent > div:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1121,
+          "top": 145,
+          "right": 1231.05,
+          "bottom": 170,
+          "width": 110.05,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "tarefas-app",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1121,
+          "y": 145,
+          "width": 110.05,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-agent > div:nth-of-type(1) > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1252.05,
+          "top": 164,
+          "right": 1319.39,
+          "bottom": 181,
+          "width": 67.34,
+          "height": 17
+        },
+        "containerSelector": "#outro",
+        "text": "coleira",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1252.05,
+          "y": 164,
+          "width": 67.34,
+          "height": 17
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-agent > div:nth-of-type(1) > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1340.39,
+          "top": 148.5,
+          "right": 1390.8,
+          "bottom": 166.5,
+          "width": 50.41,
+          "height": 18
+        },
+        "containerSelector": "#outro",
+        "text": "claude",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1340.39,
+          "y": 148.5,
+          "width": 50.41,
+          "height": 18
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-agent > div:nth-of-type(1) > span:nth-of-type(3)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1680,
+          "top": 145,
+          "right": 1701,
+          "bottom": 170,
+          "width": 21,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "···",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1680,
+          "y": 145,
+          "width": 21,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g0",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1101,
+          "top": 200,
+          "right": 1446.61,
+          "bottom": 224,
+          "width": 345.61,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "tarefa do Pastor: app de tarefas",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1101,
+          "y": 200,
+          "width": 345.61,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g1",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1111.84,
+          "top": 255.78,
+          "right": 1306.27,
+          "bottom": 279.78,
+          "width": 194.42,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "Write()",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1111.84,
+          "y": 255.78,
+          "width": 194.42,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g1 > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1101,
+          "top": 255.78,
+          "right": 1111.84,
+          "bottom": 279.78,
+          "width": 10.84,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "●",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1101,
+          "y": 255.78,
+          "width": 10.84,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g1 > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1187.45,
+          "top": 255.78,
+          "right": 1295.45,
+          "bottom": 279.78,
+          "width": 108,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "index.html",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1187.45,
+          "y": 255.78,
+          "width": 108,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g2",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1111.84,
+          "top": 283.67,
+          "right": 1263.08,
+          "bottom": 307.67,
+          "width": 151.23,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "Write()",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1111.84,
+          "y": 283.67,
+          "width": 151.23,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g2 > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1101,
+          "top": 283.67,
+          "right": 1111.84,
+          "bottom": 307.67,
+          "width": 10.84,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "●",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1101,
+          "y": 283.67,
+          "width": 10.84,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g2 > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1187.45,
+          "top": 283.67,
+          "right": 1252.27,
+          "bottom": 307.67,
+          "width": 64.81,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "app.js",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1187.45,
+          "y": 283.67,
+          "width": 64.81,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g3",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1111.84,
+          "top": 311.56,
+          "right": 1317.08,
+          "bottom": 335.56,
+          "width": 205.23,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "Write()",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1111.84,
+          "y": 311.56,
+          "width": 205.23,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g3 > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1101,
+          "top": 311.56,
+          "right": 1111.84,
+          "bottom": 335.56,
+          "width": 10.84,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "●",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1101,
+          "y": 311.56,
+          "width": 10.84,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g3 > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1187.45,
+          "top": 311.56,
+          "right": 1306.27,
+          "bottom": 335.56,
+          "width": 118.81,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "estilos.css",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1187.45,
+          "y": 311.56,
+          "width": 118.81,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#g4",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1101,
+          "top": 339.45,
+          "right": 1403.44,
+          "bottom": 363.45,
+          "width": 302.44,
+          "height": 24
+        },
+        "containerSelector": "#outro",
+        "text": "✓ servidor em localhost:4173",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1101,
+          "y": 339.45,
+          "width": 302.44,
+          "height": 24
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-prev > div:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1121,
+          "top": 605,
+          "right": 1176.59,
+          "bottom": 630,
+          "width": 55.59,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "Prévia",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1121,
+          "y": 605,
+          "width": 55.59,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-prev > div:nth-of-type(1) > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1197.59,
+          "top": 624,
+          "right": 1303.42,
+          "bottom": 641,
+          "width": 105.83,
+          "height": 17
+        },
+        "containerSelector": "#outro",
+        "text": "tarefas-app",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1197.59,
+          "y": 624,
+          "width": 105.83,
+          "height": 17
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#n-prev > div:nth-of-type(1) > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1680,
+          "top": 605,
+          "right": 1701,
+          "bottom": 630,
+          "width": 21,
+          "height": 25
+        },
+        "containerSelector": "#outro",
+        "text": "···",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1680,
+          "y": 605,
+          "width": 21,
+          "height": 25
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.url",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1112,
+          "top": 667,
+          "right": 1238,
+          "bottom": 687,
+          "width": 126,
+          "height": 20
+        },
+        "containerSelector": "#outro",
+        "text": "localhost:4173",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1112,
+          "y": 667,
+          "width": 126,
+          "height": 20
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "div.page > h2:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1125,
+          "top": 731,
+          "right": 1333.53,
+          "bottom": 770,
+          "width": 208.53,
+          "height": 39
+        },
+        "containerSelector": "#outro",
+        "text": "Minhas tarefas",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1125,
+          "y": 731,
+          "width": 208.53,
+          "height": 39
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#psub",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1125,
+          "top": 774,
+          "right": 1260.78,
+          "bottom": 795,
+          "width": 135.78,
+          "height": 21
+        },
+        "containerSelector": "#outro",
+        "text": "3 de 3 concluídas",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1125,
+          "y": 774,
+          "width": 135.78,
+          "height": 21
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#i1 > b:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1178,
+          "top": 817,
+          "right": 1307.69,
+          "bottom": 843,
+          "width": 129.69,
+          "height": 26
+        },
+        "containerSelector": "#outro",
+        "text": "Comprar café",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1178,
+          "y": 817,
+          "width": 129.69,
+          "height": 26
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#i2 > b:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1178,
+          "top": 875,
+          "right": 1370.63,
+          "bottom": 901,
+          "width": 192.63,
+          "height": 26
+        },
+        "containerSelector": "#outro",
+        "text": "Responder a equipe",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1178,
+          "y": 875,
+          "width": 192.63,
+          "height": 26
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#i3 > b:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1178,
+          "top": 933,
+          "right": 1402.7,
+          "bottom": 959,
+          "width": 224.7,
+          "height": 26
+        },
+        "containerSelector": "#outro",
+        "text": "Gravar a demo do Collie",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1178,
+          "y": 933,
+          "width": 224.7,
+          "height": 26
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#status",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 49.03,
+          "top": 1050.5,
+          "right": 130.03,
+          "bottom": 1070.5,
+          "width": 81,
+          "height": 20
+        },
+        "containerSelector": "#outro",
+        "text": "conectado",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 49.03,
+          "y": 1050.5,
+          "width": 81,
+          "height": 20
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#status > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 22,
+          "top": 1050.5,
+          "right": 31.03,
+          "bottom": 1070.5,
+          "width": 9.03,
+          "height": 20
+        },
+        "containerSelector": "#outro",
+        "text": "●",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 22,
+          "y": 1050.5,
+          "width": 9.03,
+          "height": 20
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#status > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 148.03,
+          "top": 1050.5,
+          "right": 193.03,
+          "bottom": 1070.5,
+          "width": 45,
+          "height": 20
+        },
+        "containerSelector": "#outro",
+        "text": "97 MB",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 148.03,
+          "y": 1050.5,
+          "width": 45,
+          "height": 20
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 24.556,
+        "selector": "#st-t",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 211.03,
+          "top": 1050.5,
+          "right": 418.03,
+          "bottom": 1070.5,
+          "width": 207,
+          "height": 20
+        },
+        "containerSelector": "#outro",
+        "text": "terminais 2 · janelas 1",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "lifetime": {
+          "start": 0,
+          "end": 26
+        },
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 211.03,
+          "y": 1050.5,
+          "width": 207,
+          "height": 20
+        },
+        "firstSeen": 24.556,
+        "lastSeen": 24.556,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          24.556
+        ]
+      }
+    ],
+    "duration": 26,
+    "samples": [
+      1.444,
+      4.333,
+      7.222,
+      10.111,
+      13,
+      15.889,
+      18.778,
+      21.667,
+      24.556
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 59,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 5,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.27:1; WCAG AA requires 3:1.",
+        "text": "Minhas tarefas",
+        "fg": "rgb(21,23,28)",
+        "bg": "rgb(40,43,54)",
+        "ratio": 1.27,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(115,116,119)",
+        "large": true,
+        "selector": "div > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(4) > div:nth-of-type(3) > h2",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1125,
+          "y": 731,
+          "width": 550,
+          "height": 39
+        },
+        "time": 24.556,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 2.31:1; WCAG AA requires 4.5:1.",
+        "text": "3 de 3 concluídas",
+        "fg": "rgb(92,98,112)",
+        "bg": "rgb(40,43,54)",
+        "ratio": 2.31,
+        "requiredRatio": 4.5,
+        "suggestedColor": "rgb(142,146,156)",
+        "large": false,
+        "selector": "#psub",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1125,
+          "y": 774,
+          "width": 550,
+          "height": 21
+        },
+        "time": 24.556,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.31:1; WCAG AA requires 4.5:1.",
+        "text": "Comprar café",
+        "fg": "rgb(21,23,28)",
+        "bg": "rgb(42,45,55)",
+        "ratio": 1.31,
+        "requiredRatio": 4.5,
+        "suggestedColor": "rgb(147,148,150)",
+        "large": false,
+        "selector": "div > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(4) > div:nth-of-type(3) > div:nth-of-type(2) > b",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1178,
+          "y": 817,
+          "width": 129.6875,
+          "height": 26
+        },
+        "time": 24.556,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.31:1; WCAG AA requires 4.5:1.",
+        "text": "Responder a equipe",
+        "fg": "rgb(21,23,28)",
+        "bg": "rgb(42,45,55)",
+        "ratio": 1.31,
+        "requiredRatio": 4.5,
+        "suggestedColor": "rgb(147,148,150)",
+        "large": false,
+        "selector": "div > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(4) > div:nth-of-type(3) > div:nth-of-type(3) > b",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1178,
+          "y": 875,
+          "width": 192.625,
+          "height": 26
+        },
+        "time": 24.556,
+        "times": [
+          24.556
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.31:1; WCAG AA requires 4.5:1.",
+        "text": "Gravar a demo do Collie",
+        "fg": "rgb(21,23,28)",
+        "bg": "rgb(42,45,55)",
+        "ratio": 1.31,
+        "requiredRatio": 4.5,
+        "suggestedColor": "rgb(147,148,150)",
+        "large": false,
+        "selector": "div > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(4) > div:nth-of-type(3) > div:nth-of-type(4) > b",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 1178,
+          "y": 933,
+          "width": 224.703125,
+          "height": 26
+        },
+        "time": 24.556,
+        "times": [
+          24.556
+        ]
+      }
+    ],
+    "enabled": true,
+    "samples": [
+      1.444,
+      7.222,
+      13,
+      18.778,
+      24.556
+    ],
+    "checked": 209,
+    "passed": 204
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 3,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "first_frame_empty",
+        "severity": "warning",
+        "message": "Frame 0 shows only the background, and the first frame is the thumbnail on social players: have the title or key image already on screen at 0 s instead of entering from nothing; see references/review.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0
+      },
+      {
+        "code": "film_silent",
+        "severity": "warning",
+        "message": "This 26 s film has no sound source (no <audio>, no <video> with sound): add a music bed and sounds on the visible actions unless the person asked for silence; see references/sound.md.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 50 text elements stay under it for 0.5 s or more, the smallest \"Shepherd\" at 13 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "Shepherd",
+        "selector": "span.tag.acc",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 465.28,
+          "y": 321.15,
+          "width": 60.87,
+          "height": 16.59
+        },
+        "time": 0.625,
+        "times": [
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.25,
+          0.625,
+          0.625,
+          0.625,
+          0.625,
+          1.5,
+          5.25,
+          5.25,
+          5.875,
+          6.625,
+          7.5,
+          7.5,
+          7.5,
+          8.125,
+          8.375,
+          8.75,
+          9.125,
+          9.75,
+          10.625,
+          10.625,
+          11.5,
+          11.5,
+          12.375,
+          12.375,
+          13.375,
+          14,
+          14.5,
+          14.5,
+          14.5,
+          14.5,
+          14.75,
+          15.375,
+          15.875,
+          16.25,
+          16.5
+        ],
+        "fontPx": 12.68,
+        "floorPx": 28,
+        "seconds": 25.375,
+        "elements": [
+          {
+            "selector": "span.tag.acc",
+            "text": "Shepherd",
+            "fontPx": 12.68,
+            "time": 0.625,
+            "seconds": 25.375
+          },
+          {
+            "selector": "#n-agent > div:nth-of-type(1) > span:nth-of-type(1)",
+            "text": "coleira",
+            "fontPx": 12.68,
+            "time": 7.5,
+            "seconds": 18.5
+          },
+          {
+            "selector": "#n-prev > div:nth-of-type(1) > span:nth-of-type(1)",
+            "text": "tarefas-app",
+            "fontPx": 12.9,
+            "time": 14.5,
+            "seconds": 11.5
+          },
+          {
+            "selector": "#n-shep > div:nth-of-type(1) > span:nth-of-type(2)",
+            "text": "claude",
+            "fontPx": 13.66,
+            "time": 0.625,
+            "seconds": 25.375
+          },
+          {
+            "selector": "#n-agent > div:nth-of-type(1) > span:nth-of-type(2)",
+            "text": "claude",
+            "fontPx": 13.66,
+            "time": 7.5,
+            "seconds": 18.5
+          },
+          {
+            "selector": "#sidebar > div:nth-of-type(3)",
+            "text": "CERCADOS",
+            "fontPx": 14,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#sidebar > div:nth-of-type(6)",
+            "text": "TERMINAIS",
+            "fontPx": 14,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#sidebar > div:nth-of-type(9)",
+            "text": "JANELAS",
+            "fontPx": 14,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#s5",
+            "text": "✓ Prévia ligada a tarefas-app",
+            "fontPx": 14,
+            "time": 15.375,
+            "seconds": 10.625
+          },
+          {
+            "selector": "div.url",
+            "text": "localhost:4173",
+            "fontPx": 14.88,
+            "time": 14.5,
+            "seconds": 11.5
+          },
+          {
+            "selector": "#status",
+            "text": "conectado",
+            "fontPx": 15,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#status > span:nth-of-type(2)",
+            "text": "97 MB",
+            "fontPx": 15,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#st-t",
+            "text": "terminais 2 · janelas 1",
+            "fontPx": 15,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#psub",
+            "text": "1 de 3 concluídas",
+            "fontPx": 15.88,
+            "time": 14.5,
+            "seconds": 11.5
+          },
+          {
+            "selector": "div.search > span:nth-of-type(1)",
+            "text": "Recrutar, abrir pain…",
+            "fontPx": 16,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "div.search > span:nth-of-type(2)",
+            "text": "⌘K",
+            "fontPx": 16,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#b-leash",
+            "text": "coleira",
+            "fontPx": 16,
+            "time": 8.375,
+            "seconds": 2
+          },
+          {
+            "selector": "div.brand > span:nth-of-type(1)",
+            "text": "demo",
+            "fontPx": 17,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "div.row.active",
+            "text": "tarefas",
+            "fontPx": 18,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#sidebar > div:nth-of-type(5)",
+            "text": "Novo cercado…",
+            "fontPx": 18,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#sb-shep",
+            "text": "Pastor",
+            "fontPx": 18,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "div.btn",
+            "text": "Novo terminal",
+            "fontPx": 18,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "div.hbtns > span:nth-of-type(1)",
+            "text": "59%",
+            "fontPx": 18,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "div.hbtns > span:nth-of-type(2)",
+            "text": "Ajustar à tela",
+            "fontPx": 18,
+            "time": 0.25,
+            "seconds": 25.75
+          },
+          {
+            "selector": "#sb-agent",
+            "text": "tarefas-app",
+            "fontPx": 18,
+            "time": 8.125,
+            "seconds": 17.875
+          },
+          {
+            "selector": "#g0",
+            "text": "tarefa do Pastor: app de tarefas",
+            "fontPx": 18,
+            "time": 9.125,
+            "seconds": 16.875
+          },
+          {
+            "selector": "#gs > span:nth-of-type(2)",
+            "text": "Trabalhando…",
+            "fontPx": 18,
+            "time": 9.75,
+            "seconds": 3.625
+          },
+          {
+            "selector": "#g1",
+            "text": "Write()",
+            "fontPx": 18,
+            "time": 10.625,
+            "seconds": 15.375
+          },
+          {
+            "selector": "#g1 > span:nth-of-type(2)",
+            "text": "index.html",
+            "fontPx": 18,
+            "time": 10.625,
+            "seconds": 15.375
+          },
+          {
+            "selector": "#g2",
+            "text": "Write()",
+            "fontPx": 18,
+            "time": 11.5,
+            "seconds": 14.5
+          },
+          {
+            "selector": "#g2 > span:nth-of-type(2)",
+            "text": "app.js",
+            "fontPx": 18,
+            "time": 11.5,
+            "seconds": 14.5
+          },
+          {
+            "selector": "#g3",
+            "text": "Write()",
+            "fontPx": 18,
+            "time": 12.375,
+            "seconds": 13.625
+          },
+          {
+            "selector": "#g3 > span:nth-of-type(2)",
+            "text": "estilos.css",
+            "fontPx": 18,
+            "time": 12.375,
+            "seconds": 13.625
+          },
+          {
+            "selector": "#g4",
+            "text": "✓ servidor em localhost:4173",
+            "fontPx": 18,
+            "time": 13.375,
+            "seconds": 12.625
+          },
+          {
+            "selector": "#sb-prev",
+            "text": "Prévia · tarefas-app",
+            "fontPx": 18,
+            "time": 14.75,
+            "seconds": 11.25
+          },
+          {
+            "selector": "#n-shep > div:nth-of-type(1)",
+            "text": "Pastor",
+            "fontPx": 18.53,
+            "time": 0.625,
+            "seconds": 25.375
+          },
+          {
+            "selector": "#n-shep > div:nth-of-type(2) > div:nth-of-type(1)",
+            "text": "Pastor pronto · cercado tarefas",
+            "fontPx": 18.53,
+            "time": 0.625,
+            "seconds": 25.375
+          },
+          {
+            "selector": "#n-agent > div:nth-of-type(1)",
+            "text": "tarefas-app",
+            "fontPx": 18.53,
+            "time": 7.5,
+            "seconds": 18.5
+          },
+          {
+            "selector": "#n-prev > div:nth-of-type(1)",
+            "text": "Prévia",
+            "fontPx": 18.85,
+            "time": 14.5,
+            "seconds": 11.5
+          },
+          {
+            "selector": "#typed",
+            "text": "C",
+            "fontPx": 19,
+            "time": 1.5,
+            "seconds": 3.625
+          },
+          {
+            "selector": "#sh-sent > span:nth-of-type(2)",
+            "text": "Cria um app de tarefas e",
+            "fontPx": 19,
+            "time": 5.25,
+            "seconds": 20.75
+          },
+          {
+            "selector": "#sh-sent2",
+            "text": "mostra uma prévia",
+            "fontPx": 19,
+            "time": 5.25,
+            "seconds": 20.75
+          },
+          {
+            "selector": "#s1",
+            "text": "● Vou delegar a um agente novo.",
+            "fontPx": 19,
+            "time": 5.875,
+            "seconds": 20.125
+          },
+          {
+            "selector": "#s2",
+            "text": "⏺ collie summon tarefas-app",
+            "fontPx": 19,
+            "time": 6.625,
+            "seconds": 19.375
+          },
+          {
+            "selector": "#s3",
+            "text": "✓ terminal criado · coleira ligada",
+            "fontPx": 19,
+            "time": 8.75,
+            "seconds": 17.25
+          },
+          {
+            "selector": "#s4",
+            "text": "● Abrindo a prévia…",
+            "fontPx": 19,
+            "time": 14,
+            "seconds": 12
+          },
+          {
+            "selector": "#i1 > b:nth-of-type(1)",
+            "text": "Comprar café",
+            "fontPx": 20,
+            "time": 15.875,
+            "seconds": 10.125
+          },
+          {
+            "selector": "#i2 > b:nth-of-type(1)",
+            "text": "Responder a equipe",
+            "fontPx": 20,
+            "time": 16.25,
+            "seconds": 9.75
+          },
+          {
+            "selector": "#i3 > b:nth-of-type(1)",
+            "text": "Gravar a demo do Collie",
+            "fontPx": 20,
+            "time": 16.5,
+            "seconds": 9.5
+          },
+          {
+            "selector": "div.brand",
+            "text": "collie",
+            "fontPx": 26,
+            "time": 0.25,
+            "seconds": 25.75
+          }
+        ]
+      }
+    ],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 208
+  },
+  "audio": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 1,
+    "findings": [
+      {
+        "code": "audio_none",
+        "severity": "info",
+        "message": "The film has no sound: no clip in it plays audio.",
+        "selector": "[data-composition-id]",
+        "dataAttributes": {},
+        "sourceFile": "index.html",
+        "bbox": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        },
+        "time": 0
+      }
+    ]
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  }
+}

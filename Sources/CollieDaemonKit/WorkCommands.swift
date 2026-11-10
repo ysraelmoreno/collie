@@ -10,7 +10,6 @@ extension CommandRouter {
     /// Never fails the agent: every error is a daemon log line (no payload contents).
     func workHook(_ r: Request, from tid: UUID) async {
         let now = Date()
-        if let tr = HookPayload.transcriptPath(stdinJSON: Data((str(r, "payload") ?? "").utf8)) { chatNote(tid, transcript: tr) }   // the chat body
         if ["precompact", "session-end"].contains(str(r, "hook") ?? ""),   // the conversation so far, before it is compacted or gone
            let tr = HookPayload.transcriptPath(stdinJSON: Data((str(r, "payload") ?? "").utf8)) {
             Task { await captureConversationNow(tid, transcript: tr) }

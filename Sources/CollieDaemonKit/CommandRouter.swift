@@ -319,13 +319,6 @@ actor CommandRouter {
                 try await adminOnly(req, peer: peer)
                 return Response(id: req.id, ok: true, result: try await admin(req))
             }
-            if ["terminal.chat", "terminal.style", "terminal.say"].contains(req.command) {   // the app's chat body (spec terminal-chat)
-                try await adminOnly(req, peer: peer)
-                return Response(id: req.id, ok: true, result: try await { switch req.command {
-                    case "terminal.chat": try await terminalChat(req)
-                    case "terminal.style": try await terminalStyle(req)
-                    default: try await terminalSay(req) } }())
-            }
             if req.command.hasPrefix("paddock.") {   // admin or terminal principal; rules per command
                 return Response(id: req.id, ok: true, result: try await paddockCommand(req, peer: peer))
             }
@@ -415,7 +408,7 @@ actor CommandRouter {
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
                 return Response(id: req.id, ok: true, result: try await waitTurn(t, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
             case "turn.completed":
-                if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr); chatNote(tid, transcript: tr) }   // restarts the idle capture
+                if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr) }   // restarts the idle capture
                 // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
                 let continued = flag(req, "continued"), capture = flag(req, "capture") && !continued
                 // a capture Stop holds the queue first: the ask it completes must not let the next one be typed before the decision
@@ -728,7 +721,6 @@ actor CommandRouter {
             return .object([:])
         case "admin.leash.requests", "admin.leash.answer": return try await adminLeashRequest(r)
         case "admin.app.cards", "admin.app.answer", "admin.app.context", "admin.app.restart", "admin.app.spec": return try await adminAppCard(r)
-        case "admin.block.attach", "admin.block.refresh": return try await adminBlock(r)
         case "admin.kill":
             let name = try need("target")
             if try lookup(name) == nil, let p = ws.panels.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {

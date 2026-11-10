@@ -41,7 +41,7 @@ public struct PluginSpec: Sendable, Equatable {
 
 public enum PluginRegistry {
     /// The plug-ins compiled into Collie, in palette order.
-    public static let builtIn: [PluginSpec] = [browser, memory, device, network, design, diagram, preview, designsystems, artifacts, work, uiblock]
+    public static let builtIn: [PluginSpec] = [browser, memory, device, network, design, diagram, preview, designsystems, artifacts, work]
     /// Built-ins, then the external plug-ins this process knows (`setExternal`).
     public static var all: [PluginSpec] { builtIn + external.withLock { $0.specs } }
     public static var externalSpecs: [PluginSpec] { external.withLock { $0.specs } }
@@ -155,15 +155,6 @@ extension PluginRegistry {
     static let designsystems = PluginSpec(
         id: "designsystems", title: "Design Systems",
         placements: [.dockRight, .dockLeft, .dockBottom], defaultPlacement: .dockRight,
-        commands: [], events: [])
-}
-
-extension PluginRegistry {
-    /// A collie-ui block from the terminal chat ("Anexar como painel"): `state` holds the block's `json` and, when it
-    /// is linked to an app do cercado, `app`, `command`, `params` and `refresh`. No agent commands.
-    static let uiblock = PluginSpec(
-        id: "uiblock", title: "Bloco",
-        placements: [.canvas, .dockRight, .dockLeft, .dockBottom], defaultPlacement: .canvas,
         commands: [], events: [])
 }
 

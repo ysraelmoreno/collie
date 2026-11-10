@@ -205,15 +205,6 @@ import CollieProtocol
             }
         }
     }
-
-    /// Terminal chat, slice 3: agents are taught the collie-ui fence and its kinds; it is the first thing to go at the cap.
-    @Test func chatFenceIsTaught() {
-        let t = text()
-        #expect(t.contains("```collie-ui") && t.contains("table{columns,rows}") && t.contains("chart{type:bar|line,labels,values}") && t.count <= 1500, "\(t.count)")
-        let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: (1...30).map { "agent-\($0)" }, panels: [],
-                                           lot: (String(repeating: "l", count: 60), String(repeating: "g", count: 200)), sharedFolder: ["x"])
-        #expect(tight.count <= 1500)   // a full Shepherd drops the fence rather than a name or a rule
-    }
 }
 
 /// Apps do cercado, slice 4: in a paddock, when to offer an app and that only the user approves it.

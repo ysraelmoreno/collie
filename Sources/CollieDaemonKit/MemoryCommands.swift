@@ -169,7 +169,7 @@ extension CommandRouter {
 
         case "memory.hookContext", "memory.hookRelevant":
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
-            if let tr = str(r, "transcript") { await memory.noteSession(me.id, transcript: tr); chatNote(me.id, transcript: tr) }   // the session its events name; the chat body
+            if let tr = str(r, "transcript") { await memory.noteSession(me.id, transcript: tr) }   // the session its events name
             let text: String
             if r.command == "memory.hookContext" {
                 await asks.sessionHooked(me.id)

@@ -801,24 +801,19 @@ public actor AskCoordinator {
 
     /// Answers approval `id`: the keys are written only if it is still its terminal's pending prompt, on screen, at the
     /// moment of writing; otherwise `.stale` and nothing is written. `dismissed`: a denied "press enter" (nothing to type).
-    /// `option`: the numbered option the user clicked in the chat (a permission menu or a single-choice question); written as
-    /// its digit only if that option is on the captured screen, else `.unknown` (nothing typed).
-    func approve(_ id: UUID, allow: Bool, option: Int? = nil) async -> Answer {
+    func approve(_ id: UUID, allow: Bool) async -> Answer {
         let candidates = targets.values.map { ($0.approval, $0.process, $0.scrollback) }
         return await withCheckedContinuation { c in
             // scrollback decode and PTYProcess.write (may spin 2 s): off the actor and the cooperative pool
             DispatchQueue.global().async {
                 // ponytail: a prompt printed between take and write (microseconds) is answered with these keys
-                let pending = candidates.compactMap { $0.0.pending }.first { $0.id == id }
-                if let pending, let option {   // a click on an option: it must be on the screen the approval captured
-                    guard pending.options.contains(where: { $0.number == option }) else { return c.resume(returning: .unknown) }
-                } else if candidates.contains(where: { $0.0.pending.map { $0.id == id && $0.kind == .unknown } == true }) {
+                if candidates.contains(where: { $0.0.pending.map { $0.id == id && $0.kind == .unknown } == true }) {
                     return c.resume(returning: .unknown)
                 }
                 var hit: (ApprovalTracker, Approval, Int, PTYProcess, ScrollbackBuffer)?
                 for (t, p, sb) in candidates where hit == nil { hit = t.take(id).map { (t, $0.approval, $0.inputs, p, sb) } }   // take has a side effect: once each
                 guard let (tracker, a, inputs, process, _) = hit else { return c.resume(returning: .stale) }
-                guard let keys = option.map({ Data(String($0).utf8) }) ?? Self.keys(a.kind, allow: allow) else { return c.resume(returning: .dismissed(a)) }
+                guard let keys = Self.keys(a.kind, allow: allow) else { return c.resume(returning: .dismissed(a)) }
                 // the user's click in the app (approvals are answered only from the app's work chat)
                 do { try process.write(keys, origin: .user); c.resume(returning: .sent(a)) } catch { return c.resume(returning: .failed(a)) }
                 // R9: a dialog that took the key is gone from the screen; still there (silent, or redrawn) means the key

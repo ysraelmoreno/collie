@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Collie — demo</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Space Grotesk"; src: url("fonts/SpaceGrotesk.ttf"); font-weight: 300 700; }
+      @font-face { font-family: "DM Mono"; src: url("fonts/DMMono-Regular.ttf"); font-weight: 400; }
+      @font-face { font-family: "DM Mono"; src: url("fonts/DMMono-Medium.ttf"); font-weight: 500; }
+      /* tokens = Palette.dark (Sources/CollieTheme/Palette.swift) */
+      :root {
+        --bg: #0e1326; --surface: #161c36; --sidebar: #121831; --sunken: #0b1020; --raised: #1b2340;
+        --border: #262e52; --border-soft: #1e2647; --grid: #151b33; --scrim: #070a16;
+        --text: #e8ecf8; --text2: #b6bedb; --muted: #8c95b8; --accent: #6ee7b7; --on-accent: #0e1326;
+        --attention: #ffb86b; --secondary: #93a4ff; --danger: #ff8a8a;
+        --ui: "Space Grotesk", system-ui, sans-serif; --mono: "DM Mono", ui-monospace, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); }
+      #root { position: relative; width: 100%; height: 100%; font-family: var(--ui); color: var(--text); overflow: hidden; }
+
+      /* ---- app chrome ---- */
+      #app { position: absolute; inset: 0; }
+      #sidebar { position: absolute; left: 0; top: 0; width: 300px; height: 1040px; background: var(--sidebar); border-right: 1px solid var(--border-soft); padding: 28px 22px; }
+      .brand { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px; }
+      .brand span { font-family: var(--mono); font-size: 17px; font-weight: 400; color: var(--muted); }
+      .search { margin-top: 24px; height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--sunken); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; color: var(--muted); font-size: 16px; }
+      .sec { margin-top: 30px; font-family: var(--mono); font-size: 14px; letter-spacing: 0.14em; color: var(--muted); }
+      .row { margin-top: 10px; height: 42px; border-radius: 9px; padding: 0 14px; display: flex; align-items: center; gap: 12px; font-size: 18px; color: var(--text2); }
+      .row.active { background: var(--raised); color: var(--text); }
+      .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+      .dot.ok { background: var(--accent); } .dot.sec { background: var(--secondary); }
+      #header { position: absolute; left: 300px; top: 0; right: 0; height: 90px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; padding: 0 40px; }
+      #header h1 { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; }
+      .hbtns { display: flex; gap: 18px; align-items: center; font-size: 18px; color: var(--text2); }
+      .btn { height: 44px; padding: 0 20px; border: 1px solid var(--border); border-radius: 10px; display: flex; align-items: center; color: var(--text); font-weight: 500; }
+      #canvas { position: absolute; left: 300px; top: 90px; right: 0; height: 950px; background-color: var(--bg);
+        background-image: radial-gradient(circle, #20284a 1.5px, transparent 1.6px); background-size: 36px 36px; overflow: hidden; }
+      #status { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; border-top: 1px solid var(--border-soft); background: var(--sidebar); display: flex; align-items: center; gap: 18px; padding: 0 22px; font-family: var(--mono); font-size: 15px; color: var(--muted); }
+
+      /* ---- nodes ---- */
+      .node { position: absolute; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: 0 24px 60px rgba(7,10,22,.55); transform-origin: center; }
+      .tbar { height: 54px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; gap: 12px; padding: 0 18px; font-size: 19px; font-weight: 600; background: var(--raised); }
+      .tbar .id { font-family: var(--mono); font-weight: 400; font-size: 14px; color: var(--muted); }
+      .tbar .more { margin-left: auto; color: var(--muted); letter-spacing: 3px; }
+      .tag { font-family: var(--mono); font-size: 13px; font-weight: 500; padding: 3px 8px; border-radius: 6px; border: 1px solid; }
+      .tag.acc { color: var(--accent); border-color: rgba(110,231,183,.5); }
+      .tag.sec { color: var(--secondary); border-color: rgba(147,164,255,.5); }
+      .tag.att { color: var(--attention); border-color: rgba(255,184,107,.5); }
+      .term { position: relative; height: calc(100% - 54px); background: var(--sunken); padding: 16px 20px; font-family: var(--mono); font-size: 19px; line-height: 1.5; color: var(--text2); }
+      .term .ln { white-space: nowrap; }
+      .term .dim { color: var(--muted); } .term .acc { color: var(--accent); } .term .sec { color: var(--secondary); } .term .att { color: var(--attention); } .term .txt { color: var(--text); }
+      .term .user { background: var(--raised); color: var(--text); margin: 0 -20px; padding: 0 20px; }
+      .term .res { padding-left: 22px; color: var(--muted); }
+      #sh-input { position: absolute; left: 0; right: 0; bottom: 40px; padding: 8px 20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 17px; color: var(--text); white-space: nowrap; }
+      #sh-input .pr { color: var(--text); margin-right: 10px; }
+      #sh-hint { position: absolute; left: 20px; bottom: 10px; font-size: 14px; color: var(--attention); white-space: nowrap; }
+      .caret { display: inline-block; width: 10px; height: 20px; background: var(--text); vertical-align: -3px; }
+
+      /* ---- leash ---- */
+      #leash { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+
+      /* ---- preview ---- */
+      .url { margin: 14px 18px 0; height: 36px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--border-soft); font-family: var(--mono); font-size: 15px; color: var(--muted); display: flex; align-items: center; padding: 0 12px; }
+      .page { margin: 14px 18px 18px; border-radius: 10px; background: #f4f6fb; color: #15171c; height: calc(100% - 54px - 36px - 14px - 32px); padding: 22px 26px; font-family: var(--ui); }
+      .page h2 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
+      .page .sub { margin-top: 4px; color: #5c6270; font-size: 16px; }
+      .item { margin-top: 12px; height: 46px; background: #fff; border: 1px solid #dde1ee; border-radius: 10px; display: flex; align-items: center; gap: 14px; padding: 0 16px; font-size: 20px; }
+      .box { width: 22px; height: 22px; border-radius: 6px; border: 2px solid #9aa3c0; position: relative; flex: none; }
+      .box i { position: absolute; inset: 0; background: #2f6bff; border-radius: 4px; opacity: 0; }
+      .box i::after { content: ""; position: absolute; left: 5px; top: 1px; width: 6px; height: 12px; border: solid #fff; border-width: 0 3px 3px 0; transform: rotate(40deg); }
+      .item b { font-weight: 500; }
+      .prog { margin-top: 18px; height: 8px; border-radius: 4px; background: #dde1ee; overflow: hidden; }
+      .prog i { display: block; height: 100%; width: 0; background: #2f6bff; }
+
+      /* ---- toast / labels ---- */
+      .badge { position: absolute; font-family: var(--mono); font-size: 16px; color: var(--accent); background: var(--sunken); border: 1px solid rgba(110,231,183,.5); border-radius: 8px; padding: 6px 12px; white-space: nowrap; }
+
+      /* ---- outro ---- */
+      #outro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #070a16; opacity: 0; }
+      #outro .name { font-size: 120px; font-weight: 700; letter-spacing: -0.04em; margin-top: 16px; }
+      #outro .tag1 { font-size: 40px; color: var(--text2); margin-top: 18px; font-weight: 400; }
+      #outro .tag1 em { color: var(--accent); font-style: normal; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="21" data-width="1920" data-height="1080">
+      <div id="app" class="clip" data-start="0" data-duration="21" data-track-index="0">
+        <div id="sidebar">
+          <div class="brand">collie <span>demo</span></div>
+          <div class="search"><span>Recrutar, abrir pain…</span><span>⌘K</span></div>
+          <div class="sec">CERCADOS</div>
+          <div class="row active"><i class="dot ok"></i>tarefas</div>
+          <div class="row" style="color:var(--muted)">Novo cercado…</div>
+          <div class="sec" style="margin-top:44px">TERMINAIS</div>
+          <div class="row" id="sb-shep"><i class="dot ok"></i>Pastor</div>
+          <div class="row" id="sb-agent" style="opacity:0"><i class="dot ok"></i>tarefas-app</div>
+          <div class="sec" style="margin-top:44px">JANELAS</div>
+          <div class="row" id="sb-prev" style="opacity:0"><i class="dot sec"></i>Prévia · tarefas-app</div>
+        </div>
+        <div id="header">
+          <h1>Tarefas</h1>
+          <div class="hbtns"><div class="btn">Novo terminal</div><span>59%</span><span>Ajustar à tela</span></div>
+        </div>
+        <div id="canvas">
+          <svg id="leash" viewBox="0 0 1620 950">
+            <defs>
+              <mask id="m1" maskUnits="userSpaceOnUse" x="0" y="0" width="1620" height="950"><path id="mp1" d="M600 330 C690 330 690 190 780 190" stroke="#fff" stroke-width="10" fill="none"/></mask>
+              <mask id="m2" maskUnits="userSpaceOnUse" x="0" y="0" width="1620" height="950"><path id="mp2" d="M1090 330 C1090 420 1090 420 1090 500" stroke="#fff" stroke-width="10" fill="none"/></mask>
+            </defs>
+            <g mask="url(#m1)"><path d="M600 330 C690 330 690 190 780 190" stroke="#6ee7b7" stroke-width="3" fill="none" stroke-dasharray="3 9" stroke-linecap="round"/></g>
+            <g mask="url(#m2)"><path d="M1090 330 C1090 420 1090 420 1090 500" stroke="#93a4ff" stroke-width="3" fill="none" stroke-dasharray="3 9" stroke-linecap="round"/></g>
+            <circle id="a1" cx="600" cy="330" r="7" fill="#6ee7b7" opacity="0"/><circle id="b1" cx="780" cy="190" r="7" fill="#6ee7b7" opacity="0"/>
+            <circle id="a2" cx="1090" cy="330" r="7" fill="#93a4ff" opacity="0"/><circle id="b2" cx="1090" cy="500" r="7" fill="#93a4ff" opacity="0"/>
+          </svg>
+
+          <!-- Pastor -->
+          <div id="n-shep" class="node" style="left:40px; top:200px; width:560px; height:560px;">
+            <div class="tbar"><i class="dot ok"></i>Pastor <span class="tag acc">Shepherd</span><span class="id">claude</span><span class="more">···</span></div>
+            <div class="term">
+              <div class="ln dim">✻ Pastor pronto · cercado tarefas</div>
+              <div class="ln user" id="sh-sent" style="opacity:0; margin-top:12px">❯ Cria um app de tarefas e</div>
+              <div class="ln user" id="sh-sent2" style="opacity:0">&nbsp; mostra uma prévia</div>
+              <div class="ln txt" id="s1" style="opacity:0; margin-top:12px"><span class="acc">⏺</span> Vou delegar a um agente novo.</div>
+              <div class="ln txt" id="s2" style="opacity:0"><span class="acc">⏺</span> Bash(<span class="att">collie summon tarefas-app</span>)</div>
+              <div class="ln res" id="s3" style="opacity:0">⎿ terminal criado · coleira ligada</div>
+              <div class="ln txt" id="s4" style="opacity:0; margin-top:12px"><span class="acc">⏺</span> Bash(<span class="att">collie open prévia</span>)</div>
+              <div class="ln res" id="s5" style="opacity:0">⎿ Prévia ligada a tarefas-app</div>
+              <div id="sh-input"><span class="pr">❯</span><span id="typed"></span><span class="caret" id="caret"></span></div>
+              <div id="sh-hint">⏵⏵ auto mode on (shift+tab)</div>
+            </div>
+          </div>
+
+          <!-- agente -->
+          <div id="n-agent" class="node" style="left:780px; top:40px; width:640px; height:290px; opacity:0">
+            <div class="tbar"><i class="dot ok"></i>tarefas-app <span class="tag sec">coleira</span><span class="id">claude</span><span class="more">···</span></div>
+            <div class="term" style="font-size:18px; padding-top:12px">
+              <div class="ln user" id="g0" style="opacity:0">❯ tarefa do Pastor: app de tarefas</div>
+              <div class="ln" id="gs" style="opacity:0; margin-top:6px"><span class="att" id="spin">⠋</span> <span class="att">Trabalhando…</span> <span class="dim">(esc para interromper)</span></div>
+              <div class="ln txt" id="g1" style="opacity:0"><span class="acc">⏺</span> Write(index.html)</div>
+              <div class="ln txt" id="g2" style="opacity:0"><span class="acc">⏺</span> Write(app.js)</div>
+              <div class="ln txt" id="g3" style="opacity:0"><span class="acc">⏺</span> Write(estilos.css)</div>
+              <div class="ln txt" id="g4" style="opacity:0"><span class="acc">⏺</span> Bash(<span class="att">serve :4173</span>)</div>
+              <div class="ln res" id="g5" style="opacity:0">⎿ servidor em localhost:4173</div>
+            </div>
+          </div>
+          <div id="b-leash" class="badge" style="left:612px; top:226px; opacity:0">coleira</div>
+
+          <!-- prévia -->
+          <div id="n-prev" class="node" style="left:780px; top:500px; width:640px; height:430px; opacity:0">
+            <div class="tbar"><i class="dot sec"></i>Prévia <span class="tag sec">tarefas-app</span><span class="more">···</span></div>
+            <div class="url">localhost:4173</div>
+            <div class="page">
+              <h2>Minhas tarefas</h2>
+              <div class="sub" id="psub">0 de 3 concluídas</div>
+              <div class="item" id="i1" style="opacity:0"><span class="box"><i id="c1"></i></span><b>Comprar café</b></div>
+              <div class="item" id="i2" style="opacity:0"><span class="box"><i id="c2"></i></span><b>Responder a equipe</b></div>
+              <div class="item" id="i3" style="opacity:0"><span class="box"><i id="c3"></i></span><b>Gravar a demo do Collie</b></div>
+              <div class="prog"><i id="pbar"></i></div>
+            </div>
+          </div>
+        </div>
+        <div id="status"><span style="color:var(--accent)">●</span> conectado <span>97 MB</span> <span id="st-t">terminais 1</span></div>
+      </div>
+
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const pop = (sel, t, from = {}) =>
+        tl.fromTo(sel, { opacity: 0, scale: 0.94, y: 14, ...from }, { opacity: 1, scale: 1, y: 0, duration: 0.5, ease: "power3.out" }, t);
+      const show = (sel, t) => tl.fromTo(sel, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, t);
+
+      // app entra
+      tl.fromTo("#n-shep", { y: 10 }, { y: 0, duration: 0.6, ease: "power3.out" }, 0);
+
+      // cena 1 — prompt digitado (progresso -> texto, seek-safe)
+      const prompt = "Cria um app de tarefas e mostra uma prévia";
+      const typer = { n: 0 };
+      tl.to(typer, { n: prompt.length, duration: 3.2, ease: "none", onUpdate: () => {
+        document.getElementById("typed").textContent = prompt.slice(0, Math.round(typer.n));
+      } }, 1.4);
+      tl.to("#caret", { opacity: 0, duration: 0.01 }, 5.0);
+      tl.to("#typed", { opacity: 0, duration: 0.01 }, 5.0);
+            show("#sh-sent", 5.1); show("#sh-sent2", 5.1);
+      show("#s1", 5.7); show("#s2", 6.5);
+
+      // cena 2 — novo terminal + coleira
+      pop("#n-agent", 7.4, { y: 24 });
+      tl.fromTo("#mp1", { strokeDasharray: 400, strokeDashoffset: 400 }, { strokeDashoffset: 0, duration: 0.9, ease: "power2.inOut" }, 7.5);
+      tl.fromTo(["#a1", "#b1"], { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, transformOrigin: "50% 50%", duration: 0.3, stagger: 0.7 }, 7.5);
+      show("#b-leash", 8.3);
+      tl.to("#b-leash", { opacity: 0, duration: 0.4 }, 10.2);
+      show("#s3", 8.6);
+      tl.fromTo("#n-agent", { borderColor: "#262e52" }, { borderColor: "#6ee7b7", duration: 0.4, yoyo: true, repeat: 1 }, 7.6);
+      show("#sb-agent", 8.0);
+      show("#g0", 9.0); show("#gs", 9.6);
+      show("#g1", 10.5); show("#g2", 11.4); show("#g3", 12.3);
+      const frames = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
+      const sp = { n: 0 };
+      tl.to(sp, { n: 40, duration: 3.6, ease: "none", onUpdate: () => {
+        document.getElementById("spin").textContent = frames[Math.floor(sp.n) % 10];
+      } }, 9.6);
+      tl.to("#gs", { opacity: 0, duration: 0.2 }, 13.2);
+      show("#g4", 13.3); show("#g5", 13.6);
+      show("#s4", 13.9);
+
+      // cena 3 — Prévia ligada ao terminal
+      pop("#n-prev", 14.3, { y: 24 });
+      show("#sb-prev", 14.6);
+      tl.fromTo("#mp2", { strokeDasharray: 400, strokeDashoffset: 400 }, { strokeDashoffset: 0, duration: 0.8, ease: "power2.inOut" }, 14.3);
+      tl.fromTo(["#a2", "#b2"], { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, transformOrigin: "50% 50%", duration: 0.3, stagger: 0.6 }, 14.3);
+      tl.fromTo("#n-prev", { borderColor: "#262e52" }, { borderColor: "#93a4ff", duration: 0.4, yoyo: true, repeat: 1 }, 14.4);
+      show("#s5", 15.3);
+      show("#i1", 15.8); show("#i2", 16.1); show("#i3", 16.4);
+      const done = (c, t, n, txt) => {
+        tl.to(c, { opacity: 1, duration: 0.2 }, t);
+        tl.to("#pbar", { width: (n / 3 * 100) + "%", duration: 0.4, ease: "power2.out" }, t);
+        tl.call(() => { document.getElementById("psub").textContent = txt; }, null, t);
+      };
+      done("#c1", 17.6, 1, "1 de 3 concluídas");
+      done("#c2", 18.5, 2, "2 de 3 concluídas");
+      done("#c3", 19.4, 3, "3 de 3 concluídas");
+      tl.call(() => { document.getElementById("psub").textContent = "2 de 3 concluídas"; }, null, 18.45); // seek-safe order guard
+      tl.call(() => { document.getElementById("st-t").textContent = "terminais 2 · janelas 1"; }, null, 14.4);
+
+
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

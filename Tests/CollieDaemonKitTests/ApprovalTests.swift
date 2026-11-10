@@ -217,24 +217,6 @@ private let dialog = "stty raw -echo; " + dialogText + "k=$(dd bs=1 count=1 2>/d
         }
     }
 
-    /// A click on a numbered option (terminal chat, slice 2): its digit, only when it is on the captured screen.
-    @Test func optionClickTypesItsDigitOnlyIfOnScreen() async throws {
-        try await withDaemon { d, p in
-            let t = try await term(d, p, "O", preset: "claude", dialog)
-            let a = try #require(await pending(d, p, t))
-            #expect(a.options.map(\.number) == [1, 2, 3] && a.options[1].isSession)
-            func click(_ n: Int) async throws -> Bool {
-                let r = try await admin(d, p, "work.approve", ["id": .string(a.id.uuidString), "option": .number(Double(n))])
-                guard case .object(let o)? = r.result, case .bool(let sent)? = o["sent"] else { throw ProtocolError(code: .internal, message: "\(r)") }
-                return sent
-            }
-            #expect(try await click(7) == false)   // not on the screen: nothing typed, the approval stays pending
-            #expect(try await approvals(d, p).contains { $0.id == a.id })
-            #expect(try await click(2))
-            #expect(await waitFor(10) { await d.scrollbackText(t.uuid).contains(/KEY: *32/) })
-        }
-    }
-
     /// Claude queues two dialogs: the second is drawn as soon as the first was approved (before the approval's hops
     /// through the hub are done), inside the input's echo window. It is still caught (scanned when the window ends),
     /// and the chat does not type into it.

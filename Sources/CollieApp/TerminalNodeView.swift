@@ -26,7 +26,6 @@ import CollieTheme
     /// Overlay on the body's bottom edge (never part of the terminal's frame: no PTY resize when it shows).
     private let strip: NSHostingView<AccessStrip>
     private let leash = LeashHandle()
-    private let chatToggle = ChatToggle()
     /// Leash drag from this node's handle: window-space point, and whether the mouse was released.
     var onLeashDrag: ((UUID, CGPoint, Bool) -> Void)?
     private(set) var term: NodeTerminal?
@@ -35,8 +34,6 @@ import CollieTheme
     private var reader: Task<Void, Never>?
     private var fontChoice = AppearanceSettings(defaults: .standard).terminalFont
     private var defaultsObserver: NSObjectProtocol?
-    /// The chat body (Claude, style chat) over the terminal, which stays mounted and hidden: the session is kept.
-    private var chatHost: NSHostingView<ChatBodyView>?
 
     override var isFlipped: Bool { true }
 
@@ -68,18 +65,12 @@ import CollieTheme
         addSubview(corner)
         leash.onDrag = { [weak self] p, done in if let self { self.onLeashDrag?(self.id, p, done) } }
         addSubview(leash)
-        chatToggle.onClick = { [weak self] in
-            guard let self, let t = self.client.terminals.first(where: { $0.id == self.id }) else { return }
-            let pref = TerminalStyle(rawValue: UserDefaults.standard.string(forKey: AppearanceKeys.terminalStyle) ?? "") ?? .terminal
-            Task { try? await self.client.setStyle(t.name, (t.style ?? pref) == .chat ? .terminal : .chat) }
-        }
-        addSubview(chatToggle)
         node.onStreamChange = { [weak self] s in self?.attach(s) }
         attach(node.stream)
         // Preferences write the font to the standard defaults; any other write is ignored (no reflow).
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
                                                                   queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reapplyFont(); self?.updateStyle() }
+            MainActor.assumeIsolated { self?.reapplyFont() }
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -88,25 +79,8 @@ import CollieTheme
 
     /// Re-runs `applyChrome` whenever this node's badge changes (the attention border).
     private func observeChrome() {
-        withObservationTracking { applyChrome(); updateStrip(); updateStyle() } onChange: { [weak self] in
+        withObservationTracking { applyChrome(); updateStrip() } onChange: { [weak self] in
             Task { @MainActor in self?.observeChrome() }
-        }
-    }
-
-    /// Chat body or terminal: the terminal's own style, else Preferências; Claude only (no transcript elsewhere).
-    private func updateStyle() {
-        let r = client.terminals.first { $0.id == id }
-        let pref = TerminalStyle(rawValue: UserDefaults.standard.string(forKey: AppearanceKeys.terminalStyle) ?? "") ?? .terminal
-        let chat = r?.preset == .claude && (r?.style ?? pref) == .chat
-        chatToggle.isHidden = r?.preset != .claude; chatToggle.chat = chat
-        label?.isHidden = chat
-        if chat, chatHost == nil {
-            let h = NSHostingView(rootView: ChatBodyView(id: id, client: client))
-            addSubview(h, positioned: .below, relativeTo: strip)
-            chatHost = h; term?.isHidden = true; needsLayout = true
-            if let t = term, window?.firstResponder === t { window?.makeFirstResponder(h) }   // keys must not go to the hidden terminal
-        } else if !chat, let h = chatHost {
-            h.removeFromSuperview(); chatHost = nil; term?.isHidden = false; needsLayout = true
         }
     }
 
@@ -202,7 +176,6 @@ import CollieTheme
             t.onClick = { [weak self] in self?.focus() }
             t.onMouseUp = { [weak self] in self?.bringToFront() }
             addSubview(t, positioned: .below, relativeTo: strip)
-            t.isHidden = chatHost != nil   // a remount (zoom, viewport) must not cover the chat body
             term = t
             startReader()
         } else if !on, label == nil {
@@ -214,7 +187,6 @@ import CollieTheme
             l.lineBreakMode = .byTruncatingTail
             l.font = CollieFont.ui(13 / canvas.zoom, .semibold)   // counter-scaled: 13 screen pt at any zoom
             addSubview(l, positioned: .below, relativeTo: strip)
-            l.isHidden = chatHost != nil
             label = l
         }
         updateStrip()
@@ -309,13 +281,9 @@ import CollieTheme
             t.frame = bodyFrame
             Log.canvas.debug("grid \(self.id) frame \(self.bodyFrame.size.debugDescription, privacy: .public) dims \(t.terminalDimensions.cols)x\(t.terminalDimensions.rows) live \(self.inLiveResize)")
         }
-        chatHost?.frame = bodyFrame
         strip.frame = CGRect(x: 0, y: bounds.height - AccessStrip.height, width: bounds.width, height: AccessStrip.height)
         label?.frame = bodyFrame.insetBy(dx: 4, dy: max(bodyFrame.height / 2 - 10 / canvas.zoom, 0))
-        // Claude terminals have the extra chat-toggle icon: keep the ring clear of it.
-        let icons: CGFloat = client.terminals.first { $0.id == id }?.preset == .claude ? 114 : 82
-        leash.frame = CGRect(x: max(bounds.width - icons, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
-        chatToggle.frame = CGRect(x: max(bounds.width - 79, 0), y: (Self.titleHeight - 22) / 2, width: 22, height: 22)
+        leash.frame = CGRect(x: max(bounds.width - 82, 0), y: (Self.titleHeight - 12) / 2, width: 12, height: 12)
         corner.frame = Self.cornerFrame(bounds)
         reconcileGrid()
     }
@@ -371,7 +339,7 @@ import CollieTheme
 
     // MARK: actions
 
-    private func focus() { if let term, chatHost == nil { window?.makeFirstResponder(term) } }   // chat body: the hidden terminal must not take the keys
+    private func focus() { if let term { window?.makeFirstResponder(term) } }
 
     /// On mouseUp (never mid-drag: re-adding a view cancels its mouse tracking). Re-adding drops first responder,
     /// so focus is restored when it was inside this node.
@@ -492,23 +460,6 @@ final class LeashHandle: NSView {
     override func mouseUp(with event: NSEvent) { onDrag?(event.locationInWindow, true) }
 }
 
-/// The title bar's chat/terminal switch. AppKit, like `LeashHandle`: a SwiftUI button inside the zoom-scaled title host hit-tests off its drawing.
-final class ChatToggle: NSView {
-    var onClick: (() -> Void)?
-    var chat = false { didSet { if chat != oldValue { needsDisplay = true; toolTip = chat ? "Mostrar o terminal" : "Mostrar como chat" } } }
-    override func draw(_ dirtyRect: NSRect) {
-        guard let img = NSImage(systemSymbolName: chat ? "terminal" : "bubble.left.and.text.bubble.right", accessibilityDescription: chat ? "Mostrar o terminal" : "Mostrar como chat") else { return }
-        let tinted = img.withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) ?? img
-        let r = NSRect(x: (bounds.width - tinted.size.width) / 2, y: (bounds.height - tinted.size.height) / 2, width: tinted.size.width, height: tinted.size.height)
-        CollieColor.muted.set()
-        tinted.draw(in: r)
-        r.fill(using: .sourceIn)
-    }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
-    override func mouseDown(with event: NSEvent) {}
-    override func mouseUp(with event: NSEvent) { if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() } }
-}
-
 /// The bottom-right resize corner.
 final class DragHandle: NSView {
     var onDrag: ((CGSize) -> Void)?, onMouseUp: (() -> Void)?
@@ -533,7 +484,6 @@ struct NodeTitleBar: View {
     let restart: () -> Void, kill: () -> Void, captureMemory: () -> Void, edit: () -> Void, closeNode: () -> Void
     let setLot: (Lot?) -> Void
     let fullscreen: () -> Void
-    @AppStorage(AppearanceKeys.terminalStyle) private var stylePref = TerminalStyle.terminal.rawValue
 
     var body: some View {
         let t = client.terminals.first { $0.id == id }
@@ -554,9 +504,6 @@ struct NodeTitleBar: View {
             if let text = status.text { Text(text).foregroundStyle(color(status)).lineLimit(1) }
             if case .stopped = status { Button("Reiniciar", action: restart).controlSize(.mini) }
             Spacer(minLength: 0)
-            if t?.preset == .claude {
-                Color.clear.frame(width: 22, height: 22)   // room for the AppKit ChatToggle overlay (SwiftUI hit-testing drifts under the node's zoom)
-            }
             FullscreenButton(action: fullscreen)
             Menu {
                 Button("Tela cheia", action: fullscreen).keyboardShortcut(.return, modifiers: .command)

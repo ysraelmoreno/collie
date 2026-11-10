@@ -24,7 +24,7 @@ extension CommandRouter {
         case "work.approvals": return try isoJSON(await asks.approvals())
         case "work.approve":
             guard let id = UUID(uuidString: try need(r, "id")) else { throw ProtocolError(code: .invalidArgs, message: "Aprovação inválida.") }
-            return try await approve(id, allow: flag(r, "allow"), option: try num(r, "option", max: 9).map(Int.init))
+            return try await approve(id, allow: flag(r, "allow"))
         case "work.approval.dismiss":   // nothing is typed: the user looks at the terminal
             guard let id = UUID(uuidString: try need(r, "id")) else { throw ProtocolError(code: .invalidArgs, message: "Aprovação inválida.") }
             return .object(["dismissed": .bool(await asks.dismissApproval(id))])
@@ -158,7 +158,7 @@ extension CommandRouter {
     /// `work.approve`: `{sent, reason?, code?}`; the chat gets "Aprovado"/"Negado" once the prompt is answered, plus
     /// ` do <from>` when a paired phone answered ("Aprovado do iPhone de Ana (Tailscale)"). `code` (stale, unknown,
     /// failed) is the stable form of `reason` (remote API spec, "Wire details").
-    func approve(_ id: UUID, allow: Bool, from: String? = nil, option: Int? = nil) async throws -> JSONValue {
+    func approve(_ id: UUID, allow: Bool, from: String? = nil) async throws -> JSONValue {
         func result(_ sent: Bool, _ reason: String? = nil, _ code: String? = nil) -> JSONValue {
             var o: [String: JSONValue] = ["sent": .bool(sent)]
             if let reason { o["reason"] = .string(reason) }
@@ -166,9 +166,7 @@ extension CommandRouter {
             return .object(o)
         }
         let a: Approval, sent: Bool
-        let pendingNow = await asks.approvals().first { $0.id == id }   // before it is taken
-        let label = option.flatMap { o in pendingNow?.options.first { $0.number == o }?.label }
-        switch await asks.approve(id, allow: allow, option: option) {
+        switch await asks.approve(id, allow: allow) {
         case .stale: return result(false, "pedido não está mais pendente", "stale")
         case .unknown: return result(false, "saída demais para conferir; olhe o terminal", "unknown")
         case .failed: return result(false, "o terminal não recebeu a resposta", "failed")
@@ -177,7 +175,7 @@ extension CommandRouter {
         }
         await hub.answered(a.terminalId)
         try await post(ChatMessage(role: .collie, workId: try? await work.active(terminal: a.terminalId)?.id, terminal: a.terminal,
-                                   text: (label.map { "Escolheu: \($0)" } ?? (allow ? "Aprovado" : "Negado")) + (from.map { " do \($0)" } ?? "")))
+                                   text: (allow ? "Aprovado" : "Negado") + (from.map { " do \($0)" } ?? "")))
         return result(sent)
     }
 

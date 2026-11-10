@@ -57,7 +57,6 @@ struct PreferencesView: View {
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
     @AppStorage(AppearanceKeys.terminalSize) private var size = Double(TerminalFontChoice.default.size)
-    @AppStorage(AppearanceKeys.terminalStyle) private var terminalStyle = TerminalStyle.terminal.rawValue
     @AppStorage(MemoryDigestNotice.defaultsKey) private var dailyNotification = MemoryDigestNotice.defaultOn
     @AppStorage(Notifier.confirmKey) private var confirmNotification = Notifier.confirmDefaultOn
 
@@ -120,15 +119,6 @@ struct PreferencesView: View {
                             }
                         }
                         .fixedSize()
-                    }
-                    section("Estilo do terminal") {
-                        Picker("Estilo do terminal", selection: $terminalStyle) {
-                            Text("Terminal").tag(TerminalStyle.terminal.rawValue)
-                            Text("Chat").tag(TerminalStyle.chat.rawValue)
-                        }
-                        .labelsHidden().pickerStyle(.segmented).fixedSize()
-                        Text("Chat mostra a sessão do Claude como mensagens e chamadas de ferramenta recolhíveis. Vale para todo terminal Claude; o botão no cabeçalho do nó troca só aquele. Shell, Cursor e Codex ficam em Terminal.")
-                            .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                     }
                     section("Onde desenhar") {
                         Picker("Onde desenhar", selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .artifact) })) {

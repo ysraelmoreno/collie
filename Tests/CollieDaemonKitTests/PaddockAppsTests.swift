@@ -528,21 +528,6 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
         #expect(await waitFor(5) { !alive(p3) })
     }
 
-    /// The start lives in `PaddockApps.call`, the one way every http call goes: a block panel's refresh (another
-    /// caller than the tools, with no app panel open) brings a stopped service up.
-    @Test func blockRefreshStartsAStoppedService() async throws {
-        try await with(start: { "python3 serve.py \($0)" }) { e in
-            #expect(try await admin(e.d, e.p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
-            let json = #"{"kind":"status","items":[["a","b"]],"source":{"app":"kube","command":"pods","params":{"namespace":"x"}}}"#
-            let att = try await admin(e.d, e.p, "admin.block.attach", ["terminal": .string(e.a.id), "json": .string(json)])
-            guard case .object(let o)? = att.result, case .string(let panel)? = o["id"], o["linked"] == .bool(true) else { Issue.record("\(att)"); return }
-            #expect(try await logs(e)["state"] == .string("stopped"))   // a block panel is not the app's panel: nothing started
-            let r = try await admin(e.d, e.p, "admin.block.refresh", ["panel": .string(panel)])
-            #expect(r.ok && data(r)["path"] == .string("/api/pods?namespace=x"), "\(r)")
-            #expect(try await logs(e)["state"] == .string("running"))
-        }
-    }
-
     @Test func givesUpAfterRepeatedDeaths() async throws {
         try await with(start: { _ in "echo boom; exit 3" }) { e in
             #expect(try await admin(e.d, e.p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)

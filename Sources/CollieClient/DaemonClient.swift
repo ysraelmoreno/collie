@@ -10,8 +10,6 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
 @MainActor @Observable public final class DaemonClient {
     public private(set) var state: ConnectionState = .disconnected(reason: "not started")
     public private(set) var terminals: [TerminalRecord] = []
-    /// Per Claude terminal, how far its transcript reaches (`chatChanged`): the chat body reloads when it moves.
-    public private(set) var chatEnd: [UUID: UInt64] = [:]
     public private(set) var connections: [Connection] = []
     public private(set) var badges: [UUID: StatusBadge] = [:]
     public private(set) var paddocks: [Paddock] = []
@@ -225,7 +223,6 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .leashRequestRemoved(let id): leashRequests.removeAll { $0.id == id }
         case .appCard(let c): if !appCards.contains(where: { $0.id == c.id }) { appCards.append(c) }
         case .appCardRemoved(let id): appCards.removeAll { $0.id == id }
-        case .chatChanged(let id, let end): chatEnd[id] = end
         case .remotePairing(let r): remotePairing = r
         case .remoteReveal(let t, let a, _): onRemoteReveal?(t, a)
         }
@@ -252,46 +249,6 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public func kill(_ name: String) async throws { _ = try await admin("admin.kill", ["target": .string(name)]) }
     public func restart(_ name: String) async throws { _ = try await admin("admin.restart", ["name": .string(name)]) }
     /// What the terminal's Claude conversation taught, to memory now (the curator saves it).
-    /// The chat body's entries after byte `since`, and where they end (`terminal.chat`).
-    public func chat(_ name: String, since: UInt64) async throws -> (entries: [ChatEntry], end: UInt64) {
-        var args: [String: JSONValue] = ["name": .string(name)]
-        if since > 0 { args["since"] = .number(Double(since)) }   // the daemon's `num` rejects 0: absent = from the start
-        guard case .object(let o)? = try await admin("terminal.chat", args),
-              case .array(let a)? = o["entries"], case .number(let end)? = o["end"] else { return ([], since) }
-        let entries = try JSONDecoder().decode([ChatEntry].self, from: JSONEncoder().encode(JSONValue.array(a)))
-        return (entries, UInt64(end))
-    }
-    /// The header toggle: nil follows Preferências.
-    public func setStyle(_ name: String, _ style: TerminalStyle?) async throws {
-        if let i = terminals.firstIndex(where: { $0.name == name }) { terminals[i].style = style }   // at once; the daemon's event confirms
-        _ = try await admin("terminal.style",["name": .string(name), "style": .string(style?.rawValue ?? "default")])
-    }
-    /// The chat composer: the normal prompt delivery.
-    public func say(_ name: String, _ text: String) async throws {
-        _ = try await admin("terminal.say", ["name": .string(name), "text": .string(text)], timeout: 1800)
-    }
-    /// "Anexar como painel": the block opens as a panel in the terminal's paddock. `linked`: it follows an app command;
-    /// else a snapshot, and `why` says why the source was not used.
-    public func attachBlock(_ terminal: UUID, json: String) async throws -> (panel: String, linked: Bool, why: String?) {
-        guard case .object(let o)? = try await admin("admin.block.attach", ["terminal": .string(terminal.uuidString), "json": .string(json)]),
-              case .string(let panel)? = o["panel"] else { throw ProtocolError(code: .internal, message: "malformed admin.block.attach reply") }
-        let why: String? = if case .string(let w)? = o["why"] { w } else { nil }
-        return (panel, o["linked"] == .bool(true), why)
-    }
-    /// The prompts waiting for the user (`work.approvals`); the chat body shows its terminal's as a card.
-    public func approvals() async throws -> [Approval] {
-        guard let r = try await admin("work.approvals", [:]) else { return [] }
-        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
-        return try d.decode([Approval].self, from: JSONEncoder().encode(r))
-    }
-    /// Answers an approval: `option` clicks a numbered option, else `allow`. false: not sent (stale, or the terminal only).
-    @discardableResult
-    public func answerApproval(_ a: Approval, allow: Bool, option: Int? = nil) async throws -> Bool {
-        var args: [String: JSONValue] = ["id": .string(a.id.uuidString.lowercased()), "allow": .bool(allow)]
-        if let option { args["option"] = .number(Double(option)) }
-        guard case .object(let o)? = try await admin("work.approve", args), case .bool(let sent)? = o["sent"] else { return false }
-        return sent
-    }
     public func captureMemory(_ name: String) async throws { _ = try await admin("memory.capture", ["terminal": .string(name)]) }
     /// Edits a terminal; `restartNeeded`: launch settings changed under a running process.
     @discardableResult

@@ -378,7 +378,10 @@ extension CommandRouter {
                 return d
             } ?? .distantPast
             await settleConfirms()
-            return .object(["entries": try isoJSON(digest.since(since, openAsks: true)), "curator": try isoJSON(await curator.status())])
+            var entries = digest.since(since, openAsks: true)
+            // the panel names a store with `repo`: that store's learnings and the lots' (a lot is shared by projects), never another project's
+            if str(r, "repo") != nil { entries = entries.filter { $0.store == repo.key || $0.store.hasPrefix("lot:") } }
+            return .object(["entries": try isoJSON(entries), "curator": try isoJSON(await curator.status())])
 
         case "memory.undo", "memory.resolve":
             guard let e = UUID(uuidString: try need(r, "entry")) else { throw invalid("'entry' must be a digest entry id") }

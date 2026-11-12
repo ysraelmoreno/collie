@@ -137,3 +137,27 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
         }
     }
 }
+
+@Suite(.serialized) struct MemoryDigestScopeTests {
+    private func entry(_ title: String, store: String) -> DigestEntry {
+        DigestEntry(id: UUID(), at: Date(), action: "aprendido", title: title, reason: "", store: store, created: [], before: [], undone: false, resolved: false)
+    }
+
+    /// The Aprendizado tab asks `memory.digest` with the picked store as `repo`: another project's learnings must not show.
+    @Test func digestOfAPickedRepoHasOnlyItsOwnAndTheLots() async throws {
+        let a = try await makeRepo(), b = try await makeRepo()
+        try await withDaemon { d, p in
+            let sa = await d.router.memory.repo(for: a.path), sb = await d.router.memory.repo(for: b.path)
+            try await d.router.digest.append([entry("de A", store: sa.key), entry("de B", store: sb.key),
+                                              entry("de um lote", store: "lot:\(UUID().uuidString.lowercased())"), entry("global", store: "global")])
+            func titles(_ args: [String: String]) async throws -> Set<String> {
+                let r = try await admin(d, p, "memory.digest", args)
+                guard case .object(let o)? = r.result, case .array(let es)? = o["entries"] else { throw ProtocolError(code: .internal, message: "\(r)") }
+                return Set(es.compactMap { if case .object(let e) = $0, case .string(let t)? = e["title"] { t } else { nil } })
+            }
+            #expect(try await titles(["repo": a.path]) == ["de A", "de um lote"])
+            #expect(try await titles(["repo": b.path]) == ["de B", "de um lote"])
+            #expect(try await titles([:]) == ["de A", "de B", "de um lote", "global"])   // no store named: everything (the daily notification)
+        }
+    }
+}

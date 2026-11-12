@@ -169,6 +169,7 @@ extension CommandRouter {
         case .conversation: "conversation"
         case .pitfall: "review"
         case .consolidate: "consolidation"
+        case .docTerms: "docs"
         }
         try await MemoryEventLog.$source.withValue(source) {
             switch job.kind {
@@ -178,6 +179,7 @@ extension CommandRouter {
             case .pitfall: try await runPitfallJob(job, call: call)
             case .consolidate: try await runConsolidateJob(job, call: call)
             case .procedure: try await runProcedureJob(job, call: call)
+            case .docTerms: try await runDocTermsJob(job, call: call)
             }
         }
         await refreshSkills()   // a procedure may have been created or retired
@@ -273,6 +275,7 @@ extension CommandRouter {
         case .pitfall: throw ProtocolError(code: .internal, message: "curator: a pitfall job has its own ops (applyPitfallOps)")
         case .procedure: throw ProtocolError(code: .internal, message: "curator: a procedure job writes a proposal itself")
         case .conversation: throw ProtocolError(code: .internal, message: "curator: a conversation job writes new records itself")
+        case .docTerms: throw ProtocolError(code: .internal, message: "curator: a docTerms job writes search terms itself")
         case .consolidate:
             let p = try consolidatePayload(job)
             return LearningContext(family: p.family, lot: p.lot, lotName: p.lotName, root: p.root, name: nil, quote: nil, proposal: nil)

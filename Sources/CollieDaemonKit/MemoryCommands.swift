@@ -10,7 +10,7 @@ import CollieProtocol
 extension CommandRouter {
     /// `memory.*` commands that change no record (the rest re-render the skills dirs).
     static let memoryReads: Set<String> = ["memory.search", "memory.list", "memory.get", "memory.context", "memory.hookContext",
-                                           "memory.hookRelevant", "memory.digest", "memory.repos", "memory.curator", "memory.stats"]
+                                           "memory.hookRelevant", "memory.digest", "memory.repos", "memory.curator", "memory.stats", "memory.doc-search"]
 
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
@@ -41,7 +41,7 @@ extension CommandRouter {
         }
         let adminCommands: Set<String> = ["memory.review", "memory.restore", "memory.pin", "memory.unpin",
                                           "memory.cleanup", "memory.purge", "memory.repos", "memory.curator",
-                                          "memory.digest", "memory.undo", "memory.resolve", "memory.confirm", "memory.consolidate"]
+                                          "memory.digest", "memory.undo", "memory.resolve", "memory.confirm", "memory.consolidate", "memory.doc-add"]
         if caller != nil, adminCommands.contains(r.command) {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is admin-only")
         }
@@ -111,6 +111,32 @@ extension CommandRouter {
                 if !ids.isEmpty { _ = try? await s.run { m in m.index()?.noteRead(ids) } }
             }
             return .array(try hits.map { try memJSON($0.hit.record, $0.store, ["score": .number($0.hit.score)]) })
+
+        case "memory.doc-add":
+            // ponytail: no copy of the file is kept; the chunks live in the index only (delete the cache: re-ingest the file)
+            let given = try need(r, "path")
+            let url = URL(fileURLWithPath: given, relativeTo: r.cwd.map { URL(fileURLWithPath: $0) }).standardizedFileURL
+            let chunks: [(heading: String, body: String)]
+            do {
+                chunks = DocIngest.chunk(LotBoards.scrub(try DocIngest.extract(url)))
+            } catch let f as DocIngest.Failure { throw invalid(f.message) }
+            guard !chunks.isEmpty else { throw invalid("no text in \(url.lastPathComponent)") }
+            let source = url.lastPathComponent, tag = str(r, "paddock")
+            let ids = try await repo.run { m in try m.requireIndex().replaceChunks(source: source, paddock: tag, chunks) }
+            Task.detached { await repo.fillVectors(opening: false) }   // the meaning vectors arrive after the words
+            let jobs = await enqueueDocTerms(store: repo, source: source, chunks: zip(ids, chunks).map { ($0, $1.heading, $1.body) })
+            return .object(["source": .string(source), "chunks": .number(Double(ids.count)), "termJobs": .number(Double(jobs))])
+
+        case "memory.doc-search":
+            let query = try need(r, "query"), limit = Int(try num(r, "limit", max: 20) ?? 5)
+            let vector = await memory.embed(query)
+            var found: [MemoryIndex.ChunkHit] = []
+            for s in stores {
+                found += (try? await s.run { m in m.index()?.searchChunks(query, vector: vector, paddock: paddockName, limit: limit) }) ?? []
+            }
+            return .array(found.sorted { $0.score > $1.score }.prefix(limit).map {
+                .object(["source": .string($0.source), "heading": .string($0.heading), "text": .string($0.body), "score": .number($0.score)])
+            })
 
         case "memory.list":
             let kind = try str(r, "kind").map { k throws(ProtocolError) -> MemoryKind in
@@ -184,9 +210,11 @@ extension CommandRouter {
                 let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
                 await refreshSkills(me.id)   // a session (re)starts: its skills as the stores are now (a hand edit, a pull)
                 let w = try? await work.active(terminal: me.id)
-                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used,
+                await memory.resetDocs(me.id)
+                let docs = await memory.docsLine(cwd: me.cwd, paddock: paddockName, lot: myLot?.id)
+                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used - (docs.isEmpty ? 0 : docs.utf8.count + 2),
                                                 source: str(r, "source"))
-                let mem = (head + [rest == MemoryService.header ? "" : rest]).filter { !$0.isEmpty }.joined(separator: "\n\n")
+                let mem = (head + [rest == MemoryService.header ? "" : rest, docs]).filter { !$0.isEmpty }.joined(separator: "\n\n")
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
                     peers: ConnectionGraph.reachable(from: me.id, in: ws).map(\.name),
@@ -222,6 +250,7 @@ extension CommandRouter {
                 if left > 0 { add(await commentsInject(to: me.id, limit: left)) }   // the user's comments on its pages, also outside a lot
                 let w = try? await work.active(terminal: me.id)
                 if left > 0 { add(await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, prompt: prompt, limit: left)) }
+                if left > 0 { add(await memory.docHits(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, prompt: prompt, limit: min(left, 1_800))) }
                 text = parts.joined(separator: "\n\n")
             }
             return .object(["output": .string(text)])

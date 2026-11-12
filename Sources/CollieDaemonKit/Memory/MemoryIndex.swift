@@ -48,6 +48,11 @@ final class MemoryIndex {
             CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(title, subject, body, path, aliases, tokenize='unicode61 remove_diacritics 2');
             CREATE TABLE IF NOT EXISTS stats(id TEXT PRIMARY KEY, reads INTEGER NOT NULL DEFAULT 0, lastReadAt REAL, missingSince REAL);
             CREATE TABLE IF NOT EXISTS vecs(id TEXT PRIMARY KEY, lang TEXT NOT NULL, v BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS chunks(rowid INTEGER PRIMARY KEY, source TEXT NOT NULL, paddock TEXT, heading TEXT NOT NULL, body TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS chunks_source ON chunks(source);
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunk_terms_fts USING fts5(terms, tokenize='unicode61 remove_diacritics 2');
+            CREATE TABLE IF NOT EXISTS chunk_vecs(id INTEGER PRIMARY KEY, lang TEXT NOT NULL, v BLOB NOT NULL);
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(heading, body, source, tokenize='unicode61 remove_diacritics 2');
             """)
     }
 
@@ -249,20 +254,22 @@ final class MemoryIndex {
     /// store's boost and outcome score), cosine to the query (nil: no comparable vector).
     struct Candidate: Sendable { var record: MemoryRecord; var b: Double; var m: Double; var cos: Double? }
 
+    /// The score of each (bm25, multiplier, cosine) by the rules of `rank`.
+    static func blend(_ c: [(b: Double, m: Double, cos: Double?)], lang: String?) -> [Double] {
+        guard let lang else { return c.map { $0.b * $0.m } }
+        if vectorOnlyLangs.contains(lang) {
+            let bTop = c.map(\.b).max() ?? 0
+            return c.map { $0.m * (0.6 * (bTop > 0 ? $0.b / bTop : 0) + 0.4 * max($0.cos ?? 0, 0)) }
+        }
+        let coss = c.compactMap(\.cos), lo = coss.min() ?? 0, hi = coss.max() ?? 0
+        return c.map { $0.b * $0.m * (1 + rerankMax * ($0.cos.map { hi > lo ? ($0 - lo) / (hi - lo) : 0 } ?? 0)) }
+    }
+
     /// One scale for every store of a query (R10). No vector: `b × m`. A `vectorOnlyLangs` vector: blended,
     /// `m × (0.6 × b / bTop + 0.4 × max(cos, 0))`, bTop the strongest word hit of all `c`. Any other language only
     /// re-ranks: `b × m × (1 + rerankMax × ĉ)`, ĉ the cosine min-max normalized over all `c` with one (0 without).
     static func rank(_ c: [Candidate], lang: String?) -> [MemoryHit] {
-        let scored: [(Candidate, Double)]
-        if lang == nil {
-            scored = c.map { ($0, $0.b * $0.m) }
-        } else if vectorOnlyLangs.contains(lang!) {
-            let bTop = c.map(\.b).max() ?? 0
-            scored = c.map { ($0, $0.m * (0.6 * (bTop > 0 ? $0.b / bTop : 0) + 0.4 * max($0.cos ?? 0, 0))) }
-        } else {
-            let coss = c.compactMap(\.cos), lo = coss.min() ?? 0, hi = coss.max() ?? 0
-            scored = c.map { x in (x, x.b * x.m * (1 + rerankMax * (x.cos.map { hi > lo ? ($0 - lo) / (hi - lo) : 0 } ?? 0))) }
-        }
+        let scored = Array(zip(c, blend(c.map { ($0.b, $0.m, $0.cos) }, lang: lang)))
         return scored.sorted { ($0.1, $1.0.record.id.uuidString) > ($1.1, $0.0.record.id.uuidString) }
             .map { MemoryHit(record: $0.0.record, score: $0.1) }
     }
@@ -374,6 +381,147 @@ final class MemoryIndex {
                 sqlite3_column_type(row, i) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(row, i))
             }
             out = MemoryStats(reads: Int(sqlite3_column_int64(row, 0)), lastReadAt: date(1), missingSince: date(2))
+        }
+        return out
+    }
+
+    // MARK: reference documents (chunks of files the dev ingested; no files behind them, so `refresh` never touches them)
+
+    struct ChunkHit: Sendable { var id: Int; var source: String; var heading: String; var body: String; var score: Double; var cos: Double?; var matched: Int }
+
+    /// Replaces every chunk of `source` (re-ingesting a file); returns their ids. Their vectors and search terms arrive later.
+    @discardableResult
+    func replaceChunks(source: String, paddock: String?, _ chunks: [(heading: String, body: String)]) throws -> [Int] {
+        try exec("BEGIN IMMEDIATE")
+        var ids: [Int] = []
+        do {
+            try query("DELETE FROM chunk_terms_fts WHERE rowid IN (SELECT rowid FROM chunks WHERE source = ?)", [source]) { _ in }
+            try query("DELETE FROM chunk_vecs WHERE id IN (SELECT rowid FROM chunks WHERE source = ?)", [source]) { _ in }
+            try query("DELETE FROM chunks_fts WHERE rowid IN (SELECT rowid FROM chunks WHERE source = ?)", [source]) { _ in }
+            try query("DELETE FROM chunks WHERE source = ?", [source]) { _ in }
+            for c in chunks {
+                try query("INSERT INTO chunks(source, paddock, heading, body) VALUES(?, ?, ?, ?)", [source, paddock, c.heading, c.body]) { _ in }
+                let id = Int(sqlite3_last_insert_rowid(db))
+                try query("INSERT INTO chunks_fts(rowid, heading, body, source) VALUES(?, ?, ?, ?)", [id, c.heading, c.body, source]) { _ in }
+                ids.append(id)
+            }
+            try exec("COMMIT")
+        } catch { try? exec("ROLLBACK"); throw error }
+        return ids
+    }
+
+    /// Search terms the curator wrote for chunks (questions, synonyms, the other language): words for the search only, never
+    /// shown. A chunk is skipped when it is no longer the one the curator saw (re-ingested: ids can be reused), i.e. its
+    /// text does not start with `prefix`. Returns how many were stored.
+    @discardableResult
+    func setChunkTerms(source: String, _ items: [(id: Int, prefix: String, terms: [String])]) -> Int {
+        var n = 0
+        guard (try? exec("BEGIN IMMEDIATE")) != nil else { return 0 }
+        for it in items where !it.terms.isEmpty {
+            var current: String?
+            try? query("SELECT body FROM chunks WHERE rowid = ? AND source = ?", [it.id, source]) { current = text($0, 0) }
+            guard current?.hasPrefix(it.prefix) == true else { continue }
+            try? query("DELETE FROM chunk_terms_fts WHERE rowid = ?", [it.id]) { _ in }
+            try? query("INSERT INTO chunk_terms_fts(rowid, terms) VALUES(?, ?)", [it.id, it.terms.joined(separator: "\n")]) { _ in }
+            n += 1
+        }
+        if (try? exec("COMMIT")) == nil { try? exec("ROLLBACK"); return 0 }
+        return n
+    }
+
+    /// Quoted words OR-joined; no column filter (the chunk tables have no `path`, unlike `ftsQuery`).
+    static func ftsWords(_ text: String) -> String? {
+        let t = ftsTerms(text)
+        return t.isEmpty ? nil : t.map { "\"\($0)\"" }.joined(separator: " OR ")
+    }
+
+    /// The documents a paddock sees (untagged ones and its own), sorted.
+    func chunkSources(paddock: String?) -> [String] {
+        var out: [String] = []
+        try? query("SELECT DISTINCT source FROM chunks WHERE paddock IS NULL OR paddock = ? ORDER BY source", [paddock]) { out.append(text($0, 0)) }
+        return out
+    }
+
+    /// What a chunk's vector embeds: heading + the first 500 characters.
+    static func chunkVectorText(_ heading: String, _ body: String) -> String { heading + "\n" + body.prefix(500) }
+
+    func missingChunkVectors(limit: Int) -> [(id: Int, text: String)] {
+        var out: [(id: Int, text: String)] = []
+        try? query("SELECT c.rowid, c.heading, c.body FROM chunks c LEFT JOIN chunk_vecs v ON v.id = c.rowid WHERE v.id IS NULL LIMIT ?", [limit]) { row in
+            out.append((Int(sqlite3_column_int64(row, 0)), Self.chunkVectorText(text(row, 1), text(row, 2))))
+        }
+        return out
+    }
+
+    @discardableResult
+    func storeChunkVectors(_ done: [(id: Int, vector: (lang: String, vector: [Float])?)]) -> Int {
+        var n = 0
+        guard (try? exec("BEGIN IMMEDIATE")) != nil else { return 0 }
+        for (id, v) in done {
+            let blob = v.map { e in e.vector.withUnsafeBufferPointer { Data(buffer: $0) } } ?? Data()
+            try? query("INSERT OR REPLACE INTO chunk_vecs(id, lang, v) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM chunks WHERE rowid = ?)",
+                       [id, v?.lang ?? "-", blob, id]) { _ in }
+            n += Int(sqlite3_changes(db))
+        }
+        if (try? exec("COMMIT")) == nil { try? exec("ROLLBACK"); return 0 }
+        return n
+    }
+
+    /// Best `limit` chunks a paddock sees, by the same rules as `candidates`: words (bm25) first; a `vectorOnlyLangs` vector
+    /// also brings chunks no word matched (cosine ≥ `vectorMin`), any other language only re-ranks the word hits.
+    /// `matched`: how many of the query's words the chunk contains (callers gate on it).
+    /// ponytail: brute-force cosine over the store's chunk vectors, like `candidates`.
+    func searchChunks(_ query: String, vector: (lang: String, vector: [Float])? = nil, paddock: String?, limit: Int) -> [ChunkHit] {
+        let match = Self.ftsWords(query)
+        guard limit > 0, match != nil || vector != nil else { return [] }
+        var cand: [Int: (b: Double, cos: Double?)] = [:]
+        if let match {
+            try? self.query("""
+                SELECT c.rowid, -bm25(chunks_fts) FROM chunks_fts JOIN chunks c ON c.rowid = chunks_fts.rowid
+                WHERE chunks_fts MATCH ? AND (c.paddock IS NULL OR c.paddock = ?) ORDER BY 2 DESC LIMIT 50
+                """, [match, paddock]) { cand[Int(sqlite3_column_int64($0, 0))] = (sqlite3_column_double($0, 1), nil) }
+            try? self.query("""
+                SELECT c.rowid, -bm25(chunk_terms_fts) FROM chunk_terms_fts JOIN chunks c ON c.rowid = chunk_terms_fts.rowid
+                WHERE chunk_terms_fts MATCH ? AND (c.paddock IS NULL OR c.paddock = ?) ORDER BY 2 DESC LIMIT 50
+                """, [match, paddock]) { row in
+                let id = Int(sqlite3_column_int64(row, 0))
+                cand[id] = ((cand[id]?.b ?? 0) + sqlite3_column_double(row, 1), nil)   // a hit in both counts more
+            }
+        }
+        if let vector {
+            let vectorOnly = Self.vectorOnlyLangs.contains(vector.lang)
+            let q = vector.vector.map(Double.init), qn = q.reduce(0) { $0 + $1 * $1 }.squareRoot()
+            var x = [Double](repeating: 0, count: q.count)
+            try? self.query("""
+                SELECT v.id, v.v FROM chunk_vecs v JOIN chunks c ON c.rowid = v.id
+                WHERE v.lang = ? AND (c.paddock IS NULL OR c.paddock = ?)
+                """, [vector.lang, paddock]) { row in
+                let id = Int(sqlite3_column_int64(row, 0))
+                guard qn > 0, vectorOnly || cand[id] != nil, let p = sqlite3_column_blob(row, 1) else { return }
+                let n = Int(sqlite3_column_bytes(row, 1)) / MemoryLayout<Float>.size
+                guard n == q.count else { return }   // another model's dimension
+                vDSP_vspdp(p.assumingMemoryBound(to: Float.self), 1, &x, 1, vDSP_Length(n))
+                var dot = 0.0, vn = 0.0
+                vDSP_dotprD(q, 1, x, 1, &dot, vDSP_Length(n))
+                vDSP_svesqD(x, 1, &vn, vDSP_Length(n))
+                guard vn > 0 else { return }
+                let cos = dot / (qn * vn.squareRoot())
+                if cand[id] != nil { cand[id]!.cos = cos } else if cos >= Self.vectorMin { cand[id] = (0, cos) }
+            }
+        }
+        guard !cand.isEmpty else { return [] }
+        let ids = Array(cand.keys), scores = Self.blend(ids.map { (cand[$0]!.b, 1, cand[$0]!.cos) }, lang: vector?.lang)
+        let best = zip(ids, scores).sorted { ($0.1, $1.0) > ($1.1, $0.0) }.prefix(limit)
+        let words = Self.ftsTerms(query).map { $0.lowercased() }
+        var out: [ChunkHit] = []
+        for (id, score) in best {
+            try? self.query("SELECT source, heading, body FROM chunks WHERE rowid = ?", [id]) { row in
+                var extra = ""
+                try? self.query("SELECT terms FROM chunk_terms_fts WHERE rowid = ?", [id]) { extra = text($0, 0) }
+                let source = text(row, 0), heading = text(row, 1), body = text(row, 2), hay = (heading + " " + body + " " + extra).lowercased()
+                out.append(ChunkHit(id: id, source: source, heading: heading, body: body, score: score, cos: cand[id]!.cos,
+                                    matched: words.filter { hay.contains($0) }.count))
+            }
         }
         return out
     }

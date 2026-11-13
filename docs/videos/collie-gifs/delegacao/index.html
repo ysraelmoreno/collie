@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1080" />
+    <title>Collie — GIF delegação</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Space Grotesk"; src: url("fonts/SpaceGrotesk.ttf"); font-weight: 300 700; }
+      @font-face { font-family: "DM Mono"; src: url("fonts/DMMono-Regular.ttf"); font-weight: 400; }
+      @font-face { font-family: "DM Mono"; src: url("fonts/DMMono-Medium.ttf"); font-weight: 500; }
+      :root {
+        --bg: #0e1326; --surface: #161c36; --sunken: #0b1020; --raised: #1b2340; --border: #262e52; --border-soft: #1e2647;
+        --text: #e8ecf8; --text2: #b6bedb; --muted: #8c95b8; --accent: #6ee7b7; --attention: #ffb86b; --secondary: #93a4ff;
+        --ui: "Space Grotesk", system-ui, sans-serif; --mono: "DM Mono", ui-monospace, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1080px; overflow: hidden; background: var(--bg); }
+      #root { position: relative; width: 100%; height: 100%; font-family: var(--ui); color: var(--text); overflow: hidden;
+        background-color: var(--bg); background-image: radial-gradient(circle, #20284a 1.5px, transparent 1.6px); background-size: 36px 36px; }
+      #app { position: absolute; inset: 0; }
+
+      .ttl { position: absolute; left: 60px; top: 30px; font-size: 44px; font-weight: 700; letter-spacing: -0.02em; display: flex; align-items: baseline; gap: 18px; }
+      .ttl span { font-family: var(--mono); font-size: 28px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+
+      .node { position: absolute; left: 60px; width: 960px; background: var(--surface); border: 2px solid var(--border); border-radius: 18px; overflow: hidden; box-shadow: 0 24px 60px rgba(7,10,22,.55); }
+      .tbar { height: 64px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; gap: 14px; padding: 0 24px; font-size: 30px; font-weight: 600; background: var(--raised); }
+      .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); flex: none; }
+      .tag { font-family: var(--mono); font-size: 24px; font-weight: 500; padding: 2px 10px; border-radius: 8px; border: 1px solid; }
+      .tag.acc { color: var(--accent); border-color: rgba(110,231,183,.5); }
+      .tag.sec { color: var(--secondary); border-color: rgba(147,164,255,.5); }
+      .term { background: var(--sunken); padding: 16px 26px; font-family: var(--mono); font-size: 28px; line-height: 1.55; color: var(--text2); position: relative; height: calc(100% - 64px); }
+      .ln { white-space: nowrap; }
+      .dim { color: var(--muted); } .acc { color: var(--accent); } .att { color: var(--attention); } .sec { color: var(--secondary); } .txt { color: var(--text); }
+      .user { background: var(--raised); color: var(--text); margin: 0 -26px; padding: 0 26px; }
+      .caret { display: inline-block; width: 14px; height: 30px; background: var(--text); vertical-align: -5px; }
+
+      #wire { position: absolute; left: 0; top: 0; width: 1080px; height: 1080px; pointer-events: none; }
+
+      .url { margin: 14px 24px 0; height: 36px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--border-soft); font-family: var(--mono); font-size: 24px; color: var(--muted); display: flex; align-items: center; padding: 0 14px; }
+      .page { margin: 14px 24px 0; border-radius: 10px; background: #f4f6fb; color: #15171c; height: 236px; padding: 14px 22px; font-family: var(--ui); }
+      .page h2 { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+      .item { margin-top: 8px; height: 44px; background: #fff; border: 1px solid #dde1ee; border-radius: 10px; display: flex; align-items: center; gap: 14px; padding: 0 16px; font-size: 28px; opacity: 0; }
+      .box { width: 24px; height: 24px; border-radius: 6px; border: 2px solid #9aa3c0; position: relative; flex: none; }
+      .box i { position: absolute; inset: -2px; background: #2f6bff; border-radius: 6px; opacity: 0; }
+      .box i::after { content: ""; position: absolute; left: 7px; top: 2px; width: 6px; height: 12px; border: solid #fff; border-width: 0 3px 3px 0; transform: rotate(40deg); }
+
+      .lbl { position: absolute; left: 60px; top: 954px; width: 960px; height: 90px; display: flex; align-items: center; gap: 22px;
+        background: var(--sunken); border: 2px solid var(--border); border-radius: 16px; padding: 0 28px; font-size: 34px; font-weight: 500; opacity: 0; }
+      .lbl b { font-family: var(--mono); font-size: 36px; color: var(--accent); font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="14.8" data-width="1080" data-height="1080">
+      <div id="app" class="clip" data-start="0" data-duration="14.8" data-track-index="0">
+        <div class="ttl">collie summon <span>o Pastor delega, o agente delega</span></div>
+
+        <svg id="wire" viewBox="0 0 1080 1080">
+          <path id="lp1" d="M540 296 L540 332" stroke="#6ee7b7" stroke-width="4" stroke-dasharray="3 9" stroke-linecap="round" fill="none" opacity="0"/>
+          <path id="lp2" d="M540 524 L540 560" stroke="#93a4ff" stroke-width="4" stroke-dasharray="3 9" stroke-linecap="round" fill="none" opacity="0"/>
+          <circle id="d1a" cx="540" cy="296" r="8" fill="#6ee7b7" opacity="0"/><circle id="d1b" cx="540" cy="332" r="8" fill="#6ee7b7" opacity="0"/>
+          <circle id="d2a" cx="540" cy="524" r="8" fill="#93a4ff" opacity="0"/><circle id="d2b" cx="540" cy="560" r="8" fill="#93a4ff" opacity="0"/>
+        </svg>
+
+        <div class="node" style="top:104px; height:192px; border-color:rgba(110,231,183,.55)">
+          <div class="tbar"><i class="dot"></i>Pastor <span class="tag acc">Shepherd</span></div>
+          <div class="term">
+            <div class="ln user"><span class="txt">❯ </span><span id="typed"></span><span class="caret" id="caret"></span></div>
+            <div class="ln txt" id="p1" style="opacity:0; margin-top:8px"><span class="acc">⏺</span> Bash(<span class="att">collie summon tarefas-app</span>)</div>
+          </div>
+        </div>
+
+        <div class="node" id="agent" style="top:332px; height:192px; opacity:0; border-color:rgba(147,164,255,.55)">
+          <div class="tbar"><i class="dot"></i>tarefas-app <span class="tag sec">agente</span></div>
+          <div class="term">
+            <div class="ln user" id="g1" style="opacity:0">❯ tarefa do Pastor: app de tarefas</div>
+            <div class="ln txt" id="g2" style="opacity:0; margin-top:8px"><span class="acc">⏺</span> Bash(<span class="att">collie open prévia</span>)</div>
+          </div>
+        </div>
+
+        <div class="node" id="prev" style="top:560px; height:380px; opacity:0; border-color:rgba(147,164,255,.55)">
+          <div class="tbar"><i class="dot" style="background:var(--secondary)"></i>Prévia <span class="tag sec">tarefas-app</span></div>
+          <div class="url">localhost:4173</div>
+          <div class="page">
+            <h2>Minhas tarefas</h2>
+            <div class="item" id="i1"><span class="box"><i id="c1"></i></span><b style="font-weight:500">Comprar café</b></div>
+            <div class="item" id="i2"><span class="box"><i id="c2"></i></span><b style="font-weight:500">Responder a equipe</b></div>
+            <div class="item" id="i3"><span class="box"><i id="c3"></i></span><b style="font-weight:500">Gravar a demo do Collie</b></div>
+          </div>
+        </div>
+
+        <div class="lbl" id="s1"><b>1</b>Pedido: você pede o app de tarefas ao Pastor</div>
+        <div class="lbl" id="s2"><b>2</b>Summon: o Pastor cria o terminal tarefas-app</div>
+        <div class="lbl" id="s3"><b>3</b>Delegação: o agente abre uma prévia ligada a ele</div>
+        <div class="lbl" id="s4"><b>4</b>Prévia: a tela de exemplo do app, ao vivo</div>
+      </div>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const show = (sel, t) => tl.fromTo(sel, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, t);
+      const hide = (sel, t) => tl.to(sel, { opacity: 0, duration: 0.2 }, t);
+      const label = (id, prev, t) => { if (prev) hide(prev, t); tl.fromTo(id, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, t); };
+      const leash = (path, dots, t) => {
+        tl.fromTo(path, { opacity: 0, strokeDasharray: 60, strokeDashoffset: 60 }, { opacity: 1, strokeDashoffset: 0, duration: 0.6, ease: "power2.inOut" }, t);
+        tl.fromTo(dots, { opacity: 0, scale: 0, transformOrigin: "50% 50%" }, { opacity: 1, scale: 1, duration: 0.3, stagger: 0.4, ease: "back.out(2)" }, t);
+      };
+      const node = (sel, color, t) => {
+        tl.fromTo(sel, { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, t);
+        tl.fromTo(sel, { borderColor: "#262e52" }, { borderColor: color, duration: 0.4, yoyo: true, repeat: 1, immediateRender: false }, t + 0.1);
+      };
+
+      // 1 — o usuário pede o app de tarefas
+      label("#s1", null, 0.3);
+      const prompt = "Cria um app de tarefas";
+      const typer = { n: 0 };
+      tl.to(typer, { n: prompt.length, duration: 1.6, ease: "none", onUpdate: () => {
+        document.getElementById("typed").textContent = prompt.slice(0, Math.round(typer.n));
+      } }, 0.6);
+      tl.to("#caret", { opacity: 0, duration: 0.01 }, 2.3);
+      show("#p1", 2.5);
+
+      // 2 — o Pastor cria o terminal tarefas-app
+      label("#s2", "#s1", 3.0);
+      node("#agent", "#6ee7b7", 3.2);
+      leash("#lp1", ["#d1a", "#d1b"], 3.4);
+      show("#g1", 4.2);
+
+      // 3 — o agente abre a Prévia
+      label("#s3", "#s2", 5.9);
+      show("#g2", 6.0);
+      node("#prev", "#93a4ff", 6.4);
+      leash("#lp2", ["#d2a", "#d2b"], 6.6);
+
+      // 4 — a tela de exemplo
+      label("#s4", "#s3", 8.8);
+      show("#i1", 9.0); show("#i2", 9.3); show("#i3", 9.6);
+      tl.to("#c1", { opacity: 1, duration: 0.2 }, 10.6);
+      tl.to("#c2", { opacity: 1, duration: 0.2 }, 11.3);
+      tl.to("#c3", { opacity: 1, duration: 0.2 }, 12.0);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

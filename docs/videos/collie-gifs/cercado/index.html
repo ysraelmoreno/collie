@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1080" />
+    <title>Collie — GIF cercado</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Space Grotesk"; src: url("fonts/SpaceGrotesk.ttf"); font-weight: 300 700; }
+      @font-face { font-family: "DM Mono"; src: url("fonts/DMMono-Regular.ttf"); font-weight: 400; }
+      @font-face { font-family: "DM Mono"; src: url("fonts/DMMono-Medium.ttf"); font-weight: 500; }
+      :root {
+        --bg: #0e1326; --surface: #161c36; --sunken: #0b1020; --raised: #1b2340; --border: #262e52; --border-soft: #1e2647;
+        --text: #e8ecf8; --text2: #b6bedb; --muted: #8c95b8; --accent: #6ee7b7; --attention: #ffb86b; --secondary: #93a4ff;
+        --ui: "Space Grotesk", system-ui, sans-serif; --mono: "DM Mono", ui-monospace, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1080px; overflow: hidden; background: var(--bg); }
+      #root { position: relative; width: 100%; height: 100%; font-family: var(--ui); color: var(--text); overflow: hidden;
+        background-color: var(--bg); background-image: radial-gradient(circle, #20284a 1.5px, transparent 1.6px); background-size: 36px 36px; }
+      #app { position: absolute; inset: 0; }
+
+      .ttl { position: absolute; left: 60px; top: 36px; font-size: 44px; font-weight: 700; letter-spacing: -0.02em; display: flex; align-items: baseline; gap: 18px; }
+      .ttl span { font-family: var(--mono); font-size: 28px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+
+      #g { position: absolute; left: 0; top: 0; width: 1080px; height: 1080px; }
+      .col { position: absolute; top: 130px; font-family: var(--mono); font-size: 30px; font-weight: 500; }
+      #paddock { position: absolute; left: 560px; top: 200px; width: 460px; height: 640px; border: 3px dashed var(--secondary); border-radius: 24px; background: rgba(147,164,255,.06); opacity: 0; }
+      #pname { position: absolute; left: 584px; top: 214px; font-family: var(--mono); font-size: 28px; font-weight: 500; color: var(--secondary); opacity: 0; white-space: nowrap; }
+      #files { position: absolute; left: 584px; top: 700px; width: 410px; font-family: var(--mono); font-size: 26px; line-height: 1.6; color: var(--text2); }
+      .f { opacity: 0; white-space: nowrap; }
+      #cmd { position: absolute; left: 60px; top: 870px; width: 960px; font-family: var(--mono); font-size: 30px; font-weight: 500; color: var(--attention);
+        background: var(--sunken); border: 1px solid rgba(255,184,107,.5); border-radius: 12px; padding: 8px 18px; opacity: 0; text-align: center; }
+      .lbl { position: absolute; left: 60px; top: 952px; width: 960px; height: 90px; display: flex; align-items: center; gap: 22px;
+        background: var(--sunken); border: 2px solid var(--border); border-radius: 16px; padding: 0 28px; font-size: 34px; font-weight: 500; opacity: 0; }
+      .lbl b { font-family: var(--mono); font-size: 36px; color: var(--accent); font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="13.2" data-width="1080" data-height="1080">
+      <div id="app" class="clip" data-start="0" data-duration="13.2" data-track-index="0">
+        <div class="ttl">cercado <span>trabalho isolado, integrado com land</span></div>
+
+        <div id="paddock"></div>
+        <div id="pname">collie/tarefas-app</div>
+        <p class="col" style="left:60px; color:var(--accent)">main</p>
+
+        <svg id="g" viewBox="0 0 1080 1080">
+          <!-- main -->
+          <path d="M150 200 L150 830" stroke="#6ee7b7" stroke-width="6" stroke-linecap="round" fill="none"/>
+          <circle cx="150" cy="260" r="16" fill="#6ee7b7"/>
+          <circle cx="150" cy="380" r="16" fill="#6ee7b7"/>
+          <!-- novo commit em main após o merge -->
+          <circle id="mc" cx="150" cy="780" r="16" fill="#6ee7b7" opacity="0"/>
+          <!-- ramo -->
+          <path id="br" d="M150 380 C150 440 700 400 700 470" stroke="#93a4ff" stroke-width="6" stroke-linecap="round" fill="none" opacity="0"/>
+          <path id="bl" d="M700 470 L700 640" stroke="#93a4ff" stroke-width="6" stroke-linecap="round" fill="none" opacity="0"/>
+          <circle id="k1" cx="700" cy="520" r="16" fill="#93a4ff" opacity="0"/>
+          <circle id="k2" cx="700" cy="580" r="16" fill="#93a4ff" opacity="0"/>
+          <circle id="k3" cx="700" cy="640" r="16" fill="#93a4ff" opacity="0"/>
+          <!-- volta -->
+          <path id="mg" d="M700 640 C700 740 150 700 150 780" stroke="#ffb86b" stroke-width="6" stroke-linecap="round" fill="none" opacity="0"/>
+        </svg>
+
+        <p id="l1" class="col" style="left:190px; top:244px; font-size:28px; color:var(--muted)">commit inicial</p>
+        <p id="l2" class="col" style="left:190px; top:364px; font-size:28px; color:var(--muted)">você começa aqui</p>
+        <p id="l3" class="col" style="left:190px; top:764px; font-size:28px; color:var(--attention); opacity:0">integrado</p>
+
+        <div id="files">
+          <div class="f" id="f1"><span style="color:var(--secondary)">●</span> src/tarefas.ts</div>
+          <div class="f" id="f2"><span style="color:var(--secondary)">●</span> src/ui.tsx</div>
+          <div class="f" id="f3"><span style="color:var(--secondary)">●</span> test/tarefas.test.ts</div>
+        </div>
+
+        <div id="cmd">collie paddock land</div>
+
+        <div class="lbl" id="s1"><b>1</b>O repositório está em main</div>
+        <div class="lbl" id="s2"><b>2</b>Cercado: uma cópia isolada, em branch própria</div>
+        <div class="lbl" id="s3"><b>3</b>O agente commita no cercado; main não muda</div>
+        <div class="lbl" id="s4"><b>4</b>Land: o trabalho volta integrado a main</div>
+      </div>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const show = (sel, t) => tl.fromTo(sel, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, t);
+      const hide = (sel, t) => tl.to(sel, { opacity: 0, duration: 0.2 }, t);
+      const label = (id, prev, t) => { if (prev) hide(prev, t); tl.fromTo(id, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, t); };
+      const draw = (sel, t, d) => tl.fromTo(sel, { opacity: 0, strokeDasharray: 700, strokeDashoffset: 700 }, { opacity: 1, strokeDashoffset: 0, duration: d, ease: "power2.inOut" }, t);
+      const pop = (sel, t) => tl.fromTo(sel, { opacity: 0, scale: 0, transformOrigin: "50% 50%" }, { opacity: 1, scale: 1, duration: 0.3, ease: "back.out(2)" }, t);
+
+      // 1 — main
+      label("#s1", null, 0.3);
+
+      // 2 — cercado nasce
+      label("#s2", "#s1", 2.4);
+      tl.fromTo("#paddock", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 2.6);
+      show("#pname", 2.9);
+      draw("#br", 3.0, 0.9);
+      draw("#bl", 3.9, 0.5);
+
+      // 3 — commits no cercado
+      label("#s3", "#s2", 5.4);
+      show("#f1", 5.6); pop("#k1", 5.8);
+      show("#f2", 6.8); pop("#k2", 7.0);
+      show("#f3", 8.0); pop("#k3", 8.2);
+
+      // 4 — land
+      label("#s4", "#s3", 9.2);
+      tl.fromTo("#cmd", { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3 }, 9.3);
+      draw("#mg", 9.7, 0.9);
+      pop("#mc", 10.6);
+      tl.fromTo("#l3", { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3 }, 10.7);
+      tl.to(["#paddock", "#pname", "#files"], { opacity: 0.25, duration: 0.5 }, 10.8);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

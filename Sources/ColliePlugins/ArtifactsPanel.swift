@@ -134,6 +134,8 @@ public struct ArtifactSelection: Equatable {
     public var sections: [FolderSection] { ArtifactFolderTree.sections(rows: rows, folders: folders, query: query, collapsed: collapsed) }
     @Published public private(set) var error: String?
     @Published public private(set) var busy = false
+    /// What the last export dropped (`artifact.export`'s `warnings`); empty when it failed or dropped nothing.
+    @Published public private(set) var exportWarnings: [String] = []
     /// The "Importar do Claude…" sheet: its links' progress and the Claude terminals it can use.
     @Published public var claude = ClaudeImportProgress()
     @Published public private(set) var terminals: [ClaudeTerminalRow] = []
@@ -309,9 +311,13 @@ public struct ArtifactSelection: Equatable {
     /// `artifact.export` of agent page `row` as `format` (pptx|pdf), copied to `url`; the written path, or nil with `error` set.
     public func export(_ row: ArtifactRow, format: String, to url: URL) async -> String? {
         var path: String?
+        exportWarnings = []
         await run {
             let v = await send("artifact.export", ["id": .string(row.id), "format": .string(format), "out": .string(url.path)])
-            if case .object(let o)? = v, case .string(let p)? = o["path"] { path = p }
+            if case .object(let o)? = v, case .string(let p)? = o["path"] {
+                path = p
+                if case .array(let w)? = o["warnings"] { exportWarnings = w.compactMap { if case .string(let t) = $0 { t } else { nil } } }
+            }
         }
         return path
     }
@@ -601,16 +607,16 @@ struct ArtifactsView: View {
         }
     }
 
-    /// **Mover para…**: every folder (`targets`), and "Sem pasta".
     /// Asks where to save, exports, and reveals the file; a failure shows in the panel's error line.
     private func exportRow(_ r: ArtifactRow, _ format: String) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [format == "pdf" ? .pdf : UTType(filenameExtension: "pptx") ?? .data]
         panel.nameFieldStringValue = ArtifactsModel.exportName(r.title) + "." + format
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { if await model.export(r, format: format, to: url) != nil { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
+        Task { if let p = await model.export(r, format: format, to: url) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)]) } }
     }
 
+    /// **Mover para…**: every folder (`targets`), and "Sem pasta".
     private func moveMenu(_ r: ArtifactRow, _ targets: [FolderSection]) -> some View {
         Menu("Mover para…") {
             Button("Sem pasta") { Task { await model.move(r.id, to: nil) } }.disabled(r.folder == nil)
@@ -675,6 +681,10 @@ struct ArtifactsView: View {
                     }
                 }
                 .buttonStyle(CollieButtonStyle(.secondary)).disabled(model.busy).padding(.top, 4)
+                if !r.isExport, !model.exportWarnings.isEmpty {
+                    Text("Avisos da exportação\n" + model.exportWarnings.joined(separator: "\n")).font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.horizontal, 14).padding(.vertical, 12)
         }

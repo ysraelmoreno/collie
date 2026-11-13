@@ -32,7 +32,7 @@ private actor Fake {
         case "artifact.folders": return .array([])
         case "artifact.export":
             if a["format"] == .string("bad") { throw ProtocolError(code: .invalidArgs, message: "page has no slides") }
-            return .object(["path": .string("/tmp/out/deck.pptx"), "format": a["format"] ?? .null, "slides": .number(3), "warnings": .array([])])
+            return .object(["path": .string("/tmp/out/deck.pptx"), "format": a["format"] ?? .null, "slides": .number(3), "warnings": .array([.string("fonts not embedded: Inter")])])
         case "artifact.remove":
             if holdRemove { await withCheckedContinuation { removeWaiter = $0 } }
             return .object([:])
@@ -170,6 +170,15 @@ private actor Fake {
         await m.refresh()
         let p = await m.export(m.rows[4], format: "bad", to: URL(fileURLWithPath: "/tmp/x"))
         #expect(p == nil && m.error?.contains("page has no slides") == true)
+    }
+
+    @Test func exportKeepsWarnings() async throws {
+        let (m, _) = make()
+        await m.refresh()
+        _ = await m.export(m.rows[4], format: "pptx", to: URL(fileURLWithPath: "/tmp/x"))
+        #expect(m.exportWarnings == ["fonts not embedded: Inter"])
+        _ = await m.export(m.rows[4], format: "bad", to: URL(fileURLWithPath: "/tmp/x"))
+        #expect(m.exportWarnings.isEmpty)
     }
 
     @Test func exportKeepsBusyOffAfterwards() async throws {

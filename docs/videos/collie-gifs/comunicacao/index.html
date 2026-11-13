@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1080" />
+    <title>Collie — GIF comunicação</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Space Grotesk"; src: url("fonts/SpaceGrotesk.ttf"); font-weight: 300 700; }
+      @font-face { font-family: "DM Mono"; src: url("fonts/DMMono-Regular.ttf"); font-weight: 400; }
+      @font-face { font-family: "DM Mono"; src: url("fonts/DMMono-Medium.ttf"); font-weight: 500; }
+      :root {
+        --bg: #0e1326; --surface: #161c36; --sunken: #0b1020; --raised: #1b2340; --border: #262e52; --border-soft: #1e2647;
+        --text: #e8ecf8; --text2: #b6bedb; --muted: #8c95b8; --accent: #6ee7b7; --attention: #ffb86b; --secondary: #93a4ff;
+        --ui: "Space Grotesk", system-ui, sans-serif; --mono: "DM Mono", ui-monospace, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1080px; height: 1080px; overflow: hidden; background: var(--bg); }
+      #root { position: relative; width: 100%; height: 100%; font-family: var(--ui); color: var(--text); overflow: hidden;
+        background-color: var(--bg); background-image: radial-gradient(circle, #20284a 1.5px, transparent 1.6px); background-size: 36px 36px; }
+      #app { position: absolute; inset: 0; }
+
+      .ttl { position: absolute; left: 60px; top: 36px; font-size: 44px; font-weight: 700; letter-spacing: -0.02em; display: flex; align-items: baseline; gap: 18px; }
+      .ttl span { font-family: var(--mono); font-size: 28px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+
+      .node { position: absolute; left: 60px; width: 960px; background: var(--surface); border: 2px solid var(--border); border-radius: 18px; overflow: hidden; box-shadow: 0 24px 60px rgba(7,10,22,.55); }
+      .tbar { height: 64px; border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; gap: 14px; padding: 0 24px; font-size: 30px; font-weight: 600; background: var(--raised); }
+      .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); flex: none; }
+      .tag { font-family: var(--mono); font-size: 24px; font-weight: 500; padding: 2px 10px; border-radius: 8px; border: 1px solid; }
+      .tag.acc { color: var(--accent); border-color: rgba(110,231,183,.5); }
+      .tag.sec { color: var(--secondary); border-color: rgba(147,164,255,.5); }
+      .term { background: var(--sunken); padding: 16px 26px; font-family: var(--mono); font-size: 28px; line-height: 1.55; color: var(--text2); position: relative; height: calc(100% - 64px); }
+      .ln { white-space: nowrap; }
+      .dim { color: var(--muted); } .acc { color: var(--accent); } .att { color: var(--attention); } .sec { color: var(--secondary); } .txt { color: var(--text); }
+      .user { background: var(--raised); color: var(--text); margin: 0 -26px; padding: 0 26px; }
+      .res { padding-left: 34px; color: var(--muted); }
+      .caret { display: inline-block; width: 14px; height: 30px; background: var(--text); vertical-align: -5px; }
+
+      #daemon { position: absolute; left: 340px; top: 520px; width: 400px; height: 84px; background: var(--sunken); border: 2px solid var(--attention); border-radius: 16px;
+        display: flex; align-items: center; justify-content: center; gap: 14px; font-family: var(--mono); font-size: 34px; font-weight: 500; color: var(--attention); }
+      #badge { position: absolute; left: 770px; top: 538px; font-family: var(--mono); font-size: 28px; font-weight: 500; color: var(--accent);
+        background: var(--sunken); border: 1px solid rgba(110,231,183,.5); border-radius: 10px; padding: 6px 14px; opacity: 0; white-space: nowrap; }
+      #wire { position: absolute; left: 0; top: 0; width: 1080px; height: 1080px; pointer-events: none; }
+
+      .lbl { position: absolute; left: 60px; top: 952px; width: 960px; height: 90px; display: flex; align-items: center; gap: 22px;
+        background: var(--sunken); border: 2px solid var(--border); border-radius: 16px; padding: 0 28px; font-size: 34px; font-weight: 500; opacity: 0; }
+      .lbl b { font-family: var(--mono); font-size: 36px; color: var(--accent); font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="18" data-width="1080" data-height="1080">
+      <div id="app" class="clip" data-start="0" data-duration="18" data-track-index="0">
+        <div class="ttl">collie ask <span>um terminal pede algo a outro</span></div>
+
+        <svg id="wire" viewBox="0 0 1080 1080">
+          <path d="M540 480 L540 520" stroke="#6ee7b7" stroke-width="4" stroke-dasharray="3 9" stroke-linecap="round" fill="none"/>
+          <path d="M540 604 L540 650" stroke="#93a4ff" stroke-width="4" stroke-dasharray="3 9" stroke-linecap="round" fill="none"/>
+          <circle id="pk" cx="540" cy="480" r="14" fill="#6ee7b7" opacity="0"/>
+        </svg>
+
+        <div class="node" style="top:120px; height:360px; border-color:rgba(110,231,183,.55)">
+          <div class="tbar"><i class="dot"></i>Pastor <span class="tag acc">terminal A</span></div>
+          <div class="term">
+            <div class="ln user"><span class="txt">❯ </span><span id="typed"></span><span class="caret" id="caret"></span></div>
+            <div class="ln txt" id="p1" style="opacity:0; margin-top:8px"><span class="acc">⏺</span> Vou perguntar ao agente <span class="sec">api</span>.</div>
+            <div class="ln txt" id="p2" style="opacity:0; margin-top:8px"><span class="acc">⏺</span> Bash(<span class="att">collie ask api "rota de login?"</span>)</div>
+            <div class="ln res" id="r1" style="opacity:0">⎿ aguardando api …</div>
+            <div class="ln res" id="r2" style="opacity:0; margin-top:-43px; color:var(--accent)">⎿ POST /auth/login</div>
+            <div class="ln txt" id="p3" style="opacity:0; margin-top:8px"><span class="acc">⏺</span> A rota de login é <span class="att">POST /auth/login</span>.</div>
+          </div>
+        </div>
+
+        <div id="daemon"><i class="dot" style="background:var(--attention)"></i>collied</div>
+        <div id="badge">coleira ✓</div>
+
+        <div class="node" style="top:650px; height:270px; border-color:rgba(147,164,255,.55)">
+          <div class="tbar"><i class="dot"></i>api <span class="tag sec">terminal B</span></div>
+          <div class="term">
+            <div class="ln dim">✻ api pronto · coleira com Pastor</div>
+            <div class="ln user" id="a1" style="opacity:0; margin-top:8px">❯ rota de login?</div>
+            <div class="ln txt" id="a2" style="opacity:0; margin-top:8px"><span class="acc">⏺</span> POST /auth/login <span class="dim">(routes/auth.ts)</span></div>
+          </div>
+        </div>
+
+        <div class="lbl" id="s0"><b>▶</b>Você pergunta ao Pastor, em linguagem natural</div>
+        <div class="lbl" id="s1"><b>1</b>Identidade: o pedido leva o token do terminal</div>
+        <div class="lbl" id="s2"><b>2</b>Coleira: o daemon confirma que api está ligado</div>
+        <div class="lbl" id="s3"><b>3</b>Entrega: o prompt é digitado no terminal api</div>
+        <div class="lbl" id="s4"><b>4</b>Resposta: o fim do turno devolve o resultado</div>
+        <div class="lbl" id="s5"><b>▶</b>O Pastor responde a você com o que a api disse</div>
+      </div>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const show = (sel, t) => tl.fromTo(sel, { opacity: 0, y: 6 }, { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, t);
+      const hide = (sel, t) => tl.to(sel, { opacity: 0, duration: 0.2 }, t);
+      const label = (id, prev, t) => { if (prev) hide(prev, t); tl.fromTo(id, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }, t); };
+
+      // 0 — o usuário pergunta ao Pastor
+      label("#s0", null, 0.3);
+      const prompt = "Qual a rota de login na api?";
+      const typer = { n: 0 };
+      tl.to(typer, { n: prompt.length, duration: 1.8, ease: "none", onUpdate: () => {
+        document.getElementById("typed").textContent = prompt.slice(0, Math.round(typer.n));
+      } }, 0.6);
+      tl.to("#caret", { opacity: 0, duration: 0.01 }, 2.5);
+      show("#p1", 2.8);
+      show("#p2", 3.6);
+      show("#r1", 4.1);
+
+      // 1 — pacote sai do Pastor
+      label("#s1", "#s0", 4.2);
+      tl.fromTo("#pk", { opacity: 0, attr: { cy: 480 } }, { opacity: 1, attr: { cy: 480 }, duration: 0.2 }, 4.3);
+      tl.to("#pk", { attr: { cy: 562 }, duration: 1.4, ease: "power1.inOut" }, 5.0);
+
+      // 2 — daemon confere a coleira
+      label("#s2", "#s1", 6.8);
+      tl.fromTo("#daemon", { borderColor: "#ffb86b", boxShadow: "0 0 0 0 rgba(255,184,107,0)" }, { borderColor: "#ffd9a8", boxShadow: "0 0 36px 4px rgba(255,184,107,.45)", duration: 0.4, yoyo: true, repeat: 1 }, 6.7);
+      show("#badge", 7.1);
+
+      // 3 — entrega ao terminal B
+      label("#s3", "#s2", 9.4);
+      tl.to("#pk", { attr: { cy: 650 }, fill: "#93a4ff", duration: 1.3, ease: "power1.inOut" }, 7.9);
+      hide("#badge", 9.5);
+      show("#a1", 9.6); show("#a2", 10.4);
+      tl.to("#pk", { opacity: 0, duration: 0.2 }, 9.6);
+
+      // 4 — resposta volta
+      label("#s4", "#s3", 11.9);
+      tl.fromTo("#pk", { opacity: 0, fill: "#6ee7b7", attr: { cy: 650 } }, { opacity: 1, fill: "#6ee7b7", attr: { cy: 650 }, duration: 0.2, immediateRender: false }, 12.0);
+      tl.to("#pk", { attr: { cy: 562 }, duration: 0.8, ease: "power1.inOut" }, 12.3);
+      tl.to("#pk", { attr: { cy: 480 }, duration: 0.7, ease: "power1.inOut" }, 13.2);
+      tl.to("#pk", { opacity: 0, duration: 0.2 }, 13.9);
+      hide("#r1", 13.9); show("#r2", 14.0);
+
+      // 5 — o Pastor responde ao usuário
+      label("#s5", "#s4", 14.6);
+      show("#p3", 14.8);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

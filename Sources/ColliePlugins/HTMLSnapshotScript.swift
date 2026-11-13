@@ -261,8 +261,19 @@ enum HTMLSnapshotScript {
             .replacingOccurrences(of: alt, with: alt + #" if (tag === "li") node.list = listInfo(el);"#) + isolateFunction + deckTail
     }()
 
-    /// Shows slide `i` of `slides` alone, unscaled at its parent's origin. Also for the PDF pass (one slide per page).
+    /// `isolateSlide(slides, i)` shows slide `i` of `slides` alone, unscaled at its parent's origin; `deckSlides()` finds
+    /// them, `keepSlides(slides)` returns a function putting their style/class back. Also for the PDF pass (`isolateSlide(i)`).
     static let isolateFunction = #"""
+    function deckSlides() {
+      const slides = [...document.querySelectorAll(".slide")];
+      return slides.length ? slides : [...document.querySelectorAll("[data-slide]")];
+    }
+    function keepSlides(slides) {
+      const saved = slides.map(s => [s.getAttribute("style"), s.getAttribute("class")]);
+      return () => slides.forEach((s, j) => {
+        saved[j].forEach((v, k) => { const a = k ? "class" : "style"; v === null ? s.removeAttribute(a) : s.setAttribute(a, v); });
+      });
+    }
     function isolateSlide(slides, i) {
       slides.forEach((s, j) => { if (j !== i) s.style.setProperty("display", "none", "important"); });
       const s = slides[i];
@@ -274,6 +285,20 @@ enum HTMLSnapshotScript {
     }
 
     """#
+
+    /// A `callAsyncJavaScript` body for the PDF pass: shows slide `i` alone (each call first restores the page as loaded)
+    /// and returns `{count, x, y, w, h}`, the slide's box in page CSS px (`{count: 0}` if the page has no slides).
+    static func isolateSlide(_ i: Int) -> String {
+        isolateFunction + """
+        const slides = deckSlides();
+        if (!slides.length) return { count: 0 };
+        window.__collieRestore = window.__collieRestore || keepSlides(slides);
+        window.__collieRestore();
+        isolateSlide(slides, \(i));
+        const r = slides[\(i)].getBoundingClientRect();
+        return { count: slides.length, x: r.left + scrollX, y: r.top + scrollY, w: r.width, h: r.height };
+        """
+    }
 
     static let deckTail = #"""
     function listInfo(li) {
@@ -296,13 +321,9 @@ enum HTMLSnapshotScript {
       if (data) node.image = { data, w, h, fit: "fill" };
     }
 
-    let slides = [...document.querySelectorAll(".slide")];
-    if (!slides.length) slides = [...document.querySelectorAll("[data-slide]")];
+    const slides = deckSlides();
     if (!slides.length) throw "no slides";
-    const saved = slides.map(s => [s.getAttribute("style"), s.getAttribute("class")]);
-    const restore = () => slides.forEach((s, j) => {
-      saved[j].forEach((v, k) => { const a = k ? "class" : "style"; v === null ? s.removeAttribute(a) : s.setAttribute(a, v); });
-    });
+    const restore = keepSlides(slides);
     const out = [];
     for (let i = 0; i < slides.length; i++) {
       restore();

@@ -50,8 +50,8 @@ import WebKit
         return try await BrowserAutomation.offMain { store(snap, in: out) }.get()
     }
 
-    /// `<artifactsRoot>/<id>/.import`, checked to stay under the artifact's folder (which must exist).
-    static func importFolder(_ artifactsRoot: URL, _ id: UUID) throws(ProtocolError) -> URL {
+    /// `<artifactsRoot>/<id>/<name>` (`.import` by default), checked to stay under the artifact's folder (which must exist).
+    static func importFolder(_ artifactsRoot: URL, _ id: UUID, _ name: String = importDir) throws(ProtocolError) -> URL {
         let root = artifactsRoot.standardizedFileURL.resolvingSymlinksInPath()
         let folder = root.appendingPathComponent(id.uuidString.lowercased()).standardizedFileURL.resolvingSymlinksInPath()
         var dir: ObjCBool = false
@@ -59,14 +59,12 @@ import WebKit
               FileManager.default.fileExists(atPath: folder.path, isDirectory: &dir), dir.boolValue else {
             throw ProtocolError(code: .notFound, message: "artifact not found: \(id.uuidString.lowercased())")
         }
-        return folder.appendingPathComponent(importDir, isDirectory: true)
+        return folder.appendingPathComponent(name, isDirectory: true)
     }
 
-    /// Writes the snapshot and its payloads (inline `image.data` / `svg` → files) to `dir`, replacing it.
-    nonisolated static func store(_ snap: JSONValue, in dir: URL) -> Result<JSONValue, ProtocolError> {
-        guard case .object(var o) = snap else { return .failure(ProtocolError(code: .internal, message: "html.snapshot: bad snapshot")) }
+    /// Moves `root`'s inline payloads (`image.data` / `svg`) to named files, numbering on from `images` / `svgs`.
+    nonisolated static func extractPayloads(_ root: JSONValue, images: inout Int, svgs: inout Int) -> (JSONValue, [(String, Data)]) {
         var files: [(String, Data)] = []
-        var images = 0, svgs = 0
         func external(_ v: JSONValue) -> JSONValue {
             guard case .object(var n) = v else { return v }
             if case .object(var img)? = n["image"] {
@@ -84,36 +82,83 @@ import WebKit
             if case .array(let cs)? = n["children"] { n["children"] = .array(cs.map(external)) }
             return .object(n)
         }
-        o["root"] = o["root"].map(external)
+        return (external(root), files)
+    }
+
+    /// Empties `dir` for a new run: removes it (a symlink there is removed, never followed) and recreates it 0700.
+    nonisolated static func replaceFolder(_ dir: URL) throws {
         let fm = FileManager.default
+        if fm.fileExists(atPath: dir.path) || (try? fm.destinationOfSymbolicLink(atPath: dir.path)) != nil { try fm.removeItem(at: dir) }
+        try fm.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    }
+
+    /// Writes the snapshot and its payloads (inline `image.data` / `svg` → files) to `dir`, replacing it, as `file`.
+    /// A deck snapshot (`slides: [{root}]`) has each slide's payloads moved, numbered across slides.
+    nonisolated static func store(_ snap: JSONValue, in dir: URL, file: String = "snapshot.json") -> Result<JSONValue, ProtocolError> {
+        guard case .object(var o) = snap else { return .failure(ProtocolError(code: .internal, message: "html.snapshot: bad snapshot")) }
+        var files: [(String, Data)] = []
+        var images = 0, svgs = 0
+        func external(_ v: JSONValue) -> JSONValue {
+            let (out, f) = extractPayloads(v, images: &images, svgs: &svgs)
+            files += f
+            return out
+        }
+        o["root"] = o["root"].map(external)
+        if case .array(let slides)? = o["slides"] {
+            o["slides"] = .array(slides.map { sl in
+                guard case .object(var x) = sl else { return sl }
+                x["root"] = x["root"].map(external)
+                return .object(x)
+            })
+        }
         do {
-            if fm.fileExists(atPath: dir.path) || (try? fm.destinationOfSymbolicLink(atPath: dir.path)) != nil { try fm.removeItem(at: dir) }
-            try fm.createDirectory(at: dir, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            try replaceFolder(dir)
             for (name, data) in files { try data.write(to: dir.appendingPathComponent(name)) }
-            try JSONEncoder().encode(JSONValue.object(o)).write(to: dir.appendingPathComponent("snapshot.json"))
+            try JSONEncoder().encode(JSONValue.object(o)).write(to: dir.appendingPathComponent(file))
         } catch {
             return .failure(ProtocolError(code: .internal, message: "html.snapshot: could not write the snapshot: \(error.localizedDescription)"))
         }
         let blocked: Double = if case .array(let b)? = o["blocked"] { Double(b.count) } else { 0 }
-        return .success(.object(["file": .string("\(importDir)/snapshot.json"), "blocked": .number(blocked),
-                                 "truncated": o["truncated"] ?? .bool(false)]))
+        var reply: [String: JSONValue] = ["file": .string("\(dir.lastPathComponent)/\(file)"), "blocked": .number(blocked),
+                                          "truncated": o["truncated"] ?? .bool(false)]
+        if case .array(let slides)? = o["slides"] { reply["slides"] = .number(Double(slides.count)) }
+        return .success(.object(reply))
     }
 
-    /// The snapshot with payloads inline (`image.data` base64 PNG, `svg` markup).
+    /// The snapshot with payloads inline (`image.data` base64 PNG, `svg` markup); `deck` runs `deckUserScript`.
     static func snapshot(url: URL, artifactsRoot: URL, width: Int, timeout: Duration,
-                         libs: URL? = WebLibs.directory,
-                         script: String = HTMLSnapshotScript.userScript) async throws(ProtocolError) -> JSONValue {
-        guard url.scheme?.lowercased() == BrowserPanel.artifactScheme, url.host == "app" else {
-            throw ProtocolError(code: .invalidArgs, message: "url must be collie-artifact://app/…: \(url.absoluteString)")
-        }
+                         libs: URL? = WebLibs.directory, deck: Bool = false,
+                         script: String? = nil) async throws(ProtocolError) -> JSONValue {
+        let json = try await withPage(url: url, artifactsRoot: artifactsRoot, width: width, timeout: timeout, libs: libs,
+                                      script: script ?? (deck ? HTMLSnapshotScript.deckUserScript : HTMLSnapshotScript.userScript)) { _, s in s }
+        return try await BrowserAutomation.offMain { () -> Result<JSONValue, ProtocolError> in
+            do { return .success(try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))) } catch {
+                return .failure(ProtocolError(code: .internal, message: "html.snapshot: bad snapshot JSON"))
+            }
+        }.get()
+    }
+
+    /// A fresh offline configuration: own non-persistent store, WebRTC off, the artifact and lib schemes, the no-network rule list.
+    static func hardenedConfiguration(artifactsRoot: URL, libs: URL?) async throws(ProtocolError) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list
         config.setURLSchemeHandler(DesignSchemeHandler(root: artifactsRoot, artifacts: true), forURLScheme: BrowserPanel.artifactScheme)
         config.setURLSchemeHandler(WebLibSchemeHandler(directory: libs, bundledFonts: WebLibs.fontsDirectory,
                                                             downloadedFonts: artifactsRoot.deletingLastPathComponent().appendingPathComponent("fonts")), forURLScheme: WebLibs.scheme)
+        config.userContentController.add(try await ruleList())
+        return config
+    }
+
+    /// Loads `url` (collie-artifact://app/… only) in a fresh hardened view, waits for `script`'s posted string (or the
+    /// deadline), and hands view + string to `body`; the view is released afterwards, also on failure.
+    static func withPage<T>(url: URL, artifactsRoot: URL, width: Int, timeout: Duration, libs: URL?, script: String,
+                            _ body: (WKWebView, String) async throws(ProtocolError) -> T) async throws(ProtocolError) -> T {
+        guard url.scheme?.lowercased() == BrowserPanel.artifactScheme, url.host == "app" else {
+            throw ProtocolError(code: .invalidArgs, message: "url must be collie-artifact://app/…: \(url.absoluteString)")
+        }
+        let config = try await hardenedConfiguration(artifactsRoot: artifactsRoot, libs: libs)
         let content = config.userContentController
-        content.add(try await ruleList())
         // The script runs as a user script that posts its result, not through `callAsyncJavaScript`: WebKit keeps the
         // view alive while such a call is pending, so a page hung in JS would pin it (and its WebContent process).
         let run = Run()
@@ -138,17 +183,18 @@ import WebKit
             web?.load(URLRequest(url: url))
         }
         timer.cancel()
+        var result: Result<T, ProtocolError>
+        switch out {
+        case .failure(let e): result = .failure(e)
+        case .success(let s):
+            do throws(ProtocolError) { result = .success(try await body(w, s)) } catch { result = .failure(error) }
+        }
         // the only strong reference: dropping it releases the view and its WebContent process; the next snapshot gets new ones
         web?.stopLoading()
         web?.navigationDelegate = nil
         content.removeAllScriptMessageHandlers()
         web = nil
-        let json = try out.get()
-        return try await BrowserAutomation.offMain { () -> Result<JSONValue, ProtocolError> in
-            do { return .success(try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))) } catch {
-                return .failure(ProtocolError(code: .internal, message: "html.snapshot: bad snapshot JSON"))
-            }
-        }.get()
+        return try result.get()
     }
 
     /// Compiled once per app run (WebKit also keeps it in its store).

@@ -334,6 +334,10 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.closeAll() }
         .onAppear {
             client.panelHandler = { [store] panel, command, args, timeout throws(ProtocolError) in
+                if panel == HostTarget.importer, command.hasPrefix("deck.") {
+                    return try await DeckExporter.handle(command: command, args: args, artifactsRoot: Config.root.appendingPathComponent("artifacts"),
+                                                         timeoutSeconds: timeout)
+                }
                 if panel == HostTarget.importer {
                     return try await HTMLSnapshotter.handle(command: command, args: args, artifactsRoot: Config.root.appendingPathComponent("artifacts"),
                                                             timeoutSeconds: timeout)

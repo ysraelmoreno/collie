@@ -324,9 +324,35 @@ No app: **Abrir painel… → Artifacts** (miniatura, origem, versão, status `c
 
 Comandos (`artifact.*`): `list`, `get <id>`, `add <caminho.html|pasta|.zip> [--root <pasta>] [--title] [--width <px>] [--source <link>]` (o caminho é
 resolvido contra o cwd e caminhos absolutos são aceitos; `.html`/`.htm`, sem symlink, até 8 MB), `import <id> [--width <px>]`
-(largura 320–3840, padrão 1440), `libs` (veja Bibliotecas offline), `reexport <id>` e `remove <id>` (só o app).
+(largura 320–3840, padrão 1440), `libs` (veja Bibliotecas offline), `export <id> --format pptx|pdf [--out <arquivo>]`
+(veja Exportar deck), `reexport <id>` e `remove <id>` (só o app).
 
 O painel também atualiza sozinho com os eventos `artifact.*` (no máximo uma vez a cada 500 ms); falha de importação em segundo plano chega como `artifact.imported` com `error`.
+
+### Exportar deck (PowerPoint e PDF)
+
+Uma página de slides (de agente, não um export de design) vira um `.pptx` editável ou um PDF, com o **app aberto**
+(até 60 s; a rede fica bloqueada como na importação):
+
+```bash
+collie artifact export <id> --format pptx --out apresentacao.pptx
+collie artifact export <id> --format pdf
+```
+
+Devolve `{path, format, slides, warnings}`. O arquivo fica sempre em `<raiz>/artifacts/<id>/.export/deck.<pptx|pdf>`
+(sobrescrito a cada export); `--out` grava também uma cópia. Por um terminal, `--out` precisa ficar dentro do projeto
+dele ou sob uma permissão de escrita (`collie access request <caminho> --write`), sem `..`, e o nome termina em
+`.pptx`/`.pdf`; o app grava em qualquer lugar. No painel Artifacts: **Exportar → PowerPoint (.pptx) / PDF**, com os
+avisos na linha do artifact.
+
+Slide é cada elemento `.slide` ou, se não houver nenhum, cada `[data-slide]`; um `<section>` sem isso não conta (sem
+slides: `page has no slides`). Um `<aside>` filho direto do slide e escondido (`display: none`) vira a **nota do
+apresentador**; visível, continua conteúdo. O `.pptx` tem 16:9 com textos, listas, caixas e imagens editáveis (SVG vira
+imagem); o PDF tem uma página por slide (960×540 pt), texto selecionável e fundos impressos.
+
+Perdas conhecidas no `.pptx` (listadas em `warnings`): gradiente vira a primeira cor; `box-shadow`, `clip-path` e o
+conteúdo de `::before`/`::after` somem; as fontes da web não vão embutidas (o aviso lista as famílias; sem elas,
+o PowerPoint usa uma substituta); `transform`, `filter` e animações não entram; a quebra de linha pode mudar no PowerPoint.
 
 ### Pastas
 

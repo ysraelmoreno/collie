@@ -17,6 +17,7 @@ import CollieProtocol
         #expect(none.contains("collie panel open browser [--url <url>] [--visible]") && !none.contains("design --file") && !text(shepherd: true).contains("Your own test browsers"))
         #expect(none.contains("none yet") && none.contains("Artifacts: collie artifact"))
         #expect(none.contains("No CDN: offline JS libs via artifact libs."))
+        #expect(none.contains("Slides: artifact export <id> --format pptx|pdf."))
         #expect(none.contains("claude.ai links: artifact import-claude."))   // while it fits (it goes first)
         #expect(none.contains("collie work task defer <task> \"<reason>\"") && none.contains("collie work done") && text(shepherd: true).contains("collie work status"))
         let d = text(paddock: "F1", peers: ["Bob"], panels: [("Home", "design")])

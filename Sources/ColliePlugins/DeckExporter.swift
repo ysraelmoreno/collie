@@ -10,8 +10,8 @@ import WebKit
 /// `deck.pptx` / `deck.pdf` there too, so each command clears only its own earlier files (`clear`).
 /// - `deck.snapshot {id, url, width?}` → `slides.json` (deck-mode snapshot, payloads in `img-N.png` / `svg-N.svg`);
 ///   reply `{file, slides, blocked, truncated}`.
-/// - `deck.pdf {id, url}` → `deck-app.pdf`, one page per slide at 0.75 pt per CSS px (1280×720 → 960×540), vector text;
-///   reply `{file, slides}`.
+/// - `deck.pdf {id, url}` → `deck-app.pdf`, one page per slide scaled to 960 pt wide (1280×720 or 1920×1080 → 960×540),
+///   vector text; reply `{file, slides}`.
 @MainActor public enum DeckExporter {
     nonisolated static let exportDir = ".export"
 
@@ -115,7 +115,7 @@ import WebKit
         return nil
     }
 
-    /// Merges the slide PDFs into `deck-app.pdf` in `dir` (other files kept), each page drawn at 0.75 (vector, text kept).
+    /// Merges the slide PDFs into `deck-app.pdf` in `dir` (other files kept), each page scaled to 960 pt wide (vector, text kept).
     nonisolated static func write(_ pages: [Data], to dir: URL) -> Result<JSONValue, ProtocolError> {
         let merged = NSMutableData()
         guard let consumer = CGDataConsumer(data: merged), let ctx = CGContext(consumer: consumer, mediaBox: nil, nil) else {
@@ -125,10 +125,10 @@ import WebKit
             guard let provider = CGDataProvider(data: data as CFData), let page = CGPDFDocument(provider)?.page(at: 1) else {
                 return .failure(ProtocolError(code: .internal, message: "deck.pdf: WebKit returned a bad PDF"))
             }
-            let src = page.getBoxRect(.mediaBox)
-            var box = CGRect(x: 0, y: 0, width: src.width * 0.75, height: src.height * 0.75)
+            let src = page.getBoxRect(.mediaBox), k = src.width > 0 ? 960 / src.width : 0.75
+            var box = CGRect(x: 0, y: 0, width: src.width * k, height: src.height * k)
             ctx.beginPage(mediaBox: &box)
-            ctx.scaleBy(x: 0.75, y: 0.75)
+            ctx.scaleBy(x: k, y: k)
             ctx.translateBy(x: -src.minX, y: -src.minY)
             ctx.drawPDFPage(page)
             ctx.endPage()

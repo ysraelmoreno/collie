@@ -62,8 +62,16 @@ import CollieProtocol
         _ = try await run("deck.pdf", s)
         let page = try #require(PDFDocument(url: s.exportDir.appendingPathComponent("deck-app.pdf"))?.page(at: 0))
         let b = page.bounds(for: .mediaBox)
-        #expect(abs(b.width - 1440) < 0.5 && abs(b.height - 810) < 0.5, "\(b)")
+        #expect(abs(b.width - 960) < 0.5 && abs(b.height - 540) < 0.5, "\(b)")
         #expect(page.string?.contains("Corner") == true, "\(page.string ?? "nil")")
+    }
+
+    @Test func pdfHidesChromeOutsideTheSlides() async throws {
+        let s = try site(Self.deck + "<div style='position:fixed;left:600px;top:10px;z-index:9'>COUNTER</div>")
+        _ = try await run("deck.pdf", s)
+        let doc = try #require(PDFDocument(url: s.exportDir.appendingPathComponent("deck-app.pdf")))
+        for i in 0..<doc.pageCount { #expect(doc.page(at: i)?.string?.contains("COUNTER") == false, "page \(i + 1)") }
+        #expect(doc.page(at: 1)?.string?.contains("Beta slide") == true)
     }
 
     @Test func exportSymlinkIsReplacedNotFollowed() async throws {

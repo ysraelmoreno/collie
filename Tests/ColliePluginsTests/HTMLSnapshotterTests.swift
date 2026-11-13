@@ -381,6 +381,21 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
         }
     }
 
+    @Test func deckBackgroundFromAncestorsOrGradient() async throws {
+        let slides = try await deck(Self.slideCSS + "<style>body{background:#123456}</style><div class='slide'><p>a</p></div>"
+            + "<div class='slide' style='background:linear-gradient(90deg, #ff0000, #0000ff)'><p>b</p></div>")
+        #expect(slides.first?["background"] == .string("rgb(18, 52, 86)"), "\(String(describing: slides.first?["background"]))")
+        #expect(Self.str(slides.last?["background"])?.hasPrefix("linear-gradient(") == true,
+                "\(String(describing: slides.last?["background"]))")
+    }
+
+    @Test func deckSendsEverySideBorderStyle() async throws {
+        let slides = try await deck(Self.slideCSS + "<div class='slide'><div style='width:50px;height:50px;border-bottom:2px solid red'></div></div>")
+        let box = try #require(Self.nodes(slides.first?["root"]).first { $0["tag"] == .string("div") && Self.style($0, "borderBottomWidth") != nil })
+        #expect(Self.style(box, "borderBottomStyle") == "solid", "\(box)")
+        #expect(Self.style(box, "borderTopStyle") == nil)
+    }
+
     @Test func importOutputUnchanged() {
         #expect(!HTMLSnapshotScript.userScript.contains("__collieDeck"))
         #expect(HTMLSnapshotScript.deckUserScript.contains("__collieDeck"))

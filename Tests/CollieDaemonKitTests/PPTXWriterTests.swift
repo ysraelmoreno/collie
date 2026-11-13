@@ -307,6 +307,83 @@ import Foundation
         #expect(r.warnings.contains("slide 1: dropped 2 invalid boxes"))
     }
 
+    // MARK: - Final review fixes
+
+    @Test func imageNodeKeepsItsChildren() throws {
+        let hero = node(w: 400, h: 200, children: [node("p", x: 10, y: 10, text: "caption")],
+                        image: DOMImage(file: "img-1.png", w: 4, h: 2, fit: "cover"))
+        let xml = try slideXML([hero], payloads: ["img-1.png": png]).xml
+        let pic = try #require(xml.range(of: "<p:pic>")), txt = try #require(xml.range(of: "<a:t>caption</a:t>"))
+        #expect(pic.lowerBound < txt.lowerBound)
+    }
+
+    @Test func fontSizeFollowsSlideScale() throws {
+        let xml = text(try unzip(PPTXWriter.build(deck([slide([node(style: ["fontSize": "30px"], text: "big")], w: 1920)]),
+                                                  payloads: [:]).data), "ppt/slides/slide1.xml")
+        #expect(xml.contains(#"sz="1500""#), "\(xml)")
+    }
+
+    @Test func elementGradientIsFirstColorAndWarns() throws {
+        let g = node(style: ["backgroundImage": "linear-gradient(90deg, rgb(255, 0, 0) 0%, rgb(0, 0, 255) 100%)"])
+        let r = try PPTXWriter.build(deck([slide([g, g], background: "radial-gradient(circle, rgb(0, 255, 0), rgb(0, 0, 0))")]),
+                                     payloads: [:])
+        let xml = text(try unzip(r.data), "ppt/slides/slide1.xml")
+        #expect(xml.components(separatedBy: #"srgbClr val="FF0000""#).count == 3)
+        #expect(xml.contains(#"<p:bg><p:bgPr><a:solidFill><a:srgbClr val="00FF00""#))
+        #expect(r.warnings.contains("gradient backgrounds approximated (2 elements)"), "\(r.warnings)")
+        #expect(r.warnings.contains("slide 1: gradient background → first color"))
+    }
+
+    @Test func linksOnlyForWebAndMail() throws {
+        let bad = ["javascript:alert(1)", "relative/page.html", "file:///etc/passwd"]
+        let good = ["https://x.test/a", "http://x.test", "mailto:a@x.test"]
+        let leaves = (bad + good).enumerated().map { node("p", y: Double($0.offset * 50), text: "l\($0.offset)",
+                                                         runs: [DOMRun(start: 0, end: 2, href: $0.element)]) }
+        let r = try slideXML(leaves)
+        let rels = text(r.files, "ppt/slides/_rels/slide1.xml.rels")
+        for u in bad { #expect(!rels.contains(xmlEscape(u)), "\(u)") }
+        for u in good { #expect(rels.contains(#"Target="\#(u)""#), "\(u)") }
+        #expect(r.xml.components(separatedBy: "<a:hlinkClick").count == good.count + 1)
+        for i in 0..<leaves.count { #expect(r.xml.contains("<a:t>l\(i)</a:t>")) }
+    }
+
+    @Test func uniformBorderHasNoWarning() throws {
+        var st: [String: String] = [:]
+        for side in ["Top", "Right", "Bottom", "Left"] {
+            st["border\(side)Width"] = "1px"; st["border\(side)Style"] = "solid"; st["border\(side)Color"] = "rgb(1, 2, 3)"
+        }
+        let r = try slideXML([node(style: st)])
+        #expect(r.xml.contains(#"<a:ln w="9525">"#))
+        #expect(!r.warnings.contains { $0.hasPrefix("non-uniform") }, "\(r.warnings)")
+    }
+
+    @Test func genericFontFamiliesAreSkipped() throws {
+        let a = node(style: ["fontFamily": "system-ui, -apple-system, BlinkMacSystemFont, sans-serif"], text: "a")
+        let b = node(style: ["fontFamily": "-apple-system, ui-sans-serif, \"Inter\", serif"], text: "b")
+        let c = node(style: ["fontFamily": "ui-monospace, monospace"], text: "c")
+        let r = try slideXML([a, b, c])
+        #expect(r.xml.components(separatedBy: "<a:latin").count == 2 && r.xml.contains(#"typeface="Inter""#))
+        #expect(r.warnings.contains("fonts not embedded: Inter"), "\(r.warnings)")
+    }
+
+    @Test func noHardCodedLanguage() throws {
+        let r = try PPTXWriter.build(deck([slide([node(text: "olá")], notes: "nota")]), payloads: [:])
+        let files = try unzip(r.data)
+        for name in ["ppt/slides/slide1.xml", "ppt/notesSlides/notesSlide1.xml", "ppt/notesMasters/notesMaster1.xml"] {
+            #expect(!text(files, name).contains("lang="), "\(name)")
+        }
+    }
+
+    @Test func lineWidthIsClamped() throws {
+        let xml = try slideXML([node(style: ["borderTopWidth": "100000px", "borderTopStyle": "solid"])]).xml
+        #expect(xml.contains(#"<a:ln w="20116800">"#), "\(xml)")
+    }
+
+    @Test func strikethroughRuns() throws {
+        let xml = try slideXML([node(style: ["textDecorationLine": "line-through"], text: "old")]).xml
+        #expect(xml.contains(#"strike="sngStrike""#) && !xml.contains(#"u="sng""#))
+    }
+
     @Test func hugeDeckThrows() {
         let many = (0..<20_001).map { _ in node() }
         #expect(throws: PPTXError.tooLarge) { try PPTXWriter.build(deck([slide(many)]), payloads: [:]) }

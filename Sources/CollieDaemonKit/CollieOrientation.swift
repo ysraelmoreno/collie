@@ -24,7 +24,7 @@ enum CollieOrientation {
                      sharedFolder: [String] = []) -> String {
         // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
-        // the claude.ai import hint first goes, before any name
+        // the export + claude.ai import hints go first, before any name
         // a compact UI-work line goes before the names do (a Shepherd in a shared folder keeps them)
         for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
             let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact)
@@ -59,7 +59,7 @@ enum CollieOrientation {
         if !b.isEmpty { lines.append("- Browser panel \(names(b)): collie browser … opens, checks pages.") }
         // panel-free: independent of reach. ponytail: the kinds and libs only while names fit (k = 3); else `--help` lists
         // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
-        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs." + (claude ? " claude.ai links: artifact import-claude." : "")
+        lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs." + (claude ? " Slides: artifact export <id> --format pptx|pdf. claude.ai links: artifact import-claude." : "")
             : "- Artifacts: collie artifact … (new <kind>: Prévia; --folder).")
         if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
         if isShepherd {

@@ -186,6 +186,25 @@ import Foundation
         #expect(!none.contains("<a:ln"))
     }
 
+    @Test func borderFromRealSnapshotStyles() throws {
+        // the snapshot omits initial values: no top keys at all
+        let st = ["borderBottomWidth": "1px", "borderBottomStyle": "solid", "borderBottomColor": "rgb(200, 0, 0)"]
+        let r = try slideXML([node(style: st)])
+        #expect(r.xml.contains(#"<a:ln w="9525"><a:solidFill><a:srgbClr val="C80000"/>"#))
+        #expect(r.warnings.contains("non-uniform borders approximated (1)"))
+        let plain = try slideXML([node(style: ["backgroundColor": "rgb(1, 2, 3)"]), node(style: ["borderLeftWidth": "3px"])])
+        #expect(!plain.xml.contains("<a:ln") && !plain.warnings.contains { $0.hasPrefix("non-uniform") })
+    }
+
+    @Test func looseTextGetsNoShape() throws {
+        let st = ["backgroundColor": "rgb(1, 2, 3)", "borderTopWidth": "1px", "borderTopStyle": "solid", "boxShadow": "rgb(0, 0, 0) 0px 1px 2px 0px"]
+        let div = node(w: 300, h: 100, style: st,
+                       children: [node("#text", style: st, text: "Hi "), node("p", y: 40, text: "para")])
+        let r = try slideXML([div])
+        #expect(r.xml.components(separatedBy: #"<a:srgbClr val="010203"/>"#).count == 2)   // one filled p:sp
+        #expect(r.warnings.contains("box-shadow dropped (1 elements)"))
+    }
+
     @Test func textLeafWithFillEmitsShapeThenText() throws {
         let xml = try slideXML([node(style: ["backgroundColor": "rgb(1, 2, 3)"], text: "hi")]).xml
         let shape = try #require(xml.range(of: #"srgbClr val="010203""#)), txt = try #require(xml.range(of: "<a:t>hi</a:t>"))
@@ -245,6 +264,8 @@ import Foundation
         #expect(files["ppt/notesSlides/notesSlide1.xml"] == nil)
         #expect(text(files, "ppt/notesSlides/notesSlide2.xml").contains("<a:t>then &amp; bye</a:t>"))
         #expect(files["ppt/notesMasters/notesMaster1.xml"] != nil && files["ppt/theme/theme2.xml"] != nil)
+        #expect(text(files, "ppt/notesMasters/notesMaster1.xml").contains(#"<p:ph type="sldImg" idx="2"/>"#))
+        #expect(text(files, "ppt/notesSlides/notesSlide2.xml").contains(#"<p:ph type="sldImg" idx="2"/>"#))
         #expect(text(files, "ppt/slides/_rels/slide2.xml.rels").contains("../notesSlides/notesSlide2.xml"))
         #expect(text(files, "ppt/presentation.xml").contains("</p:sldMasterIdLst><p:notesMasterIdLst>"))
         #expect(text(files, "[Content_Types].xml").contains("/ppt/notesSlides/notesSlide2.xml"))

@@ -92,6 +92,9 @@ extension CommandRouter {
             let deadline = design.deadline(r.command)
             let snap = try await design.systemSnapshot(fileId: fid, node: a.node, page: a.page, deadline: deadline)
             return try await exportHTML(f, node: a.node, snapshot: snap, by: Self.origin(nil), deadline: deadline)
+        case "artifact.export":
+            return try await exportDeck(try id(), format: try need(r, "format"), out: str(r, "out").flatMap { $0.isEmpty ? nil : $0 },
+                                        caller: caller, cwd: r.cwd)
         case "artifact.libs":
             let dir = config.weblibsDir
             let libs = try await UnixSocketClient.offPool { dir.map(WebLibs.manifest(in:)) ?? [] }

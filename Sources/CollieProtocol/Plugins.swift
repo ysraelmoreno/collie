@@ -353,6 +353,7 @@ extension PluginRegistry {
                   ParamSpec("folder", .string, help: "Folder the page goes in when saved as an artifact (as artifact add --folder)"),
                   ParamSpec("connect", .string, help: "Also leash the Prévia to these terminals you reach (comma list; Shepherd only)", repeatable: true)], timeout: 30),
             acmd("reexport", "Export the artifact's design again as its next version (the app only)", [artifactId], timeout: 120, exposedToMCP: false),
+            acmd("export", "Export a slide-deck page as an editable PowerPoint (.pptx) or a PDF (needs the Collie app); returns {path, format, slides, warnings} (ignores --panel)", [artifactId, ParamSpec("format", .string, required: true, help: "pptx | pdf"), ParamSpec("out", .string, help: "Also copy the file here (a terminal: inside its project)")], timeout: 60),
             acmd("remove", "Set the artifact aside (the app only)", [artifactId], timeout: 10, exposedToMCP: false),
             acmd("move", "Move artifacts (any, one or many in one change) into a folder that exists (\"\" for none); all or nothing; returns {folder, moved} (ignores --panel)",
                  [ParamSpec("ids", .list, positional: true, required: true, help: "Artifact ids (as artifact.list shows them)"), ParamSpec("folder", .string, required: true, help: "Folder path, up to 3 levels (Cliente/Landing/v2); \"\" for none")], timeout: 10),

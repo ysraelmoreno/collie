@@ -270,7 +270,7 @@ enum HTMLSnapshotScript {
       if (getComputedStyle(s).display === "none") s.style.setProperty("display", "block", "important");
       // transition: none, or the rect would be read mid-way from the old transform
       for (const [p, v] of [["transform", "none"], ["left", "0"], ["top", "0"], ["margin", "0"], ["position", "relative"],
-                            ["transition", "none"]]) s.style.setProperty(p, v, "important");
+                            ["transition", "none"], ["visibility", "visible"], ["opacity", "1"]]) s.style.setProperty(p, v, "important");
     }
 
     """#
@@ -316,15 +316,15 @@ enum HTMLSnapshotScript {
       for (const e of [slide, ...slide.querySelectorAll("*")]) {
         if (["::before", "::after"].some(p => !["none", "normal"].includes(getComputedStyle(e, p).content))) pseudo++;
       }
-      const root = walk(slide, slide.parentElement && getComputedStyle(slide.parentElement));
+      // never null (node cap hit, empty or zero-size slide): a bare box, so every slide decodes
+      const root = walk(slide, slide.parentElement && getComputedStyle(slide.parentElement))
+        || { tag: slide.tagName.toLowerCase(), x: b.x, y: b.y, w: b.w, h: b.h, style: {}, children: [] };
       await Promise.all(jobs);
       jobs.length = 0;
-      if (root) {
-        const svgs = [];
-        eachNode(root, n => { if (typeof n.svg === "string" && !n.image) svgs.push(svgPNG(n)); });
-        await Promise.all(svgs);
-        eachNode(root, n => { n.x -= b.x; n.y -= b.y; });
-      }
+      const svgs = [];
+      eachNode(root, n => { if (typeof n.svg === "string" && !n.image) svgs.push(svgPNG(n)); });
+      await Promise.all(svgs);
+      eachNode(root, n => { n.x -= b.x; n.y -= b.y; });
       out.push({ index: i, w: b.w, h: b.h, background: grad ? grad[0] : cs.backgroundColor, notes: notes || undefined, pseudo, root });
     }
     restore();

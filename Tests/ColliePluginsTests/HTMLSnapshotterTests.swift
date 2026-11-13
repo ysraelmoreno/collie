@@ -364,6 +364,23 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
         } catch { #expect(error.message.contains("no slides"), "\(error)") }
     }
 
+    @Test func deckVisibilityHiddenSlideIsExported() async throws {
+        let slides = try await deck(Self.slideCSS + "<style>.slide{visibility:hidden;opacity:0}.slide.active{visibility:visible;opacity:1}</style>"
+                                    + "<div class='slide active'><p>a</p></div><div class='slide'><p>b</p></div>")
+        #expect(slides.count == 2)
+        #expect(slides.allSatisfy { if case .object(let r)? = $0["root"] { return Self.count(r) > 0 }; return false })
+    }
+
+    @Test func deckEveryRootDecodes() async throws {
+        let slides = try await deck(Self.slideCSS + "<div class='slide'><p>a</p></div><div class='slide' style='width:0;height:0'></div>")
+        #expect(slides.count == 2)
+        for sl in slides {
+            guard case .object(let r)? = sl["root"] else { Issue.record("null root: \(sl)"); continue }
+            #expect(r["tag"] == .string("div") && r["x"] == .number(0) && r["y"] == .number(0), "\(r)")
+            #expect(r["w"] != nil && r["h"] != nil && r["style"] != nil && r["children"] != nil)
+        }
+    }
+
     @Test func importOutputUnchanged() {
         #expect(!HTMLSnapshotScript.userScript.contains("__collieDeck"))
         #expect(HTMLSnapshotScript.deckUserScript.contains("__collieDeck"))

@@ -94,7 +94,9 @@ import WebKit
 
     /// Writes the snapshot and its payloads (inline `image.data` / `svg` → files) to `dir`, replacing it, as `file`.
     /// A deck snapshot (`slides: [{root}]`) has each slide's payloads moved, numbered across slides.
-    nonisolated static func store(_ snap: JSONValue, in dir: URL, file: String = "snapshot.json") -> Result<JSONValue, ProtocolError> {
+    /// `replace: false`: `dir` is left as is (the caller has prepared it).
+    nonisolated static func store(_ snap: JSONValue, in dir: URL, file: String = "snapshot.json",
+                                  replace: Bool = true) -> Result<JSONValue, ProtocolError> {
         guard case .object(var o) = snap else { return .failure(ProtocolError(code: .internal, message: "html.snapshot: bad snapshot")) }
         var files: [(String, Data)] = []
         var images = 0, svgs = 0
@@ -112,7 +114,7 @@ import WebKit
             })
         }
         do {
-            try replaceFolder(dir)
+            if replace { try replaceFolder(dir) }
             for (name, data) in files { try data.write(to: dir.appendingPathComponent(name)) }
             try JSONEncoder().encode(JSONValue.object(o)).write(to: dir.appendingPathComponent(file))
         } catch {

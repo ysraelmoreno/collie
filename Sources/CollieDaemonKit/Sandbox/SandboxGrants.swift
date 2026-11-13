@@ -62,6 +62,19 @@ struct SandboxGrantStore {
         return p.count >= n && p.prefix(n - 1).elementsEqual(c.prefix(n - 1)) && p[n - 1].hasPrefix(c[n - 1])
     }
 
+    /// Whether a terminal may have the daemon write the file `path` (resolved) for it, by the profile's write rules: inside
+    /// `root` (its resolved cwd) or under one of its write `grants`; never what the profile closes after both (`refusal`'s
+    /// write rules: Collie's data, secrets, the app, any git dir (R17, R27), `neverWritable`, a pasture's paddocks); the
+    /// global agent config (R34) only under a write grant.
+    /// ponytail: stricter than the profile where it re-opens (agents' state, `.build/` checkouts): no deck goes there
+    static func mayWrite(_ path: String, root: String, grants: [SandboxGrant], home: URL, collie: URL, app: URL?, closed: [URL]) -> Bool {
+        let p = URL(fileURLWithPath: path).pathComponents
+        func under(_ r: String) -> Bool { p.starts(with: URL(fileURLWithPath: r).pathComponents) }
+        let granted = grants.contains { $0.access == .write && under($0.path) }
+        guard under(root) || granted, refusal(path, op: "write", home: home, collie: collie, app: app, closed: closed) == nil else { return false }
+        return granted || !EssentialPaths.agentConfig.contains { closes(p, $0, home: home) }
+    }
+
     static func refusal(_ path: String, op: String, home: URL, collie: URL, app: URL? = nil, closed: [URL] = []) -> String? {
         if op == "exec" { return "Executar este programa não pode ser liberado no sandbox." }
         let p = URL(fileURLWithPath: path).pathComponents

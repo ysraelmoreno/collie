@@ -13,6 +13,8 @@ private let deckFixture = fixtures.appendingPathComponent("deck-export")
 private final class FakeApp: Sendable {
     let calls = Mutex<[String]>([])
     let noSlides = Mutex(false)
+    /// The snapshot written, then the call fails (a timeout's leftovers).
+    let failAfterWrite = Mutex(false)
     func start(_ d: Daemon, _ p: Paths) async throws -> HostConnection {
         let root = p.root.appendingPathComponent("artifacts")
         let h = HostConnection(paths: p, token: { d.adminToken }) { [self] _, command, args, _ throws(ProtocolError) in
@@ -32,6 +34,7 @@ private final class FakeApp: Sendable {
                     try FileManager.default.copyItem(at: deckFixture.appendingPathComponent(f), to: out.appendingPathComponent(f))
                 }
             } catch { throw ProtocolError(code: .internal, message: "\(error)") }
+            if failAfterWrite.withLock({ $0 }) { throw ProtocolError(code: .timeout, message: "deck.snapshot timed out") }
             return .object(["file": .string(".export/slides.json"), "slides": .number(2), "blocked": .number(2), "truncated": .bool(false)])
         }
         h.start()
@@ -53,8 +56,9 @@ private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: String]
     try await UnixSocketClient.send(Request(id: "m", terminalId: t.id, token: t.token, command: cmd, args: args.mapValues { .string($0) }, cwd: cwd),
                                     to: p.socket, timeoutSeconds: 120)
 }
-private func term(_ d: Daemon, _ p: Paths, cwd: String) async throws -> Term {
-    let args: [String: JSONValue] = ["name": .string("M"), "preset": .string("shell"), "cwd": .string(cwd)]
+private func term(_ d: Daemon, _ p: Paths, cwd: String, free: Bool = false) async throws -> Term {
+    var args: [String: JSONValue] = ["name": .string("M"), "preset": .string("shell"), "cwd": .string(cwd)]
+    if free { args["sandbox"] = .string("free") }   // a fake sandbox home: no sandboxed launch in tests
     let r = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn", args: args), to: p.socket, timeoutSeconds: 60)
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     return Term(id: id, token: try await tokenOf(d, id))
@@ -208,6 +212,89 @@ private func unzipList(_ path: String) throws -> [String] {
             #expect(w.contains(.string("blocked: https://example.com/remote.png")), "\(w)")
             #expect(w.contains(.string("blocked: https://fonts.googleapis.com/css2")), "\(w)")
             #expect(!w.contains { "\($0)".contains("s3cret") }, "\(w)")
+        }
+    }
+
+    /// The terminal's sandbox rules, not just its cwd: a home as project still never gets shell rc, agent config or launchd.
+    @Test func outFollowsTheSandboxInTheHome() async throws {
+        let home = try scratch(); defer { try? FileManager.default.removeItem(at: home) }
+        try Data("keep\n".utf8).write(to: home.appendingPathComponent(".zshrc"))
+        for d in [".claude", "Library/LaunchAgents"] {
+            try FileManager.default.createDirectory(at: home.appendingPathComponent(d), withIntermediateDirectories: true)
+        }
+        try await withDaemon(configure: { $0.sandboxHome = home; $0.denialSource = LineFeed().source }) { d, p in
+            let app = FakeApp(), h = try await app.start(d, p); defer { h.stop() }
+            let m = try await term(d, p, cwd: home.path, free: true)
+            let id = try await agentPage(d)
+            let rc = try await call(p, m, "artifact.export", ["id": id, "format": "pdf", "out": ".zshrc"], cwd: home.path)
+            #expect(rc.error?.code == .invalidArgs && rc.error?.message == "out must end in .pdf", "\(rc)")
+            for out in [".zcompdump.pdf", ".claude/x.pdf", "Library/LaunchAgents/x.pdf"] {
+                let r = try await call(p, m, "artifact.export", ["id": id, "format": "pdf", "out": out], cwd: home.path)
+                #expect(r.error?.code == .unauthorized && r.error?.message.contains("use collie access request") == true, "\(out): \(r)")
+                #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent(out).path), "\(out)")
+            }
+            #expect(FileManager.default.contents(atPath: home.appendingPathComponent(".zshrc").path) == Data("keep\n".utf8))
+            #expect(app.calls.withLock { $0 }.isEmpty)   // refused before the app is asked
+        }
+    }
+
+    @Test func outNeverIntoAGitDir() async throws {
+        try await withDaemon { d, p in
+            let app = FakeApp(), h = try await app.start(d, p); defer { h.stop() }
+            let proj = try scratch(); defer { try? FileManager.default.removeItem(at: proj) }
+            for d in [".git", "sub/.git"] { try FileManager.default.createDirectory(at: proj.appendingPathComponent(d), withIntermediateDirectories: true) }
+            let m = try await term(d, p, cwd: proj.path)
+            let id = try await agentPage(d)
+            let cfg = try await call(p, m, "artifact.export", ["id": id, "format": "pdf", "out": ".git/config"], cwd: proj.path)
+            #expect(cfg.error?.code == .invalidArgs, "\(cfg)")
+            for out in [".git/x.pdf", "sub/.git/x.pdf"] {
+                let r = try await call(p, m, "artifact.export", ["id": id, "format": "pdf", "out": out], cwd: proj.path)
+                #expect(r.error?.code == .unauthorized, "\(out): \(r)")
+                #expect(!FileManager.default.fileExists(atPath: proj.appendingPathComponent(out).path), "\(out)")
+            }
+        }
+    }
+
+    @Test func outMustBeTheFormatsFile() async throws {
+        try await withDaemon { d, p in
+            let proj = try scratch(); defer { try? FileManager.default.removeItem(at: proj) }
+            let m = try await term(d, p, cwd: proj.path)
+            let id = try await agentPage(d)
+            let r = try await call(p, m, "artifact.export", ["id": id, "format": "pptx", "out": "notes.txt"], cwd: proj.path)
+            #expect(r.error?.code == .invalidArgs && r.error?.message == "out must end in .pptx", "\(r)")
+            let upper = try await call(p, m, "artifact.export", ["id": id, "format": "pptx", "out": "Deck.PPTX"], cwd: proj.path)
+            #expect(upper.error?.message != "out must end in .pptx", "\(upper)")   // the case does not matter
+        }
+    }
+
+    @Test func outOutsideCwdUnderAWriteGrant() async throws {
+        try await withDaemon { d, p in
+            let app = FakeApp(), h = try await app.start(d, p); defer { h.stop() }
+            let proj = try scratch(), outside = try scratch()
+            defer { try? FileManager.default.removeItem(at: proj); try? FileManager.default.removeItem(at: outside) }
+            let m = try await term(d, p, cwd: proj.path)
+            let id = try await agentPage(d)
+            let dst = String(cString: realpath(outside.path, nil)) + "/x.pdf"
+            let before = try await call(p, m, "artifact.export", ["id": id, "format": "pdf", "out": dst], cwd: proj.path)
+            #expect(before.error?.code == .unauthorized, "\(before)")
+            let g = try await admin(d, p, "access.grant", ["terminal": m.id, "path": String(dst.dropLast("/x.pdf".count)), "access": "write", "scope": "terminal"])
+            #expect(g.ok, "\(g)")
+            let m2 = Term(id: m.id, token: try await tokenOf(d, m.id))   // the grant restarted it: a new token
+            let r = try await call(p, m2, "artifact.export", ["id": id, "format": "pdf", "out": dst], cwd: proj.path)
+            #expect(r.ok && obj(r)["path"] == .string(dst), "\(r)")
+            #expect(FileManager.default.contents(atPath: dst) == Data("%PDF-1.4\n%%EOF\n".utf8))
+        }
+    }
+
+    @Test func failedAppCallLeavesNoSnapshot() async throws {
+        try await withDaemon { d, p in
+            let app = FakeApp(), h = try await app.start(d, p); defer { h.stop() }
+            app.failAfterWrite.withLock { $0 = true }
+            let id = try await agentPage(d)
+            let r = try await admin(d, p, "artifact.export", ["id": id, "format": "pptx"])
+            #expect(r.error?.code == .timeout, "\(r)")
+            let dir = p.root.appendingPathComponent("artifacts/\(id)/.export")
+            #expect((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) == [], "\(dir)")
         }
     }
 }

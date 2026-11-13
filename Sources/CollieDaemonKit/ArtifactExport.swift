@@ -10,34 +10,39 @@ extension CommandRouter {
         guard a.kind != .export else { throw ProtocolError(code: .invalidArgs, message: "design exports have no slides") }
         guard format == "pptx" || format == "pdf" else { throw ProtocolError(code: .invalidArgs, message: "format must be pptx|pdf") }
         // checked before the app is asked: a refused --out costs no export
-        let dst = try out.map { try Self.exportTarget($0, caller: caller, cwd: cwd) }
+        let dst = try out.map { try exportTarget($0, format: format, caller: caller, cwd: cwd) }
         // the url is built here from the record, never taken from a caller
         let args: [String: JSONValue] = ["id": .string(a.id.uuidString.lowercased()),
                                          "url": .string("collie-artifact://app/\(a.source ?? "\(a.folder)/source.html")")]
         let dir = artifacts.dir.appendingPathComponent("\(a.folder)/.export")
         var slides = 0, warnings: [String] = []
-        if format == "pptx" {
-            _ = try await host.callApp(command: "deck.snapshot", args: args, timeout: .seconds(50))
-            let (deck, payloads) = try await Self.readDeck(dir)
-            warnings = deck.blocked.map { "blocked: " + String($0.prefix { $0 != "?" && $0 != "#" }) }   // queries may carry tokens
-            if deck.truncated { warnings.append("snapshot truncated: the page has more elements than an export takes") }
-            let built: (data: Data, warnings: [String])
-            do { built = try PPTXWriter.build(deck, payloads: payloads) } catch {
-                throw ProtocolError(code: .invalidArgs, message: error == .noSlides ? "page has no slides" : "deck too large to export")
-            }
-            warnings += built.warnings
-            slides = deck.slides.count
-            try await UnixSocketClient.offPool { try Self.inDir(dir) { try Self.put($0, "deck.pptx", built.data) } }
-        } else {
-            let r = try await host.callApp(command: "deck.pdf", args: args, timeout: .seconds(50))
-            if case .object(let o) = r, case .number(let n)? = o["slides"] { slides = Int(n) }
-            try await UnixSocketClient.offPool {
-                try Self.inDir(dir) { dfd in
-                    var st = stat()
-                    guard fstatat(dfd, "deck-app.pdf", &st, AT_SYMLINK_NOFOLLOW) == 0, st.st_mode & S_IFMT == S_IFREG,
-                          renameat(dfd, "deck-app.pdf", dfd, "deck.pdf") == 0 else { throw ProtocolError(code: .internal, message: "the app left no PDF") }
+        do {
+            if format == "pptx" {
+                _ = try await host.callApp(command: "deck.snapshot", args: args, timeout: .seconds(50))
+                let (deck, payloads) = try await Self.readDeck(dir)
+                warnings = deck.blocked.map { "blocked: " + String($0.prefix { $0 != "?" && $0 != "#" }) }   // queries may carry tokens
+                if deck.truncated { warnings.append("snapshot truncated: the page has more elements than an export takes") }
+                let built: (data: Data, warnings: [String])
+                do { built = try PPTXWriter.build(deck, payloads: payloads) } catch {
+                    throw ProtocolError(code: .invalidArgs, message: error == .noSlides ? "page has no slides" : "deck too large to export")
+                }
+                warnings += built.warnings
+                slides = deck.slides.count
+                try await UnixSocketClient.offPool { try Self.inDir(dir) { try Self.put($0, "deck.pptx", built.data) } }
+            } else {
+                let r = try await host.callApp(command: "deck.pdf", args: args, timeout: .seconds(50))
+                if case .object(let o) = r, case .number(let n)? = o["slides"] { slides = Int(n) }
+                try await UnixSocketClient.offPool {
+                    try Self.inDir(dir) { dfd in
+                        var st = stat()
+                        guard fstatat(dfd, "deck-app.pdf", &st, AT_SYMLINK_NOFOLLOW) == 0, st.st_mode & S_IFMT == S_IFREG,
+                              renameat(dfd, "deck-app.pdf", dfd, "deck.pdf") == 0 else { throw ProtocolError(code: .internal, message: "the app left no PDF") }
+                    }
                 }
             }
+        } catch {   // a failed or timed-out app call, a bad snapshot: nothing of the app's is left behind
+            try? await UnixSocketClient.offPool { try Self.inDir(dir, Self.dropAppFiles) }
+            throw error
         }
         var path = dir.appendingPathComponent("deck.\(format)").path
         if let dst {
@@ -62,12 +67,13 @@ extension CommandRouter {
                         "warnings": .array(warnings.map { .string($0) })])
     }
 
-    /// `out` resolved against `cwd` (else the terminal's cwd, else `/`): its parent's real path + its name. A terminal's
-    /// must lie under its own cwd's real path (no `..`); an existing directory is refused for anyone.
-    static func exportTarget(_ out: String, caller: TerminalRecord?, cwd: String?) throws(ProtocolError) -> URL {
+    /// `out` resolved against `cwd` (else the terminal's cwd, else `/`): its parent's real path + its name; an existing
+    /// directory is refused for anyone. A terminal's: no `..`, named `*.<format>`, and a file its own sandbox lets it
+    /// write (`SandboxGrantStore.mayWrite`: under its cwd's real path or a write grant, never what the profile closes).
+    func exportTarget(_ out: String, format: String, caller: TerminalRecord?, cwd: String?) throws(ProtocolError) -> URL {
         let base = URL(fileURLWithPath: cwd ?? caller?.cwd ?? "/", isDirectory: true)
         let url = URL(fileURLWithPath: out, relativeTo: base)
-        let denied = ProtocolError(code: .unauthorized, message: "--out '\(out)' is outside your project: use collie access request <path> --write, or write inside it")
+        let denied = ProtocolError(code: .unauthorized, message: "--out '\(out)' is not writable by you: use collie access request <path> --write, or write inside your project")
         if caller != nil, out.split(separator: "/").contains("..") { throw denied }
         let name = url.standardizedFileURL.lastPathComponent
         guard !name.isEmpty, name != "/", name != ".", name != "..",
@@ -75,15 +81,34 @@ extension CommandRouter {
             throw ProtocolError(code: .invalidArgs, message: "--out '\(out)': its folder does not exist")
         }
         let dir = String(cString: parent); free(parent)
+        let dst = URL(fileURLWithPath: dir, isDirectory: true).appendingPathComponent(name)
         if let me = caller {
+            guard name.lowercased().hasSuffix(".\(format)") else { throw ProtocolError(code: .invalidArgs, message: "out must end in .\(format)") }
             guard let r = realpath(me.cwd, nil) else { throw denied }
             let root = String(cString: r); free(r)
-            guard dir == root || dir.hasPrefix(root == "/" ? "/" : root + "/") else { throw denied }
+            // the same inputs `prepareSandbox` builds this terminal's profile from
+            let project = sandboxProject(me)
+            let grants = SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: project.path, lot: ws.lot(of: me.id)?.id)
+            guard SandboxGrantStore.mayWrite(dst.path, root: root, grants: grants, home: sandboxHomeDir, collie: config.paths.root,
+                                             app: SandboxInput.appBundle(of: config.collieExecutable), closed: closedPaddocks(project)) else { throw denied }
         }
-        let dst = URL(fileURLWithPath: dir, isDirectory: true).appendingPathComponent(name)
         var st = stat()
         if lstat(dst.path, &st) == 0, st.st_mode & S_IFMT == S_IFDIR { throw ProtocolError(code: .invalidArgs, message: "--out '\(out)' is a folder: name the file") }
         return dst
+    }
+
+    /// The app's files in the `.export` dir `dfd` (snapshot, payloads, its PDF) unlinked, links themselves (never followed);
+    /// the decks written there stay.
+    private static func dropAppFiles(_ dfd: Int32) {
+        let fd = dup(dfd)
+        guard fd >= 0, let d = fdopendir(fd) else { if fd >= 0 { close(fd) }; return }
+        defer { closedir(d) }
+        var names: [String] = []
+        while let e = readdir(d) {
+            let n = withUnsafeBytes(of: e.pointee.d_name) { String(decoding: $0.prefix(Int(e.pointee.d_namlen)), as: UTF8.self) }
+            if n == "slides.json" || n == "deck-app.pdf" || n.wholeMatch(of: /(img|svg)-\d+\.(png|svg)/) != nil { names.append(n) }
+        }
+        for n in names { unlinkat(dfd, n, 0) }
     }
 
     /// `body` on `dir` opened as a directory, never through a link.
@@ -132,10 +157,7 @@ extension CommandRouter {
     private static func readDeck(_ dir: URL) async throws -> (DeckSnapshot, [String: Data]) {
         try await UnixSocketClient.offPool { () throws -> (DeckSnapshot, [String: Data]) in
             try inDir(dir) { dfd in
-                defer {
-                    for f in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-                    where f == "slides.json" || f.wholeMatch(of: /(img|svg)-\d+\.(png|svg)/) != nil { unlinkat(dfd, f, 0) }
-                }
+                defer { dropAppFiles(dfd) }
                 guard let raw = read(dfd, "slides.json", cap: 32 << 20), let s = try? JSONDecoder().decode(DeckSnapshot.self, from: raw) else {
                     throw ProtocolError(code: .internal, message: "bad deck snapshot")
                 }

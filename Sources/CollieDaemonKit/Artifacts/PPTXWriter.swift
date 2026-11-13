@@ -69,9 +69,9 @@ enum PPTXWriter {
                     rels([("rId1", "notesMaster", "../notesMasters/notesMaster1.xml"), ("rId2", "slide", "../slides/slide\(i + 1).xml")]))
             }
             var bg = slide.background
-            if let g = bg, g.contains("linear-gradient(") {
+            if let g = bg, g.contains("gradient(") {
                 warnings.append("slide \(i + 1): gradient background → first color")
-                bg = g.range(of: "rgb").flatMap { HTMLImport.leadingColor(String(g[$0.lowerBound...]))?.color }
+                bg = firstStop(g)
             }
             let bgXML = bg.flatMap(CSSColor.parse).map { "<p:bg><p:bgPr>\(fill($0))<a:effectLst/></p:bgPr></p:bg>" } ?? ""
             add("ppt/slides/slide\(i + 1).xml", #"\#(decl)<p:sld \#(ns)><p:cSld>\#(bgXML)<p:spTree>\#(group)\#(b.shapes)</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"#)
@@ -86,7 +86,8 @@ enum PPTXWriter {
         if pseudo > 0 { warnings.append("pseudo-element content dropped (\(pseudo) elements)") }
         warnings += missing.map { "image missing: \($0)" }
         for (key, text) in [("border", "non-uniform borders approximated (%d)"), ("shadow", "box-shadow dropped (%d elements)"),
-                            ("clip", "clip-path dropped (%d elements)"), ("overflow", "overflow:hidden ignored (%d)")] {
+                            ("clip", "clip-path dropped (%d elements)"), ("overflow", "overflow:hidden ignored (%d)"),
+                            ("gradient", "gradient backgrounds approximated (%d elements)")] {
             if let k = tally[key] { warnings.append(text.replacingOccurrences(of: "%d", with: "\(k)")) }
         }
         do { return (try ZipWriter.archive(entries), warnings) } catch { throw .tooLarge }
@@ -121,8 +122,10 @@ enum PPTXWriter {
             let s = node.style, loose = node.tag == "#text"   // a loose text node carries its parent's box style
             if !loose, let v = s["boxShadow"], !v.isEmpty, v != "none" { tally["shadow", default: 0] += 1 }
             if !loose, let v = s["clipPath"], !v.isEmpty, v != "none" { tally["clip", default: 0] += 1 }
+            let gradient = !loose && (s["backgroundImage"] ?? "").contains("gradient(")
+            if !root && gradient { tally["gradient", default: 0] += 1 }
             if !root && !loose { shape(node) }   // the root's fill is the slide background
-            if let img = node.image { picture(node, img); return }
+            if let img = node.image { picture(node, img) }   // a background image: text and children go on top
             if let t = node.text, !t.isEmpty { textBox(node, t); return }
             let clips = (s["overflow"] ?? "").split(separator: " ").contains { $0 == "hidden" || $0 == "clip" }
             if clips, node.children.contains(where: {
@@ -133,7 +136,9 @@ enum PPTXWriter {
 
         mutating func shape(_ n: DOMNode) {
             let s = n.style
+            // a gradient without a colour under it: its first stop
             let bg = s["backgroundColor"].flatMap(CSSColor.parse)
+                ?? s["backgroundImage"].flatMap { $0.contains("gradient(") ? PPTXWriter.firstStop($0) : nil }.flatMap(CSSColor.parse)
             // the snapshot omits initial values: an absent style is none, an absent colour is currentColor (≈ black)
             let sides = ["Top", "Right", "Bottom", "Left"].map { side -> Double in
                 let w = HTMLImport.px(s["border\(side)Width"]) ?? 0
@@ -146,7 +151,7 @@ enum PPTXWriter {
                 if Set(sides).count > 1 { tally["border", default: 0] += 1 }   // differing widths or unbordered sides
                 let side = ["Top", "Right", "Bottom", "Left"][k]
                 if let c = CSSColor.parse(s["border\(side)Color"] ?? s["color"] ?? "rgb(0, 0, 0)") {
-                    ln = #"<a:ln w="\#(emu(sides[k], scale: scale))">\#(PPTXWriter.fill(c))</a:ln>"#
+                    ln = #"<a:ln w="\#(min(max(emu(sides[k], scale: scale), 0), 20_116_800))">\#(PPTXWriter.fill(c))</a:ln>"#
                 }
             }
             let minSide = min(n.w, n.h)
@@ -197,12 +202,13 @@ enum PPTXWriter {
 
         mutating func textBox(_ node: DOMNode, _ text: String) {
             let s = node.style
-            let family = s["fontFamily"]?.split(separator: ",").first
+            let family = s["fontFamily"]?.split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) }
-                .flatMap { $0.isEmpty ? nil : $0 }
+                .first { !$0.isEmpty && !Self.generic($0) }
             if let family { families.insert(family) }
             let px = HTMLImport.px(s["fontSize"]).flatMap { $0 > 0 ? $0 : nil } ?? 16
-            let sz = Int(min(max((px * 0.75 * 100).rounded(), 100), 400_000))
+            // hundredths of a point; 12700 EMU per pt (0.75 pt per px at 1280 wide)
+            let sz = Int(min(max((px * scale / 12_700 * 100).rounded(), 100), 400_000))
             // a loose text node's box is its text; the padding in its style is the parent's
             func inset(_ k: String) -> Int { node.tag == "#text" ? 0 : max(0, emu(HTMLImport.px(s[k]) ?? 0, scale: scale)) }
             let algn = ["left": "l", "start": "l", "center": "ctr", "right": "r", "end": "r", "justify": "just"][s["textAlign"] ?? ""]
@@ -236,14 +242,16 @@ enum PPTXWriter {
                 let r = runs.last { $0.s <= a && b <= $0.e }?.run
                 let bold = Self.bold(r?.fontWeight ?? s["fontWeight"])
                 let italic = (r?.fontStyle ?? s["fontStyle"]).map { $0.contains("italic") || $0.contains("oblique") } ?? false
-                let under = HTMLImport.decoration(r?.decoration ?? s["textDecorationLine"]) == "underline"
-                var attrs = #"lang="en-US" sz="\#(sz)""#
+                let decoration = HTMLImport.decoration(r?.decoration ?? s["textDecorationLine"])
+                var attrs = #"sz="\#(sz)""#
                 if bold { attrs += #" b="1""# }
                 if italic { attrs += #" i="1""# }
-                if under { attrs += #" u="sng""# }
+                if decoration == "underline" { attrs += #" u="sng""# }
+                if decoration == "strikethrough" { attrs += #" strike="sngStrike""# }
                 var props = (r?.color ?? s["color"]).flatMap(CSSColor.parse).map(PPTXWriter.fill) ?? ""
                 if let family { props += #"<a:latin typeface="\#(xmlEscape(family))"/>"# }
-                if let href = r?.href ?? node.href, !href.isEmpty, !href.hasPrefix("#") {
+                if let href = r?.href ?? node.href, let url = URL(string: href),
+                   ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
                     props += #"<a:hlinkClick r:id="\#(rel("hyperlink", href))"/>"#
                 }
                 let piece = String(decoding: u[a..<b], as: UTF16.self)
@@ -251,7 +259,7 @@ enum PPTXWriter {
             }
             paras.append(cur)
             let body = paras.enumerated().map {
-                #"<a:p>\#($0.offset == 0 ? pPr : contPPr)\#($0.element)<a:endParaRPr lang="en-US" sz="\#(sz)" dirty="0"/></a:p>"#
+                #"<a:p>\#($0.offset == 0 ? pPr : contPPr)\#($0.element)<a:endParaRPr sz="\#(sz)" dirty="0"/></a:p>"#
             }.joined()
 
             let id = nextID
@@ -263,10 +271,22 @@ enum PPTXWriter {
                 + #"<a:lstStyle/>\#(body)</p:txBody></p:sp>"#
         }
 
+        /// CSS generic families: no real typeface to name (PowerPoint picks its own).
+        static func generic(_ f: String) -> Bool {
+            let f = f.lowercased()
+            return f.hasPrefix("ui-") || ["system-ui", "-apple-system", "blinkmacsystemfont", "sans-serif", "serif", "monospace",
+                                          "cursive", "fantasy"].contains(f)
+        }
+
         static func bold(_ w: String?) -> Bool {
             guard let w else { return false }
             return w == "bold" || w == "bolder" || (Double(w).map { $0 >= 600 } ?? false)
         }
+    }
+
+    /// A gradient's first `rgb(…)` stop (computed styles print colours as rgb/rgba).
+    static func firstStop(_ g: String) -> String? {
+        g.range(of: "rgb").flatMap { HTMLImport.leadingColor(String(g[$0.lowerBound...]))?.color }
     }
 
     static func fill(_ c: (hex: String, alpha: Int)) -> String {
@@ -326,11 +346,11 @@ enum PPTXWriter {
         #"<p:sp><p:nvSpPr><p:cNvPr id="3" name="Slide Image Placeholder 2"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg" idx="2"/></p:nvPr></p:nvSpPr>\#(spPr)</p:sp>"#
     }
 
-    static let notesMaster = #"\#(decl)<p:notesMaster \#(ns)><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>\#(group)\#(sldImg(#"<p:spPr><a:xfrm><a:off x="685800" y="1143000"/><a:ext cx="5486400" cy="3086100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>"#))\#(notesBody)<p:spPr><a:xfrm><a:off x="685800" y="4400550"/><a:ext cx="5486400" cy="3600450"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody></p:sp></p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:notesStyle><a:lvl1pPr><a:defRPr sz="1200"/></a:lvl1pPr></p:notesStyle></p:notesMaster>"#
+    static let notesMaster = #"\#(decl)<p:notesMaster \#(ns)><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>\#(group)\#(sldImg(#"<p:spPr><a:xfrm><a:off x="685800" y="1143000"/><a:ext cx="5486400" cy="3086100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>"#))\#(notesBody)<p:spPr><a:xfrm><a:off x="685800" y="4400550"/><a:ext cx="5486400" cy="3600450"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr/></a:p></p:txBody></p:sp></p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:notesStyle><a:lvl1pPr><a:defRPr sz="1200"/></a:lvl1pPr></p:notesStyle></p:notesMaster>"#
 
     static func notesSlide(_ text: String) -> String {
         let paras = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .map { #"<a:p><a:r><a:rPr lang="en-US" dirty="0"/><a:t>\#(xmlEscape(String($0)))</a:t></a:r></a:p>"# }.joined()
+            .map { #"<a:p><a:r><a:rPr dirty="0"/><a:t>\#(xmlEscape(String($0)))</a:t></a:r></a:p>"# }.joined()
         return #"\#(decl)<p:notes \#(ns)><p:cSld><p:spTree>\#(group)\#(sldImg("<p:spPr/>"))\#(notesBody)<p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>\#(paras)</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"#
     }
 

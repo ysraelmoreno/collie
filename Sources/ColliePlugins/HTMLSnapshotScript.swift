@@ -251,14 +251,18 @@ enum HTMLSnapshotScript {
     });
     """#
 
-    /// `source` up to its page walk, with list info on `li` nodes, then the per-slide loop.
+    /// `source` up to its page walk, with list info on `li` nodes and every side's border style, then the per-slide loop.
     static let deckSource: String = {
         let alt = #"if (tag === "img" && el.hasAttribute("alt")) node.alt = el.getAttribute("alt");"#
-        guard let cut = source.range(of: "const root = walk(document.documentElement, null);"), source.contains(alt) else {
+        let style = #""borderTopStyle", "#
+        guard let cut = source.range(of: "const root = walk(document.documentElement, null);"), source.contains(alt),
+              source.contains(style) else {
             preconditionFailure("HTMLSnapshotScript.source changed: update deckSource's anchors")
         }
         return String(source[..<cut.lowerBound])
-            .replacingOccurrences(of: alt, with: alt + #" if (tag === "li") node.list = listInfo(el);"#) + isolateFunction + deckTail
+            .replacingOccurrences(of: alt, with: alt + #" if (tag === "li") node.list = listInfo(el);"#)
+            .replacingOccurrences(of: style, with: style + #""borderRightStyle", "borderBottomStyle", "borderLeftStyle", "#)
+            + isolateFunction + deckTail
     }()
 
     /// `isolateSlide(slides, i)` shows slide `i` of `slides` alone, unscaled at its parent's origin; `deckSlides()` finds
@@ -286,14 +290,24 @@ enum HTMLSnapshotScript {
 
     """#
 
-    /// A `callAsyncJavaScript` body for the PDF pass: shows slide `i` alone (each call first restores the page as loaded)
-    /// and returns `{count, x, y, w, h}`, the slide's box in page CSS px (`{count: 0}` if the page has no slides).
+    /// A `callAsyncJavaScript` body for the PDF pass: shows slide `i` alone, everything outside it hidden (each call first
+    /// restores the page as loaded), and returns `{count, x, y, w, h}`, the slide's box in page CSS px (`{count: 0}` if
+    /// the page has no slides).
     static func isolateSlide(_ i: Int) -> String {
         isolateFunction + """
         const slides = deckSlides();
         if (!slides.length) return { count: 0 };
         window.__collieRestore = window.__collieRestore || keepSlides(slides);
         window.__collieRestore();
+        if (window.__collieUnhide) window.__collieUnhide();
+        // fixed chrome outside the slides (counters, nav) would print on every page
+        const s = slides[\(i)], hidden = [];
+        for (const e of document.body.querySelectorAll("*")) {
+          if (e.contains(s) || s.contains(e)) continue;
+          hidden.push([e, e.getAttribute("style")]);
+          e.style.setProperty("visibility", "hidden", "important");
+        }
+        window.__collieUnhide = () => hidden.forEach(([e, v]) => v === null ? e.removeAttribute("style") : e.setAttribute("style", v));
         isolateSlide(slides, \(i));
         const r = slides[\(i)].getBoundingClientRect();
         return { count: slides.length, x: r.left + scrollX, y: r.top + scrollY, w: r.width, h: r.height };
@@ -308,6 +322,16 @@ enum HTMLSnapshotScript {
       for (let s = li.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === "LI") index++;
       for (let a = p.parentElement; a; a = a.parentElement) if (a.tagName === "UL" || a.tagName === "OL") depth++;
       return { kind, index, depth };
+    }
+    // the slide's own background, else the nearest ancestor's (a transparent slide shows the page behind it); a
+    // gradient as its backgroundImage string
+    function slideBackground(slide) {
+      for (let e = slide; e; e = e.parentElement) {
+        const c = getComputedStyle(e);
+        if (/gradient\(/.test(c.backgroundImage)) return c.backgroundImage;
+        if (c.backgroundColor !== "transparent" && !/^rgba\(.*,\s*0\)$/.test(c.backgroundColor)) return c.backgroundColor;
+      }
+      return getComputedStyle(slide).backgroundColor;
     }
     const eachNode = (n, f) => { f(n); for (const c of n.children) eachNode(c, f); };
     // svg markup (inline or a fetched .svg file) drawn to a PNG at 2× its box, under the image caps
@@ -332,7 +356,6 @@ enum HTMLSnapshotScript {
       // notes: hidden direct-child asides (walk skips them, being display: none)
       const notes = [...slide.children].filter(c => c.tagName === "ASIDE" && getComputedStyle(c).display === "none")
         .map(c => c.textContent.trim()).join("\n");
-      const grad = /linear-gradient/.test(cs.backgroundImage) && /rgba?\([^)]*\)/.exec(cs.backgroundImage);
       let pseudo = 0;
       for (const e of [slide, ...slide.querySelectorAll("*")]) {
         if (["::before", "::after"].some(p => !["none", "normal"].includes(getComputedStyle(e, p).content))) pseudo++;
@@ -346,7 +369,7 @@ enum HTMLSnapshotScript {
       eachNode(root, n => { if (typeof n.svg === "string" && !n.image) svgs.push(svgPNG(n)); });
       await Promise.all(svgs);
       eachNode(root, n => { n.x -= b.x; n.y -= b.y; });
-      out.push({ index: i, w: b.w, h: b.h, background: grad ? grad[0] : cs.backgroundColor, notes: notes || undefined, pseudo, root });
+      out.push({ index: i, w: b.w, h: b.h, background: slideBackground(slide), notes: notes || undefined, pseudo, root });
     }
     restore();
     return JSON.stringify({ title: document.title, slides: out, blocked, truncated });

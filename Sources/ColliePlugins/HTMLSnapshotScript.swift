@@ -1,9 +1,19 @@
+import Foundation
+
 /// The DOM snapshot for `html.snapshot`, run as a document-end user script in the isolated `.defaultClient` world.
 /// Waits for `load`, `document.fonts.ready` + 300 ms, walks the page and posts the snapshot as a JSON string to the
 /// `collieSnapshot` handler (`{error}` if it threw). Keys: `{title, width, height, truncated, blocked, root}`; nodes in
 /// HTMLSnapshotter.swift.
 enum HTMLSnapshotScript {
-    static let userScript = """
+    static let userScript = wrap(source)
+    /// Deck mode (deck export): `source`'s walk run once per slide (`.slide`, else `[data-slide]`; none → error
+    /// "no slides"), each slide isolated by `isolateSlide`. Posts `{title, slides: [{index, w, h, background, notes?,
+    /// pseudo, root}], blocked, truncated}`; `root` coordinates are slide-relative, `li` nodes add `list {kind, index,
+    /// depth}`, svg nodes add a PNG `image` beside `svg`. Built from `source` by text so `userScript` stays unchanged.
+    static let deckUserScript = "window.__collieDeck = true;\n" + wrap(deckSource)
+
+    static func wrap(_ body: String) -> String {
+        """
         (async () => {
         if (document.readyState !== "complete") await new Promise(r => addEventListener("load", r, { once: true }));
         // media queries see width + gap, as in a real browser with a classic scrollbar
@@ -12,10 +22,11 @@ enum HTMLSnapshotScript {
           addEventListener("resize", r, { once: true }); setTimeout(r, 2000);
           window.webkit.messageHandlers.collieSnapshot.postMessage({ gap });
         });
-        \(source)
+        \(body)
         })().then(s => window.webkit.messageHandlers.collieSnapshot.postMessage(s),
                   e => window.webkit.messageHandlers.collieSnapshot.postMessage({ error: String(e) }));
         """
+    }
     static let source = #"""
     await document.fonts.ready;
     await new Promise(r => setTimeout(r, 300));
@@ -238,5 +249,85 @@ enum HTMLSnapshotScript {
       height: Math.min(document.documentElement.scrollHeight, MAX_H),
       truncated, blocked, root
     });
+    """#
+
+    /// `source` up to its page walk, with list info on `li` nodes, then the per-slide loop.
+    static let deckSource: String = {
+        let alt = #"if (tag === "img" && el.hasAttribute("alt")) node.alt = el.getAttribute("alt");"#
+        guard let cut = source.range(of: "const root = walk(document.documentElement, null);"), source.contains(alt) else {
+            preconditionFailure("HTMLSnapshotScript.source changed: update deckSource's anchors")
+        }
+        return String(source[..<cut.lowerBound])
+            .replacingOccurrences(of: alt, with: alt + #" if (tag === "li") node.list = listInfo(el);"#) + isolateFunction + deckTail
+    }()
+
+    /// Shows slide `i` of `slides` alone, unscaled at its parent's origin. Also for the PDF pass (one slide per page).
+    static let isolateFunction = #"""
+    function isolateSlide(slides, i) {
+      slides.forEach((s, j) => { if (j !== i) s.style.setProperty("display", "none", "important"); });
+      const s = slides[i];
+      if (getComputedStyle(s).display === "none") s.classList.add("on");
+      if (getComputedStyle(s).display === "none") s.style.setProperty("display", "block", "important");
+      // transition: none, or the rect would be read mid-way from the old transform
+      for (const [p, v] of [["transform", "none"], ["left", "0"], ["top", "0"], ["margin", "0"], ["position", "relative"],
+                            ["transition", "none"]]) s.style.setProperty(p, v, "important");
+    }
+
+    """#
+
+    static let deckTail = #"""
+    function listInfo(li) {
+      const p = li.parentElement, kind = p && p.tagName.toLowerCase();
+      if (kind !== "ul" && kind !== "ol") return undefined;
+      let index = 1, depth = 0;
+      for (let s = li.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === "LI") index++;
+      for (let a = p.parentElement; a; a = a.parentElement) if (a.tagName === "UL" || a.tagName === "OL") depth++;
+      return { kind, index, depth };
+    }
+    const eachNode = (n, f) => { f(n); for (const c of n.children) eachNode(c, f); };
+    // svg markup (inline or a fetched .svg file) drawn to a PNG at 2× its box, under the image caps
+    async function svgPNG(node) {
+      const markup = /^<svg[^>]*\sxmlns=/.test(node.svg) ? node.svg : node.svg.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
+      const img = new Image();
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(markup);
+      try { await img.decode(); } catch (e) { return; }
+      const w = Math.max(1, Math.ceil(node.w * 2)), h = Math.max(1, Math.ceil(node.h * 2));
+      const data = canvasPNG(img, w, h);
+      if (data) node.image = { data, w, h, fit: "fill" };
+    }
+
+    let slides = [...document.querySelectorAll(".slide")];
+    if (!slides.length) slides = [...document.querySelectorAll("[data-slide]")];
+    if (!slides.length) throw "no slides";
+    const saved = slides.map(s => [s.getAttribute("style"), s.getAttribute("class")]);
+    const restore = () => slides.forEach((s, j) => {
+      saved[j].forEach((v, k) => { const a = k ? "class" : "style"; v === null ? s.removeAttribute(a) : s.setAttribute(a, v); });
+    });
+    const out = [];
+    for (let i = 0; i < slides.length; i++) {
+      restore();
+      isolateSlide(slides, i);
+      const slide = slides[i], b = box(slide), cs = getComputedStyle(slide);
+      // notes: hidden direct-child asides (walk skips them, being display: none)
+      const notes = [...slide.children].filter(c => c.tagName === "ASIDE" && getComputedStyle(c).display === "none")
+        .map(c => c.textContent.trim()).join("\n");
+      const grad = /linear-gradient/.test(cs.backgroundImage) && /rgba?\([^)]*\)/.exec(cs.backgroundImage);
+      let pseudo = 0;
+      for (const e of [slide, ...slide.querySelectorAll("*")]) {
+        if (["::before", "::after"].some(p => !["none", "normal"].includes(getComputedStyle(e, p).content))) pseudo++;
+      }
+      const root = walk(slide, slide.parentElement && getComputedStyle(slide.parentElement));
+      await Promise.all(jobs);
+      jobs.length = 0;
+      if (root) {
+        const svgs = [];
+        eachNode(root, n => { if (typeof n.svg === "string" && !n.image) svgs.push(svgPNG(n)); });
+        await Promise.all(svgs);
+        eachNode(root, n => { n.x -= b.x; n.y -= b.y; });
+      }
+      out.push({ index: i, w: b.w, h: b.h, background: grad ? grad[0] : cs.backgroundColor, notes: notes || undefined, pseudo, root });
+    }
+    restore();
+    return JSON.stringify({ title: document.title, slides: out, blocked, truncated });
     """#
 }

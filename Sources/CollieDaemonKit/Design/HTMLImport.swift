@@ -25,7 +25,11 @@ struct DOMNode: Decodable, Sendable {
     var alt: String? = nil
     var image: DOMImage? = nil
     var svg: DOMFile? = nil
+    var list: DOMList? = nil
 }
+
+/// Deck snapshots: an `li`'s list (`ul`/`ol`), 1-based position and 0-based nesting depth.
+struct DOMList: Decodable, Sendable { var kind: String; var index: Int; var depth: Int }
 
 /// A styled span of a text leaf; `start`/`end` are UTF-16 offsets into its `text`.
 struct DOMRun: Decodable, Sendable {

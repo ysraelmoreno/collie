@@ -285,6 +285,90 @@ private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent
         #expect(await code("html.snapshot", ["id": .string(UUID().uuidString), "url": .string(s.url.absoluteString)]) == .notFound)
     }
 
+    // MARK: deck mode (`HTMLSnapshotScript.deckUserScript`)
+
+    /// `html` snapshotted in deck mode; the slides as objects.
+    func deck(_ html: String) async throws -> [[String: JSONValue]] {
+        let s = try site(["index.html": Data(html.utf8)])
+        let snap = try await HTMLSnapshotter.snapshot(url: s.url, artifactsRoot: s.root, width: 1440, timeout: .seconds(30),
+                                                      script: HTMLSnapshotScript.deckUserScript)
+        guard case .object(let o) = snap, case .array(let slides)? = o["slides"] else { Issue.record("no slides: \(snap)"); return [] }
+        return slides.compactMap { if case .object(let x) = $0 { return x }; return nil }
+    }
+    static let slideCSS = "<style>body{margin:0}.slide{width:1280px;height:720px;position:absolute;left:50%;top:50%}</style>"
+
+    @Test func deckTemplateSlidesAreIsolated() async throws {
+        let sec = { (on: Bool, t: String) in
+            "<section class='slide\(on ? " on" : "")' style='transform: translate(-50%,-50%) scale(.5)'><h1>\(t)</h1></section>" }
+        let slides = try await deck(Self.slideCSS + "<style>.slide{display:none}.slide.on{display:block}</style>"
+                                    + sec(true, "um") + sec(false, "dois") + sec(false, "três"))
+        #expect(slides.count == 3)
+        for (i, sl) in slides.enumerated() {
+            guard case .object(let root)? = sl["root"] else { Issue.record("no root \(i)"); continue }
+            #expect(sl["index"] == .number(Double(i)) && sl["w"] == .number(1280) && sl["h"] == .number(720), "\(sl)")
+            #expect(root["x"] == .number(0) && root["y"] == .number(0))
+        }
+        #expect(Self.nodes(slides.last?["root"]).contains { $0["text"] == .string("três") })
+    }
+
+    @Test func deckSlideWithoutOnClassIsStillExported() async throws {
+        let slides = try await deck(Self.slideCSS + "<style>.slide{display:none}</style>"
+                                    + "<div class='slide'><p>a</p></div><div class='slide'><p>b</p></div>")
+        #expect(slides.count == 2)
+        #expect(slides.allSatisfy { if case .object(let r)? = $0["root"] { return Self.count(r) > 0 }; return false })
+    }
+
+    @Test func deckListInfo() async throws {
+        let slides = try await deck(Self.slideCSS
+            + "<div class='slide'><ul><li>a</li><li>b<ul><li>d</li></ul></li></ul><ol><li>c</li></ol></div>")
+        let lis = Self.nodes(slides.first?["root"]).filter { $0["tag"] == .string("li") }
+        func list(_ n: [String: JSONValue]) -> [JSONValue?] {
+            guard case .object(let l)? = n["list"] else { return [] }
+            return [l["kind"], l["index"], l["depth"]]
+        }
+        #expect(lis.map(list) == [[.string("ul"), .number(1), .number(0)], [.string("ul"), .number(2), .number(0)],
+                                  [.string("ul"), .number(1), .number(1)], [.string("ol"), .number(1), .number(0)]], "\(lis)")
+    }
+
+    @Test func deckNotesFromHiddenAside() async throws {
+        let slides = try await deck(Self.slideCSS + "<div class='slide'><p>x</p><aside style='display:none'> nota </aside></div>"
+                                    + "<div class='slide'><aside>visível</aside></div>")
+        #expect(slides.count == 2)
+        #expect(slides.first?["notes"] == .string("nota"))
+        #expect(!Self.nodes(slides.first?["root"]).contains { $0["tag"] == .string("aside") })
+        #expect(slides.last?["notes"] == nil || slides.last?["notes"] == .null)
+        #expect(Self.nodes(slides.last?["root"]).contains { $0["tag"] == .string("aside") })
+    }
+
+    @Test func deckSvgGetsPng() async throws {
+        let slides = try await deck(Self.slideCSS + "<div class='slide'><svg viewBox='0 0 10 10' style='width:40px;height:40px'>"
+                                    + "<rect width='10' height='10' fill='red'/></svg></div>")
+        let svg = try #require(Self.nodes(slides.first?["root"]).first { $0["tag"] == .string("svg") })
+        #expect(Self.str(svg["svg"])?.hasPrefix("<svg") == true)
+        guard case .object(let image)? = svg["image"], let data = Self.str(image["data"]).flatMap({ Data(base64Encoded: $0) }),
+              let rep = NSBitmapImageRep(data: data) else { Issue.record("no png: \(svg)"); return }
+        #expect(rep.pixelsWide == 80 && image["fit"] == .string("fill"))
+    }
+
+    @Test func deckPseudoCount() async throws {
+        let slides = try await deck(Self.slideCSS + "<style>li::before{content:'x'}</style><div class='slide'><ul><li>a</li><li>b</li></ul></div>")
+        #expect(slides.first?["pseudo"] == .number(2))
+    }
+
+    @Test func deckNoSlidesIsAnError() async throws {
+        let s = try site(["index.html": Data("<section><h1>x</h1></section>".utf8)])
+        do {
+            _ = try await HTMLSnapshotter.snapshot(url: s.url, artifactsRoot: s.root, width: 1440, timeout: .seconds(30),
+                                                   script: HTMLSnapshotScript.deckUserScript)
+            Issue.record("no error")
+        } catch { #expect(error.message.contains("no slides"), "\(error)") }
+    }
+
+    @Test func importOutputUnchanged() {
+        #expect(!HTMLSnapshotScript.userScript.contains("__collieDeck"))
+        #expect(HTMLSnapshotScript.deckUserScript.contains("__collieDeck"))
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["COLLIE_REGEN_SNAPSHOT"] != nil))
     func regenerateLandingSnapshot() async throws {
         let (_, snap, dir) = try await landing()

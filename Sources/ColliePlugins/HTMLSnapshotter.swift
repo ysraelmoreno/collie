@@ -101,7 +101,8 @@ import WebKit
 
     /// The snapshot with payloads inline (`image.data` base64 PNG, `svg` markup).
     static func snapshot(url: URL, artifactsRoot: URL, width: Int, timeout: Duration,
-                         libs: URL? = WebLibs.directory) async throws(ProtocolError) -> JSONValue {
+                         libs: URL? = WebLibs.directory,
+                         script: String = HTMLSnapshotScript.userScript) async throws(ProtocolError) -> JSONValue {
         guard url.scheme?.lowercased() == BrowserPanel.artifactScheme, url.host == "app" else {
             throw ProtocolError(code: .invalidArgs, message: "url must be collie-artifact://app/…: \(url.absoluteString)")
         }
@@ -117,7 +118,7 @@ import WebKit
         // view alive while such a call is pending, so a page hung in JS would pin it (and its WebContent process).
         let run = Run()
         content.add(run, contentWorld: .defaultClient, name: Run.handler)
-        content.addUserScript(WKUserScript(source: HTMLSnapshotScript.userScript, injectionTime: .atDocumentEnd,
+        content.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd,
                                            forMainFrameOnly: true, in: .defaultClient))
         var web: WKWebView? = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: height), configuration: config)
         lastWebView = web

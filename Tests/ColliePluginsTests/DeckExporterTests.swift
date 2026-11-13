@@ -16,9 +16,9 @@ import CollieProtocol
         return Site(root: root, id: id, url: URL(string: "collie-artifact://app/\(id)/source/index.html")!)
     }
 
-    func run(_ cmd: String, _ s: Site, _ args: [String: JSONValue] = [:]) async throws(ProtocolError) -> JSONValue {
+    func run(_ cmd: String, _ s: Site, _ args: [String: JSONValue] = [:], timeout: Double = 32) async throws(ProtocolError) -> JSONValue {
         try await DeckExporter.handle(command: cmd, args: ["id": .string(s.id), "url": .string(s.url.absoluteString)].merging(args) { $1 },
-                                      artifactsRoot: s.root, timeoutSeconds: 32)
+                                      artifactsRoot: s.root, timeoutSeconds: timeout)
     }
 
     static let png1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -70,10 +70,44 @@ import CollieProtocol
         let s = try site(Self.deck)
         let elsewhere = s.root.deletingLastPathComponent().appendingPathComponent("elsewhere")
         try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: elsewhere.appendingPathComponent("slides.json"))
         try FileManager.default.createSymbolicLink(at: s.exportDir, withDestinationURL: elsewhere)
         _ = try await run("deck.snapshot", s)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: elsewhere.path).isEmpty)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: elsewhere.path) == ["slides.json"])
+        #expect(try Data(contentsOf: elsewhere.appendingPathComponent("slides.json")) == Data("old".utf8))
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: s.exportDir.path)) == nil)
+        // dangling link: replaced by a real folder too
+        try FileManager.default.removeItem(at: s.exportDir)
+        try FileManager.default.createSymbolicLink(at: s.exportDir, withDestinationURL: elsewhere.appendingPathComponent("gone"))
+        _ = try await run("deck.pdf", s)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: s.exportDir.path)) == nil)
+        #expect(FileManager.default.fileExists(atPath: s.exportDir.appendingPathComponent("deck-app.pdf").path))
+    }
+
+    /// The daemon keeps `deck.pptx` / `deck.pdf` in `.export`: each command clears only its own earlier files.
+    @Test func exportKeepsOtherOutputs() async throws {
+        let s = try site(Self.deck)
+        let fm = FileManager.default
+        try fm.createDirectory(at: s.exportDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+        for name in ["deck.pptx", "deck.pdf", "img-9.png", "svg-9.svg"] { try Data("x".utf8).write(to: s.exportDir.appendingPathComponent(name)) }
+        _ = try await run("deck.snapshot", s)
+        _ = try await run("deck.pdf", s)
+        let names = Set(try fm.contentsOfDirectory(atPath: s.exportDir.path))
+        #expect(names == ["deck.pptx", "deck.pdf", "deck-app.pdf", "slides.json", "img-1.png"], "\(names)")
+        #expect(try fm.attributesOfItem(atPath: s.exportDir.path)[.posixPermissions] as? Int == 0o700)
+        _ = try await run("deck.pdf", s)   // and pdf leaves the snapshot's files
+        #expect(Set(try fm.contentsOfDirectory(atPath: s.exportDir.path)) == names)
+    }
+
+    /// A page whose JS hangs once a slide is isolated (after load): `.timeout` at the call's deadline, not a stuck handler.
+    @Test func pdfTimesOutAfterLoad() async throws {
+        let s = try site(Self.deck + "<script>new MutationObserver(() => { for (;;) {} })"
+            + ".observe(document.body, { attributes: true, subtree: true })</script>")
+        let start = ContinuousClock.now
+        do { _ = try await run("deck.pdf", s, timeout: 7); Issue.record("no error") } catch {
+            #expect(error.code == .timeout, "\(error)")
+        }
+        #expect(ContinuousClock.now - start < .seconds(10))
     }
 
     @Test func rejectsBadId() async throws {

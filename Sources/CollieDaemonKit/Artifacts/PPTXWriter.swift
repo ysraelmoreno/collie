@@ -118,10 +118,10 @@ enum PPTXWriter {
             node.x = HTMLImport.clamp(node.x); node.y = HTMLImport.clamp(node.y)
             node.w = HTMLImport.clamp(node.w); node.h = HTMLImport.clamp(node.h)
             if (node.w <= 0 || node.h <= 0) && node.children.isEmpty { dropped += 1; return }
-            let s = node.style
-            if let v = s["boxShadow"], !v.isEmpty, v != "none" { tally["shadow", default: 0] += 1 }
-            if let v = s["clipPath"], !v.isEmpty, v != "none" { tally["clip", default: 0] += 1 }
-            if !root { shape(node) }   // the root's fill is the slide background
+            let s = node.style, loose = node.tag == "#text"   // a loose text node carries its parent's box style
+            if !loose, let v = s["boxShadow"], !v.isEmpty, v != "none" { tally["shadow", default: 0] += 1 }
+            if !loose, let v = s["clipPath"], !v.isEmpty, v != "none" { tally["clip", default: 0] += 1 }
+            if !root && !loose { shape(node) }   // the root's fill is the slide background
             if let img = node.image { picture(node, img); return }
             if let t = node.text, !t.isEmpty { textBox(node, t); return }
             let clips = (s["overflow"] ?? "").split(separator: " ").contains { $0 == "hidden" || $0 == "clip" }
@@ -134,15 +134,19 @@ enum PPTXWriter {
         mutating func shape(_ n: DOMNode) {
             let s = n.style
             let bg = s["backgroundColor"].flatMap(CSSColor.parse)
-            let widths = ["Top", "Right", "Bottom", "Left"].map { max(0, HTMLImport.px(s["border\($0)Width"]) ?? 0) }
-            let border = widths.contains { $0 > 0 } && s["borderTopStyle"] != "none"
-            guard bg != nil || border else { return }
+            // the snapshot omits initial values: an absent style is none, an absent colour is currentColor (≈ black)
+            let sides = ["Top", "Right", "Bottom", "Left"].map { side -> Double in
+                let w = HTMLImport.px(s["border\(side)Width"]) ?? 0
+                return w > 0 && (s["border\(side)Style"] ?? "none") != "none" ? w : 0
+            }
+            let first = sides.firstIndex { $0 > 0 }
+            guard bg != nil || first != nil else { return }
             var ln = ""
-            if border {
-                if Set(widths).count > 1 { tally["border", default: 0] += 1 }
-                let w = widths[0] > 0 ? widths[0] : widths.max()!
-                if let c = CSSColor.parse(s["borderTopColor"] ?? "rgb(0, 0, 0)") {
-                    ln = #"<a:ln w="\#(emu(w, scale: scale))">\#(PPTXWriter.fill(c))</a:ln>"#
+            if let k = first {
+                if Set(sides).count > 1 { tally["border", default: 0] += 1 }   // differing widths or unbordered sides
+                let side = ["Top", "Right", "Bottom", "Left"][k]
+                if let c = CSSColor.parse(s["border\(side)Color"] ?? s["color"] ?? "rgb(0, 0, 0)") {
+                    ln = #"<a:ln w="\#(emu(sides[k], scale: scale))">\#(PPTXWriter.fill(c))</a:ln>"#
                 }
             }
             let minSide = min(n.w, n.h)
@@ -317,12 +321,17 @@ enum PPTXWriter {
 
     static let notesBody = #"<p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes Placeholder 1"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>"#
 
-    static let notesMaster = #"\#(decl)<p:notesMaster \#(ns)><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>\#(group)\#(notesBody)<p:spPr><a:xfrm><a:off x="685800" y="4400550"/><a:ext cx="5486400" cy="3600450"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody></p:sp></p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:notesStyle><a:lvl1pPr><a:defRPr sz="1200"/></a:lvl1pPr></p:notesStyle></p:notesMaster>"#
+    /// Slide thumbnail on the Notes Page.
+    static func sldImg(_ spPr: String) -> String {
+        #"<p:sp><p:nvSpPr><p:cNvPr id="3" name="Slide Image Placeholder 2"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg" idx="2"/></p:nvPr></p:nvSpPr>\#(spPr)</p:sp>"#
+    }
+
+    static let notesMaster = #"\#(decl)<p:notesMaster \#(ns)><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>\#(group)\#(sldImg(#"<p:spPr><a:xfrm><a:off x="685800" y="1143000"/><a:ext cx="5486400" cy="3086100"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>"#))\#(notesBody)<p:spPr><a:xfrm><a:off x="685800" y="4400550"/><a:ext cx="5486400" cy="3600450"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody></p:sp></p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:notesStyle><a:lvl1pPr><a:defRPr sz="1200"/></a:lvl1pPr></p:notesStyle></p:notesMaster>"#
 
     static func notesSlide(_ text: String) -> String {
         let paras = text.split(separator: "\n", omittingEmptySubsequences: false)
             .map { #"<a:p><a:r><a:rPr lang="en-US" dirty="0"/><a:t>\#(xmlEscape(String($0)))</a:t></a:r></a:p>"# }.joined()
-        return #"\#(decl)<p:notes \#(ns)><p:cSld><p:spTree>\#(group)\#(notesBody)<p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>\#(paras)</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"#
+        return #"\#(decl)<p:notes \#(ns)><p:cSld><p:spTree>\#(group)\#(sldImg("<p:spPr/>"))\#(notesBody)<p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>\#(paras)</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"#
     }
 
     static let theme: String = {

@@ -4,6 +4,7 @@ import CollieCore
 import CollieProtocol
 import CollieTheme
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// One `artifact.list` entry.
 public struct ArtifactRow: Decodable, Identifiable, Equatable, Sendable {
@@ -305,6 +306,22 @@ public struct ArtifactSelection: Equatable {
         if ok { await refresh() }
     }
 
+    /// `artifact.export` of agent page `row` as `format` (pptx|pdf), copied to `url`; the written path, or nil with `error` set.
+    public func export(_ row: ArtifactRow, format: String, to url: URL) async -> String? {
+        var path: String?
+        await run {
+            let v = await send("artifact.export", ["id": .string(row.id), "format": .string(format), "out": .string(url.path)])
+            if case .object(let o)? = v, case .string(let p)? = o["path"] { path = p }
+        }
+        return path
+    }
+
+    /// A save panel's default name from a title: no `/`, `:` or control characters; "deck" when nothing is left.
+    public static func exportName(_ title: String) -> String {
+        let s = String(title.unicodeScalars.filter { $0 != "/" && $0 != ":" && $0.properties.generalCategory != .control }).trimmingCharacters(in: .whitespaces)
+        return s.isEmpty ? "deck" : s
+    }
+
     // MARK: folders
 
     /// Runs `command` (a move or a folder change), then refreshes the folders on success.
@@ -585,6 +602,15 @@ struct ArtifactsView: View {
     }
 
     /// **Mover para…**: every folder (`targets`), and "Sem pasta".
+    /// Asks where to save, exports, and reveals the file; a failure shows in the panel's error line.
+    private func exportRow(_ r: ArtifactRow, _ format: String) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [format == "pdf" ? .pdf : UTType(filenameExtension: "pptx") ?? .data]
+        panel.nameFieldStringValue = ArtifactsModel.exportName(r.title) + "." + format
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { if await model.export(r, format: format, to: url) != nil { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
+    }
+
     private func moveMenu(_ r: ArtifactRow, _ targets: [FolderSection]) -> some View {
         Menu("Mover para…") {
             Button("Sem pasta") { Task { await model.move(r.id, to: nil) } }.disabled(r.folder == nil)
@@ -632,6 +658,12 @@ struct ArtifactsView: View {
                         if r.isExport { Button("Reexportar") { Task { await model.reexport(r) } }.buttonStyle(CollieButtonStyle(.attention)) }
                         Button("Abrir no Navegador") { Task { await model.openInBrowser(r) } }
                         Button("Abrir na Prévia") { Task { await model.openInPreview(r) } }
+                        if !r.isExport {
+                            Menu("Exportar") {
+                                Button("PowerPoint (.pptx)") { exportRow(r, "pptx") }
+                                Button("PDF") { exportRow(r, "pdf") }
+                            }.fixedSize()
+                        }
                         if r.status == "failed" { Button("Importar de novo") { Task { await model.reimport(r) } } }
                         if r.status == "pending" { Button("Importar") { Task { await model.reimport(r) } } }
                     }

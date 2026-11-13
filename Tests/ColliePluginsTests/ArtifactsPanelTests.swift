@@ -30,6 +30,9 @@ private actor Fake {
                            row("f", "export", "current", file: "Imp", source: "collie-artifact://app/f/source/index.html"),
                            row("g", "agent", "importing"), row("h", "agent", "failed", source: "collie-artifact://app/h/source/index.html", error: "Collie app is not running")].prefix(rowLimit)))
         case "artifact.folders": return .array([])
+        case "artifact.export":
+            if a["format"] == .string("bad") { throw ProtocolError(code: .invalidArgs, message: "page has no slides") }
+            return .object(["path": .string("/tmp/out/deck.pptx"), "format": a["format"] ?? .null, "slides": .number(3), "warnings": .array([])])
         case "artifact.remove":
             if holdRemove { await withCheckedContinuation { removeWaiter = $0 } }
             return .object([:])
@@ -146,6 +149,41 @@ private actor Fake {
         await m.reexport(row)
         #expect(await f.last("artifact.reexport") == ["id": .string("a")])
         #expect(Array(await f.names().suffix(2)) == ["artifact.reexport", "artifact.list"])
+    }
+
+    @Test func exportSendsIdFormatAndOut() async throws {
+        let (m, f) = make()
+        await m.refresh()
+        _ = await m.export(m.rows[4], format: "pptx", to: URL(fileURLWithPath: "/tmp/out/deck.pptx"))
+        #expect(await f.last("artifact.export") == ["id": .string("e"), "format": .string("pptx"), "out": .string("/tmp/out/deck.pptx")])
+    }
+
+    @Test func exportReturnsPathOnSuccess() async throws {
+        let (m, _) = make()
+        await m.refresh()
+        let p = await m.export(m.rows[4], format: "pdf", to: URL(fileURLWithPath: "/tmp/out/deck.pdf"))
+        #expect(p == "/tmp/out/deck.pptx" && m.error == nil)
+    }
+
+    @Test func exportFailureSetsError() async throws {
+        let (m, _) = make()
+        await m.refresh()
+        let p = await m.export(m.rows[4], format: "bad", to: URL(fileURLWithPath: "/tmp/x"))
+        #expect(p == nil && m.error?.contains("page has no slides") == true)
+    }
+
+    @Test func exportKeepsBusyOffAfterwards() async throws {
+        let (m, _) = make()
+        await m.refresh()
+        _ = await m.export(m.rows[4], format: "pptx", to: URL(fileURLWithPath: "/tmp/x"))
+        #expect(!m.busy)
+        _ = await m.export(m.rows[4], format: "bad", to: URL(fileURLWithPath: "/tmp/x"))
+        #expect(!m.busy)
+    }
+
+    @Test func exportFileNameIsSanitized() {
+        #expect(ArtifactsModel.exportName("a/b:c\nd") == "abcd")
+        #expect(ArtifactsModel.exportName(" /: ") == "deck")
     }
 
     @Test func rowsDecodeStatuses() async {

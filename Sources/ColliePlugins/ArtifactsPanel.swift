@@ -135,7 +135,10 @@ public struct ArtifactSelection: Equatable {
     @Published public private(set) var error: String?
     @Published public private(set) var busy = false
     /// What the last export dropped (`artifact.export`'s `warnings`); empty when it failed or dropped nothing.
-    @Published public private(set) var exportWarnings: [String] = []
+    @Published public private(set) var exportWarnings: ExportWarnings?
+    public struct ExportWarnings: Equatable, Sendable { public let id: String; public let items: [String] }
+    /// The last export's warnings when they belong to artifact `id`; else none.
+    public func exportWarnings(for id: String) -> [String] { exportWarnings?.id == id ? exportWarnings!.items : [] }
     /// The "Importar do Claude…" sheet: its links' progress and the Claude terminals it can use.
     @Published public var claude = ClaudeImportProgress()
     @Published public private(set) var terminals: [ClaudeTerminalRow] = []
@@ -311,12 +314,15 @@ public struct ArtifactSelection: Equatable {
     /// `artifact.export` of agent page `row` as `format` (pptx|pdf), copied to `url`; the written path, or nil with `error` set.
     public func export(_ row: ArtifactRow, format: String, to url: URL) async -> String? {
         var path: String?
-        exportWarnings = []
+        exportWarnings = nil
         await run {
             let v = await send("artifact.export", ["id": .string(row.id), "format": .string(format), "out": .string(url.path)])
             if case .object(let o)? = v, case .string(let p)? = o["path"] {
                 path = p
-                if case .array(let w)? = o["warnings"] { exportWarnings = w.compactMap { if case .string(let t) = $0 { t } else { nil } } }
+                if case .array(let w)? = o["warnings"] {
+                    let items = w.compactMap { if case .string(let t) = $0 { t } else { nil } }
+                    if !items.isEmpty { exportWarnings = ExportWarnings(id: row.id, items: items) }
+                }
             }
         }
         return path
@@ -681,8 +687,8 @@ struct ArtifactsView: View {
                     }
                 }
                 .buttonStyle(CollieButtonStyle(.secondary)).disabled(model.busy).padding(.top, 4)
-                if !r.isExport, !model.exportWarnings.isEmpty {
-                    Text("Avisos da exportação\n" + model.exportWarnings.joined(separator: "\n")).font(.collieMono(11)).foregroundStyle(Color.collieAttention)
+                if !r.isExport, !model.exportWarnings(for: r.id).isEmpty {
+                    Text("Avisos da exportação\n" + model.exportWarnings(for: r.id).joined(separator: "\n")).font(.collieMono(11)).foregroundStyle(Color.collieAttention)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }

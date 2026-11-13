@@ -176,9 +176,10 @@ private actor Fake {
         let (m, _) = make()
         await m.refresh()
         _ = await m.export(m.rows[4], format: "pptx", to: URL(fileURLWithPath: "/tmp/x"))
-        #expect(m.exportWarnings == ["fonts not embedded: Inter"])
+        #expect(m.exportWarnings?.items == ["fonts not embedded: Inter"] && m.exportWarnings?.id == "e")
+        #expect(m.exportWarnings(for: "e") == ["fonts not embedded: Inter"] && m.exportWarnings(for: "h").isEmpty)
         _ = await m.export(m.rows[4], format: "bad", to: URL(fileURLWithPath: "/tmp/x"))
-        #expect(m.exportWarnings.isEmpty)
+        #expect(m.exportWarnings == nil)
     }
 
     @Test func exportKeepsBusyOffAfterwards() async throws {

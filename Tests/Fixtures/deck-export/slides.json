@@ -1,0 +1,5 @@
+{"title":"Tiny deck","blocked":["https://example.com/remote.png?token=s3cret","https://fonts.googleapis.com/css2?family=Inter"],"truncated":false,"slides":[
+{"index":0,"w":1280,"h":720,"background":"rgb(255, 255, 255)","root":{"tag":"section","x":0,"y":0,"w":1280,"h":720,"style":{},"children":[
+ {"tag":"h1","x":80,"y":80,"w":800,"h":60,"style":{"fontSize":"48px","color":"rgb(0, 0, 0)"},"children":[],"text":"Hello"}]}},
+{"index":1,"w":1280,"h":720,"notes":"Say hi","root":{"tag":"section","x":0,"y":0,"w":1280,"h":720,"style":{},"children":[
+ {"tag":"img","x":80,"y":80,"w":200,"h":100,"style":{},"children":[],"image":{"file":"img-1.png","w":200,"h":100,"fit":"fill"}}]}}]}

@@ -9,29 +9,54 @@ protocol GitFacts: Sendable {
     func pathExists(_ rel: String) -> Bool
 }
 
-/// Git and disk facts for a repo root. A git error or timeout is "unknown", never a failure.
+/// Git and disk facts for a repo root. A git error, timeout or non-repo root is "unknown", never a failure.
 struct GitFactsLive: GitFacts {
     var root: URL
     private static let timeout: Duration = .seconds(10)
+    private let repo = RepoProbe()
 
-    private func ok(_ args: [String]) async -> Bool? {
-        guard let r = try? await GitRunner.run(args, in: root, timeout: Self.timeout) else { return nil }
-        return r.status == 0
+    private final class RepoProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cached: Bool?
+        func get() -> Bool? { lock.lock(); defer { lock.unlock() }; return cached }
+        func set(_ v: Bool) { lock.lock(); cached = v; lock.unlock() }
+    }
+
+    init(root: URL) { self.root = root }
+
+    private func status(_ args: [String]) async -> Int32? {
+        (try? await GitRunner.run(args, in: root, timeout: Self.timeout))?.status
+    }
+
+    /// Exit status of `args`, but only when the root is a git repo (checked once, cached); nil = unknown.
+    private func checked(_ args: [String]) async -> Int32? {
+        if repo.get() == nil { repo.set(await status(["rev-parse", "--git-dir"]) == 0) }
+        return repo.get() == true ? await status(args) : nil
+    }
+
+    /// true = ref exists (0), false = absent (1), nil = anything else.
+    private func refExists(_ ref: String) async -> Bool? {
+        switch await checked(["show-ref", "--verify", "--quiet", ref]) { case 0: true; case 1: false; default: nil }
     }
 
     func branch(_ name: String) async -> BranchState {
         var exists = false
         for ref in ["refs/heads/\(name)", "refs/remotes/origin/\(name)"] {
-            guard let has = await ok(["show-ref", "--verify", "--quiet", ref]) else { return .open }
+            guard let has = await refExists(ref) else { return .open }
             if has { exists = true; break }
         }
         guard exists else { return .missing }
-        var base = "main"
-        if await ok(["show-ref", "--verify", "--quiet", "refs/heads/main"]) != true { base = "master" }
-        return await ok(["merge-base", "--is-ancestor", name, base]) == true ? .merged : .open
+        guard let hasMain = await refExists("refs/heads/main") else { return .open }
+        switch await checked(["merge-base", "--is-ancestor", name, hasMain ? "main" : "master"]) {
+        case 0: return .merged
+        default: return .open   // 1 = not an ancestor; anything else = unknown
+        }
     }
 
-    func commitExists(_ sha: String) async -> Bool { await ok(["cat-file", "-e", "\(sha)^{commit}"]) ?? true }
+    func commitExists(_ sha: String) async -> Bool {
+        // rev-parse --verify --quiet: 0 = exists, 1 = absent (cat-file -e exits 128 for an unknown name, same as a fatal error)
+        await checked(["rev-parse", "--verify", "--quiet", "\(sha)^{commit}"]) != 1
+    }
     func pathExists(_ rel: String) -> Bool { repoPathExists(rel, root: root) }
 }
 
@@ -42,6 +67,8 @@ struct ClaimFailure: Equatable, Sendable {
 }
 
 enum ClaimChecks {
+    // ponytail: at most 8 branches and 8 SHAs per record, so a body full of hex can't stall the pass; raise if real memories need more
+    static let maxPerKind = 8
     static let negations = ["não mergead", "não foi mergead", "pendente", "ainda não", "not merged", "pending"]
 
     static func check(_ r: MemoryRecord, facts: any GitFacts) async -> [ClaimFailure] {
@@ -50,7 +77,7 @@ enum ClaimChecks {
         if let p = r.path, !p.isEmpty, !facts.pathExists(p) { add(.init(kind: .pathMissing, detail: p)) }
         let body = r.body
         if negations.contains(where: { body.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }) {
-            for b in branches(in: body) {
+            for b in branches(in: body).prefix(maxPerKind) {
                 switch await facts.branch(b) {
                 case .merged: add(.init(kind: .branchMerged, detail: b))
                 case .missing: add(.init(kind: .branchMissing, detail: b))
@@ -58,7 +85,7 @@ enum ClaimChecks {
                 }
             }
         }
-        for s in shas(in: body) where !(await facts.commitExists(s)) { add(.init(kind: .commitMissing, detail: s)) }
+        for s in shas(in: body).prefix(maxPerKind) where !(await facts.commitExists(s)) { add(.init(kind: .commitMissing, detail: s)) }
         return out
     }
 

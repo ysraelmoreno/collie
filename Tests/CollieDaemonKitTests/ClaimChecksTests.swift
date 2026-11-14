@@ -86,4 +86,22 @@ import CollieCore
         #expect(await live.commitExists("1234567") == false)
         #expect(live.pathExists("a.txt")); #expect(!live.pathExists("zzz"))
     }
+
+    @Test func nonRepoRootNeverFails() async throws {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-norepo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: d) }
+        let f = await ClaimChecks.check(rec("fix/x pendente, commit abc1234"), facts: GitFactsLive(root: d))
+        #expect(f.isEmpty)
+    }
+    @Test func optionLikeTokensNeverExtracted() {
+        let s = "-x --upload-pack=x --exec=feat/a -abcdef1 --abcdef1234"
+        #expect(ClaimChecks.shas(in: s).isEmpty)
+        #expect(ClaimChecks.branches(in: s).allSatisfy { !$0.hasPrefix("-") })
+    }
+    @Test func capsClaimsPerRecord() async {
+        let body = (0..<20).map { "abc123\($0 % 10)f\($0)" }.joined(separator: " ")
+        let f = await ClaimChecks.check(rec(body), facts: Fake())
+        #expect(f.count <= ClaimChecks.maxPerKind)
+    }
 }

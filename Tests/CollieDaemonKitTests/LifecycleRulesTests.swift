@@ -24,10 +24,13 @@ import CollieCore
         let u = uses([(1, "a"), (2, "b")])
         var e = entry(u); e.contestedNow = true
         #expect(LifecycleRules.tier(for: e, now: now) == .provisional)
-        e = entry(u); e.lastContestedAt = ago(100)
-        #expect(LifecycleRules.tier(for: e, now: now) == .provisional)
         e = entry(u); e.flags = [LifecycleFlag(verdict: .wrong, session: "a", day: day(3), reason: "x")]
         #expect(LifecycleRules.tier(for: e, now: now) == .provisional)
+    }
+
+    @Test func pastContestDoesNotBlockEarning() {
+        var e = entry(uses([(1, "a"), (2, "b")])); e.lastContestedAt = ago(40)
+        #expect(LifecycleRules.tier(for: e, now: now) == .earned)
     }
 
     @Test func longTermStaysUnlessContested() {
@@ -63,6 +66,9 @@ import CollieCore
         #expect(plan(entry([], since: 20)).isEmpty)
         let p = plan(entry([], since: 22))
         #expect(p.count == 1 && p[0].action == .archiveUnused && p[0].reason == "provisória sem uso há 22 dias")
+        #expect(plan(entry([], since: 21)).count == 1)                     // exactly 21 days
+        var earned = entry([], since: 90); earned.tier = .earned
+        #expect(plan(earned).isEmpty)
         #expect(plan(entry(uses([(5, "a")]), since: 60)).isEmpty)          // used 5 days ago
         #expect(plan(entry(uses([(25, "a")]), since: 60)).count == 1)
         #expect(LifecycleRules.unusedPlan(records: [r], entries: [:], now: now).isEmpty)   // no entry: not planned

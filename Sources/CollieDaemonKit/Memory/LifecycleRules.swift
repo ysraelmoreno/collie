@@ -41,13 +41,15 @@ enum LifecycleRules {
         }
     }
 
-    /// Never earned once contested: any wrong/outdated flag, a live contest, or a past one.
+    /// Blocks earning: a live contest or an open wrong/outdated flag. A past contest (`lastContestedAt`) only gates promotion.
     private static func contested(_ e: LifecycleEntry) -> Bool {
-        e.contestedNow || e.lastContestedAt != nil || e.flags.contains { $0.verdict != .useful }
+        e.contestedNow || e.flags.contains { $0.verdict != .useful }
     }
 
     private static func date(_ day: String) -> Date? {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]
-        return f.date(from: day)
+        dayFormatter.date(from: day)
     }
+    nonisolated(unsafe) private static let dayFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f
+    }()
 }

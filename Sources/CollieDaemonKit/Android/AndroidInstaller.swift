@@ -228,13 +228,15 @@ extension AndroidInstaller {
     }
 
     /// The licenses `sdkmanager --licenses` prints (the ones it considers not accepted), `accepted` read from
-    /// `<sdk>/licenses/<id>`. Refreshes what `status` knows. During a job: what the job last read, else `busy`
-    /// (never a second `sdkmanager` next to the job's).
+    /// `<sdk>/licenses/<id>`. Refreshes what `status` knows. During a job (or another read): what was last read, else
+    /// `busy` (never a second `sdkmanager`). The read itself holds `running`, so no job starts next to it.
     func licenses() async throws(ProtocolError) -> [License] {
         guard !running else {
-            guard let known else { throw ProtocolError(code: .conflict, message: "busy: an Android install is running") }
+            guard let known else { throw ProtocolError(code: .conflict, message: "busy: Android setup is running") }
             return withAccepted(sdk.path, known)
         }
+        running = true   // before any await, like `begin`
+        defer { running = false }
         return try await readLicenses()
     }
 
@@ -247,8 +249,9 @@ extension AndroidInstaller {
         let before = Self.snapshot(dir)
         let r = try await sdkmanager(sm, ["--licenses", "--sdk_root=\(sdk)"], item: nil, answers: true, timeout: .seconds(300))
         if Self.snapshot(dir) != before {
-            Self.restore(dir, before)
-            throw ProtocolError(code: .internal, message: "sdkmanager --licenses changed \(dir.path) without consent; restored it")
+            let failed = Self.restore(dir, before)
+            throw ProtocolError(code: .internal, message: "sdkmanager --licenses changed \(dir.path) without consent; "
+                                + (failed.isEmpty ? "restored it" : "could NOT restore: \(failed.joined(separator: ", "))"))
         }
         let parsed = AndroidSdk.parseLicenses(Self.splitHeaders(r.output)).filter { Self.safeId($0.id) }
         // declining may end in a nonzero exit: texts printed count, an exit without any is a failure
@@ -283,7 +286,7 @@ extension AndroidInstaller {
     }
 
     private func begin(_ ids: [String]) async throws(ProtocolError) -> Task<Void, Error> {
-        guard !running else { throw ProtocolError(code: .conflict, message: "busy: an Android install is already running") }
+        guard !running else { throw ProtocolError(code: .conflict, message: "busy: Android setup is already running") }
         running = true   // before any await: a second call reentering the actor must see it
         cancelRequested = false
         let other = await othersRunning()
@@ -395,20 +398,23 @@ extension AndroidInstaller {
         return (status, String(decoding: out, as: UTF8.self))
     }
 
-    /// File name -> contents of `<sdk>/licenses/` (`nil`: no such dir).
-    static func snapshot(_ dir: URL) -> [String: Data]? {
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return nil }
+    /// File name -> contents of `<sdk>/licenses/`; a missing dir is the same as an empty one.
+    static func snapshot(_ dir: URL) -> [String: Data] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
         return Dictionary(uniqueKeysWithValues: names.map { ($0, (try? Data(contentsOf: dir.appendingPathComponent($0))) ?? Data()) })
     }
 
-    /// Puts `<sdk>/licenses/` back exactly as `snapshot` saw it.
-    static func restore(_ dir: URL, _ old: [String: Data]?) {
+    /// Puts `<sdk>/licenses/`'s files back as `snapshot` saw them (an empty dir may stay); returns the names it could not fix.
+    static func restore(_ dir: URL, _ old: [String: Data]) -> [String] {
         let fm = FileManager.default
-        guard let old else { try? fm.removeItem(at: dir); return }
+        var failed: [String] = []
         for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where old[name] == nil {
-            try? fm.removeItem(at: dir.appendingPathComponent(name))
+            do { try fm.removeItem(at: dir.appendingPathComponent(name)) } catch { failed.append(name) }
         }
-        for (name, data) in old { try? data.write(to: dir.appendingPathComponent(name), options: .atomic) }
+        for (name, data) in old {
+            do { try data.write(to: dir.appendingPathComponent(name), options: .atomic) } catch { failed.append(name) }
+        }
+        return failed
     }
 
     private func withAccepted(_ sdk: String, _ l: [(id: String, title: String, text: String)]) -> [License] {

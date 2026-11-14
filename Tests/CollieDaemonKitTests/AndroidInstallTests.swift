@@ -9,7 +9,8 @@ private var fm: FileManager { .default }
 /// A fake `sdkmanager`: `--list` prints `list` beside it, `--licenses` asks like the real one (unless
 /// `<sdk>/licenses/android-sdk-license` exists), a package prints progress with `\r`, then creates what it would install.
 /// Control files beside it: `sleep` (sleep 30 first, pid in `pid`), `fail` (exit 1), `direct` (`--licenses` asks
-/// `Accept?` with no "Review" question; "y" writes the license file), `autoaccept` (`--licenses` writes it unasked).
+/// `Accept?` with no "Review" question; "y" writes the license file), `autoaccept` (`--licenses` writes it unasked),
+/// `licsleep` (`--licenses` sleeps 2 s first, pid in `pid`), `mkdirlic` (`--licenses` creates an empty `licenses/`).
 /// Every call is appended to `calls`.
 private let fakeSdkmanager = #"""
 #!/bin/sh
@@ -19,6 +20,8 @@ echo "$*" >> "$d/calls"
 if [ $mode = list ]; then cat "$d/list"; exit 0; fi
 if [ $mode = licenses ]; then
   if [ -f "$sdk/licenses/android-sdk-license" ]; then echo "All SDK package licenses accepted."; exit 0; fi
+  if [ -f "$d/licsleep" ]; then echo $$ > "$d/pid"; sleep 2; fi
+  if [ -f "$d/mkdirlic" ]; then mkdir -p "$sdk/licenses"; fi
   if [ -f "$d/autoaccept" ]; then mkdir -p "$sdk/licenses"; echo x > "$sdk/licenses/android-sdk-license"; exit 0; fi
   if [ -f "$d/direct" ]; then
     printf 'License android-sdk-license:\n----------\nText\n----------\nAccept? (y/N): '
@@ -84,12 +87,14 @@ private struct Fixture {
             to: dir.appendingPathComponent("android-sdk-license"), atomically: true, encoding: .utf8)
     }
 
-    func installer(java: Bool = true, free: Int64? = 1 << 40, others: String? = nil) -> AndroidInstaller {
+    func installer(java: Bool = true, free: Int64? = 1 << 40, others: String? = nil,
+                   othersRunning: (@Sendable () async -> String?)? = nil) -> AndroidInstaller {
         var env = ["COLLIE_ANDROID_SDK": sdk.path, "ANDROID_AVD_HOME": home.appendingPathComponent("avd").path]
         if java { env["COLLIE_JAVA_HOME"] = home.appendingPathComponent("java").path }
         return AndroidInstaller(root: home, env: env, home: home.path,
                                 runDir: home.appendingPathComponent("run"), fetch: { url, _, _ in throw ProtocolError(code: .notFound, message: "no network: \(url)") },
-                                isAppleSilicon: true, javaCandidates: [], freeSpace: { _ in free }, othersRunning: { others })
+                                isAppleSilicon: true, javaCandidates: [], freeSpace: { _ in free },
+                                othersRunning: othersRunning ?? { others })
     }
 
     func waitFor(_ file: String) async throws {
@@ -228,7 +233,37 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
 
         try f.control("autoaccept")   // wrote a license anyway: restored, and loudly
         #expect(await code { _ = try await f.installer().licenses() } == .internal)
-        #expect(!fm.fileExists(atPath: licenses.path))
+        #expect(((try? fm.contentsOfDirectory(atPath: licenses.path)) ?? []).isEmpty)   // an empty dir may stay
+    }
+
+    @Test func licensesReadIsBusy() async throws {
+        let f = try Fixture()
+        try f.control("licsleep")
+        let inst = f.installer()
+        let read = Task { try await inst.licenses() }
+        try await f.waitFor("pid")
+        #expect(await code { _ = try await inst.start(accept: []) } == .conflict)
+        #expect(await code { _ = try await inst.licenses() } == .conflict)   // nothing read yet
+        #expect(try await read.value.map(\.id) == ["android-sdk-license"])
+        #expect(f.calls.count == 1)
+    }
+
+    @Test func busyWithNothingReadAndCancelWhileCheckingOthers() async throws {
+        let f = try Fixture()
+        let inst = f.installer(othersRunning: { try? await Task.sleep(for: .milliseconds(400)); return nil })
+        let first = Task { await code { try await inst.install(accept: []) } }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await code { _ = try await inst.licenses() } == .conflict)
+        await inst.cancel()
+        #expect(await first.value == AndroidInstaller.cancelled.code)
+        #expect(f.calls.isEmpty)
+        #expect(await inst.status().job == nil)
+    }
+
+    @Test func anEmptyLicensesDirIsNoChange() async throws {
+        let f = try Fixture()
+        try f.control("mkdirlic")
+        #expect(try await f.installer().licenses().map(\.accepted) == [false])
     }
 
     @Test func studioRunningIsBusy() async throws {

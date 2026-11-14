@@ -13,20 +13,22 @@ struct AvdManager: Sendable {
     private static let studioJbr = "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
     /// `avdmanager`: `COLLIE_AVDMANAGER`, the SDK dirs, the default macOS SDK. Java home: `COLLIE_JAVA_HOME`, then
-    /// `javaCandidates` (default: Android Studio's bundled JBR, then `/usr/libexec/java_home`'s answer); the first dir
+    /// `javaCandidates` (default: Android Studio's bundled JBR, then, only if that fails, `/usr/libexec/java_home`'s answer); the first dir
     /// holding an executable `bin/java` wins. `nil` when either is missing.
     static func locate(env: [String: String], home: String, javaCandidates: [String]? = nil) -> AvdManager? {
         let fm = FileManager.default
         let sdk = ["ANDROID_HOME", "ANDROID_SDK_ROOT"].compactMap { env[$0] }.map { "\($0)/cmdline-tools/latest/bin/avdmanager" }
         let tools = (env["COLLIE_AVDMANAGER"].map { [$0] } ?? []) + sdk + ["\(home)/Library/Android/sdk/cmdline-tools/latest/bin/avdmanager"]
         guard let tool = tools.first(where: { fm.isExecutableFile(atPath: $0) }) else { return nil }
-        let javas = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? defaultJavaCandidates())
-        guard let java = javas.first(where: { fm.isExecutableFile(atPath: "\($0)/bin/java") }) else { return nil }
+        let hasJava = { (d: String) in fm.isExecutableFile(atPath: "\(d)/bin/java") }
+        let early = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? [studioJbr])
+        // java_home is spawned only when nothing earlier works (and never when candidates are injected).
+        guard let java = early.first(where: hasJava) ?? (javaCandidates == nil ? javaHomeOutput().flatMap { hasJava($0) ? $0 : nil } : nil) else { return nil }
         return AvdManager(url: URL(fileURLWithPath: tool), javaHome: java)
     }
 
-    /// Studio's JBR, then whatever `/usr/libexec/java_home` prints (empty when no JDK is installed).
-    private static func defaultJavaCandidates() -> [String] {
+    /// What `/usr/libexec/java_home` prints, `nil` when no JDK is installed.
+    private static func javaHomeOutput() -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/libexec/java_home")
         let out = Pipe()
@@ -37,7 +39,7 @@ struct AvdManager: Sendable {
             p.waitUntilExit()
             if p.terminationStatus == 0 { found = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        return [studioJbr] + (found.isEmpty ? [] : [found])
+        return found.isEmpty ? nil : found
     }
 
     /// Runs `avdmanager` with `JAVA_HOME` set. stdin is `/dev/null` (`BoundedProcess` always opens it so), so the

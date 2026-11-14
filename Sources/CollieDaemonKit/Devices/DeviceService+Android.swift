@@ -209,7 +209,7 @@ extension DeviceService {
         let existed = FileManager.default.fileExists(atPath: config.path)
         var env = emulatorEnv
         env["ANDROID_AVD_HOME"] = dir.deletingLastPathComponent().path   // avdmanager writes where existence is checked
-        env["ANDROID_SDK_ROOT"] = env["ANDROID_SDK_ROOT"] ?? sdk.path
+        env["ANDROID_SDK_ROOT"] = sdk.path   // the root the image was picked from, as Emulator.launch forces
         if !existed {
             let r = try await mgr.run(["create", "avd", "-n", LiteAvd.name, "-k", image, "-d", "pixel", "--force"], env: env, timeout: .seconds(60))
             guard r.status == 0 else { throw ProtocolError(code: .internal, message: "avdmanager create failed: \(r.stderr.prefix(500))") }
@@ -223,11 +223,11 @@ extension DeviceService {
 
     /// Deletes `collie-lite`; no AVD, nothing to do.
     func removeLiteAvd() async throws(ProtocolError) {
-        guard let mgr = avdManager() else { throw AvdManager.missing }
         guard FileManager.default.fileExists(atPath: liteAvdDir.appendingPathComponent("config.ini").path) else { return }
+        guard let mgr = avdManager() else { throw AvdManager.missing }
         var env = emulatorEnv
         env["ANDROID_AVD_HOME"] = liteAvdDir.deletingLastPathComponent().path
-        if env["ANDROID_SDK_ROOT"] == nil, let u = emulator() {
+        if let u = emulator() {
             env["ANDROID_SDK_ROOT"] = u.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent().path
         }
         let r = try await mgr.run(["delete", "avd", "-n", LiteAvd.name], env: env, timeout: .seconds(60))

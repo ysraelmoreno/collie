@@ -23,6 +23,7 @@ private struct Lite {
         try script("avdmanager", """
         echo "$@" >> '\(log.path)'
         echo "$ANDROID_AVD_HOME" >> '\(dir.path)/home.log'
+        echo "$ANDROID_SDK_ROOT" >> '\(dir.path)/sdk.log'
         if [ "$1" = create ]; then mkdir -p "$ANDROID_AVD_HOME/collie-lite.avd"; printf 'hw.ramSize=2048\\nimage.sysdir.1=x\\n' > "$ANDROID_AVD_HOME/collie-lite.avd/config.ini"; fi
         if [ "$1" = delete ]; then rm -rf "$ANDROID_AVD_HOME/collie-lite.avd"; fi
         """)
@@ -36,7 +37,7 @@ private struct Lite {
         let mgr = AvdManager(url: dir.appendingPathComponent("avdmanager"), javaHome: dir.appendingPathComponent("jdk").path)
         let emu = sdk.appendingPathComponent("emulator/emulator")
         return DeviceService(root: dir, runDir: dir, adb: { nil }, emulator: { emu },
-                             emulatorEnv: ["ANDROID_AVD_HOME": avdHome.path], avdManager: { manager ? mgr : nil }) { _, _, _ in }
+                             emulatorEnv: ["ANDROID_AVD_HOME": avdHome.path, "ANDROID_SDK_ROOT": "/bogus/sdk"], avdManager: { manager ? mgr : nil }) { _, _, _ in }
     }
     func calls() -> [String] { ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init) }
     func cleanup() { try? FileManager.default.removeItem(at: dir) }
@@ -93,5 +94,19 @@ private struct Lite {
         try await svc.removeLiteAvd()
         #expect(fx.calls().last == "delete avd -n collie-lite")
         #expect(!FileManager.default.fileExists(atPath: fx.config.path))
+    }
+
+    @Test func avdmanagerGetsTheEmulatorDerivedSdkRoot() async throws {
+        let fx = try Lite(); defer { fx.cleanup() }
+        let svc = fx.service()
+        let want = fx.sdk.resolvingSymlinksInPath().path + "\n"
+        _ = try await svc.createLiteAvd()
+        try await svc.removeLiteAvd()
+        #expect(try String(contentsOf: fx.dir.appendingPathComponent("sdk.log"), encoding: .utf8) == want + want)
+    }
+
+    @Test func removeWithoutAvdIsNoOpEvenWithoutAvdmanager() async throws {
+        let fx = try Lite(); defer { fx.cleanup() }
+        try await fx.service(manager: false).removeLiteAvd()
     }
 }

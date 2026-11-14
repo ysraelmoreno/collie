@@ -59,8 +59,8 @@ struct GitFactsLive: GitFacts {
         // rev-parse --verify --quiet: 0 = exists, 1 = absent (cat-file -e exits 128 for an unknown name, same as a fatal error)
         guard await checked(["rev-parse", "--verify", "--quiet", "\(sha)^{commit}"]) == 1 else { return true }
         // exit 1 is also what an ambiguous abbreviation gives: any candidate object means "unknown", not absent
-        guard sha.count < 40, let r = try? await GitRunner.run(["rev-parse", "--disambiguate=\(sha)"], in: root, timeout: Self.timeout)
-        else { return false }
+        guard sha.count < 40 else { return false }
+        guard let r = try? await GitRunner.run(["rev-parse", "--disambiguate=\(sha)"], in: root, timeout: Self.timeout) else { return true }
         return r.status != 0 || !r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     func pathExists(_ rel: String) -> Bool { repoPathExists(rel, root: root) }

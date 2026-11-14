@@ -361,6 +361,19 @@ extension CommandRouter {
             let pinned = r.command == "memory.pin"
             return try await update(try id()) { rec, m in rec.pinned = pinned; try m.store.write(rec) }
 
+        case "memory.flag":   // the agent's judgement of a memory injected into its own session (admin token: no session, refused)
+            let verdicts = ["useful", "wrong", "outdated"].filter { flag(r, $0) || str(r, "verdict") == $0 }
+            guard verdicts.count == 1, str(r, "verdict").map({ verdicts.contains($0) }) ?? true, let verdict = FlagVerdict(rawValue: verdicts[0]) else {
+                throw invalid("diga um veredito: --useful, --wrong ou --outdated")
+            }
+            let (session, target) = try await memory.flagTarget(caller?.id, prefix: try need(r, "id"))
+            let reason = String(LotBoards.scrub(str(r, "reason") ?? "", secrets: await auth.secrets())
+                .trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+            var rec: MemoryRecord?
+            for s in stores where rec == nil { rec = try await s.run { m in m.store.all().records.first { $0.id == target } } }
+            let (contested, queued) = try await memory.applyFlag(session: session, id: target, record: rec, verdict: verdict, reason: reason)
+            return .object(["id": .string(target.uuidString.lowercased()), "contested": .bool(contested), "queued": .bool(queued)])
+
         case "memory.cleanup":
             let apply = flag(r, "apply"), scores = await memory.scores.all()
             let (items, changed) = try await repo.run { m -> ([CleanupItem], [UUID]) in

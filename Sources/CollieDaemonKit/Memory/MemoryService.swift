@@ -640,6 +640,46 @@ actor MemoryService {
         guard !correction, !ids.isEmpty else { return }
         await lifecycle.addUse(ids, key: UseKey(day: Self.dayFormatter.string(from: now), session: s), now: now)
     }
+    /// The caller's session and the injected id `prefix` names (full UUID or a case-insensitive prefix of 4+ characters).
+    func flagTarget(_ terminal: UUID?, prefix: String) async throws(ProtocolError) -> (session: String, id: UUID) {
+        func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        guard let terminal, let s = sessions[terminal] else { throw bad("sem sessão de agente: só um terminal pode julgar memórias injetadas") }
+        let p = prefix.trimmingCharacters(in: .whitespaces).lowercased()
+        guard p.count >= 4, p.allSatisfy({ $0.isHexDigit || $0 == "-" }) else { throw bad("id: use o UUID ou ao menos 4 caracteres hexadecimais") }
+        let hits = await lifecycle.injected(session: s).filter { $0.uuidString.lowercased().hasPrefix(p) }
+        guard !hits.isEmpty else { throw bad("a memória \(p) não foi injetada nesta sessão") }
+        guard hits.count == 1, let id = hits.first else { throw bad("id ambíguo: use mais caracteres") }
+        return (s, id)
+    }
+
+    /// `record` nil = not in a store the caller reads (flag recorded, nothing else). Refuses the 21st wrong/outdated flag of a session.
+    func applyFlag(session: String, id: UUID, record: MemoryRecord?, verdict: FlagVerdict, reason: String,
+                   now: Date = Date()) async throws(ProtocolError) -> (contested: Bool, queued: Bool) {
+        let live = record.map { LifecycleRules.eligible($0) } ?? false
+        let sticky = record.map { $0.pinned || $0.reviewed } ?? false
+        let day = Self.dayFormatter.string(from: now)
+        if verdict == .useful {
+            if live { await lifecycle.addUse([id], key: UseKey(day: day, session: session), now: now) }
+            return (false, false)
+        }
+        let used = await lifecycle.all().values.reduce(0) { $0 + $1.flags.filter { $0.session == session }.count }
+        guard used < LifecycleRules.maxFlagsPerSession else {
+            throw ProtocolError(code: .invalidArgs, message: "limite de \(LifecycleRules.maxFlagsPerSession) marcações por sessão")
+        }
+        let contest = live || sticky
+        await lifecycle.update(id, now: now) { e in
+            e.flags.append(LifecycleFlag(verdict: verdict, session: session, day: day, reason: reason))
+            if contest { e.contestedNow = true; e.lastContestedAt = now }
+        }
+        guard live else { return (contest, false) }
+        await scores.penalize(id, LifecycleRules.flagPenalty, reason: "flagged \(verdict.rawValue)")
+        return (true, enqueueVerify(id))
+    }
+
+    /// Stub until the curator's verify job (Task 6): remembers the ids asked for.
+    private(set) var verifyRequested: Set<UUID> = []
+    func enqueueVerify(_ id: UUID) -> Bool { verifyRequested.insert(id); return true }
+
     nonisolated(unsafe) private static let dayFormatter: ISO8601DateFormatter = {   // UTC; read-only after init
         let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f
     }()

@@ -129,7 +129,7 @@ private func proposals(_ store: RepoMemory, count: Int = 1) async throws -> [Mem
             #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "T"]).ok)
             try await doneTask(p, t, "login form")
             let out = try #require(await stop(p, t))
-            #expect(reason(out) == "Antes de encerrar: registre decisões e armadilhas deste trabalho com collie memory save --scope lot (ou responda 'nada a registrar').")
+            #expect(reason(out) == "Antes de encerrar: registre decisões e armadilhas deste trabalho com collie memory save --scope lot (ou responda 'nada a registrar') e marque as memórias injetadas que estavam erradas ou velhas (collie memory flag).")
             #expect(!out.contains("\n"))   // one JSON line on stdout
             #expect(HookPayload.claudeStopHookActive(stdinJSON: fx("stop-continued")) == true && HookPayload.claudeStopHookActive(stdinJSON: fx("stop")) == false)
             #expect(HookPayload.claudeStopHookActive(stdinJSON: Data("x".utf8)) == nil)

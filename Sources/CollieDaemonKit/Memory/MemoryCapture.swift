@@ -9,7 +9,7 @@ import CollieProtocol
 enum MemoryCapture {
     static let maxTitle = 120, maxBody = 1200, maxCommits = 5
 
-    static let stopReason = "Antes de encerrar: registre decisões e armadilhas deste trabalho com collie memory save --scope lot (ou responda 'nada a registrar')."
+    static let stopReason = "Antes de encerrar: registre decisões e armadilhas deste trabalho com collie memory save --scope lot (ou responda 'nada a registrar') e marque as memórias injetadas que estavam erradas ou velhas (collie memory flag)."
     /// Outside a lot `--scope lot` would be refused: the same ask, for the project.
     static let stopReasonNoLot = stopReason.replacingOccurrences(of: "--scope lot", with: "--scope project")
 

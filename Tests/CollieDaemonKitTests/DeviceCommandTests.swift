@@ -104,7 +104,7 @@ private struct LiteFx {
         try await fx.daemon { d, p in
             let m = try await term(d, p, "M", shepherd: true)
             let r = try await call(p, m, "device.lite.create")
-            #expect(!r.ok)
+            #expect(!r.ok && r.error?.code == .unauthorized)
             #expect(!FileManager.default.fileExists(atPath: fx.avdHome.appendingPathComponent("collie-lite.avd").path))
         }
     }
@@ -130,7 +130,7 @@ private struct LiteFx {
     @Test func helpListsBothCommands() {
         for n in ["device.lite.create", "device.lite.remove"] {
             let c = Commands.spec(n)
-            #expect(c?.panelFree == true && c?.timeoutSeconds == 90)
+            #expect(c?.panelFree == true && c?.timeoutSeconds == 90 && c?.exposedToMCP == false)
             #expect(c?.summary.contains("~/.android/avd") == true)
         }
         #expect(Commands.spec("device.lite.create")?.summary.contains("cmdline-tools") == true)

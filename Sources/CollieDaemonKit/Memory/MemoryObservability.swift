@@ -140,7 +140,7 @@ enum MemoryObservability {
         // lifecycle
         var lc = Lifecycle()
         for r in records where LifecycleRules.eligible(r) {
-            guard let e = lifecycle[r.id] else { continue }
+            guard let e = lifecycle[r.id] else { lc.provisional += 1; continue }   // no entry yet: provisional
             switch LifecycleRules.tier(for: e, now: now) { case .provisional: lc.provisional += 1; case .earned: lc.earned += 1; case .longTerm: lc.longTerm += 1 }
             if e.contestedNow { lc.contestedOpen += 1 }
         }

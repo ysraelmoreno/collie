@@ -124,6 +124,38 @@ private func compute(_ es: [MemoryEvent], since: Date = ago(7), records: [Memory
         #expect(MemoryDigest.eventKind(row("aposentado", by: UUID())) == .superseded && MemoryDigest.eventKind(row("aposentado")) == .archived)
         #expect(MemoryDigest.eventKind(row("ask")) == .asked && MemoryDigest.eventKind(row("confirmar")) == .asked)
     }
+
+    @Test func statsCountsTiersAndFlags() {
+        var recs: [MemoryRecord] = []
+        var entries: [UUID: LifecycleEntry] = [:]
+        func add(_ tier: LifecycleTier, contested: Bool = false, pinned: Bool = false) {
+            let r = MemoryRecord(kind: .decision, subject: "s\(recs.count)", title: "T\(recs.count)", pinned: pinned)
+            recs.append(r)
+            entries[r.id] = LifecycleEntry(tier: tier, contestedNow: contested, tierSince: ago(1))
+        }
+        add(.provisional); add(.provisional); add(.earned); add(.longTerm); add(.longTerm, contested: true)   // contested longTerm reads earned
+        add(.provisional, pinned: true)   // not eligible: not counted
+        let es = [
+            ev(.flagged, ago(1)) { $0.verdict = "useful" }, ev(.flagged, ago(1)) { $0.verdict = "useful" },
+            ev(.flagged, ago(2)) { $0.verdict = "wrong" }, ev(.flagged, ago(2)) { $0.verdict = "outdated" },
+            ev(.flagged, ago(20)) { $0.verdict = "wrong" },   // before the period
+            ev(.promoted, ago(1)), ev(.promoted, ago(3)), ev(.demoted, ago(1)),
+            ev(.archivedUnused, ago(2)), ev(.archivedUnused, ago(2)), ev(.archived, ago(2)) { $0.source = "consolidation" },
+        ]
+        let r = MemoryObservability.compute(events: es, since: ago(7), now: now, records: recs, scores: [:], openDigest: [], curator: nil,
+                                            lifecycle: entries, calendar: utc).lifecycle
+        #expect(r.provisional == 2 && r.earned == 2 && r.longTerm == 1 && r.contestedOpen == 1)
+        #expect(r.promotions == 2 && r.demotions == 1 && r.provisionalArchived == 2)
+        #expect(r.flags == .init(useful: 2, wrong: 1, outdated: 1))
+    }
+
+    @Test func statsVerifyResults() {
+        let es = [ev(.verified, ago(1)) { $0.verdict = "valid" }, ev(.verified, ago(1)) { $0.verdict = "valid" },
+                  ev(.verified, ago(2)) { $0.verdict = "invalid" }, ev(.verified, ago(2)) { $0.verdict = "deferred" },
+                  ev(.verified, ago(2)) { $0.verdict = "deferred" }, ev(.verified, ago(15)) { $0.verdict = "invalid" }]
+        let r = compute(es).lifecycle
+        #expect(r.verify == .init(valid: 2, invalid: 1, deferred: 2))
+    }
 }
 
 // MARK: session usage
@@ -287,42 +319,7 @@ private func top(_ repo: URL) -> String {
             #expect(await waitFor(5) { e.logged().contains { $0.type == .workClosed && $0.terminal == e.tid && $0.work != nil } })
         }
     }
-}
 
-extension JSONDecoder {
-    static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }
-
-    @Test func statsCountsTiersAndFlags() {
-        var recs: [MemoryRecord] = []
-        var entries: [UUID: LifecycleEntry] = [:]
-        func add(_ tier: LifecycleTier, contested: Bool = false, pinned: Bool = false) {
-            let r = MemoryRecord(kind: .decision, subject: "s\(recs.count)", title: "T\(recs.count)", pinned: pinned)
-            recs.append(r)
-            entries[r.id] = LifecycleEntry(tier: tier, contestedNow: contested, tierSince: ago(1))
-        }
-        add(.provisional); add(.provisional); add(.earned); add(.longTerm); add(.longTerm, contested: true)   // contested longTerm reads earned
-        add(.provisional, pinned: true)   // not eligible: not counted
-        let es = [
-            ev(.flagged, ago(1)) { $0.verdict = "useful" }, ev(.flagged, ago(1)) { $0.verdict = "useful" },
-            ev(.flagged, ago(2)) { $0.verdict = "wrong" }, ev(.flagged, ago(2)) { $0.verdict = "outdated" },
-            ev(.flagged, ago(20)) { $0.verdict = "wrong" },   // before the period
-            ev(.promoted, ago(1)), ev(.promoted, ago(3)), ev(.demoted, ago(1)),
-            ev(.archivedUnused, ago(2)), ev(.archivedUnused, ago(2)), ev(.archived, ago(2)) { $0.source = "consolidation" },
-        ]
-        let r = MemoryObservability.compute(events: es, since: ago(7), now: now, records: recs, scores: [:], openDigest: [], curator: nil,
-                                            lifecycle: entries, calendar: utc).lifecycle
-        #expect(r.provisional == 2 && r.earned == 2 && r.longTerm == 1 && r.contestedOpen == 1)
-        #expect(r.promotions == 2 && r.demotions == 1 && r.provisionalArchived == 2)
-        #expect(r.flags == .init(useful: 2, wrong: 1, outdated: 1))
-    }
-
-    @Test func statsVerifyResults() {
-        let es = [ev(.verified, ago(1)) { $0.verdict = "valid" }, ev(.verified, ago(1)) { $0.verdict = "valid" },
-                  ev(.verified, ago(2)) { $0.verdict = "invalid" }, ev(.verified, ago(2)) { $0.verdict = "deferred" },
-                  ev(.verified, ago(2)) { $0.verdict = "deferred" }, ev(.verified, ago(15)) { $0.verdict = "invalid" }]
-        let r = compute(es).lifecycle
-        #expect(r.verify == .init(valid: 2, invalid: 1, deferred: 2))
-    }
 
     /// Lifecycle events carry ids and verdict words only: the flag's reason and the memory's text never reach the log.
     @Test func eventsNeverCarryMemoryText() async throws {
@@ -341,4 +338,8 @@ extension JSONDecoder {
             #expect(!text.contains("segredo"))
         }
     }
+}
+
+extension JSONDecoder {
+    static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }
 }

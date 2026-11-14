@@ -128,7 +128,7 @@ extension CommandRouter {
         if e.undone { return e }
         if e.action == "promovida" {   // no record file changed: only the tier goes back (re-judged no sooner than the cooldown)
             let now = Date()
-            for b in e.before { await memory.lifecycle.update(b.id, now: now) { $0.tier = .earned; $0.tierSince = now; $0.recheckedAt = now } }
+            for b in e.before { await memory.lifecycle.update(b.id, now: now) { if $0.tier == .longTerm { $0.tier = .earned; $0.tierSince = now; $0.recheckedAt = now } } }
             try digest.mark([e.id], undone: true, resolved: nil)
             e.undone = true
             return e
@@ -163,6 +163,10 @@ extension CommandRouter {
         try digest.mark(group.map(\.id), undone: true, resolved: nil)
         for id in back { await memory.scores.reset(id) }   // restored: its correction penalty goes too (starts over)
         await memory.restored(back)
+        if e.action == "aposentado", e.reason.hasPrefix("provisória sem uso") {   // its clock starts over, or the next pass archives it again
+            let now = Date()
+            for b in e.before { await memory.lifecycle.update(b.id, now: now) { $0.tierSince = now } }
+        }
         e.undone = true
         return e
     }

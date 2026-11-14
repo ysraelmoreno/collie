@@ -198,6 +198,8 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
             #expect(d.router.memory.events.read(since: Date().addingTimeInterval(-60)).contains { $0.type == .archivedUnused && $0.ids == [x.id] })
             #expect(try await admin(d, p, "memory.undo", ["entry": row.id.uuidString]).ok)
             #expect(try await all(store).first { $0.id == x.id }?.status == .active)
+            await d.router.lifecyclePass(store, now: Date().addingTimeInterval(86_400))   // the next pass leaves it be
+            #expect(try await all(store).first { $0.id == x.id }?.status == .active)
         }
     }
 }

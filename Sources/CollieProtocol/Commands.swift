@@ -466,6 +466,16 @@ public enum Commands {
         CommandSpec(name: "font.list", summary: "Fonts pages can use offline: [{family, source (google|bundled), weights, italic, css, licence}]", timeoutSeconds: 10),
         CommandSpec(name: "font.remove", summary: "Delete a downloaded font (app only)",
                     params: [ParamSpec("family", .string, positional: true, required: true)], timeoutSeconds: 10, exposedToMCP: false),
+        // Android SDK setup (AndroidCommands): the app's, never a terminal's or MCP's
+        CommandSpec(name: "android.status", summary: "Android SDK setup state (app only): {sdk:{path,source}, items:[{id,state,detail}], needs, job?, lite}",
+                    timeoutSeconds: 10, exposedToMCP: false),
+        // 300 s, not 10: `sdkmanager --licenses` on a cold SDK is slow (the installer itself allows 300)
+        CommandSpec(name: "android.licenses", summary: "Read the Android SDK licenses sdkmanager lists, accepting none (app only): [{id,title,text,accepted}]",
+                    timeoutSeconds: 300, exposedToMCP: false),
+        CommandSpec(name: "android.install", summary: "Start the Android SDK install job (app only); replies {job} at once, follow it with android.status",
+                    params: [ParamSpec("accept", .list, positional: true, help: "License ids the user accepted (as android.licenses lists them)")],
+                    timeoutSeconds: 10, exposedToMCP: false),
+        CommandSpec(name: "android.cancel", summary: "Stop the Android SDK install job (app only)", timeoutSeconds: 10, exposedToMCP: false),
         CommandSpec(name: "admin.spawn", summary: "Spawn a terminal",
                     params: [ParamSpec("name", .string, positional: true, required: true),
                              ParamSpec("preset", .string, required: true, help: "shell|claude|codex|cursor|custom"),

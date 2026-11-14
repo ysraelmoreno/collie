@@ -35,6 +35,8 @@ actor CommandRouter {
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
     nonisolated let devices: DeviceService
+    /// One per daemon: its init clears an orphan staging dir, and `busy` is its own state.
+    let android: AndroidInstaller
     /// HTTP(S) capture of Android emulators (`network.*`), through mitmdump.
     nonisolated let network: NetworkService
     /// The design engine's server; started by the first design command.
@@ -165,6 +167,8 @@ actor CommandRouter {
             xcrun: config.xcrunPath, axe: { axePath ?? Simulator.locateAXe(env: ProcessInfo.processInfo.environment) },
             crashReports: config.crashReportsDir, logCap: config.deviceLogCap,
             emit: { p, n, pl in await me.router?.pluginEmitted(panel: p, name: n, payload: pl) })
+        self.android = config.androidInstaller ?? AndroidInstaller(root: config.paths.root, env: ProcessInfo.processInfo.environment,
+                                                                   home: NSHomeDirectory(), runDir: config.paths.runDir)
         let mitmdumpPath = config.mitmdumpPath
         self.network = NetworkService(root: config.paths.root, runDir: config.paths.runDir, devices: devices,
             mitmdump: { mitmdumpPath ?? MitmTool.locate(env: ProcessInfo.processInfo.environment) },
@@ -349,6 +353,9 @@ actor CommandRouter {
             }
             if req.command.hasPrefix("access.") {   // request/list: a terminal; grant/deny/revoke: the app alone
                 return Response(id: req.id, ok: true, result: try await accessCommand(req, peer: peer))
+            }
+            if req.command.hasPrefix("android.") {   // the app's alone
+                return Response(id: req.id, ok: true, result: try await androidCommand(req, peer: peer))
             }
             if req.command.hasPrefix("font.") {   // add/list: admin or terminal; remove: the app's
                 return Response(id: req.id, ok: true, result: try await fontCommand(req, peer: peer))

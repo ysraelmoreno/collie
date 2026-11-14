@@ -34,6 +34,8 @@ public struct DaemonConfig: Sendable {
     public var emulatorEnv: [String: String]?
     /// `avdmanager`; nil = `AvdManager.locate` (tests point it at a fake).
     var avdManager: (@Sendable () -> AvdManager?)?
+    /// The Android SDK installer; nil = the real one on the daemon's environment (tests pass one over a temp SDK).
+    var androidInstaller: AndroidInstaller?
     /// `xcrun` for `simctl` (tests point it at a fake).
     public var xcrunPath = URL(fileURLWithPath: "/usr/bin/xcrun")
     /// The AXe binary; nil = `Simulator.locateAXe`.

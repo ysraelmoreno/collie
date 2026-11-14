@@ -161,6 +161,15 @@ de um liga o emulador e espera o boot (até 3 min); com `collie panel open devic
 sessão própria, então parar ou reiniciar o serviço não o derruba. O Collie nunca o desliga: fechar o painel ou parar o serviço o
 deixa ligado. `COLLIE_EMULATOR` aponta um binário `emulator` fora do SDK padrão.
 
+### Emulador leve (`collie-lite`)
+
+Para Macs com pouca CPU e RAM: `collie device lite create` cria o AVD `collie-lite` (720×1280, 1,5 GB, 2 núcleos, sem câmera,
+áudio nem sensores, GPU do host) pelo `avdmanager` e aparece em `collie device list` como `avd:collie-lite`. Precisa do
+**Android SDK Command-line Tools** (Android Studio → SDK Tools) e de uma imagem `google_apis` arm64 já instalada; o Collie não
+baixa nada nem escreve o AVD à mão. O comando é só do app/admin, escreve apenas em `~/.android/avd/collie-lite*` e rodar de novo
+só reaplica a configuração (não apaga os dados). `collie device lite remove` apaga o AVD. Ao subir, o Collie acrescenta
+`-no-audio -no-boot-anim -no-metrics`. `COLLIE_AVDMANAGER` e `COLLIE_JAVA_HOME` apontam as ferramentas fora do lugar padrão.
+
 ## Simulador iOS
 
 O mesmo plug-in **Dispositivo** mostra um Simulador iOS (vídeo e entrada pelo [AXe](https://github.com/cameroncooke/AXe), comandos

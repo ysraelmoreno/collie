@@ -12,6 +12,8 @@ public enum LiteAvd {
         "hw.sensors.orientation": "no", "hw.sensors.proximity": "no", "hw.sensors.humidity": "no",
         "hw.sensors.pressure": "no", "hw.sensors.magnetic_field": "no", "hw.sensors.temperature": "no",
         "showDeviceFrame": "no",
+        // avdmanager writes hw.gpu.enabled=no: the guest then renders in software (measured 385% CPU under swipes vs 36% on the host GPU)
+        "hw.gpu.enabled": "yes", "hw.gpu.mode": "host",
     ]
 
     public static let launchFlags = ["-no-audio", "-no-boot-anim", "-no-metrics"]

@@ -33,7 +33,7 @@ import Foundation
                     "hw.camera.front": "none", "hw.audioInput": "no", "hw.audioOutput": "no",
                     "hw.sensors.orientation": "no", "hw.sensors.proximity": "no", "hw.sensors.humidity": "no",
                     "hw.sensors.pressure": "no", "hw.sensors.magnetic_field": "no", "hw.sensors.temperature": "no",
-                    "showDeviceFrame": "no"]
+                    "showDeviceFrame": "no", "hw.gpu.enabled": "yes", "hw.gpu.mode": "host"]
         #expect(LiteAvd.overrides == spec)
         #expect(LiteAvd.launchFlags == ["-no-audio", "-no-boot-anim", "-no-metrics"])
         #expect(LiteAvd.name == "collie-lite")

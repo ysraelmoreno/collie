@@ -19,7 +19,8 @@ actor AndroidInstaller {
     let isAppleSilicon: Bool, javaCandidates: [String]?
     /// Bytes free on the volume holding a path (`nil`: unknown, not checked).
     let freeSpace: @Sendable (String) -> Int64?
-    /// Where `sdkmanager`'s pidfile goes (`OrphanReaper`), so a restarted daemon kills a group a crash left behind.
+    /// Where `sdkmanager`'s pidfile goes (`OrphanReaper`), so a restarted daemon kills a group a crash left behind:
+    /// must be the daemon's `config.paths.runDir` (the only dir it reaps).
     let runDir: URL
     /// Names another `sdkmanager` or Android Studio when one runs (`nil`: none): the install is then `busy`.
     let othersRunning: @Sendable () async -> String?
@@ -29,16 +30,18 @@ actor AndroidInstaller {
     var running = false
     var work: Task<Void, Error>?
     var process: LongProcess?
+    /// `cancel` arrived while `begin` was still checking for other `sdkmanager`s (no job Task yet).
+    var cancelRequested = false
     /// What the last `sdkmanager --licenses` printed (`nil`: not asked yet).
     var known: [(id: String, title: String, text: String)]?
 
-    init(root: URL, env: [String: String], home: String, fetch: @escaping AndroidFetch = AndroidDownload.fetch,
+    init(root: URL, env: [String: String], home: String, runDir: URL, fetch: @escaping AndroidFetch = AndroidDownload.fetch,
          runner: @escaping AndroidRunner = AndroidInstaller.run, isAppleSilicon: Bool = AndroidInstaller.appleSilicon,
          javaCandidates: [String]? = nil, freeSpace: @escaping @Sendable (String) -> Int64? = AndroidInstaller.free,
-         runDir: URL? = nil, othersRunning: @escaping @Sendable () async -> String? = AndroidInstaller.others) {
+         othersRunning: @escaping @Sendable () async -> String? = AndroidInstaller.others) {
         self.root = root; self.env = env; self.home = home; self.fetch = fetch; self.runner = runner
         self.isAppleSilicon = isAppleSilicon; self.javaCandidates = javaCandidates; self.freeSpace = freeSpace
-        self.runDir = runDir ?? root; self.othersRunning = othersRunning
+        self.runDir = runDir; self.othersRunning = othersRunning
         // an orphan of a daemon that died mid-job (no job survives a restart)
         try? FileManager.default.removeItem(atPath: AndroidSdk.root(env: env, home: home) + "/.collie-staging")
     }
@@ -189,7 +192,7 @@ extension AndroidInstaller {
     struct License: Codable, Sendable, Equatable { var id: String; var title: String; var text: String; var accepted: Bool }
 
     /// sdkmanager gives no sizes up front: fixed estimates (download + unzip) for the 2x free-space check.
-    static let estimates: [String: Int64] = ["platform-tools": 15 << 20, "emulator": 400 << 20, "image": 1536 << 20]
+    static let estimates: [String: Int64] = ["platform-tools": 15 << 20, "emulator": 400 << 20, "image": 6 << 30]
     static let notReady = ProtocolError(code: .unavailable,
                                         message: "notReady: Java and cmdline-tools are not installed yet; run the install (prepare) first")
 
@@ -225,11 +228,28 @@ extension AndroidInstaller {
     }
 
     /// The licenses `sdkmanager --licenses` prints (the ones it considers not accepted), `accepted` read from
-    /// `<sdk>/licenses/<id>`. Refreshes what `status` knows.
+    /// `<sdk>/licenses/<id>`. Refreshes what `status` knows. During a job: what the job last read, else `busy`
+    /// (never a second `sdkmanager` next to the job's).
     func licenses() async throws(ProtocolError) -> [License] {
+        guard !running else {
+            guard let known else { throw ProtocolError(code: .conflict, message: "busy: an Android install is running") }
+            return withAccepted(sdk.path, known)
+        }
+        return try await readLicenses()
+    }
+
+    /// Never accepts anything: answers `y` only to "Review licenses?" and `n` to each `Accept?`, and if
+    /// `<sdk>/licenses/` changed anyway, restores it exactly and fails.
+    private func readLicenses() async throws(ProtocolError) -> [License] {
         let sdk = sdk.path
         guard let sm = sdkmanagerPath(sdk), java != nil else { throw Self.notReady }
-        let r = try await sdkmanager(sm, ["--licenses", "--sdk_root=\(sdk)"], item: nil, answers: true)
+        let dir = URL(fileURLWithPath: sdk).appendingPathComponent("licenses")
+        let before = Self.snapshot(dir)
+        let r = try await sdkmanager(sm, ["--licenses", "--sdk_root=\(sdk)"], item: nil, answers: true, timeout: .seconds(300))
+        if Self.snapshot(dir) != before {
+            Self.restore(dir, before)
+            throw ProtocolError(code: .internal, message: "sdkmanager --licenses changed \(dir.path) without consent; restored it")
+        }
         let parsed = AndroidSdk.parseLicenses(Self.splitHeaders(r.output)).filter { Self.safeId($0.id) }
         // declining may end in a nonzero exit: texts printed count, an exit without any is a failure
         guard r.status == 0 || !parsed.isEmpty else {
@@ -257,6 +277,7 @@ extension AndroidInstaller {
     /// Stops the job: kills `sdkmanager`'s process group and cancels the download; phase 1's staging is removed by
     /// `prepare` as it unwinds. Never deletes anything else (what `sdkmanager` half-wrote in `<sdk>` is its own to clean).
     func cancel() {
+        if running && work == nil { cancelRequested = true }
         work?.cancel()
         process?.terminate()
     }
@@ -264,9 +285,11 @@ extension AndroidInstaller {
     private func begin(_ ids: [String]) async throws(ProtocolError) -> Task<Void, Error> {
         guard !running else { throw ProtocolError(code: .conflict, message: "busy: an Android install is already running") }
         running = true   // before any await: a second call reentering the actor must see it
-        if let other = await othersRunning() {
-            running = false
-            throw ProtocolError(code: .conflict, message: "busy: \(other) is running; close it and try again")
+        cancelRequested = false
+        let other = await othersRunning()
+        if other != nil || cancelRequested {
+            running = false; cancelRequested = false
+            throw other.map { ProtocolError(code: .conflict, message: "busy: \($0) is running; close it and try again") } ?? Self.cancelled
         }
         job = .init(phase: "prepare")
         let task = Task { try await self.run(ids) }
@@ -286,7 +309,7 @@ extension AndroidInstaller {
             guard !missing.isEmpty else { job = .init(phase: "done", percent: 100); return }
 
             job = .init(phase: "install")
-            let pending = try await licenses().filter { !$0.accepted }
+            let pending = try await readLicenses().filter { !$0.accepted }
             if !pending.allSatisfy({ ids.contains($0.id) }) {
                 if prepares && ids.isEmpty { job = .init(phase: "done"); return }   // phase 1 only; the licenses are known now
                 throw ProtocolError(code: .invalidArgs, message: "accept the Android SDK licenses first: "
@@ -301,13 +324,13 @@ extension AndroidInstaller {
                 job = .init(phase: "install", item: id, percent: 0)
                 var pkg = id
                 if id == "image" {
-                    let r = try await sdkmanager(sm, ["--list", "--sdk_root=\(sdk)"], item: nil)
+                    let r = try await sdkmanager(sm, ["--list", "--sdk_root=\(sdk)"], item: nil, timeout: .seconds(300))
                     guard r.status == 0, let p = AndroidSdk.pickLatestStable(AndroidSdk.parseImages(r.output)) else {
                         throw ProtocolError(code: .unavailable, message: "no stable google_apis arm64-v8a image in sdkmanager --list: \(Self.tail(r.output))")
                     }
                     pkg = p
                 }
-                let r = try await sdkmanager(sm, ["--sdk_root=\(sdk)", pkg], item: id)
+                let r = try await sdkmanager(sm, ["--sdk_root=\(sdk)", pkg], item: id, timeout: .seconds(3600))
                 // sdkmanager can exit 0 having skipped a package whose license it does not see as accepted
                 guard r.status == 0, items(sdk).first(where: { $0.id == id })?.at != nil else {
                     throw ProtocolError(code: .unavailable, message: "\(pkg): " + (r.status == 0
@@ -328,33 +351,64 @@ extension AndroidInstaller {
         job = .init(phase: "prepare", item: item, percent: total > 0 ? Int(bytes * 100 / total) : nil, bytes: bytes, total: total)
     }
 
-    /// Runs `sdkmanager args` through `/bin/sh` (stderr into stdout; `answers`: stdin `y` then `n` forever, so
-    /// `--licenses` prints every pending license and accepts none) in its own process group, `JAVA_HOME` set.
-    /// `item`: progress lines update `job.percent`. `cancel` kills it.
-    private func sdkmanager(_ sm: String, _ args: [String], item: String?, answers: Bool = false)
+    /// Runs `sdkmanager args` through `/bin/sh` (stderr into stdout) in its own process group, `JAVA_HOME` set.
+    /// `answers`: stdin is a pipe answered as the prompts appear: `y` to "Review licenses?" (show them), `n` to every
+    /// `Accept?`; otherwise stdin is `/dev/null`. `item`: progress lines update `job.percent`. Killed by `cancel` or
+    /// past `timeout` (`.timeout`).
+    private func sdkmanager(_ sm: String, _ args: [String], item: String?, answers: Bool = false, timeout: Duration)
         async throws(ProtocolError) -> (status: Int32, output: String) {
         guard let java else { throw Self.notReady }
         if Task.isCancelled { throw Self.cancelled }
         enum Event: Sendable { case data(Data), exit(Int32) }
         let (events, sink) = AsyncStream<Event>.makeStream()
-        let script = answers ? #"{ echo y; yes n; } | "$0" "$@" 2>&1"# : #"exec "$0" "$@" 2>&1"#
-        let p = try LongProcess(executable: URL(fileURLWithPath: "/bin/sh"), args: ["-c", script, sm] + args,
-                                env: ["PATH": "/usr/bin:/bin", "JAVA_HOME": java, "HOME": home], runDir: runDir,
+        let p = try LongProcess(executable: URL(fileURLWithPath: "/bin/sh"), args: ["-c", #"exec "$0" "$@" 2>&1"#, sm] + args,
+                                env: ["PATH": "/usr/bin:/bin", "JAVA_HOME": java, "HOME": home], runDir: runDir, stdin: answers,
                                 onData: { sink.yield(.data($0)) }, onExit: { sink.yield(.exit($0)); sink.finish() })
         process = p
-        var out = Data(), status: Int32 = -1
+        let timer = Task { () -> Bool in
+            do { try await Task.sleep(for: timeout) } catch { return false }
+            p.terminate(); return true
+        }
+        var out = Data(), status: Int32 = -1, reviewed = false, declined = 0
         for await e in events {   // ends early when the job is cancelled
             switch e {
             case .data(let d):
                 if out.count < 1 << 20 { out.append(d) }
                 // ponytail: a chunk cut mid-line just misses one redraw
                 if let item, job?.item == item, let pr = AndroidSdk.parseProgress(String(decoding: d, as: UTF8.self)) { job?.percent = pr.percent }
+                if answers {
+                    // ponytail: rescans the output (capped at 1 MiB) per chunk; the licenses run prints a few KB
+                    let text = String(decoding: out, as: UTF8.self)
+                    if !reviewed, text.range(of: "Review license", options: .caseInsensitive) != nil {
+                        reviewed = true; _ = p.write(Data("y\n".utf8))
+                    }
+                    let prompts = text.components(separatedBy: "Accept?").count - 1
+                    while declined < prompts { declined += 1; _ = p.write(Data("n\n".utf8)) }
+                }
             case .exit(let c): status = c
             }
         }
-        process = nil
+        if process === p { process = nil }
+        timer.cancel()
         if Task.isCancelled { p.terminate(); throw Self.cancelled }
+        if await timer.value { throw ProtocolError(code: .timeout, message: "sdkmanager \(args.first ?? "") timed out") }
         return (status, String(decoding: out, as: UTF8.self))
+    }
+
+    /// File name -> contents of `<sdk>/licenses/` (`nil`: no such dir).
+    static func snapshot(_ dir: URL) -> [String: Data]? {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return nil }
+        return Dictionary(uniqueKeysWithValues: names.map { ($0, (try? Data(contentsOf: dir.appendingPathComponent($0))) ?? Data()) })
+    }
+
+    /// Puts `<sdk>/licenses/` back exactly as `snapshot` saw it.
+    static func restore(_ dir: URL, _ old: [String: Data]?) {
+        let fm = FileManager.default
+        guard let old else { try? fm.removeItem(at: dir); return }
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where old[name] == nil {
+            try? fm.removeItem(at: dir.appendingPathComponent(name))
+        }
+        for (name, data) in old { try? data.write(to: dir.appendingPathComponent(name), options: .atomic) }
     }
 
     private func withAccepted(_ sdk: String, _ l: [(id: String, title: String, text: String)]) -> [License] {
@@ -373,7 +427,9 @@ extension AndroidInstaller {
         try (((try? Data(contentsOf: f)) ?? Data()) + Data("\n\(Self.licenseHash(l.text))".utf8)).write(to: f, options: .atomic)
     }
 
-    /// ASSUMPTION (E2E confirms): sdkmanager stores SHA-1 (lowercase hex) of the license text as it prints it, trimmed.
+    /// UNVERIFIED until the Task 6 E2E (real sdkmanager, temp SDK): assumes sdkmanager stores the SHA-1 (lowercase hex)
+    /// of the license text as it prints it, trimmed. If wrong, sdkmanager skips the package and the job fails with
+    /// "did not install it (license not accepted?)" naming it; fix the rule here.
     static func licenseHash(_ text: String) -> String {
         Insecure.SHA1.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
     }

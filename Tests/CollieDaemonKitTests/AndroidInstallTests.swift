@@ -8,7 +8,9 @@ private var fm: FileManager { .default }
 
 /// A fake `sdkmanager`: `--list` prints `list` beside it, `--licenses` asks like the real one (unless
 /// `<sdk>/licenses/android-sdk-license` exists), a package prints progress with `\r`, then creates what it would install.
-/// Control files beside it: `sleep` (sleep 30 first, pid in `pid`), `fail` (exit 1). Every call is appended to `calls`.
+/// Control files beside it: `sleep` (sleep 30 first, pid in `pid`), `fail` (exit 1), `direct` (`--licenses` asks
+/// `Accept?` with no "Review" question; "y" writes the license file), `autoaccept` (`--licenses` writes it unasked).
+/// Every call is appended to `calls`.
 private let fakeSdkmanager = #"""
 #!/bin/sh
 d=$(dirname "$0"); sdk=""; pkg=""; mode=install
@@ -17,6 +19,11 @@ echo "$*" >> "$d/calls"
 if [ $mode = list ]; then cat "$d/list"; exit 0; fi
 if [ $mode = licenses ]; then
   if [ -f "$sdk/licenses/android-sdk-license" ]; then echo "All SDK package licenses accepted."; exit 0; fi
+  if [ -f "$d/autoaccept" ]; then mkdir -p "$sdk/licenses"; echo x > "$sdk/licenses/android-sdk-license"; exit 0; fi
+  if [ -f "$d/direct" ]; then
+    printf 'License android-sdk-license:\n----------\nText\n----------\nAccept? (y/N): '
+    read a; if [ "$a" = y ]; then mkdir -p "$sdk/licenses"; echo x > "$sdk/licenses/android-sdk-license"; fi; echo; exit 0
+  fi
   printf '1 of 1 SDK package license not accepted.\nReview license that has not been accepted (y/N)? '
   read a; [ "$a" = y ] || exit 0
   printf '\n1/1: License android-sdk-license:\n---------------------------------------\nTerms and Conditions\n\nThis is the Android Software Development Kit License Agreement\n---------------------------------------\nAccept? (y/N): '
@@ -81,9 +88,8 @@ private struct Fixture {
         var env = ["COLLIE_ANDROID_SDK": sdk.path, "ANDROID_AVD_HOME": home.appendingPathComponent("avd").path]
         if java { env["COLLIE_JAVA_HOME"] = home.appendingPathComponent("java").path }
         return AndroidInstaller(root: home, env: env, home: home.path,
-                                fetch: { url, _, _ in throw ProtocolError(code: .notFound, message: "no network: \(url)") },
-                                isAppleSilicon: true, javaCandidates: [], freeSpace: { _ in free },
-                                runDir: home.appendingPathComponent("run"), othersRunning: { others })
+                                runDir: home.appendingPathComponent("run"), fetch: { url, _, _ in throw ProtocolError(code: .notFound, message: "no network: \(url)") },
+                                isAppleSilicon: true, javaCandidates: [], freeSpace: { _ in free }, othersRunning: { others })
     }
 
     func waitFor(_ file: String) async throws {
@@ -166,6 +172,8 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         let first = Task { await code { try await inst.install(accept: []) } }
         try await f.waitFor("pid")
         #expect(await code { try await inst.install(accept: []) } == .conflict)
+        #expect(try await inst.licenses().isEmpty)   // the job's answer, no second sdkmanager
+        #expect(f.calls.filter { $0.contains("--licenses") }.count == 1)
         await inst.cancel()
         #expect(await first.value == AndroidInstaller.cancelled.code)
         #expect(f.calls.filter { $0.hasSuffix("platform-tools") }.count == 1)
@@ -208,6 +216,19 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         let job = await inst.status().job
         #expect(job?.phase == "failed" && job?.item == "platform-tools")
         #expect(job?.error?.contains("No space left") == true)
+    }
+
+    @Test func licensesNeverAcceptForTheUser() async throws {
+        let f = try Fixture()
+        let licenses = f.sdk.appendingPathComponent("licenses")
+        try f.control("direct")   // no "Review licenses?" first: an early "y" would accept
+        let l = try await f.installer().licenses()
+        #expect(l.map(\.id) == ["android-sdk-license"] && l.allSatisfy { !$0.accepted })
+        #expect(!fm.fileExists(atPath: licenses.path))
+
+        try f.control("autoaccept")   // wrote a license anyway: restored, and loudly
+        #expect(await code { _ = try await f.installer().licenses() } == .internal)
+        #expect(!fm.fileExists(atPath: licenses.path))
     }
 
     @Test func studioRunningIsBusy() async throws {

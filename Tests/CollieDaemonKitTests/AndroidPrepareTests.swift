@@ -88,7 +88,7 @@ private struct Fixture {
             try script(j.appendingPathComponent("bin/java"))
             env["COLLIE_JAVA_HOME"] = j.path
         }
-        return AndroidInstaller(root: home, env: env, home: home.path, fetch: fetch ?? fake.fetch, isAppleSilicon: appleSilicon,
+        return AndroidInstaller(root: home, env: env, home: home.path, runDir: home.appendingPathComponent("run"), fetch: fetch ?? fake.fetch, isAppleSilicon: appleSilicon,
                                 javaCandidates: [], freeSpace: { _ in free })
     }
 

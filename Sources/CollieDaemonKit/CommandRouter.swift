@@ -161,6 +161,7 @@ actor CommandRouter {
             scrcpyServer: config.scrcpyServer, grace: config.deviceGrace,
             adb: { adbPath ?? Adb.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
             emulator: { emulatorPath ?? Emulator.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) }, emulatorBoot: config.emulatorBoot, emulatorEnv: config.emulatorEnv,
+            avdManager: config.avdManager ?? { AvdManager.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
             xcrun: config.xcrunPath, axe: { axePath ?? Simulator.locateAXe(env: ProcessInfo.processInfo.environment) },
             crashReports: config.crashReportsDir, logCap: config.deviceLogCap,
             emit: { p, n, pl in await me.router?.pluginEmitted(panel: p, name: n, payload: pl) })

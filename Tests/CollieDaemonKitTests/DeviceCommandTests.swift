@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import CollieCore
 import CollieProtocol
+import CollieDevice
 @testable import CollieDaemonKit
 
 private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -64,7 +65,76 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, placement: String = "can
     return m
 }
 
+/// Temp ANDROID_AVD_HOME + fake avdmanager/java/SDK image (as LiteAvdServiceTests); never touches ~/.android.
+private struct LiteFx {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("litecmd-\(UUID().uuidString.prefix(8))")
+    var avdHome: URL { dir.appendingPathComponent("avd") }
+    init() throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: avdHome, withIntermediateDirectories: true)
+        try fm.createDirectory(at: dir.appendingPathComponent("sdk/emulator"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: dir.appendingPathComponent("sdk/system-images/android-37.0/google_apis/arm64-v8a"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: dir.appendingPathComponent("jdk/bin"), withIntermediateDirectories: true)
+        try script("jdk/bin/java", "exit 0"); try script("sdk/emulator/emulator", "exit 0")
+        try script("avdmanager", """
+        if [ "$1" = create ]; then mkdir -p "$ANDROID_AVD_HOME/collie-lite.avd"; printf 'hw.ramSize=2048\\n' > "$ANDROID_AVD_HOME/collie-lite.avd/config.ini"; fi
+        if [ "$1" = delete ]; then rm -rf "$ANDROID_AVD_HOME/collie-lite.avd"; fi
+        """)
+    }
+    func script(_ name: String, _ body: String) throws {
+        let u = dir.appendingPathComponent(name)
+        try "#!/bin/sh\n\(body)\n".write(to: u, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: u.path)
+    }
+    func daemon(_ body: (Daemon, Paths) async throws -> Void) async throws {
+        let mgr = AvdManager(url: dir.appendingPathComponent("avdmanager"), javaHome: dir.appendingPathComponent("jdk").path)
+        try await withDaemon(configure: {
+            $0.adbPath = URL(fileURLWithPath: fixtures.appendingPathComponent("fake-adb.sh").path)
+            $0.emulatorPath = dir.appendingPathComponent("sdk/emulator/emulator")
+            $0.emulatorEnv = ["ANDROID_AVD_HOME": avdHome.path]
+            $0.avdManager = { mgr }
+        }, body)
+    }
+}
+
 @Suite(.serialized) struct DeviceCommandTests {
+
+    @Test func liteCreateIsAdminOnly() async throws {
+        let fx = try LiteFx(); defer { try? FileManager.default.removeItem(at: fx.dir) }
+        try await fx.daemon { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            let r = try await call(p, m, "device.lite.create")
+            #expect(!r.ok)
+            #expect(!FileManager.default.fileExists(atPath: fx.avdHome.appendingPathComponent("collie-lite.avd").path))
+        }
+    }
+    @Test func liteCreateReturnsTheRow() async throws {
+        let fx = try LiteFx(); defer { try? FileManager.default.removeItem(at: fx.dir) }
+        try await fx.daemon { d, p in
+            let r = try await admin(d, p, "device.lite.create")
+            #expect(r.ok, "\(r)")
+            #expect(field(r, "name") == .string("collie-lite") && field(r, "created") == .string("true"))
+            #expect(field(r, "image") == .string("system-images;android-37.0;google_apis;arm64-v8a"))
+        }
+    }
+    @Test func liteRemoveReturnsEmpty() async throws {
+        let fx = try LiteFx(); defer { try? FileManager.default.removeItem(at: fx.dir) }
+        try await fx.daemon { d, p in
+            _ = try await admin(d, p, "device.lite.create")
+            let r = try await admin(d, p, "device.lite.remove")
+            #expect(r.ok, "\(r)")
+            #expect(r.result == .object([:]))
+            #expect(!FileManager.default.fileExists(atPath: fx.avdHome.appendingPathComponent("collie-lite.avd").path))
+        }
+    }
+    @Test func helpListsBothCommands() {
+        for n in ["device.lite.create", "device.lite.remove"] {
+            let c = Commands.spec(n)
+            #expect(c?.panelFree == true && c?.timeoutSeconds == 90)
+            #expect(c?.summary.contains("~/.android/avd") == true)
+        }
+        #expect(Commands.spec("device.lite.create")?.summary.contains("cmdline-tools") == true)
+    }
     @Test func listShowsUnauthorized() async throws {
         let fx = try Fx(devices: ["emulator-5554 device product:p model:Pixel_7", "R58 unauthorized"]); defer { fx.cleanup() }
         try await withDevice { d, p in

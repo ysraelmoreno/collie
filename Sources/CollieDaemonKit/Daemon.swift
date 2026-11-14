@@ -32,6 +32,8 @@ public struct DaemonConfig: Sendable {
     public var emulatorBoot: Duration = .seconds(180)
     /// The launched emulator's environment; nil = the daemon's minus `COLLIE_*` (tests pass their fakes' inputs).
     public var emulatorEnv: [String: String]?
+    /// `avdmanager`; nil = `AvdManager.locate` (tests point it at a fake).
+    var avdManager: (@Sendable () -> AvdManager?)?
     /// `xcrun` for `simctl` (tests point it at a fake).
     public var xcrunPath = URL(fileURLWithPath: "/usr/bin/xcrun")
     /// The AXe binary; nil = `Simulator.locateAXe`.

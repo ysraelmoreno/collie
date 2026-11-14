@@ -37,6 +37,11 @@ extension CommandRouter {
                          "platform": .string("ios"), "panels": names(s.udid)])
             })
         }
+        if r.command == "device.lite.create" || r.command == "device.lite.remove" {
+            guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "\(r.command) is admin only") }
+            if r.command == "device.lite.remove" { try await devices.removeLiteAvd(); return .object([:]) }
+            return .object(try await devices.createLiteAvd().mapValues { .string($0) })
+        }
         let panel = try ConnectionGraph.resolvePanel(name: str(r, "panel"), plugin: "device", from: caller?.id, in: ws)
         var args = r.args; args["panel"] = nil
         return try await devices.run(r.command, panel: panel, args: args, cwd: r.cwd)

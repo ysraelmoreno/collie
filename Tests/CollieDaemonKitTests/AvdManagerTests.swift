@@ -46,6 +46,37 @@ private func tmpScript(_ rel: String, _ body: String = "") throws -> URL {
         #expect(AvdManager.locate(env: bad, home: "/nonexistent", javaCandidates: [studio.path])?.javaHome == studio.path)
     }
 
+    @Test func locateFindsTheCollieSdkWhenNoStudioSdk() throws {
+        let home = try tmpScript("Library/Application Support/Collie/android-sdk/cmdline-tools/latest/bin/avdmanager")
+        let java = try tmpScript("bin/java")
+        let sdk = home.appendingPathComponent("Library/Application Support/Collie/android-sdk")
+        #expect(AvdManager.locate(env: ["COLLIE_JAVA_HOME": java.path], home: home.path, javaCandidates: [])?.url.path
+                == sdk.appendingPathComponent("cmdline-tools/latest/bin/avdmanager").path)
+    }
+
+    @Test func locateIgnoresAnEmptyAndroidHome() throws {
+        let home = try tmpScript("Library/Android/sdk/cmdline-tools/latest/bin/avdmanager")
+        let java = try tmpScript("bin/java")
+        let empty = FileManager.default.temporaryDirectory.appendingPathComponent("collie-avd-empty-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        let m = AvdManager.locate(env: ["ANDROID_HOME": empty.path, "COLLIE_JAVA_HOME": java.path], home: home.path, javaCandidates: [])
+        #expect(m?.url.path == home.appendingPathComponent("Library/Android/sdk/cmdline-tools/latest/bin/avdmanager").path)
+    }
+
+    @Test func avdmanagerAcceptsANumberedCmdlineToolsDir() throws {
+        let sdk = try tmpScript("cmdline-tools/19.0/bin/avdmanager")
+        let java = try tmpScript("bin/java")
+        #expect(AvdManager.locate(env: ["ANDROID_HOME": sdk.path, "COLLIE_JAVA_HOME": java.path], home: "/nonexistent", javaCandidates: [])?.url.path
+                == sdk.appendingPathComponent("cmdline-tools/19.0/bin/avdmanager").path)
+    }
+
+    @Test func javaFallsBackToTheCollieJdk() throws {
+        let sdk = try tmpScript("cmdline-tools/latest/bin/avdmanager")
+        let home = try tmpScript("Library/Application Support/Collie/jdk/Contents/Home/bin/java")
+        let jdk = home.appendingPathComponent("Library/Application Support/Collie/jdk/Contents/Home").path
+        #expect(AvdManager.locate(env: ["ANDROID_HOME": sdk.path], home: home.path, javaCandidates: [])?.javaHome == jdk)
+    }
+
     @Test func runSetsJavaHomeAndGivesChildEofOnStdin() async throws {
         let sdk = try tmpScript("cmdline-tools/latest/bin/avdmanager", "read x; echo \"got:$x java:$JAVA_HOME\"")
         let java = try tmpScript("bin/java")

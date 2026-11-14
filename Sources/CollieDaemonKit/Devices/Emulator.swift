@@ -2,6 +2,14 @@ import Foundation
 import CollieDevice
 import CollieProtocol
 
+extension AndroidSdk {
+    /// The SDK the locators use: a reused one (env, Studio's) or Collie's own under Application Support.
+    static func root(env: [String: String], home: String) -> String {
+        resolve(env: env, home: home, colliePath: "\(home)/Library/Application Support/Collie/android-sdk",
+                exists: { FileManager.default.fileExists(atPath: $0) }).path
+    }
+}
+
 /// The Android SDK `emulator` command line. Read-only: never writes to the SDK or `~/.android`.
 struct Emulator: Sendable {
     let url: URL
@@ -11,8 +19,7 @@ struct Emulator: Sendable {
 
     /// First executable of `COLLIE_EMULATOR`, the SDK dirs, the default macOS SDK: a launchd daemon has no useful PATH.
     static func locate(env: [String: String], home: String) -> URL? {
-        let sdk = ["ANDROID_HOME", "ANDROID_SDK_ROOT"].compactMap { env[$0] }.map { "\($0)/emulator/emulator" }
-        let candidates = (env["COLLIE_EMULATOR"].map { [$0] } ?? []) + sdk + ["\(home)/Library/Android/sdk/emulator/emulator"]
+        let candidates = (env["COLLIE_EMULATOR"].map { [$0] } ?? []) + ["\(AndroidSdk.root(env: env, home: home))/emulator/emulator"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }
     }
 

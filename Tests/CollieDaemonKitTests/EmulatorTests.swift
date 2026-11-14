@@ -20,6 +20,27 @@ private func tmpExecutable(_ rel: String) throws -> URL {
     #expect(Emulator.locate(env: [:], home: "/nonexistent") == nil)
 }
 
+/// Collie's own SDK under a temp home holds both tools; no Studio SDK, no ANDROID_HOME.
+@Test func locateFindsTheCollieSdkWhenNoStudioSdk() throws {
+    let home = try tmpExecutable("Library/Application Support/Collie/android-sdk/emulator/emulator")
+    let sdk = home.appendingPathComponent("Library/Application Support/Collie/android-sdk")
+    let adb = sdk.appendingPathComponent("platform-tools/adb")
+    try FileManager.default.createDirectory(at: adb.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "#!/bin/sh\n".write(to: adb, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: adb.path)
+    #expect(Emulator.locate(env: [:], home: home.path)?.path == sdk.appendingPathComponent("emulator/emulator").path)
+    #expect(Adb.locate(env: [:], home: home.path)?.path == adb.path)
+}
+
+/// An empty ANDROID_HOME is not an SDK: the Studio one still wins.
+@Test func locateIgnoresAnEmptyAndroidHome() throws {
+    let home = try tmpExecutable("Library/Android/sdk/emulator/emulator")
+    let empty = FileManager.default.temporaryDirectory.appendingPathComponent("collie-emu-empty-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+    #expect(Emulator.locate(env: ["ANDROID_HOME": empty.path], home: home.path)?.path
+            == home.appendingPathComponent("Library/Android/sdk/emulator/emulator").path)
+}
+
 private let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures")
 
 /// Nested in `DeviceCommandTests` (serialized): the fakes are driven through process-wide environment variables.

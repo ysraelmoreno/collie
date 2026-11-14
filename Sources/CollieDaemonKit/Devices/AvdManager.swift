@@ -1,4 +1,5 @@
 import Foundation
+import CollieDevice
 import CollieProtocol
 
 /// The Android SDK `avdmanager` command line plus the JDK it needs (a launchd daemon has no useful PATH or JAVA_HOME).
@@ -12,16 +13,23 @@ struct AvdManager: Sendable {
 
     private static let studioJbr = "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 
-    /// `avdmanager`: `COLLIE_AVDMANAGER`, the SDK dirs, the default macOS SDK. Java home: `COLLIE_JAVA_HOME`, then
-    /// `javaCandidates` (default: Android Studio's bundled JBR, then, only if that fails, `/usr/libexec/java_home`'s answer); the first dir
+    /// Collie's own JDK (downloaded Temurin, extracted with `--strip-components=1`, so `Contents/Home` is its java home).
+    static func collieJdk(_ home: String) -> String { "\(home)/Library/Application Support/Collie/jdk/Contents/Home" }
+
+    /// `avdmanager`: `COLLIE_AVDMANAGER`, then the resolved SDK (reused or Collie's). Java home: `COLLIE_JAVA_HOME`, then
+    /// `javaCandidates` (default: Android Studio's bundled JBR), then Collie's JDK, then, only if that fails, `/usr/libexec/java_home`'s answer; the first dir
     /// holding an executable `bin/java` wins. `nil` when either is missing.
     static func locate(env: [String: String], home: String, javaCandidates: [String]? = nil) -> AvdManager? {
         let fm = FileManager.default
-        let sdk = ["ANDROID_HOME", "ANDROID_SDK_ROOT"].compactMap { env[$0] }.map { "\($0)/cmdline-tools/latest/bin/avdmanager" }
-        let tools = (env["COLLIE_AVDMANAGER"].map { [$0] } ?? []) + sdk + ["\(home)/Library/Android/sdk/cmdline-tools/latest/bin/avdmanager"]
+        // avdmanager sits next to sdkmanager: reuse its version order (latest, numbered) by asking for sdkmanager paths
+        // and checking the avdmanager beside each.
+        func beside(_ p: String) -> String { (p as NSString).deletingLastPathComponent + "/avdmanager" }
+        let sdk = AndroidSdk.sdkmanager(in: AndroidSdk.root(env: env, home: home), exists: { fm.isExecutableFile(atPath: beside($0)) })
+            .map { [beside($0)] } ?? []
+        let tools = (env["COLLIE_AVDMANAGER"].map { [$0] } ?? []) + sdk
         guard let tool = tools.first(where: { fm.isExecutableFile(atPath: $0) }) else { return nil }
         let hasJava = { (d: String) in fm.isExecutableFile(atPath: "\(d)/bin/java") }
-        let early = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? [studioJbr])
+        let early = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? [studioJbr]) + [collieJdk(home)]
         // java_home is spawned only when nothing earlier works (and never when candidates are injected).
         guard let java = early.first(where: hasJava) ?? (javaCandidates == nil ? javaHomeOutput().flatMap { hasJava($0) ? $0 : nil } : nil) else { return nil }
         return AvdManager(url: URL(fileURLWithPath: tool), javaHome: java)

@@ -1,4 +1,5 @@
 import Foundation
+import CollieDevice
 import CollieProtocol
 
 /// The adb command line. Reuses the running adb server; never kills it (`kill-server` is never sent).
@@ -10,9 +11,8 @@ struct Adb: Sendable {
 
     /// First executable of `COLLIE_ADB`, the SDK dirs, Homebrew: a launchd daemon has no useful PATH.
     static func locate(env: [String: String], home: String) -> URL? {
-        let sdk = ["ANDROID_HOME", "ANDROID_SDK_ROOT"].compactMap { env[$0] }.map { "\($0)/platform-tools/adb" }
-        let candidates = (env["COLLIE_ADB"].map { [$0] } ?? []) + sdk
-            + ["\(home)/Library/Android/sdk/platform-tools/adb", "/opt/homebrew/bin/adb", "/usr/local/bin/adb"]
+        let candidates = (env["COLLIE_ADB"].map { [$0] } ?? [])
+            + ["\(AndroidSdk.root(env: env, home: home))/platform-tools/adb", "/opt/homebrew/bin/adb", "/usr/local/bin/adb"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }
     }
 

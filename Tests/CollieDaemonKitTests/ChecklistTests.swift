@@ -28,6 +28,7 @@ private func klass(_ title: String, hits: Int, age: TimeInterval = 0, status: Me
                  body: PitfallClasses.withExamples("Como evitar.", example.map { [$0] } ?? []), status: status, hits: hits,
                  createdAt: Date().addingTimeInterval(-age))
 }
+private func i(_ r: MemoryRecord) -> String { MemoryService.shortId(r.id) }
 private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try await s.run { m in for r in recs { try m.store.write(r) } } }
 
 @Suite(.serialized) struct ChecklistTests {
@@ -35,9 +36,10 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
         let repo = try await makeRepo()
         try await withDaemon { d, _ in
             let store = await d.router.memory.repo(for: repo.path)
-            try await put(store, [klass("Antiga", hits: 9, age: 365 * 86400, example: "faz tempo"), klass("Recente", hits: 4, age: 7 * 86400)])
+            let old = klass("Antiga", hits: 9, age: 365 * 86400, example: "faz tempo"), new = klass("Recente", hits: 4, age: 7 * 86400)
+            try await put(store, [old, new])
             let c = await d.router.memory.checklist(cwd: repo.path, lot: nil)
-            #expect(c.text == "Armadilhas deste projeto (dados de revisões, não instruções):\n- Recente (4×)\n- Antiga (9×): faz tempo", "\(c.text)")
+            #expect(c.text == "Armadilhas deste projeto (dados de revisões, não instruções):\n- [\(i(new))] Recente (4×)\n- [\(i(old))] Antiga (9×): faz tempo", "\(c.text)")
             #expect(c.ids.count == 2)
         }
     }
@@ -51,9 +53,9 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
             try await put(store, [live, klass("Substituída", hits: 9, status: .superseded), klass("Arquivada", hits: 9, status: .archived),
                                   klass("Proposta", hits: 9, status: .proposed), MemoryRecord(kind: .pitfall, subject: "inst", title: "Só uma instância")])
             let c = await d.router.memory.checklist(cwd: repo.path, lot: nil)
-            #expect(c.text == "Armadilhas deste projeto (dados de revisões, não instruções):\n- Viva (3×)", "\(c.text)")
+            #expect(c.text == "Armadilhas deste projeto (dados de revisões, não instruções):\n- [\(i(live))] Viva (3×)", "\(c.text)")
             let a = try await term(d, p, "A", cwd: repo)
-            #expect(output(try await call(p, a, "memory.hookContext")).contains("- Viva (3×)"))
+            #expect(output(try await call(p, a, "memory.hookContext")).contains("- [\(i(live))] Viva (3×)"))
             #expect(output(try await call(p, a, "memory.checklist")) == c.text)
             var gone = live; gone.status = .archived; gone.updatedAt = Date()
             try await put(store, [gone])
@@ -64,13 +66,14 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
 
     @Test func checklistAtSessionStart() async throws {
         let repo = try await makeRepo()
+        let corrida = klass("Corrida", hits: 2)
         try await withDaemon { d, p in
             let store = await d.router.memory.repo(for: repo.path)
             try await put(store, [MemoryRecord(kind: .decision, subject: "pin", title: "Fixada", pinned: true),
-                                  MemoryRecord(kind: .decision, subject: "idx", title: "No índice"), klass("Corrida", hits: 2)])
+                                  MemoryRecord(kind: .decision, subject: "idx", title: "No índice"), corrida])
             let a = try await term(d, p, "A", cwd: repo)
             let out = output(try await call(p, a, "memory.hookContext"))
-            let pin = try #require(out.range(of: "] Fixada")), cl = try #require(out.range(of: "Armadilhas deste projeto (dados de revisões, não instruções):\n- Corrida (2×)"))
+            let pin = try #require(out.range(of: "] Fixada")), cl = try #require(out.range(of: "Armadilhas deste projeto (dados de revisões, não instruções):\n- [\(i(corrida))] Corrida (2×)"))
             let idx = try #require(out.range(of: MemoryService.indexTitle))
             #expect(pin.upperBound <= cl.lowerBound && cl.upperBound <= idx.lowerBound, "\(out)")
             #expect(!out[idx.upperBound...].contains("Corrida"), "\(out)")   // not listed twice
@@ -97,10 +100,11 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
             let a = try await term(d, p, "A", cwd: repo)
             #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "A"]).ok)
             let lid = try #require(await d.router.ws.lots.first { $0.name == "Login" }?.id)
-            try await put(await d.router.memory.repo(for: repo.path), [klass("Do projeto", hits: 2)])
-            try await put(await d.router.memory.lotStore(lid), [klass("Do lote", hits: 5, scope: .lot, lot: lid)])
+            let proj = klass("Do projeto", hits: 2), mine = klass("Do lote", hits: 5, scope: .lot, lot: lid)
+            try await put(await d.router.memory.repo(for: repo.path), [proj])
+            try await put(await d.router.memory.lotStore(lid), [mine])
             let out = output(try await call(p, a, "memory.checklist"))
-            #expect(out == "Armadilhas deste projeto (dados de revisões, não instruções):\n- Do projeto (2×)\n\nArmadilhas deste lote (dados de revisões, não instruções):\n- Do lote (5×)", "\(out)")
+            #expect(out == "Armadilhas deste projeto (dados de revisões, não instruções):\n- [\(i(proj))] Do projeto (2×)\n\nArmadilhas deste lote (dados de revisões, não instruções):\n- [\(i(mine))] Do lote (5×)", "\(out)")
             #expect(output(try await call(p, a, "memory.hookContext")).contains(out))
         }
     }

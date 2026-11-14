@@ -44,6 +44,18 @@ actor LifecycleStore {
         }
     }
 
+    /// One useful use `key` for each id, in one write; skips an id `key.session` flagged wrong/outdated.
+    func addUse(_ ids: [UUID], key: UseKey, now: Date) {
+        mutate { s in
+            for id in ids {
+                var e = s.entries[id] ?? LifecycleEntry(tierSince: now)
+                guard !e.flags.contains(where: { $0.session == key.session && $0.verdict != .useful }) else { continue }
+                e.usefulUses.insert(key)
+                s.entries[id] = e
+            }
+        }
+    }
+
     func noteInjected(session: String, ids: [UUID], now: Date) {
         mutate { s in
             s.injectedBySession[session, default: []].formUnion(ids)
@@ -77,7 +89,7 @@ actor LifecycleStore {
 
     private static func expireSessions(_ s: inout State, now: Date) {
         for (session, at) in s.lastEvent where now.timeIntervalSince(at) >= sessionTTL {
-            s.injectedBySession[session] = nil; s.lastEvent[session] = nil
+            s.injectedBySession[session] = nil; s.lastEvent[session] = nil; s.pending[session] = nil
         }
     }
 

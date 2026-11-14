@@ -380,7 +380,7 @@ actor MemoryService {
             var started = false
             for r in recs.sorted(by: { (rank($0), $0.updatedAt) > (rank($1), $1.updatedAt) }) where ids.count < max {
                 let ex = PitfallClasses.examples(r.body).first.map { ": " + Self.oneLine($0, max: 120) } ?? ""
-                var line = "- \(Self.oneLine(r.title, max: 200)) (\(r.hits ?? 0)×)\(ex)"
+                var line = "- [\(Self.shortId(r.id))] \(Self.oneLine(r.title, max: 200)) (\(r.hits ?? 0)×)\(ex)"
                 if line.count > Self.checklistLineMax { line = String(line.prefix(Self.checklistLineMax - 1)) + "…" }
                 let add = (started ? "\n" : (out.isEmpty ? "" : "\n\n") + title + "\n") + line
                 guard out.utf8.count + add.utf8.count <= limit else { continue }
@@ -574,7 +574,8 @@ actor MemoryService {
         if let s = sessions[terminal] {
             let recs = chosen.map(\.hit.record)
             await lifecycle.noteInjected(session: s, ids: recs.map(\.id), now: Date())
-            await lifecycle.setPending(session: s, ids: recs.filter(LifecycleRules.eligible).map(\.id))   // the last injection only
+            let pend = recs.filter(LifecycleRules.eligible).map(\.id)   // the last injection only
+            if pend.isEmpty { _ = await lifecycle.takePending(session: s) } else { await lifecycle.setPending(session: s, ids: pend) }
         }
         var stores: [RepoMemory] = []
         for h in chosen where !stores.contains(where: { $0 === h.store }) { stores.append(h.store) }
@@ -606,12 +607,11 @@ actor MemoryService {
         guard let s = sessions[terminal] else { return }
         let ids = await lifecycle.takePending(session: s)
         guard !correction, !ids.isEmpty else { return }
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]   // UTC
-        let use = UseKey(day: f.string(from: now), session: s), entries = await lifecycle.all()
-        for id in ids where !(entries[id]?.flags.contains { $0.session == s && $0.verdict != .useful } ?? false) {
-            await lifecycle.update(id, now: now) { $0.usefulUses.insert(use) }
-        }
+        await lifecycle.addUse(ids, key: UseKey(day: Self.dayFormatter.string(from: now), session: s), now: now)
     }
+    nonisolated(unsafe) private static let dayFormatter: ISO8601DateFormatter = {   // UTC; read-only after init
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f
+    }()
 
     // MARK: procedures as skills
 

@@ -61,6 +61,23 @@ private let day: TimeInterval = 86_400
         #expect(await s.takePending(session: "s").isEmpty)
     }
 
+    @Test func pendingExpiresWithItsSession() async {
+        let s = LifecycleStore(file: tmpFile()), id = UUID()
+        await s.noteInjected(session: "a", ids: [id], now: t0)
+        await s.setPending(session: "a", ids: [id])
+        await s.noteInjected(session: "b", ids: [id], now: t0 + 8 * day)   // a: 8d idle, its pending goes too
+        #expect(await s.takePending(session: "a").isEmpty)
+    }
+
+    @Test func addUseOneWriteSkipsFlaggedBySameSession() async {
+        let f = tmpFile(), s = LifecycleStore(file: f), ok = UUID(), flagged = UUID(), key = UseKey(day: "2026-11-13", session: "s")
+        await s.update(flagged, now: t0) { $0.flags = [LifecycleFlag(verdict: .outdated, session: "s", day: "2026-11-13", reason: "")] }
+        await s.addUse([ok, flagged], key: key, now: t0)
+        let all = await LifecycleStore(file: f).all()
+        #expect(all[ok]?.usefulUses == [key] && all[ok]?.tierSince == t0)
+        #expect(all[flagged]?.usefulUses.isEmpty == true)
+    }
+
     @Test func pruneDropsIdsMissingFor30DaysKeepsRecent() async {
         let s = LifecycleStore(file: tmpFile()), gone = UUID(), back = UUID(), kept = UUID()
         for id in [gone, back, kept] { await s.update(id, now: t0) { _ in } }

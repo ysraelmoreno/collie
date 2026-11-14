@@ -139,7 +139,7 @@ private func createProcedure() -> CuratorOutput {
             guard case .object(let l)? = list.result, case .array(let rows)? = l["records"] else { Issue.record("\(list)"); return }
             #expect(rows.count == 1)
             let rel = output(try await call(p, a, "memory.hookRelevant", ["prompt": "vou mexer no sandbox agora"]))
-            #expect(rel.contains("- [procedimento ") && rel.contains("] Mexer no sandbox"), "\(rel)")
+            #expect(rel.contains("- [procedimento \(id.lowercased().prefix(8))] Mexer no sandbox"), "\(rel)")
             // an agent may save one, but it waits for the user (R12: not active without the user's provenance)
             let mine = try await call(p, a, "memory.save", ["kind": "procedure", "subject": "lint", "title": "Rodar o lint", "body": "1. lint"])
             guard case .object(let m)? = mine.result, case .string(let st)? = m["status"] else { Issue.record("\(mine)"); return }

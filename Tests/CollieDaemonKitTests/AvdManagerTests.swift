@@ -46,6 +46,19 @@ private func tmpScript(_ rel: String, _ body: String = "") throws -> URL {
         #expect(AvdManager.locate(env: bad, home: "/nonexistent", javaCandidates: [studio.path])?.javaHome == studio.path)
     }
 
+    @Test func emptyCollieJavaHomeUsesOnlyTheCollieJdk() throws {
+        let studio = try tmpScript("bin/java")
+        let home = try tmpScript("placeholder")
+        let env = ["COLLIE_JAVA_HOME": ""]
+        #expect(AvdManager.javaHome(env: env, home: home.path, javaCandidates: [studio.path]) == nil)
+        let jdk = AvdManager.collieJdk(home.path)
+        let bin = URL(fileURLWithPath: jdk).appendingPathComponent("bin/java")
+        try FileManager.default.createDirectory(at: bin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\n".write(to: bin, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
+        #expect(AvdManager.javaHome(env: env, home: home.path, javaCandidates: [studio.path]) == jdk)
+    }
+
     @Test func locateFindsTheCollieSdkWhenNoStudioSdk() throws {
         let home = try tmpScript("Library/Application Support/Collie/android-sdk/cmdline-tools/latest/bin/avdmanager")
         let java = try tmpScript("bin/java")

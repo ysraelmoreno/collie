@@ -114,6 +114,17 @@ private struct Fixture {
         #expect(!fm.fileExists(atPath: f.staging.path))
     }
 
+    @Test func prepareDownloadsTheJdkWhenCollieJavaHomeIsEmptyDespiteACandidate() async throws {
+        let f = try Fixture()
+        let studio = f.home.appendingPathComponent("studio")
+        try script(studio.appendingPathComponent("bin/java"))
+        let inst = AndroidInstaller(root: f.home, env: ["COLLIE_ANDROID_SDK": f.sdk.path, "PATH": "/usr/bin:/bin", "COLLIE_JAVA_HOME": ""],
+                                    home: f.home.path, runDir: f.home.appendingPathComponent("run"), fetch: f.fake.fetch, isAppleSilicon: true,
+                                    javaCandidates: [studio.path], freeSpace: { _ in 1 << 40 })
+        try await inst.prepare()
+        #expect(fm.isExecutableFile(atPath: f.collieJdkJava))
+    }
+
     @Test func prepareLeavesAnExistingCmdlineToolsAlone() async throws {
         let f = try Fixture()
         let numbered = f.sdk.appendingPathComponent("cmdline-tools/19.0/bin/sdkmanager")

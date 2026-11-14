@@ -33,9 +33,10 @@ struct AvdManager: Sendable {
     }
 
     /// The Java home `locate` would use (same order), `nil` when none holds an executable `bin/java`. The installer asks
-    /// it too, to decide whether Collie's JDK must be downloaded.
+    /// it too, to decide whether Collie's JDK must be downloaded. `COLLIE_JAVA_HOME` set but empty: only Collie's JDK — used by tests and the E2E.
     static func javaHome(env: [String: String], home: String, javaCandidates: [String]? = nil) -> String? {
         let hasJava = { (d: String) in FileManager.default.isExecutableFile(atPath: "\(d)/bin/java") }
+        if env["COLLIE_JAVA_HOME"] == "" { return hasJava(collieJdk(home)) ? collieJdk(home) : nil }
         let early = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? [studioJbr])
         // java_home is spawned only when nothing earlier works (and never when candidates are injected).
         let viaJavaHome = { javaCandidates == nil ? javaHomeOutput().flatMap { hasJava($0) ? $0 : nil } : nil }

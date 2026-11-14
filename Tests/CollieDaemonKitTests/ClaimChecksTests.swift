@@ -100,7 +100,7 @@ import CollieCore
         #expect(ClaimChecks.branches(in: s).isEmpty)
     }
     @Test func capsClaimsPerRecord() async {
-        let body = (0..<20).map { String(format: "abc12%02df", $0) }.joined(separator: " ")
+        let body = (0..<20).map { "abc12" + String($0 + 10) + "f" }.joined(separator: " ")
         let f = await ClaimChecks.check(rec(body), facts: Fake())
         #expect(f.count == ClaimChecks.maxPerKind)
     }

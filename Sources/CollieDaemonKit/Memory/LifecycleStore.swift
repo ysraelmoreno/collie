@@ -46,6 +46,17 @@ actor LifecycleStore {
         }
     }
 
+    /// `change` on each id's entry (a new one starts provisional at `now`), in one write.
+    func update(_ ids: [UUID], now: Date, _ change: (inout LifecycleEntry) -> Void) {
+        mutate { s in
+            for id in ids {
+                var e = s.entries[id] ?? LifecycleEntry(tierSince: now)
+                change(&e)
+                s.entries[id] = e
+            }
+        }
+    }
+
     /// One useful use `key` for each id, in one write; skips an id `key.session` flagged wrong/outdated.
     func addUse(_ ids: [UUID], key: UseKey, now: Date) {
         mutate { s in

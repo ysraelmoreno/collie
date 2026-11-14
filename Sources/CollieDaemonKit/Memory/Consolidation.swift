@@ -131,6 +131,7 @@ extension CommandRouter {
         markConsolidated(store, at: now)
         if store.root != nil { await ingestReviews(repo: store); await detectProcedures(store) }
         let scores = await memory.scores.all()
+        let longTerm = Set(await memory.lifecycle.all().filter { LifecycleRules.tier(for: $0.value, now: now) == .longTerm }.keys)
         do {
             let (before, changed, items) = try await store.run { m -> ([MemoryRecord], [MemoryRecord], [CleanupItem]) in
                 let index = m.index()
@@ -138,7 +139,7 @@ extension CommandRouter {
                 let records = m.store.all().records.filter { !MemoryLearning.usersKind($0.kind) }
                 var stats: [UUID: MemoryStats] = [:]
                 for r in records { if let s = index?.stats(r.id) { stats[r.id] = s } }
-                let items = MemoryCleanup.plan(records: records, stats: stats, scores: scores, now: now)
+                let items = MemoryCleanup.plan(records: records, stats: stats, scores: scores, exempt: longTerm, now: now)
                 return (records, try MemoryCleanup.apply(items, store: m.store), items)
             }
             let entries = changed.compactMap { c -> DigestEntry? in
@@ -149,6 +150,7 @@ extension CommandRouter {
             }
             try MemoryEventLog.$source.withValue("consolidation") { try digest.append(entries) }
         } catch { memoryLog("consolidation cleanup \(store.path): \(error)") }
+        await lifecyclePass(store, now: now)
 
         let recs = (try? await store.run { m in m.store.all().records.filter { MemoryService.visible($0, paddock: $0.paddock, lot: m.lotId) } }) ?? []
         func item(_ r: MemoryRecord) -> ConsolidatePayload.Item {

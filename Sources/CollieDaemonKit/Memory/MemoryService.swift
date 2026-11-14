@@ -281,6 +281,8 @@ actor MemoryService {
     }
 
     func isCached(root: String) -> Bool { byRoot[root] != nil }   // tests
+    /// The repo stores opened in this run (lifecycle prune: ids none of them holds).
+    func projectStores() -> [RepoMemory] { Array(byRoot.values) }
 
     /// What an agent reads: its lot's memory (if in a lot), its repo's and the global one. Never another lot's.
     func readable(_ cwd: String, lot: UUID? = nil) async -> [RepoMemory] {
@@ -337,17 +339,20 @@ actor MemoryService {
                 return m.store.all().records.filter { $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId) && m.present($0) }
             }) ?? []
             pinned += recs.filter(\.pinned)
-            for r in recs where r.pinned { owner[r.id] = s.key }
+            for r in recs { owner[r.id] = s.key }
             if lot == nil || s.lotId != nil { rest += recs.filter { !$0.pinned } }
         }
-        var (text, ids) = Self.renderContext(pinned, limit: limit, entries: await lifecycle.all())
-        var owned = owner.filter { ids.contains($0.key) }
+        let entries = await lifecycle.all()
+        var (text, ids) = Self.renderContext(pinned, limit: limit, entries: entries)
         guard !text.isEmpty else { return ContextParts() }
+        let lt = Self.renderLongTerm(rest, entries: entries, limit: limit - text.utf8.count)
+        text += lt.text; ids.formUnion(lt.ids)
+        var owned = owner.filter { ids.contains($0.key) }
         let room = Swift.min(Self.checklistMax, limit - text.utf8.count - 2)
-        let cl = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: Set(pinned.map(\.id)), focus: focus) : (text: "", ids: [:], recs: [])
+        let cl = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: ids, focus: focus) : (text: "", ids: [:], recs: [])
         if !cl.text.isEmpty { text += "\n\n" + cl.text; owned.merge(cl.ids) { a, _ in a } }
-        Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil }, limit: limit)
-        return ContextParts(text: text, ids: owned, recs: pinned.filter { ids.contains($0.id) } + cl.recs, checklist: cl.ids,
+        Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil && !ids.contains($0.id) }, limit: limit)
+        return ContextParts(text: text, ids: owned, recs: (pinned + rest).filter { ids.contains($0.id) } + cl.recs, checklist: cl.ids,
                             checklistText: cl.text.isEmpty ? "" : "\n\n" + cl.text)
     }
 
@@ -828,6 +833,26 @@ actor MemoryService {
     }
     /// The short id full-body lines carry (`collie memory flag <id>`).
     static func shortId(_ id: UUID) -> String { String(id.uuidString.lowercased().prefix(8)) }
+
+    static let longTermTitle = "Longo prazo:"
+
+    /// Up to 3 longTerm project memories of `recs` (most used first) in full, `- [<id8>] <título>: <corpo>` (no tag), the
+    /// block at most 600 UTF-8 bytes and `limit` (whole lines). A tier comes from `entries` only, never from the record.
+    static func renderLongTerm(_ recs: [MemoryRecord], entries: [UUID: LifecycleEntry], limit: Int, now: Date = Date()) -> (text: String, ids: Set<UUID>) {
+        func uses(_ r: MemoryRecord) -> Int { entries[r.id]?.usefulUses.count ?? 0 }
+        let picked = recs.filter { r in
+            LifecycleRules.eligible(r) && entries[r.id].map { LifecycleRules.tier(for: $0, now: now) == .longTerm } == true
+        }.sorted { (uses($0), $0.updatedAt) > (uses($1), $1.updatedAt) }
+        let room = Swift.min(limit, LifecycleRules.maxLongTermInjectedBytes)
+        var out = "", ids = Set<UUID>()
+        for r in picked where ids.count < LifecycleRules.maxLongTermInjected {
+            let body = oneLine(r.body, max: .max)
+            let add = (out.isEmpty ? "\n\n\(longTermTitle)" : "") + "\n- [\(shortId(r.id))] \(oneLine(r.title, max: 200))" + (body.isEmpty ? "" : ": \(body)")
+            guard out.utf8.count + add.utf8.count <= room else { continue }
+            out += add; ids.insert(r.id)
+        }
+        return (out, ids)
+    }
 
     static let indexTitle = "Índice (só títulos; `collie memory search` traz o resto):"
 

@@ -17,7 +17,9 @@ enum MemoryCleanup {
     /// An outcome score (`ScoreStore`) this low and unread this long: archived.
     static let lowScore = 0.5, lowScoreAge: TimeInterval = 30 * 86400
 
-    static func plan(records: [MemoryRecord], stats: [UUID: MemoryStats], scores: [UUID: Double] = [:], now: Date) -> [CleanupItem] {
+    /// `exempt` (longTerm): never archived cold or for a low score.
+    static func plan(records: [MemoryRecord], stats: [UUID: MemoryStats], scores: [UUID: Double] = [:], exempt: Set<UUID> = [],
+                     now: Date) -> [CleanupItem] {
         func days(_ t: TimeInterval) -> Int { Int((t / 86400).rounded()) }
         var items: [CleanupItem] = []
         var rest: [MemoryRecord] = []
@@ -29,6 +31,7 @@ enum MemoryCleanup {
                 continue
             }
             let age = now.timeIntervalSince(s?.lastReadAt ?? r.createdAt)
+            if exempt.contains(r.id) { rest.append(r); continue }
             if age >= coldAge, pow(0.5, age / halfLife) <= coldScore {
                 items.append(CleanupItem(action: .archiveCold, id: r.id, into: nil, reason: "não lida há \(days(age)) dias"))
                 continue

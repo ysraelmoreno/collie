@@ -10,6 +10,8 @@ enum LifecycleRules {
     static let maxLongTermPerProject = 12, maxLongTermInjected = 3, maxLongTermInjectedBytes = 600
     static let flagPenalty = -0.3, maxFlagsPerSession = 20
     static let verifyCooldown: TimeInterval = 14 * 86_400, maxGatesPerDay = 3
+    /// Contested this long with no verdict: "Precisa de você".
+    static let contestedAskAfter: TimeInterval = 14 * 86_400
 
     static func eligible(_ r: MemoryRecord) -> Bool {
         r.scope == .project && r.status == .active && !r.pinned && !r.reviewed

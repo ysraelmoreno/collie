@@ -1,0 +1,91 @@
+import Testing
+import Foundation
+import CollieCore
+@testable import CollieDaemonKit
+
+@Suite struct LifecycleRulesTests {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)   // 2027-01-15 UTC
+    func ago(_ d: Double) -> Date { now.addingTimeInterval(-d * 86400) }
+    func day(_ d: Int) -> String {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]
+        return f.string(from: ago(Double(d)))
+    }
+    func uses(_ pairs: [(Int, String)]) -> Set<UseKey> { Set(pairs.map { UseKey(day: day($0.0), session: $0.1) }) }
+    func entry(_ u: Set<UseKey>, since: Double = 30) -> LifecycleEntry { LifecycleEntry(usefulUses: u, tierSince: ago(since)) }
+    func tmpDir() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("collie-lc-\(UUID().uuidString)") }
+
+    @Test func earnedNeedsTwoDaysAndTwoSessions() {
+        #expect(LifecycleRules.tier(for: entry(uses([(1, "a"), (1, "b")])), now: now) == .provisional)
+        #expect(LifecycleRules.tier(for: entry(uses([(1, "a"), (2, "a")])), now: now) == .provisional)
+        #expect(LifecycleRules.tier(for: entry(uses([(1, "a"), (2, "b")])), now: now) == .earned)
+    }
+
+    @Test func contestedNeverEarns() {
+        let u = uses([(1, "a"), (2, "b")])
+        var e = entry(u); e.contestedNow = true
+        #expect(LifecycleRules.tier(for: e, now: now) == .provisional)
+        e = entry(u); e.lastContestedAt = ago(100)
+        #expect(LifecycleRules.tier(for: e, now: now) == .provisional)
+        e = entry(u); e.flags = [LifecycleFlag(verdict: .wrong, session: "a", day: day(3), reason: "x")]
+        #expect(LifecycleRules.tier(for: e, now: now) == .provisional)
+    }
+
+    @Test func longTermStaysUnlessContested() {
+        var e = entry(uses([(1, "a")])); e.tier = .longTerm
+        #expect(LifecycleRules.tier(for: e, now: now) == .longTerm)
+        e.contestedNow = true
+        #expect(LifecycleRules.tier(for: e, now: now) == .earned)
+    }
+
+    @Test func promotionNeedsEightUsesFourDaysFourteenDaySpan() {
+        let ok = uses([(20, "a"), (15, "b"), (10, "c"), (5, "d"), (5, "e"), (5, "f"), (5, "g"), (5, "h")])
+        #expect(LifecycleRules.promotionCandidate(entry(ok), now: now))
+        #expect(!LifecycleRules.promotionCandidate(entry(uses([(20, "a"), (15, "b"), (10, "c"), (5, "d"), (5, "e"), (5, "f"), (5, "g")])), now: now))   // 7 uses
+        #expect(!LifecycleRules.promotionCandidate(entry(uses([(20, "a"), (15, "b"), (5, "c"), (5, "d"), (5, "e"), (5, "f"), (5, "g"), (5, "h")])), now: now))   // 3 days
+        #expect(!LifecycleRules.promotionCandidate(entry(uses([(12, "a"), (10, "b"), (8, "c"), (6, "d"), (6, "e"), (6, "f"), (6, "g"), (6, "h")])), now: now))   // span 6
+        var l = entry(ok); l.tier = .longTerm
+        #expect(!LifecycleRules.promotionCandidate(l, now: now))
+    }
+
+    @Test func contestedInLast30DaysBlocksPromotion() {
+        let ok = uses([(20, "a"), (15, "b"), (10, "c"), (5, "d"), (5, "e"), (5, "f"), (5, "g"), (5, "h")])
+        var e = entry(ok); e.tier = .earned; e.lastContestedAt = ago(10)
+        #expect(!LifecycleRules.promotionCandidate(e, now: now))
+        e.lastContestedAt = ago(40)
+        #expect(LifecycleRules.promotionCandidate(e, now: now))
+        e.contestedNow = true
+        #expect(!LifecycleRules.promotionCandidate(e, now: now))
+    }
+
+    @Test func ttlCountsFromLastUsefulUseNotCreation() {
+        let r = MemoryRecord(kind: .decision, subject: "a", title: "t", createdAt: ago(100))
+        func plan(_ e: LifecycleEntry) -> [CleanupItem] { LifecycleRules.unusedPlan(records: [r], entries: [r.id: e], now: now) }
+        #expect(plan(entry([], since: 20)).isEmpty)
+        let p = plan(entry([], since: 22))
+        #expect(p.count == 1 && p[0].action == .archiveUnused && p[0].reason == "provisória sem uso há 22 dias")
+        #expect(plan(entry(uses([(5, "a")]), since: 60)).isEmpty)          // used 5 days ago
+        #expect(plan(entry(uses([(25, "a")]), since: 60)).count == 1)
+        #expect(LifecycleRules.unusedPlan(records: [r], entries: [:], now: now).isEmpty)   // no entry: not planned
+    }
+
+    @Test func ineligibleRecordsNeverInPlan() {
+        let rs = [MemoryRecord(kind: .decision, subject: "p", title: "t", pinned: true),
+                  MemoryRecord(kind: .decision, subject: "r", title: "t", reviewed: true),
+                  MemoryRecord(kind: .decision, scope: .lot, lotId: UUID(), subject: "l", title: "t"),
+                  MemoryRecord(kind: .decision, scope: .global, subject: "g", title: "t"),
+                  MemoryRecord(kind: .decision, scope: .paddock, paddock: "x", subject: "d", title: "t")]
+        let es = Dictionary(uniqueKeysWithValues: rs.map { ($0.id, entry([], since: 90)) })
+        #expect(LifecycleRules.unusedPlan(records: rs, entries: es, now: now).isEmpty)
+    }
+
+    @Test func plannedItemApplyArchivesAndStaysReversible() throws {
+        let s = MemoryStore(dir: tmpDir()); defer { try? FileManager.default.removeItem(at: s.dir) }
+        let r = MemoryRecord(kind: .decision, subject: "a", title: "t", createdAt: ago(50))
+        try s.write(r)
+        let plan = LifecycleRules.unusedPlan(records: s.all().records, entries: [r.id: entry([], since: 30)], now: now)
+        #expect(plan.count == 1)
+        _ = try MemoryCleanup.apply(plan, store: s)
+        #expect(s.all().records.first { $0.id == r.id }?.status == .archived)
+        #expect(try MemoryCleanup.restore(r.id, store: s).status == .active)
+    }
+}

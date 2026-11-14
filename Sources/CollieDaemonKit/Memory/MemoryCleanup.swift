@@ -3,7 +3,7 @@ import CollieCore
 import CollieProtocol
 
 struct CleanupItem: Codable, Sendable, Equatable {
-    enum Action: String, Codable, Sendable { case archiveCold, archiveMissingPath, mergeDuplicate, archiveLowScore }
+    enum Action: String, Codable, Sendable { case archiveCold, archiveMissingPath, mergeDuplicate, archiveLowScore, archiveUnused }
     var action: Action
     var id: UUID
     var into: UUID?      // the record kept in a merge
@@ -60,7 +60,7 @@ enum MemoryCleanup {
         for item in items {
             guard var r = byId[item.id], r.status == .active, !r.pinned else { continue }
             switch item.action {
-            case .archiveCold, .archiveMissingPath, .archiveLowScore: r.status = .archived
+            case .archiveCold, .archiveMissingPath, .archiveLowScore, .archiveUnused: r.status = .archived
             case .mergeDuplicate:
                 guard let into = item.into, into != item.id, byId[into]?.status == .active else { continue }
                 r.status = .superseded; r.supersededBy = into

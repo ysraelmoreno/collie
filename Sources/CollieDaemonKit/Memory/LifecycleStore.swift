@@ -15,6 +15,8 @@ struct LifecycleEntry: Codable, Sendable, Equatable {
     var lastContestedAt: Date?
     var recheckedAt: Date?
     var tierSince: Date
+    /// The `RepoMemory.key` holding the record (set by the lifecycle pass); optional: older files decode.
+    var store: String? = nil
 }
 
 /// Usage-based lifecycle state per memory id (`<root>/learning/lifecycle.json`, 0600), never in the repo's memory files.
@@ -118,9 +120,10 @@ actor LifecycleStore {
     }
 
     /// Ids gone from the memory files for 30 days lose their entry; one that comes back starts its clock over.
-    func prune(knownIds: Set<UUID>, now: Date) {
+    /// `store`: only entries of that store are judged (`knownIds` = its ids); the others stay as they are.
+    func prune(store: String? = nil, knownIds: Set<UUID>, now: Date) {
         mutate { s in
-            for id in s.entries.keys where !knownIds.contains(id) {
+            for (id, e) in s.entries where !knownIds.contains(id) && (store == nil || e.store == store) {
                 if let since = s.missingSince[id], now.timeIntervalSince(since) >= Self.missingTTL {
                     s.entries[id] = nil; s.missingSince[id] = nil
                 } else if s.missingSince[id] == nil { s.missingSince[id] = now }

@@ -12,6 +12,7 @@ enum LifecycleRules {
     static let verifyCooldown: TimeInterval = 14 * 86_400, maxGatesPerDay = 3
     /// Contested this long with no verdict: "Precisa de você".
     static let contestedAskAfter: TimeInterval = 14 * 86_400
+    static let maxClaimContestsPerPass = 10
 
     static func eligible(_ r: MemoryRecord) -> Bool {
         r.scope == .project && r.status == .active && !r.pinned && !r.reviewed

@@ -7,7 +7,8 @@ import CollieProtocol
 /// Every path and branch fine; the SHAs in `missing` absent.
 private struct PassFacts: GitFacts {
     var missing: Set<String> = []
-    func branch(_ name: String) async -> BranchState { .open }
+    var merged: Set<String> = []
+    func branch(_ name: String) async -> BranchState { merged.contains(name) ? .merged : .open }
     func commitExists(_ sha: String) async -> Bool { !missing.contains(sha) }
     func pathExists(_ rel: String) -> Bool { true }
 }
@@ -26,26 +27,93 @@ private func dayString(_ d: Date) -> String { let f = ISO8601DateFormatter(); f.
 private let bad = "deadbee1"
 
 @Suite(.serialized) struct LifecyclePassTests {
-    private func run(_ body: (Daemon, RepoMemory) async throws -> Void) async throws {
+    private func run(available: Bool = true, _ body: (Daemon, RepoMemory) async throws -> Void) async throws {
         let repo = try await makeRepo(), fake = FakeCurator()
         fake.gated = true
-        try await withDaemon(configure: { $0.curatorRunner = fake; $0.gitFacts = { _ in PassFacts(missing: [bad]) } }) { d, _ in
+        if !available { fake.avail = .unavailable("sem claude") }
+        try await withDaemon(configure: { $0.curatorRunner = fake; $0.gitFacts = { _ in PassFacts(missing: [bad], merged: ["feat/velha"]) } }) { d, _ in
             try await body(d, await d.router.memory.repo(for: repo.path))
             fake.open()
         }
     }
+    private func claimContested(_ d: Daemon) async -> Int {
+        await d.router.memory.lifecycle.all().values.filter { $0.flags.contains { $0.session == "claim-check" } }.count
+    }
 
+    /// No curator, bodies naming a merged branch and a missing SHA: the first run archives, flags and queues nothing.
     @Test func firstRunMigratesAllAsProvisionalAndArchivesNothing() async throws {
-        try await run { d, store in
-            let recs = (0..<188).map { dec("Decisão \($0)", age: 100 + Double($0)) }
+        try await run(available: false) { d, store in
+            let bodies = ["corrigido em \(bad)", "ainda não mergeado: feat/velha", "corpo"]
+            let recs: [MemoryRecord] = (0..<188).map { (i: Int) -> MemoryRecord in dec("Decisão \(i)", body: bodies[i % 3], age: 100 + Double(i)) }
             try await put(store, recs)
             let now = Date()
             await d.router.lifecyclePass(store, now: now)
             let entries = await d.router.memory.lifecycle.all()
-            #expect(recs.allSatisfy { entries[$0.id]?.tier == .provisional && entries[$0.id]?.tierSince == now })
+            #expect(recs.allSatisfy { entries[$0.id]?.tier == .provisional && entries[$0.id]?.tierSince == now && entries[$0.id]?.contestedNow == false })
             let active = try await store.run { $0.store.all().records.filter { $0.status == .active }.count }
             #expect(active == 188)
             #expect(await d.router.digest.since(.distantPast).isEmpty)
+            #expect(await claimContested(d) == 0)
+            #expect(await d.router.curator.queued(kind: .verifyContested).isEmpty)
+        }
+    }
+
+    @Test func claimContestsCappedAtTenPerPass() async throws {
+        try await run { d, store in
+            try await put(store, (0..<15).map { dec("Sumida \($0)", body: "corrigido em \(bad)") })
+            let now = Date()
+            await d.router.lifecyclePass(store, now: now)
+            #expect(await claimContested(d) == 0)   // born this pass
+            await d.router.lifecyclePass(store, now: now.addingTimeInterval(86_400))
+            #expect(await claimContested(d) == 10)
+            await d.router.lifecyclePass(store, now: now.addingTimeInterval(2 * 86_400))
+            #expect(await claimContested(d) == 15)
+        }
+    }
+
+    /// The re-check judged this text: a failing claim check never contests it again.
+    @Test func recheckedTextNotContestedAgain() async throws {
+        try await run { d, store in
+            let r = dec("Julgada", body: "corrigido em \(bad)")
+            try await put(store, [r])
+            let now = Date(), lc = d.router.memory.lifecycle
+            await d.router.lifecyclePass(store, now: now)
+            await lc.update(r.id, now: now) { $0.recheckedAt = now }
+            await d.router.lifecyclePass(store, now: now.addingTimeInterval(20 * 86_400))
+            #expect(await claimContested(d) == 0)
+        }
+    }
+
+    @Test func contestedLongTermIsEarnedUntilValidRecheck() async throws {
+        try await run { d, store in
+            let r = dec("Longa contestada", body: "corpo longo")
+            try await put(store, [r])
+            let now = Date(), lc = d.router.memory.lifecycle
+            await lc.update(r.id, now: now) { $0.tier = .longTerm; $0.contestedNow = true; $0.lastContestedAt = now }
+            await d.router.lifecyclePass(store, now: now)
+            #expect(await lc.entry(r.id)?.tier == .longTerm)   // never demoted on disk
+            #expect(MemoryService.renderLongTerm([r], entries: await lc.all(), limit: 4096).ids.isEmpty)
+            await d.router.memory.applyVerdict(r.id, kind: .verifyContested, ops: [], now: now)
+            #expect(MemoryService.renderLongTerm([r], entries: await lc.all(), limit: 4096).ids == [r.id])
+        }
+    }
+
+    /// Prune judges only the consolidated store's own entries.
+    @Test func pruneOnlyTouchesThisStoresEntries() async throws {
+        try await run { d, a in
+            let b = await d.router.memory.repo(for: try await makeRepo().path)
+            let ra = dec("Em A"), gone = dec("Sai de A"), rb = dec("Em B")
+            try await put(a, [ra, gone]); try await put(b, [rb])
+            let now = Date(), lc = d.router.memory.lifecycle
+            await d.router.lifecyclePass(a, now: now); await d.router.lifecyclePass(b, now: now)
+            let (sb, sa) = (await lc.entry(rb.id)?.store, await lc.entry(ra.id)?.store)
+            #expect(sb == b.key && sa == a.key)
+            try await a.run { try $0.store.delete(gone.id) }
+            await d.router.lifecyclePass(a, now: now.addingTimeInterval(86_400))
+            await d.router.lifecyclePass(a, now: now.addingTimeInterval(32 * 86_400))
+            #expect(await lc.entry(gone.id) == nil)
+            let (eb, ea) = (await lc.entry(rb.id), await lc.entry(ra.id))
+            #expect(eb != nil && ea != nil)
         }
     }
 

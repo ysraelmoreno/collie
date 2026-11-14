@@ -281,8 +281,6 @@ actor MemoryService {
     }
 
     func isCached(root: String) -> Bool { byRoot[root] != nil }   // tests
-    /// The repo stores opened in this run (lifecycle prune: ids none of them holds).
-    func projectStores() -> [RepoMemory] { Array(byRoot.values) }
 
     /// What an agent reads: its lot's memory (if in a lot), its repo's and the global one. Never another lot's.
     func readable(_ cwd: String, lot: UUID? = nil) async -> [RepoMemory] {
@@ -726,7 +724,7 @@ actor MemoryService {
         for s in byRoot.values {
             let recs = (try? await s.run { m in m.store.all().records }) ?? []
             guard let rec = recs.first(where: { $0.id == id }) else { continue }
-            return (rec, recs.filter { $0.status == .active && entries[$0.id]?.tier == .longTerm }.count)
+            return (rec, recs.filter { $0.status == .active && entries[$0.id].map { LifecycleRules.tier(for: $0, now: Date()) } == .longTerm }.count)
         }
         return nil
     }

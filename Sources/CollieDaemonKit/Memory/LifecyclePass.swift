@@ -8,16 +8,19 @@ extension CommandRouter {
     func lifecyclePass(_ store: RepoMemory, now: Date = Date()) async {
         guard let root = store.root, store.lotId == nil else { return }
         let lc = memory.lifecycle, facts = config.gitFacts(root)
-        let records = (try? await store.run { $0.store.all().records }) ?? []
+        guard let records = try? await store.run({ $0.store.all().records }) else { return }   // unreadable: nothing judged, nothing pruned
         // the user's kinds keep their entry and tag, but are never checked, archived or promoted automatically
         let eligible = records.filter { LifecycleRules.eligible($0) && !MemoryLearning.usersKind($0.kind) }
         let day = { let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f.string(from: now) }()
 
         // (1) migration: an eligible record with no entry starts provisional now (its clock starts here, not at createdAt);
-        // (2) tiers recomputed, a contested longTerm stored as earned
+        // (2) provisional → earned stored; a contested longTerm is never demoted on disk (`tier(for:)` reads it as earned
+        // until a valid re-check clears the contest)
+        let fresh = Set(records.map(\.id)).subtracting(await lc.all().keys)   // entries born now: no claim check this pass
         await lc.update(records.filter(LifecycleRules.eligible).map(\.id), now: now) { e in
+            e.store = store.key
             let t = LifecycleRules.tier(for: e, now: now)
-            if t != e.tier { e.tier = t; e.tierSince = now }
+            if e.tier != .longTerm, t != e.tier { e.tier = t; e.tierSince = now }
         }
         var entries = await lc.all()
 
@@ -29,11 +32,14 @@ extension CommandRouter {
         }
 
         // (4) claim checks: a failure contests the memory (a flag of session "claim-check") and queues its re-check
-        // ponytail: no per-pass cap; ceiling = uncontested eligible records × (8 branches × ≤ 4 + 8 SHAs × ≤ 2) git calls
-        // (only bodies naming a branch or SHA call git; each ≤ 10 s), once a day per store. Cap or cache facts if a pass gets slow.
-        for r in eligible {
-            guard let e = entries[r.id], !e.contestedNow,
-                  e.recheckedAt.map({ now.timeIntervalSince($0) >= LifecycleRules.verifyCooldown }) ?? true else { continue }
+        // ponytail: at most 10 contests a pass (no flood of re-checks or no-model archives); the checks themselves are uncapped:
+        // ceiling = uncontested eligible records × (8 branches × ≤ 4 + 8 SHAs × ≤ 2) git calls (only bodies naming a branch or
+        // SHA call git; each ≤ 10 s), once a day per store. Cap the checks or cache facts if a pass gets slow.
+        var contests = 0
+        for r in eligible where contests < LifecycleRules.maxClaimContestsPerPass && !fresh.contains(r.id) {
+            guard let e = entries[r.id], !e.contestedNow else { continue }
+            // a re-check judged this very text: never contested again for it (nor inside the cooldown)
+            if let at = e.recheckedAt, r.updatedAt <= at || now.timeIntervalSince(at) < LifecycleRules.verifyCooldown { continue }
             let failures = await ClaimChecks.check(r, facts: facts)
             guard !failures.isEmpty else { continue }
             let reason = failures.map { "\($0.kind.rawValue) \($0.detail)" }.joined(separator: ", ")
@@ -41,6 +47,7 @@ extension CommandRouter {
                 e.flags.append(LifecycleFlag(verdict: .outdated, session: "claim-check", day: day, reason: String(reason.prefix(CuratorOps.lineMax))))
                 e.contestedNow = true; e.lastContestedAt = now
             }
+            contests += 1
             _ = await enqueueVerify(r.id, kind: .verifyContested)   // no curator: the failed check archives it now
         }
         entries = await lc.all()
@@ -52,7 +59,7 @@ extension CommandRouter {
                 let changed = try await store.run { try MemoryCleanup.apply(items, store: $0.store) }
                 let rows = changed.compactMap { c -> DigestEntry? in
                     guard let item = items.first(where: { $0.id == c.id }), let b = records.first(where: { $0.id == c.id }) else { return nil }
-                    return DigestEntry(id: UUID(), at: Date(), action: "aposentado", title: b.title, reason: item.reason, store: store.key,
+                    return DigestEntry(id: UUID(), at: now, action: "aposentado", title: b.title, reason: item.reason, store: store.key,
                                        created: [], before: [b], undone: false, resolved: false)
                 }
                 try MemoryEventLog.$source.withValue("consolidation") { try digest.append(rows) }
@@ -64,18 +71,16 @@ extension CommandRouter {
         for r in records where r.scope == .project && r.status == .proposed && !r.reviewed && !MemoryLearning.usersKind(r.kind)
             && !keep.contains(r.id) && !asked.contains(r.id) && now.timeIntervalSince(r.createdAt) >= MemoryCleanup.proposalAge {
             guard await ClaimChecks.check(r, facts: facts).isEmpty else { continue }
-            let job = CuratorJob(id: UUID(), kind: .verifyContested, store: store.key, payload: .null, dedupe: "", createdAt: Date(), attempts: 0)
+            let job = CuratorJob(id: UUID(), kind: .verifyContested, store: store.key, payload: .null, dedupe: "", createdAt: now, attempts: 0)
             do {
                 let rows = try await applyOps([.activate(id: r.id, reason: "proposta de 14 dias com checagens ok")], job: job)
-                if rows.contains(where: { $0.action == "ativado" }) { await lc.update(r.id, now: now) { $0 = LifecycleEntry(tierSince: now) } }
-                try MemoryEventLog.$source.withValue("consolidation") { try digest.append(rows) }
+                if rows.contains(where: { $0.action == "ativado" }) { await lc.update(r.id, now: now) { $0 = LifecycleEntry(tierSince: now, store: store.key) } }
+                try MemoryEventLog.$source.withValue("consolidation") { try digest.append(rows.map { var x = $0; x.at = now; return x }) }
             } catch { memoryLog("lifecycle proposal \(store.path): \(error)") }
         }
 
-        // (7) entries of ids no project store holds (30 days) go
-        var known = Set<UUID>()
-        for s in await memory.projectStores() { known.formUnion((try? await s.run { $0.store.all().records.map(\.id) }) ?? []) }
-        if !known.isEmpty { await lc.prune(knownIds: known, now: now) }
+        // (7) this store's entries whose id it no longer holds (30 days) go; other stores' entries are theirs to judge
+        await lc.prune(store: store.key, knownIds: Set(records.map(\.id)), now: now)
 
         // (8) "Precisa de você": a pinned/reviewed memory contested, or one contested 14 days; once per contest
         let current = (try? await store.run { $0.store.all().records }) ?? []

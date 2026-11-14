@@ -27,6 +27,8 @@ actor LifecycleStore {
         var lastEvent: [String: Date] = [:]
         var pending: [String: [UUID]] = [:]
         var missingSince: [UUID: Date] = [:]
+        /// Promotion gates queued on `gateDay` (UTC `yyyy-MM-dd`); optional: older files decode.
+        var gateDay: String?, gates: Int?
     }
     nonisolated let file: URL
     private var state: State?
@@ -71,6 +73,19 @@ actor LifecycleStore {
             s.entries[id] = e
         }
         return .added
+    }
+
+    /// One promotion gate of `day` taken, unless `max` already were (count and take in one actor step).
+    func takeGate(day: String, max: Int) -> Bool {
+        let s0 = load(), used = s0.gateDay == day ? s0.gates ?? 0 : 0
+        guard used < max else { return false }
+        mutate { $0.gateDay = day; $0.gates = used + 1 }
+        return true
+    }
+
+    /// A gate taken for a job the queue refused is given back.
+    func releaseGate(day: String) {
+        mutate { s in if s.gateDay == day, let g = s.gates, g > 0 { s.gates = g - 1 } }
     }
 
     func noteInjected(session: String, ids: [UUID], now: Date) {

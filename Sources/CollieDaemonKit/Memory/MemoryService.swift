@@ -671,12 +671,58 @@ actor MemoryService {
         }
         guard live else { return (contest, false) }
         await scores.penalize(id, LifecycleRules.flagPenalty, reason: "flagged \(verdict.rawValue)")
-        return (true, enqueueVerify(id))
+        // 14 days after a re-check a new flag only tags it (contested), it queues no job
+        if let at = await lifecycle.entry(id)?.recheckedAt, now.timeIntervalSince(at) < LifecycleRules.verifyCooldown { return (true, false) }
+        return (true, await enqueueVerify(id))
     }
 
-    /// Stub until the curator's verify job (Task 6): remembers the ids asked for.
-    private(set) var verifyRequested: Set<UUID> = []
-    func enqueueVerify(_ id: UUID) -> Bool { verifyRequested.insert(id); return true }
+    /// The curator's verify queue, set by the router: (memory id, `verifyContested`/`verifyPromotion`) → queued.
+    private var verifier: (@Sendable (UUID, CuratorJobKind) async -> Bool)?
+    func setVerifier(_ f: @escaping @Sendable (UUID, CuratorJobKind) async -> Bool) { verifier = f }
+
+    /// A contested memory's re-check; false: not queued (a duplicate, no store, or archived by a failed claim check with no curator).
+    func enqueueVerify(_ id: UUID) async -> Bool { await verifier?(id, .verifyContested) ?? false }
+
+    /// The promotion gate (≤ 3 queued a UTC day, counted in `lifecycle.json`: a restart doesn't reset it).
+    func enqueuePromotion(_ id: UUID, now: Date = Date()) async -> Bool {
+        let day = Self.dayFormatter.string(from: now)
+        guard await lifecycle.takeGate(day: day, max: LifecycleRules.maxGatesPerDay) else { return false }
+        if await verifier?(id, .verifyPromotion) == true { return true }
+        await lifecycle.releaseGate(day: day)
+        return false
+    }
+
+    /// A verify job's verdict: a `retire` of `id` is `invalid` (the router archived it, reversibly), anything else `valid`.
+    /// Contested valid: flags cleared, uncontested, 14-day cooldown. Promotion valid: longTerm if still a candidate and its
+    /// project holds < 12; otherwise (or invalid) it stays earned and is not gated again for 14 days.
+    func applyVerdict(_ id: UUID, kind: CuratorJobKind, ops: [CuratorOp], now: Date = Date()) async {
+        let invalid = ops.contains { if case .retire(let r, _) = $0 { r == id } else { false } }
+        switch kind {
+        case .verifyContested:
+            guard !invalid else { return }
+            await lifecycle.update(id, now: now) { $0.flags.removeAll(); $0.contestedNow = false; $0.recheckedAt = now }
+        case .verifyPromotion:
+            var promote = false
+            if !invalid, let e = await lifecycle.entry(id), LifecycleRules.promotionCandidate(e, now: now) {
+                promote = await longTermCount(near: id) < LifecycleRules.maxLongTermPerProject
+            }
+            await lifecycle.update(id, now: now) { e in
+                e.recheckedAt = now
+                if promote { e.tier = .longTerm; e.tierSince = now }
+            }
+        default: return
+        }
+    }
+
+    /// longTerm memories in the repo store holding `id` (none found: the cap counts as reached).
+    private func longTermCount(near id: UUID) async -> Int {
+        let entries = await lifecycle.all()
+        for s in byRoot.values {
+            let ids = (try? await s.run { m in m.store.all().records.map(\.id) }) ?? []
+            if ids.contains(id) { return ids.filter { entries[$0]?.tier == .longTerm }.count }
+        }
+        return LifecycleRules.maxLongTermPerProject
+    }
 
     nonisolated(unsafe) private static let dayFormatter: ISO8601DateFormatter = {   // UTC; read-only after init
         let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; return f

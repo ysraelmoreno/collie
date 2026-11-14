@@ -45,8 +45,8 @@ private struct Term { var id: String; var token: String; var uuid: UUID { UUID(u
             #expect(r.ok && obj(r)["contested"] == .bool(true) && obj(r)["queued"] == .bool(true), "\(r)")
             let e = await d.router.memory.lifecycle.entry(ids[0])
             #expect(e?.contestedNow == true && e?.lastContestedAt != nil && e?.flags.map(\.verdict) == [.wrong] && e?.flags.first?.reason == "stale")
-            let factor = await d.router.memory.scores.factor(ids[0]), asked = await d.router.memory.verifyRequested
-            #expect(factor < 1 && asked == [ids[0]])
+            let factor = await d.router.memory.scores.factor(ids[0]), asked = await d.router.curator.queued(kind: .verifyContested).map(\.dedupe)
+            #expect(factor < 1 && asked == ["verify:verifyContested:\(ids[0].uuidString.lowercased())"])
         }
     }
 
@@ -139,7 +139,7 @@ private struct Term { var id: String; var token: String; var uuid: UUID { UUID(u
             #expect(r.ok && obj(r)["contested"] == .bool(true) && obj(r)["queued"] == .bool(false), "\(r)")
             let e = await d.router.memory.lifecycle.entry(ids[0])
             #expect(e?.flags.count == 1 && e?.contestedNow == true)
-            let factor = await d.router.memory.scores.factor(ids[0]), asked = await d.router.memory.verifyRequested
+            let factor = await d.router.memory.scores.factor(ids[0]), asked = await d.router.curator.queued(kind: .verifyContested)
             #expect(factor == 1 && asked.isEmpty)
         }
     }

@@ -98,6 +98,8 @@ public struct DaemonConfig: Sendable {
     var localModel: any LocalModel = FoundationLocalModel()
     /// The memory curator (`ClaudeCuratorRunner` in collied; tests pass a fake: they never spend tokens); nil: the live `ClaudeCuratorRunner`.
     var curatorRunner: (any CuratorRunner)? = nil
+    /// Git and disk facts of a repo root for the memory claim checks (tests pass a fixed answer).
+    var gitFacts: @Sendable (URL) -> any GitFacts = { GitFactsLive(root: $0) }
     /// Whether the installed claude takes `--plugin-dir` (procedures as skills), given the agent env; tests pass a fixed answer.
     var claudePluginDir: @Sendable ([String: String]) async -> Bool = ProcedureSkills.supported
     /// On-device sentence vectors for memory search (tests pass a fake).
@@ -236,6 +238,7 @@ public final class Daemon: Sendable {
         await router.userEnv.warm()
         await router.startJobSweep()
         await router.memory.setProposalState { [weak router] in await router?.proposalState() ?? ([], []) }
+        await router.memory.setVerifier { [weak router] id, kind in await router?.enqueueVerify(id, kind: kind) ?? false }
         await router.migrateProposals()   // once: the proposals already waiting go through the curator
         await router.curator.start { [router] job, call in try await router.curate(job, call) }
         await router.startConsolidation()

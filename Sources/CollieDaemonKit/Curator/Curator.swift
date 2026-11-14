@@ -2,9 +2,10 @@ import Foundation
 import CollieCore
 import CollieProtocol
 
-/// In priority order: a correction runs first, then proposals, pitfalls, conversations, consolidation, noticed procedures.
+/// In priority order: a correction runs first, then the re-check of a contested memory, the promotion gate, proposals,
+/// pitfalls, conversations, consolidation, noticed procedures. Raw values are on disk (queued jobs): never rename one.
 enum CuratorJobKind: String, Codable, Sendable, CaseIterable {
-    case correction, proposals, pitfall, conversation, consolidate, procedure, docTerms
+    case correction, verifyContested, verifyPromotion, proposals, pitfall, conversation, consolidate, procedure, docTerms
     var priority: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 }
 

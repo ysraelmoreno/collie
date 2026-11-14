@@ -20,6 +20,8 @@ actor DeviceService {
     let emulatorBoot: Duration
     /// The launched emulator's environment (the daemon's minus `COLLIE_*`: no tokens or socket).
     let emulatorEnv: [String: String]
+    /// `avdmanager` + Java, looked up per use (the real env keeps `COLLIE_AVDMANAGER` / `COLLIE_JAVA_HOME`, which `emulatorEnv` strips).
+    let avdManager: @Sendable () -> AvdManager?
     /// AVD name → its boot in progress (`bootAvd`): concurrent opens share it; it leaves when done.
     var boots: [String: Task<String, Error>] = [:]
     let emit: @Sendable (UUID, String, JSONValue) async -> Void
@@ -61,10 +63,11 @@ actor DeviceService {
     init(root: URL, runDir: URL, pollInterval: Duration = .seconds(2), scrcpyServer: URL? = nil, grace: Duration = .seconds(5),
          adb: @escaping @Sendable () -> URL?, emulator: @escaping @Sendable () -> URL? = { nil }, emulatorBoot: Duration = .seconds(180),
          emulatorEnv: [String: String]? = nil,
+         avdManager: @escaping @Sendable () -> AvdManager? = { AvdManager.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
          xcrun: URL = URL(fileURLWithPath: "/usr/bin/xcrun"),
          axe: @escaping @Sendable () -> URL? = { nil }, crashReports: URL = Simulator.defaultCrashReports, logCap: Int = 8 << 20,
          emit: @escaping @Sendable (UUID, String, JSONValue) async -> Void) {
-        self.root = root; self.runDir = runDir; self.pollInterval = pollInterval; self.adb = adb; self.emulator = emulator; self.emulatorBoot = emulatorBoot; self.emit = emit
+        self.root = root; self.runDir = runDir; self.pollInterval = pollInterval; self.adb = adb; self.emulator = emulator; self.emulatorBoot = emulatorBoot; self.emit = emit; self.avdManager = avdManager
         self.emulatorEnv = emulatorEnv ?? ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") }
         self.xcrun = xcrun; self.axe = axe; self.crashReports = crashReports; self.logCap = logCap
         self.scrcpyServer = scrcpyServer; self.grace = grace

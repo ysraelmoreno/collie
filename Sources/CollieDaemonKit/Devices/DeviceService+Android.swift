@@ -187,3 +187,48 @@ extension DeviceService {
         }
     }
 }
+
+/// The lightweight `collie-lite` AVD (pure pieces in `LiteAvd`).
+extension DeviceService {
+    private var liteAvdDir: URL {
+        let base = emulatorEnv["ANDROID_AVD_HOME"] ?? NSHomeDirectory() + "/.android/avd"
+        return URL(fileURLWithPath: base).appendingPathComponent("\(LiteAvd.name).avd")
+    }
+
+    /// Creates `collie-lite` with the best installed arm64 image, then applies `LiteAvd.overrides` to its config.ini.
+    /// An existing AVD is not recreated, only its config is re-merged (`created: "false"`).
+    func createLiteAvd() async throws(ProtocolError) -> [String: String] {
+        guard let mgr = avdManager() else { throw AvdManager.missing }
+        guard let u = emulator() else { throw Emulator.missing }
+        let sdk = u.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
+        guard let image = LiteAvd.pickImage(LiteAvd.installedImages(sdkRoot: sdk)) else {
+            throw ProtocolError(code: .unavailable, message: "No arm64 google_apis system image installed. In Android Studio open SDK Manager "
+                + "and install \"system-images;android-<api>;google_apis;arm64-v8a\" (for example android-37.0).")
+        }
+        let dir = liteAvdDir, config = dir.appendingPathComponent("config.ini")
+        let existed = FileManager.default.fileExists(atPath: config.path)
+        var env = emulatorEnv
+        env["ANDROID_SDK_ROOT"] = env["ANDROID_SDK_ROOT"] ?? sdk.path
+        if !existed {
+            let r = try await mgr.run(["create", "avd", "-n", LiteAvd.name, "-k", image, "-d", "pixel", "--force"], env: env, timeout: .seconds(60))
+            guard r.status == 0 else { throw ProtocolError(code: .internal, message: "avdmanager create failed: \(r.stderr.prefix(500))") }
+        }
+        do {
+            let old = (try? String(contentsOf: config, encoding: .utf8)) ?? ""
+            try LiteAvd.mergeConfig(old, LiteAvd.overrides).write(to: config, atomically: true, encoding: .utf8)
+        } catch { throw ProtocolError(code: .internal, message: "cannot write \(config.path): \(error.localizedDescription)") }
+        return ["name": LiteAvd.name, "path": dir.path, "image": image, "created": existed ? "false" : "true"]
+    }
+
+    /// Deletes `collie-lite`; no AVD, nothing to do.
+    func removeLiteAvd() async throws(ProtocolError) {
+        guard let mgr = avdManager() else { throw AvdManager.missing }
+        guard FileManager.default.fileExists(atPath: liteAvdDir.appendingPathComponent("config.ini").path) else { return }
+        var env = emulatorEnv
+        if env["ANDROID_SDK_ROOT"] == nil, let u = emulator() {
+            env["ANDROID_SDK_ROOT"] = u.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent().path
+        }
+        let r = try await mgr.run(["delete", "avd", "-n", LiteAvd.name], env: env, timeout: .seconds(60))
+        guard r.status == 0 else { throw ProtocolError(code: .internal, message: "avdmanager delete failed: \(r.stderr.prefix(500))") }
+    }
+}

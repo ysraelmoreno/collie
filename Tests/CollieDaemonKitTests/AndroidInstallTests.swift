@@ -88,13 +88,13 @@ private struct Fixture {
     }
 
     func installer(java: Bool = true, free: Int64? = 1 << 40, others: String? = nil,
-                   othersRunning: (@Sendable () async -> String?)? = nil) -> AndroidInstaller {
-        var env = ["COLLIE_ANDROID_SDK": sdk.path, "ANDROID_AVD_HOME": home.appendingPathComponent("avd").path]
+                   othersRunning: (@Sendable (Bool) async -> String?)? = nil, studioSdk: Bool = false) -> AndroidInstaller {
+        var env = ["COLLIE_ANDROID_SDK": studioSdk ? home.appendingPathComponent("Library/Android/sdk").path : sdk.path, "ANDROID_AVD_HOME": home.appendingPathComponent("avd").path]
         if java { env["COLLIE_JAVA_HOME"] = home.appendingPathComponent("java").path }
         return AndroidInstaller(root: home, env: env, home: home.path,
                                 runDir: home.appendingPathComponent("run"), fetch: { url, _, _ in throw ProtocolError(code: .notFound, message: "no network: \(url)") },
                                 isAppleSilicon: true, javaCandidates: [], freeSpace: { _ in free },
-                                othersRunning: othersRunning ?? { others })
+                                othersRunning: othersRunning ?? { studio in studio ? others : nil })
     }
 
     func waitFor(_ file: String) async throws {
@@ -250,7 +250,7 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
 
     @Test func busyWithNothingReadAndCancelWhileCheckingOthers() async throws {
         let f = try Fixture()
-        let inst = f.installer(othersRunning: { try? await Task.sleep(for: .milliseconds(400)); return nil })
+        let inst = f.installer(othersRunning: { _ in try? await Task.sleep(for: .milliseconds(400)); return nil })
         let first = Task { await code { try await inst.install(accept: []) } }
         try await Task.sleep(for: .milliseconds(100))
         #expect(await code { _ = try await inst.licenses() } == .conflict)
@@ -268,8 +268,15 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
 
     @Test func studioRunningIsBusy() async throws {
         let f = try Fixture()
-        #expect(await code { try await f.installer(others: "Android Studio").install(accept: ["android-sdk-license"]) } == .conflict)
+        #expect(await code { try await f.installer(others: "Android Studio", studioSdk: true).install(accept: ["android-sdk-license"]) } == .conflict)
         #expect(f.calls.isEmpty)
+    }
+
+    @Test func studioRunningOnAnotherSdkIsNotBusy() async throws {
+        let f = try Fixture()
+        #expect(await code { try await f.installer(others: "Android Studio").install(accept: ["android-sdk-license"]) } != .conflict)
+        #expect(AndroidInstaller.blocksForStudio(sdk: "/h/Library/Android/sdk/", home: "/h"))
+        #expect(!AndroidInstaller.blocksForStudio(sdk: "/tmp/x/sdk", home: "/h"))
     }
 
     @Test func alreadyAcceptedLicensesSkipTheStep() async throws {

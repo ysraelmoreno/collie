@@ -45,7 +45,7 @@ private struct Fixture {
                                            "COLLIE_JAVA_HOME": home.appendingPathComponent("java").path],
                          home: home.path, runDir: home.appendingPathComponent("run"),
                          fetch: { url, _, _ in throw ProtocolError(code: .notFound, message: "no network: \(url)") },
-                         isAppleSilicon: true, javaCandidates: [], freeSpace: { _ in 1 << 40 }, othersRunning: { nil })
+                         isAppleSilicon: true, javaCandidates: [], freeSpace: { _ in 1 << 40 }, othersRunning: { _ in nil })
     }
 }
 

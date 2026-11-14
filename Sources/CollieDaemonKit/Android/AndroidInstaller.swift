@@ -23,7 +23,7 @@ actor AndroidInstaller {
     /// must be the daemon's `config.paths.runDir` (the only dir it reaps).
     let runDir: URL
     /// Names another `sdkmanager` or Android Studio when one runs (`nil`: none): the install is then `busy`.
-    let othersRunning: @Sendable () async -> String?
+    let othersRunning: @Sendable (_ studioBlocks: Bool) async -> String?
 
     // Phase 2 job state, in memory only: a daemon restart forgets it, so `busy` never outlives the process.
     var job: AndroidStatus.Job?
@@ -38,7 +38,7 @@ actor AndroidInstaller {
     init(root: URL, env: [String: String], home: String, runDir: URL, fetch: @escaping AndroidFetch = AndroidDownload.fetch,
          runner: @escaping AndroidRunner = AndroidInstaller.run, isAppleSilicon: Bool = AndroidInstaller.appleSilicon,
          javaCandidates: [String]? = nil, freeSpace: @escaping @Sendable (String) -> Int64? = AndroidInstaller.free,
-         othersRunning: @escaping @Sendable () async -> String? = AndroidInstaller.others) {
+         othersRunning: @escaping @Sendable (_ studioBlocks: Bool) async -> String? = AndroidInstaller.others) {
         self.root = root; self.env = env; self.home = home; self.fetch = fetch; self.runner = runner
         self.isAppleSilicon = isAppleSilicon; self.javaCandidates = javaCandidates; self.freeSpace = freeSpace
         self.runDir = runDir; self.othersRunning = othersRunning
@@ -289,7 +289,7 @@ extension AndroidInstaller {
         guard !running else { throw ProtocolError(code: .conflict, message: "busy: Android setup is already running") }
         running = true   // before any await: a second call reentering the actor must see it
         cancelRequested = false
-        let other = await othersRunning()
+        let other = await othersRunning(Self.blocksForStudio(sdk: AndroidSdk.root(env: env, home: home), home: home))
         if other != nil || cancelRequested {
             running = false; cancelRequested = false
             throw other.map { ProtocolError(code: .conflict, message: "busy: \($0) is running; close it and try again") } ?? Self.cancelled
@@ -456,9 +456,17 @@ extension AndroidInstaller {
             .filter { !$0.isEmpty }.suffix(3).joined(separator: " | ")
     }
 
-    /// Another `sdkmanager` (any process with it in its arguments) or Android Studio (`studio`), via `pgrep`.
-    static let others: @Sendable () async -> String? = {
-        for (name, args) in [("another sdkmanager", ["-f", "sdkmanager"]), ("Android Studio", ["-x", "studio"])] {
+    /// Android Studio only blocks an install into its own SDK (`<home>/Library/Android/sdk`).
+    static func blocksForStudio(sdk: String, home: String) -> Bool {
+        URL(fileURLWithPath: sdk).resolvingSymlinksInPath().standardizedFileURL.path
+            == URL(fileURLWithPath: "\(home)/Library/Android/sdk").resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    /// Another `sdkmanager` (any process with it in its arguments, anywhere) or, when `studioBlocks`, Android Studio
+    /// (`studio`), via `pgrep`.
+    static let others: @Sendable (Bool) async -> String? = { studioBlocks in
+        for (name, args) in [("another sdkmanager", ["-f", "sdkmanager"]), ("Android Studio", ["-x", "studio"])]
+        where studioBlocks || name != "Android Studio" {
             let r = try? await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/pgrep"), args: args,
                                                   in: URL(fileURLWithPath: "/"), env: [:], timeout: .seconds(5))
             if r?.status == 0 { return name }

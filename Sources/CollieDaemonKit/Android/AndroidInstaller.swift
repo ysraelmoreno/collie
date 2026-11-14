@@ -71,16 +71,25 @@ actor AndroidInstaller {
             }
         } catch let e as ProtocolError {
             throw e
+        } catch where error is CancellationError || (error as? URLError)?.code == .cancelled {
+            throw Self.cancelled
         } catch {
             throw ProtocolError(code: .unavailable, message: error.localizedDescription)
         }
     }
+
+    /// What `prepare` throws when its task is cancelled (compare with `==`).
+    static let cancelled = ProtocolError(code: .internal, message: "Android setup cancelled")
+    /// The catalog / API answer is a few MB at most.
+    static let indexCap = 16 << 20
 
     /// Fetches a small index (catalog / API answer) into the staging and parses it.
     private func resolve(_ url: URL, _ staging: URL, _ name: String,
                          _ parse: (Data) throws(ProtocolError) -> AndroidDownload.Archive) async throws -> AndroidDownload.Archive {
         let f = staging.appendingPathComponent(name)
         try await fetch(url, f, { _, _ in })
+        let size = (try FileManager.default.attributesOfItem(atPath: f.path)[.size] as? Int) ?? 0
+        guard size <= Self.indexCap else { throw ProtocolError(code: .unavailable, message: "\(url.host ?? "") answered more than 16 MiB") }
         return try parse(try Data(contentsOf: f))
     }
 
@@ -94,9 +103,16 @@ actor AndroidInstaller {
         return to
     }
 
-    /// Moves the extracted `src` to `dest` once `src/check` is executable. Never replaces an existing `dest`.
+    /// Moves the extracted `src` to `dest` once `src/check` is executable and no symlink in it points outside it.
+    /// Never replaces an existing `dest`.
     private func place(_ src: URL, at dest: URL, check: String) throws {
         let fm = FileManager.default
+        for rel in fm.enumerator(atPath: src.path)?.compactMap({ $0 as? String }) ?? [] {
+            guard let target = try? fm.destinationOfSymbolicLink(atPath: src.appendingPathComponent(rel).path) else { continue }
+            guard Self.staysInside(link: rel, target: target) else {
+                throw ProtocolError(code: .unavailable, message: "the downloaded archive has a link out of it: \(rel) -> \(target)")
+            }
+        }
         guard fm.isExecutableFile(atPath: src.appendingPathComponent(check).path) else {
             throw ProtocolError(code: .unavailable, message: "the downloaded archive has no \(check)")
         }
@@ -105,6 +121,16 @@ actor AndroidInstaller {
         }
         try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
         try fm.moveItem(at: src, to: dest)
+    }
+
+    /// Lexically: does `target` (a symlink at `link`, both relative to the archive root) stay in the root? Absolute: no.
+    static func staysInside(link: String, target: String) -> Bool {
+        guard !target.hasPrefix("/") else { return false }
+        var stack = link.split(separator: "/").dropLast().map(String.init)
+        for c in target.split(separator: "/") where c != "." {
+            if c == ".." { guard !stack.isEmpty else { return false }; stack.removeLast() } else { stack.append(String(c)) }
+        }
+        return true
     }
 
     static let run: AndroidRunner = { exe, args, dir in

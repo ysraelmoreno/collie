@@ -49,7 +49,8 @@ private struct Fixture {
     let home: URL, sdk: URL, fake = FakeFetch()
     var staging: URL { sdk.appendingPathComponent(".collie-staging") }
 
-    init(zipSum: String? = nil) throws {
+    /// `evilLink`: the JDK tarball also holds `Contents/escape -> ../../../../etc`.
+    init(zipSum: String? = nil, evilLink: Bool = false) throws {
         home = try tmp("home")
         sdk = home.appendingPathComponent("sdk")   // not created: prepare must create it
         let src = try tmp("src")
@@ -57,6 +58,10 @@ private struct Fixture {
         let zip = src.appendingPathComponent("tools.zip")
         try sh("/usr/bin/ditto", ["-c", "-k", "--keepParent", src.appendingPathComponent("tools/cmdline-tools").path, zip.path])
         try script(src.appendingPathComponent("jdk/jdk-21.0.5+11/Contents/Home/bin/java"))
+        if evilLink {
+            try fm.createSymbolicLink(atPath: src.appendingPathComponent("jdk/jdk-21.0.5+11/Contents/escape").path,
+                                      withDestinationPath: "../../../../etc")
+        }
         let tgz = src.appendingPathComponent("jdk.tar.gz")
         try sh("/usr/bin/tar", ["-czf", tgz.path, "-C", src.appendingPathComponent("jdk").path, "jdk-21.0.5+11"])
         let zipData = try Data(contentsOf: zip)
@@ -76,14 +81,14 @@ private struct Fixture {
     }
 
     /// `java`: whether a usable Java is there (via COLLIE_JAVA_HOME).
-    func installer(java: Bool, appleSilicon: Bool = true, free: Int64? = 1 << 40) throws -> AndroidInstaller {
+    func installer(java: Bool, appleSilicon: Bool = true, free: Int64? = 1 << 40, fetch: AndroidFetch? = nil) throws -> AndroidInstaller {
         var env = ["COLLIE_ANDROID_SDK": sdk.path, "PATH": "/usr/bin:/bin"]
         if java {
             let j = home.appendingPathComponent("java")
             try script(j.appendingPathComponent("bin/java"))
             env["COLLIE_JAVA_HOME"] = j.path
         }
-        return AndroidInstaller(root: home, env: env, home: home.path, fetch: fake.fetch, isAppleSilicon: appleSilicon,
+        return AndroidInstaller(root: home, env: env, home: home.path, fetch: fetch ?? fake.fetch, isAppleSilicon: appleSilicon,
                                 javaCandidates: [], freeSpace: { _ in free })
     }
 
@@ -135,6 +140,29 @@ private struct Fixture {
         await #expect(throws: ProtocolError.self) { try await f.installer(java: true, free: 1999).prepare() }
         #expect(!fm.fileExists(atPath: f.staging.path))
         #expect(f.fake.urls == [catalogURL])
+    }
+
+    @Test func prepareRefusesALinkOutOfTheArchive() async throws {
+        let f = try Fixture(evilLink: true)
+        try script(f.sdk.appendingPathComponent("cmdline-tools/latest/bin/sdkmanager"))
+        await #expect(throws: ProtocolError.self) { try await f.installer(java: false).prepare() }
+        #expect(!fm.fileExists(atPath: AvdManager.collieJdk(f.home.path)))
+        #expect(!fm.fileExists(atPath: f.staging.path))
+        #expect(AndroidInstaller.staysInside(link: "Contents/MacOS/libjli.dylib", target: "../Home/lib/libjli.dylib"))
+        #expect(!AndroidInstaller.staysInside(link: "a/b", target: "../../x"))
+        #expect(!AndroidInstaller.staysInside(link: "a", target: "/etc"))
+        #expect(!AndroidInstaller.staysInside(link: "a/b", target: "c/../../../x"))
+    }
+
+    @Test func prepareReportsACancelAsCancelled() async throws {
+        let f = try Fixture()
+        do {
+            try await f.installer(java: true, fetch: { _, _, _ in throw CancellationError() }).prepare()
+            Issue.record("expected an error")
+        } catch {
+            #expect(error as? ProtocolError == AndroidInstaller.cancelled)
+        }
+        #expect(!fm.fileExists(atPath: f.staging.path))
     }
 
     @Test func prepareRefusesIntelHosts() async throws {

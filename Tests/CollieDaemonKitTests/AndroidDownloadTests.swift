@@ -12,11 +12,13 @@ func androidHex<D: Digest>(_ d: D) -> String { d.map { String(format: "%02x", $0
                   "https://api.adoptium.net/v3/assets/latest/21/hotspot",
                   "https://github.com/adoptium/temurin21-binaries/releases/download/x/j.tar.gz",
                   "https://objects.githubusercontent.com/github-production-release-asset/1",
+                  "https://release-assets.githubusercontent.com/github-production-release-asset/1?sp=r",
                   "https://DL.google.com/x"]
         for s in ok { #expect(AndroidDownload.allowed(URL(string: s)!), "\(s)") }
         let bad = ["http://dl.google.com/x", "https://dl.google.com:8443/x", "https://u:p@dl.google.com/x",
                    "https://u@dl.google.com/x", "https://dl.google.com.evil.com/x", "https://evil-dl.google.com/x",
                    "https://github.com/evil/repo", "https://github.com/adoptium/../evil/x", "https://github.com/adoptiumx/x",
+                   "https://evil.release-assets.githubusercontent.com/x", "https://release-assets.githubusercontent.com:444/x",
                    "ftp://dl.google.com/x", "file:///etc/passwd"]
         for s in bad { #expect(!AndroidDownload.allowed(URL(string: s)!), "\(s)") }
     }

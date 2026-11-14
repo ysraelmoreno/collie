@@ -9,7 +9,8 @@ public typealias AndroidFetch = @Sendable (_ url: URL, _ to: URL, _ progress: @e
 /// What Collie itself downloads for Android (the cmdline-tools zip, Temurin): only from these hosts, checksummed before
 /// anything is extracted. What `sdkmanager` downloads later is Google's own stack and checksums.
 enum AndroidDownload {
-    static let hosts: Set<String> = ["dl.google.com", "api.adoptium.net", "github.com", "objects.githubusercontent.com"]
+    static let hosts: Set<String> = ["dl.google.com", "api.adoptium.net", "github.com", "objects.githubusercontent.com",
+                                       "release-assets.githubusercontent.com"]
     static let repository = URL(string: "https://dl.google.com/android/repository/")!
     static let catalog = URL(string: "https://dl.google.com/android/repository/repository2-3.xml")!
     static let temurinAPI = URL(string: "https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=aarch64&image_type=jdk&os=mac&vendor=eclipse")!
@@ -116,6 +117,7 @@ enum AndroidDownload {
     /// calling task cancels the download.
     static let fetch: AndroidFetch = { url, to, progress in
         guard allowed(url) else { throw ProtocolError(code: .invalidArgs, message: "download host not allowed: \(url.absoluteString)") }
+        try Task.checkCancellation()
         let dl = Download(to: to, progress: progress)
         let session = URLSession(configuration: .ephemeral, delegate: dl, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
@@ -127,9 +129,13 @@ enum AndroidDownload {
 
     private final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
         private let to: URL, progress: @Sendable (Int64, Int64) -> Void, lock = NSLock()
-        private var done: CheckedContinuation<Void, any Error>?, failure: (any Error)?
+        private var done: CheckedContinuation<Void, any Error>?, failure: (any Error)?, result: Result<Void, any Error>?
         init(to: URL, progress: @escaping @Sendable (Int64, Int64) -> Void) { self.to = to; self.progress = progress }
-        func start(_ c: CheckedContinuation<Void, any Error>, _ task: URLSessionDownloadTask) { lock.withLock { done = c }; task.resume() }
+        /// A cancel can complete the task before `start` stores `c`: then the stored result resumes it here.
+        func start(_ c: CheckedContinuation<Void, any Error>, _ task: URLSessionDownloadTask) {
+            let early = lock.withLock { () -> Result<Void, any Error>? in if result == nil { done = c }; return result }
+            if let early { c.resume(with: early) } else { task.resume() }
+        }
 
         func urlSession(_ s: URLSession, task: URLSessionTask, willPerformHTTPRedirection r: HTTPURLResponse, newRequest: URLRequest) async -> URLRequest? {
             newRequest.url.map(AndroidDownload.allowed) == true ? newRequest : nil
@@ -149,8 +155,13 @@ enum AndroidDownload {
             lock.withLock { failure = err }
         }
         func urlSession(_ s: URLSession, task: URLSessionTask, didCompleteWithError e: (any Error)?) {
-            let (c, f) = lock.withLock { () -> (CheckedContinuation<Void, any Error>?, (any Error)?) in defer { done = nil }; return (done, failure) }
-            if let e = e ?? f { c?.resume(throwing: e) } else { c?.resume() }
+            let r: Result<Void, any Error> = lock.withLock { (e ?? failure).map { .failure($0) } ?? .success(()) }
+            let c = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
+                defer { done = nil }
+                if done == nil { result = r }
+                return done
+            }
+            c?.resume(with: r)
         }
     }
 }

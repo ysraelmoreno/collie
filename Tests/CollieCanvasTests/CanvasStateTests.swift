@@ -69,6 +69,18 @@ import Testing
         #expect(s.frames[id] == r2)
     }
 
+    @Test func placeNearCreatorSticksToIt() {
+        let s = CanvasState(), maker = UUID(), id = UUID()
+        let far = CGRect(x: 5000, y: 5000, width: 640, height: 400)   // outside the viewport
+        s.frames[maker] = far
+        s.place(id, viewport: vp, near: far)
+        let r = s.frames[id]!
+        #expect(!r.intersects(far) && abs(r.midX - far.midX) <= 700 && abs(r.midY - far.midY) <= 450)
+        let other = UUID()
+        s.place(other, viewport: vp)         // no creator: old grid, inside the viewport
+        #expect(s.frames[other]!.minX < 1300)
+    }
+
     @Test func placeNewNeverStacksManyNodes() {
         let s = CanvasState()
         var rects: [CGRect] = []

@@ -29,9 +29,12 @@ public final class CanvasState {
         if frames[id] != nil { frames[id] = r } else { pendingFrames[id] = r }
     }
 
-    /// First placement of a live node: its pending frame, else the next free grid cell.
-    public func place(_ id: UUID, viewport: CGSize) {
-        frames[id] = pendingFrames.removeValue(forKey: id) ?? placeNew(viewport: viewport)
+    /// First placement of a live node: its pending frame, else the free spot nearest `near` (its creator's frame),
+    /// else the next free grid cell.
+    public func place(_ id: UUID, viewport: CGSize, near: CGRect? = nil) {
+        frames[id] = pendingFrames.removeValue(forKey: id)
+            ?? near.map { nearestFreeFrame(size: Self.defaultTerminalSize, near: $0, avoiding: Array(frames.values)) }
+            ?? placeNew(viewport: viewport)
     }
 
     public func toScreen(_ p: CGPoint) -> CGPoint {

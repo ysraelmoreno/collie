@@ -162,7 +162,12 @@ struct CanvasView: NSViewRepresentable {
         }
         let shown = Set(ids + panelIds)
         if canvas.shown != shown { canvas.shown = shown }
-        for id in ids + panelIds where canvas.frames[id] == nil { canvas.place(id, viewport: size) }
+        for id in ids + panelIds where canvas.frames[id] == nil {
+            // beside whoever it is leashed to (summon leashes the new terminal to its creator) that already has a frame
+            let creator = client.connections.lazy.compactMap { $0.a == id ? $0.b : $0.b == id ? $0.a : nil }
+                .compactMap { self.canvas.frames[$0] }.first
+            canvas.place(id, viewport: size, near: creator)
+        }
         if let f = canvas.fullscreen, !shown.contains(f), client.state == .connected { canvas.fullscreen = nil }   // closed, or another paddock
 
         // Tela cheia: only that node, at the viewport's size (so a terminal's PTY follows); the rest is left as it was.

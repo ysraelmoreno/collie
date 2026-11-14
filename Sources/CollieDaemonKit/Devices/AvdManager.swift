@@ -27,13 +27,19 @@ struct AvdManager: Sendable {
         let sdk = AndroidSdk.sdkmanager(in: AndroidSdk.root(env: env, home: home), exists: { fm.isExecutableFile(atPath: beside($0)) })
             .map { [beside($0)] } ?? []
         let tools = (env["COLLIE_AVDMANAGER"].map { [$0] } ?? []) + sdk
-        guard let tool = tools.first(where: { fm.isExecutableFile(atPath: $0) }) else { return nil }
-        let hasJava = { (d: String) in fm.isExecutableFile(atPath: "\(d)/bin/java") }
+        guard let tool = tools.first(where: { fm.isExecutableFile(atPath: $0) }),
+              let java = javaHome(env: env, home: home, javaCandidates: javaCandidates) else { return nil }
+        return AvdManager(url: URL(fileURLWithPath: tool), javaHome: java)
+    }
+
+    /// The Java home `locate` would use (same order), `nil` when none holds an executable `bin/java`. The installer asks
+    /// it too, to decide whether Collie's JDK must be downloaded.
+    static func javaHome(env: [String: String], home: String, javaCandidates: [String]? = nil) -> String? {
+        let hasJava = { (d: String) in FileManager.default.isExecutableFile(atPath: "\(d)/bin/java") }
         let early = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? [studioJbr])
         // java_home is spawned only when nothing earlier works (and never when candidates are injected).
         let viaJavaHome = { javaCandidates == nil ? javaHomeOutput().flatMap { hasJava($0) ? $0 : nil } : nil }
-        guard let java = early.first(where: hasJava) ?? viaJavaHome() ?? (hasJava(collieJdk(home)) ? collieJdk(home) : nil) else { return nil }
-        return AvdManager(url: URL(fileURLWithPath: tool), javaHome: java)
+        return early.first(where: hasJava) ?? viaJavaHome() ?? (hasJava(collieJdk(home)) ? collieJdk(home) : nil)
     }
 
     /// What `/usr/libexec/java_home -v 17+` prints, `nil` when no JDK 17+ is installed (nonzero exit).

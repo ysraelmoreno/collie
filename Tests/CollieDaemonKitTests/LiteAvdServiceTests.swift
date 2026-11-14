@@ -19,8 +19,10 @@ private struct Lite {
         if image { try fm.createDirectory(at: sdk.appendingPathComponent("system-images/android-37.0/google_apis/arm64-v8a"), withIntermediateDirectories: true) }
         try fm.createDirectory(at: dir.appendingPathComponent("jdk/bin"), withIntermediateDirectories: true)
         try script("jdk/bin/java", "exit 0")
+        try script("sdk/emulator/emulator", "exit 0")
         try script("avdmanager", """
         echo "$@" >> '\(log.path)'
+        echo "$ANDROID_AVD_HOME" >> '\(dir.path)/home.log'
         if [ "$1" = create ]; then mkdir -p "$ANDROID_AVD_HOME/collie-lite.avd"; printf 'hw.ramSize=2048\\nimage.sysdir.1=x\\n' > "$ANDROID_AVD_HOME/collie-lite.avd/config.ini"; fi
         if [ "$1" = delete ]; then rm -rf "$ANDROID_AVD_HOME/collie-lite.avd"; fi
         """)
@@ -45,6 +47,7 @@ private struct Lite {
         let fx = try Lite(); defer { fx.cleanup() }
         let r = try await fx.service().createLiteAvd()
         #expect(fx.calls() == ["create avd -n collie-lite -k system-images;android-37.0;google_apis;arm64-v8a -d pixel --force"])
+        #expect(try String(contentsOf: fx.dir.appendingPathComponent("home.log"), encoding: .utf8) == fx.avdHome.path + "\n")
         #expect(r["created"] == "true" && r["name"] == "collie-lite" && r["path"] == fx.config.deletingLastPathComponent().path)
         #expect(r["image"] == "system-images;android-37.0;google_apis;arm64-v8a")
     }

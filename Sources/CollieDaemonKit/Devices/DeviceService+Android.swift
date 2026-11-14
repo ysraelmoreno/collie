@@ -199,7 +199,7 @@ extension DeviceService {
     /// An existing AVD is not recreated, only its config is re-merged (`created: "false"`).
     func createLiteAvd() async throws(ProtocolError) -> [String: String] {
         guard let mgr = avdManager() else { throw AvdManager.missing }
-        guard let u = emulator() else { throw Emulator.missing }
+        guard let u = emulator(), FileManager.default.isExecutableFile(atPath: u.path) else { throw Emulator.missing }
         let sdk = u.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent()
         guard let image = LiteAvd.pickImage(LiteAvd.installedImages(sdkRoot: sdk)) else {
             throw ProtocolError(code: .unavailable, message: "No arm64 google_apis system image installed. In Android Studio open SDK Manager "
@@ -208,6 +208,7 @@ extension DeviceService {
         let dir = liteAvdDir, config = dir.appendingPathComponent("config.ini")
         let existed = FileManager.default.fileExists(atPath: config.path)
         var env = emulatorEnv
+        env["ANDROID_AVD_HOME"] = dir.deletingLastPathComponent().path   // avdmanager writes where existence is checked
         env["ANDROID_SDK_ROOT"] = env["ANDROID_SDK_ROOT"] ?? sdk.path
         if !existed {
             let r = try await mgr.run(["create", "avd", "-n", LiteAvd.name, "-k", image, "-d", "pixel", "--force"], env: env, timeout: .seconds(60))
@@ -225,6 +226,7 @@ extension DeviceService {
         guard let mgr = avdManager() else { throw AvdManager.missing }
         guard FileManager.default.fileExists(atPath: liteAvdDir.appendingPathComponent("config.ini").path) else { return }
         var env = emulatorEnv
+        env["ANDROID_AVD_HOME"] = liteAvdDir.deletingLastPathComponent().path
         if env["ANDROID_SDK_ROOT"] == nil, let u = emulator() {
             env["ANDROID_SDK_ROOT"] = u.resolvingSymlinksInPath().deletingLastPathComponent().deletingLastPathComponent().path
         }

@@ -24,13 +24,11 @@ enum LifecycleRules {
         SHA256.hash(data: Data((r.title + "\n" + r.body).utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// `e` as it holds for `r` read from store `store` (nil: unknown): a tier counts only in the store that earned it and,
-    /// earned/longTerm, for the text it was given for (`textHash`); otherwise the memory starts over (provisional, no uses).
-    /// Feed the result to `tier(for:)`; the lifecycle pass stores it.
-    static func effective(_ e: LifecycleEntry, _ r: MemoryRecord, store: String?) -> LifecycleEntry {
-        let otherStore = store != nil && e.store != nil && e.store != store
-        let otherText = e.tier != .provisional && e.textHash.map { $0 != textHash(r) } == true
-        guard otherStore || otherText else { return e }
+    /// `e` as it holds for `r`: an earned/longTerm tier counts only for the text it was given for (`textHash`); another
+    /// text (edited, or a copied id) starts over (provisional, no uses). Never by store: the same record lives in the
+    /// pasture and every paddock worktree. Feed the result to `tier(for:)`; the lifecycle pass stores it.
+    static func effective(_ e: LifecycleEntry, _ r: MemoryRecord) -> LifecycleEntry {
+        guard e.tier != .provisional, let h = e.textHash, h != textHash(r) else { return e }
         var x = e
         x.tier = .provisional; x.usefulUses = []; x.textHash = nil
         return x

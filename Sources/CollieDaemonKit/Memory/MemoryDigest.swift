@@ -168,10 +168,10 @@ extension CommandRouter {
         try digest.mark(group.map(\.id), undone: true, resolved: nil)
         for id in back { await memory.scores.reset(id) }   // restored: its correction penalty goes too (starts over)
         await memory.restored(back)
-        if e.action == "aposentado" {   // the user kept it: uncontested, its clock starts over (or the next pass archives it again)
-            let now = Date()
-            for b in e.before where LifecycleRules.eligible(b) { await memory.lifecycle.userKept(b.id, now: now) }
-        }
+        // every eligible record the undo wrote back (the whole job group): the user kept it, uncontested, its clock starts
+        // over (or the next pass archives it again)
+        let kept = Date()
+        for b in before where LifecycleRules.eligible(b) { await memory.lifecycle.userKept(b.id, now: kept) }
         e.undone = true
         return e
     }

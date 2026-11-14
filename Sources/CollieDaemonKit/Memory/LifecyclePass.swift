@@ -17,11 +17,11 @@ extension CommandRouter {
         // (2) provisional → earned stored; a contested longTerm is never demoted on disk (`tier(for:)` reads it as earned
         // until a valid re-check clears the contest)
         let fresh = Set(records.map(\.id)).subtracting(await lc.all().keys)   // entries born now: no claim check this pass
-        // (2b) a tier earned in another store or for another text starts over here (`LifecycleRules.effective`)
+        // (2b) a tier given for another text starts over here (`LifecycleRules.effective`); `store` = last pass's (for prune)
         let byId = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         await lc.update(records.filter(LifecycleRules.eligible).map(\.id), now: now) { id, e in
             guard let r = byId[id] else { return }
-            let eff = LifecycleRules.effective(e, r, store: store.key)
+            let eff = LifecycleRules.effective(e, r)
             if eff != e { e = eff; e.tierSince = now }
             e.store = store.key
             let t = LifecycleRules.tier(for: e, now: now)

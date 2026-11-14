@@ -280,4 +280,26 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
             #expect(try await all(store).first { $0.id == x.id }?.status == .active)
         }
     }
+
+    /// Undoing one row of a job undoes the group: every record it writes back is kept by the user.
+    @Test func undoOfJobGroupSettlesEveryRecord() async throws {
+        let x = MemoryRecord(kind: .decision, subject: "db", title: "Primeira"), y = MemoryRecord(kind: .decision, subject: "fila", title: "Segunda")
+        try await withRepo([x, y]) { d, p, store, _ in
+            let now = Date()
+            await d.router.lifecyclePass(store, now: now.addingTimeInterval(-22 * 86_400))
+            await contest(d, x.id, at: now); await contest(d, y.id, at: now)
+            let job = CuratorJob(id: UUID(), kind: .verifyContested, store: store.key, payload: .null, dedupe: "", createdAt: now, attempts: 0)
+            let group = UUID()   // only a correction job's rows carry `job`: grouped here by hand
+            let rows = try await d.router.applyOps([.retire(id: x.id, reason: "a"), .retire(id: y.id, reason: "b")], job: job)
+                .map { var r = $0; r.job = group; return r }
+            try await d.router.digest.append(rows)
+            let row = try #require(rows.first { $0.before.first?.id == x.id })
+            #expect(try await admin(d, p, "memory.undo", ["entry": row.id.uuidString]).ok)
+            for id in [x.id, y.id] {
+                let e = await d.router.memory.lifecycle.entry(id)
+                #expect(e?.contestedNow == false && e?.flags.isEmpty == true, "\(id)")
+            }
+            #expect(try await all(store).filter { $0.status == .active }.count == 2)
+        }
+    }
 }

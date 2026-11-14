@@ -23,6 +23,8 @@ struct LifecycleEntry: Codable, Sendable, Equatable {
     var textHash: String? = nil
     /// The user undid its promotion: never gated automatically again.
     var promotionUndone: Bool? = nil
+    /// What open flags took from its score (after the floor clamp); a valid re-check gives back exactly this.
+    var flagPenalty: Double? = nil
 }
 
 /// Usage-based lifecycle state per memory id (`<root>/learning/lifecycle.json`, 0600), never in the repo's memory files.
@@ -98,7 +100,7 @@ actor LifecycleStore {
     /// and the 14-day re-check cooldown start now. Only an existing entry changes.
     func userKept(_ id: UUID, now: Date) {
         guard load().entries[id] != nil else { return }
-        update(id, now: now) { $0.tierSince = now; $0.flags = []; $0.contestedNow = false; $0.recheckedAt = now }
+        update(id, now: now) { $0.tierSince = now; $0.flags = []; $0.contestedNow = false; $0.recheckedAt = now; $0.flagPenalty = nil }
     }
 
     /// One promotion gate of `day` taken, unless `max` already were (count and take in one actor step).

@@ -136,12 +136,22 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         #expect((await mem.relevant(for: t, cwd: repo.path, prompt: prompt)).hasSuffix(" (provisória)"))
     }
 
-    @Test func copiedIdInAnotherStoreIsNotLongTerm() async throws {
-        let r = x()
+    /// The same record in two stores (pasture and a paddock worktree): one entry, its tier holds in both; a copy whose
+    /// text differs is provisional there.
+    @Test func sameIdInTwoStoresKeepsTierOnlyForSameText() async throws {
+        var r = x()
         let (mem, repo) = try await setup([r])
-        await longTerm(mem, r, store: "/outro/repo")
-        #expect(!(await mem.contextText(cwd: repo.path, paddock: nil)).text.contains(MemoryService.longTermTitle))
-        #expect((await mem.relevant(for: t, cwd: repo.path, prompt: prompt)).hasSuffix(" (provisória)"))
+        let other = try await makeRepo(), b = await mem.repo(for: other.path)
+        let same = r
+        _ = try await b.run { try $0.store.write(same) }
+        await longTerm(mem, r, store: await mem.repo(for: repo.path).key)
+        #expect((await mem.contextText(cwd: repo.path, paddock: nil)).text.contains(MemoryService.longTermTitle))
+        #expect((await mem.contextText(cwd: other.path, paddock: nil)).text.contains(MemoryService.longTermTitle))
+        r.body = "outro texto no outro repo"
+        let edited = r
+        _ = try await b.run { try $0.store.write(edited) }
+        #expect(!(await mem.contextText(cwd: other.path, paddock: nil)).text.contains(MemoryService.longTermTitle))
+        #expect((await mem.contextText(cwd: repo.path, paddock: nil)).text.contains(MemoryService.longTermTitle))
     }
 
     @Test func lotMemberGetsLongTermBlock() async throws {

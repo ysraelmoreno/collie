@@ -361,4 +361,32 @@ private let bad = "deadbee1"
             #expect(e?.tier == .earned && e?.textHash == LifecycleRules.textHash(r))
         }
     }
+
+    /// One record in two worktree stores sharing lifecycle.json: alternating passes never reset it.
+    @Test func sameRecordInTwoStoresKeepsItsUses() async throws {
+        try await run { d, a in
+            let b = await d.router.memory.repo(for: try await makeRepo().path)
+            let r = dec("Em dois")
+            try await put(a, [r]); try await put(b, [r])
+            let lc = d.router.memory.lifecycle, now = Date(), uses = [UseKey(day: "2026-11-01", session: "a"), UseKey(day: "2026-11-02", session: "b")]
+            await lc.update(r.id, now: now) { $0.usefulUses = Set(uses) }
+            for s in [a, b, a, b] { await d.router.lifecyclePass(s, now: now.addingTimeInterval(86_400)) }
+            let e = await lc.entry(r.id)
+            #expect(e?.tier == .earned && e?.usefulUses == Set(uses) && e?.store == b.key)
+        }
+    }
+
+    /// Three flags hit the 0.2 floor (taken 0.8, not 0.9): the valid verdict gives back exactly that.
+    @Test func validVerdictGivesBackExactlyWhatFlagsTook() async throws {
+        try await run { d, store in
+            let r = dec("Três marcas")
+            try await put(store, [r])
+            let mem = d.router.memory, now = Date()
+            for s in ["a", "b", "c"] { _ = try await mem.applyFlag(session: s, id: r.id, record: r, verdict: .wrong, reason: "x", now: now) }
+            #expect(abs(await mem.scores.factor(r.id) - ScoreStore.floor) < 1e-9)
+            await mem.applyVerdict(r.id, kind: .verifyContested, ops: [], now: now)
+            #expect(abs(await mem.scores.factor(r.id) - 1) < 1e-9)
+            #expect(await mem.lifecycle.entry(r.id)?.flagPenalty == nil)
+        }
+    }
 }

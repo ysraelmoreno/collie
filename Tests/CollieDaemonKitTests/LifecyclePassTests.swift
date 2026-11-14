@@ -98,6 +98,25 @@ private let bad = "deadbee1"
         }
     }
 
+    /// The 12-per-project cap counts stored longTerm: a contested one keeps its slot.
+    @Test func contestedLongTermKeepsItsSlotInTheCap() async throws {
+        try await run { d, store in
+            let lts = (0..<12).map { dec("Longa \($0)") }, next = dec("Candidata")
+            try await put(store, lts + [next])
+            let now = Date(), lc = d.router.memory.lifecycle
+            for r in lts { await lc.update(r.id, now: now) { $0.tier = .longTerm } }
+            await lc.update(lts[0].id, now: now) { $0.contestedNow = true; $0.lastContestedAt = now }
+            let ago: [Double] = [20, 14, 7, 1]
+            await lc.update(next.id, now: now) { e in
+                e.usefulUses = Set((0..<8).map { UseKey(day: dayString(now.addingTimeInterval(-ago[$0 % 4] * 86_400)), session: "u\($0)") })
+            }
+            #expect(LifecycleRules.promotionCandidate(try #require(await lc.entry(next.id)), now: now))
+            await d.router.memory.applyVerdict(next.id, kind: .verifyPromotion, ops: [], now: now)
+            let e = await lc.entry(next.id)
+            #expect(e?.tier != .longTerm && e?.recheckedAt == now)
+        }
+    }
+
     /// Prune judges only the consolidated store's own entries.
     @Test func pruneOnlyTouchesThisStoresEntries() async throws {
         try await run { d, a in

@@ -724,7 +724,8 @@ actor MemoryService {
         for s in byRoot.values {
             let recs = (try? await s.run { m in m.store.all().records }) ?? []
             guard let rec = recs.first(where: { $0.id == id }) else { continue }
-            return (rec, recs.filter { $0.status == .active && entries[$0.id].map { LifecycleRules.tier(for: $0, now: Date()) } == .longTerm }.count)
+            // the stored tier: a contested longTerm keeps its slot (it comes back after a valid re-check)
+            return (rec, recs.filter { $0.status == .active && entries[$0.id]?.tier == .longTerm }.count)
         }
         return nil
     }

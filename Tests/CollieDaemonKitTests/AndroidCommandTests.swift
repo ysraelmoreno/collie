@@ -98,7 +98,7 @@ private func ended(_ d: Daemon, _ p: Paths) async throws -> [String: JSONValue] 
         }
     }
 
-    @Test func installWithoutAcceptOnlyPrepares() async throws {
+    @Test func installWithoutAcceptAcceptsNothing() async throws {
         let f = try Fixture(prepared: true)
         defer { try? FileManager.default.removeItem(at: f.home) }
         try await withDaemon(configure: { $0.androidInstaller = f.installer }) { d, p in
@@ -131,6 +131,12 @@ private func ended(_ d: Daemon, _ p: Paths) async throws -> [String: JSONValue] 
         let help = ArgvParser.help(["help", "android"]) ?? ""
         for c in ["status", "licenses", "install", "cancel"] { #expect(help.contains("collie android \(c)"), "\(c)") }
         #expect(!help.contains("--accept-all"))
+    }
+
+    @Test func acceptIsANamedFlag() throws {
+        let (cmd, args) = try ArgvParser.parse(["android", "install", "--accept", "a", "--accept", "b"])
+        #expect(cmd == "android.install" && args["accept"] == .string("a,b"))
+        #expect(throws: ProtocolError.self) { try ArgvParser.parse(["android", "install", "--accept-all"]) }
     }
 
     @Test func commandsAreHiddenFromMCP() {

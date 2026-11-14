@@ -12,8 +12,8 @@ extension CommandRouter {
         case "android.install":
             var ids: [String] = []
             switch r.args["accept"] {
-            case .array(let a)?: ids = a.compactMap { if case .string(let s) = $0 { s } else { nil } }
-            case .string(let s)?: ids = s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }   // ponytail: also a comma string
+            case .array(let a)?: ids = a.compactMap { if case .string(let s) = $0 { s } else { nil } }.filter { !$0.isEmpty }
+            case .string(let s)?: ids = s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }   // ponytail: also a comma string
             default: break
             }
             return .object(["job": try json(await android.start(accept: ids))])

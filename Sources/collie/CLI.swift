@@ -97,8 +97,8 @@ enum CLI {
         do { cmd = try await parse(argv) } catch { err(error.message); return 2 }
         do {
             let result = try await Client.call(cmd.command, cmd.args)
+            if cmd.command == "android.install" && !json { return await followInstall(result) }   // prints the job lines itself
             print(render(cmd.command, result, json: json), terminator: "")
-            if cmd.command == "android.install" { return await followInstall(result) }
             if case .object(let o) = result, case .bool(true)? = o["truncated"] { err("output truncated") }
             // the agent exists, its first prompt didn't get there: not a success, and a retried summon would say "already exists"
             if case .object(let o) = result, case .string(let e)? = o["promptError"] {
@@ -135,6 +135,7 @@ enum CLI {
             do {
                 guard case .object(let st) = try await Client.call("android.status", [:]) else { continue }
                 job = st["job"]
+                if job == nil { err("job lost (daemon restarted?)"); return 1 }
             } catch { err(error.message); return error.code == .daemonUnavailable ? 3 : 1 }
         }
     }

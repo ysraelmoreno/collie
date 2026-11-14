@@ -473,7 +473,7 @@ public enum Commands {
         CommandSpec(name: "android.licenses", summary: "Read the Android SDK licenses sdkmanager lists, accepting none (app only): [{id,title,text,accepted}]",
                     timeoutSeconds: 300, exposedToMCP: false),
         CommandSpec(name: "android.install", summary: "Start the Android SDK install job (app only); replies {job} at once, follow it with android.status",
-                    params: [ParamSpec("accept", .list, positional: true, help: "License ids the user accepted (as android.licenses lists them)")],
+                    params: [ParamSpec("accept", .string, help: "License ids the user accepted (as android.licenses lists them), comma-separated", repeatable: true)],
                     timeoutSeconds: 10, exposedToMCP: false),
         CommandSpec(name: "android.cancel", summary: "Stop the Android SDK install job (app only)", timeoutSeconds: 10, exposedToMCP: false),
         CommandSpec(name: "admin.spawn", summary: "Spawn a terminal",

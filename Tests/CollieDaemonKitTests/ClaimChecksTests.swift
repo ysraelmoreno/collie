@@ -95,13 +95,38 @@ import CollieCore
         #expect(f.isEmpty)
     }
     @Test func optionLikeTokensNeverExtracted() {
-        let s = "-x --upload-pack=x --exec=feat/a -abcdef1 --abcdef1234"
+        let s = "-x --upload-pack=x --exec=feat/a --fix/x -abcdef1 --abcdef1234"
         #expect(ClaimChecks.shas(in: s).isEmpty)
-        #expect(ClaimChecks.branches(in: s).allSatisfy { !$0.hasPrefix("-") })
+        #expect(ClaimChecks.branches(in: s).isEmpty)
     }
     @Test func capsClaimsPerRecord() async {
-        let body = (0..<20).map { "abc123\($0 % 10)f\($0)" }.joined(separator: " ")
+        let body = (0..<20).map { String(format: "abc12%02df", $0) }.joined(separator: " ")
         let f = await ClaimChecks.check(rec(body), facts: Fake())
-        #expect(f.count <= ClaimChecks.maxPerKind)
+        #expect(f.count == ClaimChecks.maxPerKind)
+    }
+
+    @Test func ambiguousPrefixIsNotMissing() async throws {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-amb-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: d) }
+        func git(_ a: [String], input: String? = nil) throws -> String {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/git"); p.arguments = a; p.currentDirectoryURL = d
+            let out = Pipe(), inp = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice; p.standardInput = inp
+            try p.run()
+            if let input { inp.fileHandleForWriting.write(Data(input.utf8)) }
+            try inp.fileHandleForWriting.close()
+            let data = out.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+            return String(decoding: data, as: UTF8.self)
+        }
+        _ = try git(["init", "-q"])
+        // 4-hex prefixes collide after a few hundred commits (birthday); the check accepts any abbreviation length
+        let stream = (0..<1500).map { "commit refs/heads/m\ncommitter t <t@t> \(1_000_000 + $0) +0000\ndata 1\nx\n" }.joined(separator: "\n")
+        _ = try git(["fast-import", "--quiet"], input: stream)
+        let ids = try git(["rev-list", "--all"]).split(separator: "\n").map(String.init)
+        let dup = Dictionary(grouping: ids, by: { String($0.prefix(4)) }).first { $0.value.count > 1 }?.key
+        let prefix = try #require(dup)
+        let live = GitFactsLive(root: d)
+        #expect(await live.commitExists(prefix))
+        #expect(await live.commitExists(ids[0]))
     }
 }

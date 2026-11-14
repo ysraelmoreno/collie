@@ -30,7 +30,9 @@ struct GitFactsLive: GitFacts {
 
     /// Exit status of `args`, but only when the root is a git repo (checked once, cached); nil = unknown.
     private func checked(_ args: [String]) async -> Int32? {
-        if repo.get() == nil { repo.set(await status(["rev-parse", "--git-dir"]) == 0) }
+        if repo.get() == nil {   // only a definitive answer is cached: 0 = repo, 128 = not; a timeout/throw is retried next time
+            switch await status(["rev-parse", "--git-dir"]) { case 0: repo.set(true); case 128: repo.set(false); default: break }
+        }
         return repo.get() == true ? await status(args) : nil
     }
 
@@ -55,7 +57,11 @@ struct GitFactsLive: GitFacts {
 
     func commitExists(_ sha: String) async -> Bool {
         // rev-parse --verify --quiet: 0 = exists, 1 = absent (cat-file -e exits 128 for an unknown name, same as a fatal error)
-        await checked(["rev-parse", "--verify", "--quiet", "\(sha)^{commit}"]) != 1
+        guard await checked(["rev-parse", "--verify", "--quiet", "\(sha)^{commit}"]) == 1 else { return true }
+        // exit 1 is also what an ambiguous abbreviation gives: any candidate object means "unknown", not absent
+        guard sha.count < 40, let r = try? await GitRunner.run(["rev-parse", "--disambiguate=\(sha)"], in: root, timeout: Self.timeout)
+        else { return false }
+        return r.status != 0 || !r.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     func pathExists(_ rel: String) -> Bool { repoPathExists(rel, root: root) }
 }
@@ -77,7 +83,7 @@ enum ClaimChecks {
         if let p = r.path, !p.isEmpty, !facts.pathExists(p) { add(.init(kind: .pathMissing, detail: p)) }
         let body = r.body
         if negations.contains(where: { body.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }) {
-            for b in branches(in: body).prefix(maxPerKind) {
+            for b in unique(branches(in: body)).prefix(maxPerKind) {
                 switch await facts.branch(b) {
                 case .merged: add(.init(kind: .branchMerged, detail: b))
                 case .missing: add(.init(kind: .branchMissing, detail: b))
@@ -85,11 +91,13 @@ enum ClaimChecks {
                 }
             }
         }
-        for s in shas(in: body).prefix(maxPerKind) where !(await facts.commitExists(s)) { add(.init(kind: .commitMissing, detail: s)) }
+        for s in unique(shas(in: body)).prefix(maxPerKind) where !(await facts.commitExists(s)) { add(.init(kind: .commitMissing, detail: s)) }
         return out
     }
 
-    private static let branchRx = try! NSRegularExpression(pattern: #"\b(?:feat|fix|spike|docs|chore)/[A-Za-z0-9._/-]+"#)
+    private static func unique(_ a: [String]) -> [String] { var seen = Set<String>(); return a.filter { seen.insert($0).inserted } }
+
+    private static let branchRx = try! NSRegularExpression(pattern: #"(?<![\w=/-])(?:feat|fix|spike|docs|chore)/[A-Za-z0-9._/-]+"#)
     private static let shaRx = try! NSRegularExpression(pattern: #"\b[0-9a-f]{7,40}\b"#)
 
     static func branches(in s: String) -> [String] {

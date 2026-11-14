@@ -662,6 +662,8 @@ actor MemoryService {
             if live { await lifecycle.addUse([id], key: UseKey(day: day, session: session), now: now) }
             return (false, false)
         }
+        // 14 days after a re-check a flag on it changes nothing (stored, it would block earning again)
+        if live, let at = await lifecycle.entry(id)?.recheckedAt, now.timeIntervalSince(at) < LifecycleRules.verifyCooldown { return (false, false) }
         let contest = live || sticky
         let flag = LifecycleFlag(verdict: verdict, session: session, day: day, reason: reason)
         switch await lifecycle.addFlag(id, flag, limit: LifecycleRules.maxFlagsPerSession, contest: contest, now: now) {
@@ -671,8 +673,6 @@ actor MemoryService {
         }
         guard live else { return (contest, false) }
         await scores.penalize(id, LifecycleRules.flagPenalty, reason: "flagged \(verdict.rawValue)")
-        // 14 days after a re-check a new flag only tags it (contested), it queues no job
-        if let at = await lifecycle.entry(id)?.recheckedAt, now.timeIntervalSince(at) < LifecycleRules.verifyCooldown { return (true, false) }
         return (true, await enqueueVerify(id))
     }
 
@@ -703,8 +703,9 @@ actor MemoryService {
             await lifecycle.update(id, now: now) { $0.flags.removeAll(); $0.contestedNow = false; $0.recheckedAt = now }
         case .verifyPromotion:
             var promote = false
-            if !invalid, let e = await lifecycle.entry(id), LifecycleRules.promotionCandidate(e, now: now) {
-                promote = await longTermCount(near: id) < LifecycleRules.maxLongTermPerProject
+            if !invalid, let e = await lifecycle.entry(id), LifecycleRules.promotionCandidate(e, now: now),
+               let (rec, longTerm) = await longTermCount(near: id), LifecycleRules.eligible(rec) {   // pinned/reviewed meanwhile: never
+                promote = longTerm < LifecycleRules.maxLongTermPerProject
             }
             await lifecycle.update(id, now: now) { e in
                 e.recheckedAt = now
@@ -714,14 +715,15 @@ actor MemoryService {
         }
     }
 
-    /// longTerm memories in the repo store holding `id` (none found: the cap counts as reached).
-    private func longTermCount(near id: UUID) async -> Int {
+    /// `id`'s record and the active longTerm memories of the repo store holding it (nil: not found, no promotion).
+    private func longTermCount(near id: UUID) async -> (MemoryRecord, Int)? {
         let entries = await lifecycle.all()
         for s in byRoot.values {
-            let ids = (try? await s.run { m in m.store.all().records.map(\.id) }) ?? []
-            if ids.contains(id) { return ids.filter { entries[$0]?.tier == .longTerm }.count }
+            let recs = (try? await s.run { m in m.store.all().records }) ?? []
+            guard let rec = recs.first(where: { $0.id == id }) else { continue }
+            return (rec, recs.filter { $0.status == .active && entries[$0.id]?.tier == .longTerm }.count)
         }
-        return LifecycleRules.maxLongTermPerProject
+        return nil
     }
 
     nonisolated(unsafe) private static let dayFormatter: ISO8601DateFormatter = {   // UTC; read-only after init

@@ -41,11 +41,14 @@ enum MemoryVerify {
     /// Fenced like `Consolidation.input`: memory text and flag reasons are data inside the `DADOS-<nonce>` marks only.
     static func input(_ p: VerifyPayload, nonce: String) -> String {
         func d(_ s: String) -> String { s.replacingOccurrences(of: "DADOS-", with: "DADOS_", options: .caseInsensitive) }
+        // one line each (no forged "Fatos verificados:" line from a reason or a title); the multi-line body goes last
+        func one(_ s: String) -> String { d(CuratorOps.clean(s, cap: CuratorOps.lineMax, multiline: false)) }
         let mark = "DADOS-\(nonce)"
-        var l = [mark, "Memória: id \(p.id.uuidString) [\(p.kind.rawValue)] \(d(p.title)): \(d(p.body))", "Marcações:"]
-        l += p.flags.isEmpty ? ["- nenhuma"] : p.flags.map { "- \($0.verdict.rawValue): \(d($0.reason.isEmpty ? "(sem motivo)" : $0.reason))" }
+        var l = [mark, "Marcações:"]
+        l += p.flags.isEmpty ? ["- nenhuma"] : p.flags.map { "- \($0.verdict.rawValue): \($0.reason.isEmpty ? "(sem motivo)" : one($0.reason))" }
         l.append("Fatos verificados:")
-        l += p.facts.isEmpty ? ["- nenhuma checagem falhou"] : p.facts.map { "- \($0.kind): \(d($0.detail))" }
+        l += p.facts.isEmpty ? ["- nenhuma checagem falhou"] : p.facts.map { "- \(one($0.kind)): \(one($0.detail))" }
+        l.append("Memória: id \(p.id.uuidString) [\(p.kind.rawValue)] \(one(p.title)):\n\(d(p.body))")
         l.append(mark)
         return l.joined(separator: "\n")
     }
@@ -67,8 +70,10 @@ extension CommandRouter {
         for s in await knownStores() where s.root != nil && found == nil {
             if let r = (try? await s.run { $0.store.all().records.first { $0.id == id } }) ?? nil { found = (s, r) }
         }
-        guard let (s, r) = found, let root = s.root else { return false }
+        // a feedback or procedure (the user's kinds) is never retired by the curator: no budget spent, it stays tagged only
+        guard let (s, r) = found, let root = s.root, LifecycleRules.eligible(r), !MemoryLearning.usersKind(r.kind) else { return false }
         let failures = await ClaimChecks.check(r, facts: config.gitFacts(root))
+        // spec "Re-check (C)": with no model or the cap reached, a failed deterministic claim check alone archives
         if kind == .verifyContested, !failures.isEmpty, await !curator.status().available {
             let why = "checagem falhou: " + failures.map { "\($0.kind.rawValue) \($0.detail)" }.joined(separator: ", ")
             let job = CuratorJob(id: UUID(), kind: kind, store: s.key, payload: .null, dedupe: "", createdAt: Date(), attempts: 0)

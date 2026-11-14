@@ -42,6 +42,9 @@ import Foundation
         #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest, v11]), list: list) == latest)
         #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([v9, v11]), list: list) == v11)
         #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([]), list: list) == nil)
+        let named = "/s/cmdline-tools/beta/bin/sdkmanager"
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([named]), list: { _ in ["beta"] }) == named)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([named, v9]), list: { _ in ["beta", "9.0"] }) == v9)
     }
 
     private let listing = """
@@ -73,6 +76,9 @@ import Foundation
         #expect(AndroidSdk.pickLatestStable(AndroidSdk.parseImages(listing)) == "system-images;android-37.0;google_apis;arm64-v8a")
         #expect(AndroidSdk.pickLatestStable(["system-images;android-CinnamonBun;google_apis;arm64-v8a"]) == nil)
         #expect(AndroidSdk.pickLatestStable([]) == nil)
+        let ext = ["system-images;android-34-ext10;google_apis;arm64-v8a", "system-images;android-33;google_apis;arm64-v8a",
+                   "system-images;android-CinnamonBun;google_apis;arm64-v8a"]
+        #expect(AndroidSdk.pickLatestStable(ext) == ext[0])
     }
 
     @Test func parseProgressReadsPercent() {
@@ -80,6 +86,11 @@ import Foundation
         #expect(p?.percent == 45)
         #expect(p?.label == "Downloading emulator...")
         #expect(AndroidSdk.parseProgress("[=======] 100% Unzipping x")?.percent == 100)
+        let redraw = AndroidSdk.parseProgress("[==   ] 10% Downloading x\r[===  ] 11% Downloading x")
+        #expect(redraw?.percent == 11)
+        let ansi = AndroidSdk.parseProgress("[===  ] 12% Unzipping y\u{1B}[K")
+        #expect(ansi?.percent == 12)
+        #expect(ansi?.label == "Unzipping y")
         #expect(AndroidSdk.parseProgress("Warning: nothing here") == nil)
     }
 

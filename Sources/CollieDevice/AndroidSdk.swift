@@ -33,8 +33,10 @@ public enum AndroidSdk {
         let root = "\(sdk)/cmdline-tools"
         func bin(_ v: String) -> String { "\(root)/\(v)/bin/sdkmanager" }
         if exists(bin("latest")) { return bin("latest") }
-        let numbered = list(root).compactMap { v in Double(v).map { (v, $0) } }.sorted { $0.1 > $1.1 }
-        return numbered.map { bin($0.0) }.first(where: exists)
+        let names = list(root).filter { $0 != "latest" }
+        let numeric = names.compactMap { v in Double(v).map { (v, $0) } }.sorted { $0.1 > $1.1 }.map(\.0)
+        let rest = names.filter { Double($0) == nil }.sorted { $0.compare($1, options: .numeric) == .orderedAscending }
+        return (numeric + rest).map(bin).first(where: exists)
     }
 
     /// `system-images;android-N;google_apis;arm64-v8a` rows of `sdkmanager --list` (first column), deduplicated.
@@ -43,7 +45,7 @@ public enum AndroidSdk {
         var out: [String] = []
         for line in listOutput.split(separator: "\n") {
             let id = line.split(separator: "|", omittingEmptySubsequences: false).first
-                .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
             let c = id.split(separator: ";").map(String.init)
             if c.count == 4, c[0] == "system-images", c[1].hasPrefix("android-"), c[2] == "google_apis",
                c[3] == "arm64-v8a", seen.insert(id).inserted { out.append(id) }
@@ -55,13 +57,18 @@ public enum AndroidSdk {
     public static func pickLatestStable(_ packages: [String]) -> String? {
         packages.compactMap { p -> (String, Double)? in
             let c = p.split(separator: ";")
-            guard c.count > 1, c[1].hasPrefix("android-"), let n = Double(c[1].dropFirst("android-".count)) else { return nil }
+            // leading number only: `android-34-ext10` counts as 34, `android-CinnamonBun` has none
+            guard c.count > 1, c[1].hasPrefix("android-"),
+                  let n = Double(String(c[1].dropFirst("android-".count).prefix { $0.isNumber || $0 == "." })) else { return nil }
             return (p, n)
         }.max { $0.1 < $1.1 }?.0
     }
 
     /// `[=====   ] 45% Downloading emulator...` -> (45, "Downloading emulator...")
     public static func parseProgress(_ line: String) -> (percent: Int, label: String)? {
+        // sdkmanager redraws in place with \r and ANSI erase codes: only the last segment is current
+        let last = line.split(whereSeparator: { $0 == "\r" || $0 == "\n" }).last.map(String.init) ?? ""
+        let line = last.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
         guard line.contains("["), let pct = line.firstIndex(of: "%") else { return nil }
         let digits = line[..<pct].reversed().prefix { $0.isNumber }
         guard !digits.isEmpty, let n = Int(String(digits.reversed())), (0...100).contains(n) else { return nil }

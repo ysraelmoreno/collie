@@ -129,4 +129,13 @@ import CollieCore
         #expect(await live.commitExists(prefix))
         #expect(await live.commitExists(ids[0]))
     }
+
+    /// `[a1b2c3d4]` is the short id of a memory in the store, not a commit.
+    @Test func shortIdOfAKnownMemoryIsNotASha() async {
+        let other = UUID(uuidString: "A1B2C3D4-0000-4000-8000-000000000000")!
+        let body = "veja [a1b2c3d4] e o commit abc1234"
+        let f = await ClaimChecks.check(rec(body), facts: Fake(), knownIds: [other])
+        #expect(f == [.init(kind: .commitMissing, detail: "abc1234")])
+        #expect(await ClaimChecks.check(rec(body), facts: Fake()).count == 2)   // no ids given: both read as SHAs
+    }
 }

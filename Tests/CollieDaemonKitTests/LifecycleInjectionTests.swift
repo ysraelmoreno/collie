@@ -118,4 +118,44 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         await mem.resolvePending(for: t, correction: false, now: Date())
         #expect(await mem.lifecycle.all().isEmpty)
     }
+
+    private func longTerm(_ mem: MemoryService, _ r: MemoryRecord, store: String?) async {
+        await mem.lifecycle.update(r.id, now: Date()) { $0.tier = .longTerm; $0.store = store; $0.textHash = LifecycleRules.textHash(r) }
+    }
+
+    @Test func editedLongTermIsProvisionalAgain() async throws {
+        var r = x()
+        let (mem, repo) = try await setup([r])
+        let key = await mem.repo(for: repo.path).key
+        await longTerm(mem, r, store: key)
+        #expect((await mem.contextText(cwd: repo.path, paddock: nil)).text.contains(MemoryService.longTermTitle))
+        r.body = "postgres pool sizing, editado"
+        let edited = r
+        _ = try await mem.repo(for: repo.path).run { try $0.store.write(edited) }
+        #expect(!(await mem.contextText(cwd: repo.path, paddock: nil)).text.contains(MemoryService.longTermTitle))
+        #expect((await mem.relevant(for: t, cwd: repo.path, prompt: prompt)).hasSuffix(" (provisória)"))
+    }
+
+    @Test func copiedIdInAnotherStoreIsNotLongTerm() async throws {
+        let r = x()
+        let (mem, repo) = try await setup([r])
+        await longTerm(mem, r, store: "/outro/repo")
+        #expect(!(await mem.contextText(cwd: repo.path, paddock: nil)).text.contains(MemoryService.longTermTitle))
+        #expect((await mem.relevant(for: t, cwd: repo.path, prompt: prompt)).hasSuffix(" (provisória)"))
+    }
+
+    @Test func lotMemberGetsLongTermBlock() async throws {
+        let r = x()
+        let (mem, repo) = try await setup([r])
+        await longTerm(mem, r, store: await mem.repo(for: repo.path).key)
+        let c = await mem.contextText(cwd: repo.path, paddock: nil, lot: UUID())
+        #expect(c.text.contains(MemoryService.longTermTitle) && c.ids.contains(r.id), "\(c.text)")
+    }
+
+    @Test func usersKindHasNoProvisionalTag() async throws {
+        let f = MemoryRecord(kind: .feedback, subject: "db", title: "Use Postgres pool", body: "postgres pool sizing")
+        let (mem, repo) = try await setup([f])
+        let out = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        #expect(out.contains("[regra \(id8(f))]") && !out.contains("provisória"), "\(out)")
+    }
 }

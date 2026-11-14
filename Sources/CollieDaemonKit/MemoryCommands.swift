@@ -355,6 +355,7 @@ extension CommandRouter {
             let id = try id()
             let rec = try await repo.run { m in try MemoryCleanup.restore(id, store: m.store, index: m.index()) }
             await memory.scores.reset(id)   // a restored memory starts over
+            await memory.lifecycle.userKept(id, now: Date())
             return try memJSON(rec, repo)
 
         case "memory.pin", "memory.unpin":

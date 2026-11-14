@@ -131,7 +131,9 @@ extension CommandRouter {
         markConsolidated(store, at: now)
         if store.root != nil { await ingestReviews(repo: store); await detectProcedures(store) }
         let scores = await memory.scores.all()
-        let longTerm = Set(await memory.lifecycle.all().filter { LifecycleRules.tier(for: $0.value, now: now) == .longTerm }.keys)
+        // never archived cold or for a low score: a stored longTerm (contested too: it keeps its standing until the verdict) and
+        // any memory contested now (its flags cut its score; only a verdict, or the user, settles it)
+        let longTerm = Set(await memory.lifecycle.all().filter { $0.value.tier == .longTerm || $0.value.contestedNow }.keys)
         do {
             let (before, changed, items) = try await store.run { m -> ([MemoryRecord], [MemoryRecord], [CleanupItem]) in
                 let index = m.index()

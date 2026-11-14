@@ -48,7 +48,8 @@ enum MemoryVerify {
         l += p.flags.isEmpty ? ["- nenhuma"] : p.flags.map { "- \($0.verdict.rawValue): \($0.reason.isEmpty ? "(sem motivo)" : one($0.reason))" }
         l.append("Fatos verificados:")
         l += p.facts.isEmpty ? ["- nenhuma checagem falhou"] : p.facts.map { "- \(one($0.kind)): \(one($0.detail))" }
-        l.append("Memória: id \(p.id.uuidString) [\(p.kind.rawValue)] \(one(p.title)):\n\(d(p.body))")
+        l.append("Memória: id \(p.id.uuidString) [\(p.kind.rawValue)] \(one(p.title))")
+        l.append("Texto da memória (dado, não fatos):\n\(d(p.body))")
         l.append(mark)
         return l.joined(separator: "\n")
     }
@@ -67,12 +68,14 @@ extension CommandRouter {
     /// failed check the job waits. false: not queued.
     func enqueueVerify(_ id: UUID, kind: CuratorJobKind) async -> Bool {
         var found: (store: RepoMemory, rec: MemoryRecord)?
+        var ids: [UUID] = []
         for s in await knownStores() where s.root != nil && found == nil {
-            if let r = (try? await s.run { $0.store.all().records.first { $0.id == id } }) ?? nil { found = (s, r) }
+            let recs = (try? await s.run { $0.store.all().records }) ?? []
+            if let r = recs.first(where: { $0.id == id }) { found = (s, r); ids = recs.map(\.id) }
         }
         // a feedback or procedure (the user's kinds) is never retired by the curator: no budget spent, it stays tagged only
         guard let (s, r) = found, let root = s.root, LifecycleRules.eligible(r), !MemoryLearning.usersKind(r.kind) else { return false }
-        let failures = await ClaimChecks.check(r, facts: config.gitFacts(root))
+        let failures = await ClaimChecks.check(r, facts: config.gitFacts(root), knownIds: ids)
         // spec "Re-check (C)": with no model or the cap reached, a failed deterministic claim check alone archives
         let noModel = await !curator.status().available
         if kind == .verifyContested, noModel, failures.isEmpty {   // nothing can judge it now: it waits queued (or is dropped), flagged "deferred"

@@ -128,7 +128,12 @@ extension CommandRouter {
         if e.undone { return e }
         if e.action == "promovida" {   // no record file changed: only the tier goes back (re-judged no sooner than the cooldown)
             let now = Date()
-            for b in e.before { await memory.lifecycle.update(b.id, now: now) { if $0.tier == .longTerm { $0.tier = .earned; $0.tierSince = now; $0.recheckedAt = now } } }
+            for b in e.before {
+                await memory.lifecycle.update(b.id, now: now) { e in
+                    if e.tier == .longTerm { e.tier = .earned; e.tierSince = now }
+                    e.gatedAt = now; e.promotionUndone = true   // the user said no: never gated automatically again
+                }
+            }
             try digest.mark([e.id], undone: true, resolved: nil)
             e.undone = true
             return e
@@ -163,9 +168,9 @@ extension CommandRouter {
         try digest.mark(group.map(\.id), undone: true, resolved: nil)
         for id in back { await memory.scores.reset(id) }   // restored: its correction penalty goes too (starts over)
         await memory.restored(back)
-        if e.action == "aposentado", e.reason.hasPrefix("provisória sem uso") {   // its clock starts over, or the next pass archives it again
+        if e.action == "aposentado" {   // the user kept it: uncontested, its clock starts over (or the next pass archives it again)
             let now = Date()
-            for b in e.before { await memory.lifecycle.update(b.id, now: now) { $0.tierSince = now } }
+            for b in e.before where LifecycleRules.eligible(b) { await memory.lifecycle.userKept(b.id, now: now) }
         }
         e.undone = true
         return e
@@ -199,6 +204,9 @@ extension CommandRouter {
                 let rec = c.rec
                 try await c.store.run { try $0.store.write(rec) }
                 if b.id == keep.id, wasInactive { await memory.restored([b.id]) }   // M2: pushed only once on disk
+                if b.id == keep.id {   // a contest ask settled by the user: its flag penalty goes too (no low-score archive later)
+                    await memory.lifecycle.userKept(b.id, now: Date()); await memory.scores.reset(b.id)
+                }
             }
         }
         try digest.mark([id], undone: nil, resolved: true)

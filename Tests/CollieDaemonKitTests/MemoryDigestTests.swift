@@ -180,7 +180,7 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
             #expect(d.router.memory.events.read(since: Date().addingTimeInterval(-60)).contains { $0.type == .promoted && $0.ids == [x.id] })
             #expect(try await admin(d, p, "memory.undo", ["entry": row.id.uuidString]).ok)
             let e = try #require(await lc.entry(x.id))
-            #expect(e.tier == .earned && e.recheckedAt != nil)
+            #expect(e.tier == .earned && e.gatedAt != nil && e.promotionUndone == true && e.recheckedAt == nil)
             #expect(await d.router.digest.since(.distantPast).first { $0.id == row.id }?.undone == true)
             #expect(try await all(store) == onDisk)   // the record file is untouched
         }
@@ -199,6 +199,84 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
             #expect(try await admin(d, p, "memory.undo", ["entry": row.id.uuidString]).ok)
             #expect(try await all(store).first { $0.id == x.id }?.status == .active)
             await d.router.lifecyclePass(store, now: Date().addingTimeInterval(86_400))   // the next pass leaves it be
+            #expect(try await all(store).first { $0.id == x.id }?.status == .active)
+        }
+    }
+
+    private func contest(_ d: Daemon, _ id: UUID, at: Date) async {
+        await d.router.memory.lifecycle.update(id, now: at) { e in
+            e.contestedNow = true; e.lastContestedAt = at
+            e.flags = [LifecycleFlag(verdict: .wrong, session: "a", day: "2026-11-01", reason: "velha")]
+        }
+    }
+
+    /// The user keeping a memory (resolve, restore, undo) settles its contest and restarts its unused clock.
+    @Test func resolveKeepingContestedSettlesIt() async throws {
+        let x = MemoryRecord(kind: .decision, subject: "db", title: "Contestada")
+        try await withRepo([x]) { d, p, store, _ in
+            let now = Date()
+            await contest(d, x.id, at: now.addingTimeInterval(-15 * 86_400))
+            await d.router.lifecyclePass(store, now: now)
+            let ask = try #require(await d.router.digest.since(.distantPast).first { $0.action == "ask" })
+            #expect(try await admin(d, p, "memory.resolve", ["entry": ask.id.uuidString, "keep": "newer"]).ok)
+            let e = await d.router.memory.lifecycle.entry(x.id)
+            #expect(e?.contestedNow == false && e?.flags.isEmpty == true && e?.recheckedAt != nil)
+            await d.router.lifecyclePass(store, now: Date())
+            #expect(await d.router.digest.since(.distantPast).filter { $0.action == "ask" }.count == 1)
+            #expect(try await all(store).first { $0.id == x.id }?.status == .active)
+        }
+    }
+
+    @Test func restoreSettlesContestAndClock() async throws {
+        let x = MemoryRecord(kind: .decision, subject: "db", title: "Sem uso contestada")
+        try await withRepo([x]) { d, p, store, _ in
+            let now = Date().addingTimeInterval(-22 * 86_400)
+            await d.router.lifecyclePass(store, now: now)
+            await d.router.lifecyclePass(store, now: Date())
+            #expect(try await all(store).first { $0.id == x.id }?.status == .archived)
+            await contest(d, x.id, at: Date())
+            let root = try #require(store.root).path
+            #expect(try await admin(d, p, "memory.restore", ["id": x.id.uuidString, "repo": root]).ok)
+            let e = await d.router.memory.lifecycle.entry(x.id)
+            #expect(e?.contestedNow == false && e?.flags.isEmpty == true)
+            await d.router.lifecyclePass(store, now: Date())
+            #expect(try await all(store).first { $0.id == x.id }?.status == .active)
+        }
+    }
+
+    /// Any archive row undone (here a retire), not only an unused one.
+    @Test func undoOfRetireSettlesContest() async throws {
+        let x = MemoryRecord(kind: .decision, subject: "db", title: "Retirada contestada")
+        try await withRepo([x]) { d, p, store, _ in
+            let now = Date()
+            await d.router.lifecyclePass(store, now: now.addingTimeInterval(-22 * 86_400))
+            await contest(d, x.id, at: now)
+            let job = CuratorJob(id: UUID(), kind: .verifyContested, store: store.key, payload: .null, dedupe: "", createdAt: now, attempts: 0)
+            let rows = try await d.router.applyOps([.retire(id: x.id, reason: "checagem falhou")], job: job)
+            try await d.router.digest.append(rows)
+            let row = try #require(rows.first { $0.action == "aposentado" })
+            #expect(try await admin(d, p, "memory.undo", ["entry": row.id.uuidString]).ok)
+            let e = await d.router.memory.lifecycle.entry(x.id)
+            #expect(e?.contestedNow == false && e?.flags.isEmpty == true)
+            await d.router.lifecyclePass(store, now: Date())
+            #expect(try await all(store).first { $0.id == x.id }?.status == .active)
+        }
+    }
+
+    /// Kept by the user after two flags: score neutral again, so 30+ days unread it is not low-score archived.
+    @Test func resolveKeepingResetsFlagPenalty() async throws {
+        var x = MemoryRecord(kind: .decision, subject: "db", title: "Duas marcas")
+        x.createdAt = Date().addingTimeInterval(-40 * 86_400)
+        try await withRepo([x]) { d, p, store, _ in
+            let mem = d.router.memory, then = Date().addingTimeInterval(-15 * 86_400)
+            _ = try await mem.applyFlag(session: "a", id: x.id, record: x, verdict: .wrong, reason: "x", now: then)
+            _ = try await mem.applyFlag(session: "b", id: x.id, record: x, verdict: .outdated, reason: "y", now: then)
+            #expect(await mem.scores.factor(x.id) <= MemoryCleanup.lowScore)
+            await d.router.lifecyclePass(store, now: Date())
+            let ask = try #require(await d.router.digest.since(.distantPast).first { $0.action == "ask" })
+            #expect(try await admin(d, p, "memory.resolve", ["entry": ask.id.uuidString, "keep": "newer"]).ok)
+            #expect(await mem.scores.factor(x.id) == 1)
+            await d.router.consolidate(store, now: Date())
             #expect(try await all(store).first { $0.id == x.id }?.status == .active)
         }
     }

@@ -327,7 +327,7 @@ actor MemoryService {
 
     /// `contextText`, with each injected id's store key: header, pinned, the pitfall checklist (≤ 1 200 B), the index.
     private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int, focus: String = "") async -> ContextParts {
-        var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = [], owner: [UUID: String] = [:]
+        var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = [], pool: [MemoryRecord] = [], owner: [UUID: String] = [:]
         let (keep, asked) = await proposalState?() ?? ([], [])
         for s in await readable(cwd, lot: lot) {
             let recs = (try? await s.run { m -> [MemoryRecord] in
@@ -339,18 +339,19 @@ actor MemoryService {
             pinned += recs.filter(\.pinned)
             for r in recs { owner[r.id] = s.key }
             if lot == nil || s.lotId != nil { rest += recs.filter { !$0.pinned } }
+            pool += recs.filter { !$0.pinned }   // longTerm reaches a lot member too, as pinned does
         }
         let entries = await lifecycle.all()
         var (text, ids) = Self.renderContext(pinned, limit: limit, entries: entries)
         guard !text.isEmpty else { return ContextParts() }
-        let lt = Self.renderLongTerm(rest, entries: entries, limit: limit - text.utf8.count)
+        let lt = Self.renderLongTerm(pool, entries: entries, limit: limit - text.utf8.count, owner: owner)
         text += lt.text; ids.formUnion(lt.ids)
         var owned = owner.filter { ids.contains($0.key) }
         let room = Swift.min(Self.checklistMax, limit - text.utf8.count - 2)
         let cl = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: ids, focus: focus) : (text: "", ids: [:], recs: [])
         if !cl.text.isEmpty { text += "\n\n" + cl.text; owned.merge(cl.ids) { a, _ in a } }
         Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil && !ids.contains($0.id) }, limit: limit)
-        return ContextParts(text: text, ids: owned, recs: (pinned + rest).filter { ids.contains($0.id) } + cl.recs, checklist: cl.ids,
+        return ContextParts(text: text, ids: owned, recs: (pinned + pool).filter { ids.contains($0.id) } + cl.recs, checklist: cl.ids,
                             checklistText: cl.text.isEmpty ? "" : "\n\n" + cl.text)
     }
 
@@ -462,7 +463,7 @@ actor MemoryService {
         let entries = await lifecycle.all()
         for id in ids {
             guard let f = found[id] else { continue }   // gone, inactive or already seen: dropped
-            let line = "\n" + Self.relevantLine(f.rec, entries)
+            let line = "\n" + Self.relevantLine(f.rec, entries, store: f.key)
             guard out.utf8.count + line.utf8.count <= limit else { wait.append(id); continue }
             out += line; chosen[id] = f.key
         }
@@ -596,7 +597,7 @@ actor MemoryService {
         var lines = [Self.relevantHeader], used = Self.relevantHeader.utf8.count, chosen: [(hit: MemoryHit, store: RepoMemory)] = []
         let entries = await lifecycle.all()
         for h in picked where chosen.count < max {
-            let line = Self.relevantLine(h.hit.record, entries)
+            let line = Self.relevantLine(h.hit.record, entries, store: h.store.key)
             guard used + 1 + line.utf8.count <= limit else { continue }
             lines.append(line); used += 1 + line.utf8.count; chosen.append(h)
         }
@@ -711,18 +712,22 @@ actor MemoryService {
         case .verifyContested:
             noteLifecycle(.verified, id, store: store, verdict: invalid ? "invalid" : "valid")
             guard !invalid else { return false }
+            // each agent flag cost −0.3 (`applyFlag`; a claim-check flag cost nothing): given back, so the score is as before
+            let paid = await lifecycle.entry(id)?.flags.filter { $0.verdict != .useful && $0.session != "claim-check" }.count ?? 0
             await lifecycle.update(id, now: now) { $0.flags.removeAll(); $0.contestedNow = false; $0.recheckedAt = now }
+            if paid > 0 { await scores.penalize(id, -LifecycleRules.flagPenalty * Double(paid), reason: "re-check valid") }
             return false
         case .verifyPromotion:
             noteLifecycle(.verified, id, store: store, verdict: invalid ? "invalid" : "valid")
-            var promote = false
+            var promote = false, hash: String?
             if !invalid, let e = await lifecycle.entry(id), LifecycleRules.promotionCandidate(e, now: now),
                let (rec, longTerm) = await longTermCount(near: id), LifecycleRules.eligible(rec) {   // pinned/reviewed meanwhile: never
                 promote = longTerm < LifecycleRules.maxLongTermPerProject
+                hash = LifecycleRules.textHash(rec)
             }
             await lifecycle.update(id, now: now) { e in
-                e.recheckedAt = now
-                if promote { e.tier = .longTerm; e.tierSince = now }
+                e.gatedAt = now
+                if promote { e.tier = .longTerm; e.tierSince = now; e.textHash = hash }
             }
             return promote
         default: return false
@@ -840,11 +845,13 @@ actor MemoryService {
     private static func firstLine(_ body: String) -> String {
         oneLine(String(body.split(separator: "\n", omittingEmptySubsequences: true).first ?? ""), max: 200)
     }
-    /// `(provisória)` / `(contestada)` for a record under the lifecycle (absent entry = provisional); none for the user's.
-    private static func mark(_ r: MemoryRecord, _ entries: [UUID: LifecycleEntry], now: Date = Date()) -> String {
+    /// `(provisória)` / `(contestada)` for a record under the lifecycle (absent entry = provisional), read from `store`; no
+    /// `provisória` for the user's kinds, nothing for pinned/reviewed.
+    private static func mark(_ r: MemoryRecord, _ entries: [UUID: LifecycleEntry], store: String?, now: Date = Date()) -> String {
         guard LifecycleRules.eligible(r) else { return "" }
         let e = entries[r.id]
-        let tags = [(e.map { LifecycleRules.tier(for: $0, now: now) } ?? .provisional) == .provisional ? "provisória" : nil,
+        let tier = e.map { LifecycleRules.tier(for: LifecycleRules.effective($0, r, store: store), now: now) } ?? .provisional
+        let tags = [tier == .provisional && !MemoryLearning.usersKind(r.kind) ? "provisória" : nil,
                     e?.contestedNow == true ? "contestada" : nil].compactMap { $0 }
         return tags.isEmpty ? "" : " (\(tags.joined(separator: ", ")))"
     }
@@ -855,10 +862,13 @@ actor MemoryService {
 
     /// Up to 3 longTerm project memories of `recs` (most used first) in full, `- [<id8>] <título>: <corpo>` (no tag), the
     /// block at most 600 UTF-8 bytes and `limit` (whole lines). A tier comes from `entries` only, never from the record.
-    static func renderLongTerm(_ recs: [MemoryRecord], entries: [UUID: LifecycleEntry], limit: Int, now: Date = Date()) -> (text: String, ids: Set<UUID>) {
+    /// `owner`: each record's store key (absent: not checked).
+    static func renderLongTerm(_ recs: [MemoryRecord], entries: [UUID: LifecycleEntry], limit: Int, owner: [UUID: String] = [:],
+                               now: Date = Date()) -> (text: String, ids: Set<UUID>) {
         func uses(_ r: MemoryRecord) -> Int { entries[r.id]?.usefulUses.count ?? 0 }
         let picked = recs.filter { r in
-            LifecycleRules.eligible(r) && entries[r.id].map { LifecycleRules.tier(for: $0, now: now) == .longTerm } == true
+            LifecycleRules.eligible(r)
+                && entries[r.id].map { LifecycleRules.tier(for: LifecycleRules.effective($0, r, store: owner[r.id]), now: now) == .longTerm } == true
         }.sorted { (uses($0), $0.updatedAt) > (uses($1), $1.updatedAt) }
         let room = Swift.min(limit, LifecycleRules.maxLongTermInjectedBytes)
         var out = "", ids = Set<UUID>()
@@ -906,10 +916,10 @@ actor MemoryService {
                 let t = oneLine(r.title, max: 200), lead = "- [\(shortId(r.id))] "
                 let line: String
                 if kind == .map {
-                    line = lead + (r.path.map { "\(oneLine($0, max: 200)) — \(t)" } ?? t) + mark(r, entries)
+                    line = lead + (r.path.map { "\(oneLine($0, max: 200)) — \(t)" } ?? t) + mark(r, entries, store: nil)
                 } else {
                     let first = firstLine(r.body)
-                    line = lead + t + (first.isEmpty ? "" : ": \(first)") + mark(r, entries)
+                    line = lead + t + (first.isEmpty ? "" : ": \(first)") + mark(r, entries, store: nil)
                 }
                 let add = (started ? "" : "\n\n\(title)") + "\n" + line
                 guard out.utf8.count + add.utf8.count <= limit else { continue }
@@ -919,10 +929,10 @@ actor MemoryService {
         return (out, ids)
     }
 
-    private static func relevantLine(_ r: MemoryRecord, _ entries: [UUID: LifecycleEntry]) -> String {
+    private static func relevantLine(_ r: MemoryRecord, _ entries: [UUID: LifecycleEntry], store: String?) -> String {
         let label = ["feedback": "regra", "decision": "decisão", "map": "mapa", "pitfall": "armadilha", "procedure": "procedimento"][r.kind.rawValue] ?? r.kind.rawValue
         let head = r.kind == .map ? (r.path.map { "\(oneLine($0, max: 200)) — " } ?? "") + oneLine(r.title, max: 200) : oneLine(r.title, max: 200)
         let body = oneLine(r.body, max: 300)
-        return "- [\(label) \(shortId(r.id))] \(head)" + (body.isEmpty ? "" : ": \(body)") + mark(r, entries)
+        return "- [\(label) \(shortId(r.id))] \(head)" + (body.isEmpty ? "" : ": \(body)") + mark(r, entries, store: store)
     }
 }

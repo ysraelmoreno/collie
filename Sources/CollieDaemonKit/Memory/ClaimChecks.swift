@@ -77,7 +77,8 @@ enum ClaimChecks {
     static let maxPerKind = 8
     static let negations = ["não mergead", "não foi mergead", "pendente", "ainda não", "not merged", "pending"]
 
-    static func check(_ r: MemoryRecord, facts: any GitFacts) async -> [ClaimFailure] {
+    /// `knownIds`: the store's record ids; a hex run that starts one (an `[a1b2c3d4]` short id) is not read as a SHA.
+    static func check(_ r: MemoryRecord, facts: any GitFacts, knownIds: some Sequence<UUID> = [UUID]()) async -> [ClaimFailure] {
         var out: [ClaimFailure] = []
         func add(_ f: ClaimFailure) { if !out.contains(f) { out.append(f) } }
         if let p = r.path, !p.isEmpty, !facts.pathExists(p) { add(.init(kind: .pathMissing, detail: p)) }
@@ -91,7 +92,8 @@ enum ClaimChecks {
                 }
             }
         }
-        for s in unique(shas(in: body)).prefix(maxPerKind) where !(await facts.commitExists(s)) { add(.init(kind: .commitMissing, detail: s)) }
+        let ids = knownIds.map { $0.uuidString.lowercased() }
+        for s in unique(shas(in: body).filter { s in !ids.contains { $0.hasPrefix(s) } }).prefix(maxPerKind) where !(await facts.commitExists(s)) { add(.init(kind: .commitMissing, detail: s)) }
         return out
     }
 

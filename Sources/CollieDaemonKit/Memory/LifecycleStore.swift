@@ -17,6 +17,12 @@ struct LifecycleEntry: Codable, Sendable, Equatable {
     var tierSince: Date
     /// The `RepoMemory.key` holding the record (set by the lifecycle pass); optional: older files decode.
     var store: String? = nil
+    /// When the promotion gate last judged it (verdict or undo); the 14-day re-gate wait reads this, not `recheckedAt`.
+    var gatedAt: Date? = nil
+    /// `LifecycleRules.textHash` of the text an earned/longTerm tier was given for: an edited text starts over.
+    var textHash: String? = nil
+    /// The user undid its promotion: never gated automatically again.
+    var promotionUndone: Bool? = nil
 }
 
 /// Usage-based lifecycle state per memory id (`<root>/learning/lifecycle.json`, 0600), never in the repo's memory files.
@@ -49,11 +55,11 @@ actor LifecycleStore {
     }
 
     /// `change` on each id's entry (a new one starts provisional at `now`), in one write.
-    func update(_ ids: [UUID], now: Date, _ change: (inout LifecycleEntry) -> Void) {
+    func update(_ ids: [UUID], now: Date, _ change: (UUID, inout LifecycleEntry) -> Void) {
         mutate { s in
             for id in ids {
                 var e = s.entries[id] ?? LifecycleEntry(tierSince: now)
-                change(&e)
+                change(id, &e)
                 s.entries[id] = e
             }
         }
@@ -86,6 +92,13 @@ actor LifecycleStore {
             s.entries[id] = e
         }
         return .added
+    }
+
+    /// The user kept `id` (resolved its ask, restored it, undid its archive): uncontested, flags cleared, its unused clock
+    /// and the 14-day re-check cooldown start now. Only an existing entry changes.
+    func userKept(_ id: UUID, now: Date) {
+        guard load().entries[id] != nil else { return }
+        update(id, now: now) { $0.tierSince = now; $0.flags = []; $0.contestedNow = false; $0.recheckedAt = now }
     }
 
     /// One promotion gate of `day` taken, unless `max` already were (count and take in one actor step).
@@ -141,8 +154,17 @@ actor LifecycleStore {
 
     private func load() -> State {
         if let state { return state }
-        // ponytail: an unreadable file starts empty (lifecycle is derived usage data, never what the user wrote)
-        let s = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(State.self, from: $0) } ?? State()
+        // ponytail: an undecodable file is kept aside as `<name>.corrupt` (the last one only) and state starts empty
+        // (lifecycle is derived usage data, never what the user wrote)
+        var s = State()
+        if let data = try? Data(contentsOf: file) {
+            do { s = try JSONDecoder().decode(State.self, from: data) } catch {
+                let aside = file.appendingPathExtension("corrupt")
+                unlink(aside.path)
+                let moved = rename(file.path, aside.path) == 0
+                memoryLog("lifecycle: unreadable \(file.lastPathComponent) (\(error)); \(moved ? "kept as \(aside.lastPathComponent)" : "not moved"), starting empty")
+            }
+        }
         state = s
         return s
     }

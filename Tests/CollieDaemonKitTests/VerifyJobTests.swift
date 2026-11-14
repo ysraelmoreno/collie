@@ -132,7 +132,7 @@ private func candidate(_ e: inout LifecycleEntry) {
             let lc = d.router.memory.lifecycle
             await lc.update(ids[0], now: Date()) { candidate(&$0) }
             #expect(await d.router.memory.enqueuePromotion(ids[0]))
-            #expect(await waitFor(10) { await lc.entry(ids[0])?.recheckedAt != nil })
+            #expect(await waitFor(10) { await lc.entry(ids[0])?.gatedAt != nil })
             #expect(await lc.entry(ids[0])?.tier != .longTerm)
             #expect(try await status(store, ids[0]) == .active)   // a promotion's "invalid" never archives
         }
@@ -146,7 +146,7 @@ private func candidate(_ e: inout LifecycleEntry) {
             for id in ids.prefix(12) { await lc.update(id, now: Date()) { $0.tier = .longTerm } }
             await lc.update(ids[12], now: Date()) { candidate(&$0) }
             #expect(await d.router.memory.enqueuePromotion(ids[12]))
-            #expect(await waitFor(10) { await lc.entry(ids[12])?.recheckedAt != nil })
+            #expect(await waitFor(10) { await lc.entry(ids[12])?.gatedAt != nil })
             #expect(await lc.entry(ids[12])?.tier != .longTerm)
         }
     }
@@ -274,7 +274,7 @@ private func candidate(_ e: inout LifecycleEntry) {
             #expect(await waitFor(10) { fake.calls == 1 })
             try await pin(ids[0])
             fake.open()
-            #expect(await waitFor(10) { await lc.entry(ids[0])?.recheckedAt != nil })
+            #expect(await waitFor(10) { await lc.entry(ids[0])?.gatedAt != nil })
             #expect(await lc.entry(ids[0])?.tier != .longTerm)
             // the refused one gave its gate back: 2 more fit today
             #expect(await lc.takeGate(day: day.string(from: Date()), max: LifecycleRules.maxGatesPerDay))
@@ -298,6 +298,25 @@ private func candidate(_ e: inout LifecycleEntry) {
             await d.router.memory.lifecycle.update(ids[0], now: Date()) { $0.recheckedAt = Date().addingTimeInterval(-15 * 86_400) }
             await session(d, t, "s2", ids)
             #expect(try await flag(p, t, ids[0])["queued"] == .bool(true))
+        }
+    }
+
+    /// An undone promotion is never gated again by the pass.
+    @Test func undonePromotionNotGatedAgain() async throws {
+        let fake = FakeCurator()
+        try await withDaemon(configure: { $0.curatorRunner = fake; $0.gitFacts = { _ in VerifyFacts() } }) { d, p in
+            let (_, ids, store) = try await setup(d, p)
+            let lc = d.router.memory.lifecycle, now = Date(), today = day.string(from: now)
+            await d.router.lifecyclePass(store, now: now)
+            await lc.update(ids[0], now: now) { e in
+                candidate(&e); e.tier = .earned; e.promotionUndone = true; e.gatedAt = now.addingTimeInterval(-30 * 86_400)
+            }
+            await d.router.lifecyclePass(store, now: now)
+            #expect(await lc.takeGate(day: today, max: 1))   // a gate is held only by a queued promotion job
+            await lc.releaseGate(day: today)
+            await lc.update(ids[0], now: now) { $0.promotionUndone = nil }
+            await d.router.lifecyclePass(store, now: now)
+            #expect(await !lc.takeGate(day: today, max: 1))
         }
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import CollieCore
 
 /// Pure tier and lifetime rules; state lives in `LifecycleStore`.
@@ -16,6 +17,23 @@ enum LifecycleRules {
 
     static func eligible(_ r: MemoryRecord) -> Bool {
         r.scope == .project && r.status == .active && !r.pinned && !r.reviewed
+    }
+
+    /// SHA-256 hex of the record's title and body: the text a tier was given for.
+    static func textHash(_ r: MemoryRecord) -> String {
+        SHA256.hash(data: Data((r.title + "\n" + r.body).utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// `e` as it holds for `r` read from store `store` (nil: unknown): a tier counts only in the store that earned it and,
+    /// earned/longTerm, for the text it was given for (`textHash`); otherwise the memory starts over (provisional, no uses).
+    /// Feed the result to `tier(for:)`; the lifecycle pass stores it.
+    static func effective(_ e: LifecycleEntry, _ r: MemoryRecord, store: String?) -> LifecycleEntry {
+        let otherStore = store != nil && e.store != nil && e.store != store
+        let otherText = e.tier != .provisional && e.textHash.map { $0 != textHash(r) } == true
+        guard otherStore || otherText else { return e }
+        var x = e
+        x.tier = .provisional; x.usefulUses = []; x.textHash = nil
+        return x
     }
 
     static func tier(for e: LifecycleEntry, now: Date) -> LifecycleTier {

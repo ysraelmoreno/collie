@@ -113,7 +113,7 @@ private let bad = "deadbee1"
             #expect(LifecycleRules.promotionCandidate(try #require(await lc.entry(next.id)), now: now))
             await d.router.memory.applyVerdict(next.id, kind: .verifyPromotion, ops: [], now: now)
             let e = await lc.entry(next.id)
-            #expect(e?.tier != .longTerm && e?.recheckedAt == now)
+            #expect(e?.tier != .longTerm && e?.gatedAt == now && e?.recheckedAt == nil)
         }
     }
 
@@ -289,6 +289,76 @@ private let bad = "deadbee1"
             let asks = await d.router.digest.since(.distantPast).filter { $0.action == "ask" }
             #expect(asks.map { $0.before.map(\.id) } == [[old.id]], "\(asks.map(\.title))")
             #expect(try await status(store, old.id) == .active)
+        }
+    }
+
+    private func eightUses(_ now: Date) -> Set<UseKey> {
+        let ago: [Double] = [20, 14, 7, 1]
+        return Set((0..<8).map { UseKey(day: dayString(now.addingTimeInterval(-ago[$0 % 4] * 86_400)), session: "u\($0)") })
+    }
+
+    /// Two flags (−0.3 each) put the score under 0.5: the low-score cleanup waits for the verdict, which gives it back.
+    @Test func twoFlagsNeverArchiveWithoutVerdict() async throws {
+        try await run { d, store in
+            let r = dec("Contestada duas vezes", age: 40)
+            try await put(store, [r])
+            let mem = d.router.memory, now = Date()
+            _ = try await mem.applyFlag(session: "a", id: r.id, record: r, verdict: .wrong, reason: "x", now: now)
+            _ = try await mem.applyFlag(session: "b", id: r.id, record: r, verdict: .outdated, reason: "y", now: now)
+            #expect(await mem.scores.factor(r.id) <= MemoryCleanup.lowScore)
+            await d.router.consolidate(store, now: now)
+            #expect(try await status(store, r.id) == .active)
+            await mem.applyVerdict(r.id, kind: .verifyContested, ops: [], now: now)
+            #expect(abs(await mem.scores.factor(r.id) - 1) < 1e-9)
+        }
+    }
+
+    /// The promotion gate stamps `gatedAt`, not `recheckedAt`: a promoted memory can be flagged at once; a contested one
+    /// judged valid still waits out its cooldown.
+    @Test func promotedCanBeFlaggedAtOnceRecheckedCannot() async throws {
+        try await run { d, store in
+            let r = dec("Promovida"), c = dec("Revalidada")
+            try await put(store, [r, c])
+            let mem = d.router.memory, lc = mem.lifecycle, now = Date()
+            await lc.update(r.id, now: now) { $0.usefulUses = self.eightUses(now) }
+            #expect(await mem.applyVerdict(r.id, kind: .verifyPromotion, ops: [], now: now))
+            let pe = await lc.entry(r.id)
+            #expect(pe?.gatedAt == now && pe?.recheckedAt == nil)
+            #expect(try await mem.applyFlag(session: "s", id: r.id, record: r, verdict: .wrong, reason: "x", now: now).contested)
+            await mem.applyVerdict(c.id, kind: .verifyContested, ops: [], now: now)
+            #expect(try await !mem.applyFlag(session: "s", id: c.id, record: c, verdict: .wrong, reason: "x", now: now).contested)
+        }
+    }
+
+    /// A longTerm whose text changed starts over: provisional from now, no uses, no hash.
+    @Test func editedLongTermStartsOverAsProvisional() async throws {
+        try await run { d, store in
+            var r = dec("Longa", body: "texto original")
+            try await put(store, [r])
+            let lc = d.router.memory.lifecycle, now = Date(), hash = LifecycleRules.textHash(r)
+            await d.router.lifecyclePass(store, now: now)
+            await lc.update(r.id, now: now) { $0.tier = .longTerm; $0.textHash = hash; $0.usefulUses = self.eightUses(now) }
+            #expect(MemoryService.renderLongTerm([r], entries: await lc.all(), limit: 4096).ids == [r.id])
+            r.body = "texto editado"
+            try await put(store, [r])
+            #expect(MemoryService.renderLongTerm([r], entries: await lc.all(), limit: 4096).ids.isEmpty)
+            let later = now.addingTimeInterval(86_400)
+            await d.router.lifecyclePass(store, now: later)
+            let e = await lc.entry(r.id)
+            #expect(e?.tier == .provisional && e?.tierSince == later && e?.textHash == nil && e?.usefulUses.isEmpty == true)
+        }
+    }
+
+    /// An earned entry with no hash (older file) gets the current text's.
+    @Test func earnedGetsTextHash() async throws {
+        try await run { d, store in
+            let r = dec("Ganhou")
+            try await put(store, [r])
+            let lc = d.router.memory.lifecycle, now = Date()
+            await lc.update(r.id, now: now) { $0.usefulUses = [UseKey(day: "2026-11-01", session: "a"), UseKey(day: "2026-11-02", session: "b")] }
+            await d.router.lifecyclePass(store, now: now)
+            let e = await lc.entry(r.id)
+            #expect(e?.tier == .earned && e?.textHash == LifecycleRules.textHash(r))
         }
     }
 }

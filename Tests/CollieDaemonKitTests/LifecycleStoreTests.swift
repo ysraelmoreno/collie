@@ -89,4 +89,27 @@ private let day: TimeInterval = 86_400
         #expect(all[back] != nil)
         #expect(all[kept] != nil)
     }
+
+    @Test func undecodableFileKeptAsCorrupt() async throws {
+        let f = tmpFile(), aside = f.appendingPathExtension("corrupt")
+        try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: aside)   // an older .corrupt is overwritten
+        try Data("{not json".utf8).write(to: f)
+        #expect(await LifecycleStore(file: f).all().isEmpty)
+        #expect(try Data(contentsOf: aside) == Data("{not json".utf8))
+        #expect(!FileManager.default.fileExists(atPath: f.path))
+    }
+
+    @Test func userKeptClearsContestAndRestartsClock() async {
+        let id = UUID(), s = LifecycleStore(file: tmpFile())
+        await s.userKept(id, now: t0)
+        #expect(await s.entry(id) == nil)   // no entry: nothing made up
+        await s.update(id, now: t0) { e in
+            e.tier = .earned; e.contestedNow = true; e.flags = [LifecycleFlag(verdict: .wrong, session: "a", day: "2026-11-01", reason: "")]
+        }
+        await s.userKept(id, now: t0 + day)
+        let e = await s.entry(id)
+        #expect(e?.tier == .earned && e?.flags.isEmpty == true && e?.contestedNow == false)
+        #expect(e?.tierSince == t0 + day && e?.recheckedAt == t0 + day)
+    }
 }

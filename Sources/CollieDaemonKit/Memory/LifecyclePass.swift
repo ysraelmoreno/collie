@@ -17,17 +17,23 @@ extension CommandRouter {
         // (2) provisional → earned stored; a contested longTerm is never demoted on disk (`tier(for:)` reads it as earned
         // until a valid re-check clears the contest)
         let fresh = Set(records.map(\.id)).subtracting(await lc.all().keys)   // entries born now: no claim check this pass
-        await lc.update(records.filter(LifecycleRules.eligible).map(\.id), now: now) { e in
+        // (2b) a tier earned in another store or for another text starts over here (`LifecycleRules.effective`)
+        let byId = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        await lc.update(records.filter(LifecycleRules.eligible).map(\.id), now: now) { id, e in
+            guard let r = byId[id] else { return }
+            let eff = LifecycleRules.effective(e, r, store: store.key)
+            if eff != e { e = eff; e.tierSince = now }
             e.store = store.key
             let t = LifecycleRules.tier(for: e, now: now)
             if e.tier != .longTerm, t != e.tier { e.tier = t; e.tierSince = now }
+            if e.tier != .provisional, e.textHash == nil { e.textHash = LifecycleRules.textHash(r) }   // earned now (or an older entry)
         }
         var entries = await lc.all()
 
-        // (3) promotion gates (≤ 3 a day, in `enqueuePromotion`); a recent re-check waits out its cooldown
+        // (3) promotion gates (≤ 3 a day, in `enqueuePromotion`); a recent gate waits out its cooldown, an undone promotion never comes back
         for r in eligible {
-            guard let e = entries[r.id], LifecycleRules.promotionCandidate(e, now: now),
-                  e.recheckedAt.map({ now.timeIntervalSince($0) >= LifecycleRules.verifyCooldown }) ?? true else { continue }
+            guard let e = entries[r.id], e.promotionUndone != true, LifecycleRules.promotionCandidate(e, now: now),
+                  e.gatedAt.map({ now.timeIntervalSince($0) >= LifecycleRules.verifyCooldown }) ?? true else { continue }
             _ = await memory.enqueuePromotion(r.id, now: now)
         }
 
@@ -40,7 +46,7 @@ extension CommandRouter {
             guard let e = entries[r.id], !e.contestedNow else { continue }
             // a re-check judged this very text: never contested again for it (nor inside the cooldown)
             if let at = e.recheckedAt, r.updatedAt <= at || now.timeIntervalSince(at) < LifecycleRules.verifyCooldown { continue }
-            let failures = await ClaimChecks.check(r, facts: facts)
+            let failures = await ClaimChecks.check(r, facts: facts, knownIds: byId.keys)
             guard !failures.isEmpty else { continue }
             let reason = failures.map { "\($0.kind.rawValue) \($0.detail)" }.joined(separator: ", ")
             await lc.update(r.id, now: now) { e in
@@ -71,7 +77,7 @@ extension CommandRouter {
         let (keep, asked) = await proposalState()
         for r in records where r.scope == .project && r.status == .proposed && !r.reviewed && !MemoryLearning.usersKind(r.kind)
             && !keep.contains(r.id) && !asked.contains(r.id) && now.timeIntervalSince(r.createdAt) >= MemoryCleanup.proposalAge {
-            guard await ClaimChecks.check(r, facts: facts).isEmpty else { continue }
+            guard await ClaimChecks.check(r, facts: facts, knownIds: byId.keys).isEmpty else { continue }
             let job = CuratorJob(id: UUID(), kind: .verifyContested, store: store.key, payload: .null, dedupe: "", createdAt: now, attempts: 0)
             do {
                 let rows = try await applyOps([.activate(id: r.id, reason: "proposta de 14 dias com checagens ok")], job: job)

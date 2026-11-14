@@ -293,7 +293,8 @@ actor MemoryService {
     /// `source`: the SessionStart's (compact|resume are logged as `compact`, anything else as `start`).
     func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, limit: Int = 4096,
                  source: String? = nil) async -> String {
-        let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
+        let focus = await sessionFocus(cwd: cwd, paddock: paddock)
+        let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit, focus: focus)
         injected[terminal] = (lot, c.ids.merging(skills[terminal]?.ids ?? [:]) { a, _ in a })
         if let work { await scores.noteInjected(Set(c.ids.keys), work: work) }
         if let s = sessions[terminal], !c.ids.isEmpty { await lifecycle.noteInjected(session: s, ids: Array(c.ids.keys), now: Date()) }
@@ -325,7 +326,7 @@ actor MemoryService {
     private struct ContextParts { var text = "", ids: [UUID: String] = [:], recs: [MemoryRecord] = [], checklist: [UUID: String] = [:], checklistText = "" }
 
     /// `contextText`, with each injected id's store key: header, pinned, the pitfall checklist (≤ 1 200 B), the index.
-    private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int) async -> ContextParts {
+    private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int, focus: String = "") async -> ContextParts {
         var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = [], owner: [UUID: String] = [:]
         let (keep, asked) = await proposalState?() ?? ([], [])
         for s in await readable(cwd, lot: lot) {
@@ -343,7 +344,7 @@ actor MemoryService {
         var owned = owner.filter { ids.contains($0.key) }
         guard !text.isEmpty else { return ContextParts() }
         let room = Swift.min(Self.checklistMax, limit - text.utf8.count - 2)
-        let cl = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: Set(pinned.map(\.id))) : (text: "", ids: [:], recs: [])
+        let cl = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: Set(pinned.map(\.id)), focus: focus) : (text: "", ids: [:], recs: [])
         if !cl.text.isEmpty { text += "\n\n" + cl.text; owned.merge(cl.ids) { a, _ in a } }
         Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil }, limit: limit)
         return ContextParts(text: text, ids: owned, recs: pinned.filter { ids.contains($0.id) } + cl.recs, checklist: cl.ids,
@@ -364,10 +365,34 @@ actor MemoryService {
         return (c.text, Set(c.ids.keys))
     }
 
-    private func checklistParts(cwd: String, lot: UUID?, limit: Int, max: Int = 7, exclude: Set<UUID> = []) async -> (text: String, ids: [UUID: String], recs: [MemoryRecord]) {
+    /// What this session is about, from the repo's own state (branch, last commits, changed paths) and the cercado: the
+    /// query that orders the start-of-session checklist (`ChecklistRanking`). "" when there is no repo or git fails or is
+    /// slow (the hook has 5 s: it fails open to the old order).
+    func sessionFocus(cwd: String, paddock: String?) async -> String {
+        guard let root = await repo(for: cwd).root else { return "" }
+        func git(_ args: [String]) async -> String? {
+            guard let r = try? await GitRunner.run(args, in: root, timeout: .seconds(1)), r.status == 0 else { return nil }
+            return r.stdout
+        }
+        async let branch = git(["rev-parse", "--abbrev-ref", "HEAD"])
+        async let log = git(["log", "-5", "--format=%s"])
+        async let status = git(["status", "--short", "-uno"])
+        let b = await branch?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subjects = (await log ?? "").split(separator: "\n").map(String.init)
+        let paths = (await status ?? "").split(separator: "\n").map { line -> String in
+            let p = String(line.dropFirst(3))
+            return p.components(separatedBy: " -> ").last ?? p   // a rename: the new name
+        }
+        return ChecklistFocus.build(branch: b == "HEAD" ? nil : b, workTitle: nil, commitSubjects: subjects, paths: paths, paddock: paddock)
+    }
+
+    /// `focus`: `sessionFocus` ("" = no signal: ranked by hits only, as `memory.checklist` always is).
+    private func checklistParts(cwd: String, lot: UUID?, limit: Int, max: Int = 7, exclude: Set<UUID> = [], focus: String = "") async -> (text: String, ids: [UUID: String], recs: [MemoryRecord]) {
         var sections = [(Self.checklistHeader, await repo(for: cwd))]
         if let lot { sections.append((Self.lotChecklistHeader, lotStore(lot))) }
         let factors = await scores.all(), now = Date()
+        let focusTerms = Self.significantTerms(focus).joined(separator: " ")
+        let focusVector = focusTerms.isEmpty ? nil : await embed(focus, wait: Self.promptEmbedWait)
         func rank(_ r: MemoryRecord) -> Double {
             Double(r.hits ?? 0) * pow(0.5, Swift.max(0, now.timeIntervalSince(r.updatedAt)) / MemoryIndex.halfLife) * (factors[r.id] ?? 1)
         }
@@ -377,8 +402,14 @@ actor MemoryService {
                 m.store.all().records.filter { $0.status == .active && $0.kind == .pitfall && $0.hits != nil && !exclude.contains($0.id)
                     && Self.visible($0, paddock: nil, lot: m.lotId) }
             }) ?? []
+            var relevance: [UUID: Double] = [:]
+            if !focusTerms.isEmpty {
+                let recIds = Set(recs.map(\.id))
+                let found = (try? await s.run { m in (m.index()?.candidates(focusTerms, vector: focusVector, limit: 50, kinds: [.pitfall]) ?? []).filter { m.present($0.record) } }) ?? []
+                for h in MemoryIndex.rank(found, lang: focusVector?.lang) where recIds.contains(h.record.id) { relevance[h.record.id] = h.score }
+            }
             var started = false
-            for r in recs.sorted(by: { (rank($0), $0.updatedAt) > (rank($1), $1.updatedAt) }) where ids.count < max {
+            for r in ChecklistRanking.pick(recs, relevance: relevance, focus: focus, max: recs.count, hitRank: rank) where ids.count < max {
                 let ex = PitfallClasses.examples(r.body).first.map { ": " + Self.oneLine($0, max: 120) } ?? ""
                 var line = "- [\(Self.shortId(r.id))] \(Self.oneLine(r.title, max: 200)) (\(r.hits ?? 0)×)\(ex)"
                 if line.count > Self.checklistLineMax { line = String(line.prefix(Self.checklistLineMax - 1)) + "…" }

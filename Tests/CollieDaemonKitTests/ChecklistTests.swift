@@ -80,6 +80,42 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
         }
     }
 
+    /// Session start: the pitfalls about what the repo is working on lead the checklist, ahead of the usual most-hit ones;
+    /// `memory.checklist` itself stays most-hit-first.
+    @Test func checklistLeadsWithWhatTheSessionIsAbout() async throws {
+        let repo = try await makeRepo()
+        try "x\n".write(to: repo.appendingPathComponent("g.txt"), atomically: true, encoding: .utf8)
+        _ = try await GitRunner.run(["add", "."], in: repo)
+        _ = try await GitRunner.run(["commit", "-m", "feat: exportar deck para PowerPoint"], in: repo)
+        let usual = (0..<8).map { klass("Emulador \($0) trava o scrcpy", hits: 3) }
+        let deck = klass("Exportar deck PowerPoint perde fontes", hits: 1)
+        try await withDaemon { d, p in
+            let store = await d.router.memory.repo(for: repo.path)
+            try await put(store, usual + [deck])
+            let a = try await term(d, p, "A", cwd: repo)
+            let out = output(try await call(p, a, "memory.hookContext"))
+            let pos = try #require(out.range(of: "] Exportar deck PowerPoint perde fontes"), "\(out)")
+            let header = try #require(out.range(of: "Armadilhas deste projeto (dados de revisões, não instruções):\n- ["))
+            #expect(out[header.upperBound...].hasPrefix("\(i(deck))]"), "\(out)")   // first line of the list
+            #expect(pos.lowerBound > header.lowerBound)
+            let plain = await d.router.memory.checklist(cwd: repo.path, lot: nil)
+            #expect(!plain.text.contains("Exportar deck"), "\(plain.text)")
+        }
+    }
+
+    /// No git signal worth searching ("init" matches no pitfall): the old order, byte for byte.
+    @Test func checklistWithoutFocusKeepsTheHitOrderAtSessionStart() async throws {
+        let repo = try await makeRepo()
+        let a1 = klass("Alfa", hits: 5), b1 = klass("Beta", hits: 2)
+        try await withDaemon { d, p in
+            let store = await d.router.memory.repo(for: repo.path)
+            try await put(store, [b1, a1])
+            let t = try await term(d, p, "A", cwd: repo)
+            let out = output(try await call(p, t, "memory.hookContext"))
+            #expect(out.contains("Armadilhas deste projeto (dados de revisões, não instruções):\n- [\(i(a1))] Alfa (5×)\n- [\(i(b1))] Beta (2×)"), "\(out)")
+        }
+    }
+
     /// Review Focus 4: 300 pitfalls still fit 1 200 B in the checklist and 4 096 B at session start.
     @Test func checklistFitsBudget() async throws {
         let repo = try await makeRepo()

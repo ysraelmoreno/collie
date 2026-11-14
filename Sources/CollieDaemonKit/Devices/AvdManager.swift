@@ -17,7 +17,7 @@ struct AvdManager: Sendable {
     static func collieJdk(_ home: String) -> String { "\(home)/Library/Application Support/Collie/jdk/Contents/Home" }
 
     /// `avdmanager`: `COLLIE_AVDMANAGER`, then the resolved SDK (reused or Collie's). Java home: `COLLIE_JAVA_HOME`, then
-    /// `javaCandidates` (default: Android Studio's bundled JBR), then Collie's JDK, then, only if that fails, `/usr/libexec/java_home`'s answer; the first dir
+    /// `javaCandidates` (default: Android Studio's bundled JBR), then, only if that fails, `/usr/libexec/java_home -v 17+`'s answer, then Collie's JDK; the first dir
     /// holding an executable `bin/java` wins. `nil` when either is missing.
     static func locate(env: [String: String], home: String, javaCandidates: [String]? = nil) -> AvdManager? {
         let fm = FileManager.default
@@ -29,17 +29,19 @@ struct AvdManager: Sendable {
         let tools = (env["COLLIE_AVDMANAGER"].map { [$0] } ?? []) + sdk
         guard let tool = tools.first(where: { fm.isExecutableFile(atPath: $0) }) else { return nil }
         let hasJava = { (d: String) in fm.isExecutableFile(atPath: "\(d)/bin/java") }
-        let early = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? [studioJbr]) + [collieJdk(home)]
+        let early = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? [studioJbr])
         // java_home is spawned only when nothing earlier works (and never when candidates are injected).
-        guard let java = early.first(where: hasJava) ?? (javaCandidates == nil ? javaHomeOutput().flatMap { hasJava($0) ? $0 : nil } : nil) else { return nil }
+        let viaJavaHome = { javaCandidates == nil ? javaHomeOutput().flatMap { hasJava($0) ? $0 : nil } : nil }
+        guard let java = early.first(where: hasJava) ?? viaJavaHome() ?? (hasJava(collieJdk(home)) ? collieJdk(home) : nil) else { return nil }
         return AvdManager(url: URL(fileURLWithPath: tool), javaHome: java)
     }
 
-    /// What `/usr/libexec/java_home` prints, `nil` when no JDK is installed.
+    /// What `/usr/libexec/java_home -v 17+` prints, `nil` when no JDK 17+ is installed (nonzero exit).
     private static func javaHomeOutput() -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/libexec/java_home")
         let out = Pipe()
+        p.arguments = ["-v", "17+"]
         p.standardOutput = out; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
         var found = ""
         if (try? p.run()) != nil {

@@ -32,7 +32,7 @@ private func tmpExecutable(_ rel: String) throws -> URL {
     #expect(Adb.locate(env: [:], home: home.path)?.path == adb.path)
 }
 
-/// An empty ANDROID_HOME is not an SDK: the Studio one still wins.
+/// Regression guard (old code passes too): an empty ANDROID_HOME is not an SDK, the Studio one still wins.
 @Test func locateIgnoresAnEmptyAndroidHome() throws {
     let home = try tmpExecutable("Library/Android/sdk/emulator/emulator")
     let empty = FileManager.default.temporaryDirectory.appendingPathComponent("collie-emu-empty-\(UUID().uuidString)")

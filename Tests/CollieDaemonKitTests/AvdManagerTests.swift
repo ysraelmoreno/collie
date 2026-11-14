@@ -54,6 +54,7 @@ private func tmpScript(_ rel: String, _ body: String = "") throws -> URL {
                 == sdk.appendingPathComponent("cmdline-tools/latest/bin/avdmanager").path)
     }
 
+    /// Regression guard (old code passes too): an empty ANDROID_HOME is not an SDK.
     @Test func locateIgnoresAnEmptyAndroidHome() throws {
         let home = try tmpScript("Library/Android/sdk/cmdline-tools/latest/bin/avdmanager")
         let java = try tmpScript("bin/java")

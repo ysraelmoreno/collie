@@ -7,6 +7,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
     enum Kind: String, Codable, Sendable {
         case injected, searched, noHit, created, merged, superseded, retracted, archived, undone, asked, curatorRun, correction
         case sessionUsage, workClosed
+        /// Lifecycle: a flag, a promotion to longTerm, a longTerm contested, a verify result, a provisional archived for no use.
+        case flagged, promoted, demoted, verified, archivedUnused
     }
     var at = Date.distantPast   // stamped by the log
     var type: Kind
@@ -26,6 +28,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
     var model: String? = nil, messages: Int? = nil
     /// `correction`: active|proposed and the subject key repeats are matched on. `workClosed`: merged.
     var mode: String? = nil, subject: String? = nil, merged: Bool? = nil
+    /// `flagged`: useful|wrong|outdated. `verified`: valid|invalid|deferred (a job that can't run now: no model and no failed claim check).
+    var verdict: String? = nil
 
     static func estimate(bytes: Int) -> Int { (bytes + 3) / 4 }
 

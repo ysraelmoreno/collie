@@ -6,7 +6,7 @@ import CollieProtocol
 struct DigestEntry: Codable, Sendable, Identifiable, Equatable {
     var id: UUID
     var at: Date
-    var action: String   // aprendido|aposentado|mesclado|ativado|descartado|ask|confirmar
+    var action: String   // aprendido|aposentado|mesclado|ativado|descartado|promovida|ask|confirmar
     var title: String
     var reason: String
     var store: String    // RepoMemory.key
@@ -48,6 +48,7 @@ struct MemoryDigest {
         case "mesclado": .merged
         case "aposentado": e.by != nil ? .superseded : .archived
         case "descartado": .retracted
+        case "promovida": .promoted
         case "ask", "confirmar": .asked
         default: nil
         }
@@ -55,7 +56,10 @@ struct MemoryDigest {
 
     private func emit(_ e: DigestEntry, as kind: MemoryEvent.Kind? = nil) {
         guard let events, let k = kind ?? Self.eventKind(e) else { return }
-        var ev = MemoryEvent(type: k, ids: e.created.isEmpty ? e.before.map(\.id) : e.created, source: MemoryEventLog.source ?? "user")
+        let src = MemoryEventLog.source ?? "user"
+        // a provisional memory archived for no use (the lifecycle pass) is its own event, not a low-score consolidation
+        var ev = MemoryEvent(type: k == .archived && src == "lifecycle" ? .archivedUnused : k,
+                             ids: e.created.isEmpty ? e.before.map(\.id) : e.created, source: src)
         ev.place(store: e.store)
         events.emit(ev)
     }
@@ -122,6 +126,13 @@ extension CommandRouter {
             throw ProtocolError(code: .notFound, message: "entrada \(id.uuidString.lowercased()) não encontrada")
         }
         if e.undone { return e }
+        if e.action == "promovida" {   // no record file changed: only the tier goes back (re-judged no sooner than the cooldown)
+            let now = Date()
+            for b in e.before { await memory.lifecycle.update(b.id, now: now) { $0.tier = .earned; $0.tierSince = now; $0.recheckedAt = now } }
+            try digest.mark([e.id], undone: true, resolved: nil)
+            e.undone = true
+            return e
+        }
         guard e.action != "ask" else { throw ProtocolError(code: .invalidArgs, message: "uma pergunta se resolve (memory.resolve), não se desfaz") }
         guard e.action != "confirmar" else { throw ProtocolError(code: .invalidArgs, message: "uma confirmação se responde (memory.confirm), não se desfaz") }
         let group = e.job.map { j in es.filter { $0.job == j && !$0.undone && $0.action != "ask" } } ?? [e]

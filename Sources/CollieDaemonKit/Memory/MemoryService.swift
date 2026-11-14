@@ -663,17 +663,21 @@ actor MemoryService {
         let day = Self.dayFormatter.string(from: now)
         if verdict == .useful {
             if live { await lifecycle.addUse([id], key: UseKey(day: day, session: session), now: now) }
+            noteLifecycle(.flagged, id, store: await lifecycle.entry(id)?.store, verdict: verdict.rawValue)
             return (false, false)
         }
         // 14 days after a re-check a flag on it changes nothing (stored, it would block earning again)
         if live, let at = await lifecycle.entry(id)?.recheckedAt, now.timeIntervalSince(at) < LifecycleRules.verifyCooldown { return (false, false) }
         let contest = live || sticky
+        let was = await lifecycle.entry(id)
         let flag = LifecycleFlag(verdict: verdict, session: session, day: day, reason: reason)
         switch await lifecycle.addFlag(id, flag, limit: LifecycleRules.maxFlagsPerSession, contest: contest, now: now) {
         case .duplicate: return (await lifecycle.entry(id)?.contestedNow ?? false, false)   // idempotent: one session, one say per memory
         case .limit: throw ProtocolError(code: .invalidArgs, message: "limite de \(LifecycleRules.maxFlagsPerSession) marcações por sessão")
         case .added: break
         }
+        noteLifecycle(.flagged, id, store: was?.store, verdict: verdict.rawValue)
+        if live, was?.tier == .longTerm, was?.contestedNow != true { noteLifecycle(.demoted, id, store: was?.store) }
         guard live else { return (contest, false) }
         await scores.penalize(id, LifecycleRules.flagPenalty, reason: "flagged \(verdict.rawValue)")
         return (true, await enqueueVerify(id))
@@ -698,13 +702,19 @@ actor MemoryService {
     /// A verify job's verdict: a `retire` of `id` is `invalid` (the router archived it, reversibly), anything else `valid`.
     /// Contested valid: flags cleared, uncontested, 14-day cooldown. Promotion valid: longTerm if still a candidate and its
     /// project holds < 12; otherwise (or invalid) it stays earned and is not gated again for 14 days.
-    func applyVerdict(_ id: UUID, kind: CuratorJobKind, ops: [CuratorOp], now: Date = Date()) async {
+    /// Returns true when `id` was promoted to longTerm (the router writes its "promovida" digest row).
+    @discardableResult
+    func applyVerdict(_ id: UUID, kind: CuratorJobKind, ops: [CuratorOp], now: Date = Date()) async -> Bool {
         let invalid = ops.contains { if case .retire(let r, _) = $0 { r == id } else { false } }
+        let store = await lifecycle.entry(id)?.store
         switch kind {
         case .verifyContested:
-            guard !invalid else { return }
+            noteLifecycle(.verified, id, store: store, verdict: invalid ? "invalid" : "valid")
+            guard !invalid else { return false }
             await lifecycle.update(id, now: now) { $0.flags.removeAll(); $0.contestedNow = false; $0.recheckedAt = now }
+            return false
         case .verifyPromotion:
+            noteLifecycle(.verified, id, store: store, verdict: invalid ? "invalid" : "valid")
             var promote = false
             if !invalid, let e = await lifecycle.entry(id), LifecycleRules.promotionCandidate(e, now: now),
                let (rec, longTerm) = await longTermCount(near: id), LifecycleRules.eligible(rec) {   // pinned/reviewed meanwhile: never
@@ -714,8 +724,16 @@ actor MemoryService {
                 e.recheckedAt = now
                 if promote { e.tier = .longTerm; e.tierSince = now }
             }
-        default: return
+            return promote
+        default: return false
         }
+    }
+
+    /// A lifecycle event (ids and a verdict word only), placed in the entry's store.
+    nonisolated func noteLifecycle(_ kind: MemoryEvent.Kind, _ id: UUID, store: String?, verdict: String? = nil) {
+        var e = MemoryEvent(type: kind, ids: [id], verdict: verdict)
+        if let store { e.place(store: store) }
+        events.emit(e)
     }
 
     /// `id`'s record and the active longTerm memories of the repo store holding it (nil: not found, no promotion).

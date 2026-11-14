@@ -74,12 +74,17 @@ extension CommandRouter {
         guard let (s, r) = found, let root = s.root, LifecycleRules.eligible(r), !MemoryLearning.usersKind(r.kind) else { return false }
         let failures = await ClaimChecks.check(r, facts: config.gitFacts(root))
         // spec "Re-check (C)": with no model or the cap reached, a failed deterministic claim check alone archives
-        if kind == .verifyContested, !failures.isEmpty, await !curator.status().available {
+        let noModel = await !curator.status().available
+        if kind == .verifyContested, noModel, failures.isEmpty {   // nothing can judge it now: it waits queued (or is dropped), flagged "deferred"
+            memory.noteLifecycle(.verified, id, store: s.key, verdict: "deferred")
+        }
+        if kind == .verifyContested, !failures.isEmpty, noModel {
             let why = "checagem falhou: " + failures.map { "\($0.kind.rawValue) \($0.detail)" }.joined(separator: ", ")
             let job = CuratorJob(id: UUID(), kind: kind, store: s.key, payload: .null, dedupe: "", createdAt: Date(), attempts: 0)
             do {
                 let entries = try await applyOps([.retire(id: id, reason: String(why.prefix(CuratorOps.lineMax)))], job: job)
                 try MemoryEventLog.$source.withValue("verify") { try digest.append(entries) }
+                if !entries.isEmpty { memory.noteLifecycle(.verified, id, store: s.key, verdict: "invalid") }
             } catch { memoryLog("verify fallback: \(error)") }
             return false
         }
@@ -97,11 +102,17 @@ extension CommandRouter {
         let out = try await call(CuratorCall(instructions: MemoryVerify.instructions, input: MemoryVerify.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
         let ops = CuratorOps.validate(out.json, scope: CuratorScope(ids: [p.id], scopes: [], kinds: [], maxOps: 4)).ops
-        _ = await memory.store(key: j.store)   // opened after a restart: applyVerdict counts its longTerm
+        let home = await memory.store(key: j.store)   // opened after a restart: applyVerdict counts its longTerm
         if j.kind == .verifyContested, let retire = ops.first(where: { if case .retire = $0 { true } else { false } }) {
             let entries = try await applyOps([retire], job: j)
             do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
         }
-        await memory.applyVerdict(p.id, kind: j.kind, ops: ops)
+        let promoted = await memory.applyVerdict(p.id, kind: j.kind, ops: ops)
+        if promoted, let rec = (try? await home?.run { $0.store.all().records.first { $0.id == p.id } }) ?? nil {
+            let row = DigestEntry(id: UUID(), at: Date(), action: "promovida", title: rec.title,
+                                  reason: "usada e confirmada pelo curador: vale a longo prazo", store: j.store,
+                                  created: [], before: [rec], undone: false, resolved: false)
+            do { try MemoryEventLog.$source.withValue("verify") { try digest.append([row]) } } catch { memoryLog("digest: \(error)") }
+        }
     }
 }

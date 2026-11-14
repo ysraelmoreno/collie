@@ -160,4 +160,44 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
             #expect(try await titles([:]) == ["de A", "de B", "de um lote", "global"])   // no store named: everything (the daily notification)
         }
     }
+
+    @Test func digestListsPromotionAndUndoRestoresIt() async throws {
+        var x = MemoryRecord(kind: .decision, subject: "db", title: "Use Postgres")
+        x.createdAt = Date().addingTimeInterval(-40 * 86_400)
+        try await withRepo([x]) { d, p, store, _ in
+            let lc = d.router.memory.lifecycle, onDisk = try await all(store)
+            var uses: Set<UseKey> = []
+            let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]
+            for i in 0..<8 { uses.insert(UseKey(day: f.string(from: Date().addingTimeInterval(-[20.0, 14, 7, 1][i % 4] * 86_400)), session: "u\(i)")) }
+            await lc.update(x.id, now: Date().addingTimeInterval(-30 * 86_400)) { $0.tier = .earned; $0.usefulUses = uses; $0.store = store.key }
+            let job = CuratorJob(id: UUID(), kind: .verifyPromotion, store: store.key,
+                                 payload: MemoryVerify.payload(memory: x, flags: [], facts: []), dedupe: "", createdAt: Date(), attempts: 0)
+            try await d.router.runVerifyJob(job) { _ in CuratorOutput(json: .object(["ops": .array([])]), inputTokens: 1, outputTokens: 1, costUSD: 0) }
+            #expect(await lc.entry(x.id)?.tier == .longTerm)
+            let row = try #require(await d.router.digest.since(.distantPast).first { $0.action == "promovida" })
+            #expect(row.before.map(\.id) == [x.id] && row.title == "Use Postgres")
+            d.router.memory.events.flush()
+            #expect(d.router.memory.events.read(since: Date().addingTimeInterval(-60)).contains { $0.type == .promoted && $0.ids == [x.id] })
+            #expect(try await admin(d, p, "memory.undo", ["entry": row.id.uuidString]).ok)
+            let e = try #require(await lc.entry(x.id))
+            #expect(e.tier == .earned && e.recheckedAt != nil)
+            #expect(await d.router.digest.since(.distantPast).first { $0.id == row.id }?.undone == true)
+            #expect(try await all(store) == onDisk)   // the record file is untouched
+        }
+    }
+
+    @Test func undoRestoresUnusedArchive() async throws {
+        let x = MemoryRecord(kind: .decision, subject: "db", title: "Sem uso")
+        try await withRepo([x]) { d, p, store, _ in
+            let now = Date()
+            await d.router.lifecyclePass(store, now: now)
+            await d.router.lifecyclePass(store, now: now.addingTimeInterval(22 * 86_400))
+            #expect(try await all(store).first { $0.id == x.id }?.status == .archived)
+            let row = try #require(await d.router.digest.since(.distantPast).first { $0.before.first?.id == x.id })
+            d.router.memory.events.flush()
+            #expect(d.router.memory.events.read(since: Date().addingTimeInterval(-60)).contains { $0.type == .archivedUnused && $0.ids == [x.id] })
+            #expect(try await admin(d, p, "memory.undo", ["entry": row.id.uuidString]).ok)
+            #expect(try await all(store).first { $0.id == x.id }?.status == .active)
+        }
+    }
 }

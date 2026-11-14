@@ -55,13 +55,22 @@ enum MemoryObservability {
         var tokensPerTask: Double?, searchesPerTask: Double?, coverage: Double?
         var repeatCorrections = 0, completedTasks = 0
     }
+    struct Lifecycle: Codable, Sendable, Equatable {
+        /// Effective tiers of the eligible active project records, and how many of them are contested now.
+        var provisional = 0, earned = 0, longTerm = 0, contestedOpen = 0
+        /// Counted from the period's events.
+        var promotions = 0, demotions = 0, provisionalArchived = 0
+        var flags = Flags(), verify = Verify()
+        struct Flags: Codable, Sendable, Equatable { var useful = 0, wrong = 0, outdated = 0 }
+        struct Verify: Codable, Sendable, Equatable { var valid = 0, invalid = 0, deferred = 0 }
+    }
     struct Trends: Codable, Sendable, Equatable { var current: Week; var previous: Week }
     struct Report: Codable, Sendable, Equatable {
         var since: Date, until: Date
         /// The oldest event read (the log may be younger than the period: dead memories need 30 days of it).
         var logSince: Date?
         var caveat = MemoryObservability.caveat
-        var usage = Usage(), maintenance = Maintenance(), learning = Learning(), cost = Cost()
+        var usage = Usage(), maintenance = Maintenance(), learning = Learning(), cost = Cost(), lifecycle = Lifecycle()
         var trends: Trends
     }
 
@@ -76,7 +85,8 @@ enum MemoryObservability {
     /// Events from at least 30 days before `now` (dead memories, repeats and the previous week look back further than the
     /// period); `records`: the active memories in scope; `openDigest`: the digest's open asks/confirmations.
     static func compute(events: [MemoryEvent], since: Date, now: Date, records: [MemoryRecord], scores: [UUID: Double],
-                        openDigest: [DigestEntry], curator: CuratorStatus?, calendar: Calendar = .current) -> Report {
+                        openDigest: [DigestEntry], curator: CuratorStatus?, lifecycle: [UUID: LifecycleEntry] = [:],
+                        calendar: Calendar = .current) -> Report {
         let inPeriod = events.filter { $0.at >= since && $0.at <= now }
         let titles = Dictionary(records.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a })
         var r = Report(since: since, until: now, logSince: events.map(\.at).min(),
@@ -126,6 +136,27 @@ enum MemoryObservability {
         m.curatorRuns = runs.count; m.curatorRunFailures = runs.filter { $0.ok != true }.count
         m.lastCuratorRun = events.filter { $0.type == .curatorRun }.map(\.at).max()
         r.maintenance = m
+
+        // lifecycle
+        var lc = Lifecycle()
+        for r in records where LifecycleRules.eligible(r) {
+            guard let e = lifecycle[r.id] else { continue }
+            switch LifecycleRules.tier(for: e, now: now) { case .provisional: lc.provisional += 1; case .earned: lc.earned += 1; case .longTerm: lc.longTerm += 1 }
+            if e.contestedNow { lc.contestedOpen += 1 }
+        }
+        for e in inPeriod {
+            switch e.type {
+            case .promoted: lc.promotions += 1
+            case .demoted: lc.demotions += 1
+            case .archivedUnused: lc.provisionalArchived += 1
+            case .flagged:
+                switch e.verdict { case "useful": lc.flags.useful += 1; case "wrong": lc.flags.wrong += 1; case "outdated": lc.flags.outdated += 1; default: break }
+            case .verified:
+                switch e.verdict { case "valid": lc.verify.valid += 1; case "invalid": lc.verify.invalid += 1; case "deferred": lc.verify.deferred += 1; default: break }
+            default: break
+            }
+        }
+        r.lifecycle = lc
 
         // learning
         let fix = repeats(events, from: since, to: now)

@@ -48,6 +48,7 @@ extension CommandRouter {
                 e.contestedNow = true; e.lastContestedAt = now
             }
             contests += 1
+            if e.tier == .longTerm { memory.noteLifecycle(.demoted, r.id, store: store.key) }
             _ = await enqueueVerify(r.id, kind: .verifyContested)   // no curator: the failed check archives it now
         }
         entries = await lc.all()
@@ -59,10 +60,10 @@ extension CommandRouter {
                 let changed = try await store.run { try MemoryCleanup.apply(items, store: $0.store) }
                 let rows = changed.compactMap { c -> DigestEntry? in
                     guard let item = items.first(where: { $0.id == c.id }), let b = records.first(where: { $0.id == c.id }) else { return nil }
-                    return DigestEntry(id: UUID(), at: now, action: "aposentado", title: b.title, reason: item.reason, store: store.key,
+                    return DigestEntry(id: UUID(), at: max(now, Date()), action: "aposentado", title: b.title, reason: item.reason, store: store.key,
                                        created: [], before: [b], undone: false, resolved: false)
                 }
-                try MemoryEventLog.$source.withValue("consolidation") { try digest.append(rows) }
+                try MemoryEventLog.$source.withValue("lifecycle") { try digest.append(rows) }
             } catch { memoryLog("lifecycle unused \(store.path): \(error)") }
         }
 

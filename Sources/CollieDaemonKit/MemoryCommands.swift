@@ -564,7 +564,7 @@ extension CommandRouter {
             return placed(lot: e.lot, project: e.project)
         }
         let report = MemoryObservability.compute(events: events, since: since, now: now, records: records, scores: await memory.scores.all(),
-                                         openDigest: open, curator: await curator.status())
+                                         openDigest: open, curator: await curator.status(), lifecycle: await memory.lifecycle.all())
         return try isoJSON(report)
     }
 }

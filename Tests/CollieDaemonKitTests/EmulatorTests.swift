@@ -79,11 +79,11 @@ extension DeviceCommandTests { @Suite struct EmulatorTests {
     /// A daemon with the fakes (`emulatorBoot` 5 s; the fake emulator boots as emulator-5556 after 1 s). `running`/`names`
     /// as in `deviceList`; `env`: extra fake knobs, unset afterwards. Kills every fake emulator it launched, even on failure.
     private func withBoot(running: [String] = [], names: [String] = [], env: [String: String] = [:], emulator: String? = nil,
-                          _ body: (Daemon, Paths) async throws -> Void) async throws {
+                          avds: [String] = ["Pixel_7_API_34", "Tablet_API_33"], _ body: (Daemon, Paths) async throws -> Void) async throws {
         let dir = URL(fileURLWithPath: "/tmp/collie-emu-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         func put(_ n: String, _ lines: [String]) throws { try (lines.joined(separator: "\n") + "\n").write(to: dir.appendingPathComponent(n), atomically: true, encoding: .utf8) }
-        try put("devices", ["List of devices attached"] + running); try put("avds", ["Pixel_7_API_34", "Tablet_API_33"]); try put("names", names)
+        try put("devices", ["List of devices attached"] + running); try put("avds", avds); try put("names", names)
         let all = env.merging(["COLLIE_FAKE_ADB_DEVICES": dir.appendingPathComponent("devices").path,
                                "COLLIE_FAKE_ADB_AVDNAMES": dir.appendingPathComponent("names").path,
                                "COLLIE_FAKE_EMULATOR_AVDS": dir.appendingPathComponent("avds").path,
@@ -197,6 +197,37 @@ extension DeviceCommandTests { @Suite struct EmulatorTests {
         try await withBoot(emulator: "/nonexistent") { d, p in
             let r = try await admin(d, p, "panel.open", ["plugin": "device", "serial": "avd:Pixel_7_API_34"])
             #expect(r.error?.code == .unavailable)
+        }
+    }
+
+    // MARK: lean launch flags (Task 5)
+
+    /// `emulator` wrapper for the fake: logs `argv <args>` for `-avd`, then execs the fake (which logs `launch <name> <pid>`).
+    private func argvEmulator() throws -> (path: String, dir: URL) {
+        let dir = URL(fileURLWithPath: "/tmp/collie-emu-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let f = dir.appendingPathComponent("emulator")
+        let fake = fixtures.appendingPathComponent("fake-emulator.sh").path
+        try "#!/bin/sh\n[ \"$1\" = -avd ] && echo \"argv $*\" >> \"$COLLIE_FAKE_EMULATOR_LOG\"\nexec \"\(fake)\" \"$@\"\n"
+            .write(to: f, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f.path)
+        return (f.path, dir)
+    }
+
+    @Test func liteLaunchGetsExtraFlags() async throws {
+        let (emu, dir) = try argvEmulator(); defer { try? FileManager.default.removeItem(at: dir) }
+        try await withBoot(emulator: emu, avds: ["collie-lite"]) { d, p in
+            let r = try await admin(d, p, "panel.open", ["plugin": "device", "serial": "avd:collie-lite"])
+            #expect(r.ok, "\(r)")
+            #expect(emulatorLog().contains("argv -avd collie-lite -no-audio -no-boot-anim -no-metrics"), "\(emulatorLog())")
+        }
+    }
+    @Test func otherAvdsLaunchUnchanged() async throws {
+        let (emu, dir) = try argvEmulator(); defer { try? FileManager.default.removeItem(at: dir) }
+        try await withBoot(emulator: emu) { d, p in
+            let r = try await admin(d, p, "panel.open", ["plugin": "device", "serial": "avd:Pixel_7_API_34"])
+            #expect(r.ok, "\(r)")
+            #expect(emulatorLog().contains("argv -avd Pixel_7_API_34"), "\(emulatorLog())")
         }
     }
 } }

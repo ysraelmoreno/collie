@@ -27,6 +27,11 @@ struct Emulator: Sendable {
         return AdbParsing.avds(r.stdout)
     }
 
+    /// Lean flags for the lightweight AVD (`LiteAvd`); none for the others.
+    static func extraArgs(for avd: String) -> [String] {
+        avd == LiteAvd.name ? LiteAvd.launchFlags : []
+    }
+
     /// `emulator -avd <avd>` in its own session (setsid), so no timeout, group kill, daemon stop or launchd ending the
     /// job takes it along; stdin `/dev/null`, stdout+stderr into `log` (truncated), cwd `/`, no other fd inherited.
     /// `env` plus `ANDROID_SDK_ROOT = sdkRoot`. Returns its pid; it is reaped when it exits, never stopped by us.
@@ -48,7 +53,7 @@ struct Emulator: Sendable {
                 posix_spawn_file_actions_addopen(&acts, 1, logPath, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0o600)
                 posix_spawn_file_actions_adddup2(&acts, 1, 2)
                 posix_spawn_file_actions_addchdir_np(&acts, "/")
-                let args: [String] = [path, "-avd", avd]
+                let args: [String] = [path, "-avd", avd] + Self.extraArgs(for: avd)
                 let argv = args.map { strdup($0) } + [nil]
                 let envp = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
                 defer { (argv + envp).forEach { free($0) } }

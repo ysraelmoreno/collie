@@ -662,14 +662,12 @@ actor MemoryService {
             if live { await lifecycle.addUse([id], key: UseKey(day: day, session: session), now: now) }
             return (false, false)
         }
-        let used = await lifecycle.all().values.reduce(0) { $0 + $1.flags.filter { $0.session == session }.count }
-        guard used < LifecycleRules.maxFlagsPerSession else {
-            throw ProtocolError(code: .invalidArgs, message: "limite de \(LifecycleRules.maxFlagsPerSession) marcações por sessão")
-        }
         let contest = live || sticky
-        await lifecycle.update(id, now: now) { e in
-            e.flags.append(LifecycleFlag(verdict: verdict, session: session, day: day, reason: reason))
-            if contest { e.contestedNow = true; e.lastContestedAt = now }
+        let flag = LifecycleFlag(verdict: verdict, session: session, day: day, reason: reason)
+        switch await lifecycle.addFlag(id, flag, limit: LifecycleRules.maxFlagsPerSession, contest: contest, now: now) {
+        case .duplicate: return (await lifecycle.entry(id)?.contestedNow ?? false, false)   // idempotent: one session, one say per memory
+        case .limit: throw ProtocolError(code: .invalidArgs, message: "limite de \(LifecycleRules.maxFlagsPerSession) marcações por sessão")
+        case .added: break
         }
         guard live else { return (contest, false) }
         await scores.penalize(id, LifecycleRules.flagPenalty, reason: "flagged \(verdict.rawValue)")

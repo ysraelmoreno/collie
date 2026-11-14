@@ -87,6 +87,28 @@ private struct Term { var id: String; var token: String; var uuid: UUID { UUID(u
         }
     }
 
+    @Test func sameSessionFlagTwiceIsIdempotent() async throws {
+        try await withDaemon { d, p in
+            let (t, ids, _) = try await setup(d, p)
+            let first = try await flag(p, t, ids[0].uuidString, "wrong")
+            let second = try await flag(p, t, ids[0].uuidString, "outdated")
+            #expect(first.ok && obj(first)["queued"] == .bool(true))
+            #expect(second.ok && obj(second)["contested"] == .bool(true) && obj(second)["queued"] == .bool(false), "\(second)")
+            #expect(await d.router.memory.lifecycle.entry(ids[0])?.flags.count == 1)
+            let factor = await d.router.memory.scores.factor(ids[0])
+            #expect(abs(factor - 0.7) < 0.001, "\(factor)")
+        }
+    }
+
+    @Test func idInjectedOnlyInAnotherSessionIsInvalidArgs() async throws {
+        try await withDaemon { d, p in
+            let (t, _, _) = try await setup(d, p)
+            let other = UUID()
+            await d.router.memory.lifecycle.noteInjected(session: "s2", ids: [other], now: Date())
+            #expect(try await flag(p, t, other.uuidString, "wrong").error?.code == .invalidArgs)
+        }
+    }
+
     @Test func flagStillAcceptedAfterDaemonRestart() async throws {
         try await withDaemon { d, p in
             let (t, ids, _) = try await setup(d, p)

@@ -56,6 +56,23 @@ actor LifecycleStore {
         }
     }
 
+    enum FlagOutcome: Sendable { case added, duplicate, limit }
+
+    /// Appends `flag` to `id` in one write unless this session already flagged `id` (wrong/outdated: `.duplicate`) or already holds
+    /// `limit` flags (`.limit`); count and append are one actor step, so concurrent flags can't overshoot.
+    func addFlag(_ id: UUID, _ flag: LifecycleFlag, limit: Int, contest: Bool, now: Date) -> FlagOutcome {
+        let s0 = load()
+        if s0.entries[id]?.flags.contains(where: { $0.session == flag.session && $0.verdict != .useful }) == true { return .duplicate }
+        guard s0.entries.values.reduce(0, { $0 + $1.flags.filter { $0.session == flag.session }.count }) < limit else { return .limit }
+        mutate { s in
+            var e = s.entries[id] ?? LifecycleEntry(tierSince: now)
+            e.flags.append(flag)
+            if contest { e.contestedNow = true; e.lastContestedAt = now }
+            s.entries[id] = e
+        }
+        return .added
+    }
+
     func noteInjected(session: String, ids: [UUID], now: Date) {
         mutate { s in
             s.injectedBySession[session, default: []].formUnion(ids)

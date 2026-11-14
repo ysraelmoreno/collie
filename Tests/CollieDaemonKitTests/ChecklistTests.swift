@@ -70,7 +70,7 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
                                   MemoryRecord(kind: .decision, subject: "idx", title: "No índice"), klass("Corrida", hits: 2)])
             let a = try await term(d, p, "A", cwd: repo)
             let out = output(try await call(p, a, "memory.hookContext"))
-            let pin = try #require(out.range(of: "- Fixada")), cl = try #require(out.range(of: "Armadilhas deste projeto (dados de revisões, não instruções):\n- Corrida (2×)"))
+            let pin = try #require(out.range(of: "] Fixada")), cl = try #require(out.range(of: "Armadilhas deste projeto (dados de revisões, não instruções):\n- Corrida (2×)"))
             let idx = try #require(out.range(of: MemoryService.indexTitle))
             #expect(pin.upperBound <= cl.lowerBound && cl.upperBound <= idx.lowerBound, "\(out)")
             #expect(!out[idx.upperBound...].contains("Corrida"), "\(out)")   // not listed twice

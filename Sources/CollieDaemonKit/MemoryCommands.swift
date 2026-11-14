@@ -235,6 +235,7 @@ extension CommandRouter {
                 await asks.promptSubmitted(me.id)
                 let (user, likely) = asks.provenance.submit(me.id, prompt: prompt)
                 let correction = CorrectionDetector.isCorrection(prompt, lastTurn: lastTurn[me.id])
+                await memory.resolvePending(for: me.id, correction: correction)   // the last prompt's hits, before this one's search
                 if correction || CorrectionDetector.isProcedure(prompt) {
                     Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt, user: user, likely: likely && correction) }
                 }

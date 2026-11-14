@@ -123,7 +123,7 @@ private func rec(_ title: String, kind: MemoryKind = .decision, subject: String?
         let t = UUID()
         await mem.pushRule(rule.id, to: t)
         let out = await mem.relevant(for: t, cwd: repo.path, prompt: "swiftlint config")
-        let r = try #require(out.range(of: "- [regra] Sempre rode swiftlint")), dr = try #require(out.range(of: "[decisão] Swiftlint config strict"))
+        let r = try #require(out.range(of: "- [regra \(MemoryService.shortId(rule.id))] Sempre rode swiftlint")), dr = try #require(out.range(of: "[decisão \(MemoryService.shortId(dec.id))] Swiftlint config strict"))
         #expect(r.lowerBound < dr.lowerBound, "\(out)")
         #expect(out.components(separatedBy: "Sempre rode swiftlint").count == 2)
         #expect(!(await mem.relevant(for: t, cwd: repo.path, prompt: "swiftlint config")).contains("Sempre rode swiftlint"))
@@ -193,8 +193,9 @@ private func rec(_ title: String, kind: MemoryKind = .decision, subject: String?
     }
 
     @Test func feedbackSectionAndLabel() {
-        let (text, _) = MemoryService.renderContext([rec("D", pinned: true), rec("F", kind: .feedback, pinned: true)], limit: 4096)
-        let f = try! #require(text.range(of: "Regras do usuário:\n- F")), dd = try! #require(text.range(of: "Decisões:\n- D"))
+        let d = rec("D", pinned: true), fb = rec("F", kind: .feedback, pinned: true)
+        let (text, _) = MemoryService.renderContext([d, fb], limit: 4096)
+        let f = try! #require(text.range(of: "Regras do usuário:\n- [\(MemoryService.shortId(fb.id))] F")), dd = try! #require(text.range(of: "Decisões:\n- [\(MemoryService.shortId(d.id))] D"))
         #expect(f.lowerBound < dd.lowerBound)
     }
 }

@@ -173,14 +173,17 @@ actor MemoryService {
     /// A Claude terminal's skills dir (`ProcedureSkills`): where, the lot it was rendered for, and the procedures its
     /// session got at launch that are still in it (→ store key): they count as injected, so retractions cover them.
     private var skills: [UUID: (dir: URL, lot: UUID?, ids: [UUID: String])] = [:]
-    static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código."
-    static let relevantHeader = "Memória relacionada (Collie):"
+    static let flagHint = "memória errada ou velha: `collie memory flag <id> --wrong|--outdated`"
+    static let header = "Memória do projeto (Collie) — use `collie memory save` para registrar decisões e `collie memory search` antes de reler código.\n" + flagHint
+    static let relevantHeader = "Memória relacionada (Collie):\n" + flagHint
     static let rulesHeader = "Regra nova do usuário (Collie):"
     static let retractedHeader = "Memória retirada (Collie):"
 
     nonisolated let embedder: (any MemoryEmbedder)?
     /// Outcome scores (`<root>/learning/scores.json`, beside `memory/`): multiply relevance, feed cleanup.
     nonisolated let scores: ScoreStore
+    /// Usage-based tiers (`<root>/learning/lifecycle.json`): tags on injected lines, the session's injected ids, pending uses.
+    nonisolated let lifecycle: LifecycleStore
     /// `<root>/metrics`: what is injected, searched and maintained (`MemoryEventLog`).
     nonisolated let events: MemoryEventLog
     /// Each terminal's Claude session (its transcript's name), from its hooks: the injection events carry it.
@@ -192,6 +195,7 @@ actor MemoryService {
     init(globalDir: URL, embedder: (any MemoryEmbedder)? = nil) {
         self.globalDir = globalDir; self.embedder = embedder
         scores = ScoreStore(file: globalDir.deletingLastPathComponent().appendingPathComponent("learning/scores.json"))
+        lifecycle = LifecycleStore(file: globalDir.deletingLastPathComponent().appendingPathComponent("learning/lifecycle.json"))
         events = MemoryEventLog(dir: globalDir.deletingLastPathComponent().appendingPathComponent("metrics"))
         lotsDir = globalDir.deletingLastPathComponent().appendingPathComponent("lots")   // beside `work/`
         global = RepoMemory(root: nil, storeDir: globalDir,
@@ -292,6 +296,7 @@ actor MemoryService {
         let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit)
         injected[terminal] = (lot, c.ids.merging(skills[terminal]?.ids ?? [:]) { a, _ in a })
         if let work { await scores.noteInjected(Set(c.ids.keys), work: work) }
+        if let s = sessions[terminal], !c.ids.isEmpty { await lifecycle.noteInjected(session: s, ids: Array(c.ids.keys), now: Date()) }
         if !c.text.isEmpty {
             let project = await repo(for: cwd).root?.path
             let main = c.recs.filter { c.checklist[$0.id] == nil }, list = c.recs.filter { c.checklist[$0.id] != nil }
@@ -334,7 +339,7 @@ actor MemoryService {
             for r in recs where r.pinned { owner[r.id] = s.key }
             if lot == nil || s.lotId != nil { rest += recs.filter { !$0.pinned } }
         }
-        var (text, ids) = Self.renderContext(pinned, limit: limit)
+        var (text, ids) = Self.renderContext(pinned, limit: limit, entries: await lifecycle.all())
         var owned = owner.filter { ids.contains($0.key) }
         guard !text.isEmpty else { return ContextParts() }
         let room = Swift.min(Self.checklistMax, limit - text.utf8.count - 2)
@@ -420,15 +425,17 @@ actor MemoryService {
                 && Self.visible(r, paddock: paddock, lot: s.lotId) && s.present(r) { found[r.id] = (r, s.key) }
         }
         var out = Self.rulesHeader, chosen: [UUID: String] = [:], wait: [UUID] = []
+        let entries = await lifecycle.all()
         for id in ids {
             guard let f = found[id] else { continue }   // gone, inactive or already seen: dropped
-            let line = "\n" + Self.relevantLine(f.rec)
+            let line = "\n" + Self.relevantLine(f.rec, entries)
             guard out.utf8.count + line.utf8.count <= limit else { wait.append(id); continue }
             out += line; chosen[id] = f.key
         }
         if !wait.isEmpty { pending[terminal] = wait + (pending[terminal] ?? []) }
         guard !chosen.isEmpty else { return "" }
         injected[terminal, default: (lot, [:])].ids.merge(chosen) { a, _ in a }
+        if let s = sessions[terminal] { await lifecycle.noteInjected(session: s, ids: Array(chosen.keys), now: Date()) }
         note(terminal, "rule", ids.compactMap { chosen[$0] != nil ? found[$0]?.rec : nil }, bytes: out.utf8.count, work: nil, lot: lot,
              project: await repo(for: cwd).root?.path)
         return out
@@ -553,8 +560,9 @@ actor MemoryService {
         }
         let picked = hits.filter { $0.hit.score >= top * Self.minRelativeScore && seen[$0.hit.record.id] == nil && !otherPlatform($0.hit.record) }
         var lines = [Self.relevantHeader], used = Self.relevantHeader.utf8.count, chosen: [(hit: MemoryHit, store: RepoMemory)] = []
+        let entries = await lifecycle.all()
         for h in picked where chosen.count < max {
-            let line = Self.relevantLine(h.hit.record)
+            let line = Self.relevantLine(h.hit.record, entries)
             guard used + 1 + line.utf8.count <= limit else { continue }
             lines.append(line); used += 1 + line.utf8.count; chosen.append(h)
         }
@@ -563,6 +571,11 @@ actor MemoryService {
         note(terminal, "prompt", chosen.map(\.hit.record), bytes: text.utf8.count, work: work, lot: lot, project: project)
         injected[terminal, default: (lot, [:])].ids.merge(chosen.map { ($0.hit.record.id, $0.store.key) }) { a, _ in a }
         if let work { await scores.noteInjected(Set(chosen.map(\.hit.record.id)), work: work) }
+        if let s = sessions[terminal] {
+            let recs = chosen.map(\.hit.record)
+            await lifecycle.noteInjected(session: s, ids: recs.map(\.id), now: Date())
+            await lifecycle.setPending(session: s, ids: recs.filter(LifecycleRules.eligible).map(\.id))   // the last injection only
+        }
         var stores: [RepoMemory] = []
         for h in chosen where !stores.contains(where: { $0 === h.store }) { stores.append(h.store) }
         for s in stores {
@@ -580,8 +593,24 @@ actor MemoryService {
         }
     }
 
-    func endSession(_ terminal: UUID) {
+    /// The session's pending uses are dropped, not counted (no next prompt: no evidence).
+    func endSession(_ terminal: UUID) async {
+        let s = sessions[terminal]
         injected[terminal] = nil; injectedDocs[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil; skills[terminal] = nil; sessions[terminal] = nil
+        if let s { _ = await lifecycle.takePending(session: s) }
+    }
+
+    /// At `terminal`'s next prompt: the memories its last prompt-relevance injection brought count one useful use per
+    /// (UTC day, session), unless `correction` (dropped) or this session flagged them wrong/outdated. No session: nothing.
+    func resolvePending(for terminal: UUID, correction: Bool, now: Date = Date()) async {
+        guard let s = sessions[terminal] else { return }
+        let ids = await lifecycle.takePending(session: s)
+        guard !correction, !ids.isEmpty else { return }
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]   // UTC
+        let use = UseKey(day: f.string(from: now), session: s), entries = await lifecycle.all()
+        for id in ids where !(entries[id]?.flags.contains { $0.session == s && $0.verdict != .useful } ?? false) {
+            await lifecycle.update(id, now: now) { $0.usefulUses.insert(use) }
+        }
     }
 
     // MARK: procedures as skills
@@ -672,14 +701,23 @@ actor MemoryService {
     private static func firstLine(_ body: String) -> String {
         oneLine(String(body.split(separator: "\n", omittingEmptySubsequences: true).first ?? ""), max: 200)
     }
-    private static func mark(_ r: MemoryRecord) -> String { r.reviewed ? "" : " (não revisada, \(r.origin))" }
+    /// `(provisória)` / `(contestada)` for a record under the lifecycle (absent entry = provisional); none for the user's.
+    private static func mark(_ r: MemoryRecord, _ entries: [UUID: LifecycleEntry], now: Date = Date()) -> String {
+        guard LifecycleRules.eligible(r) else { return "" }
+        let e = entries[r.id]
+        let tags = [(e.map { LifecycleRules.tier(for: $0, now: now) } ?? .provisional) == .provisional ? "provisória" : nil,
+                    e?.contestedNow == true ? "contestada" : nil].compactMap { $0 }
+        return tags.isEmpty ? "" : " (\(tags.joined(separator: ", ")))"
+    }
+    /// The short id full-body lines carry (`collie memory flag <id>`).
+    static func shortId(_ id: UUID) -> String { String(id.uuidString.lowercased().prefix(8)) }
 
     static let indexTitle = "Índice (só títulos; `collie memory search` traz o resto):"
 
     /// `full` as `renderContext(_:limit:)`, then one line per `index` record (title only, newest first) in what is left.
     /// Only `full` ids count as injected: an index line can still bring its body by prompt relevance.
-    static func renderContext(_ full: [MemoryRecord], index: [MemoryRecord], limit: Int) -> (text: String, ids: Set<UUID>) {
-        var (out, ids) = renderContext(full, limit: limit)
+    static func renderContext(_ full: [MemoryRecord], index: [MemoryRecord], limit: Int, entries: [UUID: LifecycleEntry] = [:]) -> (text: String, ids: Set<UUID>) {
+        var (out, ids) = renderContext(full, limit: limit, entries: entries)
         guard !out.isEmpty else { return (out, ids) }
         appendIndex(&out, index, limit: limit)
         return (out, ids)
@@ -697,7 +735,7 @@ actor MemoryService {
     /// Header, then active user rules (feedback), decisions (title + first line), the map (`path — title`), pitfalls,
     /// procedures; pinned first, then newest.
     /// At most `limit` UTF-8 bytes, whole items only (one that doesn't fit is skipped).
-    static func renderContext(_ recs: [MemoryRecord], limit: Int) -> (text: String, ids: Set<UUID>) {
+    static func renderContext(_ recs: [MemoryRecord], limit: Int, entries: [UUID: LifecycleEntry] = [:]) -> (text: String, ids: Set<UUID>) {
         var out = header, ids = Set<UUID>()
         guard out.utf8.count <= limit else { return ("", []) }
         let sections: [(MemoryKind, String)] = [(.feedback, "Regras do usuário:"), (.decision, "Decisões:"), (.map, "Mapa:"), (.pitfall, "Armadilhas:"),
@@ -706,13 +744,13 @@ actor MemoryService {
             let items = recs.filter { $0.kind == kind }.sorted { ($0.pinned ? 1 : 0, $0.updatedAt) > ($1.pinned ? 1 : 0, $1.updatedAt) }
             var started = false
             for r in items {
-                let t = oneLine(r.title, max: 200)
+                let t = oneLine(r.title, max: 200), lead = "- [\(shortId(r.id))] "
                 let line: String
                 if kind == .map {
-                    line = "- " + (r.path.map { "\(oneLine($0, max: 200)) — \(t)" } ?? t) + mark(r)
+                    line = lead + (r.path.map { "\(oneLine($0, max: 200)) — \(t)" } ?? t) + mark(r, entries)
                 } else {
                     let first = firstLine(r.body)
-                    line = "- " + t + (first.isEmpty ? "" : ": \(first)") + mark(r)
+                    line = lead + t + (first.isEmpty ? "" : ": \(first)") + mark(r, entries)
                 }
                 let add = (started ? "" : "\n\n\(title)") + "\n" + line
                 guard out.utf8.count + add.utf8.count <= limit else { continue }
@@ -722,10 +760,10 @@ actor MemoryService {
         return (out, ids)
     }
 
-    private static func relevantLine(_ r: MemoryRecord) -> String {
+    private static func relevantLine(_ r: MemoryRecord, _ entries: [UUID: LifecycleEntry]) -> String {
         let label = ["feedback": "regra", "decision": "decisão", "map": "mapa", "pitfall": "armadilha", "procedure": "procedimento"][r.kind.rawValue] ?? r.kind.rawValue
         let head = r.kind == .map ? (r.path.map { "\(oneLine($0, max: 200)) — " } ?? "") + oneLine(r.title, max: 200) : oneLine(r.title, max: 200)
         let body = oneLine(r.body, max: 300)
-        return "- [\(label)] \(head)" + (body.isEmpty ? "" : ": \(body)") + mark(r)
+        return "- [\(label) \(shortId(r.id))] \(head)" + (body.isEmpty ? "" : ": \(body)") + mark(r, entries)
     }
 }

@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preferências: 3 opções</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+  }
+}
+
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+:root { --navy: #1E2647; --navy-2: #262E52; --mint: #7BD3A2; --danger: #FF8A80; --warn: #E8B04B; --ok: var(--mint); --line: var(--color-border); --win: var(--color-bg); --panel: var(--color-surface); }
+[data-theme="light"] { --navy: #E3E8FF; --navy-2: #D3DBFF; --mint: #2F6F4F; --danger: #B3261E; --warn: #8A5A00; --ok: #1E7A4B; }
+@media (prefers-color-scheme: light) { :root:not([data-theme]) { --navy: #E3E8FF; --navy-2: #D3DBFF; --mint: #2F6F4F; --danger: #B3261E; --warn: #8A5A00; --ok: #1E7A4B; } }
+body { background: var(--bg); color: var(--text); font-family: "Space Grotesk", system-ui, sans-serif; font-size: 15px; line-height: 1.45; padding: 24px 20px 64px; }
+code, .mono, kbd { font-family: "DM Mono", ui-monospace, Menlo, monospace; }
+.wrap { max-width: 980px; margin: 0 auto; }
+h1 { font-size: 30px; margin: 0 0 4px; } h2 { font-size: 15px; margin: 0 0 8px; } p { margin: 0 0 8px; }
+.muted { color: var(--muted); } .small { font-size: 12px; }
+.top { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; margin-bottom: 16px; }
+.pc { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+@media (max-width: 760px) { .pc { grid-template-columns: 1fr; } }
+.pcard { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; font-size: 13px; }
+.pcard h2 { color: var(--mint); } .pcard .rec { color: var(--mint); font-weight: 700; }
+.pcard ul { margin: 0; padding-left: 18px; } .pcard li { margin: 2px 0; }
+.rec-banner { background: var(--navy); border-radius: 12px; padding: 12px 16px; margin-bottom: 20px; font-size: 14px; }
+.ctl { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-right: 4px; }
+.chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.chip { background: var(--surface); border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 5px 12px; font-size: 13px; }
+.chip.on { background: var(--mint); color: var(--bg); border-color: var(--mint); font-weight: 700; }
+.optbar .chip { font-size: 14px; padding: 7px 16px; }
+.stage { display: flex; justify-content: center; }
+/* janela macOS */
+.win { width: 100%; background: var(--win); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 24px 60px rgba(0,0,0,.28); }
+.win.a { max-width: 600px; height: 640px; } .win.b, .win.c { max-width: 900px; height: 640px; }
+.tb { height: 38px; background: var(--navy); display: flex; align-items: center; padding: 0 14px; gap: 7px; flex: none; }
+.tb i { width: 12px; height: 12px; border-radius: 50%; background: var(--muted); opacity: .45; } .tb b { margin: 0 auto; font-size: 13px; padding-right: 40px; }
+.body { flex: 1; min-height: 0; display: flex; }
+.scroll { overflow: auto; flex: 1; min-width: 0; padding: 20px; scroll-behavior: smooth; }
+.hdr { text-align: center; padding: 14px 0 0; } .hdr h3 { margin: 0; font-size: 17px; } .hdr span { font-size: 12px; color: var(--muted); }
+.seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 2px; gap: 2px; }
+.seg button { background: none; border: 0; border-radius: 7px; padding: 4px 12px; font-size: 13px; color: var(--text); } .seg button.on { background: var(--mint); color: var(--bg); font-weight: 700; }
+.center { display: flex; justify-content: center; padding: 10px 0 0; }
+/* seções */
+.sec { margin-bottom: 24px; } .sec > h4 { margin: 0 0 10px; font-size: 14px; } .sec .note { font-size: 12px; color: var(--muted); font-family: "DM Mono", monospace; margin-top: 8px; }
+.sec.big > h4 { font-size: 20px; margin-bottom: 12px; }
+.cards { display: flex; gap: 12px; flex-wrap: wrap; }
+.cc { flex: 1; min-width: 130px; background: var(--panel); border: 2px solid var(--line); border-radius: 12px; padding: 8px; text-align: left; color: var(--text); }
+.cc.on { border-color: var(--mint); } .cc b { font-size: 13px; display: block; margin-top: 6px; } .cc span { font-size: 11px; color: var(--muted); }
+.mini { height: 56px; border-radius: 6px; display: flex; gap: 4px; padding: 6px; } .mini s { width: 20px; background: rgba(128,128,128,.3); border-radius: 3px; } .mini div { flex: 1; display: grid; gap: 4px; } .mini div i { height: 4px; width: 28px; border-radius: 4px; display: block; } .mini div u { background: rgba(128,128,128,.25); border-radius: 4px; }
+.row { display: flex; align-items: center; gap: 12px; padding: 8px 0; flex-wrap: wrap; } .row + .row { border-top: 1px solid var(--line); }
+select, input[type=text] { font: inherit; font-size: 13px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; }
+.tg { display: flex; gap: 10px; align-items: flex-start; padding: 4px 0; font-size: 14px; } .tg input { accent-color: var(--mint); margin-top: 3px; }
+.btn { font: inherit; font-size: 13px; border-radius: 8px; padding: 6px 14px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.btn.p { background: var(--mint); color: var(--bg); border-color: var(--mint); font-weight: 700; } .btn.d { color: var(--danger); } .btn[disabled] { opacity: .4; cursor: not-allowed; }
+.btn.q { background: none; }
+.stub { border: 1px dashed var(--line); border-radius: 12px; padding: 18px; color: var(--muted); font-size: 13px; }
+/* Android */
+.sw { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+.sw .path { font-family: "DM Mono", monospace; font-size: 12px; word-break: break-all; margin: 4px 0 8px; }
+.badge { font-size: 11px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; } .badge.s { border-color: var(--mint); color: var(--mint); }
+.cmp { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 14px; margin-bottom: 14px; }
+.cr { display: grid; grid-template-columns: 24px 1fr auto; gap: 4px 10px; padding: 10px 0; align-items: center; } .cr + .cr { border-top: 1px solid var(--line); }
+.dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; border: 2px solid var(--line); color: var(--muted); }
+.dot.ok { background: var(--ok); border-color: var(--ok); color: var(--bg); } .dot.err { background: var(--danger); border-color: var(--danger); color: var(--bg); } .dot.run { border-color: var(--mint); color: var(--mint); }
+.cr .n { font-weight: 700; font-size: 14px; } .cr .d { font-size: 12px; color: var(--muted); } .cr .r { text-align: right; font-size: 12px; font-family: "DM Mono", monospace; color: var(--muted); }
+.bar { grid-column: 2 / 4; height: 6px; background: var(--line); border-radius: 6px; overflow: hidden; } .bar i { display: block; height: 100%; background: var(--mint); border-radius: 6px; }
+.bar i.run { background: repeating-linear-gradient(45deg, var(--mint) 0 8px, color-mix(in srgb, var(--mint) 65%, var(--bg)) 8px 16px); background-size: 22px 22px; animation: mv 1s linear infinite; } @keyframes mv { to { background-position: 22px 0; } }
+.er { grid-column: 2 / 4; color: var(--danger); font-size: 12px; font-family: "DM Mono", monospace; }
+.act { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; } .act .grow { flex: 1; font-size: 12px; color: var(--muted); }
+.lic { background: var(--navy); border-radius: 12px; padding: 14px; margin-bottom: 14px; } .lic .box { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-family: "DM Mono", monospace; font-size: 12px; margin: 8px 0; } .lic .box div { padding: 2px 0; }
+.err-banner { border: 1px solid var(--danger); color: var(--danger); border-radius: 12px; padding: 10px 14px; font-size: 13px; margin-bottom: 14px; }
+.avd { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; } .avd .ph { width: 30px; height: 52px; border: 2px solid var(--mint); border-radius: 6px; flex: none; } .avd .info { flex: 1; min-width: 180px; } .avd.off { opacity: .55; }
+/* B: barra lateral */
+.side { width: 210px; flex: none; background: var(--navy); padding: 12px 10px; overflow: auto; border-right: 1px solid var(--line); }
+.side input { width: 100%; margin-bottom: 10px; } .side .g { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 10px 8px 4px; }
+.side button { display: flex; width: 100%; gap: 8px; align-items: center; background: none; border: 0; color: var(--text); padding: 6px 8px; border-radius: 8px; font-size: 14px; text-align: left; } .side button.on { background: var(--mint); color: var(--bg); font-weight: 700; } .side button em { margin-left: auto; font-style: normal; font-size: 11px; } 
+.pg-h { font-size: 22px; margin: 0 0 16px; }
+/* C: página única */
+.idx { width: 190px; flex: none; padding: 14px 10px; border-right: 1px solid var(--line); overflow: auto; background: var(--panel); } .idx input { width: 100%; margin-bottom: 8px; } .idx a { display: block; padding: 5px 8px; border-radius: 8px; font-size: 13px; color: var(--muted); text-decoration: none; cursor: pointer; } .idx a.on { color: var(--text); background: var(--navy-2); font-weight: 700; box-shadow: inset 3px 0 var(--mint); } .idx a.dim { opacity: .3; }
+.hr { border: 0; border-top: 1px solid var(--line); margin: 0 0 20px; } .hit { background: color-mix(in srgb, var(--mint) 28%, transparent); border-radius: 3px; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div><h1>Preferências do Collie: 3 opções</h1><p class="muted">Compare a estrutura da janela. A página Android (todos os estados) e a Aparência funcionam nas três; clique, busque e alterne.</p></div>
+    <div class="ctl"><span class="lbl">Tema</span><span class="chips" id="themes"></span></div>
+  </div>
+  <div class="pc">
+    <div class="pcard"><h2>A · Segmentado, 4 páginas</h2><ul><li><b>+</b> É o que existe hoje: custo mínimo, zero reaprendizado.</li><li><b>+</b> Janela pequena (560 pt).</li><li><b>−</b> Aparência já é uma rolagem longa e mistura assuntos; Android estoura a janela.</li><li><b>−</b> Um 5º item não cabe no seletor.</li></ul></div>
+    <div class="pcard"><h2>B · Barra lateral com grupos</h2><ul><li><b>+</b> Padrão do Ajustes do Sistema: escala com novas páginas, quebra Aparência em partes curtas.</li><li><b>+</b> Android ganha página própria com folga; busca filtra a barra.</li><li><b>−</b> Janela maior (≈ 820 pt) e Aparência vira 3 páginas.</li><li class="rec">★ Recomendo esta.</li></ul></div>
+    <div class="pcard"><h2>C · Página única + índice</h2><ul><li><b>+</b> Tudo à mão, busca acha qualquer ajuste, links diretos por seção.</li><li><b>+</b> Sem mudar de página para comparar ajustes.</li><li><b>−</b> Rolagem enorme com o Android no fim; estados longos empurram o resto.</li><li><b>−</b> Menos familiar no macOS.</li></ul></div>
+  </div>
+  <div class="rec-banner"><b>Recomendação: B.</b> O Android é a primeira página com fluxo próprio (licença, download, progresso). Ela pede espaço e foco, e a barra com grupos deixa a janela crescer (Android, futuros dispositivos) sem inchar a Aparência.</div>
+  <div class="ctl optbar"><span class="lbl">Opção</span><span class="chips" id="opts"></span></div>
+  <div class="ctl"><span class="lbl">Estado do Android</span><span class="chips" id="states"></span></div>
+  <div class="stage" id="stage"></div>
+</div>
+<script>
+const $ = s => document.querySelector(s), esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const S = { opt: 'B', android: 'vazio', lic: false, avd: false, theme: 'auto', page: { A: 'Aparência', B: 'android', C: null }, q: '' };
+const STATES = [['vazio','Nada instalado'],['parcial','Parcial'],['lic','Licenças'],['instalando','Instalando'],['pronto','Tudo pronto'],['erro','Erro']];
+/* ---------- seções de Aparência (iguais às de hoje) ---------- */
+const mini = (bg, ac, side) => `<div class="mini" style="background:${bg}">${side ? '<s></s>' : ''}<div><i style="background:${ac}"></i><u></u></div></div>`;
+const card = (t, s, m, on) => `<button class="cc ${on ? 'on' : ''}" data-grp>${m}<b>${t}</b><span>${s}</span></button>`;
+const sec = (t, b, big) => `<section class="sec ${big ? 'big' : ''}" data-sec><h4>${t}</h4>${b}</section>`;
+const SEC = {
+  tema: () => sec('Tema', `<div class="cards">${card('Escuro','fundo índigo, menta',mini('#15171C','#7BD3A2'),1)}${card('Claro','papel, cobalto',mini('#F4F2ED','#2D69FD'))}${card('Sistema','segue o macOS',mini('linear-gradient(90deg,#15171C 50%,#F4F2ED 50%)','#7BD3A2'))}</div>`),
+  estrutura: () => sec('Estrutura', `<div class="cards">${card('Compacta','canvas + cabeçalho flutuante',mini('#15171C','#7BD3A2'),1)}${card('Completa','barra lateral, cercados e status',mini('#15171C','#7BD3A2',1))}</div><div class="note">Muda só a moldura. Terminais, guias e painéis ficam onde estão.</div>`),
+  terminal: () => sec('Terminal', `<div class="row"><label>Fonte <select><option>DM Mono</option><option>Menlo</option><option>SF Mono</option></select></label><label>Tamanho <select><option>13 pt</option><option>12 pt</option><option>14 pt</option></select></label></div>`),
+  desenhar: () => sec('Onde desenhar', `<div class="seg" data-seg><button class="on">Página (Prévia)</button><button>FigCraft</button><button>Perguntar</button></div><div class="note">Em trabalho de interface, o Pastor desenha antes: numa página na Prévia, no FigCraft, ou pergunta.</div>`),
+  sandbox: () => sec('Modo do sandbox', `<div class="seg" data-seg><button class="on">Aberto (padrão)</button><button>Estrito</button></div><div class="note">Aberto: o agente lê e escreve tudo na sua conta; só os dados e o app do Collie ficam fechados. Vale para terminais abertos depois.</div>`),
+  fontes: () => sec('Fontes', `<label class="tg"><input type="checkbox" checked> Baixar fontes do Google Fonts</label><div class="row"><input type="text" placeholder="Família (ex.: Inter)"><button class="btn">Baixar</button></div><div class="row"><b style="font-weight:500">Space Grotesk</b><span class="small muted mono">Google Fonts</span><button class="btn q" style="margin-left:auto">Remover</button></div><div class="row"><b style="font-weight:500">DM Mono</b><span class="small muted mono">vem com o Collie</span></div>`),
+  memoria: () => sec('Memória', `<label class="tg"><input type="checkbox" checked> Avisar uma vez por dia o que o Collie aprendeu</label><label class="tg"><input type="checkbox" checked> Avisar quando uma correção precisar de confirmação</label><div class="note">Às 18h, se houver algo no Aprendizado de hoje.</div>`),
+  plugins: () => sec('Plug-ins', `<div class="stub">Página de Plug-ins: inalterada nesta prévia.</div>`),
+  celular: () => sec('Celular', `<div class="stub">Página de Celular (acesso remoto, QR de pareamento, aparelhos, leitura/completo): inalterada nesta prévia.</div>`),
+};
+/* ---------- Android ---------- */
+const COMP = [['Java (JDK)','JDK 17, necessário para o sdkmanager',190],['Command-line Tools','sdkmanager e avdmanager',150],['Emulator','emulador do Android',380],['Platform-tools','adb e fastboot',12],['Imagem de sistema','google_apis · arm64-v8a',1400]];
+const ST = {
+  vazio: [['m'],['m'],['m'],['m'],['m']],
+  parcial: [['ok','s'],['ok','s'],['m'],['ok','s'],['m']],
+  instalando: [['ok','c'],['ok','c'],['run','c',62],['ok','c'],['q','c']],
+  pronto: [['ok','c'],['ok','c'],['ok','c'],['ok','c'],['ok','c']],
+  erro: [['ok','c'],['ok','c'],['ok','c'],['ok','c'],['err','c']],
+};
+const fmt = mb => mb >= 1000 ? (mb / 1000).toFixed(1).replace('.', ',') + ' GB' : mb + ' MB';
+const SRC = { s: 'SDK do Android Studio (reaproveitado)', c: 'SDK do Collie' };
+const COLLIE = '~/Library/Application Support/Collie/android-sdk';
+function android() {
+  const a = S.android, rows = ST[a], miss = COMP.map((c, i) => [c, rows[i]]).filter(([, r]) => r[0] !== 'ok');
+  const total = miss.reduce((t, [c]) => t + c[2], 0);
+  const sdk = a === 'vazio' ? ['Nenhum SDK encontrado', 'Será criado em ' + COLLIE, ''] : a === 'parcial' ? ['SDK do Android Studio (reaproveitado)', '~/Library/Android/sdk', 's'] : ['SDK do Collie', COLLIE, 'c'];
+  const sdkBox = `<div class="sw"><div class="small muted">SDK em uso</div><div class="path">${sdk[1]}</div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${sdk[2] ? `<span class="badge ${sdk[2] === 'c' ? 's' : ''}">${sdk[0]}</span>` : `<span class="badge">${sdk[0]}</span>`}<button class="btn" style="margin-left:auto" ${a === 'vazio' ? 'disabled' : ''}>Ver na pasta</button></div>${a === 'parcial' ? '<div class="small muted" style="margin-top:8px">O que faltar é instalado neste SDK. Nada do Android Studio é alterado além disso.</div>' : ''}</div>`;
+  const list = COMP.map((c, i) => {
+    const [st, src, pct] = rows[i], ok = st === 'ok';
+    const right = ok ? 'OK' : st === 'run' ? `${pct}% · ${fmt(Math.round(c[2] * pct / 100))} de ${fmt(c[2])}` : st === 'err' ? 'falhou' : st === 'q' ? 'na fila · ' + fmt(c[2]) : 'ausente · ' + fmt(c[2]);
+    const origin = ok ? SRC[src] : st === 'm' && a === 'parcial' ? 'instala no SDK em uso' : st === 'm' ? 'instala no SDK do Collie' : c[1];
+    return `<div class="cr"><span class="dot ${ok ? 'ok' : st === 'err' ? 'err' : st === 'run' ? 'run' : ''}">${ok ? '✓' : st === 'err' ? '!' : st === 'run' ? '↓' : ''}</span><div><div class="n">${c[0]}</div><div class="d">${ok ? c[1] + ' · ' + origin : st === 'm' ? c[1] + ' · ' + origin : c[1]}</div></div><div class="r" style="${st === 'err' ? 'color:var(--danger)' : ''}">${right}</div>${st === 'run' || st === 'q' ? `<div class="bar"><i class="${st === 'run' ? 'run' : ''}" style="width:${st === 'run' ? pct : 0}%"></i></div>` : ''}${st === 'err' ? '<div class="er">sdkmanager saiu com 1: Connection reset durante o download</div>' : ''}</div>`;
+  }).join('');
+  let act = '';
+  if (S.lic && a !== 'instalando' && a !== 'pronto' && a !== 'erro') {
+    act = `<div class="lic"><b>Licenças do Google</b><p class="small muted" style="margin:4px 0 0">Para baixar o Android SDK é preciso aceitar os termos abaixo. Nada é baixado antes disso. Total a baixar: ${fmt(total)}.</p><div class="box"><div>android-sdk-license</div><div>android-sdk-arm-dbt-license</div><div class="muted">Texto integral do Google (em inglês) via sdkmanager, sem edição.</div></div><label class="tg"><input type="checkbox" id="lic-ok"> Li e aceito as licenças do Google</label><div class="act" style="margin:8px 0 0"><button class="btn q" data-act="lic-no">Cancelar</button><button class="btn p" data-act="lic-yes" id="lic-go" disabled>Aceitar e baixar</button></div></div>`;
+  } else if (a === 'vazio' || a === 'parcial') act = `<div class="act"><button class="btn p" data-act="lic-open">Instalar o que falta</button><span class="grow">${miss.length} ${miss.length > 1 ? 'itens' : 'item'} · ${fmt(total)} a baixar. Pede o aceite das licenças antes.</span></div>`;
+  else if (a === 'instalando') act = `<div class="act"><button class="btn d" data-act="cancel">Cancelar</button><span class="grow">Baixando o Emulator · ${fmt(Math.round(total * 0.2))} restantes de ${fmt(total)}. Feche à vontade: continua em segundo plano.</span></div>`;
+  else if (a === 'erro') act = `<div class="err-banner"><b>Não deu para baixar a imagem de sistema.</b> A conexão caiu. O que já foi baixado fica guardado.<div class="act" style="margin:8px 0 0"><button class="btn p" data-act="retry">Tentar de novo</button><span class="grow">Falta ${fmt(1400)}</span></div></div>`;
+  else act = `<div class="act"><span class="badge s">Tudo pronto</span><span class="grow">Java, ferramentas, emulador e imagem instalados.</span></div>`;
+  const ready = a === 'pronto';
+  const emu = `<section class="sec" style="margin-top:6px"><h4>Emulador</h4>${S.avd && ready ? `<div class="avd"><div class="ph"></div><div class="info"><b>collie-lite</b><div class="small muted mono">720×1280 · 1,5 GB de RAM · 2 núcleos · GPU do host</div></div><button class="btn d" data-act="avd-del">Remover</button></div>` : `<div class="avd ${ready ? '' : 'off'}"><div class="ph" style="border-color:var(--muted)"></div><div class="info"><b>Emulador leve (collie-lite)</b><div class="small muted mono">720×1280 · 1,5 GB · 2 núcleos · GPU do host</div>${ready ? '' : '<div class="small muted">Disponível quando tudo estiver instalado.</div>'}</div><button class="btn p" data-act="avd-new" ${ready ? '' : 'disabled'}>Criar emulador leve</button></div>`}</section>`;
+  return `<div data-sec>${sdkBox}<div class="cmp">${list}</div>${act}${emu}</div>`;
+}
+SEC.android = () => android();
+/* ---------- estruturas ---------- */
+const TITLE = { Aparência: ['Aparência', ['tema','estrutura','terminal','desenhar','sandbox','fontes','memoria']], 'Plug-ins': ['Plug-ins', ['plugins']], Celular: ['Celular', ['celular']], Android: ['Android', ['android']] };
+function optA() {
+  const p = S.page.A;
+  return `<div class="win a"><div class="tb"><i></i><i></i><i></i><b>Preferências</b></div><div class="hdr"><h3>${p}</h3><span>Preferências</span></div><div class="center"><div class="seg" data-tabs="A">${Object.keys(TITLE).map(k => `<button class="${k === p ? 'on' : ''}" data-v="${k}">${k}</button>`).join('')}</div></div><div class="scroll">${TITLE[p][1].map(k => SEC[k]()).join('')}</div></div>`;
+}
+const NAV = [['Interface', [['aparencia','Aparência','◐','tema paleta escuro claro sistema estrutura moldura completa compacta barra',['tema','estrutura']], ['terminal','Terminal e fontes','›_','terminal fonte tamanho google fonts baixar família',['terminal','fontes']]]],
+  ['Agentes', [['agentes','Desenho e sandbox','✎','onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor',['desenhar','sandbox']], ['memoria','Memória','◈','memória aprendizado aviso notificação correção',['memoria']], ['plugins','Plug-ins','⚙','plug-ins extensões',['plugins']]]],
+  ['Dispositivos', [['celular','Celular','▯','celular iphone acesso remoto qr pareamento aparelhos leitura completo',['celular']], ['android','Android','▮','android java sdk emulador adb imagem licença avd collie-lite platform-tools command-line',['android']]]]];
+const FLAT = NAV.flatMap(g => g[1]);
+function optB() {
+  const q = S.q.toLowerCase(), cur = FLAT.find(i => i[0] === S.page.B) || FLAT[0];
+  const groups = NAV.map(([g, items]) => { const it = items.filter(i => !q || (i[1] + ' ' + i[3]).toLowerCase().includes(q)); return it.length ? `<div class="g">${g}</div>${it.map(i => `<button class="${i[0] === cur[0] ? 'on' : ''}" data-v="${i[0]}"><span class="mono">${i[2]}</span>${i[1]}${i[0] === 'android' && S.android !== 'pronto' ? `<em>${S.android === 'erro' ? '!' : S.android === 'instalando' ? '↓' : '•'}</em>` : ''}</button>`).join('')}` : ''; }).join('') || '<div class="small muted" style="padding:8px">Nada encontrado.</div>';
+  return `<div class="win b"><div class="tb"><i></i><i></i><i></i><b>Preferências · ${cur[1]}</b></div><div class="body"><nav class="side"><input type="text" id="q" placeholder="Buscar" value="${esc(S.q)}">${groups}</nav><div class="scroll"><h3 class="pg-h">${cur[1]}</h3>${cur[4].map(k => SEC[k]()).join('')}</div></div></div>`;
+}
+const CSEC = [['aparencia','Aparência',['tema','estrutura']],['terminal','Terminal e fontes',['terminal','fontes']],['agentes','Desenho e sandbox',['desenhar','sandbox']],['memoria','Memória',['memoria']],['plugins','Plug-ins',['plugins']],['celular','Celular',['celular']],['android','Android',['android']]];
+function optC() {
+  const q = S.q.toLowerCase(), kw = Object.fromEntries(FLAT.map(i => [i[0], (i[1] + ' ' + i[3]).toLowerCase()]));
+  const hit = id => !q || kw[id].includes(q);
+  const idx = CSEC.map(([id, t]) => `<a data-v="${id}" class="${hit(id) ? '' : 'dim'}">${t}</a>`).join('');
+  const body = CSEC.filter(([id]) => hit(id)).map(([id, t, ks]) => `<section id="c-${id}" class="csec"><h3 class="pg-h" style="font-size:20px">${t}</h3>${ks.map(k => SEC[k]()).join('')}<hr class="hr"></section>`).join('') || '<div class="stub">Nada encontrado para essa busca.</div>';
+  return `<div class="win c"><div class="tb"><i></i><i></i><i></i><b>Preferências</b></div><div class="body"><nav class="idx"><input type="text" id="q" placeholder="Buscar nos ajustes" value="${esc(S.q)}">${idx}</nav><div class="scroll" id="cs">${body}</div></div></div>`;
+}
+/* ---------- render e eventos ---------- */
+const chips = (id, list, cur) => $(id).innerHTML = list.map(([v, t]) => `<button class="chip ${v === cur ? 'on' : ''}" data-v="${v}">${t}</button>`).join('');
+function draw(keepScroll) {
+  const sc = $('.scroll'), top = sc ? sc.scrollTop : 0, hadQ = document.activeElement && document.activeElement.id === 'q';
+  const st = S.android; chips('#states', STATES, S.lic && (st === 'vazio' || st === 'parcial') ? 'lic' : st);
+  chips('#opts', [['A','A · Segmentado'],['B','B · Barra lateral'],['C','C · Página única']], S.opt);
+  chips('#themes', [['auto','Auto'],['light','Claro'],['dark','Escuro']], S.theme);
+  $('#stage').innerHTML = { A: optA, B: optB, C: optC }[S.opt]();
+  if (keepScroll && $('.scroll')) $('.scroll').scrollTop = top;
+  if (hadQ) { const q = $('#q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+  spy();
+}
+function spy() {
+  const cs = $('#cs'); if (!cs) return;
+  const secs = [...cs.querySelectorAll('.csec')]; let cur = secs[0];
+  secs.forEach(s => { if (s.offsetTop - cs.offsetTop <= cs.scrollTop + 30) cur = s; });
+  document.querySelectorAll('.idx a').forEach(a => a.classList.toggle('on', !!cur && cur.id === 'c-' + a.dataset.v));
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('button, a'); if (!t) return;
+  const v = t.dataset.v, p = t.parentElement, a = t.dataset.act;
+  if (p.id === 'themes') { S.theme = v; v === 'auto' ? document.documentElement.removeAttribute('data-theme') : document.documentElement.dataset.theme = v; return draw(1); }
+  if (p.id === 'opts') { S.opt = v; S.q = ''; return draw(); }
+  if (p.id === 'states') { S.lic = v === 'lic'; S.android = v === 'lic' ? 'vazio' : v; S.avd = false; if (S.opt === 'A') S.page.A = 'Android'; else if (S.opt === 'B') S.page.B = 'android'; else setTimeout(() => $('#c-android') && $('#c-android').scrollIntoView(), 0); return draw(1); }
+  if (p.dataset.tabs) { S.page.A = v; return draw(); }
+  if (S.opt === 'B' && p.closest('.side') && v) { S.page.B = v; return draw(); }
+  if (S.opt === 'C' && t.closest('.idx') && v) { const el = $('#c-' + v); if (el) $('#cs').scrollTo({ top: el.offsetTop - $('#cs').offsetTop, behavior: 'smooth' }); return; }
+  if (a === 'lic-open') { S.lic = true; return draw(1); }
+  if (a === 'lic-no') { S.lic = false; return draw(1); }
+  if (a === 'lic-yes') { S.lic = false; S.android = 'instalando'; return draw(1); }
+  if (a === 'cancel') { S.android = 'parcial'; return draw(1); }
+  if (a === 'retry') { S.android = 'instalando'; return draw(1); }
+  if (a === 'avd-new') { S.avd = true; return draw(1); }
+  if (a === 'avd-del') { S.avd = false; return draw(1); }
+  if (p.dataset.seg !== undefined) { p.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === t)); return; }
+  if (t.dataset.grp !== undefined) { p.querySelectorAll('.cc').forEach(b => b.classList.toggle('on', b === t)); }
+});
+document.addEventListener('input', e => {
+  if (e.target.id === 'q') { S.q = e.target.value; draw(1); }
+  if (e.target.id === 'lic-ok') $('#lic-go').disabled = !e.target.checked;
+});
+document.addEventListener('scroll', spy, true);
+draw();
+</script>
+</body>
+</html>

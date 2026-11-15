@@ -94,7 +94,7 @@ private struct Fixture {
             env["COLLIE_JAVA_HOME"] = j.path
         }
         return AndroidInstaller(root: home, env: env, home: home.path, runDir: home.appendingPathComponent("run"), fetch: fetch ?? fake.fetch, isAppleSilicon: appleSilicon,
-                                javaCandidates: [], freeSpace: { _ in free })
+                                javaCandidates: [], freeSpace: { _ in free }, othersRunning: { _ in nil })   // no pgrep
     }
 
     var collieJdkJava: String { AvdManager.collieJdk(home.path) + "/bin/java" }
@@ -141,21 +141,71 @@ private struct Fixture {
         #expect(fm.isExecutableFile(atPath: f.collieJdkJava))
     }
 
-    /// Studio's SDK with `cmdline-tools/latest` 23.0 (sdkmanager wraps the `android` CLI): never run, 20.0 goes beside it.
-    @Test func prepareInstalls20BesideAStudioLatest23() async throws {
+    /// Studio's SDK with `cmdline-tools/latest` 23.0 (android CLI): allowed, nothing downloaded.
+    @Test func prepareKeepsAStudioLatest23() async throws {
         let f = try Fixture()
         let latest = f.sdk.appendingPathComponent("cmdline-tools/latest/bin/sdkmanager")
         try script(latest, rev: "23.0")
         let inst = try f.installer(java: true)
-        #expect(await inst.status().items.first { $0.id == "cmdline-tools" }?.detail.contains("23.0 not supported") == true)
         try await inst.prepare()
+        #expect(f.fake.urls.isEmpty)
+        #expect(try fm.contentsOfDirectory(atPath: f.sdk.appendingPathComponent("cmdline-tools").path) == ["latest"])
+        #expect(await inst.status().items.first { $0.id == "cmdline-tools" }?.detail == latest.path)
+    }
+
+    /// A `latest` with no revision is not usable and never touched: 20.0 goes beside it.
+    @Test func prepareInstalls20BesideAnUnusableLatest() async throws {
+        let f = try Fixture()
+        let latest = f.sdk.appendingPathComponent("cmdline-tools/latest/bin/sdkmanager")
+        try script(latest)
+        try fm.removeItem(at: f.sdk.appendingPathComponent("cmdline-tools/latest/source.properties"))
+        try await f.installer(java: true).prepare()
         #expect(f.fake.urls == [catalogURL, zipURL])
         #expect(fm.isExecutableFile(atPath: f.sdk.appendingPathComponent("cmdline-tools/20.0/bin/sdkmanager").path))
-        #expect(try String(contentsOf: latest.deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("source.properties"), encoding: .utf8) == "Pkg.Revision=23.0\n")
         #expect(Set(try fm.contentsOfDirectory(atPath: f.sdk.appendingPathComponent("cmdline-tools").path)) == ["latest", "20.0"])
-        #expect(await inst.status().items.first { $0.id == "cmdline-tools" }?.detail
-                == f.sdk.appendingPathComponent("cmdline-tools/20.0/bin/sdkmanager").path)
+    }
+
+    /// A fake unknown `latest` (22.0) logging its args in `calls`; `selfAccepts`: a package install writes `licenses/`.
+    private func unknown22(_ f: Fixture, selfAccepts: Bool) throws -> URL {
+        let bin = f.sdk.appendingPathComponent("cmdline-tools/latest/bin")
+        try script(bin.appendingPathComponent("sdkmanager"), rev: "22.0")
+        try """
+        #!/bin/sh
+        for a in "$@"; do case "$a" in --sdk_root=*) s="${a#--sdk_root=}";; esac; done
+        echo "$*" >> "$(dirname "$0")/calls"
+        \(selfAccepts ? #"case "$*" in *--licenses*) ;; *) mkdir -p "$s/licenses"; echo x > "$s/licenses/android-sdk-license";; esac"# : "")
+        exit 0
+        """.write(to: bin.appendingPathComponent("sdkmanager"), atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("sdkmanager").path)
+        return bin.appendingPathComponent("calls")
+    }
+
+    @Test func anUnknownCmdlineToolsThatSelfAcceptsIsBlocked() async throws {
+        let f = try Fixture()
+        let calls = try unknown22(f, selfAccepts: true)
+        let inst = try f.installer(java: true)
+        for _ in 0..<2 {
+            var failure: ProtocolError?
+            do { try await inst.install(accept: []) } catch { failure = error as? ProtocolError }
+            #expect(failure?.code == .unavailable && failure?.message.contains("cmdline-tools 22.0 accepts") == true)
+        }
+        #expect(f.fake.urls.isEmpty)   // blocked, no 20.0 download
+        #expect(try String(contentsOf: calls, encoding: .utf8).split(separator: "\n").count == 1)   // probed once
+        #expect(try String(contentsOf: calls, encoding: .utf8).hasSuffix(" platform-tools\n"))
+        #expect(!fm.fileExists(atPath: f.sdk.appendingPathComponent("licenses").path))
+        #expect(!fm.fileExists(atPath: f.staging.path))
+        #expect(await inst.status().items.first { $0.id == "cmdline-tools" }?.detail.contains("22.0 accepts") == true)
+    }
+
+    @Test func anUnknownCmdlineToolsThatAsksRunsAsClassic() async throws {
+        let f = try Fixture()
+        let calls = try unknown22(f, selfAccepts: false)
+        let inst = try f.installer(java: true)
+        #expect(try await inst.licenses().isEmpty)
+        #expect(try await inst.licenses().isEmpty)
+        let lines = try String(contentsOf: calls, encoding: .utf8).split(separator: "\n")
+        #expect(lines.count == 3 && lines[0].hasSuffix(" platform-tools") && lines[1].hasPrefix("--licenses") && lines[2].hasPrefix("--licenses"))
+        #expect(!fm.fileExists(atPath: f.staging.path))
     }
 
     @Test func prepareCleansTheStagingOnFailure() async throws {

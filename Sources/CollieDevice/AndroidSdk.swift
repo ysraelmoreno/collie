@@ -25,9 +25,14 @@ public enum AndroidSdk {
         return (colliePath, "collie")
     }
 
-    /// Newest cmdline-tools revision Collie runs. 21+ (23.0) ships `sdkmanager` as a deprecated wrapper over the new
-    /// `android` CLI: it ignores `--licenses`, crashes installing platform-tools and writes to ~/.android.
+    /// Newest classic cmdline-tools revision: what Collie downloads, and the first choice to run. 21+ ships `sdkmanager`
+    /// as a deprecated wrapper over the new `android` CLI, which writes the license acceptance by itself.
     public static let maxCmdlineTools = [20, 0]
+    /// The one `android` CLI revision verified live (installs with `--sdk_root`, ignores `--licenses`, accepts on install).
+    public static let androidCliTools = [23, 0]
+
+    /// How a cmdline-tools `sdkmanager` behaves. `unknown(rev)` (21.x, 22.x, 23.1+, 24+): untested, the daemon probes it.
+    public enum SdkManagerKind: Equatable, Sendable { case classic, androidCli, unknown(String) }
 
     /// major.minor of `Pkg.Revision=` in a cmdline-tools `source.properties` (`23.0` -> [23, 0]); nil when absent or not a number.
     public static func cmdlineToolsRevision(_ properties: String) -> [Int]? {
@@ -44,37 +49,48 @@ public enum AndroidSdk {
         return Set(list(root) + ["latest"]).compactMap { v in read("\(root)/\(v)/source.properties").flatMap(cmdlineToolsRevision).map { (v, $0) } }
     }
 
-    /// Only a dir whose `source.properties` revision is at most `maxCmdlineTools` counts. Prefers `cmdline-tools/latest`,
-    /// else the highest revision.
+    /// The `sdkmanager` to run and its kind. Only dirs with a `source.properties` revision count. First a classic
+    /// (<= `maxCmdlineTools`), then `androidCliTools` (23.0, patch ignored), then any other revision; within each,
+    /// `cmdline-tools/latest` wins, else the highest revision.
+    public static func sdkmanagerTool(
+        in sdk: String, exists: (String) -> Bool,
+        list: (String) -> [String] = { (try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? [] },
+        read: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }
+    ) -> (path: String, kind: SdkManagerKind)? {
+        func bin(_ v: String) -> String { "\(sdk)/cmdline-tools/\(v)/bin/sdkmanager" }
+        let usable = cmdlineTools(in: sdk, list: list, read: read).filter { exists(bin($0.dir)) }
+        func kind(_ rev: [Int]) -> SdkManagerKind {
+            !maxCmdlineTools.lexicographicallyPrecedes(rev) ? .classic : rev == androidCliTools ? .androidCli
+                : .unknown(rev.map(String.init).joined(separator: "."))
+        }
+        func rank(_ k: SdkManagerKind) -> Int { switch k { case .classic: 0; case .androidCli: 1; case .unknown: 2 } }
+        let found = usable.map { (dir: $0.dir, rev: $0.rev, kind: kind($0.rev)) }
+        guard let top = found.map({ rank($0.kind) }).min() else { return nil }
+        let group = found.filter { rank($0.kind) == top }
+        guard let pick = group.first(where: { $0.dir == "latest" }) ?? group.max(by: { $0.rev.lexicographicallyPrecedes($1.rev) })
+        else { return nil }
+        return (bin(pick.dir), pick.kind)
+    }
+
+    /// `sdkmanagerTool`'s path.
     public static func sdkmanager(
         in sdk: String, exists: (String) -> Bool,
         list: (String) -> [String] = { (try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? [] },
         read: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }
     ) -> String? {
-        func bin(_ v: String) -> String { "\(sdk)/cmdline-tools/\(v)/bin/sdkmanager" }
-        let usable = cmdlineTools(in: sdk, list: list, read: read)
-            .filter { !maxCmdlineTools.lexicographicallyPrecedes($0.rev) && exists(bin($0.dir)) }
-        if usable.contains(where: { $0.dir == "latest" }) { return bin("latest") }
-        return usable.max { $0.rev.lexicographicallyPrecedes($1.rev) }.map { bin($0.dir) }
+        sdkmanagerTool(in: sdk, exists: exists, list: list, read: read)?.path
     }
 
-    /// The highest cmdline-tools revision in the SDK that Collie refuses to run (21+), as `23.0`; nil when none.
-    public static func unsupportedCmdlineTools(
-        in sdk: String,
-        list: (String) -> [String] = { (try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? [] },
-        read: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }
-    ) -> String? {
-        cmdlineTools(in: sdk, list: list, read: read).map(\.rev).filter { maxCmdlineTools.lexicographicallyPrecedes($0) }
-            .max { $0.lexicographicallyPrecedes($1) }.map { $0.map(String.init).joined(separator: ".") }
-    }
-
-    /// `system-images;android-N;google_apis;arm64-v8a` rows of `sdkmanager --list` (first column), deduplicated.
+    /// `system-images;android-N;google_apis;arm64-v8a` rows of `sdkmanager --list` (first column), deduplicated. Reads
+    /// the classic table (`id | ver | desc`) and the android CLI's (`system-images/android-N/...   ver   desc`, slashes
+    /// normalized to `;`, the form both install).
     public static func parseImages(_ listOutput: String) -> [String] {
         var seen = Set<String>()
         var out: [String] = []
         for line in listOutput.split(separator: "\n") {
-            let id = line.split(separator: "|", omittingEmptySubsequences: false).first
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            let first = line.split(separator: "|", omittingEmptySubsequences: false).first?
+                .split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+            let id = first.hasPrefix("system-images/") ? first.replacingOccurrences(of: "/", with: ";") : first
             let c = id.split(separator: ";").map(String.init)
             if c.count == 4, c[0] == "system-images", c[1].hasPrefix("android-"), c[2] == "google_apis",
                c[3] == "arm64-v8a", seen.insert(id).inserted { out.append(id) }

@@ -53,14 +53,26 @@ import Foundation
         #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([named, v9]), list: { _ in ["beta", "9.0"] }, read: read) == named)
     }
 
-    @Test func sdkmanagerSkipsCmdlineTools21AndUp() {
+    @Test func sdkmanagerPolicyClassicThen23ThenUnknown() {
         let latest = "/s/cmdline-tools/latest/bin/sdkmanager", v20 = "/s/cmdline-tools/20.0/bin/sdkmanager"
-        let list: (String) -> [String] = { _ in ["latest", "20.0"] }
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest]), list: list, read: props(["latest": "23.0"])) == nil)
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest]), list: list, read: props(["latest": "20.1"])) == nil)
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest]), list: list, read: props(["latest": "20.0.1"])) == latest)
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest, v20]), list: list,
-                                      read: props(["latest": "23.0", "20.0": "20.0"])) == v20)
+        let v19 = "/s/cmdline-tools/19.0/bin/sdkmanager", v22 = "/s/cmdline-tools/22.0/bin/sdkmanager"
+        let list: (String) -> [String] = { _ in ["latest", "20.0", "19.0", "22.0"] }
+        func pick(_ e: Set<String>, _ rev: [String: String]) -> (path: String, kind: AndroidSdk.SdkManagerKind)? {
+            AndroidSdk.sdkmanagerTool(in: "/s", exists: fs(e), list: list, read: props(rev))
+        }
+        // a classic latest <= 20 wins over a higher numbered classic
+        #expect(pick([latest, v20], ["latest": "19.0", "20.0": "20.0"])! == (latest, .classic))
+        // classic beats 23.0 and unknown, wherever they are
+        #expect(pick([latest, v19, v22], ["latest": "23.0", "19.0": "19.0", "22.0": "22.0"])! == (v19, .classic))
+        #expect(pick([latest], ["latest": "20.0.1"])! == (latest, .classic))
+        // 23.0 (patch ignored) is allowed, as the android CLI; it beats an unknown
+        #expect(pick([latest, v22], ["latest": "23.0", "22.0": "22.0"])! == (latest, .androidCli))
+        #expect(pick([latest], ["latest": "23.0.4"])! == (latest, .androidCli))
+        // anything else is unknown
+        #expect(pick([v22], ["22.0": "22.0"])! == (v22, .unknown("22.0")))
+        #expect(pick([latest], ["latest": "20.1"])! == (latest, .unknown("20.1")))
+        #expect(pick([latest], ["latest": "23.1"])! == (latest, .unknown("23.1")))
+        #expect(pick([latest], ["latest": "24.0"])! == (latest, .unknown("24.0")))
         #expect(AndroidSdk.cmdlineToolsRevision("Pkg.Revision=23.0\n") == [23, 0])
         #expect(AndroidSdk.cmdlineToolsRevision("Pkg.Revision=19\n") == [19, 0])
         #expect(AndroidSdk.cmdlineToolsRevision("Pkg.Revision=abc\n") == nil)
@@ -96,6 +108,26 @@ import Foundation
             "system-images;android-35;google_apis;arm64-v8a",
             "system-images;android-37.0;google_apis;arm64-v8a",
             "system-images;android-CinnamonBun;google_apis;arm64-v8a",
+        ])
+    }
+
+    /// Real `sdkmanager --list` of cmdline-tools 23.0 (android CLI): no `|`, slash paths, whitespace columns.
+    private let listing23 = """
+    Installed packages:
+      platform-tools                                                                          37.0.1                 Android SDK Platform-Tools
+    Available packages:
+      add-ons/addon-google_apis-google-10                                                     2.0.0                  Google APIs
+      system-images/android-36-ext18/google_apis/arm64-v8a                                    1.0.0                  Google APIs ARM 64 v8a System Image
+      system-images/android-36-ext18/google_apis/x86_64                                       1.0.0                  Google APIs Intel x86_64 Atom System Image
+      system-images/android-36-ext18/google_apis_playstore/arm64-v8a                          1.0.0                  Google Play ARM 64 v8a System Image
+      system-images/android-36-ext19/google_apis/arm64-v8a                                    1.0.0                  Google APIs ARM 64 v8a System Image
+      system-images/android-36-ext19/google_apis/x86_64                                       1.0.0                  Google APIs Intel x86_64 Atom System Image
+    """
+
+    @Test func parseImagesReadsTheAndroidCliFormat() {
+        #expect(AndroidSdk.parseImages(listing23) == [
+            "system-images;android-36-ext18;google_apis;arm64-v8a",
+            "system-images;android-36-ext19;google_apis;arm64-v8a",
         ])
     }
 

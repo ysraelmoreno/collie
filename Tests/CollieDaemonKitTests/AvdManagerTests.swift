@@ -10,7 +10,7 @@ private func tmpScript(_ rel: String, _ body: String = "") throws -> URL {
     try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
     try "#!/bin/sh\n\(body)\n".write(to: f, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f.path)
-    if rel.contains("cmdline-tools/") {   // a real cmdline-tools dir has its revision; 21+ is never used
+    if rel.contains("cmdline-tools/") {   // a real cmdline-tools dir has its revision
         try "Pkg.Revision=20.0\n".write(to: f.deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("source.properties"), atomically: true, encoding: .utf8)
     }
@@ -88,12 +88,13 @@ private func tmpScript(_ rel: String, _ body: String = "") throws -> URL {
                 == sdk.appendingPathComponent("cmdline-tools/19.0/bin/avdmanager").path)
     }
 
-    @Test func avdmanagerSkipsALatest23ForA20Beside() throws {
+    @Test func avdmanagerUsesALatest23UnlessAClassicIsBeside() throws {
         let sdk = try tmpScript("cmdline-tools/latest/bin/avdmanager")
         try "Pkg.Revision=23.0\n".write(to: sdk.appendingPathComponent("cmdline-tools/latest/source.properties"), atomically: true, encoding: .utf8)
         let java = try tmpScript("bin/java")
         let env = ["ANDROID_HOME": sdk.path, "COLLIE_JAVA_HOME": java.path]
-        #expect(AvdManager.locate(env: env, home: "/nonexistent", javaCandidates: []) == nil)
+        #expect(AvdManager.locate(env: env, home: "/nonexistent", javaCandidates: [])?.url.path
+                == sdk.appendingPathComponent("cmdline-tools/latest/bin/avdmanager").path)
         let v20 = sdk.appendingPathComponent("cmdline-tools/20.0")
         try FileManager.default.copyItem(at: sdk.appendingPathComponent("cmdline-tools/latest"), to: v20)
         try "Pkg.Revision=20.0\n".write(to: v20.appendingPathComponent("source.properties"), atomically: true, encoding: .utf8)

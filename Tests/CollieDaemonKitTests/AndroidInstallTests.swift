@@ -10,13 +10,14 @@ private var fm: FileManager { .default }
 /// `<sdk>/licenses/android-sdk-license` exists), a package prints progress with `\r`, then creates what it would install.
 /// Control files beside it: `sleep` (sleep 30 first, pid in `pid`), `fail` (exit 1), `direct` (`--licenses` asks
 /// `Accept?` with no "Review" question; "y" writes the license file), `autoaccept` (`--licenses` writes it unasked),
-/// `licsleep` (`--licenses` sleeps 2 s first, pid in `pid`), `mkdirlic` (`--licenses` creates an empty `licenses/`).
-/// Every call is appended to `calls`.
+/// `licsleep` (`--licenses` sleeps 2 s first, pid in `pid`), `mkdirlic` (`--licenses` creates an empty `licenses/`),
+/// `selfaccept` (a package install writes the license itself, like 23.0). Every call is appended to `calls`, its
+/// `HOME|ANDROID_USER_HOME` to `envs`.
 private let fakeSdkmanager = #"""
 #!/bin/sh
 d=$(dirname "$0"); sdk=""; pkg=""; mode=install
 for a in "$@"; do case "$a" in --sdk_root=*) sdk="${a#--sdk_root=}";; --list) mode=list;; --licenses) mode=licenses;; *) pkg="$a";; esac; done
-echo "$*" >> "$d/calls"
+echo "$*" >> "$d/calls"; echo "$HOME|$ANDROID_USER_HOME" >> "$d/envs"
 if [ $mode = list ]; then cat "$d/list"; exit 0; fi
 if [ $mode = licenses ]; then
   if [ -f "$sdk/licenses/android-sdk-license" ]; then echo "All SDK package licenses accepted."; exit 0; fi
@@ -34,6 +35,7 @@ if [ $mode = licenses ]; then
 fi
 if [ -f "$d/sleep" ]; then echo $$ > "$d/pid"; sleep 30; fi
 if [ -f "$d/fail" ]; then echo "Error: No space left on device"; exit 1; fi
+if [ -f "$d/selfaccept" ]; then mkdir -p "$sdk/licenses"; echo x > "$sdk/licenses/android-sdk-license"; fi
 [ -f "$sdk/licenses/android-sdk-license" ] || { echo "Skipping $pkg: license not accepted"; exit 0; }
 printf '[====    ] 45%% Downloading %s...\r[========] 100%% Unzipping...\n' "$pkg"
 case "$pkg" in
@@ -64,14 +66,18 @@ private struct Fixture {
             .split(separator: "\n").map(String.init)
     }
 
-    init() throws {
+    var envs: [String] {
+        ((try? String(contentsOf: bin.appendingPathComponent("envs"), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    init(rev: String = "20.0") throws {
         home = fm.temporaryDirectory.appendingPathComponent("collie-inst-\(UUID().uuidString)")
         sdk = home.appendingPathComponent("sdk")
         bin = sdk.appendingPathComponent("cmdline-tools/latest/bin")
         try fm.createDirectory(at: bin, withIntermediateDirectories: true)
         try fakeSdkmanager.write(to: bin.appendingPathComponent("sdkmanager"), atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("sdkmanager").path)
-        try "Pkg.Revision=20.0\n".write(to: bin.deletingLastPathComponent().appendingPathComponent("source.properties"), atomically: true, encoding: .utf8)
+        try "Pkg.Revision=\(rev)\n".write(to: bin.deletingLastPathComponent().appendingPathComponent("source.properties"), atomically: true, encoding: .utf8)
         try listOutput.write(to: bin.appendingPathComponent("list"), atomically: true, encoding: .utf8)
         let java = home.appendingPathComponent("java/bin/java")
         try fm.createDirectory(at: java.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -89,8 +95,9 @@ private struct Fixture {
     }
 
     func installer(java: Bool = true, free: Int64? = 1 << 40, others: String? = nil,
-                   othersRunning: (@Sendable (Bool) async -> String?)? = nil, studioSdk: Bool = false) -> AndroidInstaller {
-        var env = ["COLLIE_ANDROID_SDK": studioSdk ? home.appendingPathComponent("Library/Android/sdk").path : sdk.path, "ANDROID_AVD_HOME": home.appendingPathComponent("avd").path]
+                   othersRunning: (@Sendable (Bool) async -> String?)? = nil, studioSdk: Bool = false,
+                   sdkPath: String? = nil) -> AndroidInstaller {
+        var env = ["COLLIE_ANDROID_SDK": sdkPath ?? (studioSdk ? home.appendingPathComponent("Library/Android/sdk").path : sdk.path), "ANDROID_AVD_HOME": home.appendingPathComponent("avd").path]
         if java { env["COLLIE_JAVA_HOME"] = home.appendingPathComponent("java").path }
         return AndroidInstaller(root: home, env: env, home: home.path,
                                 runDir: home.appendingPathComponent("run"), fetch: { url, _, _ in throw ProtocolError(code: .notFound, message: "no network: \(url)") },
@@ -278,6 +285,36 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         #expect(await code { try await f.installer(others: "Android Studio").install(accept: ["android-sdk-license"]) } != .conflict)
         #expect(AndroidInstaller.blocksForStudio(sdk: "/h/Library/Android/sdk/", home: "/h"))
         #expect(!AndroidInstaller.blocksForStudio(sdk: "/tmp/x/sdk", home: "/h"))
+    }
+
+    /// cmdline-tools 23.0 (android CLI): no license list, the Install click is the acceptance; what it writes in
+    /// `<sdk>/licenses/` stays.
+    @Test func androidCliInstallsWithoutLicenses() async throws {
+        let f = try Fixture(rev: "23.0")
+        try f.control("selfaccept")
+        let inst = f.installer()
+        #expect(try await inst.licenses().isEmpty)
+        #expect(await inst.status().needs == "ready")
+        try await inst.install(accept: [])
+        #expect(!f.calls.contains { $0.contains("--licenses") })
+        #expect(try String(contentsOf: f.sdk.appendingPathComponent("licenses/android-sdk-license"), encoding: .utf8) == "x\n")
+        let st = await inst.status()
+        #expect(st.items.allSatisfy { $0.state == "ok" } && st.needs == "ready" && st.job?.phase == "done")
+    }
+
+    /// Every `sdkmanager` run: temp HOME = ANDROID_USER_HOME (gone after the job), `--sdk_root` without `..`.
+    @Test func everySdkmanagerRunIsIsolated() async throws {
+        let f = try Fixture()
+        try fm.createDirectory(at: f.home.appendingPathComponent("x"), withIntermediateDirectories: true)
+        let dotted = f.home.path + "/x/../sdk"
+        try await f.installer(sdkPath: dotted).install(accept: ["android-sdk-license"])
+        let root = "--sdk_root=\(AndroidInstaller.sdkRoot(f.sdk.path))"
+        #expect(!root.contains(".."))
+        #expect(f.calls.count == 5 && f.calls.allSatisfy { $0.contains(root) && !$0.contains("..") })
+        #expect(f.envs.count == 5 && f.envs.allSatisfy { $0 == "\(dotted)/.collie-staging/home|\(dotted)/.collie-staging/home" })
+        #expect(!fm.fileExists(atPath: f.sdk.appendingPathComponent(".collie-staging").path))
+        #expect(AndroidInstaller.tail("WARNING: The SDK Manager CLI tool (sdkmanager) is deprecated. Android CLI will be used instead.\nboom")
+                == "boom")
     }
 
     @Test func alreadyAcceptedLicensesSkipTheStep() async throws {

@@ -34,6 +34,8 @@ actor AndroidInstaller {
     var cancelRequested = false
     /// What the last `sdkmanager --licenses` printed (`nil`: not asked yet).
     var known: [(id: String, title: String, text: String)]?
+    /// Probe answers per unknown cmdline-tools revision: `true` when it accepted licenses by itself (blocked).
+    var probed: [String: Bool] = [:]
 
     init(root: URL, env: [String: String], home: String, runDir: URL, fetch: @escaping AndroidFetch = AndroidDownload.fetch,
          runner: @escaping AndroidRunner = AndroidInstaller.run, isAppleSilicon: Bool = AndroidInstaller.appleSilicon,
@@ -86,7 +88,7 @@ actor AndroidInstaller {
                 let file = try await download(tools, staging.appendingPathComponent("cmdline-tools.zip"), "cmdline-tools", progress)
                 let out = staging.appendingPathComponent("unzip")
                 try await runner("/usr/bin/ditto", ["-x", "-k", file.path, out.path], staging)
-                // an unusable `latest` (e.g. Studio's 23.0) is never touched: 20.0 goes beside it
+                // an unusable `latest` (no revision or no sdkmanager) is never touched: 20.0 goes beside it
                 let dir = fm.fileExists(atPath: "\(sdk)/cmdline-tools/latest") ? "cmdline-tools/20.0" : "cmdline-tools/latest"
                 try place(out.appendingPathComponent("cmdline-tools"), at: URL(fileURLWithPath: sdk).appendingPathComponent(dir),
                           check: "bin/sdkmanager")
@@ -203,12 +205,57 @@ extension AndroidInstaller {
                            exists: { FileManager.default.fileExists(atPath: $0) })
     }
     private var java: String? { AvdManager.javaHome(env: env, home: home, javaCandidates: javaCandidates) }
+    private func sdkmanagerTool(_ sdk: String) -> (path: String, kind: AndroidSdk.SdkManagerKind)? {
+        AndroidSdk.sdkmanagerTool(in: sdk, exists: { FileManager.default.isExecutableFile(atPath: $0) })
+    }
+    /// `nil` also when the probe blocked it.
     private func sdkmanagerPath(_ sdk: String) -> String? {
-        AndroidSdk.sdkmanager(in: sdk, exists: { FileManager.default.isExecutableFile(atPath: $0) })
+        guard let t = sdkmanagerTool(sdk) else { return nil }
+        if case .unknown(let rev) = t.kind, probed[rev] == true { return nil }
+        return t.path
     }
 
-    private func unsupportedNote(_ sdk: String) -> String {
-        AndroidSdk.unsupportedCmdlineTools(in: sdk).map { "cmdline-tools \($0) not supported (android CLI); installs 20.0 beside it" } ?? ""
+    static func selfAccepts(_ rev: String) -> ProtocolError {
+        ProtocolError(code: .unavailable, message: "cmdline-tools \(rev) accepts the Android SDK licenses by itself; "
+                      + "not supported: install cmdline-tools 20.0 or 23.0")
+    }
+
+    /// The `sdkmanager` to run, `cli` for the android CLI (23.0). An unknown revision is probed once per daemon:
+    /// it blocks (`selfAccepts`) when it accepts licenses by itself, else it runs as a classic.
+    private func tool(_ sdk: String) async throws(ProtocolError) -> (path: String, cli: Bool) {
+        guard let t = sdkmanagerTool(sdk), java != nil else { throw Self.notReady }
+        guard case .unknown(let rev) = t.kind else { return (t.path, t.kind == .androidCli) }
+        if probed[rev] == nil { probed[rev] = try await probe(t.path, sdk) }
+        if probed[rev] == true { throw Self.selfAccepts(rev) }
+        return (t.path, false)
+    }
+
+    /// Runs `sm --sdk_root=<empty tmp sdk> platform-tools` (own temp HOME) and answers whether it created `licenses/`
+    /// without being asked. A probe that cannot finish (timeout, cannot start) counts as accepting: blocked.
+    private func probe(_ sm: String, _ sdk: String) async throws(ProtocolError) -> Bool {
+        let dir = URL(fileURLWithPath: sdk).appendingPathComponent(".collie-staging/probe")
+        let fm = FileManager.default
+        try? fm.removeItem(at: dir)
+        defer { try? fm.removeItem(at: dir); rmdir(dir.deletingLastPathComponent().path) }
+        let tmpSdk = dir.appendingPathComponent("sdk")
+        do { try fm.createDirectory(at: tmpSdk, withIntermediateDirectories: true) }
+        catch { throw ProtocolError(code: .unavailable, message: "cannot create \(tmpSdk.path): \(error.localizedDescription)") }
+        do throws(ProtocolError) {
+            _ = try await sdkmanager(sm, ["--sdk_root=\(Self.sdkRoot(tmpSdk.path))", "platform-tools"], item: nil,
+                                     timeout: .seconds(300), home: dir.appendingPathComponent("home"))
+        } catch where error == Self.cancelled { throw error } catch { return true }
+        return fm.fileExists(atPath: tmpSdk.appendingPathComponent("licenses").path)
+    }
+
+    /// `--sdk_root`'s value: symlinks and `..` resolved (23.0 refuses to unzip into a root holding `..`).
+    static func sdkRoot(_ sdk: String) -> String { URL(fileURLWithPath: sdk).resolvingSymlinksInPath().standardizedFileURL.path }
+
+    /// The temp `HOME` / `ANDROID_USER_HOME` of a job's `sdkmanager` runs (20.0 writes `~/.android/cache`, 23.0
+    /// `~/.android/bin/android-cli`); removed when the job ends and at daemon start.
+    private func jobHome(_ sdk: String) -> URL { URL(fileURLWithPath: sdk).appendingPathComponent(".collie-staging/home") }
+    private func removeJobHome(_ sdk: String) {
+        try? FileManager.default.removeItem(at: jobHome(sdk))
+        rmdir(jobHome(sdk).deletingLastPathComponent().path)   // `.collie-staging` too, only if empty
     }
 
     /// The spec's items in install order, with where each is (`nil`: missing).
@@ -223,14 +270,21 @@ extension AndroidInstaller {
     func status() -> AndroidStatus {
         let sdk = sdk, found = items(sdk.path)
         let prepared = found.prefix(2).allSatisfy { $0.at != nil }
-        let noPending = known.map { withAccepted(sdk.path, $0).allSatisfy(\.accepted) } ?? false
+        // the android CLI has no license list: the Install click is the acceptance
+        let noPending = sdkmanagerTool(sdk.path)?.kind == .androidCli
+            || known.map { withAccepted(sdk.path, $0).allSatisfy(\.accepted) } ?? false
         let needs = !prepared ? "needsPrepare" : found.allSatisfy({ $0.at != nil }) || noPending ? "ready" : "needsLicense"
         let lite = (env["ANDROID_AVD_HOME"] ?? "\(home)/.android/avd") + "/\(LiteAvd.name).avd/config.ini"
         return AndroidStatus(
             sdk: .init(path: sdk.path, source: sdk.source),
             items: found.map { .init(id: $0.id, state: $0.at != nil ? "ok" : running && job?.item == $0.id ? "installing" : "missing",
-                                     detail: $0.at ?? ($0.id == "cmdline-tools" ? unsupportedNote(sdk.path) : "")) },
+                                     detail: $0.at ?? ($0.id == "cmdline-tools" ? blockedNote(sdk.path) : "")) },
             needs: needs, job: job, lite: FileManager.default.fileExists(atPath: lite))
+    }
+
+    private func blockedNote(_ sdk: String) -> String {
+        guard case .unknown(let rev) = sdkmanagerTool(sdk)?.kind, probed[rev] == true else { return "" }
+        return Self.selfAccepts(rev).message
     }
 
     /// The licenses `sdkmanager --licenses` prints (the ones it considers not accepted), `accepted` read from
@@ -242,18 +296,21 @@ extension AndroidInstaller {
             return withAccepted(sdk.path, known)
         }
         running = true   // before any await, like `begin`
-        defer { running = false }
+        let sdk = sdk.path
+        defer { running = false; removeJobHome(sdk) }
         return try await readLicenses()
     }
 
     /// Never accepts anything: answers `y` only to "Review licenses?" and `n` to each `Accept?`, and if
-    /// `<sdk>/licenses/` changed anyway, restores it exactly and fails.
+    /// `<sdk>/licenses/` changed anyway, restores it exactly and fails. The android CLI has none to show: `[]`.
     private func readLicenses() async throws(ProtocolError) -> [License] {
         let sdk = sdk.path
-        guard let sm = sdkmanagerPath(sdk), java != nil else { throw Self.notReady }
+        let (sm, cli) = try await tool(sdk)
+        if cli { known = []; return [] }
         let dir = URL(fileURLWithPath: sdk).appendingPathComponent("licenses")
         let before = Self.snapshot(dir)
-        let r = try await sdkmanager(sm, ["--licenses", "--sdk_root=\(sdk)"], item: nil, answers: true, timeout: .seconds(300))
+        let r = try await sdkmanager(sm, ["--licenses", "--sdk_root=\(Self.sdkRoot(sdk))"], item: nil, answers: true,
+                                     timeout: .seconds(300), home: jobHome(sdk))
         if Self.snapshot(dir) != before {
             let failed = Self.restore(dir, before)
             throw ProtocolError(code: .internal, message: "sdkmanager --licenses changed \(dir.path) without consent; "
@@ -307,17 +364,19 @@ extension AndroidInstaller {
     }
 
     private func run(_ ids: [String]) async throws {
-        defer { running = false; work = nil; process = nil }
+        let sdk = sdk.path   // one SDK for the whole job
+        defer { running = false; work = nil; process = nil; removeJobHome(sdk) }
         do {
-            let sdk = sdk.path   // one SDK for the whole job
             let prepares = sdkmanagerPath(sdk) == nil || java == nil
             try await prepare(progress: { item, bytes, total in Task { await self.downloaded(item, bytes, total) } })
             try Task.checkCancellation()
-            guard let sm = sdkmanagerPath(sdk) else { throw Self.notReady }
+            let (sm, _) = try await tool(sdk)
+            let root = Self.sdkRoot(sdk)
             let missing = items(sdk).filter { $0.at == nil && Self.estimates[$0.id] != nil }.map(\.id)
             guard !missing.isEmpty else { job = .init(phase: "done", percent: 100); return }
 
             job = .init(phase: "install")
+            // android CLI: `[]`, the Install click is the acceptance (it writes `<sdk>/licenses/` itself)
             let pending = try await readLicenses().filter { !$0.accepted }
             if !pending.allSatisfy({ ids.contains($0.id) }) {
                 if prepares && ids.isEmpty { job = .init(phase: "done"); return }   // phase 1 only; the licenses are known now
@@ -333,13 +392,13 @@ extension AndroidInstaller {
                 job = .init(phase: "install", item: id, percent: 0)
                 var pkg = id
                 if id == "image" {
-                    let r = try await sdkmanager(sm, ["--list", "--sdk_root=\(sdk)"], item: nil, timeout: .seconds(300))
+                    let r = try await sdkmanager(sm, ["--list", "--sdk_root=\(root)"], item: nil, timeout: .seconds(300), home: jobHome(sdk))
                     guard r.status == 0, let p = AndroidSdk.pickLatestStable(AndroidSdk.parseImages(r.output)) else {
                         throw ProtocolError(code: .unavailable, message: "no stable google_apis arm64-v8a image in sdkmanager --list: \(Self.tail(r.output))")
                     }
                     pkg = p
                 }
-                let r = try await sdkmanager(sm, ["--sdk_root=\(sdk)", pkg], item: id, timeout: .seconds(3600))
+                let r = try await sdkmanager(sm, ["--sdk_root=\(root)", pkg], item: id, timeout: .seconds(3600), home: jobHome(sdk))
                 // sdkmanager can exit 0 having skipped a package whose license it does not see as accepted
                 guard r.status == 0, items(sdk).first(where: { $0.id == id })?.at != nil else {
                     throw ProtocolError(code: .unavailable, message: "\(pkg): " + (r.status == 0
@@ -360,18 +419,22 @@ extension AndroidInstaller {
         job = .init(phase: "prepare", item: item, percent: total > 0 ? Int(bytes * 100 / total) : nil, bytes: bytes, total: total)
     }
 
-    /// Runs `sdkmanager args` through `/bin/sh` (stderr into stdout) in its own process group, `JAVA_HOME` set.
+    /// Runs `sdkmanager args` through `/bin/sh` (stderr into stdout) in its own process group, `JAVA_HOME` set and
+    /// `HOME` / `ANDROID_USER_HOME` the temp `home` (created here), so nothing lands in `~/.android`.
     /// `answers`: stdin is a pipe answered as the prompts appear: `y` to "Review licenses?" (show them), `n` to every
     /// `Accept?`; otherwise stdin is `/dev/null`. `item`: progress lines update `job.percent`. Killed by `cancel` or
     /// past `timeout` (`.timeout`).
-    private func sdkmanager(_ sm: String, _ args: [String], item: String?, answers: Bool = false, timeout: Duration)
+    private func sdkmanager(_ sm: String, _ args: [String], item: String?, answers: Bool = false, timeout: Duration, home: URL)
         async throws(ProtocolError) -> (status: Int32, output: String) {
         guard let java else { throw Self.notReady }
         if Task.isCancelled { throw Self.cancelled }
+        do { try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true) }
+        catch { throw ProtocolError(code: .unavailable, message: "cannot create \(home.path): \(error.localizedDescription)") }
         enum Event: Sendable { case data(Data), exit(Int32) }
         let (events, sink) = AsyncStream<Event>.makeStream()
         let p = try LongProcess(executable: URL(fileURLWithPath: "/bin/sh"), args: ["-c", #"exec "$0" "$@" 2>&1"#, sm] + args,
-                                env: ["PATH": "/usr/bin:/bin", "JAVA_HOME": java, "HOME": home], runDir: runDir, stdin: answers,
+                                env: ["PATH": "/usr/bin:/bin", "JAVA_HOME": java, "HOME": home.path, "ANDROID_USER_HOME": home.path],
+                                runDir: runDir, stdin: answers,
                                 onData: { sink.yield(.data($0)) }, onExit: { sink.yield(.exit($0)); sink.finish() })
         process = p
         let timer = Task { () -> Bool in
@@ -456,10 +519,11 @@ extension AndroidInstaller {
             .replacingOccurrences(of: "(?m)(^|[0-9]+/[0-9]+: )(License [A-Za-z0-9._-]+:)[ \\t]*$", with: "\n$2", options: .regularExpression)
     }
 
-    /// The last lines of an output, for an error message.
+    /// The last lines of an output, for an error message, without 23.0's deprecation warning.
     static func tail(_ s: String) -> String {
         s.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }.suffix(3).joined(separator: " | ")
+            .filter { !$0.isEmpty && !$0.hasPrefix("WARNING: The SDK Manager CLI tool (sdkmanager) is deprecated") }
+            .suffix(3).joined(separator: " | ")
     }
 
     /// Android Studio only blocks an install into its own SDK (`<home>/Library/Android/sdk`).

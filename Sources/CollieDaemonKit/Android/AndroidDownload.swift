@@ -45,14 +45,18 @@ enum AndroidDownload {
         guard got == checksum.lowercased() else { throw fail("checksum mismatch for \(file.lastPathComponent)") }
     }
 
-    /// The newest stable (channel-0, not obsolete) `cmdline-tools;*` package's macOS archive in Google's
-    /// `repository2-*.xml`. The catalog publishes sha1 (sha256 when present wins).
+    /// Newest cmdline-tools revision Collie accepts. 21+ (23.0) ships `sdkmanager` as a deprecated wrapper over the new
+    /// `android` CLI: it ignores `--licenses`, crashes installing platform-tools and writes to ~/.android.
+    static let maxCmdlineTools = [20, 0]
+
+    /// The newest stable (channel-0, not obsolete, `cmdline-tools;<version>` no `latest`/alpha) package up to
+    /// `maxCmdlineTools`, its macOS archive in Google's `repository2-*.xml`. The catalog publishes sha1 (sha256 when present wins).
     static func cmdlineTools(catalog: Data) throws(ProtocolError) -> Archive {
         let p = CatalogParser()
         let x = XMLParser(data: catalog)
         x.delegate = p
         guard x.parse() else { throw ProtocolError(code: .unavailable, message: "the Android repository catalog is not valid XML") }
-        let best = p.packages.filter { $0.path.hasPrefix("cmdline-tools;") && !$0.obsolete && ["", "channel-0"].contains($0.channel) }
+        let best = p.packages.filter { $0.path.hasPrefix("cmdline-tools;") && !$0.obsolete && ["", "channel-0"].contains($0.channel) && !maxCmdlineTools.lexicographicallyPrecedes($0.revision) }
             .compactMap { pkg in pkg.archives.first.map { (pkg.revision, $0) } }
             .max { $0.0.lexicographicallyPrecedes($1.0) }
         guard let a = best?.1 else { throw ProtocolError(code: .unavailable, message: "no macOS cmdline-tools in the Android repository catalog") }

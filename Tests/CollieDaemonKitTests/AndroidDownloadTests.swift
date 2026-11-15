@@ -56,6 +56,26 @@ func androidHex<D: Digest>(_ d: D) -> String { d.map { String(format: "%02x", $0
               <archive><complete><size>164</size><checksum type="sha1">cc</checksum><url>commandlinetools-mac-19_latest.zip</url></complete><host-os>macosx</host-os></archive>
             </archives>
           </remotePackage>
+          <remotePackage path="cmdline-tools;20.0">
+            <revision><major>20</major><minor>0</minor></revision>
+            <channelRef ref="channel-0"/>
+            <archives><archive><complete><size>7</size><checksum type="sha1">zz</checksum><url>commandlinetools-mac-20_latest.zip</url></complete><host-os>macosx</host-os></archive></archives>
+          </remotePackage>
+          <remotePackage path="cmdline-tools;23.0">
+            <revision><major>23</major><minor>0</minor></revision>
+            <channelRef ref="channel-0"/>
+            <archives><archive><complete><size>7</size><checksum type="sha1">zz</checksum><url>mac-23.zip</url></complete><host-os>macosx</host-os></archive></archives>
+          </remotePackage>
+          <remotePackage path="cmdline-tools;latest">
+            <revision><major>23</major><minor>0</minor></revision>
+            <channelRef ref="channel-0"/>
+            <archives><archive><complete><size>7</size><checksum type="sha1">zz</checksum><url>mac-latest.zip</url></complete><host-os>macosx</host-os></archive></archives>
+          </remotePackage>
+          <remotePackage path="cmdline-tools;19.0-alpha01">
+            <revision><major>19</major><minor>0</minor><preview>1</preview></revision>
+            <channelRef ref="channel-3"/>
+            <archives><archive><complete><size>7</size><checksum type="sha1">zz</checksum><url>mac-alpha.zip</url></complete><host-os>macosx</host-os></archive></archives>
+          </remotePackage>
           <remotePackage path="cmdline-tools;20.0-alpha01">
             <revision><major>20</major><minor>0</minor><preview>1</preview></revision>
             <channelRef ref="channel-3"/>
@@ -73,8 +93,8 @@ func androidHex<D: Digest>(_ d: D) -> String { d.map { String(format: "%02x", $0
         </sdk:sdk-repository>
         """
         let a = try AndroidDownload.cmdlineTools(catalog: Data(xml.utf8))
-        #expect(a.url.absoluteString == "https://dl.google.com/android/repository/commandlinetools-mac-19_latest.zip")
-        #expect(a.size == 164 && a.checksum == "cc" && a.type == "sha1")
+        #expect(a.url.absoluteString == "https://dl.google.com/android/repository/commandlinetools-mac-20_latest.zip")
+        #expect(a.size == 7 && a.checksum == "zz" && a.type == "sha1")
         #expect(throws: ProtocolError.self) { try AndroidDownload.cmdlineTools(catalog: Data("<sdk-repository/>".utf8)) }
     }
 

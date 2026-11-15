@@ -141,3 +141,5 @@ Formatos reais conferidos:
 Limites vistos:
 - O JDK próprio baixou (199,7 MB), conferiu e extraiu, mas mover para `~/Library/Application Support/Collie/jdk` deu EPERM a partir do terminal: o macOS protege a pasta de dados do app instalado. O `collied` de dentro do `Collie.app` é dono dela; o E2E seguiu com o JDK do Studio. O staging foi limpo na falha.
 - O `sdkmanager` 20 regrava o cache de catálogo em `~/.android/cache` (arquivos que já existiam), ignorando `ANDROID_USER_HOME`.
+- Baixar o JDK quando o `sdkmanager` falha por versão de classe (Java antigo demais) ainda não está implementado (lacuna conhecida).
+- `cmdline-tools` 21+ (o `latest` 23.0 do Studio, wrapper do CLI `android`) nunca roda: só conta um dir com `source.properties` `Pkg.Revision` ≤ 20.0; sem nenhum, a fase 1 instala o 20.0 em `cmdline-tools/20.0` ao lado do `latest` existente, sem tocá-lo.

@@ -25,18 +25,47 @@ public enum AndroidSdk {
         return (colliePath, "collie")
     }
 
-    /// Prefers `cmdline-tools/latest`, else the highest numbered `cmdline-tools/<version>`.
+    /// Newest cmdline-tools revision Collie runs. 21+ (23.0) ships `sdkmanager` as a deprecated wrapper over the new
+    /// `android` CLI: it ignores `--licenses`, crashes installing platform-tools and writes to ~/.android.
+    public static let maxCmdlineTools = [20, 0]
+
+    /// major.minor of `Pkg.Revision=` in a cmdline-tools `source.properties` (`23.0` -> [23, 0]); nil when absent or not a number.
+    public static func cmdlineToolsRevision(_ properties: String) -> [Int]? {
+        guard let line = properties.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix("Pkg.Revision=") }) else { return nil }
+        let parts = line.dropFirst("Pkg.Revision=".count).trimmingCharacters(in: .whitespaces).split(separator: ".")
+            .prefix(2).map { Int($0.prefix { $0.isNumber }) }
+        guard let major = parts.first ?? nil else { return nil }
+        return [major, parts.count > 1 ? parts[1] ?? 0 : 0]
+    }
+
+    /// Each `cmdline-tools/<dir>` with its revision (dirs without a readable one left out).
+    static func cmdlineTools(in sdk: String, list: (String) -> [String], read: (String) -> String?) -> [(dir: String, rev: [Int])] {
+        let root = "\(sdk)/cmdline-tools"
+        return Set(list(root) + ["latest"]).compactMap { v in read("\(root)/\(v)/source.properties").flatMap(cmdlineToolsRevision).map { (v, $0) } }
+    }
+
+    /// Only a dir whose `source.properties` revision is at most `maxCmdlineTools` counts. Prefers `cmdline-tools/latest`,
+    /// else the highest revision.
     public static func sdkmanager(
         in sdk: String, exists: (String) -> Bool,
-        list: (String) -> [String] = { (try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? [] }
+        list: (String) -> [String] = { (try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? [] },
+        read: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }
     ) -> String? {
-        let root = "\(sdk)/cmdline-tools"
-        func bin(_ v: String) -> String { "\(root)/\(v)/bin/sdkmanager" }
-        if exists(bin("latest")) { return bin("latest") }
-        let names = list(root).filter { $0 != "latest" }
-        let numeric = names.compactMap { v in Double(v).map { (v, $0) } }.sorted { $0.1 > $1.1 }.map(\.0)
-        let rest = names.filter { Double($0) == nil }.sorted { $0.compare($1, options: .numeric) == .orderedAscending }
-        return (numeric + rest).map(bin).first(where: exists)
+        func bin(_ v: String) -> String { "\(sdk)/cmdline-tools/\(v)/bin/sdkmanager" }
+        let usable = cmdlineTools(in: sdk, list: list, read: read)
+            .filter { !maxCmdlineTools.lexicographicallyPrecedes($0.rev) && exists(bin($0.dir)) }
+        if usable.contains(where: { $0.dir == "latest" }) { return bin("latest") }
+        return usable.max { $0.rev.lexicographicallyPrecedes($1.rev) }.map { bin($0.dir) }
+    }
+
+    /// The highest cmdline-tools revision in the SDK that Collie refuses to run (21+), as `23.0`; nil when none.
+    public static func unsupportedCmdlineTools(
+        in sdk: String,
+        list: (String) -> [String] = { (try? FileManager.default.contentsOfDirectory(atPath: $0)) ?? [] },
+        read: (String) -> String? = { try? String(contentsOfFile: $0, encoding: .utf8) }
+    ) -> String? {
+        cmdlineTools(in: sdk, list: list, read: read).map(\.rev).filter { maxCmdlineTools.lexicographicallyPrecedes($0) }
+            .max { $0.lexicographicallyPrecedes($1) }.map { $0.map(String.init).joined(separator: ".") }
     }
 
     /// `system-images;android-N;google_apis;arm64-v8a` rows of `sdkmanager --list` (first column), deduplicated.
@@ -67,7 +96,7 @@ public enum AndroidSdk {
     /// `[=====   ] 45% Downloading emulator...` -> (45, "Downloading emulator...")
     public static func parseProgress(_ line: String) -> (percent: Int, label: String)? {
         // sdkmanager redraws in place with \r and ANSI erase codes: only the last segment is current
-        let last = line.split(whereSeparator: { $0 == "\r" || $0 == "\n" }).last.map(String.init) ?? ""
+        let last = line.split(whereSeparator: { $0.isNewline || $0 == "\r" }).last.map(String.init) ?? ""
         let line = last.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
         guard line.contains("["), let pct = line.firstIndex(of: "%") else { return nil }
         let digits = line[..<pct].reversed().prefix { $0.isNumber }

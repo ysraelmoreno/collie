@@ -86,7 +86,9 @@ actor AndroidInstaller {
                 let file = try await download(tools, staging.appendingPathComponent("cmdline-tools.zip"), "cmdline-tools", progress)
                 let out = staging.appendingPathComponent("unzip")
                 try await runner("/usr/bin/ditto", ["-x", "-k", file.path, out.path], staging)
-                try place(out.appendingPathComponent("cmdline-tools"), at: URL(fileURLWithPath: sdk).appendingPathComponent("cmdline-tools/latest"),
+                // an unusable `latest` (e.g. Studio's 23.0) is never touched: 20.0 goes beside it
+                let dir = fm.fileExists(atPath: "\(sdk)/cmdline-tools/latest") ? "cmdline-tools/20.0" : "cmdline-tools/latest"
+                try place(out.appendingPathComponent("cmdline-tools"), at: URL(fileURLWithPath: sdk).appendingPathComponent(dir),
                           check: "bin/sdkmanager")
             }
         } catch let e as ProtocolError {
@@ -177,7 +179,7 @@ actor AndroidInstaller {
 /// pending, or not read yet), `ready` (nothing blocks `install`: everything is there, or the rest needs no new license).
 struct AndroidStatus: Codable, Sendable, Equatable {
     struct Sdk: Codable, Sendable, Equatable { var path: String; var source: String }
-    /// `state`: ok | missing | installing; `detail`: where it is (empty when missing).
+    /// `state`: ok | missing | installing; `detail`: where it is (when missing: empty, or why a cmdline-tools there is skipped).
     struct Item: Codable, Sendable, Equatable { var id: String; var state: String; var detail: String }
     /// `phase`: prepare | install | done | failed | cancelled. Kept after the end, so a failure stays visible.
     struct Job: Codable, Sendable, Equatable {
@@ -205,6 +207,10 @@ extension AndroidInstaller {
         AndroidSdk.sdkmanager(in: sdk, exists: { FileManager.default.isExecutableFile(atPath: $0) })
     }
 
+    private func unsupportedNote(_ sdk: String) -> String {
+        AndroidSdk.unsupportedCmdlineTools(in: sdk).map { "cmdline-tools \($0) not supported (android CLI); installs 20.0 beside it" } ?? ""
+    }
+
     /// The spec's items in install order, with where each is (`nil`: missing).
     private func items(_ sdk: String) -> [(id: String, at: String?)] {
         func exe(_ rel: String) -> String? { FileManager.default.isExecutableFile(atPath: "\(sdk)/\(rel)") ? "\(sdk)/\(rel)" : nil }
@@ -223,7 +229,7 @@ extension AndroidInstaller {
         return AndroidStatus(
             sdk: .init(path: sdk.path, source: sdk.source),
             items: found.map { .init(id: $0.id, state: $0.at != nil ? "ok" : running && job?.item == $0.id ? "installing" : "missing",
-                                     detail: $0.at ?? "") },
+                                     detail: $0.at ?? ($0.id == "cmdline-tools" ? unsupportedNote(sdk.path) : "")) },
             needs: needs, job: job, lite: FileManager.default.fileExists(atPath: lite))
     }
 

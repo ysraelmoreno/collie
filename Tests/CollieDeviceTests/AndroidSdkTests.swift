@@ -35,16 +35,43 @@ import Foundation
         #expect(AndroidSdk.resolve(env: ["ANDROID_HOME": "/x"], home: "/h", colliePath: "/c", exists: fs([])) == ("/c", "collie"))
     }
 
+    /// `source.properties` for every dir: `rev[dir]` as its Pkg.Revision, dirs not in `rev` have none.
+    private func props(_ rev: [String: String]) -> (String) -> String? {
+        { path in rev.first { path == "/s/cmdline-tools/\($0.key)/source.properties" }.map { "Pkg.Desc=x\nPkg.Revision=\($0.value)\n" } }
+    }
+
     @Test func sdkmanagerPrefersLatestThenHighestNumbered() {
         let latest = "/s/cmdline-tools/latest/bin/sdkmanager"
         let v9 = "/s/cmdline-tools/9.0/bin/sdkmanager", v11 = "/s/cmdline-tools/11.0/bin/sdkmanager"
         let list: (String) -> [String] = { _ in ["9.0", "11.0", "latest"] }
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest, v11]), list: list) == latest)
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([v9, v11]), list: list) == v11)
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([]), list: list) == nil)
+        let read = props(["latest": "20.0", "9.0": "9.0", "11.0": "11.0", "beta": "12.0"])
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest, v11]), list: list, read: read) == latest)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([v9, v11]), list: list, read: read) == v11)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([]), list: list, read: read) == nil)
         let named = "/s/cmdline-tools/beta/bin/sdkmanager"
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([named]), list: { _ in ["beta"] }) == named)
-        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([named, v9]), list: { _ in ["beta", "9.0"] }) == v9)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([named]), list: { _ in ["beta"] }, read: read) == named)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([named, v9]), list: { _ in ["beta", "9.0"] }, read: read) == named)
+    }
+
+    @Test func sdkmanagerSkipsCmdlineTools21AndUp() {
+        let latest = "/s/cmdline-tools/latest/bin/sdkmanager", v20 = "/s/cmdline-tools/20.0/bin/sdkmanager"
+        let list: (String) -> [String] = { _ in ["latest", "20.0"] }
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest]), list: list, read: props(["latest": "23.0"])) == nil)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest]), list: list, read: props(["latest": "20.1"])) == nil)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest]), list: list, read: props(["latest": "20.0.1"])) == latest)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest, v20]), list: list,
+                                      read: props(["latest": "23.0", "20.0": "20.0"])) == v20)
+        #expect(AndroidSdk.cmdlineToolsRevision("Pkg.Revision=23.0\n") == [23, 0])
+        #expect(AndroidSdk.cmdlineToolsRevision("Pkg.Revision=19\n") == [19, 0])
+        #expect(AndroidSdk.cmdlineToolsRevision("Pkg.Revision=abc\n") == nil)
+    }
+
+    @Test func sdkmanagerNeedsSourceProperties() {
+        let latest = "/s/cmdline-tools/latest/bin/sdkmanager", v9 = "/s/cmdline-tools/9.0/bin/sdkmanager"
+        let list: (String) -> [String] = { _ in ["latest", "9.0"] }
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest, v9]), list: list, read: props(["9.0": "9.0"])) == v9)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest]), list: list, read: props([:])) == nil)
+        #expect(AndroidSdk.sdkmanager(in: "/s", exists: fs([latest]), list: list, read: { _ in "Pkg.Desc=x\n" }) == nil)
     }
 
     private let listing = """
@@ -91,6 +118,9 @@ import Foundation
         let ansi = AndroidSdk.parseProgress("[===  ] 12% Unzipping y\u{1B}[K")
         #expect(ansi?.percent == 12)
         #expect(ansi?.label == "Unzipping y")
+        // "\r\n" is one Character in Swift: still a line break
+        #expect(AndroidSdk.parseProgress("[==   ] 10% Downloading x\r\n")?.percent == 10)
+        #expect(AndroidSdk.parseProgress("[==   ] 10% Downloading x\r\n[===  ] 13% Downloading x")?.percent == 13)
         #expect(AndroidSdk.parseProgress("Warning: nothing here") == nil)
     }
 

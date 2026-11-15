@@ -32,10 +32,15 @@ private func tmp(_ name: String) throws -> URL {
     return d
 }
 
-private func script(_ f: URL) throws {
+/// A `cmdline-tools/<dir>/bin/<tool>` also gets `<dir>/source.properties` with Pkg.Revision `rev`.
+private func script(_ f: URL, rev: String = "20.0") throws {
     try fm.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
     try "#!/bin/sh\necho ok\n".write(to: f, atomically: true, encoding: .utf8)
     try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: f.path)
+    let dir = f.deletingLastPathComponent().deletingLastPathComponent()
+    if f.path.contains("cmdline-tools/") {
+        try "Pkg.Revision=\(rev)\n".write(to: dir.appendingPathComponent("source.properties"), atomically: true, encoding: .utf8)
+    }
 }
 
 private func sh(_ exe: String, _ args: [String]) throws {
@@ -134,6 +139,23 @@ private struct Fixture {
         #expect(try fm.contentsOfDirectory(atPath: f.sdk.appendingPathComponent("cmdline-tools").path) == ["19.0"])
         #expect(try String(contentsOf: numbered, encoding: .utf8) == "#!/bin/sh\necho ok\n")
         #expect(fm.isExecutableFile(atPath: f.collieJdkJava))
+    }
+
+    /// Studio's SDK with `cmdline-tools/latest` 23.0 (sdkmanager wraps the `android` CLI): never run, 20.0 goes beside it.
+    @Test func prepareInstalls20BesideAStudioLatest23() async throws {
+        let f = try Fixture()
+        let latest = f.sdk.appendingPathComponent("cmdline-tools/latest/bin/sdkmanager")
+        try script(latest, rev: "23.0")
+        let inst = try f.installer(java: true)
+        #expect(await inst.status().items.first { $0.id == "cmdline-tools" }?.detail.contains("23.0 not supported") == true)
+        try await inst.prepare()
+        #expect(f.fake.urls == [catalogURL, zipURL])
+        #expect(fm.isExecutableFile(atPath: f.sdk.appendingPathComponent("cmdline-tools/20.0/bin/sdkmanager").path))
+        #expect(try String(contentsOf: latest.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("source.properties"), encoding: .utf8) == "Pkg.Revision=23.0\n")
+        #expect(Set(try fm.contentsOfDirectory(atPath: f.sdk.appendingPathComponent("cmdline-tools").path)) == ["latest", "20.0"])
+        #expect(await inst.status().items.first { $0.id == "cmdline-tools" }?.detail
+                == f.sdk.appendingPathComponent("cmdline-tools/20.0/bin/sdkmanager").path)
     }
 
     @Test func prepareCleansTheStagingOnFailure() async throws {

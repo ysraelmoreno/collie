@@ -35,6 +35,7 @@ private struct Fixture {
         try fm.createDirectory(at: bin, withIntermediateDirectories: true)
         try fakeSdkmanager.write(to: bin.appendingPathComponent("sdkmanager"), atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("sdkmanager").path)
+        try "Pkg.Revision=20.0\n".write(to: bin.deletingLastPathComponent().appendingPathComponent("source.properties"), atomically: true, encoding: .utf8)
         let java = home.appendingPathComponent("java/bin/java")
         try fm.createDirectory(at: java.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "#!/bin/sh\n".write(to: java, atomically: true, encoding: .utf8)

@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import CollieProtocol
+import CollieDevice
 
 /// One GET written to `to`, `progress(bytesSoFar, total)` as it goes (total -1 when unknown). The daemon's is
 /// `AndroidDownload.fetch`; tests inject a fake.
@@ -45,9 +46,8 @@ enum AndroidDownload {
         guard got == checksum.lowercased() else { throw fail("checksum mismatch for \(file.lastPathComponent)") }
     }
 
-    /// Newest cmdline-tools revision Collie accepts. 21+ (23.0) ships `sdkmanager` as a deprecated wrapper over the new
-    /// `android` CLI: it ignores `--licenses`, crashes installing platform-tools and writes to ~/.android.
-    static let maxCmdlineTools = [20, 0]
+    /// Newest cmdline-tools revision Collie downloads (and runs): see `AndroidSdk.maxCmdlineTools`.
+    static let maxCmdlineTools = AndroidSdk.maxCmdlineTools
 
     /// The newest stable (channel-0, not obsolete, `cmdline-tools;<version>` no `latest`/alpha) package up to
     /// `maxCmdlineTools`, its macOS archive in Google's `repository2-*.xml`. The catalog publishes sha1 (sha256 when present wins).

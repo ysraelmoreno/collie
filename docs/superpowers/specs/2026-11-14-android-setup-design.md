@@ -120,3 +120,24 @@ Funções puras: ordem de `AndroidSdk.resolve`, escolha de Java, escolha da imag
 - Formato exato do aceite em `<sdk>/licenses/` e como capturar os textos do `sdkmanager`.
 - Como ler o progresso do `sdkmanager` (a saída muda entre versões).
 - Nomes dos eventos, formato dos erros e onde mora o código (provável: `Sources/CollieDaemonKit/Android/`).
+
+## Resultado do E2E (2026-11-14, daemon isolado, SDK e AVD home temporários)
+
+Fluxo `android status` → `install` (fase 1) → `licenses` → `install --accept …` (fase 2) → `device lite create` terminou em `ready` e `device.list` mostrou `avd:collie-lite`; fase 2 levou ~2 min. O `collie-lite` do usuário em `~/.android/avd` não foi tocado.
+
+Mudanças em relação ao desenho, todas no código:
+- **`cmdline-tools` fixo em ≤ 20.0** (`AndroidDownload.maxCmdlineTools`). O 23.0 (o `latest` do catálogo) traz um `sdkmanager` que só repassa ao novo `android` CLI: ignora `--licenses`, quebrou instalando `platform-tools` ("Illegal entry path") e se instalou em `~/.android/bin` e `~/.android/cli` mesmo com `ANDROID_USER_HOME`. Decisão do usuário. Risco aberto: um SDK do Studio reaproveitado com `cmdline-tools` ≥ 21 pode cair no mesmo invólucro.
+- **Checksum do catálogo do Google é SHA-1** (não há SHA-256 no `repository2-3.xml`); usa SHA-256 quando existir. O Temurin usa SHA-256 do JSON do Adoptium.
+- **Host a mais:** `release-assets.githubusercontent.com` (para onde o GitHub redireciona os assets do Adoptium hoje), além de `objects.githubusercontent.com`.
+- **Android Studio só bloqueia o SDK dele** (`~/Library/Android/sdk`), como diz "no mesmo SDK"; outro `sdkmanager` bloqueia sempre.
+- **`COLLIE_JAVA_HOME` definido e vazio** = só o JDK do Collie (para testes e E2E).
+- **Java:** `/usr/libexec/java_home -v 17+`.
+
+Formatos reais conferidos:
+- Licenças: `--licenses` mostra cada uma com cabeçalho `N/M: License <id>:` e `Accept? (y/N):`; o aceite é `<sdk>/licenses/<id>` com o SHA-1 do texto (ex.: `android-sdk-license` = `24333f8a…`). O hash calculado pelo Collie foi aceito pelo `sdkmanager`.
+- Progresso: linhas `[===   ] N% …` com `\r`; o parser lê a última.
+- `--licenses` lista **todas** as 8 licenças pendentes do repositório (TV, XR, MIPS, preview…), não só as dos 3 pacotes; o install exige todas. Fica para a tela/um ajuste: pedir só as que os pacotes usam (`uses-license` do catálogo).
+
+Limites vistos:
+- O JDK próprio baixou (199,7 MB), conferiu e extraiu, mas mover para `~/Library/Application Support/Collie/jdk` deu EPERM a partir do terminal: o macOS protege a pasta de dados do app instalado. O `collied` de dentro do `Collie.app` é dono dela; o E2E seguiu com o JDK do Studio. O staging foi limpo na falha.
+- O `sdkmanager` 20 regrava o cache de catálogo em `~/.android/cache` (arquivos que já existiam), ignorando `ANDROID_USER_HOME`.

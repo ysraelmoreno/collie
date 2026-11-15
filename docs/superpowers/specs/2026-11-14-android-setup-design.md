@@ -126,7 +126,7 @@ Funções puras: ordem de `AndroidSdk.resolve`, escolha de Java, escolha da imag
 Fluxo `android status` → `install` (fase 1) → `licenses` → `install --accept …` (fase 2) → `device lite create` terminou em `ready` e `device.list` mostrou `avd:collie-lite`; fase 2 levou ~2 min. O `collie-lite` do usuário em `~/.android/avd` não foi tocado.
 
 Mudanças em relação ao desenho, todas no código:
-- **`cmdline-tools` fixo em ≤ 20.0** (`AndroidDownload.maxCmdlineTools`). O 23.0 (o `latest` do catálogo) traz um `sdkmanager` que só repassa ao novo `android` CLI: ignora `--licenses`, quebrou instalando `platform-tools` ("Illegal entry path") e se instalou em `~/.android/bin` e `~/.android/cli` mesmo com `ANDROID_USER_HOME`. Decisão do usuário. Risco aberto: um SDK do Studio reaproveitado com `cmdline-tools` ≥ 21 pode cair no mesmo invólucro.
+- **`cmdline-tools` padrão ≤ 20.0** (`AndroidSdk.maxCmdlineTools`). Motivo: o 23.0 (o `latest` do catálogo) é um invólucro do novo CLI `android` que grava `licenses/android-sdk-license` sozinho, sem perguntar, ignora `--licenses` ("no longer needed") e escreve fora do SDK (`$HOME/.android/bin/android-cli`, `$HOME/.android/cli`). O "Illegal entry path" visto no primeiro E2E não é a causa (ver "Decisão do dono").
 - **Checksum do catálogo do Google é SHA-1** (não há SHA-256 no `repository2-3.xml`); usa SHA-256 quando existir. O Temurin usa SHA-256 do JSON do Adoptium.
 - **Host a mais:** `release-assets.githubusercontent.com` (para onde o GitHub redireciona os assets do Adoptium hoje), além de `objects.githubusercontent.com`.
 - **Android Studio só bloqueia o SDK dele** (`~/Library/Android/sdk`), como diz "no mesmo SDK"; outro `sdkmanager` bloqueia sempre.
@@ -142,4 +142,12 @@ Limites vistos:
 - O JDK próprio baixou (199,7 MB), conferiu e extraiu, mas mover para `~/Library/Application Support/Collie/jdk` deu EPERM a partir do terminal: o macOS protege a pasta de dados do app instalado. O `collied` de dentro do `Collie.app` é dono dela; o E2E seguiu com o JDK do Studio. O staging foi limpo na falha.
 - O `sdkmanager` 20 regrava o cache de catálogo em `~/.android/cache` (arquivos que já existiam), ignorando `ANDROID_USER_HOME`.
 - Baixar o JDK quando o `sdkmanager` falha por versão de classe (Java antigo demais) ainda não está implementado (lacuna conhecida).
-- `cmdline-tools` 21+ (o `latest` 23.0 do Studio, wrapper do CLI `android`) nunca roda: só conta um dir com `source.properties` `Pkg.Revision` ≤ 20.0; sem nenhum, a fase 1 instala o 20.0 em `cmdline-tools/20.0` ao lado do `latest` existente, sem tocá-lo.
+- ~~`cmdline-tools` 21+ nunca roda~~ (regra do `fa95272`): substituída pela "Decisão do dono" abaixo.
+
+## Decisão do dono (2026-11-14, Task 7)
+
+- **Aceite.** O clique em **Instalar**, com o aviso visível "Ao instalar, você aceita os termos do Android SDK" e link para o texto do Google (https://developer.android.com/studio/terms), é o aceite. Com o 23.0 não há lista de licenças por pacote: ele grava o aceite sozinho. Com o clássico, o Collie continua gravando só as licenças mostradas.
+- **Versões do `cmdline-tools`.** Padrão: o clássico mais novo ≤ 20.0 (é o que o Collie baixa). O 23.0 é **permitido** (ex.: o `latest` do Studio). Versão desconhecida (21, 22, > 23) passa por uma **sondagem**: roda `sdkmanager --list` com HOME e `ANDROID_USER_HOME` temporários e `--sdk_root` de um SDK temporário vazio; se criar `licenses/` sem aceite, bloqueia com mensagem clara; senão é tratada como clássica.
+- **Isolamento.** Todo `sdkmanager` roda com `HOME` e `ANDROID_USER_HOME` temporários (por trabalho, apagados no fim) e `--sdk_root=<sdk>` explícito, para nada ir parar em `~/.android` (o 20.0 regrava `~/.android/cache`; o 23.0 instala `~/.android/bin/android-cli`).
+- **Downloads do Collie.** Hosts: `dl.google.com`, `api.adoptium.net`, `github.com/adoptium/…`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`; só HTTPS, porta padrão, sem credenciais. Checksum: SHA-256 quando o catálogo tem; senão o SHA-1 do catálogo do Google (o `repository2-3.xml` só traz SHA-1); Temurin com o SHA-256 do Adoptium.
+- **Pendências.** (1) Com o clássico, pedir só as licenças dos 3 pacotes (`uses-license` do catálogo), não as 8 do repositório. (2) Baixar o JDK 21 quando o `sdkmanager` falha por versão de classe.

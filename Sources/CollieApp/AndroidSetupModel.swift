@@ -76,4 +76,27 @@ enum AndroidCopy {
         s.items.filter { $0.state == "missing" }.reduce(0) { $0 + (estimates[$1.id] ?? 0) }
     }
     static func needsFree(_ s: AndroidSetupStatus) -> Int64 { 2 * totalPending(s) }
+
+    /// The fixed notice beside Instalar (owner's decision), linked to `termsURL`.
+    static let notice = "Ao instalar, você aceita os termos do Android SDK"
+
+    /// Headline and primary button per state, from `docs/pages/preferencias-b/index.html` (`STATES` and `android(...)`).
+    static func label(for s: AndroidScreenState) -> (title: String, button: String) {
+        switch s {
+        case .nada: ("Nada instalado", "Instalar")
+        case .parcial: ("Parcial", "Instalar o que falta")
+        case .preparando: ("Preparando (fase 1)", "Cancelar")
+        case .licenca: ("Licenças do SDK do Android", "Aceitar e baixar")
+        case .instalando: ("Instalando (fase 2)", "Cancelar")
+        case .pronto: ("Tudo pronto", "Criar emulador leve")
+        case .erro: ("Erro", "Tentar de novo")
+        case .recusou: ("Licenças recusadas.", "Rever licenças")
+        case .ocupado: ("Outro processo está usando o SDK.", "Tentar de novo")
+        }
+    }
+
+    /// What `android.install` sends as `accept`: only the pending licenses, and only once the user checked the box.
+    static func acceptIds(licenses: [AndroidLicense], checked: Bool) -> [String] {
+        checked ? licenses.filter { !$0.accepted }.map(\.id) : []
+    }
 }

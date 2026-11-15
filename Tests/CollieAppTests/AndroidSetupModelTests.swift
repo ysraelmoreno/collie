@@ -114,3 +114,26 @@ private let allOk = ["ok", "ok", "ok", "ok", "ok"]
     let s = status(allMissing, needs: "ready", job: j)
     #expect(s.job?.percent == nil && s.job?.bytes == nil && s.job?.total == nil)
 }
+
+@Test func labelsPerStateCopyThePreview() {
+    let cases: [(AndroidScreenState, String, String)] = [
+        (.nada, "Nada instalado", "Instalar"), (.parcial, "Parcial", "Instalar o que falta"),
+        (.preparando, "Preparando (fase 1)", "Cancelar"), (.licenca, "Licenças do SDK do Android", "Aceitar e baixar"),
+        (.instalando, "Instalando (fase 2)", "Cancelar"), (.pronto, "Tudo pronto", "Criar emulador leve"),
+        (.erro("x"), "Erro", "Tentar de novo"), (.recusou, "Licenças recusadas.", "Rever licenças"),
+        (.ocupado("busy: y"), "Outro processo está usando o SDK.", "Tentar de novo"),
+    ]
+    for (s, title, button) in cases {
+        let l = AndroidCopy.label(for: s)
+        #expect(l.title == title, "\(s)"); #expect(l.button == button, "\(s)")
+    }
+    #expect(AndroidCopy.notice == "Ao instalar, você aceita os termos do Android SDK")
+}
+
+@Test func acceptIdsSendsOnlyCheckedPending() {
+    let two = [AndroidLicense(id: "a", title: "", text: "", accepted: false), AndroidLicense(id: "b", title: "", text: "", accepted: true),
+               AndroidLicense(id: "c", title: "", text: "", accepted: false)]
+    #expect(AndroidCopy.acceptIds(licenses: two, checked: false) == [])
+    #expect(AndroidCopy.acceptIds(licenses: two, checked: true) == ["a", "c"])
+    #expect(AndroidCopy.acceptIds(licenses: [], checked: true) == [])
+}

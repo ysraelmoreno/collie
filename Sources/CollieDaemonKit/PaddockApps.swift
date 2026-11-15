@@ -91,6 +91,8 @@ enum PaddockApps {
         return shape(v, c.result)
     }
     static let bodyCap = 1 << 20
+    /// The whole document of an `eventDiff` stream (its new items are still capped as any event).
+    static let diffDocumentCap = 4 << 20
 
     /// `result`: only the `pick` keys of a root object (missing ones ignored), then each `tail` array cut to its last
     /// N items, with `<key>Truncated: true` when cut. Not an object, or no `result`: the reply as is.
@@ -166,7 +168,9 @@ enum PaddockApps {
 
     /// One connection to `m.eventStream` (SSE): each event named in `m.events` (no `event:` field: `message`) goes to
     /// `onEvent`, its `data` as JSON, else as text; one over `pluginEventPayloadCap` is dropped. Throws if it couldn't
-    /// connect; returns when a connected stream ends.
+    /// connect; returns when a connected stream ends. With `m.eventDiff`, a `document` (or unnamed) event is the whole
+    /// document (≤ `diffDocumentCap`): each new item of its array (`AppEventDiff`, a new baseline per connection) goes
+    /// to `onEvent` as `m.events[0]`.
     // ponytail: `id:` and `retry:` are ignored (no Last-Event-ID on reconnect; the backoff is ours)
     static func subscribe(_ m: PluginManifest, onEvent: @Sendable (String, JSONValue) async -> Void) async throws {
         guard let origin = m.serviceOrigin, let path = m.eventStream, let url = URL(string: origin + path) else { return }
@@ -177,10 +181,12 @@ enum PaddockApps {
         let (bytes, resp) = try await session.bytes(for: req)
         guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
         var line: [UInt8] = [], data: [UInt8] = [], name: String?, over = false
+        var diff = m.eventDiff.map(AppEventDiff.init(key:))
+        let cap = diff == nil ? pluginEventPayloadCap : diffDocumentCap
         do {
             for try await b in bytes {
                 guard b == 0x0A else {
-                    if line.count <= pluginEventPayloadCap { line.append(b) } else { over = true }
+                    if line.count <= cap { line.append(b) } else { over = true }
                     continue
                 }
                 if line.last == 0x0D { line.removeLast() }
@@ -188,7 +194,11 @@ enum PaddockApps {
                 line.removeAll(keepingCapacity: true)
                 if l.isEmpty {   // the event ends
                     let n = name ?? "message"
-                    if !over, !data.isEmpty || name != nil, m.events.contains(n) {
+                    if !over, diff != nil, n == "document" || n == "message", let first = m.events.first {
+                        if let doc = try? JSONDecoder().decode(JSONValue.self, from: Data(data)) {
+                            for item in diff!.newItems(in: doc) { await onEvent(first, item) }   // an item over the cap: pluginEmitted drops it
+                        }
+                    } else if !over, !data.isEmpty || name != nil, m.events.contains(n), data.count <= pluginEventPayloadCap {
                         await onEvent(n, (try? JSONDecoder().decode(JSONValue.self, from: Data(data))) ?? .string(String(decoding: data, as: UTF8.self)))
                     }
                     data = []; name = nil; over = false
@@ -203,7 +213,7 @@ enum PaddockApps {
                 case "data":
                     if !data.isEmpty { data.append(0x0A) }
                     data += v.utf8
-                    if data.count > pluginEventPayloadCap { over = true; data = [] }
+                    if data.count > cap { over = true; data = [] }
                 default: break
                 }
             }

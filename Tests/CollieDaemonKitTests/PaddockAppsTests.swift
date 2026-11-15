@@ -314,6 +314,59 @@ private final class EventService: @unchecked Sendable {
             }
         }
     }
+
+    /// app adopt: an `eventDiff` stream sends its whole document (here 100 KiB, over the 64 KiB event cap); only the
+    /// new items of its array become events, the first document being the baseline.
+    @Test func diffStreamNoticesOnlyNewItems() async throws {
+        try await PluginRegistry.exclusively {
+            let svc = try await EventService()
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("apps-\(UUID().uuidString)").resolvingSymlinksInPath()
+            let app = dir.appendingPathComponent(".collie/apps/kube")
+            try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir); svc.stop() }
+            var m = try JSONSerialization.jsonObject(with: manifest(base: svc.base)) as! [String: Any]
+            m["eventStream"] = "/api/stream"; m["eventDiff"] = "analyticsEvents"; m["events"] = ["kube.event"]
+            try JSONSerialization.data(withJSONObject: m).write(to: app.appendingPathComponent("collie-plugin.json"))
+            let gap = PaddockApps.noticeGap
+            PaddockApps.noticeGap = .seconds(1)
+            defer { PaddockApps.noticeGap = gap }
+            func document(_ n: Int) -> String {
+                let items = (1...n).map { #"{"n":\#($0)}"# }.joined(separator: ",")
+                return "event: document\ndata: {\"padding\":\"\(String(repeating: "x", count: 100 * 1024))\",\"analyticsEvents\":[\(items)]}\n\n"
+            }
+
+            try await withDaemon { d, p in
+                #expect(try await admin(d, p, "paddock.create", ["name": .string("k"), "folder": .string(dir.path)]).ok)
+                let s = try await admin(d, p, "admin.spawn", ["name": .string("B"), "preset": .string("cursor"), "paddock": .string("k"),
+                                                              "command": .string("echo T=$COLLIE_TOKEN; exec cat")])
+                guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }
+                let b = Term(id: id, token: try await tokenOf(d, id, echo: false))
+                #expect(try await admin(d, p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
+                #expect(try await call(p, b, "app.attach", ["id": .string("kube")]).ok)
+                #expect(await waitFor(10) { svc.live == 1 })
+
+                let bid = UUID(uuidString: b.id)!
+                func seqs() async -> Set<Int> {
+                    let t = await d.scrollbackText(bid)
+                    return Set(t.matches(of: #/evento kube\.event #([0-9]+)/#).compactMap { Int($0.1) })
+                }
+                svc.push(document(2))   // the baseline: no notice
+                try await Task.sleep(for: .seconds(2))
+                #expect(await seqs().isEmpty)
+                svc.push(document(3))
+                svc.push(document(5))
+                #expect(await waitFor(15) { await seqs().count == 3 })
+                let got = await seqs(), shown = await d.scrollbackText(bid)
+                #expect(got.count == 3, "\(shown)")
+                var ns: [Int] = []
+                for seq in got.sorted() {
+                    let ev = try await call(p, b, "app.event", ["seq": .number(Double(seq))])
+                    if case .number(let n)? = data(ev)["n"] { ns.append(Int(n)) }
+                }
+                #expect(ns == [3, 4, 5], "\(ns)")
+            }
+        }
+    }
 }
 
 /// Apps do cercado, slice 3: the context the page sent (through its panel's host, `admin.app.context`) for the agents

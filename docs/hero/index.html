@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<style>
+@font-face { font-family: "Space Grotesk"; src: url("../videos/collie-gifs/cercado/fonts/SpaceGrotesk.ttf"); font-weight: 300 700; }
+@font-face { font-family: "DM Mono"; src: url("../videos/collie-gifs/cercado/fonts/DMMono-Regular.ttf"); font-weight: 400; }
+@font-face { font-family: "DM Mono"; src: url("../videos/collie-gifs/cercado/fonts/DMMono-Medium.ttf"); font-weight: 500; }
+:root {
+  --bg: #0e1326; --surface: #161c36; --sunken: #0b1020; --raised: #1b2340; --border: #262e52;
+  --text: #e8ecf8; --text2: #b6bedb; --muted: #8c95b8; --accent: #6ee7b7; --attention: #ffb86b; --secondary: #93a4ff;
+  --ui: "Space Grotesk", system-ui, sans-serif; --mono: "DM Mono", ui-monospace, monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1600px; height: 900px; overflow: hidden; }
+body { font-family: var(--ui); color: var(--text); position: relative;
+  background:
+    radial-gradient(900px 600px at 78% 40%, rgba(147,164,255,.18), transparent 70%),
+    radial-gradient(700px 500px at 10% 100%, rgba(110,231,183,.10), transparent 70%),
+    var(--bg); }
+
+.copy { position: absolute; left: 88px; top: 0; bottom: 0; width: 520px; display: flex; flex-direction: column; justify-content: center; }
+.brand { font-family: var(--mono); font-size: 22px; font-weight: 500; color: var(--accent); display: flex; align-items: center; gap: 10px; margin-bottom: 36px; }
+.brand i { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 18px var(--accent); }
+h1 { font-size: 64px; line-height: 1.02; font-weight: 700; letter-spacing: -0.035em; }
+h1 em { font-style: normal; color: var(--secondary); }
+.sub { margin-top: 26px; font-size: 22px; line-height: 1.45; color: var(--text2); max-width: 470px; }
+.chips { margin-top: 36px; display: flex; flex-wrap: wrap; gap: 10px; max-width: 480px; }
+.chip { font-family: var(--mono); font-size: 15px; color: var(--text2); border: 1px solid var(--border); background: rgba(22,28,54,.7); border-radius: 999px; padding: 7px 14px; }
+
+.win { position: absolute; left: 650px; top: 92px; width: 900px; height: 716px; border-radius: 18px; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 50px 120px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.03) inset; }
+.bar { height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 18px; border-bottom: 1px solid var(--border); background: var(--raised); }
+.bar b { width: 12px; height: 12px; border-radius: 50%; background: #3a4370; }
+.bar span { margin-left: 16px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.canvas { position: absolute; top: 44px; left: 0; right: 0; bottom: 0;
+  background-image: radial-gradient(circle, #232b50 1.3px, transparent 1.4px); background-size: 28px 28px; }
+
+.node { position: absolute; background: var(--sunken); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 18px 40px rgba(0,0,0,.4); }
+.nh { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border);
+  font-family: var(--mono); font-size: 12px; color: var(--text2); background: var(--surface); }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.tag { margin-left: auto; font-size: 10.5px; padding: 2px 7px; border-radius: 6px; border: 1px solid; }
+.term { padding: 12px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.65; color: var(--text2); white-space: pre; }
+.g { color: var(--accent); } .y { color: var(--attention); } .b { color: var(--secondary); } .m { color: var(--muted); }
+
+.paddock { position: absolute; left: 400px; top: 236px; width: 480px; height: 330px; border: 2px dashed rgba(147,164,255,.55);
+  border-radius: 18px; background: rgba(147,164,255,.04); }
+.paddock span { position: absolute; left: 16px; top: -12px; padding: 0 8px; background: var(--surface); font-family: var(--mono);
+  font-size: 12px; color: var(--secondary); border-radius: 6px; }
+
+.phone { position: absolute; left: 70px; top: 360px; width: 210px; height: 300px; }
+.screen { margin: 12px auto 0; width: 150px; height: 240px; border-radius: 22px; background: linear-gradient(160deg, #f4f2ec, #e6e3da);
+  padding: 22px 14px; color: #1c2034; font-family: var(--ui); }
+.screen h4 { font-size: 15px; font-weight: 700; }
+.row { margin-top: 10px; height: 30px; border-radius: 9px; background: #fff; display: flex; align-items: center; gap: 8px; padding: 0 8px; font-size: 9.5px; }
+.row i { width: 12px; height: 12px; border-radius: 4px; border: 1.5px solid #6c63ff; }
+.row.ok i { background: #6c63ff; }
+
+.browser .addr { margin: 10px 12px 0; height: 22px; border-radius: 6px; background: var(--surface); font-family: var(--mono); font-size: 10.5px; color: var(--muted); padding: 4px 10px; }
+.page { margin: 10px 12px; height: 128px; border-radius: 8px; background: #f4f2ec; padding: 14px; }
+.page .l { height: 10px; border-radius: 4px; background: #d9d5ca; margin-bottom: 8px; }
+.page .btn { width: 70px; height: 20px; border-radius: 6px; background: #6c63ff; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <div class="copy">
+    <div class="brand"><i></i>collie</div>
+    <h1>Seus agentes de código, <em>num só canvas.</em></h1>
+    <p class="sub">Claude, Codex e Cursor lado a lado, conversando entre si, cada um no seu cercado. Com navegador, simulador e design ali do lado.</p>
+    <div class="chips">
+      <span class="chip">terminais com guias</span>
+      <span class="chip">worktrees isoladas</span>
+      <span class="chip">iOS e Android</span>
+      <span class="chip">memória</span>
+      <span class="chip">sandbox</span>
+    </div>
+  </div>
+
+  <div class="win">
+    <div class="bar"><b></b><b></b><b></b><span>Pasto · tarefas-app</span></div>
+    <div class="canvas">
+      <svg width="900" height="672" style="position:absolute;inset:0">
+        <g fill="none" stroke-width="2" stroke-dasharray="5 6" stroke-linecap="round">
+          <path d="M370 140 C470 140 520 190 520 270" stroke="#93a4ff"/>
+          <path d="M370 190 C560 190 760 210 760 300" stroke="#93a4ff"/>
+          <path d="M210 250 C210 300 175 320 175 360" stroke="#6ee7b7"/>
+          <path d="M800 214 C800 250 820 260 820 300" stroke="#ffb86b" opacity=".8"/>
+        </g>
+      </svg>
+
+      <div class="node" style="left:40px; top:34px; width:330px; height:216px">
+        <div class="nh"><span class="dot" style="background:var(--accent)"></span>pastor <span class="m">claude</span>
+          <span class="tag" style="color:var(--accent); border-color:rgba(110,231,183,.4)">Pastor</span></div>
+        <div class="term"><span class="g">●</span> Dividi a feature em duas frentes.
+<span class="m">  collie summon api --preset codex</span>
+<span class="m">  collie summon ui --preset claude</span>
+<span class="g">●</span> api terminou: 12 testes passando.
+<span class="g">●</span> ui pediu revisão da tela de tarefas.
+  Abrindo o simulador para conferir…
+<span class="b">›</span> <span style="background:var(--text2)"> </span></div>
+      </div>
+
+      <div class="node browser" style="left:650px; top:30px; width:220px; height:184px">
+        <div class="nh"><span class="dot" style="background:var(--attention)"></span>navegador</div>
+        <div class="addr">localhost:3000/tarefas</div>
+        <div class="page"><div class="l" style="width:60%"></div><div class="l"></div><div class="l" style="width:80%"></div><div class="btn"></div></div>
+      </div>
+
+      <div class="phone node">
+        <div class="nh"><span class="dot" style="background:var(--accent)"></span>iPhone 16e</div>
+        <div class="screen"><h4>Tarefas</h4>
+          <div class="row ok"><i></i>Revisar PR #42</div>
+          <div class="row ok"><i></i>Rodar testes</div>
+          <div class="row"><i></i>Publicar versão</div>
+          <div class="row"><i></i>Escrever notas</div>
+        </div>
+      </div>
+
+      <div class="paddock"><span>cercado · collie/tarefas</span></div>
+
+      <div class="node" style="left:416px; top:270px; width:214px; height:200px">
+        <div class="nh"><span class="dot" style="background:var(--secondary)"></span>api <span class="m">codex</span>
+          <span class="tag" style="color:var(--muted); border-color:var(--border)">ocioso</span></div>
+        <div class="term"><span class="g">✓</span> POST /tarefas
+<span class="g">✓</span> PATCH /tarefas/:id
+<span class="g">✓</span> 12 testes passando
+<span class="m">git commit -m "feat: api"</span>
+<span class="m">collie lot post</span></div>
+      </div>
+
+      <div class="node" style="left:642px; top:300px; width:226px; height:210px">
+        <div class="nh"><span class="dot" style="background:var(--attention)"></span>ui <span class="m">claude</span>
+          <span class="tag" style="color:var(--attention); border-color:rgba(255,184,107,.45)">trabalhando</span></div>
+        <div class="term"><span class="y">●</span> Lista de tarefas com check
+<span class="m">  Update TarefasView.swift</span>
+<span class="m">  + 48 linhas</span>
+<span class="y">●</span> Conferindo no simulador
+<span class="m">  collie device screenshot</span>
+<span class="g">●</span> Tela confere com o design.</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

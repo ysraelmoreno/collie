@@ -3,7 +3,7 @@
 Canvas para orquestrar terminais de agentes (Claude, Codex, Cursor) no macOS: daemon (`collied`), CLI (`collie`) e app
 SwiftUI/AppKit. Antes chamado Orq.
 
-![Collie: canvas com um Pastor, um simulador iOS e o painel Design](docs/screenshot.png)
+![Collie: agentes Claude e Codex num canvas, com cercado, simulador iOS e navegador](docs/screenshot.png)
 
 ## O que tem
 

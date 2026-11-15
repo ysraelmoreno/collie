@@ -131,7 +131,7 @@ import Foundation
         let names = tools.compactMap { t -> String? in
             if case .object(let o) = t, case .string(let n)? = o["name"] { return n } else { return nil }
         }.filter(builtInTool)
-        #expect(names == ["list", "ask", "wait", "model", "ask_result", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
+        #expect(names == ["list", "ask", "wait", "model", "ask_result", "reply", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                          "memory_save", "memory_search", "memory_doc-search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede", "memory_flag",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get",
                          "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach", "app_event", "app_context", "app_snapshot", "app_new", "app_adopt", "app_logs",
@@ -159,7 +159,7 @@ import Foundation
         func names(_ m: Bool) -> [String] {
             MCPSchema.tools(shepherd: m).compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }.filter(builtInTool)
         }
-        #expect(names(true) == ["list", "ask", "wait", "model", "ask_result", "check", "summon", "dismiss", "leash", "leash_request", "unleash", "notify",
+        #expect(names(true) == ["list", "ask", "wait", "model", "ask_result", "reply", "check", "summon", "dismiss", "leash", "leash_request", "unleash", "notify",
                                 "paddock_create", "paddock_list", "paddock_status", "paddock_land", "paddock_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                                 "memory_save", "memory_search", "memory_doc-search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede", "memory_flag",
                          "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get", "work_rerail",

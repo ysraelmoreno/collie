@@ -886,3 +886,96 @@ extension AskTests {
         }
     }
 }
+
+// MARK: - collie reply (agent-comms Task 3)
+
+private func cursorTarget(_ asks: AskCoordinator, _ name: String) async throws -> UUID {
+    let rec = TerminalRecord(id: UUID(), name: name, preset: .cursor, command: "cat", cwd: "/tmp", isShepherd: false, paddockId: nil, projectRoot: nil)
+    let sb = ScrollbackBuffer(spillURL: nil)
+    let p = try PTYProcess(spec: LaunchSpec(executable: "/bin/sh", arguments: ["-c", "printf ready; exec cat >/dev/null"], environment: [:], cwd: "/tmp"), scrollback: sb)
+    await asks.attach(rec, process: p, scrollback: sb)
+    return rec.id
+}
+
+extension AskTests {
+    @Test func replyCompletesInflightAsk() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        #expect(await inFlight(asks, b))
+        try await asks.reply(terminal: b, message: "feito: slugify.py, 3 testes")
+        let r = try await t.value
+        #expect(r.output == "feito: slugify.py, 3 testes" && r.source == .hook && !r.truncated)
+        #expect(!(await asks.isBusy(b)))
+    }
+
+    @Test func replyWithoutInflightIsNotFound() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let b = try await cursorTarget(asks, "B")
+        do { try await asks.reply(terminal: b, message: "oi"); Issue.record("replied") }
+        catch { #expect(error.code == .notFound && error.message == "no ask is waiting for your reply", "\(error)") }
+    }
+
+    /// Another terminal's in-flight ask is not this caller's to answer.
+    @Test func replyOnlyAnswersOwnAsk() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B"), c = try await cursorTarget(asks, "C")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        defer { t.cancel() }
+        #expect(await inFlight(asks, b))
+        await #expect(throws: ProtocolError.self) { try await asks.reply(terminal: c, message: "forjado") }
+        #expect(await asks.isBusy(b))
+    }
+
+    @Test func replyDoesNotLatchHookOnly() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        #expect(await inFlight(asks, b))
+        try await asks.reply(terminal: b, message: "feito")
+        _ = try await t.value
+        let next = try await asks.ask(from: a, to: b, prompt: "agora os testes", raw: false, timeout: .seconds(10))
+        #expect(next.source == .idle)   // the Cursor that forgets `reply` still finishes by idle
+    }
+
+    @Test func replyIgnoresInjectAndUserAsks() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let b = try await cursorTarget(asks, "B")
+        try await asks.inject(to: b, prompt: "papel do terminal", hold: .seconds(10))   // returns once written; holds the slot
+        #expect(await asks.isBusy(b))
+        await #expect(throws: ProtocolError.self) { try await asks.reply(terminal: b, message: "oi") }
+        let c = try await cursorTarget(asks, "C")
+        let u = Task { try await asks.askAsUser(to: c, prompt: "o que falta?", timeout: .seconds(10)) }
+        defer { u.cancel() }
+        #expect(await inFlight(asks, c))
+        await #expect(throws: ProtocolError.self) { try await asks.reply(terminal: c, message: "oi") }
+    }
+
+    @Test func replyRejectsEmptyAndOversized() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        defer { t.cancel() }
+        #expect(await inFlight(asks, b))
+        for m in ["", String(repeating: "x", count: 8193)] {
+            do { try await asks.reply(terminal: b, message: m); Issue.record("accepted \(m.count)") }
+            catch { #expect(error.code == .invalidArgs, "\(error)") }
+        }
+        #expect(await asks.isBusy(b))
+    }
+
+    /// End to end: `collie reply` from the asked Cursor's own terminal answers the blocking ask.
+    @Test func replyCommandAnswersTheAsker() async throws {
+        try await withDaemon(configure: { $0.idleQuietSeconds = 15 }) { d, p in
+            let a = try await term(d, p, "A")
+            let b = try await term(d, p, "B", preset: "cursor", command: quietAgent)
+            try await connect(d, p, "A", "B")
+            let pending = Task { try await ask(p, a, "B", "crie o slugify", timeout: 20) }
+            #expect(await waitFor(10) { await d.askBusy(UUID(uuidString: b.id)!) })
+            let r = try await send(p, Request(id: "r", terminalId: b.id, token: b.token, command: "reply", args: ["message": .string("feito")]))
+            #expect(r.ok, "\(r)")
+            let res = result(try await pending.value)
+            #expect(res.output == "feito" && res.source == "hook", "\(res)")
+        }
+    }
+}

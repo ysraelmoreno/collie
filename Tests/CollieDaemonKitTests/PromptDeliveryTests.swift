@@ -191,4 +191,41 @@ import CollieTerminal
         await asks.turnCompleted(terminal: b, message: "the answer")
         #expect(try await t.value.output == "the answer")
     }
+
+    // MARK: - reply instruction (agent-comms Task 3)
+
+    static let replyLine = "\n(Ao terminar, responda com: collie reply \"<resposta curta>\")"
+
+    @Test func cursorAskGetsReplyInstruction() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let (a, b, w) = try await pair(asks, preset: .cursor, command: "cat")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "implemente o painel", raw: false, timeout: .seconds(10)) }
+        defer { t.cancel() }
+        let c = try #require(await firstChunk(w))
+        #expect(c.hasPrefix("[collie] pedido de A (ask ") && c.hasSuffix("): implemente o painel" + Self.replyLine), "\(c)")
+    }
+
+    @Test func claudeAskHasNoReplyInstruction() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let (a, b, w) = try await pair(asks, preset: .claude, command: "cat")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "implemente o painel", raw: false, timeout: .seconds(10)) }
+        defer { t.cancel() }
+        let c = try #require(await firstChunk(w))
+        #expect(!c.contains("collie reply") && c.hasSuffix("implemente o painel"), "\(c)")
+    }
+
+    @Test func rawCursorAskHasNoInstruction() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let (a, b, w) = try await pair(asks, preset: .cursor, command: "cat")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "implemente o painel", raw: true, timeout: .seconds(10)) }
+        defer { t.cancel() }
+        #expect(await firstChunk(w) == "implemente o painel")
+    }
+
+    @Test func cursorInjectHasNoInstruction() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let (_, b, w) = try await pair(asks, preset: .cursor, command: "cat")
+        try await asks.inject(to: b, prompt: "implemente o painel", hold: .seconds(5))
+        #expect(w.chunks.first == "implemente o painel")
+    }
 }

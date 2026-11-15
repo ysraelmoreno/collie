@@ -305,6 +305,8 @@ public actor AskCoordinator {
         var senderName: String?
         /// The id the prefix shows (`ask --no-wait`: its inbox id); nil: the waiter's own, short.
         var askId: String?
+        /// A hookless Cursor's task: the prompt ends asking it to answer with `collie reply` (a clean, immediate answer).
+        var replyHint = false
         /// `ask --no-wait`: told once the prompt is written (and, for a Claude TUI, submitted) — the inbox's deliveredAt.
         var onDelivered: (@Sendable () -> Void)?
         var cont: CheckedContinuation<Result<AskResult, ProtocolError>, Never>?
@@ -388,7 +390,24 @@ public actor AskCoordinator {
         // the name is the registry's, never the asker's text; --raw and a dialog's answer (`ask B y`) stay exact
         let sender = !raw && from != to && prompt.count > Self.dialogAnswerMax ? targets[from]?.name : nil
         return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, guardsApproval: task, detached: detached,
-                                  senderName: sender, askId: askId, onDelivered: onDelivered, cont: nil), timeout: timeout)
+                                  senderName: sender, askId: askId, replyHint: sender != nil && t.preset == .cursor,
+                                  onDelivered: onDelivered, cont: nil), timeout: timeout)
+    }
+
+    static let replyMax = 8192
+    static let replyHintLine = "\n(Ao terminar, responda com: collie reply \"<resposta curta>\")"
+
+    /// `collie reply`: completes the in-flight ask addressed to `terminal` with `message`. Throws `.notFound` when none is
+    /// waiting for it (an inject's or the user's turn is not an ask to answer). Changes nothing else: the turn still ends
+    /// by idle (no hook latch), so the next ask to a Cursor that forgets `reply` finishes too.
+    func reply(terminal: UUID, message: String) throws(ProtocolError) {
+        guard !message.isEmpty, message.utf8.count <= Self.replyMax else {
+            throw ProtocolError(code: .invalidArgs, message: "reply: 1 to \(Self.replyMax) bytes")
+        }
+        guard let id = targets[terminal]?.inflight?.id, let w = waiters[id], !w.inject, !w.user, !w.held, w.from != terminal else {
+            throw ProtocolError(code: .notFound, message: "no ask is waiting for your reply")
+        }
+        finish(id, .success(AskResult(output: message, source: .hook, truncated: false)))
     }
 
     /// What an agent's ask to another agent is typed after: who sent it, never editable by the sender.
@@ -748,7 +767,7 @@ public actor AskCoordinator {
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
         // off the cooperative pool, report failures back through finish.
         // the prompt kept (w.prompt) stays bare: the hook's echo/signature checks look for its last line
-        let text = w.senderName.map { Self.senderPrefix(name: $0, askId: w.askId ?? String(id.uuidString.prefix(8)).lowercased()) + w.prompt } ?? w.prompt
+        let text = (w.senderName.map { Self.senderPrefix(name: $0, askId: w.askId ?? String(id.uuidString.prefix(8)).lowercased()) + w.prompt } ?? w.prompt) + (w.replyHint ? Self.replyHintLine : "")
         let data = PromptInjector.payload(text, raw: w.raw, bracketed: t.paste.enabled)
         let process = t.process, name = t.name, inject = w.inject, approval = t.approval, guards = w.guardsApproval, hold = reply
         DispatchQueue.global().async { [weak self] in

@@ -406,6 +406,9 @@ actor CommandRouter {
                 guard let id = str(req, "id") else { return Response(id: req.id, ok: true, result: .array(await inbox.recent(from: tid).map(AskInbox.json))) }
                 guard let e = await inbox.get(id: id, from: tid) else { throw ProtocolError(code: .notFound, message: "No ask '\(id)'") }
                 return Response(id: req.id, ok: true, result: AskInbox.json(e))
+            case "reply":
+                try await asks.reply(terminal: tid, message: try need(req, "message"))
+                return Response(id: req.id, ok: true, result: .object([:]))
             case "check":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
                 let model: [String: JSONValue] = t.model.map { ["model": .string($0)] } ?? [:]

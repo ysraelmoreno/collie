@@ -31,11 +31,25 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         public var method: String
         public var path: String
     }
-    /// An app's own service (v2); `start` and `health` are kept for slice 5 and not acted on yet.
+    /// An app's own service (v2): the daemon runs `start` (slice 5) in `cwd` (relative to the paddock; default: the
+    /// app's folder) and waits for `health`.
     public struct Service: Codable, Sendable, Equatable {
         public var base: String
         public var start: String?
         public var health: String?
+        public var cwd: String?
+    }
+    /// `runs: "http"`: what of the JSON reply reaches the caller (`PaddockApps.shape`): only the `pick` keys of the
+    /// root object, then each `tail` array cut to its last N items.
+    public struct Result: Codable, Sendable, Equatable {
+        public var pick: [String]
+        public var tail: [String: Int]
+        public init(pick: [String] = [], tail: [String: Int] = [:]) { self.pick = pick; self.tail = tail }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            pick = try c.decodeIfPresent([String].self, forKey: .pick) ?? []
+            tail = try c.decodeIfPresent([String: Int].self, forKey: .tail) ?? [:]
+        }
     }
     public struct Command: Codable, Sendable, Equatable {
         public var name: String
@@ -48,6 +62,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         public var http: HTTP?
         /// The user allows each call on a card before it runs (destructive actions).
         public var confirm: Bool
+        public var result: Result?
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
             name = try c.decode(String.self, forKey: .name); summary = try c.decode(String.self, forKey: .summary)
@@ -57,6 +72,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
             outputFile = try c.decodeIfPresent(Bool.self, forKey: .outputFile) ?? false
             http = try c.decodeIfPresent(HTTP.self, forKey: .http)
             confirm = try c.decodeIfPresent(Bool.self, forKey: .confirm) ?? false
+            result = try c.decodeIfPresent(Result.self, forKey: .result)
         }
     }
 
@@ -76,6 +92,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public var permissions: [String: JSONValue]?   // phase 3; only absent/empty accepted now
     public var service: Service?           // v2
     public var eventStream: String?        // v2: an SSE path on service.base (slice 2)
+    /// v2: the stream sends a whole document; its array at this key becomes one `events[0]` per new item (`AppEventDiff`).
+    public var eventDiff: String?
     /// Set by the daemon on an approved app do cercado (never read from its file): its folder and pin, so the panel
     /// serves a `ui/` page from the paddock, only while the files still hash to the pin (slice 4).
     public var appFolder: String?
@@ -98,6 +116,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         permissions = try c.decodeIfPresent([String: JSONValue].self, forKey: .permissions)
         service = try c.decodeIfPresent(Service.self, forKey: .service)
         eventStream = try c.decodeIfPresent(String.self, forKey: .eventStream)
+        eventDiff = try c.decodeIfPresent(String.self, forKey: .eventDiff)
         appFolder = try c.decodeIfPresent(String.self, forKey: .appFolder)
         appPin = try c.decodeIfPresent(String.self, forKey: .appPin)
     }
@@ -248,13 +267,17 @@ public struct PluginManifest: Codable, Sendable, Equatable {
                 throw Self.bad("nome de comando '\(c.name)' inválido ou repetido: a-z, 0-9 e '-', até 32, começando com letra")
             }
             switch c.runs {
-            case "ui": guard c.http == nil else { throw Self.bad("comando '\(c.name)': http só com runs \"http\"") }
+            case "ui": guard c.http == nil, c.result == nil else { throw Self.bad("comando '\(c.name)': http e result só com runs \"http\"") }
             case "http" where apiVersion >= 2:
                 guard origin != nil else { throw Self.bad("comando '\(c.name)': runs \"http\" precisa de service.base") }
                 guard let h = c.http, ["GET", "POST", "PUT", "PATCH", "DELETE"].contains(h.method), Self.safeHTTPPath(h.path) else {
                     throw Self.bad("comando '\(c.name)': http {method: GET|POST|PUT|PATCH|DELETE, path: /…} sem '..', '?' ou '#'")
                 }
                 guard !c.outputFile else { throw Self.bad("comando '\(c.name)': outputFile só com runs \"ui\"") }
+                if let r = c.result, r.pick.count > 32 || r.pick.contains(where: { $0.isEmpty || $0.count > 64 })
+                    || r.tail.contains(where: { $0.key.isEmpty || $0.key.count > 64 || !(1...1000).contains($0.value) }) {
+                    throw Self.bad("comando '\(c.name)': result {pick: até 32 chaves, tail: {chave: 1 a 1000}}")
+                }
             default: throw Self.bad("comando '\(c.name)': runs deve ser \"ui\"" + (apiVersion >= 2 ? " ou \"http\"" : ""))
             }
             try Self.text(c.summary, "summary de '\(c.name)'", 1...2000)
@@ -285,11 +308,17 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         if let s = service {   // slice 5: the daemon runs `start` in the app's folder (the approval card shows it)
             if let start = s.start { try Self.text(start, "service.start", 1...500) }
             if let h = s.health, !Self.safeHTTPPath(h) { throw Self.bad("service.health '\(h)': um caminho /… do service.base") }
+            if let cwd = s.cwd, s.start == nil || !Self.safeRelativePath(cwd) {
+                throw Self.bad("service.cwd '\(cwd)': uma pasta relativa ao cercado (sem '..', até 256 caracteres), com service.start")
+            }
         }
         if let e = eventStream {
             guard origin != nil, Self.safeHTTPPath(e), !events.isEmpty else {
                 throw Self.bad("eventStream '\(e)': um caminho /… do service.base, com events declarados")
             }
+        }
+        if let k = eventDiff, eventStream == nil || events.isEmpty || k.isEmpty || k.count > 64 || k.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+            throw Self.bad("eventDiff '\(k)': o nome de uma chave (1 a 64), com eventStream e events declarados")
         }
     }
 
@@ -298,6 +327,11 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         let parts = p.split(separator: "/", omittingEmptySubsequences: false)
         return p.utf8.count <= 512 && parts.count >= 2 && parts[0] == "ui" && p.hasSuffix(".html")
             && parts.allSatisfy { match(String($0), "[A-Za-z0-9_][A-Za-z0-9._-]{0,127}") }
+    }
+    /// `tools/x`: relative, no empty, `.` or `..` component, no control character, ≤ 256 characters.
+    static func safeRelativePath(_ p: String) -> Bool {
+        (1...256).contains(p.count) && !p.hasPrefix("/") && !p.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+            && !p.split(separator: "/", omittingEmptySubsequences: false).contains { $0.isEmpty || $0 == "." || $0 == ".." }
     }
     /// `/api/pods`: plain path segments only, ≤ 512 bytes.
     static func safeHTTPPath(_ p: String) -> Bool {

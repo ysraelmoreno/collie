@@ -214,4 +214,60 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         #expect(refusal { $0["service"] = ["base": "http://127.0.0.1:4100"] }?.message.contains("apiVersion 2") == true)
         #expect(refusal { var c = command("go"); c["confirm"] = true; $0["commands"] = [c] }?.message.contains("apiVersion 2") == true)
     }
+
+    // app adopt (spec 2026-11-15): service.cwd, result.pick/tail, eventDiff
+    @Test func serviceCwdDecodes() throws {
+        let m = try manifest(v2 { $0["service"] = ["base": "http://127.0.0.1:4100", "start": "./run.sh", "cwd": "tools/x"] })
+        #expect(m.service?.cwd == "tools/x")
+    }
+
+    @Test func serviceCwdRejectsEscape() {
+        for cwd in ["../x", "/abs", "a/../../b", "", String(repeating: "a", count: 257)] {
+            #expect(refusal(v2 { $0["service"] = ["base": "http://127.0.0.1:4100", "start": "./run.sh", "cwd": cwd] })?.message.contains("service.cwd") == true, "\(cwd)")
+        }
+    }
+
+    @Test func serviceCwdNeedsStart() {
+        #expect(refusal(v2 { $0["service"] = ["base": "http://127.0.0.1:4100", "cwd": "tools/x"] })?.message.contains("service.cwd") == true)
+    }
+
+    @Test func resultPickAndTailDecode() throws {
+        let m = try manifest(v2 { m in
+            m["commands"] = [["name": "events", "summary": "s", "runs": "http", "http": ["method": "GET", "path": "/api/document"],
+                              "result": ["pick": ["analyticsEvents"], "tail": ["analyticsEvents": 50]]]]
+        })
+        #expect(m.commands[0].result?.pick == ["analyticsEvents"] && m.commands[0].result?.tail == ["analyticsEvents": 50])
+        #expect(try manifest(v2 { m in   // pick alone: no tail
+            m["commands"] = [["name": "events", "summary": "s", "runs": "http", "http": ["method": "GET", "path": "/x"], "result": ["pick": ["a"]]]]
+        }).commands[0].result?.tail == [:])
+    }
+
+    @Test func resultTailRange() {
+        for n in [0, 1001] {
+            #expect(refusal(v2 { m in
+                m["commands"] = [["name": "events", "summary": "s", "runs": "http", "http": ["method": "GET", "path": "/x"], "result": ["tail": ["a": n]]]]
+            })?.message.contains("result") == true, "\(n)")
+        }
+        #expect(refusal(v2 { m in   // > 32 keys
+            m["commands"] = [["name": "events", "summary": "s", "runs": "http", "http": ["method": "GET", "path": "/x"], "result": ["pick": (0..<33).map { "k\($0)" }]]]
+        })?.message.contains("result") == true)
+        #expect(refusal { var c = command("a"); c["result"] = ["pick": ["x"]]; $0["commands"] = [c] }?.message.contains("result") == true)   // runs ui
+    }
+
+    @Test func eventDiffNeedsStreamAndEvents() throws {
+        #expect(refusal(v2 { $0["eventDiff"] = "analyticsEvents" })?.message.contains("eventDiff") == true)   // no eventStream
+        #expect(refusal(v2 { $0["eventDiff"] = "analyticsEvents"; $0["eventStream"] = "/api/stream"; $0["events"] = [String]() }) != nil)
+        #expect(refusal(v2 { $0["eventDiff"] = ""; $0["eventStream"] = "/api/stream" })?.message.contains("eventDiff") == true)
+        #expect(refusal(v2 { $0["eventDiff"] = String(repeating: "a", count: 65); $0["eventStream"] = "/api/stream" })?.message.contains("eventDiff") == true)
+        let m = try manifest(v2 { $0["eventDiff"] = "analyticsEvents"; $0["eventStream"] = "/api/stream" })
+        #expect(m.eventDiff == "analyticsEvents" && m.events.first == "kube.pod.crashed")
+    }
+
+    @Test func oldManifestUnchanged() throws {
+        let m = try manifest(v2())
+        #expect(m.service?.cwd == nil && m.eventDiff == nil && m.commands.allSatisfy { $0.result == nil })
+        let json = String(decoding: try JSONEncoder().encode(m), as: UTF8.self)
+        #expect(!json.contains("\"cwd\"") && !json.contains("\"result\"") && !json.contains("\"eventDiff\""), "\(json)")
+        #expect(try PluginManifest.decode(JSONEncoder().encode(m)) == m)
+    }
 }

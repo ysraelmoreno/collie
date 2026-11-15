@@ -16,6 +16,9 @@ struct AttentionDetector {
                                           "delete this file?", "read this file?", "run this mcp tool?", "allow this web search?",
                                           "allow this web fetch?", "proceed with this edit?"]
     private static let cursorLogin = "press any key to log in"
+    /// cursor-agent 2026.11.13's trust dialog in a folder it has not seen ("[a] Trust this workspace [q] Quit"): a
+    /// prompt typed into it is lost, its "a" trusts the folder (agent-comms Task 4, reproduced). Only the user answers it.
+    private static let cursorTrust = "workspace trust required"
     /// Claude Code's tool-permission dialog (checked against 2.1.307's bundle): a line "Do you want to proceed?" /
     /// "… make this edit to x?" / "… create x?" / "… overwrite x?", then within 3 lines the numbered option "1. Yes".
     // ponytail: the dialog's shape, not its whole text; an agent reply quoting such a dialog verbatim would match too
@@ -31,7 +34,7 @@ struct AttentionDetector {
 
     init(preset: Preset) {
         isClaude = preset == .claude
-        patterns = (isClaude ? Self.claude : []) + (preset == .cursor ? Self.cursorApprovals + [Self.cursorLogin] : []) + Self.generic
+        patterns = (isClaude ? Self.claude : []) + (preset == .cursor ? Self.cursorApprovals + [Self.cursorLogin, Self.cursorTrust] : []) + Self.generic
     }
 
     /// The reason (the matched pattern, or Claude's question as printed) when `text` completes a prompt; the buffer is
@@ -57,7 +60,7 @@ struct AttentionDetector {
         case _ where cursorApprovals.contains(reason): .yesNoKey
         // claude 2.1.314's trust dialog: no numbers ("1" is ignored) and the cursor on "No, exit" (Enter ends the terminal):
         // only the user's own keys answer it
-        case QuietDetector.overflowReason, "do you trust the files in this folder", "trust this folder", cursorLogin, claudeQuestion: .unknown
+        case QuietDetector.overflowReason, "do you trust the files in this folder", "trust this folder", cursorLogin, cursorTrust, claudeQuestion: .unknown
         default: .menu   // the permission dialogs: numbered options, "1" is "Yes"
         }
     }

@@ -592,7 +592,7 @@ extension AskTests {
             try await connect(d, p, "A", "B")
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
-            let head = "[collie] Reply from B (ask \(id)):"
+            let head = "[collie] Reply from B (ask \(id)"   // ", queued behind a turn" when B was still starting
             let aid = UUID(uuidString: a.id)!
             #expect(await waitFor(10) { await d.scrollbackText(aid).contains(head) })
             try await Task.sleep(for: .milliseconds(500))
@@ -653,6 +653,35 @@ extension AskTests {
         }
     }
 
+    /// agent-comms Task 4: the asker hears that its message waits behind a turn in progress.
+    @Test func noWaitAckSaysTargetBusy() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let bid = UUID(uuidString: b.id)!
+            #expect(await waitFor(10) { await d.badge(bid) != .working })
+            let (first, r1) = try await askNoWait(p, a, "B", "one", timeout: 30)
+            guard case .object(let o1)? = r1.result else { Issue.record("\(r1)"); return }
+            #expect(o1["targetBusy"] == .bool(false))
+            #expect(await waitFor(10) { await d.askBusy(bid) })
+            let (second, r2) = try await askNoWait(p, a, "B", "two", timeout: 30)
+            guard case .object(let o2)? = r2.result else { Issue.record("\(r2)"); return }
+            #expect(o2["targetBusy"] == .bool(true))
+            guard case .object(let e1)? = try await askResult(p, a, first).result,
+                  case .object(let e2)? = try await askResult(p, a, second).result else { Issue.record("no entries"); return }
+            #expect(e1["targetBusy"] == .bool(false) && e2["targetBusy"] == .bool(true))
+        }
+    }
+
+    @Test func inboxLineMentionsQueue() {
+        var e = AskInbox.Entry(id: "abcd1234", target: "B")
+        e.status = .done; e.output = "ok"
+        #expect(!AskInbox.message(e).contains("queued"))
+        e.targetBusy = true
+        #expect(AskInbox.message(e) == "[collie] Reply from B (ask abcd1234, queued behind a turn): ok")
+    }
+
     @Test func noWaitFailureDelivered() async throws {
         try await withDaemon { d, p in
             let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
@@ -698,7 +727,7 @@ extension AskTests {
             #expect(!(await d.scrollbackText(aid).contains("[collie] Reply")))   // never typed into the prompt
             let r = try await send(p, Request(id: "x", token: d.adminToken, command: "work.approval.dismiss", args: ["id": .string(approval.id.uuidString)]))
             #expect(r.ok, "\(r)")
-            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[collie] Reply from B (ask \(id)):") })
+            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[collie] Reply from B (ask \(id)") })
         }
     }
 

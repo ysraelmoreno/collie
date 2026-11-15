@@ -399,9 +399,11 @@ actor CommandRouter {
                 let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", max: 86_400) ?? 1800)
                 if let e = ClaudeModel.slashRefusal(prompt, target: t) { throw e }   // DX backlog 20: no turn, no reply
                 if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout)) }
+                let busy = await targetBusy(t.id)
                 let r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout)
                 return Response(id: req.id, ok: true, result: .object([
-                    "output": .string(r.output), "source": .string(r.source.rawValue), "truncated": .bool(r.truncated)]))
+                    "output": .string(r.output), "source": .string(r.source.rawValue), "truncated": .bool(r.truncated),
+                    "targetBusy": .bool(busy)]))
             case "ask.result":   // the asker's own asks only: another terminal's id is notFound
                 guard let id = str(req, "id") else { return Response(id: req.id, ok: true, result: .array(await inbox.recent(from: tid).map(AskInbox.json))) }
                 guard let e = await inbox.get(id: id, from: tid) else { throw ProtocolError(code: .notFound, message: "No ask '\(id)'") }
@@ -467,7 +469,8 @@ actor CommandRouter {
     /// `ask --no-wait`: the same ask, detached; its reply is kept in the inbox and typed into the asker once it is idle
     /// (claude/codex/cursor only: a shell would run it).
     private func askNoWait(from: UUID, to t: TerminalRecord, prompt: String, raw: Bool, timeout: Duration) async -> JSONValue {
-        let id = await inbox.open(from: from, target: t.name)
+        let busy = await targetBusy(t.id)
+        let id = await inbox.open(from: from, target: t.name, targetBusy: busy)
         let asks = asks, inbox = inbox, target = t.id
         let typed = ws.terminals.first { $0.id == from }.map { [.claude, .codex, .cursor].contains($0.preset) } ?? false
         Task {
@@ -480,7 +483,13 @@ actor CommandRouter {
             guard let e = await inbox.close(id: id, r), typed else { return }
             try? await asks.inject(to: from, prompt: AskInbox.message(e), hold: .seconds(1800), afterQuiet: true)
         }
-        return .object(["askId": .string(id), "target": .string(t.name)])
+        return .object(["askId": .string(id), "target": .string(t.name), "targetBusy": .bool(busy)])
+    }
+
+    /// The target is in a turn (its badge `working`, or an ask, capture or Claude turn holds it): a prompt waits in its queue.
+    private func targetBusy(_ id: UUID) async -> Bool {
+        if await hub.currentBadges[id] == .working { return true }
+        return await asks.commandState(id)?.busy ?? false
     }
 
     /// `check --screen`: the terminal's screen as drawn now (its output replayed into an emulator of its size).

@@ -104,6 +104,28 @@ import CollieTerminal
         #expect(AskCoordinator.keys(AttentionDetector.kind(why!), allow: true) == nil)
     }
 
+    // MARK: - cursor's first prompt (agent-comms Task 4: reproduced, the trust dialog took the keys)
+
+    /// cursor-agent 2026.11.13 in a folder it has not seen: its trust dialog, where "a" trusts and "q" quits.
+    static let cursorTrust = "⚠ Workspace Trust Required\nDo you trust the contents of this directory?\n[a] Trust this workspace [q] Quit\n"
+
+    @Test func cursorTrustDialogIsDetectedAndLeftToTheUser() {
+        var d = AttentionDetector(preset: .cursor)
+        let why = d.feed(Self.cursorTrust)
+        #expect(why != nil)
+        #expect(why.map(AttentionDetector.kind) == .unknown)
+        #expect(why.flatMap { AskCoordinator.keys(AttentionDetector.kind($0), allow: true) } == nil)
+    }
+
+    @Test func summonPromptIsNotTypedIntoCursorTrustDialog() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let (id, w) = try await start(asks, preset: .cursor, script: "printf '\(Self.cursorTrust.replacingOccurrences(of: "\n", with: "\\n"))'; exec cat")
+        await #expect(throws: ProtocolError.self) {
+            try await asks.inject(to: id, prompt: "Responda apenas com a palavra PRONTO1 e nada mais.", hold: .seconds(4))
+        }
+        #expect(w.chunks.isEmpty)
+    }
+
     // MARK: - sender prefix (agent-comms Task 2)
 
     /// A (asker) and B (a shell that reads and stays quiet: the ask finishes on idle).

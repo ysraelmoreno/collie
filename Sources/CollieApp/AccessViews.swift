@@ -313,6 +313,9 @@ struct AppCardView: View {
                 if let start = card.start {   // slice 5: the daemon runs it in the app's folder, under the paddock's sandbox
                     Text("Vai rodar: \(Text(verbatim: AccessCopy.shown(start)).font(.collieMono(11)))").font(.collieUI(12))
                 }
+                if let cwd = card.cwd {   // service.cwd: the folder it runs in, relative to the paddock
+                    Text("Pasta: \(Text(verbatim: AccessCopy.shown(cwd)).font(.collieMono(11)))").font(.collieUI(12))
+                }
                 if !card.commands.isEmpty {
                     Text("Comandos para os agentes: \(Text(verbatim: card.commands.joined(separator: ", ")).font(.collieMono(11)))")
                         .font(.collieUI(12)).fixedSize(horizontal: false, vertical: true)

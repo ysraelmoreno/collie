@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import CollieCore
 import CollieProtocol
+import CollieTerminal
 @testable import CollieDaemonKit
 
 private let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -34,6 +35,9 @@ private func ask(_ p: Paths, _ from: Term, _ target: String, _ prompt: String, t
     return try await send(p, Request(id: "a", terminalId: from.id, token: from.token, command: "ask", args: args),
                           timeoutSeconds: Double(timeout ?? 5) + 10)
 }
+
+/// The fake agent echoes what it was typed: an agent's ask now starts with the sender prefix (agent-comms Task 2).
+private func bare(_ s: String?) -> String? { s?.replacing(#/\[collie\] pedido de \S+ \(ask [0-9a-f]{8}\): /#, with: "") }
 
 private func result(_ r: Response) -> (output: String, source: String?, truncated: Bool?) {
     guard case .object(let o)? = r.result, case .string(let out)? = o["output"] else { return ("<no result: \(r)>", nil, nil) }
@@ -172,9 +176,9 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
                     #expect(res.source == "idle", "ask 1 must exercise the swallow path: \(res)")
                     // idle output is the raw screen (echo, "thinking...", answer); the answer is its last line
                     let last = res.output.split(whereSeparator: \.isNewline).last.map(String.init)
-                    #expect(last == "answer:\(prompt)", "ask \(n): \(res)")
+                    #expect(bare(last) == "answer:\(prompt)", "ask \(n): \(res)")
                 } else {
-                    #expect(res.output == "answer:\(prompt)", "ask \(n): \(res)")
+                    #expect(bare(res.output) == "answer:\(prompt)", "ask \(n): \(res)")
                     #expect(res.source == "hook", "ask \(n): \(res)")
                 }
             }
@@ -257,7 +261,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
             #expect(result(try await ask(p, a, "B", "q1", timeout: 20)).source == "idle")
             let quoting = "re: **answer:q1**"
             let r = result(try await ask(p, a, "B", quoting, timeout: 20))
-            #expect(r.output == "**answer:\(quoting)**", "\(r)")
+            #expect(bare(r.output) == "**answer:\(quoting)**", "\(r)")
         }
     }
 
@@ -588,7 +592,7 @@ extension AskTests {
             try await connect(d, p, "A", "B")
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
-            let head = "[collie] Reply from B (ask \(id)):"
+            let head = "[collie] Reply from B (ask \(id)"   // ", queued behind a turn" when B was still starting
             let aid = UUID(uuidString: a.id)!
             #expect(await waitFor(10) { await d.scrollbackText(aid).contains(head) })
             try await Task.sleep(for: .milliseconds(500))
@@ -649,6 +653,35 @@ extension AskTests {
         }
     }
 
+    /// agent-comms Task 4: the asker hears that its message waits behind a turn in progress.
+    @Test func noWaitAckSaysTargetBusy() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let bid = UUID(uuidString: b.id)!
+            #expect(await waitFor(10) { await d.badge(bid) != .working })
+            let (first, r1) = try await askNoWait(p, a, "B", "one", timeout: 30)
+            guard case .object(let o1)? = r1.result else { Issue.record("\(r1)"); return }
+            #expect(o1["targetBusy"] == .bool(false))
+            #expect(await waitFor(10) { await d.askBusy(bid) })
+            let (second, r2) = try await askNoWait(p, a, "B", "two", timeout: 30)
+            guard case .object(let o2)? = r2.result else { Issue.record("\(r2)"); return }
+            #expect(o2["targetBusy"] == .bool(true))
+            guard case .object(let e1)? = try await askResult(p, a, first).result,
+                  case .object(let e2)? = try await askResult(p, a, second).result else { Issue.record("no entries"); return }
+            #expect(e1["targetBusy"] == .bool(false) && e2["targetBusy"] == .bool(true))
+        }
+    }
+
+    @Test func inboxLineMentionsQueue() {
+        var e = AskInbox.Entry(id: "abcd1234", target: "B")
+        e.status = .done; e.output = "ok"
+        #expect(!AskInbox.message(e).contains("queued"))
+        e.targetBusy = true
+        #expect(AskInbox.message(e) == "[collie] Reply from B (ask abcd1234, queued behind a turn): ok")
+    }
+
     @Test func noWaitFailureDelivered() async throws {
         try await withDaemon { d, p in
             let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
@@ -694,7 +727,7 @@ extension AskTests {
             #expect(!(await d.scrollbackText(aid).contains("[collie] Reply")))   // never typed into the prompt
             let r = try await send(p, Request(id: "x", token: d.adminToken, command: "work.approval.dismiss", args: ["id": .string(approval.id.uuidString)]))
             #expect(r.ok, "\(r)")
-            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[collie] Reply from B (ask \(id)):") })
+            #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[collie] Reply from B (ask \(id)") })
         }
     }
 
@@ -777,5 +810,201 @@ extension AskTests {
         let p = try #require(await b.get(id: pending, from: me))
         #expect(p.status == .failed && p.error?.contains("restarted") == true, "\(p)")
         #expect(await AskInbox(file: nil).recent(from: me).isEmpty, "no file: memory only (tests)")
+    }
+}
+
+// MARK: - collie wait in the deadlock graph (agent-comms Task 1)
+
+/// A coordinator-only target named `name` that reads what it's typed and never ends a turn by itself (hook-only preset).
+private func waitTarget(_ asks: AskCoordinator, _ name: String) async throws -> UUID {
+    let rec = TerminalRecord(id: UUID(), name: name, preset: .claude, command: "cat", cwd: "/tmp", isShepherd: false, paddockId: nil, projectRoot: nil)
+    let sb = ScrollbackBuffer(spillURL: nil)
+    let p = try PTYProcess(spec: LaunchSpec(executable: "/bin/sh", arguments: ["-c", "printf ready; exec cat >/dev/null"], environment: [:], cwd: "/tmp"), scrollback: sb)
+    await asks.attach(rec, process: p, scrollback: sb)
+    return rec.id
+}
+
+private func inFlight(_ asks: AskCoordinator, _ id: UUID) async -> Bool {
+    for _ in 0..<200 { if await asks.isBusy(id) { return true }; try? await Task.sleep(for: .milliseconds(25)) }
+    return false
+}
+
+extension AskTests {
+    @Test func waitThenCrossedAskIsDeadlock() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
+        _ = try await asks.beginWait(from: b, to: a)
+        do { _ = try await asks.ask(from: a, to: b, prompt: "pode testar?", raw: false, timeout: .seconds(5)); Issue.record("no deadlock") }
+        catch { #expect(error.code == .deadlock && error.message == "Deadlock: 'B' is already waiting on 'A'; 'A' cannot ask 'B'", "\(error)") }
+    }
+
+    @Test func askThenCrossedWaitIsDeadlock() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
+        let pending = Task { try await asks.ask(from: a, to: b, prompt: "pode testar?", raw: false, timeout: .seconds(10)) }
+        defer { pending.cancel() }
+        #expect(await inFlight(asks, b))
+        do { _ = try await asks.beginWait(from: b, to: a); Issue.record("no deadlock") }
+        catch { #expect(error.code == .deadlock && error.message == "Deadlock: 'A' is already waiting on 'B'; 'B' cannot wait on 'A'", "\(error)") }
+    }
+
+    @Test func endWaitReleasesEdge() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
+        await asks.endWait(try await asks.beginWait(from: b, to: a))
+        let pending = Task { try await asks.ask(from: a, to: b, prompt: "pode testar?", raw: false, timeout: .seconds(10)) }
+        defer { pending.cancel() }
+        #expect(await inFlight(asks, b))
+    }
+
+    @Test func noCycleNoDeadlock() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B"), c = try await waitTarget(asks, "C")
+        let ab = Task { try await asks.ask(from: a, to: b, prompt: "primeiro pedido", raw: false, timeout: .seconds(10)) }
+        defer { ab.cancel() }
+        #expect(await inFlight(asks, b))
+        let cb = Task { try await asks.ask(from: c, to: b, prompt: "segundo pedido", raw: false, timeout: .seconds(10)) }
+        defer { cb.cancel() }
+        for _ in 0..<100 where await asks.queued(b) == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(await asks.queued(b) == 1)
+        let w = try await asks.beginWait(from: c, to: a)   // C -> A, A -> B, C -> B: no cycle
+        await asks.endWait(w)
+    }
+
+    @Test func detachedAskAddsNoEdge() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
+        let pending = Task { try await asks.ask(from: a, to: b, prompt: "pode testar?", raw: false, timeout: .seconds(10), detached: true) }
+        defer { pending.cancel() }
+        #expect(await inFlight(asks, b))
+        await asks.endWait(try await asks.beginWait(from: b, to: a))
+    }
+
+    /// Router: `collie wait` on an agent that is working (badge) while blocked on an ask to the waiter is refused up front.
+    @Test func waitOnAgentAskingMeIsDeadlock() async throws {
+        try await withDaemon { d, p in
+            let ticks = "echo T=$COLLIE_TOKEN; while :; do echo tick; sleep 0.1; done"
+            let a = try await term(d, p, "A", preset: "custom", command: ticks)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let pending = Task { try await ask(p, a, "B", "never answered", timeout: 30) }
+            defer { pending.cancel() }
+            #expect(await waitFor(10) { await d.askBusy(UUID(uuidString: b.id)!) })
+            #expect(await waitFor(10) { await d.badge(UUID(uuidString: a.id)!) == .working })
+            let t0 = ContinuousClock.now
+            let r = try await send(p, Request(id: "w", terminalId: b.id, token: b.token, command: "wait",
+                                              args: ["target": .string("A"), "timeout": .number(30)]), timeoutSeconds: 40)
+            #expect(ContinuousClock.now - t0 < .seconds(10))
+            #expect(r.error?.code == .deadlock && r.error?.message == "Deadlock: 'A' is already waiting on 'B'; 'B' cannot wait on 'A'", "\(r)")
+        }
+    }
+
+    /// A `wait` that timed out leaves no edge: the crossed blocking ask that follows is not a deadlock.
+    @Test func timedOutWaitReleasesEdge() async throws {
+        try await withDaemon { d, p in
+            let ticks = "echo T=$COLLIE_TOKEN; while :; do echo tick; sleep 0.1; done"
+            let a = try await term(d, p, "A", preset: "custom", command: ticks)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            #expect(await waitFor(10) { await d.badge(UUID(uuidString: a.id)!) == .working })
+            let w = try await send(p, Request(id: "w", terminalId: b.id, token: b.token, command: "wait",
+                                              args: ["target": .string("A"), "timeout": .number(1)]), timeoutSeconds: 15)
+            #expect(w.error?.code == .timeout, "\(w)")
+            let r = try await ask(p, a, "B", "pode testar?", timeout: 1)
+            #expect(r.error?.code != .deadlock, "\(r)")
+        }
+    }
+}
+
+// MARK: - collie reply (agent-comms Task 3)
+
+private func cursorTarget(_ asks: AskCoordinator, _ name: String) async throws -> UUID {
+    let rec = TerminalRecord(id: UUID(), name: name, preset: .cursor, command: "cat", cwd: "/tmp", isShepherd: false, paddockId: nil, projectRoot: nil)
+    let sb = ScrollbackBuffer(spillURL: nil)
+    let p = try PTYProcess(spec: LaunchSpec(executable: "/bin/sh", arguments: ["-c", "printf ready; exec cat >/dev/null"], environment: [:], cwd: "/tmp"), scrollback: sb)
+    await asks.attach(rec, process: p, scrollback: sb)
+    return rec.id
+}
+
+extension AskTests {
+    @Test func replyCompletesInflightAsk() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        #expect(await inFlight(asks, b))
+        try await asks.reply(terminal: b, message: "feito: slugify.py, 3 testes")
+        let r = try await t.value
+        #expect(r.output == "feito: slugify.py, 3 testes" && r.source == .hook && !r.truncated)
+        #expect(!(await asks.isBusy(b)))
+    }
+
+    @Test func replyWithoutInflightIsNotFound() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let b = try await cursorTarget(asks, "B")
+        do { try await asks.reply(terminal: b, message: "oi"); Issue.record("replied") }
+        catch { #expect(error.code == .notFound && error.message == "no ask is waiting for your reply", "\(error)") }
+    }
+
+    /// Another terminal's in-flight ask is not this caller's to answer.
+    @Test func replyOnlyAnswersOwnAsk() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B"), c = try await cursorTarget(asks, "C")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        defer { t.cancel() }
+        #expect(await inFlight(asks, b))
+        await #expect(throws: ProtocolError.self) { try await asks.reply(terminal: c, message: "forjado") }
+        #expect(await asks.isBusy(b))
+    }
+
+    @Test func replyDoesNotLatchHookOnly() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        #expect(await inFlight(asks, b))
+        try await asks.reply(terminal: b, message: "feito")
+        _ = try await t.value
+        let next = try await asks.ask(from: a, to: b, prompt: "agora os testes", raw: false, timeout: .seconds(10))
+        #expect(next.source == .idle)   // the Cursor that forgets `reply` still finishes by idle
+    }
+
+    @Test func replyIgnoresInjectAndUserAsks() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let b = try await cursorTarget(asks, "B")
+        try await asks.inject(to: b, prompt: "papel do terminal", hold: .seconds(10))   // returns once written; holds the slot
+        #expect(await asks.isBusy(b))
+        await #expect(throws: ProtocolError.self) { try await asks.reply(terminal: b, message: "oi") }
+        let c = try await cursorTarget(asks, "C")
+        let u = Task { try await asks.askAsUser(to: c, prompt: "o que falta?", timeout: .seconds(10)) }
+        defer { u.cancel() }
+        #expect(await inFlight(asks, c))
+        await #expect(throws: ProtocolError.self) { try await asks.reply(terminal: c, message: "oi") }
+    }
+
+    @Test func replyRejectsEmptyAndOversized() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 15)
+        let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
+        let t = Task { try await asks.ask(from: a, to: b, prompt: "crie o slugify", raw: false, timeout: .seconds(10)) }
+        defer { t.cancel() }
+        #expect(await inFlight(asks, b))
+        for m in ["", String(repeating: "x", count: 8193)] {
+            do { try await asks.reply(terminal: b, message: m); Issue.record("accepted \(m.count)") }
+            catch { #expect(error.code == .invalidArgs, "\(error)") }
+        }
+        #expect(await asks.isBusy(b))
+    }
+
+    /// End to end: `collie reply` from the asked Cursor's own terminal answers the blocking ask.
+    @Test func replyCommandAnswersTheAsker() async throws {
+        try await withDaemon(configure: { $0.idleQuietSeconds = 15 }) { d, p in
+            let a = try await term(d, p, "A")
+            let b = try await term(d, p, "B", preset: "cursor", command: quietAgent)
+            try await connect(d, p, "A", "B")
+            let pending = Task { try await ask(p, a, "B", "crie o slugify", timeout: 20) }
+            #expect(await waitFor(10) { await d.askBusy(UUID(uuidString: b.id)!) })
+            let r = try await send(p, Request(id: "r", terminalId: b.id, token: b.token, command: "reply", args: ["message": .string("feito")]))
+            #expect(r.ok, "\(r)")
+            let res = result(try await pending.value)
+            #expect(res.output == "feito" && res.source == "hook", "\(res)")
+        }
     }
 }

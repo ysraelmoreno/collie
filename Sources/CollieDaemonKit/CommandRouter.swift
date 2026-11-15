@@ -399,13 +399,18 @@ actor CommandRouter {
                 let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", max: 86_400) ?? 1800)
                 if let e = ClaudeModel.slashRefusal(prompt, target: t) { throw e }   // DX backlog 20: no turn, no reply
                 if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout)) }
+                let busy = await targetBusy(t.id)
                 let r = try await asks.ask(from: tid, to: t.id, prompt: prompt, raw: raw, timeout: timeout)
                 return Response(id: req.id, ok: true, result: .object([
-                    "output": .string(r.output), "source": .string(r.source.rawValue), "truncated": .bool(r.truncated)]))
+                    "output": .string(r.output), "source": .string(r.source.rawValue), "truncated": .bool(r.truncated),
+                    "targetBusy": .bool(busy)]))
             case "ask.result":   // the asker's own asks only: another terminal's id is notFound
                 guard let id = str(req, "id") else { return Response(id: req.id, ok: true, result: .array(await inbox.recent(from: tid).map(AskInbox.json))) }
                 guard let e = await inbox.get(id: id, from: tid) else { throw ProtocolError(code: .notFound, message: "No ask '\(id)'") }
                 return Response(id: req.id, ok: true, result: AskInbox.json(e))
+            case "reply":
+                try await asks.reply(terminal: tid, message: try need(req, "message"))
+                return Response(id: req.id, ok: true, result: .object([:]))
             case "check":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
                 let model: [String: JSONValue] = t.model.map { ["model": .string($0)] } ?? [:]
@@ -414,7 +419,7 @@ actor CommandRouter {
                 return Response(id: req.id, ok: true, result: .object(model.merging(["output": .string(s.text), "truncated": .bool(s.truncated)]) { $1 }))
             case "wait":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
-                return Response(id: req.id, ok: true, result: try await waitTurn(t, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
+                return Response(id: req.id, ok: true, result: try await waitTurn(t, from: tid, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
             case "turn.completed":
                 if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr) }   // restarts the idle capture
                 // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
@@ -464,12 +469,13 @@ actor CommandRouter {
     /// `ask --no-wait`: the same ask, detached; its reply is kept in the inbox and typed into the asker once it is idle
     /// (claude/codex/cursor only: a shell would run it).
     private func askNoWait(from: UUID, to t: TerminalRecord, prompt: String, raw: Bool, timeout: Duration) async -> JSONValue {
-        let id = await inbox.open(from: from, target: t.name)
+        let busy = await targetBusy(t.id)
+        let id = await inbox.open(from: from, target: t.name, targetBusy: busy)
         let asks = asks, inbox = inbox, target = t.id
         let typed = ws.terminals.first { $0.id == from }.map { [.claude, .codex, .cursor].contains($0.preset) } ?? false
         Task {
             let r: Result<AskResult, ProtocolError>
-            do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true,
+            do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true, askId: id,
                                                                 onDelivered: { Task { await inbox.delivered(id: id) } })) }
             catch { r = .failure(error) }
             // nil: the asker was removed meanwhile — nothing to type
@@ -477,7 +483,13 @@ actor CommandRouter {
             guard let e = await inbox.close(id: id, r), typed else { return }
             try? await asks.inject(to: from, prompt: AskInbox.message(e), hold: .seconds(1800), afterQuiet: true)
         }
-        return .object(["askId": .string(id), "target": .string(t.name)])
+        return .object(["askId": .string(id), "target": .string(t.name), "targetBusy": .bool(busy)])
+    }
+
+    /// The target is in a turn (its badge `working`, or an ask, capture or Claude turn holds it): a prompt waits in its queue.
+    private func targetBusy(_ id: UUID) async -> Bool {
+        if await hub.currentBadges[id] == .working { return true }
+        return await asks.commandState(id)?.busy ?? false
     }
 
     /// `check --screen`: the terminal's screen as drawn now (its output replayed into an emulator of its size).
@@ -492,7 +504,8 @@ actor CommandRouter {
 
     /// `wait`: an idle agent answers at once with its last turn; a working one when its turn ends (Stop hook), or when its
     /// badge leaves `working` (hookless agents, an approval prompt).
-    private func waitTurn(_ t: TerminalRecord, timeout: Duration) async throws(ProtocolError) -> JSONValue {
+    /// While it waits, `from -> t` is an edge of the asks' deadlock graph (a crossed blocking ask or wait is refused).
+    private func waitTurn(_ t: TerminalRecord, from: UUID, timeout: Duration) async throws(ProtocolError) -> JSONValue {
         func reply(idle: Bool, _ badge: StatusBadge?) -> JSONValue {
             var o: [String: JSONValue] = ["idle": .bool(idle), "badge": .string((badge ?? .stopped).rawValue)]
             if let m = lastTurn[t.id] { o["message"] = .string(m) }
@@ -500,13 +513,17 @@ actor CommandRouter {
         }
         let ends = turnEnds[t.id] ?? 0, deadline = ContinuousClock.now + timeout
         if let b = await hub.currentBadges[t.id], b != .working { return reply(idle: true, b) }
+        let edge = try await asks.beginWait(from: from, to: t.id)
+        var done: JSONValue?
         // ponytail: 200 ms polling of the turn count and the hub's badge (itself polled 4/s)
         while ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(200))
             if Task.isCancelled { break }
             let b = await hub.currentBadges[t.id]
-            if (turnEnds[t.id] ?? 0) != ends || b != .working { return reply(idle: false, b) }
+            if (turnEnds[t.id] ?? 0) != ends || b != .working { done = reply(idle: false, b); break }
         }
+        await asks.endWait(edge)
+        if let done { return done }
         throw ProtocolError(code: .timeout, message: "'\(t.name)' is still working after \(timeout.components.seconds)s")
     }
 

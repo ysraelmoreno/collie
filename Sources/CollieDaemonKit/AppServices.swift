@@ -260,8 +260,8 @@ extension CommandRouter {
         return s
     }
 
-    /// `/bin/sh` in the app's folder running `service.start`, stderr into stdout; under the paddock's terminal profile
-    /// when terminals are sandboxed (`config.sandboxHome`; tests: none, as for terminals).
+    /// `/bin/sh` in the app's folder (or `service.cwd` in the paddock) running `service.start`, stderr into stdout;
+    /// under the paddock's terminal profile when terminals are sandboxed (`config.sandboxHome`; tests: none, as for terminals).
     func serviceLaunch(_ m: PluginManifest, folder: String, paddock: Paddock, id: UUID) async throws -> (URL, [String], [String: String]) {
         guard let start = m.service?.start else { throw ProtocolError(code: .invalidArgs, message: "no service.start") }
         let env = ProcessInfo.processInfo.environment
@@ -269,11 +269,30 @@ extension CommandRouter {
                                    "COLLIE_PADDOCK_NAME": paddock.name, "COLLIE_PADDOCK_PATH": paddock.path]
         for k in ["HOME", "USER", "LANG"] { if let v = env[k] { e[k] = v } }
         e = UserEnvironment.merge(user: await userEnv.current(), collie: e, collieBin: config.collieExecutable.deletingLastPathComponent().path)
-        let sh = ["-c", "cd \"$0\" || exit 70; exec 2>&1; exec /bin/sh -c \"$1\"", folder, start]
+        let sh = ["-c", "cd \"$0\" || exit 70; exec 2>&1; exec /bin/sh -c \"$1\"", try Self.serviceDir(m, folder: folder, paddock: paddock), start]
         guard let home = config.sandboxHome else { return (URL(fileURLWithPath: "/bin/sh"), sh, e) }
         let profile = try prepareServiceSandbox(id: id, paddock: paddock, start: start)
         return (URL(fileURLWithPath: "/usr/bin/sandbox-exec"), ["-f", profile.path, "/bin/sh"] + sh,
                 SandboxLaunch.environment(e, id: id, root: config.paths.root, shell: config.shell, home: home))
+    }
+
+    /// Where the service runs: the app's folder, or `service.cwd` resolved (no link left) and still inside the paddock.
+    // ponytail: checked at each start, not at the `cd`; a folder swapped for a link in between is not caught
+    static func serviceDir(_ m: PluginManifest, folder: String, paddock: Paddock) throws(ProtocolError) -> String {
+        guard let cwd = m.service?.cwd else { return folder }
+        return try resolveCwd(cwd, in: paddock.path)
+    }
+
+    /// `<paddock>/<cwd>` with every link resolved; it must exist and stay inside the paddock.
+    static func resolveCwd(_ cwd: String, in paddock: String) throws(ProtocolError) -> String {
+        func real(_ p: String) -> String? { realpath(p, nil).map { r in defer { free(r) }; return String(cString: r) } }
+        guard let root = real(paddock), let dir = real(URL(fileURLWithPath: paddock).appendingPathComponent(cwd).path) else {
+            throw ProtocolError(code: .invalidArgs, message: "service.cwd '\(cwd)' does not exist in the paddock")
+        }
+        guard dir == root || dir.hasPrefix(root.hasSuffix("/") ? root : root + "/") else {
+            throw ProtocolError(code: .invalidArgs, message: "service.cwd leaves the paddock")
+        }
+        return dir
     }
 
     /// The paddock's terminal profile for the service (as `prepareSandbox` renders a terminal's): project = the paddock.

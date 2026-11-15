@@ -301,6 +301,12 @@ public actor AskCoordinator {
         var user = false
         /// `ask --no-wait`: the asker isn't blocked, so no edge in the deadlock graph.
         var detached = false
+        /// An agent's task to another agent: the asker's registered name, typed before the prompt (`senderPrefix`).
+        var senderName: String?
+        /// The id the prefix shows (`ask --no-wait`: its inbox id); nil: the waiter's own, short.
+        var askId: String?
+        /// A hookless Cursor's task: the prompt ends asking it to answer with `collie reply` (a clean, immediate answer).
+        var replyHint = false
         /// `ask --no-wait`: told once the prompt is written (and, for a Claude TUI, submitted) — the inbox's deliveredAt.
         var onDelivered: (@Sendable () -> Void)?
         var cont: CheckedContinuation<Result<AskResult, ProtocolError>, Never>?
@@ -324,6 +330,8 @@ public actor AskCoordinator {
     nonisolated let provenance = InputProvenance()
     private var targets: [UUID: Target] = [:]
     private var waiters: [UUID: Waiter] = [:]   // queued + in-flight asks; also the deadlock graph (from -> to)
+    /// `collie wait` callers blocked on a working agent: the deadlock graph's other edges (from -> to).
+    private var waitEdges: [UUID: (from: UUID, to: UUID)] = [:]
 
     private let heldMax: Duration
     /// Every approval prompt as it appears, changes or clears (one consumer: the router tells the chat and the panels).
@@ -367,7 +375,7 @@ public actor AskCoordinator {
         }
     }
 
-    public func ask(from: UUID, to: UUID, prompt: String, raw: Bool, timeout: Duration, detached: Bool = false,
+    public func ask(from: UUID, to: UUID, prompt: String, raw: Bool, timeout: Duration, detached: Bool = false, askId: String? = nil,
                     onDelivered: (@Sendable () -> Void)? = nil) async throws(ProtocolError) -> AskResult {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
@@ -379,9 +387,48 @@ public actor AskCoordinator {
         // R7: unguarded on purpose — v1 asks answer prompts (a Shepherd's `collie ask B y`); but a task sent to an agent
         // still opening must not answer its trust dialog with an Enter and be lost
         let task = t.claudeTUI && !t.typed && prompt.count > Self.dialogAnswerMax
+        // the name is the registry's, never the asker's text; --raw and a dialog's answer (`ask B y`) stay exact
+        let sender = !raw && from != to && prompt.count > Self.dialogAnswerMax ? targets[from]?.name : nil
         return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, guardsApproval: task, detached: detached,
+                                  senderName: sender, askId: askId, replyHint: sender != nil && t.preset == .cursor,
                                   onDelivered: onDelivered, cont: nil), timeout: timeout)
     }
+
+    static let replyMax = 8192
+    static let replyHintLine = "\n(Ao terminar, responda com: collie reply \"<resposta curta>\")"
+
+    /// `collie reply`: completes the in-flight ask addressed to `terminal` with `message`. Throws `.notFound` when none is
+    /// waiting for it (an inject's or the user's turn is not an ask to answer). Changes nothing else: the turn still ends
+    /// by idle (no hook latch), so the next ask to a Cursor that forgets `reply` finishes too.
+    func reply(terminal: UUID, message: String) throws(ProtocolError) {
+        guard !message.isEmpty, message.utf8.count <= Self.replyMax else {
+            throw ProtocolError(code: .invalidArgs, message: "reply: 1 to \(Self.replyMax) bytes")
+        }
+        guard let id = targets[terminal]?.inflight?.id, let w = waiters[id], !w.inject, !w.user, !w.held, w.from != terminal else {
+            throw ProtocolError(code: .notFound, message: "no ask is waiting for your reply")
+        }
+        finish(id, .success(AskResult(output: message, source: .hook, truncated: false)))
+    }
+
+    /// What an agent's ask to another agent is typed after: who sent it, never editable by the sender.
+    static func senderPrefix(name: String, askId: String) -> String {
+        let clean = String(String.UnicodeScalarView(name.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0) ? " " : $0 }))
+        return "[collie] pedido de \(clean.prefix(64)) (ask \(askId)): "
+    }
+
+    /// An edge `from -> to` for as long as `from` blocks waiting for `to`'s turn. Throws `.deadlock` if `to` already
+    /// waits (ask or wait) on `from`.
+    public func beginWait(from: UUID, to: UUID) throws(ProtocolError) -> UUID {
+        if reaches(to, from) {
+            throw ProtocolError(code: .deadlock,
+                                message: "Deadlock: '\(name(to))' is already waiting on '\(name(from))'; '\(name(from))' cannot wait on '\(name(to))'")
+        }
+        let token = UUID()
+        waitEdges[token] = (from, to)
+        return token
+    }
+
+    public func endWait(_ token: UUID) { waitEdges[token] = nil }
 
     /// The user's ask (work chat): same FIFO, readiness gate and hook/idle completion as `ask`, but no caller
     /// terminal, so no edge in the deadlock graph (`from == to`, as `inject`).
@@ -671,6 +718,7 @@ public actor AskCoordinator {
             if n == b { return true }
             guard seen.insert(n).inserted else { continue }
             stack += waiters.values.filter { $0.from == n && !$0.detached }.map(\.to)
+            stack += waitEdges.values.filter { $0.from == n }.map(\.to)
         }
         return false
     }
@@ -718,20 +766,22 @@ public actor AskCoordinator {
         if confirm { targets[to]?.awaitingSubmit = id }
         // PTYProcess.write may spin up to 2 s on a target that isn't reading: keep it off the actor and
         // off the cooperative pool, report failures back through finish.
-        let data = PromptInjector.payload(w.prompt, raw: w.raw, bracketed: t.paste.enabled)
+        // the prompt kept (w.prompt) stays bare: the hook's echo/signature checks look for its last line
+        let text = (w.senderName.map { Self.senderPrefix(name: $0, askId: w.askId ?? String(id.uuidString.prefix(8)).lowercased()) + w.prompt } ?? w.prompt) + (w.replyHint ? Self.replyHintLine : "")
+        let data = PromptInjector.payload(text, raw: w.raw, bracketed: t.paste.enabled)
         let process = t.process, name = t.name, inject = w.inject, approval = t.approval, guards = w.guardsApproval, hold = reply
         DispatchQueue.global().async { [weak self] in
             // checked again at the write, in one step with counting the input: a prompt printed (or keys typed) since the
             // check above is not answered either
             // ponytail: a prompt printed between this check and the write itself (microseconds) still is
             if guards {
-                switch approval.inputIfClear(echo: w.prompt) {   // its echo is not a prompt
+                switch approval.inputIfClear(echo: text) {   // its echo is not a prompt
                 case .written: break
                 case .pending where hold: Task { await self?.requeue(id) }; return   // held reply: retried after the prompt
                 case .pending: Task { await self?.finish(id, .failure(Self.awaitingApproval(name))) }; return
                 case .window: Task { await self?.requeue(id) }; return
                 }
-            } else { approval.input(echo: w.prompt) }
+            } else { approval.input(echo: text) }
             do {
                 try process.write(data, origin: w.user ? .user : .collie)   // R17: the user's own chat text is theirs
                 if !raw {

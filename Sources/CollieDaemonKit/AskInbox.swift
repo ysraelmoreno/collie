@@ -13,6 +13,8 @@ actor AskInbox {
         /// How it ended (hook/idle) and when: asked, prompt delivered (submitted), reply or failure.
         var source: AskResult.Source?
         var askedAt = Date(), deliveredAt: Date?, completedAt: Date?
+        /// The target was in a turn when asked: the prompt waited in its queue (optional: older files lack it).
+        var targetBusy: Bool?
     }
     static let keep = 20, inlineMax = 300, previewMax = 120
     private var byAsker: [UUID: [Entry]] = [:]   // oldest first
@@ -42,10 +44,10 @@ actor AskInbox {
     }
 
     /// A new id (8 lowercase hex chars, unique in the inbox) for `from`'s ask to `target`.
-    func open(from: UUID, target: String) -> String {
+    func open(from: UUID, target: String, targetBusy: Bool = false) -> String {
         var id: String
         repeat { id = String(UUID().uuidString.prefix(8)).lowercased() } while byAsker.values.contains { $0.contains { $0.id == id } }
-        byAsker[from, default: []].append(Entry(id: id, target: target))
+        byAsker[from, default: []].append(Entry(id: id, target: target, targetBusy: targetBusy))
         if byAsker[from]!.count > Self.keep { byAsker[from]!.removeFirst() }
         save()
         return id
@@ -83,11 +85,12 @@ actor AskInbox {
         guard e.status == .done else { return "[collie] Ask \(e.id) to \(e.target) failed: \(e.error ?? "no reply")" }
         let out = e.output ?? ""
         let flat = out.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        if flat.count <= inlineMax { return "[collie] Reply from \(e.target) (ask \(e.id)): \(flat)" }
+        let ask = "ask \(e.id)" + (e.targetBusy == true ? ", queued behind a turn" : "")
+        if flat.count <= inlineMax { return "[collie] Reply from \(e.target) (\(ask)): \(flat)" }
         let lines = out.split(separator: "\n", omittingEmptySubsequences: true)
         let first = (lines.first ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let preview = first.count <= previewMax ? first : String(first.prefix(previewMax)) + "…"
-        return "[collie] Reply from \(e.target) (ask \(e.id), \(lines.count) lines): \(preview) — full reply: collie ask result \(e.id)"
+        return "[collie] Reply from \(e.target) (\(ask), \(lines.count) lines): \(preview) — full reply: collie ask result \(e.id)"
     }
 
     static func json(_ e: Entry) -> JSONValue {
@@ -95,6 +98,7 @@ actor AskInbox {
         if let out = e.output { o["output"] = .string(out) }
         if let err = e.error { o["error"] = .string(err) }
         if let s = e.source { o["source"] = .string(s.rawValue) }
+        o["targetBusy"] = .bool(e.targetBusy == true)
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         o["askedAt"] = .string(f.string(from: e.askedAt))
         if let d = e.deliveredAt { o["deliveredAt"] = .string(f.string(from: d)) }

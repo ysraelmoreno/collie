@@ -180,4 +180,11 @@ import Foundation
         #expect(!l[0].text.contains("Accept?"))
         #expect(l[1].text.hasSuffix("Second text."))
     }
+
+    /// Real outputs of cmdline-tools 20.0 on Temurin 11: the script check, and with SKIP_JDK_VERSION_CHECK the JVM's.
+    @Test func needsNewerJavaMatchesBothFailures() {
+        #expect(AndroidSdk.needsNewerJava("This tool requires JDK 17 or later. Your version was detected as 11.0.33.\nTo override this check, set SKIP_JDK_VERSION_CHECK."))
+        #expect(AndroidSdk.needsNewerJava(#"Exception in thread "main" java.lang.UnsupportedClassVersionError: com/android/sdklib/repository/generated/addon/v1/ObjectFactory has been compiled by a more recent version of the Java Runtime (class file version 61.0), this version of the Java Runtime only recognizes class file versions up to 55.0"#))
+        #expect(!AndroidSdk.needsNewerJava("Error: No space left on device"))
+    }
 }

@@ -230,6 +230,34 @@ extension Fixture {
     }
 }
 
+private let jdkTgzURL = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21/OpenJDK21.tar.gz"
+
+extension Fixture {
+    var collieJdk: String { AvdManager.collieJdk(home.path) }
+    var javas: [String] {
+        ((try? String(contentsOf: bin.appendingPathComponent("javas"), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    /// `fake` also serves Adoptium's answer and a tiny JDK tarball (`jdk-21/Contents/Home/bin/java`).
+    func serveJdk(_ fake: FakeFetch) throws {
+        let src = home.appendingPathComponent("jdksrc")
+        let java = src.appendingPathComponent("jdk-21/Contents/Home/bin/java")
+        try fm.createDirectory(at: java.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\n".write(to: java, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: java.path)
+        let tgz = home.appendingPathComponent("jdk.tar.gz")
+        let p = try Process.run(URL(fileURLWithPath: "/usr/bin/tar"), arguments: ["-czf", tgz.path, "-C", src.path, "jdk-21"])
+        p.waitUntilExit()
+        let json = home.appendingPathComponent("jdk.json")
+        try """
+        [{"binary":{"package":{"checksum":"\(androidHex(SHA256.hash(data: try Data(contentsOf: tgz))))","link":"\(jdkTgzURL)","size":2000}}}]
+        """.write(to: json, atomically: true, encoding: .utf8)
+        fake.serve(AndroidDownload.temurinAPI.absoluteString, json); fake.serve(jdkTgzURL, tgz)
+    }
+
+    func jdkFetches(_ fake: FakeFetch) -> Int { fake.urls.filter { $0 == jdkTgzURL }.count }
+}
+
 private func hashLine(_ id: String) -> String { "\n" + androidHex(Insecure.SHA1.hash(data: Data("Text of \(id)".utf8))) }
 
 private func code(_ body: () async throws -> Void) async -> ErrorCode? {
@@ -480,6 +508,47 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         #expect(f.licenseFiles.isEmpty)
         try await inst.install(accept: allLicenses + ["extra"])
         #expect(f.licenseFiles == Dictionary(uniqueKeysWithValues: allLicenses.map { ($0, hashLine($0)) }))
+    }
+
+    /// A classic sdkmanager on a Java older than 17: Collie's JDK is downloaded once, the run retried once with it, and
+    /// the rest of the daemon's runs use it.
+    @Test func retriesOnceWithCollieJdkAfterClassVersionError() async throws {
+        let f = try Fixture()
+        try f.collieJdk.write(to: f.bin.appendingPathComponent("oldjava"), atomically: true, encoding: .utf8)
+        let fake = FakeFetch()
+        try f.serveJdk(fake)
+        let inst = f.installer(fetch: fake.fetch)
+        #expect(try await inst.licenses().map(\.id) == ["android-sdk-license"])
+        #expect(f.calls.count == 2 && f.javas == [f.collieJdk])
+        #expect(f.jdkFetches(fake) == 1)
+        #expect(fm.isExecutableFile(atPath: f.collieJdk + "/bin/java"))
+        #expect(!fm.fileExists(atPath: f.sdk.appendingPathComponent(".collie-staging").path))
+
+        try await inst.install(accept: ["android-sdk-license"])
+        #expect(f.calls.count == 7 && f.javas.count == 6 && f.javas.allSatisfy { $0 == f.collieJdk })
+        #expect(f.jdkFetches(fake) == 1)
+    }
+
+    @Test func secondClassVersionErrorFails() async throws {
+        let f = try Fixture()
+        try f.control("classerr")
+        let fake = FakeFetch()
+        try f.serveJdk(fake)
+        #expect(await code { _ = try await f.installer(fetch: fake.fetch).licenses() } == .unavailable)
+        #expect(f.calls.count == 2)   // no third run
+        #expect(f.jdkFetches(fake) == 1)
+    }
+
+    @Test func unrelatedFailureDoesNotDownloadJdk() async throws {
+        let f = try Fixture()
+        try f.acceptAlready()
+        try f.control("fail")
+        let fake = FakeFetch()
+        try f.serveJdk(fake)
+        #expect(await code { try await f.installer(fetch: fake.fetch).install(accept: []) } == .unavailable)
+        #expect(!fake.urls.contains(AndroidDownload.temurinAPI.absoluteString))
+        #expect(f.calls.filter { $0.hasSuffix("platform-tools") }.count == 1)
+        #expect(!fm.fileExists(atPath: f.collieJdk))
     }
 
     @Test func alreadyAcceptedLicensesSkipTheStep() async throws {

@@ -36,6 +36,8 @@ actor AndroidInstaller {
     var known: [(id: String, title: String, text: String)]?
     /// Probe answers per unknown cmdline-tools revision: `true` when it accepted licenses by itself (blocked).
     var probed: [String: Bool] = [:]
+    /// A classic `sdkmanager` found the Java too old once: every later run uses Collie's JDK (until the daemon restarts).
+    var useCollieJdk = false
 
     init(root: URL, env: [String: String], home: String, runDir: URL, fetch: @escaping AndroidFetch = AndroidDownload.fetch,
          runner: @escaping AndroidRunner = AndroidInstaller.run, isAppleSilicon: Bool = AndroidInstaller.appleSilicon,
@@ -76,14 +78,7 @@ actor AndroidInstaller {
             if let free = freeSpace(staging.path), free < 2 * total {
                 throw ProtocolError(code: .unavailable, message: "not enough disk space: \(2 * total) bytes needed next to the SDK, \(free) free")
             }
-            if let jdk {
-                let dest = URL(fileURLWithPath: AvdManager.collieJdk(home)).deletingLastPathComponent().deletingLastPathComponent()
-                let file = try await download(jdk, staging.appendingPathComponent("jdk.tar.gz"), "java", progress)
-                let out = staging.appendingPathComponent("jdk")
-                try fm.createDirectory(at: out, withIntermediateDirectories: true)
-                try await runner("/usr/bin/tar", ["-xzf", file.path, "--strip-components=1", "-C", out.path], staging)
-                try place(out, at: dest, check: "Contents/Home/bin/java")
-            }
+            if let jdk { try await installJdk(jdk, staging, progress) }
             if let tools {
                 let file = try await download(tools, staging.appendingPathComponent("cmdline-tools.zip"), "cmdline-tools", progress)
                 let out = staging.appendingPathComponent("unzip")
@@ -93,13 +88,44 @@ actor AndroidInstaller {
                 try place(out.appendingPathComponent("cmdline-tools"), at: URL(fileURLWithPath: sdk).appendingPathComponent(dir),
                           check: "bin/sdkmanager")
             }
-        } catch let e as ProtocolError {
-            throw e
-        } catch where error is CancellationError || (error as? URLError)?.code == .cancelled {
-            throw Self.cancelled
-        } catch {
-            throw ProtocolError(code: .unavailable, message: error.localizedDescription)
-        }
+        } catch { throw Self.wrap(error) }
+    }
+
+    /// A `ProtocolError` as is; a cancelled task or download is `cancelled`; anything else `unavailable`.
+    static func wrap(_ error: Error) -> ProtocolError {
+        if let e = error as? ProtocolError { return e }
+        if error is CancellationError || (error as? URLError)?.code == .cancelled { return cancelled }
+        return ProtocolError(code: .unavailable, message: error.localizedDescription)
+    }
+
+    /// Downloads, checks and extracts Temurin in `staging`, then moves it to Collie's JDK dir.
+    private func installJdk(_ jdk: AndroidDownload.Archive, _ staging: URL,
+                            _ progress: @escaping @Sendable (String, Int64, Int64) -> Void) async throws {
+        let dest = URL(fileURLWithPath: AvdManager.collieJdk(home)).deletingLastPathComponent().deletingLastPathComponent()
+        let file = try await download(jdk, staging.appendingPathComponent("jdk.tar.gz"), "java", progress)
+        let out = staging.appendingPathComponent("jdk")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        try await runner("/usr/bin/tar", ["-xzf", file.path, "--strip-components=1", "-C", out.path], staging)
+        try place(out, at: dest, check: "Contents/Home/bin/java")
+    }
+
+    /// Collie's JDK home, downloaded (like `prepare`, in its own staging) when not there yet.
+    private func collieJdk() async throws(ProtocolError) -> String {
+        let jdk = AvdManager.collieJdk(home)
+        let fm = FileManager.default
+        if fm.isExecutableFile(atPath: jdk + "/bin/java") { return jdk }
+        let staging = URL(fileURLWithPath: AndroidSdk.root(env: env, home: home)).appendingPathComponent(".collie-staging/jdk")
+        try? fm.removeItem(at: staging)
+        defer { try? fm.removeItem(at: staging); rmdir(staging.deletingLastPathComponent().path) }
+        do {
+            try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+            let a = try await resolve(AndroidDownload.temurinAPI, staging, "temurin.json", AndroidDownload.temurin)
+            if let free = freeSpace(staging.path), free < 2 * a.size {
+                throw ProtocolError(code: .unavailable, message: "not enough disk space: \(2 * a.size) bytes needed next to the SDK, \(free) free")
+            }
+            try await installJdk(a, staging, { _, _, _ in })
+        } catch { throw Self.wrap(error) }
+        return jdk
     }
 
     /// What `prepare` throws when its task is cancelled (compare with `==`).
@@ -342,7 +368,7 @@ extension AndroidInstaller {
         let dir = URL(fileURLWithPath: sdk).appendingPathComponent("licenses")
         let before = Self.snapshot(dir)
         let r = try await sdkmanager(sm, ["--licenses", "--sdk_root=\(Self.sdkRoot(sdk))"], item: nil, answers: true,
-                                     timeout: .seconds(300), home: jobHome(sdk))
+                                     timeout: .seconds(300), home: jobHome(sdk), classic: true)
         if Self.snapshot(dir) != before {
             let failed = Self.restore(dir, before)
             throw ProtocolError(code: .internal, message: "sdkmanager --licenses changed \(dir.path) without consent; "
@@ -404,7 +430,7 @@ extension AndroidInstaller {
             let prepares = sdkmanagerPath(sdk) == nil || java == nil
             try await prepare(progress: { item, bytes, total in Task { await self.downloaded(item, bytes, total) } })
             try Task.checkCancellation()
-            let (sm, _) = try await tool(sdk)
+            let (sm, cli) = try await tool(sdk)
             let root = Self.sdkRoot(sdk)
             let missing = self.missing(sdk)
             guard !missing.isEmpty else { job = .init(phase: "done", percent: 100); return }
@@ -427,13 +453,14 @@ extension AndroidInstaller {
                 job = .init(phase: "install", item: id, percent: 0)
                 var pkg = id
                 if id == "image" {
-                    let r = try await sdkmanager(sm, ["--list", "--sdk_root=\(root)"], item: nil, timeout: .seconds(300), home: jobHome(sdk))
+                    let r = try await sdkmanager(sm, ["--list", "--sdk_root=\(root)"], item: nil, timeout: .seconds(300), home: jobHome(sdk),
+                                                 classic: !cli)
                     guard r.status == 0, let p = AndroidSdk.pickLatestStable(AndroidSdk.parseImages(r.output)) else {
                         throw ProtocolError(code: .unavailable, message: "no stable google_apis arm64-v8a image in sdkmanager --list: \(Self.tail(r.output))")
                     }
                     pkg = p
                 }
-                let r = try await sdkmanager(sm, ["--sdk_root=\(root)", pkg], item: id, timeout: .seconds(3600), home: jobHome(sdk))
+                let r = try await sdkmanager(sm, ["--sdk_root=\(root)", pkg], item: id, timeout: .seconds(3600), home: jobHome(sdk), classic: !cli)
                 // sdkmanager can exit 0 having skipped a package whose license it does not see as accepted
                 guard r.status == 0, items(sdk).first(where: { $0.id == id })?.at != nil else {
                     throw ProtocolError(code: .unavailable, message: "\(pkg): " + (r.status == 0
@@ -459,9 +486,24 @@ extension AndroidInstaller {
     /// `answers`: stdin is a pipe answered as the prompts appear: `y` to "Review licenses?" (show them), `n` to every
     /// `Accept?`; otherwise stdin is `/dev/null`. `item`: progress lines update `job.percent`. Killed by `cancel` or
     /// past `timeout` (`.timeout`).
-    private func sdkmanager(_ sm: String, _ args: [String], item: String?, answers: Bool = false, timeout: Duration, home: URL)
+    /// `classic`: a run that fails for a Java older than 17 (`AndroidSdk.needsNewerJava`), when that Java is not
+    /// Collie's JDK, gets Collie's JDK (downloaded if needed) and is retried once with it; failing so again throws.
+    private func sdkmanager(_ sm: String, _ args: [String], item: String?, answers: Bool = false, timeout: Duration, home: URL,
+                            classic: Bool = false) async throws(ProtocolError) -> (status: Int32, output: String) {
+        guard let java = useCollieJdk ? AvdManager.collieJdk(self.home) : java else { throw Self.notReady }
+        let r = try await spawn(sm, args, item: item, answers: answers, timeout: timeout, home: home, java: java)
+        guard classic, r.status != 0, AndroidSdk.needsNewerJava(r.output), java != AvdManager.collieJdk(self.home) else { return r }
+        let jdk = try await collieJdk()
+        useCollieJdk = true
+        let again = try await spawn(sm, args, item: item, answers: answers, timeout: timeout, home: home, java: jdk)
+        guard again.status == 0 || !AndroidSdk.needsNewerJava(again.output) else {
+            throw ProtocolError(code: .unavailable, message: "sdkmanager \(args.first ?? "") needs a newer Java, also with Collie's JDK: \(Self.tail(again.output))")
+        }
+        return again
+    }
+
+    private func spawn(_ sm: String, _ args: [String], item: String?, answers: Bool, timeout: Duration, home: URL, java: String)
         async throws(ProtocolError) -> (status: Int32, output: String) {
-        guard let java else { throw Self.notReady }
         if Task.isCancelled { throw Self.cancelled }
         do { try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true) }
         catch { throw ProtocolError(code: .unavailable, message: "cannot create \(home.path): \(error.localizedDescription)") }

@@ -141,7 +141,7 @@ Formatos reais conferidos:
 Limites vistos:
 - O JDK próprio baixou (199,7 MB), conferiu e extraiu, mas mover para `~/Library/Application Support/Collie/jdk` deu EPERM a partir do terminal: o macOS protege a pasta de dados do app instalado. O `collied` de dentro do `Collie.app` é dono dela; o E2E seguiu com o JDK do Studio. O staging foi limpo na falha.
 - O `sdkmanager` 20 regrava o cache de catálogo em `~/.android/cache` (arquivos que já existiam), ignorando `ANDROID_USER_HOME`.
-- Baixar o JDK quando o `sdkmanager` falha por versão de classe (Java antigo demais) ainda não está implementado (lacuna conhecida).
+- ~~Baixar o JDK quando o `sdkmanager` falha por versão de classe~~: feito (ver "Decisão do dono", JDK antigo).
 - ~~`cmdline-tools` 21+ nunca roda~~ (regra do `fa95272`): substituída pela "Decisão do dono" abaixo.
 
 ## Decisão do dono (2026-11-14, Task 7)
@@ -152,4 +152,4 @@ Limites vistos:
 - **Isolamento.** Todo `sdkmanager` roda com `HOME` e `ANDROID_USER_HOME` temporários (por trabalho, apagados no fim) e `--sdk_root=<sdk>` explícito, para nada ir parar em `~/.android` (o 20.0 regrava `~/.android/cache`; o 23.0 instala `~/.android/bin/android-cli`).
 - **Downloads do Collie.** Hosts: `dl.google.com`, `api.adoptium.net`, `github.com/adoptium/…`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com`; só HTTPS, porta padrão, sem credenciais. Checksum: SHA-256 quando o catálogo tem; senão o SHA-1 do catálogo do Google (o `repository2-3.xml` só traz SHA-1); Temurin com o SHA-256 do Adoptium.
 - **"Illegal entry path" (1º E2E):** reproduzido. Só aparece com `--sdk_root` contendo `..` (era o caminho do meu E2E), no 23.0; o 20.0 não liga. Era ambiente. O Collie agora passa o `--sdk_root` normalizado.
-- **Pendências.** (2) Baixar o JDK 21 quando o `sdkmanager` falha por versão de classe.
+- **JDK antigo (clássico).** Saídas reais do 20.0 com Temurin 11: `This tool requires JDK 17 or later…` (checagem do script) ou, com `SKIP_JDK_VERSION_CHECK`, `UnsupportedClassVersionError` (`AndroidSdk.needsNewerJava` reconhece as duas). Quando um `sdkmanager` clássico (`--licenses`, `--list`, instalação) falha assim e o Java usado não é o JDK do Collie: baixa o Temurin (mesmo caminho do `prepare`: `api.adoptium.net`, SHA-256, staging) e repete aquela chamada **uma vez** com o JDK do Collie; dali em diante o daemon usa esse JDK. Falhar assim de novo é erro; nunca há laço. O 23.0 traz o próprio Java: não se aplica.

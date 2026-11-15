@@ -81,6 +81,12 @@ public enum AndroidSdk {
         sdkmanagerTool(in: sdk, exists: exists, list: list, read: read)?.path
     }
 
+    /// A classic `sdkmanager` (<= 20.0) failed for a Java older than 17: its script's check ("requires JDK 17 or
+    /// later"), or the JVM's class-version error when that check is skipped. The android CLI (23.0) brings its own Java.
+    public static func needsNewerJava(_ output: String) -> Bool {
+        output.contains("requires JDK 17 or later") || output.contains("UnsupportedClassVersionError")
+    }
+
     /// `system-images;android-N;google_apis;arm64-v8a` rows of `sdkmanager --list` (first column), deduplicated. Reads
     /// the classic table (`id | ver | desc`) and the android CLI's (`system-images/android-N/...   ver   desc`, slashes
     /// normalized to `;`, the form both install).

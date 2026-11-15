@@ -551,6 +551,44 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         #expect(!fm.fileExists(atPath: f.collieJdk))
     }
 
+    /// 23.0 downloads its CLI into the job's temp HOME: kept under the daemon root, so the next job (even after a daemon
+    /// restart) does not download it again.
+    @Test func secondJobReusesTheCache() async throws {
+        let f = try Fixture(rev: "23.0")
+        try f.control("selfaccept"); try f.control("clidl")
+        try await f.installer().install(accept: [])
+        let downloads = { ((try? String(contentsOf: f.bin.appendingPathComponent("downloads"), encoding: .utf8)) ?? "").split(separator: "\n") }
+        #expect(downloads() == ["dl", "unpack"])
+        try fm.removeItem(at: f.sdk.appendingPathComponent("platform-tools"))
+        try await f.installer().install(accept: [])   // a new installer: a restarted daemon
+        #expect(downloads() == ["dl", "unpack"])
+        #expect(fm.fileExists(atPath: f.sdk.appendingPathComponent("platform-tools/adb").path))
+    }
+
+    @Test func cacheLivesUnderTheDaemonRoot() async throws {
+        let f = try Fixture(rev: "23.0")
+        try f.control("selfaccept"); try f.control("clidl")
+        try await f.installer().install(accept: [])
+        let top = f.home.appendingPathComponent("cache")
+        let keys = try fm.contentsOfDirectory(atPath: top.appendingPathComponent("android-cli").path)
+        #expect(keys.count == 1)
+        let c = top.appendingPathComponent("android-cli/\(keys[0])/.android")
+        #expect(try String(contentsOf: c.appendingPathComponent("bin/android-cli"), encoding: .utf8) == "cli\n")
+        #expect(fm.fileExists(atPath: c.appendingPathComponent("cli/bundles/h1/main.jar").path))
+        #expect(!fm.fileExists(atPath: c.appendingPathComponent("cli/bundles/lock").path))
+        #expect(!fm.fileExists(atPath: c.appendingPathComponent("cli/analytics").path))
+        #expect((try fm.attributesOfItem(atPath: top.path)[.posixPermissions] as? Int) == 0o700)
+        #expect(!fm.fileExists(atPath: f.home.appendingPathComponent(".android").path))
+        #expect(!fm.fileExists(atPath: f.sdk.appendingPathComponent(".collie-staging").path))
+    }
+
+    @Test func classicNeverTouchesTheCache() async throws {
+        let f = try Fixture()
+        try f.control("clidl")
+        try await f.installer().install(accept: ["android-sdk-license"])
+        #expect(!fm.fileExists(atPath: f.home.appendingPathComponent("cache").path))
+    }
+
     @Test func alreadyAcceptedLicensesSkipTheStep() async throws {
         let f = try Fixture()
         try f.acceptAlready()

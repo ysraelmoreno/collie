@@ -12,7 +12,7 @@ typealias AndroidRunner = @Sendable (_ executable: String, _ args: [String], _ d
 /// place only once checksummed and extracted. The staging is removed on success and failure; nothing outside it is
 /// deleted or overwritten. Phase 2 (`install`, below): licenses, then `sdkmanager` installs the rest.
 actor AndroidInstaller {
-    /// The daemon's root. ponytail: unused; job state is in memory only (spec).
+    /// The daemon's root: holds the android CLI cache (`<root>/cache/android-cli`). Job state is in memory only (spec).
     let root: URL
     let env: [String: String], home: String
     let fetch: AndroidFetch, runner: AndroidRunner
@@ -454,13 +454,13 @@ extension AndroidInstaller {
                 var pkg = id
                 if id == "image" {
                     let r = try await sdkmanager(sm, ["--list", "--sdk_root=\(root)"], item: nil, timeout: .seconds(300), home: jobHome(sdk),
-                                                 classic: !cli)
+                                                 classic: !cli, cli: cli)
                     guard r.status == 0, let p = AndroidSdk.pickLatestStable(AndroidSdk.parseImages(r.output)) else {
                         throw ProtocolError(code: .unavailable, message: "no stable google_apis arm64-v8a image in sdkmanager --list: \(Self.tail(r.output))")
                     }
                     pkg = p
                 }
-                let r = try await sdkmanager(sm, ["--sdk_root=\(root)", pkg], item: id, timeout: .seconds(3600), home: jobHome(sdk), classic: !cli)
+                let r = try await sdkmanager(sm, ["--sdk_root=\(root)", pkg], item: id, timeout: .seconds(3600), home: jobHome(sdk), classic: !cli, cli: cli)
                 // sdkmanager can exit 0 having skipped a package whose license it does not see as accepted
                 guard r.status == 0, items(sdk).first(where: { $0.id == id })?.at != nil else {
                     throw ProtocolError(code: .unavailable, message: "\(pkg): " + (r.status == 0
@@ -486,12 +486,16 @@ extension AndroidInstaller {
     /// `answers`: stdin is a pipe answered as the prompts appear: `y` to "Review licenses?" (show them), `n` to every
     /// `Accept?`; otherwise stdin is `/dev/null`. `item`: progress lines update `job.percent`. Killed by `cancel` or
     /// past `timeout` (`.timeout`).
+    /// `cli`: the android CLI's own download is restored from / saved to `cliCache` around the run.
     /// `classic`: a run that fails for a Java older than 17 (`AndroidSdk.needsNewerJava`), when that Java is not
     /// Collie's JDK, gets Collie's JDK (downloaded if needed) and is retried once with it; failing so again throws.
     private func sdkmanager(_ sm: String, _ args: [String], item: String?, answers: Bool = false, timeout: Duration, home: URL,
-                            classic: Bool = false) async throws(ProtocolError) -> (status: Int32, output: String) {
+                            classic: Bool = false, cli: Bool = false) async throws(ProtocolError) -> (status: Int32, output: String) {
         guard let java = useCollieJdk ? AvdManager.collieJdk(self.home) : java else { throw Self.notReady }
+        let cache = cli ? cliCache(sm) : nil
+        if let cache { Self.restoreCli(from: cache, into: home) }
         let r = try await spawn(sm, args, item: item, answers: answers, timeout: timeout, home: home, java: java)
+        if let cache, r.status == 0 { saveCli(from: home, to: cache) }
         guard classic, r.status != 0, AndroidSdk.needsNewerJava(r.output), java != AvdManager.collieJdk(self.home) else { return r }
         let jdk = try await collieJdk()
         useCollieJdk = true
@@ -500,6 +504,52 @@ extension AndroidInstaller {
             throw ProtocolError(code: .unavailable, message: "sdkmanager \(args.first ?? "") needs a newer Java, also with Collie's JDK: \(Self.tail(again.output))")
         }
         return again
+    }
+
+    /// What 23.0's launcher downloads (`bin/android-cli`) and unpacks (`cli/bundles/`) into `$HOME/.android`.
+    static let cliPaths = [".android/bin/android-cli", ".android/cli/bundles"]
+
+    /// `<root>/cache/android-cli/<rev>-<size>-<mtime>` of the launcher (`bin/android` beside `sm`, else `sm`): a new
+    /// cmdline-tools gets a new key. ponytail: old keys stay (~330 MB each); prune when a second revision is common.
+    private func cliCache(_ sm: String) -> URL {
+        let bin = (sm as NSString).deletingLastPathComponent
+        let fm = FileManager.default
+        let launcher = fm.fileExists(atPath: bin + "/android") ? bin + "/android" : sm
+        let a = try? fm.attributesOfItem(atPath: launcher)
+        let rev = (try? String(contentsOfFile: (bin as NSString).deletingLastPathComponent + "/source.properties", encoding: .utf8))
+            .flatMap(AndroidSdk.cmdlineToolsRevision)?.map(String.init).joined(separator: ".") ?? "0"
+        let size = (a?[.size] as? Int) ?? 0, mtime = Int((a?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)
+        return root.appendingPathComponent("cache/android-cli/\(rev)-\(size)-\(mtime)")
+    }
+
+    /// Copies the cache into the job's temp HOME (APFS clones), what is not there yet. Best effort: a miss only re-downloads.
+    static func restoreCli(from cache: URL, into home: URL) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: cache.path) else { return }
+        for p in cliPaths where !fm.fileExists(atPath: home.appendingPathComponent(p).path) {
+            let dest = home.appendingPathComponent(p)
+            try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.copyItem(at: cache.appendingPathComponent(p), to: dest)
+        }
+    }
+
+    /// After a clean run, once per key: copies `cliPaths` (not `bundles/lock`; no analytics/tos files) beside the
+    /// cache, then renames the copy into place, so a half copy is never used. `<root>/cache` is 0700.
+    private func saveCli(from home: URL, to cache: URL) {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: cache.path),
+              Self.cliPaths.allSatisfy({ fm.fileExists(atPath: home.appendingPathComponent($0).path) }) else { return }
+        let tmp = cache.deletingLastPathComponent().appendingPathComponent(".tmp-\(UUID().uuidString)")
+        do {
+            try fm.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.appendingPathComponent("cache").path)
+            for p in Self.cliPaths {
+                try fm.createDirectory(at: tmp.appendingPathComponent(p).deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: home.appendingPathComponent(p), to: tmp.appendingPathComponent(p))
+            }
+            try? fm.removeItem(at: tmp.appendingPathComponent(".android/cli/bundles/lock"))
+            try fm.moveItem(at: tmp, to: cache)
+        } catch { try? fm.removeItem(at: tmp) }
     }
 
     private func spawn(_ sm: String, _ args: [String], item: String?, answers: Bool, timeout: Duration, home: URL, java: String)

@@ -14,6 +14,7 @@ enum AndroidDownload {
                                        "release-assets.githubusercontent.com"]
     static let repository = URL(string: "https://dl.google.com/android/repository/")!
     static let catalog = URL(string: "https://dl.google.com/android/repository/repository2-3.xml")!
+    static let sysImgCatalog = URL(string: "https://dl.google.com/android/repository/sys-img/google_apis/sys-img2-3.xml")!
     static let temurinAPI = URL(string: "https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=aarch64&image_type=jdk&os=mac&vendor=eclipse")!
 
     /// https on an exact listed host, default port, no credentials; on github.com only under `/adoptium/`.
@@ -52,15 +53,35 @@ enum AndroidDownload {
     /// The newest stable (channel-0, not obsolete, `cmdline-tools;<version>` no `latest`/alpha) package up to
     /// `maxCmdlineTools`, its macOS archive in Google's `repository2-*.xml`. The catalog publishes sha1 (sha256 when present wins).
     static func cmdlineTools(catalog: Data) throws(ProtocolError) -> Archive {
-        let p = CatalogParser()
-        let x = XMLParser(data: catalog)
-        x.delegate = p
-        guard x.parse() else { throw ProtocolError(code: .unavailable, message: "the Android repository catalog is not valid XML") }
-        let best = p.packages.filter { $0.path.hasPrefix("cmdline-tools;") && !$0.obsolete && ["", "channel-0"].contains($0.channel) && !maxCmdlineTools.lexicographicallyPrecedes($0.revision) }
+        let best = try packages(catalog).filter { $0.path.hasPrefix("cmdline-tools;") && !$0.obsolete && ["", "channel-0"].contains($0.channel) && !maxCmdlineTools.lexicographicallyPrecedes($0.revision) }
             .compactMap { pkg in pkg.archives.first.map { (pkg.revision, $0) } }
             .max { $0.0.lexicographicallyPrecedes($1.0) }
         guard let a = best?.1 else { throw ProtocolError(code: .unavailable, message: "no macOS cmdline-tools in the Android repository catalog") }
         return a
+    }
+
+    private static func packages(_ catalog: Data) throws(ProtocolError) -> [CatalogParser.Package] {
+        let p = CatalogParser()
+        let x = XMLParser(data: catalog)
+        x.delegate = p
+        guard x.parse() else { throw ProtocolError(code: .unavailable, message: "the Android repository catalog is not valid XML") }
+        return p.packages
+    }
+
+    /// The licenses (`uses-license`) the stable (channel-0, not obsolete) packages of `ids` use, across Google's
+    /// `catalogs`: `platform-tools` and `emulator` by path, `image` = any google_apis arm64-v8a system image (the one
+    /// `sdkmanager --list` picks later is one of them). `nil` when an id has no such package: ask for every license then.
+    static func licenses(for ids: [String], catalogs: [Data]) throws(ProtocolError) -> Set<String>? {
+        var all: [CatalogParser.Package] = []
+        for c in catalogs { all += try packages(c) }
+        let stable = all.filter { !$0.obsolete && ["", "channel-0"].contains($0.channel) }
+        var out = Set<String>()
+        for id in ids {
+            let refs = stable.filter { id == "image" ? !AndroidSdk.parseImages($0.path).isEmpty : $0.path == id }.compactMap(\.license)
+            guard !refs.isEmpty else { return nil }
+            out.formUnion(refs)
+        }
+        return out
     }
 
     /// The first asset of Adoptium's `assets/latest` answer (sha256).
@@ -73,7 +94,7 @@ enum AndroidDownload {
     }
 
     private final class CatalogParser: NSObject, XMLParserDelegate {
-        struct Package { var path = "", obsolete = false, channel = "", revision: [Int] = [], archives: [Archive] = [] }
+        struct Package { var path = "", obsolete = false, channel = "", license: String?, revision: [Int] = [], archives: [Archive] = [] }
         private struct Draft { var url = "", size: Int64 = 0, sums: [String: String] = [:], type = "sha1", os = "", arch = "" }
         var packages: [Package] = []
         private var pkg: Package?, draft: Draft?, stack: [String] = [], text = ""
@@ -82,8 +103,9 @@ enum AndroidDownload {
             let e = String(e.split(separator: ":").last ?? "")
             stack.append(e); text = ""
             switch e {
-            case "remotePackage": pkg = Package(path: a["path"] ?? "", obsolete: a["obsolete"] == "true")
+            case "remotePackage": pkg = Package(path: a["path"] ?? "", obsolete: a["obsolete"] == "true", license: nil)
             case "channelRef": pkg?.channel = a["ref"] ?? ""
+            case "uses-license": pkg?.license = a["ref"]
             case "archive": draft = Draft()
             case "checksum": draft?.type = a["type"]?.lowercased() ?? "sha1"
             default: break

@@ -12,15 +12,38 @@ private var fm: FileManager { .default }
 /// `Accept?` with no "Review" question; "y" writes the license file), `autoaccept` (`--licenses` writes it unasked),
 /// `licsleep` (`--licenses` sleeps 2 s first, pid in `pid`), `mkdirlic` (`--licenses` creates an empty `licenses/`),
 /// `selfaccept` (a package install writes the license itself, like 23.0). Every call is appended to `calls`, its
-/// `HOME|ANDROID_USER_HOME` to `envs`.
+/// `HOME|ANDROID_USER_HOME` to `envs`. `licout`: `--licenses` prints it (after "Review"), reading one answer per
+/// `Accept?`. `oldjava` (holds Collie's JDK path): every run fails like 20.0 on JDK 11 unless JAVA_HOME is that path;
+/// `classerr`: every run fails with the class-version error; runs that pass log JAVA_HOME to `javas`. `clidl`: like 23.0's
+/// launcher, "downloads" `$HOME/.android/bin/android-cli` and unpacks `$HOME/.android/cli/bundles/` when absent (logged
+/// to `downloads`).
 private let fakeSdkmanager = #"""
 #!/bin/sh
 d=$(dirname "$0"); sdk=""; pkg=""; mode=install
 for a in "$@"; do case "$a" in --sdk_root=*) sdk="${a#--sdk_root=}";; --list) mode=list;; --licenses) mode=licenses;; *) pkg="$a";; esac; done
 echo "$*" >> "$d/calls"; echo "$HOME|$ANDROID_USER_HOME" >> "$d/envs"
+if [ -f "$d/oldjava" ] && [ "$JAVA_HOME" != "$(cat "$d/oldjava")" ]; then
+  printf 'This tool requires JDK 17 or later. Your version was detected as 11.0.33.\nTo override this check, set SKIP_JDK_VERSION_CHECK.\n'; exit 1
+fi
+if [ -f "$d/classerr" ]; then
+  echo 'Exception in thread "main" java.lang.UnsupportedClassVersionError: com/android/sdklib/repository/generated/addon/v1/ObjectFactory has been compiled by a more recent version of the Java Runtime (class file version 61.0), this version of the Java Runtime only recognizes class file versions up to 55.0'; exit 1
+fi
+echo "$JAVA_HOME" >> "$d/javas"
+if [ -f "$d/clidl" ]; then
+  [ -f "$HOME/.android/bin/android-cli" ] || { echo "Downloading Android CLI..."; echo dl >> "$d/downloads"; mkdir -p "$HOME/.android/bin"; echo cli > "$HOME/.android/bin/android-cli"; }
+  [ -d "$HOME/.android/cli/bundles" ] || { echo "Unpacking embedded installation..."; echo unpack >> "$d/downloads"; mkdir -p "$HOME/.android/cli/bundles/h1"; echo jar > "$HOME/.android/cli/bundles/h1/main.jar"; : > "$HOME/.android/cli/bundles/lock"; }
+  : > "$HOME/.android/cli/analytics"
+fi
 if [ $mode = list ]; then cat "$d/list"; exit 0; fi
 if [ $mode = licenses ]; then
   if [ -f "$sdk/licenses/android-sdk-license" ]; then echo "All SDK package licenses accepted."; exit 0; fi
+  if [ -f "$d/licout" ]; then
+    printf '8 of 8 SDK package licenses not accepted.\nReview licenses that have not been accepted (y/N)? '
+    read a; [ "$a" = y ] || exit 0
+    exec 3<&0
+    while IFS= read -r line; do printf '%s\n' "$line"; case "$line" in Accept*) read a <&3;; esac; done < "$d/licout"
+    exit 0
+  fi
   if [ -f "$d/licsleep" ]; then echo $$ > "$d/pid"; sleep 2; fi
   if [ -f "$d/mkdirlic" ]; then mkdir -p "$sdk/licenses"; fi
   if [ -f "$d/autoaccept" ]; then mkdir -p "$sdk/licenses"; echo x > "$sdk/licenses/android-sdk-license"; exit 0; fi
@@ -96,11 +119,11 @@ private struct Fixture {
 
     func installer(java: Bool = true, free: Int64? = 1 << 40, others: String? = nil,
                    othersRunning: (@Sendable (Bool) async -> String?)? = nil, studioSdk: Bool = false,
-                   sdkPath: String? = nil) -> AndroidInstaller {
+                   sdkPath: String? = nil, fetch: AndroidFetch? = nil) -> AndroidInstaller {
         var env = ["COLLIE_ANDROID_SDK": sdkPath ?? (studioSdk ? home.appendingPathComponent("Library/Android/sdk").path : sdk.path), "ANDROID_AVD_HOME": home.appendingPathComponent("avd").path]
         if java { env["COLLIE_JAVA_HOME"] = home.appendingPathComponent("java").path }
         return AndroidInstaller(root: home, env: env, home: home.path,
-                                runDir: home.appendingPathComponent("run"), fetch: { url, _, _ in throw ProtocolError(code: .notFound, message: "no network: \(url)") },
+                                runDir: home.appendingPathComponent("run"), fetch: fetch ?? { url, _, _ in throw ProtocolError(code: .notFound, message: "no network: \(url)") },
                                 isAppleSilicon: true, javaCandidates: [], freeSpace: { _ in free },
                                 othersRunning: othersRunning ?? { studio in studio ? others : nil })
     }
@@ -111,6 +134,103 @@ private struct Fixture {
         }
     }
 }
+
+/// Trimmed from Google's live `repository2-3.xml` (several channels per package; only channel-0 counts).
+private let repoCatalog = """
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sdk:sdk-repository xmlns:sdk="http://schemas.android.com/sdk/android/repo/repository2/03" xmlns:common="http://schemas.android.com/repository/android/common/02" xmlns:generic="http://schemas.android.com/repository/android/generic/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<remotePackage path="platform-tools">
+  <type-details xsi:type="generic:genericDetailsType"/>
+  <revision><major>37</major><minor>0</minor><micro>3</micro></revision>
+  <display-name>Android SDK Platform-Tools</display-name>
+  <uses-license ref="android-sdk-preview-license"/>
+  <channelRef ref="channel-2"/>
+  <archives><archive><complete><size>16597640</size><checksum type="sha1">eca4effbe35f4968139b051bbb16753302a3c33c</checksum><url>platform-tools_r37.0.3-darwin.zip</url></complete><host-os>macosx</host-os></archive></archives>
+</remotePackage>
+<remotePackage path="platform-tools">
+  <type-details xsi:type="generic:genericDetailsType"/>
+  <revision><major>37</major><minor>0</minor><micro>1</micro></revision>
+  <display-name>Android SDK Platform-Tools</display-name>
+  <uses-license ref="android-sdk-license"/>
+  <channelRef ref="channel-0"/>
+  <archives><archive><complete><size>16110554</size><checksum type="sha1">6ae73f4de6452dc57e62ec02b68eed92a4c21661</checksum><url>platform-tools_r37.0.1-darwin.zip</url></complete><host-os>macosx</host-os></archive></archives>
+</remotePackage>
+<remotePackage path="emulator">
+  <type-details xsi:type="generic:genericDetailsType"/>
+  <revision><major>37</major><minor>3</minor><micro>9</micro></revision>
+  <display-name>Android Emulator</display-name>
+  <uses-license ref="android-sdk-license"/>
+  <channelRef ref="channel-1"/>
+  <archives><archive><complete><size>420630743</size><checksum type="sha1">05bbb7ae4e047e96204364e146e586037f4ad336</checksum><url>emulator-darwin_aarch64-16863232.zip</url></complete><host-os>macosx</host-os><host-arch>aarch64</host-arch></archive></archives>
+</remotePackage>
+<remotePackage path="emulator">
+  <type-details xsi:type="generic:genericDetailsType"/>
+  <revision><major>37</major><minor>2</minor><micro>13</micro></revision>
+  <display-name>Android Emulator</display-name>
+  <uses-license ref="android-sdk-license"/>
+  <channelRef ref="channel-0"/>
+  <archives><archive><complete><size>416113219</size><checksum type="sha1">6c5e61b873e11c7d1d08683bea089f762baee070</checksum><url>emulator-darwin_aarch64-16740729.zip</url></complete><host-os>macosx</host-os><host-arch>aarch64</host-arch></archive></archives>
+</remotePackage>
+</sdk:sdk-repository>
+"""
+
+/// Shaped like Google's `sys-img/google_apis/sys-img2-3.xml`.
+private let sysImgCatalog = """
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sys-img:sdk-sys-img xmlns:sys-img="http://schemas.android.com/sdk/android/repo/sys-img2/03" xmlns:common="http://schemas.android.com/repository/android/common/02" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<remotePackage path="system-images;android-37.0;google_apis;arm64-v8a">
+  <type-details xsi:type="sys-img:sysImgDetailsType"><api-level>37</api-level></type-details>
+  <revision><major>1</major></revision>
+  <display-name>Google APIs ARM 64 v8a System Image</display-name>
+  <uses-license ref="android-sdk-arm-dbt-license"/>
+  <channelRef ref="channel-0"/>
+  <archives><archive><complete><size>1</size><checksum type="sha1">00</checksum><url>arm64-v8a-37.0_r01.zip</url></complete></archive></archives>
+</remotePackage>
+<remotePackage path="system-images;android-CinnamonBun;google_apis;arm64-v8a">
+  <revision><major>1</major></revision>
+  <uses-license ref="android-sdk-preview-license"/>
+  <channelRef ref="channel-2"/>
+</remotePackage>
+<remotePackage path="system-images;android-36;google_apis;x86_64">
+  <revision><major>1</major></revision>
+  <uses-license ref="intel-android-sysimage-license"/>
+  <channelRef ref="channel-0"/>
+</remotePackage>
+</sys-img:sdk-sys-img>
+"""
+
+/// The 8 licenses real `--licenses` lists on an empty SDK.
+private let allLicenses = ["android-googletv-license", "android-sdk-arm-dbt-license", "android-sdk-license", "android-sdk-preview-license",
+                           "google-gdk-license", "intel-android-extra-license", "intel-android-sysimage-license", "mips-android-sysimage-license"]
+
+extension Fixture {
+    /// `licout` with the 8 licenses, texts `Text of <id>`.
+    func eightLicenses() throws {
+        try allLicenses.enumerated().map { "\($0 + 1)/8: License \($1):\n---------------------------------------\nText of \($1)\n---------------------------------------\nAccept? (y/N): " }
+            .joined(separator: "\n").write(to: bin.appendingPathComponent("licout"), atomically: true, encoding: .utf8)
+    }
+
+    /// A fake fetch serving both catalogs.
+    func catalogs() throws -> FakeFetch {
+        let fake = FakeFetch()
+        for (name, xml, url) in [("repo.xml", repoCatalog, AndroidDownload.catalog), ("sysimg.xml", sysImgCatalog, AndroidDownload.sysImgCatalog)] {
+            let f = home.appendingPathComponent(name)
+            try xml.write(to: f, atomically: true, encoding: .utf8)
+            fake.serve(url.absoluteString, f)
+        }
+        return fake
+    }
+
+    /// `<sdk>/licenses/` as name -> contents.
+    var licenseFiles: [String: String] {
+        let dir = sdk.appendingPathComponent("licenses")
+        return Dictionary(uniqueKeysWithValues: ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).map {
+            ($0, (try? String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8)) ?? "")
+        })
+    }
+}
+
+private func hashLine(_ id: String) -> String { "\n" + androidHex(Insecure.SHA1.hash(data: Data("Text of \(id)".utf8))) }
 
 private func code(_ body: () async throws -> Void) async -> ErrorCode? {
     do { try await body(); return nil } catch { return (error as? ProtocolError)?.code }
@@ -315,6 +435,51 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         #expect(!fm.fileExists(atPath: f.sdk.appendingPathComponent(".collie-staging").path))
         #expect(AndroidInstaller.tail("WARNING: The SDK Manager CLI tool (sdkmanager) is deprecated. Android CLI will be used instead.\nboom")
                 == "boom")
+    }
+
+    /// Classic: of the 8 the repository lists, only the channel-0 `uses-license` of the missing packages.
+    @Test func licensesListsOnlyTheNeededOnes() async throws {
+        let f = try Fixture()
+        try f.eightLicenses()
+        let fake = try f.catalogs()
+        let inst = f.installer(fetch: fake.fetch)
+        #expect(try await inst.licenses().map(\.id).sorted() == ["android-sdk-arm-dbt-license", "android-sdk-license"])
+        #expect(Set(fake.urls) == [AndroidDownload.catalog.absoluteString, AndroidDownload.sysImgCatalog.absoluteString])
+        #expect(await inst.status().needs == "needsLicense")
+        #expect(!fm.fileExists(atPath: f.sdk.appendingPathComponent(".collie-staging").path))
+
+        // platform-tools and emulator there: only the image's
+        for p in ["platform-tools/adb", "emulator/emulator"] {
+            let x = f.sdk.appendingPathComponent(p)
+            try fm.createDirectory(at: x.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "#!/bin/sh\n".write(to: x, atomically: true, encoding: .utf8)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: x.path)
+        }
+        #expect(try await inst.licenses().map(\.id) == ["android-sdk-arm-dbt-license"])
+    }
+
+    @Test func installNeverWritesALicenseTheUserDidNotAccept() async throws {
+        let f = try Fixture()
+        try f.eightLicenses()
+        let inst = f.installer(fetch: try f.catalogs().fetch)
+        #expect(await code { try await inst.install(accept: ["android-sdk-license"]) } == .invalidArgs)
+        #expect(f.licenseFiles.isEmpty)
+        try await inst.install(accept: ["android-sdk-license", "android-sdk-arm-dbt-license", "google-gdk-license", "../evil"])
+        #expect(f.licenseFiles == ["android-sdk-license": hashLine("android-sdk-license"),
+                                   "android-sdk-arm-dbt-license": hashLine("android-sdk-arm-dbt-license")])
+        #expect(await inst.status().needs == "ready")
+    }
+
+    /// No catalog: every pending license is asked (today's rule), and still only what the user passed is written.
+    @Test func catalogFailureFallsBackToAllPending() async throws {
+        let f = try Fixture()
+        try f.eightLicenses()
+        let inst = f.installer()   // fetch always fails
+        #expect(try await inst.licenses().map(\.id) == allLicenses)
+        #expect(await code { try await inst.install(accept: ["android-sdk-license", "android-sdk-arm-dbt-license"]) } == .invalidArgs)
+        #expect(f.licenseFiles.isEmpty)
+        try await inst.install(accept: allLicenses + ["extra"])
+        #expect(f.licenseFiles == Dictionary(uniqueKeysWithValues: allLicenses.map { ($0, hashLine($0)) }))
     }
 
     @Test func alreadyAcceptedLicensesSkipTheStep() async throws {

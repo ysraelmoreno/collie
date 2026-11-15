@@ -108,8 +108,8 @@ actor AndroidInstaller {
     static let indexCap = 16 << 20
 
     /// Fetches a small index (catalog / API answer) into the staging and parses it.
-    private func resolve(_ url: URL, _ staging: URL, _ name: String,
-                         _ parse: (Data) throws(ProtocolError) -> AndroidDownload.Archive) async throws -> AndroidDownload.Archive {
+    private func resolve<T>(_ url: URL, _ staging: URL, _ name: String,
+                            _ parse: (Data) throws(ProtocolError) -> T) async throws -> T {
         let f = staging.appendingPathComponent(name)
         try await fetch(url, f, { _, _ in })
         let size = (try FileManager.default.attributesOfItem(atPath: f.path)[.size] as? Int) ?? 0
@@ -267,6 +267,28 @@ extension AndroidInstaller {
         rmdir(jobHome(sdk).deletingLastPathComponent().path)   // `.collie-staging` too, only if empty
     }
 
+    /// The `sdkmanager` packages still missing (`platform-tools`, `emulator`, `image`), in install order.
+    private func missing(_ sdk: String) -> [String] { items(sdk).filter { $0.at == nil && Self.estimates[$0.id] != nil }.map(\.id) }
+
+    /// The licenses the missing packages use (channel-0 `uses-license` of Google's catalogs, fetched each time: a few
+    /// MB, never cached). `nil` when a catalog cannot be fetched or read: then every pending license is asked.
+    private func neededLicenses(_ sdk: String) async -> Set<String>? {
+        let missing = self.missing(sdk)
+        guard !missing.isEmpty else { return [] }
+        let urls = (missing.contains { $0 != "image" } ? [AndroidDownload.catalog] : [])
+            + (missing.contains("image") ? [AndroidDownload.sysImgCatalog] : [])
+        let fm = FileManager.default
+        let dir = URL(fileURLWithPath: sdk).appendingPathComponent(".collie-staging/catalogs")
+        try? fm.removeItem(at: dir)
+        defer { try? fm.removeItem(at: dir); rmdir(dir.deletingLastPathComponent().path) }
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            var data: [Data] = []
+            for (i, url) in urls.enumerated() { data.append(try await resolve(url, dir, "\(i).xml") { $0 }) }
+            return try AndroidDownload.licenses(for: missing, catalogs: data)
+        } catch { return nil }
+    }
+
     /// The spec's items in install order, with where each is (`nil`: missing).
     private func items(_ sdk: String) -> [(id: String, at: String?)] {
         func exe(_ rel: String) -> String? { FileManager.default.isExecutableFile(atPath: "\(sdk)/\(rel)") ? "\(sdk)/\(rel)" : nil }
@@ -296,8 +318,8 @@ extension AndroidInstaller {
         return Self.selfAccepts(rev, sdk).message
     }
 
-    /// The licenses `sdkmanager --licenses` prints (the ones it considers not accepted), `accepted` read from
-    /// `<sdk>/licenses/<id>`. Refreshes what `status` knows. During a job (or another read): what was last read, else
+    /// The licenses `sdkmanager --licenses` prints (the ones it considers not accepted) that the missing packages use
+    /// (`neededLicenses`; all it prints when the catalogs cannot be read), `accepted` read from `<sdk>/licenses/<id>`. Refreshes what `status` knows. During a job (or another read): what was last read, else
     /// `busy` (never a second `sdkmanager`). The read itself holds `running`, so no job starts next to it.
     func licenses() async throws(ProtocolError) -> [License] {
         guard !running else {
@@ -331,8 +353,10 @@ extension AndroidInstaller {
         guard r.status == 0 || !parsed.isEmpty else {
             throw ProtocolError(code: .unavailable, message: "sdkmanager --licenses failed (exit \(r.status)): \(Self.tail(r.output))")
         }
-        known = parsed
-        return withAccepted(sdk, parsed)
+        let needed = await neededLicenses(sdk)
+        let shown = needed.map { n in parsed.filter { n.contains($0.id) } } ?? parsed
+        known = shown
+        return withAccepted(sdk, shown)
     }
 
     /// Starts the job and returns at once: `android.install` answers with this `{job}`. `busy` (`conflict`) while
@@ -382,11 +406,12 @@ extension AndroidInstaller {
             try Task.checkCancellation()
             let (sm, _) = try await tool(sdk)
             let root = Self.sdkRoot(sdk)
-            let missing = items(sdk).filter { $0.at == nil && Self.estimates[$0.id] != nil }.map(\.id)
+            let missing = self.missing(sdk)
             guard !missing.isEmpty else { job = .init(phase: "done", percent: 100); return }
 
             job = .init(phase: "install")
-            // android CLI: `[]`, the Install click is the acceptance (it writes `<sdk>/licenses/` itself)
+            // android CLI: `[]`, the Install click is the acceptance (it writes `<sdk>/licenses/` itself). Classic: only
+            // the needed ones, so `accept` below writes only ids the user passed that the packages use.
             let pending = try await readLicenses().filter { !$0.accepted }
             if !pending.allSatisfy({ ids.contains($0.id) }) {
                 if prepares && ids.isEmpty { job = .init(phase: "done"); return }   // phase 1 only; the licenses are known now

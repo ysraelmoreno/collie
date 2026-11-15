@@ -5,7 +5,7 @@ import CollieProtocol
 @testable import CollieDaemonKit
 
 /// Serves local files for the URLs it knows, records every URL asked. No network.
-private final class FakeFetch: @unchecked Sendable {
+final class FakeFetch: @unchecked Sendable {
     private let lock = NSLock()
     private var served: [String: URL] = [:]
     private var asked: [String] = []

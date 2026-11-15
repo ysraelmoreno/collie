@@ -25,9 +25,11 @@ public struct AppCard: Codable, Sendable, Equatable, Identifiable {
     public var at: Date
     /// approve: the command the daemon will run for the app's service (`service.start`), shown as "Vai rodar".
     public var start: String?
+    /// approve: the folder it runs in (`service.cwd`, relative to the paddock), shown as "Pasta".
+    public var cwd: String?
     public init(id: UUID = UUID(), kind: Kind, paddock: UUID, paddockName: String, app: String, name: String, base: String?,
-                commands: [String] = [], events: [String] = [], sha256: String = "", call: String? = nil, command: String? = nil, by: UUID?, at: Date = Date(), start: String? = nil) {
+                commands: [String] = [], events: [String] = [], sha256: String = "", call: String? = nil, command: String? = nil, by: UUID?, at: Date = Date(), start: String? = nil, cwd: String? = nil) {
         self.id = id; self.kind = kind; self.paddock = paddock; self.paddockName = paddockName; self.app = app; self.name = name
-        self.base = base; self.commands = commands; self.events = events; self.sha256 = sha256; self.call = call; self.command = command; self.by = by; self.at = at; self.start = start
+        self.base = base; self.commands = commands; self.events = events; self.sha256 = sha256; self.call = call; self.command = command; self.by = by; self.at = at; self.start = start; self.cwd = cwd
     }
 }

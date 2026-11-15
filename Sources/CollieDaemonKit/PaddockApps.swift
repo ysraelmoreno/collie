@@ -410,7 +410,7 @@ extension CommandRouter {
         guard !appCards.contains(where: { $0.kind == .approve && $0.paddock == p.id && $0.app == m.id && $0.sha256 == sha }) else { return }
         let card = AppCard(kind: .approve, paddock: p.id, paddockName: p.name, app: m.id, name: m.name, base: m.serviceOrigin,
                            commands: m.commands.map { $0.name + ($0.confirm ? " (pede confirmação)" : "") }, events: m.events, sha256: sha, by: by,
-                           start: m.service?.start)
+                           start: m.service?.start, cwd: m.service?.cwd)
         appCards.append(card)
         await hub.emit(.appCard(card))
     }

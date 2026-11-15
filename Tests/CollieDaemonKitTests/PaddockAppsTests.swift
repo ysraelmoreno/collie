@@ -448,7 +448,7 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
 @Suite(.serialized) struct PaddockAppServiceTests {
     fileprivate struct Env { let d: Daemon; let p: Paths; let a: Term; let app: URL; let base: String }
 
-    fileprivate func with(start: (UInt16) -> String, _ body: (Env) async throws -> Void) async throws {
+    fileprivate func with(start: (UInt16) -> String, cwd: String? = nil, _ body: (Env) async throws -> Void) async throws {
         try await PluginRegistry.exclusively {
             let (idle, rb) = (AppServices.idle, AppServices.restartBase)
             AppServices.idle = .seconds(2); AppServices.restartBase = 0.05
@@ -460,7 +460,9 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
             let port = freePort(), base = "http://127.0.0.1:\(port)"
             try serve.write(to: app.appendingPathComponent("serve.py"), atomically: true, encoding: .utf8)
             var m = try JSONSerialization.jsonObject(with: manifest(base: base)) as! [String: Any]
-            m["service"] = ["base": base, "start": start(port), "health": "/healthz"]
+            var svc: [String: Any] = ["base": base, "start": start(port), "health": "/healthz"]
+            if let cwd { svc["cwd"] = cwd }
+            m["service"] = svc
             try JSONSerialization.data(withJSONObject: m).write(to: app.appendingPathComponent("collie-plugin.json"))
             try await withDaemon { d, p in
                 #expect(try await admin(d, p, "paddock.create", ["name": .string("k"), "folder": .string(tmp.path)]).ok)
@@ -538,6 +540,56 @@ private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
             #expect(text.contains("boom") && text.contains("saiu com código 3") && why.contains("caiu 5 vezes"), "\(l)")
             let r = try await call(e.p, e.a, "kube.pods")
             #expect(r.error?.code == .unavailable && r.error?.message.contains("caiu 5 vezes") == true, "\(r)")
+        }
+    }
+
+    /// app adopt: `service.cwd` (relative to the paddock) is where `start` runs; a link out of the paddock is refused.
+    private func real(_ u: URL) -> String { realpath(u.path, nil).map { r in defer { free(r) }; return String(cString: r) } ?? u.path }
+
+    @Test func serviceStartsInCwd() async throws {
+        try await with(start: { "pwd -P > where.txt; exec python3 ../.collie/apps/kube/serve.py \($0)" }, cwd: "sub") { e in
+            let pad = e.app.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: pad.appendingPathComponent("sub"), withIntermediateDirectories: true)
+            #expect(try await admin(e.d, e.p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).ok)
+            let r = try await call(e.p, e.a, "kube.pods")
+            #expect(r.ok, "\(r)")
+            let got = try String(contentsOf: pad.appendingPathComponent("sub/where.txt"), encoding: .utf8)
+            #expect(got.trimmingCharacters(in: .whitespacesAndNewlines) == real(pad) + "/sub", "\(got)")
+        }
+    }
+
+    @Test func serviceCwdSymlinkEscapeRefused() async throws {
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("out-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try await with(start: { _ in "pwd > ran.txt" }, cwd: "sub") { e in
+            let pad = e.app.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            try FileManager.default.createSymbolicLink(at: pad.appendingPathComponent("sub"), withDestinationURL: outside)
+            #expect(try await admin(e.d, e.p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).ok)
+            #expect(await waitFor(10) { let l = try? await logs(e); return l?["state"] == .string("failed") })
+            let l = try await logs(e)
+            #expect(l["reason"].map { "\($0)".contains("service.cwd leaves the paddock") } == true, "\(l)")
+            #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("ran.txt").path))
+        }
+    }
+
+    @Test func serviceWithoutCwdUnchanged() async throws {
+        try await with(start: { "pwd -P > where.txt; exec python3 serve.py \($0)" }) { e in
+            #expect(try await admin(e.d, e.p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).ok)
+            #expect(try await call(e.p, e.a, "kube.pods").ok)
+            let got = try String(contentsOf: e.app.appendingPathComponent("where.txt"), encoding: .utf8)
+            #expect(got.trimmingCharacters(in: .whitespacesAndNewlines) == real(e.app), "\(got)")
+        }
+    }
+
+    @Test func approvalCardShowsCwd() async throws {
+        try await with(start: { _ in "./run.sh" }, cwd: "sub") { e in
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("kube")]).error?.code == .unauthorized)
+            let c = try await cards(e.d, e.p)
+            #expect(c.count == 1 && c[0].cwd == "sub" && c[0].start == "./run.sh", "\(c)")
         }
     }
 

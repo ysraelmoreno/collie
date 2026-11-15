@@ -469,7 +469,7 @@ actor CommandRouter {
         let typed = ws.terminals.first { $0.id == from }.map { [.claude, .codex, .cursor].contains($0.preset) } ?? false
         Task {
             let r: Result<AskResult, ProtocolError>
-            do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true,
+            do throws(ProtocolError) { r = .success(try await asks.ask(from: from, to: target, prompt: prompt, raw: raw, timeout: timeout, detached: true, askId: id,
                                                                 onDelivered: { Task { await inbox.delivered(id: id) } })) }
             catch { r = .failure(error) }
             // nil: the asker was removed meanwhile — nothing to type

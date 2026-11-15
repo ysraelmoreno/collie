@@ -36,6 +36,9 @@ private func ask(_ p: Paths, _ from: Term, _ target: String, _ prompt: String, t
                           timeoutSeconds: Double(timeout ?? 5) + 10)
 }
 
+/// The fake agent echoes what it was typed: an agent's ask now starts with the sender prefix (agent-comms Task 2).
+private func bare(_ s: String?) -> String? { s?.replacing(#/\[collie\] pedido de \S+ \(ask [0-9a-f]{8}\): /#, with: "") }
+
 private func result(_ r: Response) -> (output: String, source: String?, truncated: Bool?) {
     guard case .object(let o)? = r.result, case .string(let out)? = o["output"] else { return ("<no result: \(r)>", nil, nil) }
     var src: String?; if case .string(let s)? = o["source"] { src = s }
@@ -173,9 +176,9 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
                     #expect(res.source == "idle", "ask 1 must exercise the swallow path: \(res)")
                     // idle output is the raw screen (echo, "thinking...", answer); the answer is its last line
                     let last = res.output.split(whereSeparator: \.isNewline).last.map(String.init)
-                    #expect(last == "answer:\(prompt)", "ask \(n): \(res)")
+                    #expect(bare(last) == "answer:\(prompt)", "ask \(n): \(res)")
                 } else {
-                    #expect(res.output == "answer:\(prompt)", "ask \(n): \(res)")
+                    #expect(bare(res.output) == "answer:\(prompt)", "ask \(n): \(res)")
                     #expect(res.source == "hook", "ask \(n): \(res)")
                 }
             }
@@ -258,7 +261,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
             #expect(result(try await ask(p, a, "B", "q1", timeout: 20)).source == "idle")
             let quoting = "re: **answer:q1**"
             let r = result(try await ask(p, a, "B", quoting, timeout: 20))
-            #expect(r.output == "**answer:\(quoting)**", "\(r)")
+            #expect(bare(r.output) == "**answer:\(quoting)**", "\(r)")
         }
     }
 

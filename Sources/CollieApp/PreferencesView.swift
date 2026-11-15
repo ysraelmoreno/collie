@@ -5,7 +5,7 @@ import CollieClient
 import CollieProtocol
 import ColliePlugins
 
-/// Three pages, Aparência, Plug-ins (`PluginsPreferences`) and Celular (`CelularPreferences`), picked in the header.
+/// Seven pages in a sidebar with search (`PreferencePage`): Interface, Agentes and Dispositivos (Celular, Android).
 extension DesignFirst {
     var label: String { switch self { case .artifact: "Página (Prévia)"; case .figcraft: "FigCraft"; case .ask: "Perguntar" } }
     /// The `design.prefer` reply (`{designFirst}`); nil when it is anything else.
@@ -52,7 +52,9 @@ struct PreferencesView: View {
     @State private var newFont = ""
     @State private var fontBusy = false
     @State private var fontError: String?
-    @State private var page = "Aparência"
+    @State private var page = PreferencePage.aparencia
+    @State private var query = ""
+    @State private var androidBadge: String?
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
@@ -67,108 +69,184 @@ struct PreferencesView: View {
         (.compact, "Compacta", "canvas + cabeçalho flutuante"), (.full, "Completa", "barra lateral, cercados e status")]
 
     var body: some View {
-        VStack(spacing: 0) {
-            PanelHeader(page, subtitle: "Preferências")
-            Picker("Página", selection: $page) { ForEach(["Aparência", "Plug-ins", "Celular"], id: \.self) { Text($0).tag($0) } }
-                .labelsHidden().pickerStyle(.segmented).fixedSize().padding(.top, 10)
-            if page == "Plug-ins" {
-                ScrollView { PluginsPreferences(client: client).padding(20).frame(maxWidth: .infinity, alignment: .leading) }
-            } else if page == "Celular" {
-                ScrollView { CelularPreferences(client: client).padding(20).frame(maxWidth: .infinity, alignment: .leading) }
-            } else { appearance }
+        HStack(spacing: 0) {
+            sidebar
+            Rectangle().fill(Color.collieBorder).frame(width: 1)
+            VStack(spacing: 0) {
+                PanelHeader(page.title, subtitle: "Preferências")
+                ScrollView { pageContent.padding(20).frame(maxWidth: .infinity, alignment: .leading) }
+            }
+            .frame(maxWidth: .infinity)
         }
-        .frame(width: 560, height: 560)
+        .frame(minWidth: 640, idealWidth: 820, maxWidth: .infinity, minHeight: 480, idealHeight: 600, maxHeight: .infinity)
         .background(Color.collieBackground)
         .onAppear { AppearanceSettings.normalize(.standard) }   // a stale or hand-edited value would leave a picker blank
         .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode(); await loadFonts() }   // no workspace event: read when shown
+        // ponytail: one `android.status` read every 5 s, only while this window is shown and connected (the task dies with it)
+        .task(id: client.state == .connected) {
+            while client.state == .connected, !Task.isCancelled {
+                let r = try? await client.adminCall("android.status", [:])
+                androidBadge = PreferencePage.androidBadge(r.flatMap(AndroidSetupStatus.from))
+                try? await Task.sleep(for: .seconds(5))
+            }
+            androidBadge = nil   // connection dropped: no stale ↓
+        }
         .onChange(of: theme) { CollieApp.applyTheme() }
+        .onChange(of: query) {   // the search hid the open page: show the first match (none: keep it)
+            let m = PreferencePage.matching(query)
+            if let first = m.first, !m.contains(page) { page = first }
+        }
     }
 
-    private var appearance: some View {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    section("Tema") {
-                        HStack(spacing: 12) {
-                            ForEach(themes, id: \.0) { t in
-                                ChoiceCard(t.1, subtitle: t.2, selected: theme == t.0.rawValue, action: { theme = t.0.rawValue }) {
-                                    miniature(t.3, sidebar: false)
-                                }
-                            }
-                        }
-                    }
-                    section("Estrutura") {
-                        HStack(spacing: 12) {
-                            ForEach(structures, id: \.0) { s in
-                                ChoiceCard(s.1, subtitle: s.2, selected: structure == s.0.rawValue, action: { structure = s.0.rawValue }) {
-                                    miniature(currentPalette, sidebar: s.0 == .full)
-                                }
-                            }
-                        }
-                        Text("Muda só a moldura. Terminais, guias e painéis ficam onde estão.")
-                            .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
-                    }
-                    section("Terminal") {
-                        HStack(spacing: 16) {
-                            Picker("Fonte", selection: $family) {
-                                ForEach(TerminalFontChoice.families, id: \.self) { Text($0).tag($0) }
-                            }
-                            Picker("Tamanho", selection: $size) {
-                                ForEach(Int(TerminalFontChoice.sizes.lowerBound)...Int(TerminalFontChoice.sizes.upperBound), id: \.self) {
-                                    Text("\($0) pt").tag(Double($0))
-                                }
-                            }
-                        }
-                        .fixedSize()
-                    }
-                    section("Onde desenhar") {
-                        Picker("Onde desenhar", selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .artifact) })) {
-                            ForEach(DesignFirst.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
-                        }
-                        .labelsHidden().pickerStyle(.segmented).fixedSize()
-                        .disabled(client.state != .connected)
-                        Text("Em trabalho de interface, o Pastor desenha antes: numa página na Prévia (fontes, animação, bibliotecas offline), no FigCraft, ou pergunta. Vale para o workspace e para o rebanho Feature com design.")
-                            .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
-                    }
-                    section("Modo do sandbox") {
-                        Picker("Modo do sandbox", selection: Binding(get: { sandboxMode.rawValue }, set: { setSandboxMode(SandboxMode(rawValue: $0) ?? .strict) })) {
-                            ForEach(SandboxMode.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
-                        }
-                        .labelsHidden().pickerStyle(.segmented).fixedSize()
-                        .disabled(client.state != .connected)
-                        Text(sandboxMode == .open
-                             ? "Aberto: o agente lê e escreve tudo na sua conta (chaves e tokens incluídos); só os dados e o app do Collie ficam fechados. Vale para terminais abertos depois."
-                             : "Estrito: escrita só no projeto, segredos fechados, cartões para liberar. Vale para terminais abertos depois.")
-                            .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
-                    }
-                    section("Fontes") {
-                        Toggle("Baixar fontes do Google Fonts", isOn: Binding(get: { googleFonts }, set: { setGoogleFonts($0) }))
-                            .disabled(client.state != .connected)
-                        Text("Para as páginas da Prévia, offline: o daemon baixa cada família uma vez (só o nome da fonte e o download vão ao Google); as páginas nunca acessam a rede. Os agentes pedem com collie font add.")
-                            .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
-                        HStack {
-                            TextField("Família (ex.: Inter)", text: $newFont).frame(width: 220).onSubmit(addFont)
-                            Button(fontBusy ? "Baixando…" : "Baixar", action: addFont)
-                                .disabled(!googleFonts || fontBusy || newFont.trimmingCharacters(in: .whitespaces).isEmpty || client.state != .connected)
-                        }
-                        if let fontError { Text(fontError).font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
-                        ForEach(fonts) { f in
-                            HStack {
-                                Text(f.family).font(.collieUI(13))
-                                Text(f.downloaded ? "Google Fonts" : "vem com o Collie").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
-                                Spacer()
-                                if f.downloaded { Button("Remover") { removeFont(f.family) }.disabled(client.state != .connected) }
-                            }
-                        }
-                    }
-                    section("Memória") {
-                        Toggle("Avisar uma vez por dia o que o Collie aprendeu", isOn: $dailyNotification)
-                        Text("Às 18h, se houver algo no Aprendizado de hoje. O resumo fica sempre no painel Memória.")
-                            .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
-                        Toggle("Avisar quando uma correção precisar de confirmação", isOn: $confirmNotification)
+    private var sidebar: some View {
+        let pages = PreferencePage.matching(query)
+        return VStack(alignment: .leading, spacing: 2) {
+            TextField("Buscar", text: $query).textFieldStyle(.roundedBorder).padding(.bottom, 8)
+            ForEach(["Interface", "Agentes", "Dispositivos"], id: \.self) { g in
+                let items = pages.filter { $0.group == g }
+                if !items.isEmpty {
+                    Text(g.uppercased()).font(.collieMono(10)).foregroundStyle(Color.collieMuted).padding(.top, 10).padding(.horizontal, 8)
+                    ForEach(items, id: \.self) { p in sidebarItem(p) }
+                }
+            }
+            if pages.isEmpty { Text("Nada encontrado.").font(.collieMono(12)).foregroundStyle(Color.collieMuted).padding(8) }
+            Spacer()
+        }
+        .padding(12)
+        .frame(width: 200)
+        .background(Color.collieSidebar)
+    }
+
+    private func sidebarItem(_ p: PreferencePage) -> some View {
+        Button { page = p } label: {
+            HStack(spacing: 8) {
+                Text(p.icon).font(.collieMono(12)).foregroundStyle(Color.collieMuted).frame(width: 18)
+                Text(p.title).font(.collieUI(13)).foregroundStyle(Color.collieText)
+                Spacer()
+                if p == .android, let androidBadge {
+                    Text(androidBadge).font(.collieMono(11, .semibold))
+                        .foregroundStyle(androidBadge == "!" ? Color.collieDanger : Color.collieAccent)
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(page == p ? Color.collieSurface : .clear, in: .rect(cornerRadius: 6))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The sections of the old single Aparência page, split per sidebar page (text and bindings unchanged).
+    @ViewBuilder
+    private var pageContent: some View {
+        switch page {
+        case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; structureSection }
+        case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
+        case .desenho: VStack(alignment: .leading, spacing: 22) { designSection; sandboxSection }
+        case .memoria: memorySection
+        case .plugins: PluginsPreferences(client: client)
+        case .celular: CelularPreferences(client: client)
+        case .android: AndroidPreferences(client: client)
+        }
+    }
+
+    private var themeSection: some View {
+        section("Tema") {
+            HStack(spacing: 12) {
+                ForEach(themes, id: \.0) { t in
+                    ChoiceCard(t.1, subtitle: t.2, selected: theme == t.0.rawValue, action: { theme = t.0.rawValue }) {
+                        miniature(t.3, sidebar: false)
                     }
                 }
-                .padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    private var structureSection: some View {
+        section("Estrutura") {
+            HStack(spacing: 12) {
+                ForEach(structures, id: \.0) { s in
+                    ChoiceCard(s.1, subtitle: s.2, selected: structure == s.0.rawValue, action: { structure = s.0.rawValue }) {
+                        miniature(currentPalette, sidebar: s.0 == .full)
+                    }
+                }
+            }
+            Text("Muda só a moldura. Terminais, guias e painéis ficam onde estão.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+        }
+    }
+
+    private var terminalSection: some View {
+        section("Terminal") {
+            HStack(spacing: 16) {
+                Picker("Fonte", selection: $family) {
+                    ForEach(TerminalFontChoice.families, id: \.self) { Text($0).tag($0) }
+                }
+                Picker("Tamanho", selection: $size) {
+                    ForEach(Int(TerminalFontChoice.sizes.lowerBound)...Int(TerminalFontChoice.sizes.upperBound), id: \.self) {
+                        Text("\($0) pt").tag(Double($0))
+                    }
+                }
+            }
+            .fixedSize()
+        }
+    }
+
+    private var designSection: some View {
+        section("Onde desenhar") {
+            Picker("Onde desenhar", selection: Binding(get: { designFirst.rawValue }, set: { setDesignFirst(DesignFirst(rawValue: $0) ?? .artifact) })) {
+                ForEach(DesignFirst.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+            }
+            .labelsHidden().pickerStyle(.segmented).fixedSize()
+            .disabled(client.state != .connected)
+            Text("Em trabalho de interface, o Pastor desenha antes: numa página na Prévia (fontes, animação, bibliotecas offline), no FigCraft, ou pergunta. Vale para o workspace e para o rebanho Feature com design.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+        }
+    }
+
+    private var sandboxSection: some View {
+        section("Modo do sandbox") {
+            Picker("Modo do sandbox", selection: Binding(get: { sandboxMode.rawValue }, set: { setSandboxMode(SandboxMode(rawValue: $0) ?? .strict) })) {
+                ForEach(SandboxMode.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+            }
+            .labelsHidden().pickerStyle(.segmented).fixedSize()
+            .disabled(client.state != .connected)
+            Text(sandboxMode == .open
+                 ? "Aberto: o agente lê e escreve tudo na sua conta (chaves e tokens incluídos); só os dados e o app do Collie ficam fechados. Vale para terminais abertos depois."
+                 : "Estrito: escrita só no projeto, segredos fechados, cartões para liberar. Vale para terminais abertos depois.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+        }
+    }
+
+    private var fontsSection: some View {
+        section("Fontes") {
+            Toggle("Baixar fontes do Google Fonts", isOn: Binding(get: { googleFonts }, set: { setGoogleFonts($0) }))
+                .disabled(client.state != .connected)
+            Text("Para as páginas da Prévia, offline: o daemon baixa cada família uma vez (só o nome da fonte e o download vão ao Google); as páginas nunca acessam a rede. Os agentes pedem com collie font add.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+            HStack {
+                TextField("Família (ex.: Inter)", text: $newFont).frame(width: 220).onSubmit(addFont)
+                Button(fontBusy ? "Baixando…" : "Baixar", action: addFont)
+                    .disabled(!googleFonts || fontBusy || newFont.trimmingCharacters(in: .whitespaces).isEmpty || client.state != .connected)
+            }
+            if let fontError { Text(fontError).font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
+            ForEach(fonts) { f in
+                HStack {
+                    Text(f.family).font(.collieUI(13))
+                    Text(f.downloaded ? "Google Fonts" : "vem com o Collie").font(.collieMono(11)).foregroundStyle(Color.collieMuted)
+                    Spacer()
+                    if f.downloaded { Button("Remover") { removeFont(f.family) }.disabled(client.state != .connected) }
+                }
+            }
+        }
+    }
+
+    private var memorySection: some View {
+        section("Memória") {
+            Toggle("Avisar uma vez por dia o que o Collie aprendeu", isOn: $dailyNotification)
+            Text("Às 18h, se houver algo no Aprendizado de hoje. O resumo fica sempre no painel Memória.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+            Toggle("Avisar quando uma correção precisar de confirmação", isOn: $confirmNotification)
+        }
     }
 
     private func loadDesignFirst() async {

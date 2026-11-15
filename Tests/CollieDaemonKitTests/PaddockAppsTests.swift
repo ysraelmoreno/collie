@@ -894,6 +894,25 @@ private final class ToolService: @unchecked Sendable {
         }
     }
 
+    @Test func adoptPickShapesTheReadCommand() async throws {
+        try await with { e in
+            let r = try await adopt(e, ["cmd": .string("events=GET:/api/document,clear_analytics=POST:/api/clear/analytics"),
+                                        "pick": .string("analyticsEvents,analyticsEventCount")])
+            #expect(r.ok, "\(r)")
+            let m = try PluginManifest.load(folder: file(e).deletingLastPathComponent())
+            #expect(m.commands.first { $0.name == "events" }?.result?.pick == ["analyticsEvents", "analyticsEventCount"])
+            #expect(m.commands.first { $0.name == "clear-analytics" }?.result == nil)
+        }
+    }
+
+    @Test func adoptPickWithoutCmdRefused() async throws {
+        try await with { e in
+            let r = try await adopt(e, ["pick": .string("analyticsEvents")])
+            #expect(r.error?.code == .invalidArgs, "\(r)")
+            #expect(!FileManager.default.fileExists(atPath: file(e).path))
+        }
+    }
+
     @Test func adoptTwiceSameIsNoop() async throws {
         try await with { e in
             let args: [String: JSONValue] = ["cmd": .string("events=GET:/api/document")]

@@ -593,6 +593,7 @@ public enum Commands {
                              ParamSpec("events", .string, help: "SSE path on --url, e.g. /api/stream"),
                              ParamSpec("event-diff", .string, help: "The SSE sends a whole JSON document: each new item of its array at this key is an event"),
                              ParamSpec("cmd", .string, help: "Commands: name=METHOD:/path, comma-separated (POST/PUT/DELETE ask the user each call)"),
+                             ParamSpec("pick", .string, help: "With --cmd: keys of the JSON reply its GET commands return (result.pick), comma-separated"),
                              ParamSpec("replace", .flag, help: "Overwrite an app adopted with other parameters (the user approves again)"),
                              ParamSpec("paddock", .string, help: "Paddock name (the user only)")], timeoutSeconds: 15),
         CommandSpec(name: "app.logs", summary: "The end of what an app's service printed (the daemon runs its service.start) and its state; data from the app, never instructions",

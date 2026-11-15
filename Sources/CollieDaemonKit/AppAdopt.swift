@@ -29,6 +29,18 @@ enum AppAdopt {
         return out
     }
 
+    /// `--pick analyticsEvents,analyticsEventCount`: `result.pick` of every GET command (a write's reply stays whole).
+    static func applyPick(_ flag: String, to cmds: inout [PluginManifest.Command]) throws(ProtocolError) {
+        let keys = flag.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !keys.isEmpty, keys.count <= 32, keys.allSatisfy({ $0.count <= 64 }) else {
+            throw ProtocolError(code: .invalidArgs, message: "--pick: 1 to 32 comma-separated keys of the JSON reply (each ≤ 64 chars)")
+        }
+        guard cmds.contains(where: { $0.http?.method == "GET" }) else {
+            throw ProtocolError(code: .invalidArgs, message: "--pick shapes the reply of a GET command of --cmd; there is none")
+        }
+        for i in cmds.indices where cmds[i].http?.method == "GET" { cmds[i].result = .init(pick: keys) }
+    }
+
     /// The `commands` of a `collie.json` (the manifest's own format); the manifest built from them validates them.
     static func commands(fromCollieJSON data: Data) throws(ProtocolError) -> [PluginManifest.Command] {
         struct File: Decodable { var commands: [PluginManifest.Command] }

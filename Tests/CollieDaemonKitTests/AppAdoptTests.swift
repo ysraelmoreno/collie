@@ -155,4 +155,25 @@ import CollieProtocol
             #expect(refused { _ = try AppAdopt.manifest(input { $0.start = "./run.sh"; $0.cwd = cwd }) }?.code == .invalidArgs, "\(cwd)")
         }
     }
+
+    // --pick (extra task): the keys of result.pick for the GET commands of --cmd
+    @Test func pickFillsResultOfReadCommands() throws {
+        var c = try AppAdopt.parseCmds("events=GET:/api/document,clear_analytics=POST:/api/clear/analytics")
+        try AppAdopt.applyPick("analyticsEvents, analyticsEventCount", to: &c)
+        #expect(c[0].result == .init(pick: ["analyticsEvents", "analyticsEventCount"]))
+        #expect(c[1].result == nil)   // a write's reply stays whole
+        let m = try JSONSerialization.jsonObject(with: try AppAdopt.manifest(input { $0.cmds = c })) as? [String: Any]
+        let first = (m?["commands"] as? [[String: Any]])?.first
+        #expect((first?["result"] as? [String: Any])?["pick"] as? [String] == ["analyticsEvents", "analyticsEventCount"])
+    }
+
+    @Test func pickRefusesBadLists() throws {
+        let reads = try AppAdopt.parseCmds("events=GET:/api/document")
+        for f in ["", " , ", (1...33).map { "k\($0)" }.joined(separator: ","), String(repeating: "k", count: 65)] {
+            var c = reads
+            #expect(refused { try AppAdopt.applyPick(f, to: &c) }?.code == .invalidArgs, "\(f.prefix(20))")
+        }
+        var writes = try AppAdopt.parseCmds("clear=POST:/api/clear")
+        #expect(refused { try AppAdopt.applyPick("events", to: &writes) }?.code == .invalidArgs)   // no GET command to shape
+    }
 }

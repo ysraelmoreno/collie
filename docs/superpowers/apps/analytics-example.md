@@ -12,11 +12,14 @@ No terminal do cercado (o agente pode rodar; só o usuário aprova):
 collie app adopt analytics --name "Analytics debug" --url http://127.0.0.1:8767 \
   --start ./run.sh --cwd tools/page-load-metrics-live --health /api/health \
   --events /api/stream --event-diff analyticsEvents \
-  --cmd "events=GET:/api/document,clear_analytics=POST:/api/clear/analytics"
+  --cmd "events=GET:/api/document,clear_analytics=POST:/api/clear/analytics" \
+  --pick analyticsEvents,analyticsEventCount
 ```
 
 - Escreve só `.collie/apps/analytics/collie-plugin.json` e levanta o cartão de aprovação.
 - `_` no nome de `--cmd` vira `-` (`clear-analytics`): nomes de comando aceitam `a-z`, `0-9` e `-`.
+- `--pick` (só com `--cmd`) vira o `result.pick` de cada comando `GET`: `events` devolve só `analyticsEvents` e
+  `analyticsEventCount`. A resposta de `clear-analytics` vem inteira. São de 1 a 32 chaves, separadas por vírgula.
 - `POST`/`PUT`/`DELETE` nascem com `confirm: true` (cartão Permitir/Negar a cada chamada).
 - Repetir o mesmo comando não muda nada; com outros parâmetros recusa (`conflict`) até passar `--replace`, que pede
   aprovação de novo.
@@ -26,10 +29,11 @@ collie app adopt analytics --name "Analytics debug" --url http://127.0.0.1:8767 
 Depois do cartão aprovado: `collie app attach analytics` abre o painel ligado ao agente. As tools são
 `analytics_events` e `analytics_clear-analytics`.
 
-## `collie.json` (recomendado)
+## `collie.json` (alternativa)
 
-`--cmd` não define `result`, então `events` devolve o documento inteiro (performance, sistema, leaks…). Para o agente
-receber só os eventos de analytics, deixe um `collie.json` na pasta da ferramenta e adote sem `--cmd`:
+Sem `--pick`, o `events` devolve o documento inteiro (performance, sistema, leaks…). `--pick` não define `tail`.
+Para limitar também quantos eventos voltam (os últimos 50), deixe um `collie.json` na pasta da ferramenta e adote
+sem `--cmd`:
 
 ```json
 {"commands": [
@@ -41,7 +45,7 @@ receber só os eventos de analytics, deixe um `collie.json` na pasta da ferramen
 ]}
 ```
 
-## Manifesto gerado (com o `collie.json` acima)
+## Manifesto gerado (com o `collie.json` acima; com `--cmd`/`--pick`, o `result` de `events` tem só o `pick`)
 
 ```json
 {

@@ -425,6 +425,9 @@ extension CommandRouter {
         var source = "none"
         if let flag = str(r, "cmd") {
             input.cmds = try AppAdopt.parseCmds(flag); source = "cmd"
+            if let pick = str(r, "pick") { try AppAdopt.applyPick(pick, to: &input.cmds) }
+        } else if str(r, "pick") != nil {
+            throw ProtocolError(code: .invalidArgs, message: "--pick goes with --cmd (a collie.json sets result.pick itself)")
         } else if let data = Self.smallRegularFile(URL(fileURLWithPath: toolDir).appendingPathComponent("collie.json")) {
             input.cmds = try AppAdopt.commands(fromCollieJSON: data); source = "collie.json"
         } else if let origin = PluginManifest.loopbackOrigin(input.url), await PaddockApps.healthy(origin: origin, path: input.health) {

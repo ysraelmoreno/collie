@@ -298,7 +298,8 @@ extension AndroidInstaller {
 
     /// The licenses the missing packages use (channel-0 `uses-license` of Google's catalogs, fetched each time: a few
     /// MB, never cached). `nil` when a catalog cannot be fetched or read: then every pending license is asked.
-    private func neededLicenses(_ sdk: String) async -> Set<String>? {
+    /// A cancel is rethrown as `cancelled`, never taken for "no catalog".
+    private func neededLicenses(_ sdk: String) async throws(ProtocolError) -> Set<String>? {
         let missing = self.missing(sdk)
         guard !missing.isEmpty else { return [] }
         let urls = (missing.contains { $0 != "image" } ? [AndroidDownload.catalog] : [])
@@ -312,7 +313,10 @@ extension AndroidInstaller {
             var data: [Data] = []
             for (i, url) in urls.enumerated() { data.append(try await resolve(url, dir, "\(i).xml") { $0 }) }
             return try AndroidDownload.licenses(for: missing, catalogs: data)
-        } catch { return nil }
+        } catch {
+            if Self.wrap(error) == Self.cancelled || Task.isCancelled || cancelRequested { throw Self.cancelled }
+            return nil
+        }
     }
 
     /// The spec's items in install order, with where each is (`nil`: missing).
@@ -379,7 +383,7 @@ extension AndroidInstaller {
         guard r.status == 0 || !parsed.isEmpty else {
             throw ProtocolError(code: .unavailable, message: "sdkmanager --licenses failed (exit \(r.status)): \(Self.tail(r.output))")
         }
-        let needed = await neededLicenses(sdk)
+        let needed = try await neededLicenses(sdk)
         let shown = needed.map { n in parsed.filter { n.contains($0.id) } } ?? parsed
         known = shown
         return withAccepted(sdk, shown)
@@ -522,14 +526,19 @@ extension AndroidInstaller {
         return root.appendingPathComponent("cache/android-cli/\(rev)-\(size)-\(mtime)")
     }
 
-    /// Copies the cache into the job's temp HOME (APFS clones), what is not there yet. Best effort: a miss only re-downloads.
+    /// Copies the cache into the job's temp HOME (APFS clones), what is not there yet: into a temp sibling, renamed
+    /// into place, so a half copy never stays. Best effort: a miss only re-downloads.
     static func restoreCli(from cache: URL, into home: URL) {
         let fm = FileManager.default
         guard fm.fileExists(atPath: cache.path) else { return }
         for p in cliPaths where !fm.fileExists(atPath: home.appendingPathComponent(p).path) {
             let dest = home.appendingPathComponent(p)
-            try? fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.copyItem(at: cache.appendingPathComponent(p), to: dest)
+            let tmp = dest.deletingLastPathComponent().appendingPathComponent(".tmp-\(UUID().uuidString)")
+            do {
+                try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fm.copyItem(at: cache.appendingPathComponent(p), to: tmp)
+                try fm.moveItem(at: tmp, to: dest)
+            } catch { try? fm.removeItem(at: tmp) }
         }
     }
 

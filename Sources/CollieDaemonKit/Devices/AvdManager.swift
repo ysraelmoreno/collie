@@ -34,13 +34,25 @@ struct AvdManager: Sendable {
 
     /// The Java home `locate` would use (same order), `nil` when none holds an executable `bin/java`. The installer asks
     /// it too, to decide whether Collie's JDK must be downloaded. `COLLIE_JAVA_HOME` set but empty: only Collie's JDK — used by tests and the E2E.
+    /// A Java whose `release` says it is older than 17 is skipped (cmdline-tools 20.0 and avdmanager need 17+); one
+    /// without a readable `release` is kept.
     static func javaHome(env: [String: String], home: String, javaCandidates: [String]? = nil) -> String? {
-        let hasJava = { (d: String) in FileManager.default.isExecutableFile(atPath: "\(d)/bin/java") }
+        let hasJava = { (d: String) in FileManager.default.isExecutableFile(atPath: "\(d)/bin/java") && (javaMajor(d) ?? 17) >= 17 }
         if env["COLLIE_JAVA_HOME"] == "" { return hasJava(collieJdk(home)) ? collieJdk(home) : nil }
         let early = (env["COLLIE_JAVA_HOME"].map { [$0] } ?? []) + (javaCandidates ?? [studioJbr])
         // java_home is spawned only when nothing earlier works (and never when candidates are injected).
         let viaJavaHome = { javaCandidates == nil ? javaHomeOutput().flatMap { hasJava($0) ? $0 : nil } : nil }
         return early.first(where: hasJava) ?? viaJavaHome() ?? (hasJava(collieJdk(home)) ? collieJdk(home) : nil)
+    }
+
+    /// The major version in `<javaHome>/release`'s `JAVA_VERSION="…"` (`"1.8.0_292"` -> 8, `"11.0.33"` -> 11); `nil` when
+    /// there is no such line.
+    static func javaMajor(_ javaHome: String) -> Int? {
+        guard let text = try? String(contentsOfFile: "\(javaHome)/release", encoding: .utf8),
+              let line = text.split(whereSeparator: \.isNewline).first(where: { $0.hasPrefix("JAVA_VERSION=") }) else { return nil }
+        let parts = line.dropFirst("JAVA_VERSION=".count).trimmingCharacters(in: CharacterSet(charactersIn: "\" ")).split(separator: ".")
+        guard let first = parts.first.flatMap({ Int($0.prefix { $0.isNumber }) }) else { return nil }
+        return first == 1 && parts.count > 1 ? Int(parts[1].prefix { $0.isNumber }) : first
     }
 
     /// What `/usr/libexec/java_home -v 17+` prints, `nil` when no JDK 17+ is installed (nonzero exit).

@@ -486,6 +486,14 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         #expect(try await inst.licenses().map(\.id) == ["android-sdk-arm-dbt-license"])
     }
 
+    @Test func aCancelledCatalogFetchIsACancelNotAFallback() async throws {
+        let f = try Fixture()
+        try f.eightLicenses()
+        let inst = f.installer(fetch: { _, _, _ in throw CancellationError() })
+        #expect(await code { _ = try await inst.licenses() } == AndroidInstaller.cancelled.code)
+        #expect(await inst.status().needs == "needsLicense")   // nothing read
+    }
+
     @Test func installNeverWritesALicenseTheUserDidNotAccept() async throws {
         let f = try Fixture()
         try f.eightLicenses()

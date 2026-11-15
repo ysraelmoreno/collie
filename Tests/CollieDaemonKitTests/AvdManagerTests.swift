@@ -63,6 +63,18 @@ private func tmpScript(_ rel: String, _ body: String = "") throws -> URL {
         #expect(AvdManager.javaHome(env: env, home: home.path, javaCandidates: [studio.path]) == jdk)
     }
 
+    /// A `release` saying < 17 skips that Java (no `release`: kept, as above).
+    @Test func javaHomeSkipsAJdkOlderThan17() throws {
+        let old = try tmpScript("bin/java"), eight = try tmpScript("bin/java"), studio = try tmpScript("bin/java")
+        try "IMPLEMENTOR=\"Eclipse Adoptium\"\nJAVA_VERSION=\"11.0.33\"\n".write(to: old.appendingPathComponent("release"), atomically: true, encoding: .utf8)
+        try "JAVA_VERSION=\"1.8.0_292\"\n".write(to: eight.appendingPathComponent("release"), atomically: true, encoding: .utf8)
+        try "JAVA_VERSION=\"21.0.5\"\n".write(to: studio.appendingPathComponent("release"), atomically: true, encoding: .utf8)
+        #expect(AvdManager.javaMajor(old.path) == 11 && AvdManager.javaMajor(eight.path) == 8 && AvdManager.javaMajor(studio.path) == 21)
+        let home = try tmpScript("placeholder").path
+        #expect(AvdManager.javaHome(env: ["COLLIE_JAVA_HOME": old.path], home: home, javaCandidates: [eight.path, studio.path]) == studio.path)
+        #expect(AvdManager.javaHome(env: ["COLLIE_JAVA_HOME": old.path], home: home, javaCandidates: [eight.path]) == nil)
+    }
+
     @Test func locateFindsTheCollieSdkWhenNoStudioSdk() throws {
         let home = try tmpScript("Library/Application Support/Collie/android-sdk/cmdline-tools/latest/bin/avdmanager")
         let java = try tmpScript("bin/java")

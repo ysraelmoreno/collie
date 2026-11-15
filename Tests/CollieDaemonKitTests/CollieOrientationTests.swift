@@ -216,3 +216,27 @@ import CollieProtocol
         #expect(!CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: []).contains("app new"))
     }
 }
+
+/// agent-comms Task 5: no blocking ask in a cycle; a Cursor answers with `collie reply`.
+@Suite struct CollieOrientationCommsTests {
+    private func text(peers: [String] = []) -> String {
+        CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: peers, panels: [])
+    }
+
+    @Test func orientationWarnsAgainstBlockingCrossAsk() {
+        let t = text(peers: ["Bob"])
+        #expect(t.contains("Don't block-ask one who may wait on you: --no-wait or lot post."), "\(t)")
+        #expect(!text().contains("block-ask"))   // no peers: nobody to cross
+    }
+
+    @Test func orientationMentionsReplyForCursor() {
+        let c = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: ["Bob"], panels: [], agent: "cursor")
+        #expect(c.contains("- Asked by an agent? End with collie reply \"<short answer>\"."), "\(c)")
+        #expect(!text(peers: ["Bob"]).contains("collie reply"))
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        let lot = (name: String(repeating: "L", count: 64), goal: String(repeating: "objetivo ", count: 60))
+        let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" },
+                                           panels: ps, lot: lot, morePanels: true, agent: "cursor")
+        #expect(tight.count <= 1500 && tight.contains("collie reply"), "\(tight.count) \(tight)")
+    }
+}

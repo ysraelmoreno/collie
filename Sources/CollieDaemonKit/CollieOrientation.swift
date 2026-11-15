@@ -49,6 +49,12 @@ enum CollieOrientation {
             "- Memory: collie memory search|save — check before re-reading.",
             "- Work log: collie work status; collie work task defer <task> \"<reason>\" | drop …; collie work done.",
         ]
+        // agent-comms: a crossed blocking ask (or wait) is refused as a deadlock; a hookless Cursor answers by command
+        // ponytail: no warning line for a Shepherd: at the 1500 cap already, its ask line teaches --no-wait
+        if !peers.isEmpty && !isShepherd && !tight { lines[1] += " Don't block-ask one who may wait on you: --no-wait or lot post." }
+        if agent == "cursor" {
+            if tight { lines[1] += " Asked: collie reply." } else { lines.insert("- Asked by an agent? End with collie reply \"<short answer>\".", at: 2) }
+        }
         if let lot {
             // the goal is the user's text: one line, short (a long one only loses its tail)
             let goal = tight ? "" : LotBoards.clean(lot.goal, max: k > 0 ? 80 : 30)

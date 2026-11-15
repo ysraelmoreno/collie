@@ -176,4 +176,67 @@ import CollieProtocol
         var writes = try AppAdopt.parseCmds("clear=POST:/api/clear")
         #expect(refused { try AppAdopt.applyPick("events", to: &writes) }?.code == .invalidArgs)   // no GET command to shape
     }
+    // notify (consult mode): adopt writes notify:false unless --notify; a manifest without the field keeps notifying
+    @Test func adoptManifestNotifyDefaultsOff() throws {
+        let off = try PluginManifest.decode(AppAdopt.manifest(input()))
+        #expect(off.notify == false && !off.notifies)
+        let on = try PluginManifest.decode(AppAdopt.manifest(input { $0.notify = true }))
+        #expect(on.notify == true && on.notifies)
+        let legacy = try PluginManifest.decode(Data(#"{"apiVersion":2,"id":"kube","name":"K","version":"0.1.0","ui":"http://127.0.0.1:9/","service":{"base":"http://127.0.0.1:9"}}"#.utf8))
+        #expect(legacy.notify == nil && legacy.notifies)
+    }
+
+    // the query params (last, since=last, match) every GET http command gets unless it declares them itself
+    @Test func queryParamsOnlyForUndeclaredGetHTTP() throws {
+        var c = try AppAdopt.parseCmds("events=GET:/api/document,clear=POST:/api/clear")
+        c.append(contentsOf: AppAdopt.commands(fromOpenAPI: Data(#"{"paths":{"/api/doc":{"get":{"operationId":"doc","parameters":[{"name":"since","in":"query"}]}}}}"#.utf8)))
+        let m = try PluginManifest.decode(AppAdopt.manifest(input { $0.cmds = c }))
+        #expect(m.queryParams(m.commands[0]) == ["last", "since", "match"] && m.queryParams(m.commands[1]).isEmpty)
+        #expect(m.queryParams(m.commands[2]) == ["last", "match"])   // its own `since` goes to the app
+        let spec = m.pluginSpec().commands.map { c in c.params.filter { $0.name != "panel" } }   // panel: every plug-in command's
+        #expect(spec[0].map(\.name) == ["last", "since", "match"] && spec[1].isEmpty)
+        #expect(spec[2].map(\.name) == ["since", "last", "match"])
+    }
+
+    private let list: JSONValue = .object(["analyticsEvents": .array([.object(["n": .number(1), "name": .string("page_view")]),
+                                                                       .object(["n": .number(2), "name": .string("click"), "meta": .object(["screen": .string("Home")])]),
+                                                                       .object(["n": .number(3), "name": .string("page_view")])]),
+                                           "analyticsEventCount": .number(3)])
+    private func ns(_ v: JSONValue, _ key: String = "analyticsEvents") -> [Double] {
+        guard case .object(let o) = v, case .array(let a)? = o[key] else { return [] }
+        return a.compactMap { if case .object(let i) = $0, case .number(let n)? = i["n"] { n } else { nil } }
+    }
+
+    @Test func queryLastCutsEveryList() {
+        let (v, _) = PaddockApps.query(list, .init(last: 2), seen: [:])
+        #expect(ns(v) == [2, 3])
+        if case .object(let o) = v { #expect(o["analyticsEventCount"] == .number(3)) }   // not a list: untouched
+        let (root, _) = PaddockApps.query(.array([.number(1), .number(2), .number(3)]), .init(last: 1), seen: [:])
+        #expect(root == .array([.number(3)]))
+    }
+
+    @Test func queryMatchAnyStringFieldCaseInsensitive() {
+        #expect(ns(PaddockApps.query(list, .init(match: "PAGE_VIEW"), seen: [:]).0) == [1, 3])
+        #expect(ns(PaddockApps.query(list, .init(match: "home"), seen: [:]).0) == [2])            // a nested field
+        #expect(ns(PaddockApps.query(list, .init(match: "^cl.ck$"), seen: [:]).0) == [2])         // a simple regex
+        #expect(ns(PaddockApps.query(list, .init(match: "page_view", last: 1), seen: [:]).0) == [3])
+        #expect(ns(PaddockApps.query(list, .init(match: "(unclosed"), seen: [:]).0).isEmpty)     // bad regex: literal text
+    }
+
+    @Test func querySinceLastReturnsOnlyNewItems() {
+        let (first, seen) = PaddockApps.query(list, .init(since: true), seen: [:])
+        #expect(ns(first) == [1, 2, 3])   // nothing read yet: all new
+        #expect(ns(PaddockApps.query(list, .init(since: true), seen: seen).0).isEmpty)
+        guard case .object(var o) = list, case .array(var a)? = o["analyticsEvents"] else { return }
+        a.append(.object(["n": .number(4), "name": .string("click")])); o["analyticsEvents"] = .array(a)
+        let (next, seen2) = PaddockApps.query(.object(o), .init(match: "zzz", since: true), seen: seen)
+        #expect(ns(next).isEmpty)                                                    // filtered out, but read
+        #expect(ns(PaddockApps.query(.object(o), .init(since: true), seen: seen2).0).isEmpty)
+        #expect(ns(PaddockApps.query(.object(o), .init(since: true), seen: seen).0) == [4])
+        // the log cleared (the last seen item is gone): all of it is new
+        #expect(ns(PaddockApps.query(.object(["analyticsEvents": .array([.object(["n": .number(9)])])]), .init(since: true), seen: seen).0) == [9])
+        // a plain read moves the cursor too
+        let (_, plain) = PaddockApps.query(.object(o), .init(), seen: seen)
+        #expect(ns(PaddockApps.query(.object(o), .init(since: true), seen: plain).0).isEmpty)
+    }
 }

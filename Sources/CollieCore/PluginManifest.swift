@@ -94,6 +94,9 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public var eventStream: String?        // v2: an SSE path on service.base (slice 2)
     /// v2: the stream sends a whole document; its array at this key becomes one `events[0]` per new item (`AppEventDiff`).
     public var eventDiff: String?
+    /// v2: an event types a notice into the leashed agents (`PaddockApps.appEventNotice`); false: it is only recorded,
+    /// for `collie app event` / `collie events` (consult mode). Absent: true (`collie app adopt` writes false).
+    public var notify: Bool?
     /// Set by the daemon on an approved app do cercado (never read from its file): its folder and pin, so the panel
     /// serves a `ui/` page from the paddock, only while the files still hash to the pin (slice 4).
     public var appFolder: String?
@@ -117,8 +120,19 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         service = try c.decodeIfPresent(Service.self, forKey: .service)
         eventStream = try c.decodeIfPresent(String.self, forKey: .eventStream)
         eventDiff = try c.decodeIfPresent(String.self, forKey: .eventDiff)
+        notify = try c.decodeIfPresent(Bool.self, forKey: .notify)
         appFolder = try c.decodeIfPresent(String.self, forKey: .appFolder)
         appPin = try c.decodeIfPresent(String.self, forKey: .appPin)
+    }
+
+    public var notifies: Bool { notify ?? true }
+
+    /// Consult params the daemon applies to a GET http command's reply (`PaddockApps.query`), never sent to the app:
+    /// `last`, `since`, `match`, each unless the command declares it (then it is the app's).
+    public static let queryParamNames = ["last", "since", "match"]
+    public func queryParams(_ c: Command) -> [String] {
+        guard c.runs == "http", c.http?.method == "GET" else { return [] }
+        return Self.queryParamNames.filter { n in !c.params.contains { $0.name == n } }
     }
 
     /// The page is a loopback URL of the app's service (v2), not a `ui/` file.
@@ -176,6 +190,9 @@ public struct PluginManifest: Codable, Sendable, Equatable {
                 if c.outputFile, !params.contains(where: { $0.name == "out" }) {
                     params.append(ParamSpec("out", .string, help: "Copy the file here (relative to the current directory; dirs created, overwritten); returns that path"))
                 }
+                let help = ["last": "Only the last N items of each list in the reply", "since": "'last': only the items new since this terminal's previous read",
+                            "match": "Only the list items with a string field matching this text or simple regex (case-insensitive)"]
+                for n in queryParams(c) { params.append(ParamSpec(n, n == "last" ? .int : .string, help: help[n] ?? "")) }
                 // a confirm card waits for the user before the call's own timeout starts
                 return CommandSpec(name: "\(id).\(c.name)", summary: c.summary, params: params,
                                    timeoutSeconds: c.timeout + (c.confirm ? Self.confirmWait : 0) + (c.runs == "http" && service?.start != nil ? Self.startWait : 0),

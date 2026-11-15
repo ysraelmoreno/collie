@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import CollieCore
 import CollieProtocol
+import CollieTerminal
 @testable import CollieDaemonKit
 
 private let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -777,5 +778,108 @@ extension AskTests {
         let p = try #require(await b.get(id: pending, from: me))
         #expect(p.status == .failed && p.error?.contains("restarted") == true, "\(p)")
         #expect(await AskInbox(file: nil).recent(from: me).isEmpty, "no file: memory only (tests)")
+    }
+}
+
+// MARK: - collie wait in the deadlock graph (agent-comms Task 1)
+
+/// A coordinator-only target named `name` that reads what it's typed and never ends a turn by itself (hook-only preset).
+private func waitTarget(_ asks: AskCoordinator, _ name: String) async throws -> UUID {
+    let rec = TerminalRecord(id: UUID(), name: name, preset: .claude, command: "cat", cwd: "/tmp", isShepherd: false, paddockId: nil, projectRoot: nil)
+    let sb = ScrollbackBuffer(spillURL: nil)
+    let p = try PTYProcess(spec: LaunchSpec(executable: "/bin/sh", arguments: ["-c", "printf ready; exec cat >/dev/null"], environment: [:], cwd: "/tmp"), scrollback: sb)
+    await asks.attach(rec, process: p, scrollback: sb)
+    return rec.id
+}
+
+private func inFlight(_ asks: AskCoordinator, _ id: UUID) async -> Bool {
+    for _ in 0..<200 { if await asks.isBusy(id) { return true }; try? await Task.sleep(for: .milliseconds(25)) }
+    return false
+}
+
+extension AskTests {
+    @Test func waitThenCrossedAskIsDeadlock() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
+        _ = try await asks.beginWait(from: b, to: a)
+        do { _ = try await asks.ask(from: a, to: b, prompt: "pode testar?", raw: false, timeout: .seconds(5)); Issue.record("no deadlock") }
+        catch { #expect(error.code == .deadlock && error.message == "Deadlock: 'B' is already waiting on 'A'; 'A' cannot ask 'B'", "\(error)") }
+    }
+
+    @Test func askThenCrossedWaitIsDeadlock() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
+        let pending = Task { try await asks.ask(from: a, to: b, prompt: "pode testar?", raw: false, timeout: .seconds(10)) }
+        defer { pending.cancel() }
+        #expect(await inFlight(asks, b))
+        do { _ = try await asks.beginWait(from: b, to: a); Issue.record("no deadlock") }
+        catch { #expect(error.code == .deadlock && error.message == "Deadlock: 'A' is already waiting on 'B'; 'B' cannot wait on 'A'", "\(error)") }
+    }
+
+    @Test func endWaitReleasesEdge() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
+        await asks.endWait(try await asks.beginWait(from: b, to: a))
+        let pending = Task { try await asks.ask(from: a, to: b, prompt: "pode testar?", raw: false, timeout: .seconds(10)) }
+        defer { pending.cancel() }
+        #expect(await inFlight(asks, b))
+    }
+
+    @Test func noCycleNoDeadlock() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B"), c = try await waitTarget(asks, "C")
+        let ab = Task { try await asks.ask(from: a, to: b, prompt: "primeiro pedido", raw: false, timeout: .seconds(10)) }
+        defer { ab.cancel() }
+        #expect(await inFlight(asks, b))
+        let cb = Task { try await asks.ask(from: c, to: b, prompt: "segundo pedido", raw: false, timeout: .seconds(10)) }
+        defer { cb.cancel() }
+        for _ in 0..<100 where await asks.queued(b) == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(await asks.queued(b) == 1)
+        let w = try await asks.beginWait(from: c, to: a)   // C -> A, A -> B, C -> B: no cycle
+        await asks.endWait(w)
+    }
+
+    @Test func detachedAskAddsNoEdge() async throws {
+        let asks = AskCoordinator(idleQuietSeconds: 1)
+        let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
+        let pending = Task { try await asks.ask(from: a, to: b, prompt: "pode testar?", raw: false, timeout: .seconds(10), detached: true) }
+        defer { pending.cancel() }
+        #expect(await inFlight(asks, b))
+        await asks.endWait(try await asks.beginWait(from: b, to: a))
+    }
+
+    /// Router: `collie wait` on an agent that is working (badge) while blocked on an ask to the waiter is refused up front.
+    @Test func waitOnAgentAskingMeIsDeadlock() async throws {
+        try await withDaemon { d, p in
+            let ticks = "echo T=$COLLIE_TOKEN; while :; do echo tick; sleep 0.1; done"
+            let a = try await term(d, p, "A", preset: "custom", command: ticks)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            let pending = Task { try await ask(p, a, "B", "never answered", timeout: 30) }
+            defer { pending.cancel() }
+            #expect(await waitFor(10) { await d.askBusy(UUID(uuidString: b.id)!) })
+            #expect(await waitFor(10) { await d.badge(UUID(uuidString: a.id)!) == .working })
+            let t0 = ContinuousClock.now
+            let r = try await send(p, Request(id: "w", terminalId: b.id, token: b.token, command: "wait",
+                                              args: ["target": .string("A"), "timeout": .number(30)]), timeoutSeconds: 40)
+            #expect(ContinuousClock.now - t0 < .seconds(10))
+            #expect(r.error?.code == .deadlock && r.error?.message == "Deadlock: 'A' is already waiting on 'B'; 'B' cannot wait on 'A'", "\(r)")
+        }
+    }
+
+    /// A `wait` that timed out leaves no edge: the crossed blocking ask that follows is not a deadlock.
+    @Test func timedOutWaitReleasesEdge() async throws {
+        try await withDaemon { d, p in
+            let ticks = "echo T=$COLLIE_TOKEN; while :; do echo tick; sleep 0.1; done"
+            let a = try await term(d, p, "A", preset: "custom", command: ticks)
+            let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
+            try await connect(d, p, "A", "B")
+            #expect(await waitFor(10) { await d.badge(UUID(uuidString: a.id)!) == .working })
+            let w = try await send(p, Request(id: "w", terminalId: b.id, token: b.token, command: "wait",
+                                              args: ["target": .string("A"), "timeout": .number(1)]), timeoutSeconds: 15)
+            #expect(w.error?.code == .timeout, "\(w)")
+            let r = try await ask(p, a, "B", "pode testar?", timeout: 1)
+            #expect(r.error?.code != .deadlock, "\(r)")
+        }
     }
 }

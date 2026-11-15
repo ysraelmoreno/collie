@@ -324,6 +324,8 @@ public actor AskCoordinator {
     nonisolated let provenance = InputProvenance()
     private var targets: [UUID: Target] = [:]
     private var waiters: [UUID: Waiter] = [:]   // queued + in-flight asks; also the deadlock graph (from -> to)
+    /// `collie wait` callers blocked on a working agent: the deadlock graph's other edges (from -> to).
+    private var waitEdges: [UUID: (from: UUID, to: UUID)] = [:]
 
     private let heldMax: Duration
     /// Every approval prompt as it appears, changes or clears (one consumer: the router tells the chat and the panels).
@@ -382,6 +384,20 @@ public actor AskCoordinator {
         return try await enqueue(Waiter(from: from, to: to, prompt: prompt, raw: raw, guardsApproval: task, detached: detached,
                                   onDelivered: onDelivered, cont: nil), timeout: timeout)
     }
+
+    /// An edge `from -> to` for as long as `from` blocks waiting for `to`'s turn. Throws `.deadlock` if `to` already
+    /// waits (ask or wait) on `from`.
+    public func beginWait(from: UUID, to: UUID) throws(ProtocolError) -> UUID {
+        if reaches(to, from) {
+            throw ProtocolError(code: .deadlock,
+                                message: "Deadlock: '\(name(to))' is already waiting on '\(name(from))'; '\(name(from))' cannot wait on '\(name(to))'")
+        }
+        let token = UUID()
+        waitEdges[token] = (from, to)
+        return token
+    }
+
+    public func endWait(_ token: UUID) { waitEdges[token] = nil }
 
     /// The user's ask (work chat): same FIFO, readiness gate and hook/idle completion as `ask`, but no caller
     /// terminal, so no edge in the deadlock graph (`from == to`, as `inject`).
@@ -671,6 +687,7 @@ public actor AskCoordinator {
             if n == b { return true }
             guard seen.insert(n).inserted else { continue }
             stack += waiters.values.filter { $0.from == n && !$0.detached }.map(\.to)
+            stack += waitEdges.values.filter { $0.from == n }.map(\.to)
         }
         return false
     }

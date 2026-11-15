@@ -414,7 +414,7 @@ actor CommandRouter {
                 return Response(id: req.id, ok: true, result: .object(model.merging(["output": .string(s.text), "truncated": .bool(s.truncated)]) { $1 }))
             case "wait":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
-                return Response(id: req.id, ok: true, result: try await waitTurn(t, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
+                return Response(id: req.id, ok: true, result: try await waitTurn(t, from: tid, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
             case "turn.completed":
                 if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr) }   // restarts the idle capture
                 // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
@@ -492,7 +492,8 @@ actor CommandRouter {
 
     /// `wait`: an idle agent answers at once with its last turn; a working one when its turn ends (Stop hook), or when its
     /// badge leaves `working` (hookless agents, an approval prompt).
-    private func waitTurn(_ t: TerminalRecord, timeout: Duration) async throws(ProtocolError) -> JSONValue {
+    /// While it waits, `from -> t` is an edge of the asks' deadlock graph (a crossed blocking ask or wait is refused).
+    private func waitTurn(_ t: TerminalRecord, from: UUID, timeout: Duration) async throws(ProtocolError) -> JSONValue {
         func reply(idle: Bool, _ badge: StatusBadge?) -> JSONValue {
             var o: [String: JSONValue] = ["idle": .bool(idle), "badge": .string((badge ?? .stopped).rawValue)]
             if let m = lastTurn[t.id] { o["message"] = .string(m) }
@@ -500,13 +501,17 @@ actor CommandRouter {
         }
         let ends = turnEnds[t.id] ?? 0, deadline = ContinuousClock.now + timeout
         if let b = await hub.currentBadges[t.id], b != .working { return reply(idle: true, b) }
+        let edge = try await asks.beginWait(from: from, to: t.id)
+        var done: JSONValue?
         // ponytail: 200 ms polling of the turn count and the hub's badge (itself polled 4/s)
         while ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(200))
             if Task.isCancelled { break }
             let b = await hub.currentBadges[t.id]
-            if (turnEnds[t.id] ?? 0) != ends || b != .working { return reply(idle: false, b) }
+            if (turnEnds[t.id] ?? 0) != ends || b != .working { done = reply(idle: false, b); break }
         }
+        await asks.endWait(edge)
+        if let done { return done }
         throw ProtocolError(code: .timeout, message: "'\(t.name)' is still working after \(timeout.components.seconds)s")
     }
 

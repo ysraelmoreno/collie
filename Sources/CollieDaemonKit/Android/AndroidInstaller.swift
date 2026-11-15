@@ -215,9 +215,9 @@ extension AndroidInstaller {
         return t.path
     }
 
-    static func selfAccepts(_ rev: String) -> ProtocolError {
-        ProtocolError(code: .unavailable, message: "cmdline-tools \(rev) accepts the Android SDK licenses by itself; "
-                      + "not supported: install cmdline-tools 20.0 or 23.0")
+    static func selfAccepts(_ rev: String, _ sdk: String) -> ProtocolError {
+        ProtocolError(code: .unavailable, message: "cmdline-tools \(rev) accepts the Android SDK licenses by itself; not "
+                      + "supported: install cmdline-tools 20.0 into \(sdk)/cmdline-tools/20.0, or use 23.0")
     }
 
     /// The `sdkmanager` to run, `cli` for the android CLI (23.0). An unknown revision is probed once per daemon:
@@ -225,14 +225,19 @@ extension AndroidInstaller {
     private func tool(_ sdk: String) async throws(ProtocolError) -> (path: String, cli: Bool) {
         guard let t = sdkmanagerTool(sdk), java != nil else { throw Self.notReady }
         guard case .unknown(let rev) = t.kind else { return (t.path, t.kind == .androidCli) }
-        if probed[rev] == nil { probed[rev] = try await probe(t.path, sdk) }
-        if probed[rev] == true { throw Self.selfAccepts(rev) }
+        if probed[rev] == nil {
+            // an inconclusive probe (killed, timed out) blocks without being cached: the next call probes again
+            guard let accepts = try await probe(t.path, sdk) else { throw Self.selfAccepts(rev, sdk) }
+            probed[rev] = accepts
+        }
+        if probed[rev] == true { throw Self.selfAccepts(rev, sdk) }
         return (t.path, false)
     }
 
     /// Runs `sm --sdk_root=<empty tmp sdk> platform-tools` (own temp HOME) and answers whether it created `licenses/`
-    /// without being asked. A probe that cannot finish (timeout, cannot start) counts as accepting: blocked.
-    private func probe(_ sm: String, _ sdk: String) async throws(ProtocolError) -> Bool {
+    /// without being asked. `nil`: inconclusive (timeout, cannot start, killed by a signal); `cancelled` when `cancel`
+    /// stopped it. Only a clean run answers `false`.
+    private func probe(_ sm: String, _ sdk: String) async throws(ProtocolError) -> Bool? {
         let dir = URL(fileURLWithPath: sdk).appendingPathComponent(".collie-staging/probe")
         let fm = FileManager.default
         try? fm.removeItem(at: dir)
@@ -240,11 +245,15 @@ extension AndroidInstaller {
         let tmpSdk = dir.appendingPathComponent("sdk")
         do { try fm.createDirectory(at: tmpSdk, withIntermediateDirectories: true) }
         catch { throw ProtocolError(code: .unavailable, message: "cannot create \(tmpSdk.path): \(error.localizedDescription)") }
+        let status: Int32
         do throws(ProtocolError) {
-            _ = try await sdkmanager(sm, ["--sdk_root=\(Self.sdkRoot(tmpSdk.path))", "platform-tools"], item: nil,
-                                     timeout: .seconds(300), home: dir.appendingPathComponent("home"))
-        } catch where error == Self.cancelled { throw error } catch { return true }
-        return fm.fileExists(atPath: tmpSdk.appendingPathComponent("licenses").path)
+            status = try await sdkmanager(sm, ["--sdk_root=\(Self.sdkRoot(tmpSdk.path))", "platform-tools"], item: nil,
+                                          timeout: .seconds(300), home: dir.appendingPathComponent("home")).status
+        } catch where error == Self.cancelled { throw error } catch { return nil }
+        if fm.fileExists(atPath: tmpSdk.appendingPathComponent("licenses").path) { return true }
+        if cancelRequested { throw Self.cancelled }   // `cancel` during `licenses()` (no job Task to cancel)
+        return status > 128 ? nil : false   // 128 + signal: killed
+
     }
 
     /// `--sdk_root`'s value: symlinks and `..` resolved (23.0 refuses to unzip into a root holding `..`).
@@ -284,7 +293,7 @@ extension AndroidInstaller {
 
     private func blockedNote(_ sdk: String) -> String {
         guard case .unknown(let rev) = sdkmanagerTool(sdk)?.kind, probed[rev] == true else { return "" }
-        return Self.selfAccepts(rev).message
+        return Self.selfAccepts(rev, sdk).message
     }
 
     /// The licenses `sdkmanager --licenses` prints (the ones it considers not accepted), `accepted` read from
@@ -296,6 +305,7 @@ extension AndroidInstaller {
             return withAccepted(sdk.path, known)
         }
         running = true   // before any await, like `begin`
+        cancelRequested = false
         let sdk = sdk.path
         defer { running = false; removeJobHome(sdk) }
         return try await readLicenses()

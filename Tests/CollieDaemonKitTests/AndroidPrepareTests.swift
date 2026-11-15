@@ -165,33 +165,47 @@ private struct Fixture {
         #expect(Set(try fm.contentsOfDirectory(atPath: f.sdk.appendingPathComponent("cmdline-tools").path)) == ["latest", "20.0"])
     }
 
-    /// A fake unknown `latest` (22.0) logging its args in `calls`; `selfAccepts`: a package install writes `licenses/`.
-    private func unknown22(_ f: Fixture, selfAccepts: Bool) throws -> URL {
+    /// A fake unknown `latest` (22.0) logging its args in `calls`, `HOME|ANDROID_USER_HOME` in `envs`. Controls (files
+    /// in `bin`) act on a package install (the probe): `selfaccept` writes `licenses/`, `kill` dies by SIGKILL,
+    /// `sleep` sleeps 30 s (pid in `pid`). Returns `bin`.
+    private func unknown22(_ f: Fixture, _ controls: [String] = []) throws -> URL {
         let bin = f.sdk.appendingPathComponent("cmdline-tools/latest/bin")
         try script(bin.appendingPathComponent("sdkmanager"), rev: "22.0")
-        try """
+        try #"""
         #!/bin/sh
+        d=$(dirname "$0")
         for a in "$@"; do case "$a" in --sdk_root=*) s="${a#--sdk_root=}";; esac; done
-        echo "$*" >> "$(dirname "$0")/calls"
-        \(selfAccepts ? #"case "$*" in *--licenses*) ;; *) mkdir -p "$s/licenses"; echo x > "$s/licenses/android-sdk-license";; esac"# : "")
+        echo "$*" >> "$d/calls"; echo "$HOME|$ANDROID_USER_HOME" >> "$d/envs"
+        case "$*" in *--licenses*) exit 0;; esac
+        if [ -f "$d/sleep" ]; then echo $$ > "$d/pid"; sleep 30; fi
+        if [ -f "$d/kill" ]; then kill -9 $$; fi
+        if [ -f "$d/selfaccept" ]; then mkdir -p "$s/licenses"; echo x > "$s/licenses/android-sdk-license"; fi
         exit 0
-        """.write(to: bin.appendingPathComponent("sdkmanager"), atomically: true, encoding: .utf8)
+        """#.write(to: bin.appendingPathComponent("sdkmanager"), atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("sdkmanager").path)
-        return bin.appendingPathComponent("calls")
+        for c in controls { try "".write(to: bin.appendingPathComponent(c), atomically: true, encoding: .utf8) }
+        return bin
+    }
+
+    private func lines(_ bin: URL, _ name: String) -> [String] {
+        ((try? String(contentsOf: bin.appendingPathComponent(name), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
+    private func failure(_ body: () async throws -> Void) async -> ProtocolError? {
+        do { try await body(); return nil } catch { return error as? ProtocolError }
     }
 
     @Test func anUnknownCmdlineToolsThatSelfAcceptsIsBlocked() async throws {
         let f = try Fixture()
-        let calls = try unknown22(f, selfAccepts: true)
+        let bin = try unknown22(f, ["selfaccept"])
         let inst = try f.installer(java: true)
         for _ in 0..<2 {
-            var failure: ProtocolError?
-            do { try await inst.install(accept: []) } catch { failure = error as? ProtocolError }
-            #expect(failure?.code == .unavailable && failure?.message.contains("cmdline-tools 22.0 accepts") == true)
+            let e = await failure { try await inst.install(accept: []) }
+            #expect(e?.code == .unavailable && e?.message.contains("cmdline-tools 22.0 accepts") == true)
+            #expect(e?.message.contains("\(f.sdk.path)/cmdline-tools/20.0") == true)
         }
         #expect(f.fake.urls.isEmpty)   // blocked, no 20.0 download
-        #expect(try String(contentsOf: calls, encoding: .utf8).split(separator: "\n").count == 1)   // probed once
-        #expect(try String(contentsOf: calls, encoding: .utf8).hasSuffix(" platform-tools\n"))
+        #expect(lines(bin, "calls").count == 1 && lines(bin, "calls")[0].hasSuffix(" platform-tools"))   // probed once
         #expect(!fm.fileExists(atPath: f.sdk.appendingPathComponent("licenses").path))
         #expect(!fm.fileExists(atPath: f.staging.path))
         #expect(await inst.status().items.first { $0.id == "cmdline-tools" }?.detail.contains("22.0 accepts") == true)
@@ -199,12 +213,37 @@ private struct Fixture {
 
     @Test func anUnknownCmdlineToolsThatAsksRunsAsClassic() async throws {
         let f = try Fixture()
-        let calls = try unknown22(f, selfAccepts: false)
+        let bin = try unknown22(f)
         let inst = try f.installer(java: true)
         #expect(try await inst.licenses().isEmpty)
         #expect(try await inst.licenses().isEmpty)
-        let lines = try String(contentsOf: calls, encoding: .utf8).split(separator: "\n")
-        #expect(lines.count == 3 && lines[0].hasSuffix(" platform-tools") && lines[1].hasPrefix("--licenses") && lines[2].hasPrefix("--licenses"))
+        let calls = lines(bin, "calls")
+        let probe = AndroidInstaller.sdkRoot(f.sdk.path) + "/.collie-staging/probe"
+        #expect(calls.count == 3 && calls[0] == "--sdk_root=\(probe)/sdk platform-tools"
+                && calls[1].hasPrefix("--licenses") && calls[2].hasPrefix("--licenses"))
+        let probeHome = f.sdk.path + "/.collie-staging/probe/home"
+        #expect(lines(bin, "envs").first == "\(probeHome)|\(probeHome)")
+        #expect(!fm.fileExists(atPath: f.staging.path))
+    }
+
+    /// A probe killed by a signal, or cancelled, is never cached as classic: the next call probes again.
+    @Test func aKilledOrCancelledProbeIsNotCached() async throws {
+        let f = try Fixture()
+        let bin = try unknown22(f, ["kill"])
+        let inst = try f.installer(java: true)
+        #expect(await failure { _ = try await inst.licenses() }?.message.contains("22.0 accepts") == true)
+        try fm.removeItem(at: bin.appendingPathComponent("kill"))
+
+        try "".write(to: bin.appendingPathComponent("sleep"), atomically: true, encoding: .utf8)
+        let read = Task { await failure { _ = try await inst.licenses() } }
+        for _ in 0..<200 where !fm.fileExists(atPath: bin.appendingPathComponent("pid").path) { try await Task.sleep(for: .milliseconds(25)) }
+        await inst.cancel()
+        #expect(await read.value == AndroidInstaller.cancelled)
+        try fm.removeItem(at: bin.appendingPathComponent("sleep"))
+
+        try "".write(to: bin.appendingPathComponent("selfaccept"), atomically: true, encoding: .utf8)
+        #expect(await failure { _ = try await inst.licenses() }?.message.contains("22.0 accepts") == true)
+        #expect(lines(bin, "calls").count == 3 && lines(bin, "calls").allSatisfy { $0.hasSuffix(" platform-tools") })   // probed each time
         #expect(!fm.fileExists(atPath: f.staging.path))
     }
 

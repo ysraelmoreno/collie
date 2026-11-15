@@ -387,6 +387,8 @@ extension CommandRouter {
             return .object(["id": .string(id), "paddock": .string(paddock.name), "folder": .string(folder.path), "state": .string("pending"),
                             "files": .array([.string(PluginManifest.fileName), .string("ui/index.html")]),
                             "next": .string("edit the files, then collie app attach \(id): a card asks the user to approve (again, if the files changed)")])
+        case "app.adopt":   // app adopt (spec 2026-11-15): a v2 manifest for a running local tool; only the user approves it
+            return try await adoptApp(r, paddock: paddock, by: caller?.id)
         case "app.attach":
             let id = try need(r, "id")
             guard let f = found.first(where: { $0.id == id }) else { throw noApp(id, paddock) }
@@ -409,6 +411,75 @@ extension CommandRouter {
             return try isoJSON(p)
         default: throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(r.command)'")
         }
+    }
+
+    /// `app.adopt`: commands from `--cmd`, else the tool's `collie.json` (`<paddock>/<cwd>/collie.json`), else its
+    /// OpenAPI (`/openapi.json`, `/swagger.json`) when it already answers its health; then the manifest, written only
+    /// in `.collie/apps/<id>/`. The same file again: nothing written, no new card; another one: `--replace`.
+    private func adoptApp(_ r: Request, paddock: Paddock, by: UUID?) async throws -> JSONValue {
+        let id = try need(r, "id")
+        var input = AppAdopt.Input(id: id, name: str(r, "name") ?? id, url: try need(r, "url"), start: str(r, "start"), cwd: str(r, "cwd"),
+                                   health: str(r, "health"), ui: str(r, "ui"), eventStream: str(r, "events"), eventDiff: str(r, "event-diff"), cmds: [])
+        _ = try AppAdopt.manifest(input)   // url, cwd, paths: refused before anything is read or written
+        let toolDir = if let c = input.cwd { try CommandRouter.resolveCwd(c, in: paddock.path) } else { paddock.path }
+        var source = "none"
+        if let flag = str(r, "cmd") {
+            input.cmds = try AppAdopt.parseCmds(flag); source = "cmd"
+        } else if let data = Self.smallRegularFile(URL(fileURLWithPath: toolDir).appendingPathComponent("collie.json")) {
+            input.cmds = try AppAdopt.commands(fromCollieJSON: data); source = "collie.json"
+        } else if let origin = PluginManifest.loopbackOrigin(input.url), await PaddockApps.healthy(origin: origin, path: input.health) {
+            for path in ["/openapi.json", "/swagger.json"] {
+                guard let data = await Self.fetch(origin + path) else { continue }
+                input.cmds = AppAdopt.commands(fromOpenAPI: data)
+                if !input.cmds.isEmpty { source = "openapi"; break }
+            }
+        }
+        let manifest = try AppAdopt.manifest(input)
+        let folder = URL(fileURLWithPath: paddock.path).appendingPathComponent(PaddockApps.dir).appendingPathComponent(id)
+        let file = folder.appendingPathComponent(PluginManifest.fileName)
+        let exists = (try? FileManager.default.attributesOfItem(atPath: folder.path)) != nil
+        let same = exists && Self.smallRegularFile(file) == manifest
+        if exists, !same {
+            guard flag(r, "replace") else {
+                throw ProtocolError(code: .conflict, message: "\(PaddockApps.dir)/\(id) already adopted differently: pass --replace (the user approves it again)")
+            }
+            func type(_ u: URL) -> FileAttributeType? { try? FileManager.default.attributesOfItem(atPath: u.path)[.type] as? FileAttributeType }   // lstat
+            guard type(folder) == .typeDirectory, type(file) == nil || type(file) == .typeRegular else {
+                throw ProtocolError(code: .conflict, message: "\(PaddockApps.dir)/\(id) is not a plain folder with a plain \(PluginManifest.fileName)")
+            }
+        }
+        if !same {
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try manifest.write(to: file, options: exists ? .atomic : .withoutOverwriting)
+            } catch { throw ProtocolError(code: .internal, message: "could not write \(file.path): \(error.localizedDescription)") }
+        }
+        let (m, sha) = try PaddockApps.read(folder)
+        if !same { await raiseApproval(m, sha: sha, in: paddock, by: by) }
+        let pin = paddock.apps?[id]
+        return .object(["id": .string(id), "paddock": .string(paddock.name), "folder": .string(folder.path),
+                        "state": .string(pin == sha ? "approved" : pin == nil ? "pending" : "changed"),
+                        "commands": .array(m.commands.map { .string($0.name + ($0.confirm ? " (confirm)" : "")) }), "source": .string(source),
+                        "next": .string(source == "none"
+                            ? "no commands found (no --cmd, collie.json or OpenAPI): add --cmd name=GET:/path --replace, or a collie.json in the tool's folder; the panel works already once approved"
+                            : "the user approves it on the card; then collie app attach \(id)")])
+    }
+
+    /// A regular file (no link), ≤ 256 KiB; nil: anything else.
+    private static func smallRegularFile(_ u: URL) -> Data? {
+        guard let a = try? FileManager.default.attributesOfItem(atPath: u.path), a[.type] as? FileAttributeType == .typeRegular,
+              (a[.size] as? Int ?? .max) <= 256 * 1024 else { return nil }
+        return try? Data(contentsOf: u)
+    }
+
+    /// GET on the tool's loopback service (5 s, no redirect, ≤ 1 MiB, 2xx); nil: anything else.
+    private static func fetch(_ url: String) async -> Data? {
+        guard let u = URL(string: url) else { return nil }
+        let s = PaddockApps.session(5)
+        defer { s.invalidateAndCancel() }
+        guard let (data, resp) = try? await s.data(for: URLRequest(url: u, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 5)),
+              let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code), data.count <= PaddockApps.bodyCap else { return nil }
+        return data
     }
 
     private func noApp(_ id: String, _ p: Paddock) -> ProtocolError {

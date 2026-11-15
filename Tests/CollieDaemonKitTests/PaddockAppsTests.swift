@@ -815,3 +815,189 @@ private func serviceApp(in folder: URL) throws {
         }
     }
 }
+
+/// A loopback tool for `app adopt`: answers `routes[path]` (200, JSON), else 404.
+private final class ToolService: @unchecked Sendable {
+    private let listener: NWListener
+    private(set) var port: UInt16 = 0
+    init(_ routes: [String: String]) async throws {
+        let params = NWParameters.tcp
+        params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: params)
+        listener.newConnectionHandler = { c in
+            c.start(queue: .global())
+            c.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, _, _ in
+                let head = String(decoding: data ?? Data(), as: UTF8.self)
+                let target = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
+                let path = String(target.split(separator: "?").first ?? "/")
+                let body = Data((routes[path] ?? #"{"error":"not found"}"#).utf8)
+                let resp = "HTTP/1.1 \(routes[path] == nil ? "404 Not Found" : "200 OK")\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+                c.send(content: Data(resp.utf8) + body, completion: .contentProcessed { _ in c.cancel() })
+            }
+        }
+        port = try await withCheckedThrowingContinuation { (k: CheckedContinuation<UInt16, any Error>) in
+            let once = NSLock(); nonisolated(unsafe) var done = false
+            listener.stateUpdateHandler = { [listener] st in
+                once.lock(); defer { once.unlock() }
+                guard !done else { return }
+                if case .ready = st { done = true; k.resume(returning: listener.port!.rawValue) }
+                if case .failed(let e) = st { done = true; k.resume(throwing: e) }
+            }
+            listener.start(queue: .global())
+        }
+    }
+    func stop() { listener.cancel() }
+    var base: String { "http://127.0.0.1:\(port)" }
+}
+
+/// app adopt (spec 2026-11-15): an agent adopts a running local tool; the manifest lands in `.collie/apps/<id>/`, the
+/// card asks the user, and only then its http commands are tools.
+@Suite(.serialized) struct PaddockAppAdoptTests {
+    fileprivate struct Env { let d: Daemon; let p: Paths; let a: Term; let dir: URL; let svc: ToolService }
+    static let document = #"{"analyticsEvents":[{"n":1},{"n":2}],"leakEvents":[{"big":"x"}],"events":[]}"#
+    static let openAPI = #"{"openapi":"3.0.0","paths":{"/api/document":{"get":{"operationId":"getDocument","summary":"The document"}},"/api/clear/analytics":{"post":{}}}}"#
+
+    fileprivate func with(routes: [String: String] = ["/api/health": "{}", "/api/document": document], _ body: (Env) async throws -> Void) async throws {
+        try await PluginRegistry.exclusively {
+            let svc = try await ToolService(routes)
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("adopt-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: tmp.appendingPathComponent("tool"), withIntermediateDirectories: true)
+            let dir = URL(fileURLWithPath: realpath(tmp.path, nil).map { p in defer { free(p) }; return String(cString: p) } ?? tmp.path)
+            defer { try? FileManager.default.removeItem(at: dir); svc.stop() }
+            try await withDaemon { d, p in
+                #expect(try await admin(d, p, "paddock.create", ["name": .string("k"), "folder": .string(dir.path)]).ok)
+                let s = try await admin(d, p, "admin.spawn", ["name": .string("A"), "preset": .string("shell"), "paddock": .string("k")])
+                guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }
+                try await body(Env(d: d, p: p, a: Term(id: id, token: try await tokenOf(d, id)), dir: dir, svc: svc))
+            }
+            PluginRegistry.setExternal([])
+        }
+    }
+    private func adopt(_ e: Env, _ extra: [String: JSONValue] = [:]) async throws -> Response {
+        try await call(e.p, e.a, "app.adopt", ["id": .string("analytics"), "url": .string(e.svc.base)].merging(extra) { _, b in b })
+    }
+    private func file(_ e: Env) -> URL { e.dir.appendingPathComponent(".collie/apps/analytics/collie-plugin.json") }
+    private func result(_ r: Response) -> [String: JSONValue] { if case .object(let o)? = r.result { o } else { [:] } }
+
+    @Test func adoptWritesPendingAppAndCard() async throws {
+        try await with { e in
+            let r = try await adopt(e, ["start": .string("./run.sh"), "cmd": .string("events=GET:/api/document")])
+            let o = result(r)
+            #expect(o["state"] == .string("pending") && o["source"] == .string("cmd") && o["commands"] == .array([.string("events")]), "\(r)")
+            #expect(o["folder"] == .string(e.dir.appendingPathComponent(".collie/apps/analytics").path))
+            let m = try PluginManifest.load(folder: file(e).deletingLastPathComponent())
+            #expect(m.ui == e.svc.base + "/" && m.service?.start == "./run.sh")
+            guard case .array(let rows)? = try await call(e.p, e.a, "app.list").result, case .object(let row)? = rows.first else { Issue.record("list"); return }
+            #expect(row["state"] == .string("pending"))
+            let c = try await cards(e.d, e.p)
+            #expect(c.count == 1 && c[0].app == "analytics" && c[0].base == e.svc.base && c[0].start == "./run.sh" && c[0].by?.uuidString == e.a.id, "\(c)")
+        }
+    }
+
+    @Test func adoptTwiceSameIsNoop() async throws {
+        try await with { e in
+            let args: [String: JSONValue] = ["cmd": .string("events=GET:/api/document")]
+            #expect(try await adopt(e, args).ok)
+            let before = try Data(contentsOf: file(e))
+            let at = try FileManager.default.attributesOfItem(atPath: file(e).path)[.modificationDate] as? Date
+            let again = try await adopt(e, args)
+            #expect(again.ok && result(again)["state"] == .string("pending"), "\(again)")
+            #expect(try Data(contentsOf: file(e)) == before)
+            #expect(try FileManager.default.attributesOfItem(atPath: file(e).path)[.modificationDate] as? Date == at)
+            #expect(try await cards(e.d, e.p).count == 1)
+        }
+    }
+
+    @Test func adoptDifferentConflicts() async throws {
+        try await with { e in
+            #expect(try await adopt(e, ["cmd": .string("events=GET:/api/document")]).ok)
+            let before = try Data(contentsOf: file(e))
+            let other: [String: JSONValue] = ["cmd": .string("events=GET:/api/document,clear_analytics=POST:/api/clear/analytics")]
+            let r = try await adopt(e, other)
+            #expect(r.error?.code == .conflict && r.error?.message.contains("--replace") == true, "\(r)")
+            #expect(try Data(contentsOf: file(e)) == before)
+            let first = try await cards(e.d, e.p)
+            let rep = try await adopt(e, other.merging(["replace": .bool(true)]) { a, _ in a })
+            #expect(rep.ok && result(rep)["commands"] == .array([.string("events"), .string("clear-analytics (confirm)")]), "\(rep)")
+            #expect(try Data(contentsOf: file(e)) != before)
+            let now = try await cards(e.d, e.p)
+            #expect(now.count == 2 && now.contains { c in !first.contains { $0.sha256 == c.sha256 } }, "\(now)")
+        }
+    }
+
+    @Test func adoptNonLoopbackRefused() async throws {
+        try await with { e in
+            let r = try await adopt(e, ["url": .string("http://example.com")])
+            #expect(r.error?.code == .invalidArgs, "\(r)")
+            #expect(!FileManager.default.fileExists(atPath: file(e).deletingLastPathComponent().path))
+            #expect(try await cards(e.d, e.p).isEmpty)
+        }
+    }
+
+    @Test func adoptCwdEscapeRefusedNothingWritten() async throws {
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("out-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try await with { e in
+            try FileManager.default.createSymbolicLink(at: e.dir.appendingPathComponent("link"), withDestinationURL: outside)
+            for cwd in ["../x", "/tmp", "a/../../b", "link"] {
+                let r = try await adopt(e, ["start": .string("./run.sh"), "cwd": .string(cwd), "cmd": .string("events=GET:/api/document")])
+                #expect(r.error?.code == .invalidArgs, "\(cwd): \(r)")
+            }
+            #expect(!FileManager.default.fileExists(atPath: file(e).deletingLastPathComponent().path))
+            #expect(try await cards(e.d, e.p).isEmpty)
+        }
+    }
+
+    @Test func adoptUsesOpenAPIWhenHealthy() async throws {
+        try await with(routes: ["/api/health": "{}", "/openapi.json": Self.openAPI]) { e in
+            let r = try await adopt(e, ["health": .string("/api/health")])
+            #expect(result(r)["source"] == .string("openapi")
+                    && result(r)["commands"] == .array([.string("post-api-clear-analytics (confirm)"), .string("get-document")]), "\(r)")
+        }
+        try await with(routes: [:]) { e in   // not answering: no commands, a hint
+            let r = try await adopt(e, ["health": .string("/api/health")])
+            #expect(r.ok && result(r)["source"] == .string("none") && result(r)["commands"] == .array([]), "\(r)")
+            guard case .string(let next)? = result(r)["next"] else { Issue.record("\(r)"); return }
+            #expect(next.contains("--cmd"))
+        }
+    }
+
+    @Test func adoptUsesCollieJSONFirst() async throws {
+        try await with(routes: ["/api/health": "{}", "/openapi.json": Self.openAPI]) { e in
+            try Data(#"{"commands":[{"name":"events","summary":"Eventos","runs":"http","http":{"method":"GET","path":"/api/document"}}]}"#.utf8)
+                .write(to: e.dir.appendingPathComponent("tool/collie.json"))
+            let r = try await adopt(e, ["start": .string("./run.sh"), "cwd": .string("tool"), "health": .string("/api/health")])
+            #expect(result(r)["source"] == .string("collie.json") && result(r)["commands"] == .array([.string("events")]), "\(r)")
+            #expect(try PluginManifest.load(folder: file(e).deletingLastPathComponent()).service?.cwd == "tool")
+        }
+    }
+
+    @Test func agentCannotApprove() async throws {
+        try await with { e in
+            #expect(try await adopt(e, ["cmd": .string("events=GET:/api/document")]).ok)
+            #expect(try await call(e.p, e.a, "app.approve", ["id": .string("analytics"), "paddock": .string("k")]).error?.code == .unauthorized)
+            let c = try await cards(e.d, e.p)
+            #expect(try await call(e.p, e.a, "admin.app.answer", ["id": .string(c[0].id.uuidString), "allow": .bool(true)]).ok == false)
+            #expect(try await call(e.p, e.a, "app.adopt", ["id": .string("x"), "url": .string(e.svc.base), "paddock": .string("k")]).error?.code == .unauthorized)
+            guard case .array(let rows)? = try await call(e.p, e.a, "app.list").result, case .object(let row)? = rows.first else { Issue.record("list"); return }
+            #expect(row["state"] == .string("pending"))
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("analytics")]).error?.code == .unauthorized)
+        }
+    }
+
+    @Test func adoptThenApproveThenAttachRunsHttpTool() async throws {
+        try await with { e in
+            try Data(#"{"commands":[{"name":"events","summary":"Eventos","runs":"http","http":{"method":"GET","path":"/api/document"},"result":{"pick":["analyticsEvents"],"tail":{"analyticsEvents":1}}}]}"#.utf8)
+                .write(to: e.dir.appendingPathComponent("collie.json"))
+            let r = try await adopt(e)
+            #expect(result(r)["source"] == .string("collie.json"), "\(r)")
+            let c = try await cards(e.d, e.p)
+            #expect(try await admin(e.d, e.p, "admin.app.answer", ["id": .string(c[0].id.uuidString), "allow": .bool(true)]).ok)
+            #expect(result(try await adopt(e))["state"] == .string("approved"))
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("analytics")]).ok)
+            let ev = try await call(e.p, e.a, "analytics.events")
+            #expect(data(ev) == ["analyticsEvents": .array([.object(["n": .number(2)])]), "analyticsEventsTruncated": .bool(true)], "\(ev)")
+        }
+    }
+}

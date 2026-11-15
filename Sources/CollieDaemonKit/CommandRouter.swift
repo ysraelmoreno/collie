@@ -102,6 +102,8 @@ actor CommandRouter {
     /// Slice 2: SSE subscriptions by panel; app-event notices waiting per terminal, and when each terminal got its last.
     var appStreams: [UUID: AppStream] = [:]
     var appNotices: [UUID: [String]] = [:]
+    /// `since=last` of app reads: per terminal, paddock, app and command, the last item of each list it read (memory only).
+    var appReadCursors: [String: [String: JSONValue]] = [:]
     var appNoticeAt: [UUID: ContinuousClock.Instant] = [:]
     /// Slice 3: what the user is looking at in each app panel (`collie.context`), and when the page set it.
     var appContexts: [UUID: (value: JSONValue, at: Date)] = [:]

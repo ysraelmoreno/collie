@@ -10,6 +10,8 @@ enum AppAdopt {
         var id, name, url: String
         var start, cwd, health, ui, eventStream, eventDiff: String?
         var cmds: [PluginManifest.Command]
+        /// `--notify`: events type a notice into the agents; off by default (consult mode: the agent asks when it wants).
+        var notify = false
     }
     static let openAPICap = 40
 
@@ -84,7 +86,7 @@ enum AppAdopt {
             "apiVersion": 2, "id": i.id, "name": i.name, "version": "0.1.0", "license": "private",
             "placements": ["canvas", "dock.right"], "defaultPlacement": "dock.right",
             "ui": ui.hasPrefix("http://") || ui.hasPrefix("https://") ? ui : origin + (ui.hasPrefix("/") ? ui : "/" + ui),
-            "service": service, "events": i.eventStream == nil ? [String]() : ["\(i.id).event"],
+            "service": service, "notify": i.notify, "events": i.eventStream == nil ? [String]() : ["\(i.id).event"],
         ]
         if let e = i.eventStream { m["eventStream"] = e }
         if let k = i.eventDiff { m["eventDiff"] = k }

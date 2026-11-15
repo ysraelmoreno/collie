@@ -322,6 +322,10 @@ struct AppCardView: View {
                 }
                 if !card.events.isEmpty {
                     Text("Eventos: \(Text(verbatim: card.events.joined(separator: ", ")).font(.collieMono(11)))").font(.collieUI(12))
+                    if let notify = card.notify {   // consult mode: recorded only, the agent reads them when it wants
+                        Text(notify ? "Cada evento avisa o agente" : "Eventos só ficam registrados; o agente não é avisado")
+                            .font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                    }
                 }
                 Text("Aprovar fixa este manifesto (SHA-256); se ele mudar, o Collie pergunta de novo.")
                     .font(.collieUI(11)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)

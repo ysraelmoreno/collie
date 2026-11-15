@@ -367,6 +367,40 @@ private final class EventService: @unchecked Sendable {
             }
         }
     }
+    /// consult mode: `notify: false` records the event (`app event <seq>`) but types no notice into the agent.
+    @Test func notifyFalseRecordsWithoutNotice() async throws {
+        try await PluginRegistry.exclusively {
+            let svc = try await EventService()
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("apps-\(UUID().uuidString)").resolvingSymlinksInPath()
+            let app = dir.appendingPathComponent(".collie/apps/kube")
+            try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir); svc.stop() }
+            var m = try JSONSerialization.jsonObject(with: manifest(base: svc.base)) as! [String: Any]
+            m["notify"] = false
+            try JSONSerialization.data(withJSONObject: m).write(to: app.appendingPathComponent("collie-plugin.json"))
+            let gap = PaddockApps.noticeGap
+            PaddockApps.noticeGap = .seconds(1)
+            defer { PaddockApps.noticeGap = gap }
+
+            try await withDaemon { d, p in
+                #expect(try await admin(d, p, "paddock.create", ["name": .string("k"), "folder": .string(dir.path)]).ok)
+                let s = try await admin(d, p, "admin.spawn", ["name": .string("B"), "preset": .string("cursor"), "paddock": .string("k"),
+                                                              "command": .string("echo T=$COLLIE_TOKEN; exec cat")])
+                guard case .object(let so)? = s.result, case .string(let id)? = so["id"] else { Issue.record("\(s)"); return }
+                let b = Term(id: id, token: try await tokenOf(d, id, echo: false))
+                #expect(try await admin(d, p, "app.approve", ["id": .string("kube"), "paddock": .string("k")]).ok)
+                #expect(try await call(p, b, "app.attach", ["id": .string("kube")]).ok)
+                guard let panel = await d.router.ws.panels.first(where: { $0.pluginId == "kube" }) else { Issue.record("no panel"); return }
+                await d.router.pluginEmitted(panel: panel.id, name: "kube.pod.crashed", payload: .object(["pod": .string("web-2")]))
+                let seq = await d.router.eventSeq
+                let ev = try await call(p, b, "app.event", ["seq": .number(Double(seq))])
+                #expect(ev.ok && data(ev)["pod"] == .string("web-2"), "\(ev)")
+                try await Task.sleep(for: .seconds(3))
+                let text = await d.scrollbackText(UUID(uuidString: b.id)!)
+                #expect(!text.contains("evento kube.pod.crashed"), "\(text)")
+            }
+        }
+    }
 }
 
 /// Apps do cercado, slice 3: the context the page sent (through its panel's host, `admin.app.context`) for the agents
@@ -1002,6 +1036,37 @@ private final class ToolService: @unchecked Sendable {
             guard case .array(let rows)? = try await call(e.p, e.a, "app.list").result, case .object(let row)? = rows.first else { Issue.record("list"); return }
             #expect(row["state"] == .string("pending"))
             #expect(try await call(e.p, e.a, "app.attach", ["id": .string("analytics")]).error?.code == .unauthorized)
+        }
+    }
+
+    @Test func adoptNotifyOffByDefaultShownOnCard() async throws {
+        try await with { e in
+            #expect(try await adopt(e, ["cmd": .string("events=GET:/api/document")]).ok)
+            #expect(try PluginManifest.load(folder: file(e).deletingLastPathComponent()).notify == false)
+            #expect(try await cards(e.d, e.p).first?.notify == false)
+            #expect(try await adopt(e, ["cmd": .string("events=GET:/api/document"), "notify": .bool(true), "replace": .bool(true)]).ok)
+            #expect(try PluginManifest.load(folder: file(e).deletingLastPathComponent()).notify == true)
+            let now = try await cards(e.d, e.p)
+            #expect(now.contains { $0.notify == true }, "\(now)")
+        }
+    }
+
+    /// last / since=last / match on a GET http command: applied by the daemon after pick/tail, never sent to the app.
+    @Test func queryParamsOnAdoptedRead() async throws {
+        let doc = #"{"analyticsEvents":[{"n":1,"name":"page_view"},{"n":2,"name":"click"}],"analyticsEventCount":2}"#
+        try await with(routes: ["/api/health": "{}", "/api/document": doc]) { e in
+            #expect(try await adopt(e, ["cmd": .string("events=GET:/api/document"), "pick": .string("analyticsEvents")]).ok)
+            let c = try await cards(e.d, e.p)
+            #expect(try await admin(e.d, e.p, "admin.app.answer", ["id": .string(c[0].id.uuidString), "allow": .bool(true)]).ok)
+            #expect(try await call(e.p, e.a, "app.attach", ["id": .string("analytics")]).ok)
+            func ev(_ args: [String: JSONValue]) async throws -> JSONValue? { data(try await call(e.p, e.a, "analytics.events", args))["analyticsEvents"] }
+            let click: JSONValue = .object(["n": .number(2), "name": .string("click")])
+            #expect(try await ev(["last": .number(1)]) == .array([click]))
+            #expect(try await ev(["match": .string("^CL")]) == .array([click]))
+            #expect(try await ev(["since": .string("last")]) == .array([]))   // the two reads above saw everything
+            let r = try await call(e.p, e.a, "analytics.events", ["since": .string("yesterday")])
+            #expect(r.error?.code == .invalidArgs, "\(r)")
+            #expect(try await call(e.p, e.a, "analytics.events", ["last": .number(0)]).error?.code == .invalidArgs)
         }
     }
 

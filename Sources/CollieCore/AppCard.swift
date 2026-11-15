@@ -27,9 +27,11 @@ public struct AppCard: Codable, Sendable, Equatable, Identifiable {
     public var start: String?
     /// approve: the folder it runs in (`service.cwd`, relative to the paddock), shown as "Pasta".
     public var cwd: String?
+    /// approve: whether the app's events type a notice into the agents (`PluginManifest.notifies`); nil on confirm cards.
+    public var notify: Bool?
     public init(id: UUID = UUID(), kind: Kind, paddock: UUID, paddockName: String, app: String, name: String, base: String?,
-                commands: [String] = [], events: [String] = [], sha256: String = "", call: String? = nil, command: String? = nil, by: UUID?, at: Date = Date(), start: String? = nil, cwd: String? = nil) {
+                commands: [String] = [], events: [String] = [], sha256: String = "", call: String? = nil, command: String? = nil, by: UUID?, at: Date = Date(), start: String? = nil, cwd: String? = nil, notify: Bool? = nil) {
         self.id = id; self.kind = kind; self.paddock = paddock; self.paddockName = paddockName; self.app = app; self.name = name
-        self.base = base; self.commands = commands; self.events = events; self.sha256 = sha256; self.call = call; self.command = command; self.by = by; self.at = at; self.start = start; self.cwd = cwd
+        self.base = base; self.commands = commands; self.events = events; self.sha256 = sha256; self.call = call; self.command = command; self.by = by; self.at = at; self.start = start; self.cwd = cwd; self.notify = notify
     }
 }

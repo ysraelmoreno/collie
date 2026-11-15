@@ -88,9 +88,20 @@ enum PaddockApps {
         guard let v = try? JSONDecoder().decode(JSONValue.self, from: data) else {
             throw ProtocolError(code: .internal, message: "\(m.name): a resposta não é JSON")
         }
-        return v
+        return shape(v, c.result)
     }
     static let bodyCap = 1 << 20
+
+    /// `result`: only the `pick` keys of a root object (missing ones ignored), then each `tail` array cut to its last
+    /// N items, with `<key>Truncated: true` when cut. Not an object, or no `result`: the reply as is.
+    static func shape(_ v: JSONValue, _ r: PluginManifest.Result?) -> JSONValue {
+        guard let r, case .object(var o) = v else { return v }
+        if !r.pick.isEmpty { o = o.filter { r.pick.contains($0.key) } }
+        for (k, n) in r.tail {
+            if case .array(let a)? = o[k], a.count > n { o[k] = .array(Array(a.suffix(n))); o[k + "Truncated"] = .bool(true) }
+        }
+        return .object(o)
+    }
 
     /// `collie app new`: a v2 manifest (a `ui/` page, one example command run by the page, one event) and that page,
     /// using the bridge. Validated as any manifest (a bad id or name fails here, before anything is written).

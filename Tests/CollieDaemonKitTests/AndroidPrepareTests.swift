@@ -222,7 +222,7 @@ private struct Fixture {
         #expect(calls.count == 3 && calls[0] == "--sdk_root=\(probe)/sdk platform-tools"
                 && calls[1].hasPrefix("--licenses") && calls[2].hasPrefix("--licenses"))
         let probeHome = f.sdk.path + "/.collie-staging/probe/home"
-        #expect(lines(bin, "envs").first == "\(probeHome)|\(probeHome)")
+        #expect(lines(bin, "envs").first == "\(probeHome)|\(probeHome)/.android")
         #expect(!fm.fileExists(atPath: f.staging.path))
     }
 

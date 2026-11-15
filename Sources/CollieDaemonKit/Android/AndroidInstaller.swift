@@ -285,7 +285,7 @@ extension AndroidInstaller {
     /// `--sdk_root`'s value: symlinks and `..` resolved (23.0 refuses to unzip into a root holding `..`).
     static func sdkRoot(_ sdk: String) -> String { URL(fileURLWithPath: sdk).resolvingSymlinksInPath().standardizedFileURL.path }
 
-    /// The temp `HOME` / `ANDROID_USER_HOME` of a job's `sdkmanager` runs (20.0 writes `~/.android/cache`, 23.0
+    /// The temp `HOME` (`ANDROID_USER_HOME` = its `.android`) of a job's `sdkmanager` runs (20.0 writes `~/.android/cache`, 23.0
     /// `~/.android/bin/android-cli`); removed when the job ends and at daemon start.
     private func jobHome(_ sdk: String) -> URL { URL(fileURLWithPath: sdk).appendingPathComponent(".collie-staging/home") }
     private func removeJobHome(_ sdk: String) {
@@ -486,7 +486,8 @@ extension AndroidInstaller {
     }
 
     /// Runs `sdkmanager args` through `/bin/sh` (stderr into stdout) in its own process group, `JAVA_HOME` set and
-    /// `HOME` / `ANDROID_USER_HOME` the temp `home` (created here), so nothing lands in `~/.android`.
+    /// `HOME` the temp `home` (created here) and `ANDROID_USER_HOME` its `.android` (the standard layout: 23.0 writes
+    /// `$ANDROID_USER_HOME/bin/android-cli` and `cli/`, where `cliPaths` look), so nothing lands in `~/.android`.
     /// `answers`: stdin is a pipe answered as the prompts appear: `y` to "Review licenses?" (show them), `n` to every
     /// `Accept?`; otherwise stdin is `/dev/null`. `item`: progress lines update `job.percent`. Killed by `cancel` or
     /// past `timeout` (`.timeout`).
@@ -569,7 +570,8 @@ extension AndroidInstaller {
         enum Event: Sendable { case data(Data), exit(Int32) }
         let (events, sink) = AsyncStream<Event>.makeStream()
         let p = try LongProcess(executable: URL(fileURLWithPath: "/bin/sh"), args: ["-c", #"exec "$0" "$@" 2>&1"#, sm] + args,
-                                env: ["PATH": "/usr/bin:/bin", "JAVA_HOME": java, "HOME": home.path, "ANDROID_USER_HOME": home.path],
+                                env: ["PATH": "/usr/bin:/bin", "JAVA_HOME": java, "HOME": home.path,
+                                      "ANDROID_USER_HOME": home.appendingPathComponent(".android").path],
                                 runDir: runDir, stdin: answers,
                                 onData: { sink.yield(.data($0)) }, onExit: { sink.yield(.exit($0)); sink.finish() })
         process = p

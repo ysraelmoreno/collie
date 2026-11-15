@@ -15,8 +15,8 @@ private var fm: FileManager { .default }
 /// `HOME|ANDROID_USER_HOME` to `envs`. `licout`: `--licenses` prints it (after "Review"), reading one answer per
 /// `Accept?`. `oldjava` (holds Collie's JDK path): every run fails like 20.0 on JDK 11 unless JAVA_HOME is that path;
 /// `classerr`: every run fails with the class-version error; runs that pass log JAVA_HOME to `javas`. `clidl`: like 23.0's
-/// launcher, "downloads" `$HOME/.android/bin/android-cli` and unpacks `$HOME/.android/cli/bundles/` when absent (logged
-/// to `downloads`).
+/// launcher, "downloads" `$ANDROID_USER_HOME/bin/android-cli` and unpacks `$ANDROID_USER_HOME/cli/bundles/` when absent
+/// (default `$HOME/.android`, as the real one; logged to `downloads`).
 private let fakeSdkmanager = #"""
 #!/bin/sh
 d=$(dirname "$0"); sdk=""; pkg=""; mode=install
@@ -30,9 +30,10 @@ if [ -f "$d/classerr" ]; then
 fi
 echo "$JAVA_HOME" >> "$d/javas"
 if [ -f "$d/clidl" ]; then
-  [ -f "$HOME/.android/bin/android-cli" ] || { echo "Downloading Android CLI..."; echo dl >> "$d/downloads"; mkdir -p "$HOME/.android/bin"; echo cli > "$HOME/.android/bin/android-cli"; }
-  [ -d "$HOME/.android/cli/bundles" ] || { echo "Unpacking embedded installation..."; echo unpack >> "$d/downloads"; mkdir -p "$HOME/.android/cli/bundles/h1"; echo jar > "$HOME/.android/cli/bundles/h1/main.jar"; : > "$HOME/.android/cli/bundles/lock"; }
-  : > "$HOME/.android/cli/analytics"
+  u="${ANDROID_USER_HOME:-$HOME/.android}"
+  [ -f "$u/bin/android-cli" ] || { echo "Downloading Android CLI..."; echo dl >> "$d/downloads"; mkdir -p "$u/bin"; echo cli > "$u/bin/android-cli"; }
+  [ -d "$u/cli/bundles" ] || { echo "Unpacking embedded installation..."; echo unpack >> "$d/downloads"; mkdir -p "$u/cli/bundles/h1"; echo jar > "$u/cli/bundles/h1/main.jar"; : > "$u/cli/bundles/lock"; }
+  : > "$u/cli/analytics"
 fi
 if [ $mode = list ]; then cat "$d/list"; exit 0; fi
 if [ $mode = licenses ]; then
@@ -450,7 +451,7 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         #expect(st.items.allSatisfy { $0.state == "ok" } && st.needs == "ready" && st.job?.phase == "done")
     }
 
-    /// Every `sdkmanager` run: temp HOME = ANDROID_USER_HOME (gone after the job), `--sdk_root` without `..`.
+    /// Every `sdkmanager` run: temp HOME, ANDROID_USER_HOME its `.android` (gone after the job), `--sdk_root` without `..`.
     @Test func everySdkmanagerRunIsIsolated() async throws {
         let f = try Fixture()
         try fm.createDirectory(at: f.home.appendingPathComponent("x"), withIntermediateDirectories: true)
@@ -459,7 +460,7 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         let root = "--sdk_root=\(AndroidInstaller.sdkRoot(f.sdk.path))"
         #expect(!root.contains(".."))
         #expect(f.calls.count == 5 && f.calls.allSatisfy { $0.contains(root) && !$0.contains("..") })
-        #expect(f.envs.count == 5 && f.envs.allSatisfy { $0 == "\(dotted)/.collie-staging/home|\(dotted)/.collie-staging/home" })
+        #expect(f.envs.count == 5 && f.envs.allSatisfy { $0 == "\(dotted)/.collie-staging/home|\(dotted)/.collie-staging/home/.android" })
         #expect(!fm.fileExists(atPath: f.sdk.appendingPathComponent(".collie-staging").path))
         #expect(AndroidInstaller.tail("WARNING: The SDK Manager CLI tool (sdkmanager) is deprecated. Android CLI will be used instead.\nboom")
                 == "boom")

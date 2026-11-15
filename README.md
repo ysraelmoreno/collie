@@ -170,6 +170,13 @@ baixa nada nem escreve o AVD à mão. O comando é só do app/admin, escreve ape
 só reaplica a configuração (não apaga os dados). `collie device lite remove` apaga o AVD. Ao subir, o Collie acrescenta
 `-no-audio -no-boot-anim -no-metrics`. `COLLIE_AVDMANAGER` e `COLLIE_JAVA_HOME` apontam as ferramentas fora do lugar padrão.
 
+**Preferências → Android.** Em Dispositivos → Android o app instala o SDK sem Android Studio. **Instalar** roda em duas fases:
+primeiro o JDK Temurin (se não houver um 17+) e o Command-line Tools; depois as licenças do Google, que aparecem para você ler e
+aceitar (só as pendentes; **Recusar** não baixa nada da fase 2), e então platform-tools, emulador e imagem de sistema. Ao lado de
+Instalar há o aviso de que instalar aceita os termos do Android SDK, com link. Um SDK do Android Studio já existente é reaproveitado
+e instala só o que falta. Os tamanhos com "~" são estimativas, e é preciso ter o dobro livre em disco. Com tudo pronto, **Criar
+emulador leve** cria o `collie-lite` e **Remover** o apaga.
+
 ## Simulador iOS
 
 O mesmo plug-in **Dispositivo** mostra um Simulador iOS (vídeo e entrada pelo [AXe](https://github.com/cameroncooke/AXe), comandos

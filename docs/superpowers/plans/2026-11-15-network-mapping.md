@@ -131,6 +131,7 @@
 - Test: `Tests/CollieAppTests/NetworkPanelTests.swift` (existente; leia o estilo)
 
 **Interfaces:**
+- Visual aprovado pelo dono: `docs/pages/rede-map-local/index.html` (painel, regras, formulário, cartão) e `docs/pages/rede-map-local-canvas/index.html` (painel dentro do canvas). Siga essas prévias, nos tokens do Collie.
 - Consumes: `FlowSummary.mapped`, `network.rule-*`, `network.get`.
 - Produces: marca "mapeado" (com o nome da regra) na linha e no detalhe; lista de regras (liga/desliga, remove); formulário "Mapear esta resposta" preenchido do fluxo, que chama `network.rule-add --from <id>` com as edições.
 

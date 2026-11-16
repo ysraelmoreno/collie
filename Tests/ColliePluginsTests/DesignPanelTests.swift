@@ -167,7 +167,7 @@ import CollieProtocol
         GPUProbe.memoize(true)
         let panel = Panel(id: UUID(), name: "d", pluginId: "design", placement: .canvas, state: ["file": .string("f")])
         let host = PanelHostContext(panel: panel, root: root, workspaceId: nil, call: { _, _ throws(ProtocolError) in .null }, emit: { _, _ in })
-        let v = DesignPanel(panel: panel, host: host, webRoot: root)
+        let v = DesignPanel(panel: panel, host: host); v.scheme.root = root
         let web = try #require(v.webView)
         web.load(URLRequest(url: designURL(editLink: "figcraft://join?x=1", webGPU: true)))
         for _ in 0..<100 where web.url?.query != "webgl" { try await Task.sleep(for: .milliseconds(50)) }
@@ -198,7 +198,7 @@ import CollieProtocol
         try fm.createSymbolicLink(at: collie.appendingPathComponent("fonts/Evil"), withDestinationURL: collie.appendingPathComponent("fonts/Inter"))
         let panel = Panel(id: UUID(), name: "d", pluginId: "design", placement: .canvas, state: ["file": .string("f")])
         let host = PanelHostContext(panel: panel, root: collie, workspaceId: nil, call: { _, _ throws(ProtocolError) in .null }, emit: { _, _ in })
-        let v = DesignPanel(panel: panel, host: host, webRoot: root)
+        let v = DesignPanel(panel: panel, host: host); v.scheme.root = root
         defer { v.close() }
         let web = try #require(v.webView)
         func got() async -> String { ((try? await web.evaluateJavaScript("window.got ? window.got.join(',') : ''")) as? String) ?? "" }
@@ -226,7 +226,7 @@ import CollieProtocol
         try Data([9]).write(to: ttf.appendingPathComponent("b.ttf"))
         let panel = Panel(id: UUID(), name: "d", pluginId: "design", placement: .canvas, state: ["file": .string("f")])
         let host = PanelHostContext(panel: panel, root: collie, workspaceId: nil, call: { _, _ throws(ProtocolError) in .null }, emit: { _, _ in })
-        let v = DesignPanel(panel: panel, host: host, webRoot: root)
+        let v = DesignPanel(panel: panel, host: host); v.scheme.root = root
         defer { v.close() }
         let web = try #require(v.webView)
         func got() async -> String { ((try? await web.evaluateJavaScript("window.got ? window.got.join(',') : ''")) as? String) ?? "" }
@@ -242,8 +242,110 @@ import CollieProtocol
 
     /// The figcraft web build exports `collie_add_font` (patch 0005; rebuild with scripts/build-figcraft.sh).
     @Test func webBuildExportsAddFont() throws {
-        guard let web = DesignPanel.webDirectory else { return }   // not built here
+        let web = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("vendor/figcraft/web")
+        guard FileManager.default.fileExists(atPath: web.appendingPathComponent("index.html").path) else { return }   // not built here
         let js = try FileManager.default.contentsOfDirectory(atPath: web.path).filter { $0.hasSuffix(".js") }
         #expect(try js.contains { try String(contentsOf: web.appendingPathComponent($0), encoding: .utf8).contains("collie_add_font") }, "\(js)")
+    }
+
+    func host(_ call: @escaping PanelHostContext.Call) -> (Panel, PanelHostContext) {
+        let panel = Panel(id: UUID(), name: "d", pluginId: "design", placement: .canvas, state: ["file": .string("f")])
+        return (panel, PanelHostContext(panel: panel, root: URL(fileURLWithPath: NSTemporaryDirectory()), workspaceId: nil, call: call, emit: { _, _ in }))
+    }
+
+    /// A web folder whose index says `text`.
+    func page(_ text: String) throws -> URL {
+        let root = try webRoot()
+        try Data("<html><body>\(text)</body></html>".utf8).write(to: root.appendingPathComponent("index.html"))
+        return root
+    }
+
+    func bodyText(_ web: WKWebView, until want: String) async throws -> String {
+        var got = ""
+        for _ in 0..<100 {
+            got = ((try? await web.evaluateJavaScript("document.body ? document.body.innerText : ''")) as? String) ?? ""
+            if got == want { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return got
+    }
+
+    actor Seq { var n = 0; func next() -> Int { n += 1; return n } }
+
+    /// No engine in the app at all: the handler is there anyway and serves the `web` the daemon's `design.link` names.
+    @Test func handlerRegisteredWithoutEngine() async throws {
+        let saved = GPUProbe.task; defer { GPUProbe.task = saved }
+        GPUProbe.memoize(false)
+        let dir = try page("A")
+        let (panel, h) = host { _, _ throws(ProtocolError) in .object(["editLink": .string("figcraft://join?x=1"), "web": .string(dir.path)]) }
+        let v = DesignPanel(panel: panel, host: h)
+        defer { v.close() }
+        #expect(v.scheme.root == nil)
+        #expect(v.webView?.configuration.urlSchemeHandler(forURLScheme: "collie-design") === v.scheme)
+        v.connect()
+        #expect(try await bodyText(try #require(v.webView), until: "A") == "A")
+    }
+
+    @Test func rootComesFromLink() async throws {
+        let saved = GPUProbe.task; defer { GPUProbe.task = saved }
+        GPUProbe.memoize(false)
+        let a = try page("A"), b = try page("B"), seq = Seq()
+        let (panel, h) = host { _, _ throws(ProtocolError) in
+            let n = await seq.next()
+            // ponytail: same link both times (the same URL reloads); a link that changes only the fragment is a same-document navigation
+            return .object(["editLink": .string("figcraft://join?x=1"), "web": .string((n == 1 ? a : b).path)])
+        }
+        let v = DesignPanel(panel: panel, host: h)
+        defer { v.close() }
+        let web = try #require(v.webView)
+        v.connect()
+        #expect(try await bodyText(web, until: "A") == "A")
+        v.connect()
+        #expect(try await bodyText(web, until: "B") == "B")
+    }
+
+    func failure(_ message: String) async throws -> DesignPanel {
+        let (panel, h) = host { _, _ throws(ProtocolError) in throw ProtocolError(code: .unavailable, message: message) }
+        let v = DesignPanel(panel: panel, host: h)
+        v.connect()
+        for _ in 0..<100 where v.box.label.stringValue == "Abrindo…" { try await Task.sleep(for: .milliseconds(20)) }
+        return v
+    }
+
+    @Test func notInstalledShowsInstallState() async throws {
+        let v = try await failure("Motor de design não instalado. Baixe em Preferências › Desenho e sandbox (collie design engine install)")
+        defer { v.close() }
+        #expect(v.box.label.stringValue == "Motor de design não instalado")
+        #expect(v.box.retry.title == "Abrir Preferências" && !v.box.retry.isHidden)
+        nonisolated(unsafe) var page: String?
+        let o = NotificationCenter.default.addObserver(forName: .collieOpenPreferences, object: nil, queue: nil) { page = $0.object as? String }
+        defer { NotificationCenter.default.removeObserver(o) }
+        v.box.retry.performClick(nil)
+        #expect(page == "desenho")
+    }
+
+    @Test func outdatedShowsUpdateState() async throws {
+        let v = try await failure("Motor de design desatualizado. Atualize em Preferências › Desenho e sandbox (collie design engine install)")
+        defer { v.close() }
+        #expect(v.box.label.stringValue == "Motor de design desatualizado")
+        #expect(v.box.retry.title == "Abrir Preferências" && !v.box.retry.isHidden)
+    }
+
+    /// Any other failure keeps **Reconectar**, and no build script hint is left anywhere.
+    @Test func noScriptHintLeft() async throws {
+        let v = try await failure("motor de design sendo trocado, tente de novo")
+        defer { v.close() }
+        #expect(v.box.label.stringValue == "Motor de design indisponível\nmotor de design sendo trocado, tente de novo")
+        #expect(v.box.retry.title == "Reconectar")
+        let (panel, h) = host { _, _ throws(ProtocolError) in .object(["editLink": .string("figcraft://join?x=1")]) }   // no `web`
+        let w = DesignPanel(panel: panel, host: h)
+        defer { w.close() }
+        w.connect()
+        for _ in 0..<100 where w.box.label.stringValue == "Abrindo…" { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(w.box.label.stringValue == "Motor de design indisponível")
+        let src = try String(contentsOf: URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/ColliePlugins/DesignPanel.swift"), encoding: .utf8)
+        #expect(!src.contains("Rode scripts/build-figcraft.sh"))
     }
 }

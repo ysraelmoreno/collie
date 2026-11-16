@@ -41,7 +41,7 @@ enum PreferencePage: String, CaseIterable {
         switch self {
         case .aparencia: "tema paleta escuro claro sistema estrutura moldura completa compacta barra"
         case .terminal: "terminal fonte tamanho google fonts baixar família"
-        case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor"
+        case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor motor baixar instalar remover atualizar reinstalar"
         case .memoria: "memória aprendizado aviso notificação correção"
         case .plugins: "plug-ins extensões"
         case .celular: "celular iphone acesso remoto qr pareamento aparelhos leitura completo"
@@ -64,6 +64,22 @@ enum PreferencePage: String, CaseIterable {
         default: s?.needs == "needsLicense" ? "!" : nil
         }
     }
+
+    /// Desenho e sandbox's badge from `design.engine.status`, the same row the page draws: `↓` while a job runs, `!` after
+    /// a failed one or while the engine needs updating or reinstalling.
+    static func designBadge(_ s: DesignEngineStatus?) -> String? {
+        switch s.map({ DesignEngineStatus.row($0) }) {
+        case .downloading, .verifying: "↓"
+        case .failed, .needsUpdate: "!"
+        default: nil
+        }
+    }
+
+    /// Defaults key for the page a `collieOpenPreferences` notification asked for: `PreferencesView` shows it and clears
+    /// it, whether its window was already open or opens now. ponytail: defaults as the mailbox, the window may not exist yet.
+    static let requestKey = "preferences.requestedPage"
+    /// The page named by a `collieOpenPreferences` notification's object (`"desenho"`); nil for anything else.
+    static func requested(_ object: Any?) -> PreferencePage? { (object as? String).flatMap(PreferencePage.init(rawValue:)) }
 
     private static func fold(_ s: String) -> String { s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
 }

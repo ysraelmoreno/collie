@@ -55,6 +55,8 @@ struct PreferencesView: View {
     @State private var page = PreferencePage.aparencia
     @State private var query = ""
     @State private var androidBadge: String?
+    @State private var designBadge: String?
+    @AppStorage(PreferencePage.requestKey) private var requestedPage = ""
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
@@ -80,22 +82,31 @@ struct PreferencesView: View {
         }
         .frame(minWidth: 640, idealWidth: 820, maxWidth: .infinity, minHeight: 480, idealHeight: 600, maxHeight: .infinity)
         .background(Color.collieBackground)
-        .onAppear { AppearanceSettings.normalize(.standard) }   // a stale or hand-edited value would leave a picker blank
+        .onAppear { AppearanceSettings.normalize(.standard); showRequestedPage() }   // a stale or hand-edited value would leave a picker blank
+        .onChange(of: requestedPage) { showRequestedPage() }
         .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode(); await loadFonts() }   // no workspace event: read when shown
-        // ponytail: one `android.status` read every 5 s, only while this window is shown and connected (the task dies with it)
+        // ponytail: one `android.status` and one `design.engine.status` read every 5 s, only while this window is shown and connected (the task dies with it)
         .task(id: client.state == .connected) {
             while client.state == .connected, !Task.isCancelled {
                 let r = try? await client.adminCall("android.status", [:])
                 androidBadge = PreferencePage.androidBadge(r.flatMap(AndroidSetupStatus.from))
+                let d = try? await client.adminCall("design.engine.status", [:])
+                designBadge = PreferencePage.designBadge(d.flatMap(DesignEngineStatus.from))
                 try? await Task.sleep(for: .seconds(5))
             }
-            androidBadge = nil   // connection dropped: no stale ↓
+            androidBadge = nil; designBadge = nil   // connection dropped: no stale ↓
         }
         .onChange(of: theme) { CollieApp.applyTheme() }
         .onChange(of: query) {   // the search hid the open page: show the first match (none: keep it)
             let m = PreferencePage.matching(query)
             if let first = m.first, !m.contains(page) { page = first }
         }
+    }
+
+    /// A `collieOpenPreferences` asked for a page (`ContentView`): show it, with the search cleared so it is not hidden.
+    private func showRequestedPage() {
+        guard let p = PreferencePage(rawValue: requestedPage) else { return }
+        query = ""; page = p; requestedPage = ""
     }
 
     private var sidebar: some View {
@@ -123,9 +134,9 @@ struct PreferencesView: View {
                 Text(p.icon).font(.collieMono(12)).foregroundStyle(Color.collieMuted).frame(width: 18)
                 Text(p.title).font(.collieUI(13)).foregroundStyle(Color.collieText)
                 Spacer()
-                if p == .android, let androidBadge {
-                    Text(androidBadge).font(.collieMono(11, .semibold))
-                        .foregroundStyle(androidBadge == "!" ? Color.collieDanger : Color.collieAccent)
+                if let b = p == .android ? androidBadge : p == .desenho ? designBadge : nil {
+                    Text(b).font(.collieMono(11, .semibold))
+                        .foregroundStyle(b == "!" ? Color.collieDanger : Color.collieAccent)
                 }
             }
             .padding(.horizontal, 8).padding(.vertical, 5)
@@ -141,7 +152,7 @@ struct PreferencesView: View {
         switch page {
         case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; structureSection }
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
-        case .desenho: VStack(alignment: .leading, spacing: 22) { designSection; sandboxSection }
+        case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
         case .memoria: memorySection
         case .plugins: PluginsPreferences(client: client)
         case .celular: CelularPreferences(client: client)

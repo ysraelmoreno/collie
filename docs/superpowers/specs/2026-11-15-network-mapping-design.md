@@ -155,3 +155,19 @@ daemon todas voltam **desligadas**; o painel mostra "N regras desligadas" até o
 
 Teste do addon com o `mitmdump` real do mesmo jeito que `NetworkMitmTests`; E2E em daemon isolado com um servidor
 local e `curl` passando pelo proxy. O teste ao vivo com emulador e o app de verdade é passo do dono depois de instalar.
+
+## Implementado (2026-11-15)
+
+Só o que desviou do desenho acima:
+
+- `--body-file` de terminal: só dentro do projeto do terminal (e nunca o que o sandbox fecha). Não vale "onde o
+  sandbox deixaria ler", porque a leitura no sandbox é aberta quase em tudo e anularia a anti-meta.
+- `--header` repetido na CLI chega unido por vírgula; o daemon só corta antes de um novo `Nome:`. MCP e app mandam lista.
+- Regra de agente negada ou expirada fica salva, desligada; o comando volta `unauthorized` com o id.
+- O cartão reaproveita o `confirm` dos apps (`confirmCard`), com layout próprio para a Rede e sem "Permitir nesta sessão".
+  Prazo: `DaemonConfig.ruleCardWait` (120 s); `rule-add` e `rule-enable` têm timeout de 150 s.
+- Arquivo de regras ausente no addon = nenhuma regra (só inválido ou versão desconhecida mantém as anteriores).
+- `--from` recusa fluxo com corpo truncado ou que não se descomprime (pede `--body`/`--body-file`).
+- Regra que casa tudo: sem cartão para o usuário; o painel avisa no formulário e marca "toda requisição" na lista.
+- `FlowSummary` leva `mappedBy` (a linha mostra o nome da regra); `mapped` é derivado.
+- Uso e verificação: `docs/superpowers/apps/network-mapping.md`.

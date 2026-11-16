@@ -28,9 +28,9 @@ Security.framework (`SecStaticCode`), CryptoKit, Darwin (`renamex_np`), Swift Te
   `gh release`), fazer download real de rede nos testes.
 - Tarefas de CI (Task 7 e 8): **só validam com `bash -n` e `actionlint`** (sem `actionlint` instalado: avise; não
   instale sem perguntar). O teste real é no GitHub e é **passo do dono**.
-- **Pendente do dono** (spec, seção própria): P1 (motor desatualizado usável × bloquear se ≠ pin) e P2 (ordem App
-  Support → bundle × bundle primeiro). Passos marcados **[depende da decisão P1/P2]** seguem a decisão aprovada atual
-  (usável; App Support → bundle) a menos que o dono mude antes; se mudar, siga a variante indicada no passo.
+- Decisões P1 e P2 (spec, Decisões do dono): motor de App Support só roda se `<root>/figcraft/.collie-installed` ==
+  `pin.sha256` (senão `needsUpdate`; versão instalada não mais velha que a do pin → `reinstall`); ordem de busca
+  env → bundle → App Support → vendor (DEBUG).
 - Commit por task, só dos seus arquivos (`git diff <arquivo>` antes de `git add`; confira hunks alheios), trailer
   `Co-Authored-By: <seu modelo real> <noreply@anthropic.com>`. Não editar `.collie/`, `docs/pages`, nem arquivos não
   rastreados de outros.
@@ -42,11 +42,15 @@ Security.framework (`SecStaticCode`), CryptoKit, Darwin (`renamex_np`), Swift Te
 - Requisito de assinatura (por binário, `<id>` = `figcraft-server` ou `figcraft-cli`), flags
   `kSecCSStrictValidate | kSecCSCheckAllArchitectures`:
   `identifier "<id>" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "<teamId>"`
-- Textos (pt-BR, exatos): admin "Motor de design não instalado. Baixe em Preferências › Desenho e sandbox (collie
-  design engine install)"; terminal "Motor de design não instalado: peça ao usuário para baixá-lo em Preferências ›
-  Desenho e sandbox do Collie."; "O arquivo baixado não confere (sha256). Nada foi instalado."; "Espaço
+- Textos (pt-BR, exatos): `absent` admin "Motor de design não instalado. Baixe em Preferências › Desenho e sandbox
+  (collie design engine install)"; `absent` terminal "Motor de design não instalado: peça ao usuário para baixá-lo em
+  Preferências › Desenho e sandbox do Collie."; `needsUpdate` admin "Motor de design desatualizado. Atualize em
+  Preferências › Desenho e sandbox (collie design engine install)"; `needsUpdate` terminal "Motor de design
+  desatualizado: peça ao usuário para atualizá-lo em Preferências › Desenho e sandbox do Collie."; painel "Motor de
+  design não instalado" / "Motor de design desatualizado"; botões "Baixar (<tamanho>)", "Atualizar (<tamanho>)",
+  "Reinstalar (<tamanho>)"; "O arquivo baixado não confere (sha256). Nada foi instalado."; "Espaço
   insuficiente"; "Motor alterado, baixe de novo"; "motor de design sendo trocado, tente de novo"; "backup em
-  andamento"; botão "Baixar (<tamanho>)"; "Os painéis Design abertos vão reconectar."; confirmação de Remover "Os
+  andamento"; "Os painéis Design abertos vão reconectar."; confirmação de Remover "Os
   arquivos de design continuam; o painel Design fica indisponível até baixar de novo."
 - Nunca tocar `<root>/design/`. Download só por comando do app (rota `adminOnly`, fora do MCP).
 - Se o plano não bater com o código, pare e pergunte.
@@ -58,7 +62,8 @@ Security.framework (`SecStaticCode`), CryptoKit, Darwin (`renamex_np`), Swift Te
 - Trocar/remover com painel Design aberto e `figcraft-cli mcp` vivos: clientes fechados, servidor parado sob `hold`,
   `ensureRunning` durante o `hold` não cai para o bundle, `commandList` relido, `<root>/design/server` intacto (Task 2).
 - Install durante backup: espera ≤ 60 s, depois `busy`; `remove` durante `hold` → `busy` (Task 3).
-- Pin ausente/ilegível no bundle (build local antigo): `status` sem `pinned`, `install` falha claro (Task 1, Task 4).
+- Pin ausente/ilegível no bundle (build local antigo): `status` sem `pinned`, `install` falha claro, e nenhum motor de
+  App Support roda (não há sha com que comparar) (Task 1, Task 4).
 - Terminal chamando `design.engine.install` direto pelo socket (sem MCP): recusado por `adminOnly` (Task 4).
 
 ## File Structure
@@ -82,7 +87,7 @@ Ordem e dependências: 1 → 2 → 3 → 4 → (5, 6 em paralelo). 7 depende só
 
 ---
 
-### Task 1: Pin e resolução do motor — [depende da decisão P1/P2]
+### Task 1: Pin e resolução do motor
 
 **Files:**
 - Create: `Resources/figcraft-engine.json`, `Sources/CollieDaemonKit/Design/FigcraftEngine.swift`
@@ -92,18 +97,20 @@ Ordem e dependências: 1 → 2 → 3 → 4 → (5, 6 em paralelo). 7 depende só
 - Produces:
   - `struct FigcraftPin: Codable, Equatable, Sendable { version, figcraft, commit, inputs, url: String; size, unpackedSize: Int64; sha256, teamId: String }` + `static func load(_ file: URL) -> FigcraftPin?`
   - `struct FigcraftEngine: Equatable, Sendable { dir: URL; version: String?; source: Source }`, `enum Source: String, Codable { env, appSupport, bundle, vendor }`; `var web: URL { dir/web }`
-  - `static func resolve(env: URL?, appSupport: URL, bundle: URL?, vendor: URL?) -> FigcraftEngine?`
+  - `static func resolve(env: URL?, bundle: URL?, appSupport: URL, vendor: URL?, pin: FigcraftPin?) -> FigcraftEngine?` (ordem env → bundle → App Support → vendor; App Support só se `installedSha(appSupport) == pin?.sha256`)
+  - `static func installedSha(_ dir: URL) -> String?` (lê `.collie-installed`, sem espaços) e `static let marker = ".collie-installed"`
+  - `static func compareVersions(_ a: String, _ b: String) -> ComparisonResult` (`X.Y.Z` numérico, depois `N` de `-cN`)
   - `static func isValid(_ dir: URL) -> Bool` (executáveis `bin/figcraft-server`, `bin/figcraft-cli`; arquivo `web/index.html`)
   - `static func cleanStaging(root: URL)` (apaga `<root>/.figcraft-staging`)
-  - `enum EngineState: Equatable { case absent, installed(FigcraftEngine), updateAvailable(FigcraftEngine, pinned: String) }`; `static func state(_ e: FigcraftEngine?, pin: FigcraftPin?) -> EngineState`
+  - `enum EngineState: Equatable { case absent, installed(FigcraftEngine), needsUpdate(installed: String?, pinned: String, reinstall: Bool) }`; `static func state(running: FigcraftEngine?, appSupport: URL, pin: FigcraftPin?) -> EngineState` (`running == nil` e `<root>/figcraft` válido → `needsUpdate`; `reinstall` = marcador ausente ou `compareVersions(installed, pinned) != .orderedAscending`)
 
-- [ ] **Step 1: Write the failing tests** em `FigcraftEngineTests` (dirs falsos em temp, executáveis `chmod 755`): `envWinsWithoutVersionCheck`; `appSupportBeforeBundle` **[P2: se o dono escolher "bundle vence", o teste vira `bundleBeforeAppSupport`]**; `invalidAppSupportFallsBackToBundle` (sem `web/index.html`); `noneIsNil`; `versionReadFromEngineJson` (`{"version":"0.7.0-c1"}` → `"0.7.0-c1"`; bundle sem `engine.json` → `nil`); `stateUpdateAvailableWhenVersionDiffers` **[P1: se o dono escolher bloquear, `state` ganha `case needsUpdate` e App Support ≠ pin nunca é `installed`]**; `stateInstalledWhenEqual`; `pinLoadsShippedFile` (`Resources/figcraft-engine.json` decodifica, `url` começa com `https://github.com/ysraelmoreno/collie/releases/download/figcraft-v`, `teamId` não vazio); `cleanStagingRemovesIt`.
+- [ ] **Step 1: Write the failing tests** em `FigcraftEngineTests` (dirs falsos em temp, executáveis `chmod 755`): `envWinsWithoutVersionCheck`; `bundleBeforeAppSupport` (os dois válidos e App Support com marcador certo → `source == .bundle`); `appSupportWhenNoBundle`; `invalidAppSupportIsSkipped` (sem `web/index.html`); `appSupportWithoutMarkerDoesNotRun`; `appSupportWithOtherShaDoesNotRun`; `appSupportWithoutPinDoesNotRun`; `noneIsNil`; `versionReadFromEngineJson` (`{"version":"0.7.0-c1"}` → `"0.7.0-c1"`; bundle sem `engine.json` → `nil`); `stateNeedsUpdateWhenOlder` (instalado `0.7.0-c1`, pin `0.8.0-c1`, marcador ≠ → `.needsUpdate(installed: "0.7.0-c1", pinned: "0.8.0-c1", reinstall: false)`); `stateReinstallWhenNewerOrSameVersion` (`0.9.0-c1` e `0.8.0-c1` com outro sha → `reinstall: true`); `stateReinstallWhenMarkerMissing`; `compareVersionsOrdersCN` (`0.7.0-c2` > `0.7.0-c1`, `0.10.0-c1` > `0.9.0-c9`); `stateInstalledWhenMarkerMatches`; `pinLoadsShippedFile` (`Resources/figcraft-engine.json` decodifica, `url` começa com `https://github.com/ysraelmoreno/collie/releases/download/figcraft-v`, `teamId` não vazio); `cleanStagingRemovesIt`.
 - [ ] **Step 2: Run** `--filter FigcraftEngineTests`. Expected: FAIL (tipos não existem).
 - [ ] **Step 3: Implement.** Pin com `version: "0.7.0-c1"`, `figcraft: "v0.7.0"`, `commit` do `build-figcraft.sh`, `inputs`/`sha256` = 64 zeros, `size`/`unpackedSize` = 0 (a Task 7 e o dono preenchem), `teamId` = OU do Developer ID (`security find-identity -v -p codesigning`; se não houver, `"TEAMID"` e avise).
 - [ ] **Step 4: Run** `--filter FigcraftEngineTests`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(design): figcraft engine pin and resolution`.
 
-### Task 2: Servidor e clientes com motor resolvido, troca sob `hold`, mensagens e orientação — [depende da decisão P1]
+### Task 2: Servidor e clientes com motor resolvido, troca sob `hold`, mensagens e orientação
 
 **Files:**
 - Modify: `Sources/CollieDaemonKit/Design/FigcraftServer.swift:12-48`, `Design/DesignService.swift:58-75,360-370,400-410,724`, `CommandRouter.swift:178-184`, `Daemon.swift:67-68`, `DataBackup.swift:77,95`, `CollieOrientation.swift:20-40,94-104` (+ o chamador de `CollieOrientation.text`), `Sources/collied/main.swift:72-82`
@@ -112,25 +119,25 @@ Ordem e dependências: 1 → 2 → 3 → 4 → (5, 6 em paralelo). 7 depende só
 **Interfaces:**
 - Consumes: `FigcraftEngine`, `FigcraftPin.load`, `FigcraftEngine.cleanStaging` (Task 1).
 - Produces:
-  - `DaemonConfig.figcraftEngine: @Sendable () -> FigcraftEngine?` (substitui `figcraftDir`; `main.swift` monta com `env: COLLIE_FIGCRAFT_DIR`, `appSupport: <root>/figcraft`, `bundle: <Helpers>/../Resources/figcraft`, `vendor:` só `#if DEBUG`) e `DaemonConfig.figcraftPin: FigcraftPin?` (bundle; `COLLIE_FIGCRAFT_PIN` só `#if DEBUG`). `main.swift` chama `cleanStaging(root:)` antes de montar.
+  - `DaemonConfig.figcraftEngine: @Sendable () -> FigcraftEngine?` (substitui `figcraftDir`; `main.swift` monta `resolve(env: COLLIE_FIGCRAFT_DIR, bundle: <Helpers>/../Resources/figcraft, appSupport: <root>/figcraft, vendor:` só `#if DEBUG`, `pin:)`) e `DaemonConfig.figcraftPin: FigcraftPin?` (bundle; `COLLIE_FIGCRAFT_PIN` só `#if DEBUG`). `main.swift` chama `cleanStaging(root:)` antes de montar.
   - `FigcraftServer.init(engine: @escaping @Sendable () -> FigcraftEngine?, verify: @escaping @Sendable (FigcraftEngine) -> Bool = { _ in true }, dataDir:runDir:port:env:)`; o motor é resolvido em `start()` e exposto como `var engine: FigcraftEngine? { get }` (o do processo em execução).
   - `hold` vira contagem: `func hold() async`, `func release() async`, `var isHeld: Bool`; com `isHeld`, `ensureRunning` lança `.unavailable` "motor de design sendo trocado, tente de novo" (backup mantém "backup em andamento" pelo motivo passado: `hold(reason: String)`). `DataBackup` passa a usar `hold(reason:)`/`release()`.
-  - `FigcraftServer.notInstalled(admin: Bool) -> ProtocolError` (`.unavailable`, os dois textos da Global Constraints; substitui `notBundled`). `verify` falhou → `.unavailable` "Motor alterado, baixe de novo".
+  - `FigcraftServer.unavailable(_ state: EngineState, admin: Bool) -> ProtocolError` (`.unavailable`, os quatro textos `absent`/`needsUpdate` × admin/terminal da Global Constraints; substitui `notBundled`). O servidor recebe também `state: @Sendable () -> EngineState` para escolher o texto. `verify` falhou → `.unavailable` "Motor alterado, baixe de novo".
   - `DesignService.init(server:root:runDir:idle:timeoutCap:)`: CLI de cada cliente novo = `await server.engine?.dir/bin/figcraft-cli` (nunca outro build). `func resetCaches()` zera `commandList` (e qualquer outro cache por build).
   - `CommandRouter.swapEngine(_ swap: () throws -> Void) async throws(ProtocolError)`: espera `!backupHeld` ≤ 60 s (senão `busy` "backup em andamento") → `figcraft.hold(reason:"swap")` → `design.stop()` → `figcraft.stop()` → `swap()` → `design.resetCaches()` → `figcraft.release()`.
   - `design.link` responde `{editLink, web: <engine.web.path>, version}`.
-  - `CollieOrientation.text(..., figcraftAvailable: Bool)`: `false` → `.figcraft`/`.ask` usam a linha de `.artifact` + "FigCraft indisponível (motor não instalado); se o usuário quiser FigCraft, peça para baixá-lo em Preferências."
+  - `CollieOrientation.text(..., figcraftAvailable: Bool)` (`false` em `absent` e `needsUpdate`): `.figcraft`/`.ask` usam a linha de `.artifact` + "FigCraft indisponível (motor não instalado ou desatualizado); se o usuário quiser FigCraft, peça para baixá-lo em Preferências."
 
 - [ ] **Step 1: Write the failing tests:**
-  - `FigcraftServerTests`: `missingEngineSaysNotInstalledForAdmin` e `…ForTerminal` (texto exato); `holdBlocksStartWithoutFallingBack` (motor A em App Support e B no bundle; `hold`; closure passa a ver só B; `ensureRunning` → "motor de design sendo trocado…", log não mostra B); `swapUnderHoldStartsNewEngine` (fake A → `swapEngine` troca para fake B → próxima chamada mostra B no log); `failedVerifySaysAltered`; `backupAndSwapHoldsAreIndependent` (dois `hold`, um `release` → ainda segurado).
+  - `FigcraftServerTests`: `missingEngineSaysNotInstalledForAdmin` e `…ForTerminal`; `staleEngineSaysOutdatedForAdmin` e `…ForTerminal` (state `needsUpdate`; textos exatos; o fake de App Support não é executado); `holdBlocksStartWithoutFallingBack` (motor A em App Support; `hold`; closure passa a ver outro motor B; `ensureRunning` → "motor de design sendo trocado…", log não mostra B); `swapUnderHoldStartsNewEngine` (fake A → `swapEngine` troca para fake B → próxima chamada mostra B no log); `failedVerifySaysAltered`; `backupAndSwapHoldsAreIndependent` (dois `hold`, um `release` → ainda segurado).
   - `DesignCommandTests`: `newClientUsesRunningServerEngine` (servidor de A rodando; closure passa a apontar para B sem troca; cliente novo usa o CLI de A); `swapClosesClientsResetsCommandListKeepsData` (`design.help` uma vez com fake A; `swapEngine`; `design.help` relê com B; arquivo em `<root>/design/server` existe); `linkCarriesWebDir`.
-  - `CollieOrientationTests`: `figcraftPreferredButMissingFallsBackToPage`; `askWithoutEngineFallsBackToPage`.
+  - `CollieOrientationTests`: `figcraftPreferredButMissingFallsBackToPage`; `askWithoutEngineFallsBackToPage`; `figcraftPreferredButOutdatedFallsBackToPage` (o chamador passa `false` em `needsUpdate`).
 - [ ] **Step 2: Run** `--filter FigcraftServerTests`, `--filter DesignCommandTests`, `--filter CollieOrientationTests`, `--filter DataBackupTests`. Expected: FAIL nos novos.
-- [ ] **Step 3: Implement.** Atualize os testes existentes que passam `binary:` para a closure (mesma semântica). **[P1: se o dono escolher bloquear, `verify` também confere `.collie-installed` (Task 3) contra `pin.sha256` para `source == .appSupport` e falha com "Atualize o motor de design".]**
+- [ ] **Step 3: Implement.** Atualize os testes existentes que passam `binary:` para a closure (mesma semântica). O marcador já é conferido no `resolve` (Task 1) a cada `start()`; `verify` cuida só da assinatura.
 - [ ] **Step 4: Run** os quatro filtros + `swift build --disable-sandbox --product collied` (código de saída à parte). Expected: PASS, build ok.
 - [ ] **Step 5: Commit** `refactor(design): resolve the engine per start, swap under hold, guide agents without it`.
 
-### Task 3: `FigcraftInstaller` — [depende da decisão P1]
+### Task 3: `FigcraftInstaller`
 
 **Files:**
 - Create: `Sources/CollieDaemonKit/Design/FigcraftInstaller.swift`
@@ -149,7 +156,8 @@ Ordem e dependências: 1 → 2 → 3 → 4 → (5, 6 em paralelo). 7 depende só
   - `CommandRouter` passa `verify: { FigcraftInstaller.signedByTeam(...) }` ao `FigcraftServer` para `source == .appSupport` (os dois binários).
 
 - [ ] **Step 1: Write the failing tests** (fetch falso escreve um `tar.gz` montado no próprio teste com `/usr/bin/tar`; binários = scripts `#!/bin/sh` executáveis; `signature`, `busy` e `swap` injetados; `swap` de teste chama `op` e registra a chamada):
-  - `installsWithSwap` (fase `done`, `<root>/figcraft/bin/figcraft-server` existe, `swap` chamado 1×, staging some, `isExcludedFromBackup == true`);
+  - `installsWithSwap` (fase `done`, `<root>/figcraft/bin/figcraft-server` existe, `swap` chamado 1×, staging some, `isExcludedFromBackup == true`, `FigcraftEngine.installedSha(<root>/figcraft) == pin.sha256`);
+  - `updateReplacesStaleEngine` (`<root>/figcraft` com marcador antigo → instala; marcador novo; `resolve` passa a devolver App Support);
   - `swapReplacesExistingAtomically` (`swapInto` com motor antigo e novo: depois, `<root>/figcraft` é o novo e o antigo está no staging; nunca há chamada a `rename` que deixe `<root>/figcraft` ausente — teste do resultado + `swapInto` sobre dir inexistente usa `rename`);
   - `badShaExtractsNothing` (job `failed`, texto exato, motor anterior intacto, staging some, `fetch` chamado 1×);
   - `rejectsSymlinkInArchive`, `rejectsSetuidInArchive` (tar com link / bit setuid → `failed`, nada trocado);
@@ -164,7 +172,7 @@ Ordem e dependências: 1 → 2 → 3 → 4 → (5, 6 em paralelo). 7 depende só
   - `stripsQuarantine` (arquivo com `com.apple.quarantine` no extraído → sem o atributo depois).
   - `AndroidDownloadTests`: `allowsFigcraftReleasePath`, `refusesOtherCollieReleasePaths` (`/ysraelmoreno/collie/releases/download/v0.1.0/…` → `false`), `refusesDotDotInFigcraftPath`.
 - [ ] **Step 2: Run** `--filter FigcraftInstallerTests` e `--filter AndroidDownloadTests`. Expected: FAIL.
-- [ ] **Step 3: Implement** o spec §3 passos 2–9 na ordem: sha256 antes de extrair; `/usr/bin/tar -xzf` via `BoundedProcess`; varredura (sem symlink, só regular/dir, sem setuid/setgid, `chmod go-w`); layout; assinatura dos dois; `removexattr` de quarentena; `isExcludedFromBackup`; `swap { swapInto(...) }`; apaga staging. Falha → staging removido, nada fora dele tocado. **[P1: se o dono escolher bloquear, grave `<root>/figcraft/.collie-installed` com o `sha256` do asset antes do `swap` e teste `writesInstalledMarker`.]**
+- [ ] **Step 3: Implement** o spec §3 passos 2–9 na ordem: sha256 antes de extrair; `/usr/bin/tar -xzf` via `BoundedProcess`; varredura (sem symlink, só regular/dir, sem setuid/setgid, `chmod go-w`); layout; assinatura dos dois; `removexattr` de quarentena; `isExcludedFromBackup`; grava `FigcraftEngine.marker` com o sha256 do asset no `staging/figcraft` **antes** do `swap` (troca leva o marcador junto); `swap { swapInto(...) }`; apaga staging. Falha → staging removido, nada fora dele tocado.
 - [ ] **Step 4: Run** os dois filtros. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(design): download, verify and install the figcraft engine`.
 
@@ -179,16 +187,16 @@ Ordem e dependências: 1 → 2 → 3 → 4 → (5, 6 em paralelo). 7 depende só
 - Consumes: `FigcraftInstaller` (Task 3), `FigcraftEngine.state`, `FigcraftServer.engine` (Tasks 1–2).
 - Produces:
   - `func designEngineCommand(_ r: Request, peer: pid_t) async throws -> JSONValue` começando por `try await adminOnly(r, peer: peer)`; rota `if req.command.hasPrefix("design.engine.")` antes de `PluginRegistry.command`.
-  - `design.engine.status` → `{state: "absent"|"installed"|"updateAvailable", installed?: {version, source}, pinned?: {version, size}, job?: Job}`; `design.engine.install` → `{job}`; `design.engine.cancel` → `{}`; `design.engine.remove` → `{}` (`busy` com job/hold; `.notFound` se `source != appSupport`). Todos `exposedToMCP: false`.
+  - `design.engine.status` → `{state: "absent"|"installed"|"needsUpdate", installed?: {version, source}, reinstall?: Bool, pinned?: {version, size}, job?: Job}`; `design.engine.install` → `{job}`; `design.engine.cancel` → `{}`; `design.engine.remove` → `{}` (`busy` com job/hold; `.notFound` se não há `<root>/figcraft`; vale em `needsUpdate`). Todos `exposedToMCP: false`.
   - CLI `collie design engine [status|install|remove]` tratado como `android.` na linha 54 (credencial do app); `install` segue o job como `followInstall`.
 
-- [ ] **Step 1: Write the failing tests:** `terminalIsRefused` (cada um dos quatro comandos vindo de um peer de terminal → erro de `adminOnly`, mesmo código que `AndroidCommandTests` espera); `notListedInMCP` (nenhum `design.engine.*` com `exposedToMCP`); `notRoutedAsPluginCommand` (`PluginRegistry.command("design.engine.status") == nil` ou rota própria alcançada antes); `statusAbsentWithPin`; `statusWithoutPinHasNoPinned`; `removeBundleEngineIsNotFound`; `removeWhileJobIsBusy`. Use o fetch falso da Task 3.
+- [ ] **Step 1: Write the failing tests:** `terminalIsRefused` (cada um dos quatro comandos vindo de um peer de terminal → erro de `adminOnly`, mesmo código que `AndroidCommandTests` espera); `notListedInMCP` (nenhum `design.engine.*` com `exposedToMCP`); `notRoutedAsPluginCommand` (`PluginRegistry.command("design.engine.status") == nil` ou rota própria alcançada antes); `statusAbsentWithPin`; `statusWithoutPinHasNoPinned`; `statusNeedsUpdateWithReinstall` (motor parado mais novo que o pin → `state: "needsUpdate"`, `reinstall: true`); `removeWithoutAppSupportIsNotFound` (só motor de bundle); `removeStaleEngineWorks`; `removeWhileJobIsBusy`. Use o fetch falso da Task 3.
 - [ ] **Step 2: Run** `--filter DesignEngineCommandTests`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `--filter DesignEngineCommandTests` + `swift build --disable-sandbox --product collie`. Expected: PASS, build ok.
 - [ ] **Step 5: Commit** `feat(design): admin-only design.engine commands and CLI`.
 
-### Task 5: Preferências › Desenho e sandbox, seção "Motor de design" — [depende da decisão P1]
+### Task 5: Preferências › Desenho e sandbox, seção "Motor de design"
 
 **Files:**
 - Create: `Sources/CollieApp/DesignEngineModel.swift` (decodifica e mapeia), `Sources/CollieApp/DesignEnginePreferences.swift` (view + poll, molde `AndroidPreferences.swift:40-55`)
@@ -199,28 +207,28 @@ Ordem e dependências: 1 → 2 → 3 → 4 → (5, 6 em paralelo). 7 depende só
 - Consumes: resposta de `design.engine.status` (Task 4).
 - Produces:
   - `struct DesignEngineStatus: Equatable { static func from(_ v: JSONValue) -> DesignEngineStatus? }`
-  - `enum DesignEngineRow: Equatable { case absent(download: String), downloading(done: String, total: String), verifying, installed(version: String, bundled: Bool), update(installed: String, available: String, download: String), failed(String) }` e `static func row(_ s: DesignEngineStatus) -> DesignEngineRow` (tamanhos por `ByteCountFormatter` `.file`, locale injetável para teste)
+  - `enum DesignEngineRow: Equatable { case absent(download: String), downloading(done: String, total: String), verifying, installed(version: String, bundled: Bool), needsUpdate(installed: String?, pinned: String, download: String, reinstall: Bool), failed(String) }` e `static func row(_ s: DesignEngineStatus) -> DesignEngineRow` (tamanhos por `ByteCountFormatter` `.file`, locale injetável para teste)
   - `static func pollInterval(_ s: DesignEngineStatus?) -> Duration` (1 s com job, 3 s sem)
-  - `PreferencePage.designBadge(_ s: DesignEngineStatus?) -> String?` (`↓` downloading/verifying/installing; `!` failed ou updateAvailable)
-  - keywords de `.desenho` ganham `"motor baixar instalar remover atualizar"`
+  - `PreferencePage.designBadge(_ s: DesignEngineStatus?) -> String?` (`↓` downloading/verifying/installing; `!` failed ou needsUpdate)
+  - keywords de `.desenho` ganham `"motor baixar instalar remover atualizar reinstalar"`
 
-- [ ] **Step 1: Write the failing tests:** `rowAbsentShowsDownloadSize` (size 51 400 000, locale `pt_BR` → `download == "51,4 MB"`); `rowDownloadingProgress`; `rowBundledHasNoRemove`; `rowUpdate` **[P1: se bloquear, vira `rowNeedsUpdate` com "Atualize o motor de design"]**; `rowFailedCarriesMessage`; `pollIsOneSecondWithJobThreeWithout`; `PreferencePageTests`: `motorFindsDesenho` (`matching("motor") == [.desenho]`), `designBadgeStates`.
+- [ ] **Step 1: Write the failing tests:** `rowAbsentShowsDownloadSize` (size 51 400 000, locale `pt_BR` → `download == "51,4 MB"`); `rowDownloadingProgress`; `rowBundledHasNoRemove`; `rowNeedsUpdate` (`reinstall: false` → botão "Atualizar (53,2 MB)" e texto "Motor v0.7.0-c1 desatualizado: este Collie usa v0.8.0-c1. O painel Design fica indisponível até atualizar."); `rowReinstall` (`reinstall: true` → botão "Reinstalar (53,2 MB)"); `needsUpdateAllowsRemove`; `rowFailedCarriesMessage`; `pollIsOneSecondWithJobThreeWithout`; `PreferencePageTests`: `motorFindsDesenho` (`matching("motor") == [.desenho]`), `designBadgeStates`.
 - [ ] **Step 2: Run** `--filter DesignEngineModelTests` e `--filter PreferencePageTests`. Expected: FAIL.
 - [ ] **Step 3: Implement** a view com o esboço do spec §7 e os textos exatos; Remover com `confirmationDialog`.
 - [ ] **Step 4: Run** os dois filtros + `swift build --disable-sandbox --product CollieApp`. Expected: PASS, build ok.
 - [ ] **Step 5: Commit** `feat(app): design engine download in Preferences`.
 
-### Task 6: Painel Design sem motor — [depende da decisão P2 só nos testes de origem]
+### Task 6: Painel Design sem motor ou com motor desatualizado
 
 **Files:**
 - Modify: `Sources/ColliePlugins/DesignPanel.swift:157-185,291-318` (e o `DesignSchemeHandler`)
 - Test: `Tests/ColliePluginsTests/DesignPanelTests.swift`
 
 **Interfaces:**
-- Consumes: `design.link` → `{editLink, web, version}` (Task 2); erro `notInstalled` (Task 2).
-- Produces: `DesignSchemeHandler` sempre registrado no `init`, com `var root: URL?` (nil → 404); `connect()` põe `root = URL(fileURLWithPath: web)` da resposta antes de `web.load`; remove `webDirectory` e a resolução no app (inclusive o fallback DEBUG para `vendor/`, que passa a ser do daemon). Erro `.unavailable` com o texto `notInstalled` → label "Motor de design não instalado" e botão **Abrir Preferências** (abre Preferências na página `.desenho` pelo mesmo caminho que o app já usa; se o host não expõe isso ao plug-in, pare e pergunte) no lugar de **Reconectar**.
+- Consumes: `design.link` → `{editLink, web, version}` (Task 2); erros `absent`/`needsUpdate` de `FigcraftServer.unavailable` (Task 2).
+- Produces: `DesignSchemeHandler` sempre registrado no `init`, com `var root: URL?` (nil → 404); `connect()` põe `root = URL(fileURLWithPath: web)` da resposta antes de `web.load`; remove `webDirectory` e a resolução no app (inclusive o fallback DEBUG para `vendor/`, que passa a ser do daemon). Erro `.unavailable` com um dos textos admin de `absent`/`needsUpdate` → label "Motor de design não instalado" ou "Motor de design desatualizado" e botão **Abrir Preferências** (abre Preferências na página `.desenho` pelo mesmo caminho que o app já usa; se o host não expõe isso ao plug-in, pare e pergunte) no lugar de **Reconectar**.
 
-- [ ] **Step 1: Write the failing tests:** `handlerRegisteredWithoutEngine` (painel criado sem motor; depois `connect()` com `design.link` falso devolvendo `web` de um dir de teste → página carrega `index.html` desse dir); `rootComesFromLink` (dois `connect()` com `web` diferentes → serve o segundo); `notInstalledShowsInstallState` (`design.link` falso lança o erro → label e botão exatos); `noScriptHintLeft` (texto "Rode scripts/build-figcraft.sh" não aparece).
+- [ ] **Step 1: Write the failing tests:** `handlerRegisteredWithoutEngine` (painel criado sem motor; depois `connect()` com `design.link` falso devolvendo `web` de um dir de teste → página carrega `index.html` desse dir); `rootComesFromLink` (dois `connect()` com `web` diferentes → serve o segundo); `notInstalledShowsInstallState` e `outdatedShowsUpdateState` (`design.link` falso lança cada erro → label e botão exatos); `noScriptHintLeft` (texto "Rode scripts/build-figcraft.sh" não aparece).
 - [ ] **Step 2: Run** `--filter DesignPanelTests`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `--filter DesignPanelTests` + `swift build --disable-sandbox --product CollieApp`. Expected: PASS, build ok.

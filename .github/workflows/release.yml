@@ -1,0 +1,125 @@
+# Builds the Developer ID signed, notarized Collie-<version>.dmg and attaches it (+ .sha256) to the GitHub Release.
+# Secrets and setup: docs/release.md. Never runs on pull requests (secrets + signing).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # macos-26 = macOS 26 arm64 with Xcode 26 (swift-tools 6.2); arm64-only build
+    runs-on: macos-26
+    # figcraft cold (~40 min) + swift build + notarization (can pass 1 h; release.sh polls up to 4 h)
+    timeout-minutes: 330
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Check tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag \"$TAG\" is not vX.Y.Z"; exit 1; }
+
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # vendor/ is git-ignored: regenerate it. figcraft (Rust → wasm) is the slow one, cached by its inputs.
+      - name: Cache figcraft
+        id: figcraft
+        uses: actions/cache@v4
+        with:
+          path: vendor/figcraft
+          key: figcraft-arm64-${{ hashFiles('scripts/build-figcraft.sh', 'patches/figcraft/**') }}
+
+      - name: Build figcraft
+        if: steps.figcraft.outputs.cache-hit != 'true'
+        run: |
+          rust="$(sed -n 's/^RUST_VERSION=//p' scripts/build-figcraft.sh)"
+          rustup toolchain install "$rust" --profile minimal --target wasm32-unknown-unknown
+          scripts/build-figcraft.sh
+
+      - name: Fetch vendored assets
+        run: |
+          scripts/fetch-scrcpy-server.sh
+          scripts/fetch-fonts.sh
+          scripts/fetch-weblibs.sh
+          scripts/build-drawio.sh
+
+      - name: Signing keychain
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+        run: |
+          [ -n "$P12_BASE64" ] && [ -n "$P12_PASSWORD" ] && [ -n "$NOTARY_KEY_P8" ] \
+            || { echo "::error::missing secrets (docs/release.md)"; exit 1; }
+          KC="$RUNNER_TEMP/collie-signing.keychain-db"
+          KC_PW="$(openssl rand -base64 32)"
+          echo "::add-mask::$KC_PW"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$KC" -P "$P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          # Developer ID G2 intermediate: without it the identity is not "valid" when the .p12 lacks the chain
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KC"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PW" "$KC" >/dev/null
+          # shellcheck disable=SC2046 # word-split the existing keychain list on purpose
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KC"
+          printf '%s\n' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+
+      - name: Build, sign, notarize
+        env:
+          COLLIE_VERSION: ${{ env.TAG }}
+          COLLIE_NOTARY_KEY: ${{ runner.temp }}/notary-key.p8
+          COLLIE_NOTARY_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          COLLIE_NOTARY_ISSUER: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          COLLIE_NOTARY_TIMEOUT: "14400"
+        run: scripts/release.sh
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER="${TAG#v}"
+          DMG="Collie-$VER.dmg"
+          (cd build && shasum -a 256 "$DMG" > "$DMG.sha256")
+          SUM="$(cut -d' ' -f1 "build/$DMG.sha256")"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "build/$DMG" "build/$DMG.sha256" --clobber
+          else
+            printf '%s\n' \
+              "Collie $VER para macOS 15+ em Apple Silicon (arm64). Assinado com Developer ID e notarizado pela Apple." \
+              "" \
+              "Instalar: abra \`$DMG\` e arraste o **Collie** para **Applications**; abra pelo \`/Applications\`." \
+              "" \
+              "SHA-256 do dmg: \`$SUM\`" > "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" "build/$DMG" "build/$DMG.sha256" --verify-tag \
+              --title "Collie $VER" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
+          fi
+
+      - name: Remove keychain and keys
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/collie-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8"

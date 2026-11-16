@@ -59,7 +59,7 @@ public struct Flow: Codable, Equatable, Sendable {
         return FlowSummary(
             id: id, method: method, host: u?.host ?? "", path: path, status: status, size: resBody?.size,
             durationMs: timing.end.map { Int(($0.timeIntervalSince(timing.start) * 1000).rounded()) }, state: state,
-            mapped: mappedBy != nil)
+            mappedBy: mappedBy)
     }
 }
 
@@ -72,6 +72,7 @@ public struct FlowSummary: Codable, Equatable, Sendable {
     public var size: Int?
     public var durationMs: Int?
     public var state: FlowState
-    /// Answered or cut by a map rule (`Flow.mappedBy`), not the server.
-    public var mapped: Bool
+    /// The map rule that answered or cut it (`Flow.mappedBy`), not the server.
+    public var mappedBy: String?
+    public var mapped: Bool { mappedBy != nil }
 }

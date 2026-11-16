@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rede: mapear resposta</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+/* Prévia do painel Rede com regras de map local. Dois painéis lado a lado (fluxos e detalhe), regras em aba,
+   formulário "Mapear esta resposta" e o cartão de aprovação de agente, nos tokens do Collie. */
+:root {
+  --bg: #15171C; --surface: #1F232B; --surface-2: #262A33; --border: #2E323B;
+  --fg: #F4F2ED; --muted: #8C95B8; --accent: #6E9BFF; --accent-text: #93A4FF; --on-accent: #15171C;
+  --map: #E6B450; --map-bg: #3A3220; --ok: #6EE7B7; --err: #FF8A80; --warn: #E6B450;
+  --mono: "DM Mono", ui-monospace, Menlo, monospace; --sans: "Space Grotesk", system-ui, sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #F4F2ED; --surface: #FFFFFF; --surface-2: #ECE9E2; --border: #DCD8CF;
+    --fg: #15171C; --muted: #5A5D66; --accent: #2D69FD; --accent-text: #4A5BD6; --on-accent: #FFFFFF;
+    --map: #8A5A00; --map-bg: #FBEFD2; --ok: #0F7A55; --err: #B3261E; --warn: #8A5A00;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #F4F2ED; --surface: #FFFFFF; --surface-2: #ECE9E2; --border: #DCD8CF;
+  --fg: #15171C; --muted: #5A5D66; --accent: #2D69FD; --accent-text: #4A5BD6; --on-accent: #FFFFFF;
+  --map: #8A5A00; --map-bg: #FBEFD2; --ok: #0F7A55; --err: #B3261E; --warn: #8A5A00;
+  color-scheme: light;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 14px; line-height: 1.45;
+  padding-block: 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.page { max-width: 1180px; margin: 0 auto; display: grid; gap: 40px; }
+h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.01em; }
+h2 { font-size: 13px; margin: 0 0 12px; color: var(--muted); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+.lead { margin: 0; color: var(--muted); max-width: 70ch; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.muted { color: var(--muted); }
+
+/* janela do painel */
+.win { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.bar b { font-weight: 600; }
+.pill { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.pill.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.pill.map { color: var(--map); background: var(--map-bg); border-color: color-mix(in srgb, var(--map) 45%, transparent); }
+.sp { flex: 1; }
+button { font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+button.ghost { background: transparent; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); min-height: 380px; }
+@media (max-width: 820px) { .split { grid-template-columns: minmax(0, 1fr); } }
+.list { border-right: 1px solid var(--border); min-width: 0; }
+@media (max-width: 820px) { .list { border-right: 0; border-bottom: 1px solid var(--border); } }
+.row { display: grid; grid-template-columns: 52px minmax(0, 1fr) 46px 60px; gap: 8px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.row.sel { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+.row .m { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.row .u { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .u small { color: var(--muted); }
+.st { font-family: var(--mono); font-size: 12px; text-align: right; }
+.st.ok { color: var(--ok); } .st.err { color: var(--err); }
+.row.mapped { box-shadow: inset 3px 0 0 var(--map); }
+.row .tag { grid-column: 2 / -1; margin-top: -4px; }
+.tag { font-size: 11px; color: var(--map); }
+.tag::before { content: "⇄ "; }
+
+.detail { padding: 14px 16px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.detail .top { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.mappedbox { border: 1px solid color-mix(in srgb, var(--map) 45%, transparent); background: var(--map-bg); color: var(--map); border-radius: 8px; padding: 8px 10px; }
+.mappedbox b { color: var(--fg); font-weight: 600; }
+pre { margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.5; max-height: 200px; }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); padding: 0 8px; background: var(--surface); }
+.tab { padding: 8px 12px; color: var(--muted); border-bottom: 2px solid transparent; }
+.tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+
+/* regras */
+.rules { display: grid; }
+.rule { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.rule:last-child { border-bottom: 0; }
+.rule .t { min-width: 0; }
+.rule .t b { display: block; font-weight: 600; }
+.rule .t span { color: var(--muted); font-size: 12.5px; }
+.rule.off .t { opacity: .55; }
+.sw { appearance: none; width: 34px; height: 20px; border-radius: 999px; background: var(--border); position: relative; cursor: pointer; border: 0; padding: 0; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--fg); transition: transform .15s; }
+.sw[aria-checked="true"] { background: var(--accent); }
+.sw[aria-checked="true"]::after { transform: translateX(14px); background: var(--on-accent); }
+.notice { padding: 8px 14px; color: var(--warn); border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--warn) 9%, transparent); }
+
+/* formulário */
+.form { padding: 16px; display: grid; gap: 14px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+input, select, textarea { font: inherit; font-family: var(--mono); font-size: 12.5px; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; width: 100%; }
+textarea { min-height: 110px; resize: vertical; }
+.opts { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.opts label { display: inline-flex; grid-auto-flow: column; align-items: center; gap: 6px; color: var(--fg); font-size: 13px; }
+.opts input { width: auto; }
+.foot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: flex-end; border-top: 1px solid var(--border); padding: 12px 16px; background: var(--surface-2); }
+
+/* cartão de agente */
+.card { max-width: 520px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: grid; gap: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.25); }
+.card h3 { margin: 0; font-size: 16px; }
+.card .what { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+.card dt { color: var(--muted); } .card dd { margin: 0; font-family: var(--mono); font-size: 12.5px; min-width: 0; overflow-wrap: anywhere; }
+.card .acts { display: flex; gap: 10px; justify-content: flex-end; }
+.notes { display: grid; gap: 6px; color: var(--muted); max-width: 70ch; margin: 0; padding-left: 18px; }
+</style>
+</head>
+<body>
+<main class="page">
+
+<header>
+  <h1>Rede: responder no lugar do servidor</h1>
+  <p class="lead">Prévia do painel Rede com regras de map local. Dados de exemplo; nada aqui foi capturado de verdade.</p>
+</header>
+
+<section aria-labelledby="s1">
+  <h2 id="s1">1. Fluxos com uma resposta mapeada</h2>
+  <div class="win">
+    <div class="bar">
+      <b>Rede</b><span class="pill on">emulator-5554 · capturando</span>
+      <span class="pill">112 fluxos</span>
+      <span class="sp"></span>
+      <span class="pill map">1 regra ligada</span>
+      <button class="ghost">Regras (3)</button><button class="ghost">Limpar</button>
+    </div>
+    <div class="split">
+      <div class="list" role="list">
+        <div class="row" role="listitem"><span class="m">GET</span><span class="u">api.example.com<small>/v1/home</small></span><span class="st ok">200</span><span class="st muted">84 ms</span></div>
+        <div class="row mapped sel" role="listitem">
+          <span class="m">GET</span><span class="u">api.example.com<small>/pdp/v2/products/10482</small></span><span class="st ok">200</span><span class="st muted">3 ms</span>
+          <span class="tag">mapeado · PDP com desconto</span>
+        </div>
+        <div class="row" role="listitem"><span class="m">POST</span><span class="u">api.example.com<small>/cart/items</small></span><span class="st ok">201</span><span class="st muted">212 ms</span></div>
+        <div class="row" role="listitem"><span class="m">GET</span><span class="u">cdn.example.com<small>/img/banner-12.webp</small></span><span class="st ok">200</span><span class="st muted">41 ms</span></div>
+        <div class="row" role="listitem"><span class="m">GET</span><span class="u">api.example.com<small>/checkout/summary</small></span><span class="st err">503</span><span class="st muted">1.2 s</span></div>
+      </div>
+      <div class="detail">
+        <div class="top"><b class="mono">GET /pdp/v2/products/10482</b><span class="pill map">mapeado</span><span class="sp"></span>
+          <button class="primary">Mapear esta resposta</button></div>
+        <div class="mappedbox">Resposta fabricada pela regra <b>PDP com desconto</b>. O servidor não foi chamado.</div>
+        <pre>HTTP/1.1 200 OK
+content-type: application/json
+
+{ "product": { "id": "10482", "name": "Cerveja Lager 350 ml",
+  "price": 4.20, "discount": { "type": "percent", "value": 15 } } }</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s2">
+  <h2 id="s2">2. Lista de regras</h2>
+  <div class="win">
+    <div class="tabs" role="tablist"><span class="tab" role="tab">Fluxos</span><span class="tab on" role="tab" aria-selected="true">Regras</span></div>
+    <div class="notice">2 regras salvas estão desligadas desde que o Collie abriu. Ligue só o que precisa.</div>
+    <div class="rules" id="rules">
+      <div class="rule">
+        <button class="sw" role="switch" aria-checked="true" aria-label="PDP com desconto"></button>
+        <div class="t"><b>PDP com desconto</b><span class="mono">GET api.example.com/pdp/v2/products/*</span></div>
+        <span class="pill">200 · 2,1 KB</span><button class="ghost" aria-label="Remover">Remover</button>
+      </div>
+      <div class="rule off">
+        <button class="sw" role="switch" aria-checked="false" aria-label="Checkout com erro"></button>
+        <div class="t"><b>Checkout com erro</b><span class="mono">POST api.example.com/checkout/*</span></div>
+        <span class="pill">500 · 64 B</span><button class="ghost" aria-label="Remover">Remover</button>
+      </div>
+      <div class="rule off">
+        <button class="sw" role="switch" aria-checked="false" aria-label="Home lenta"></button>
+        <div class="t"><b>Home lenta</b><span class="mono">GET api.example.com/v1/home · atraso 8 s</span></div>
+        <span class="pill">queda após o atraso</span><button class="ghost" aria-label="Remover">Remover</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="s3">
+  <h2 id="s3">3. Mapear esta resposta (preenchido do fluxo capturado)</h2>
+  <div class="win">
+    <form class="form" onsubmit="return false">
+      <div class="grid2">
+        <label>Nome<input id="f-name" value="PDP com desconto"></label>
+        <label>Método<select id="f-method"><option>GET</option><option>POST</option><option>(qualquer)</option></select></label>
+        <label>Host<input id="f-host" value="api.example.com"></label>
+        <label>Caminho<input id="f-path" value="/pdp/v2/products/*"></label>
+      </div>
+      <div class="grid2">
+        <label>Ação<select id="f-action"><option>Responder com…</option><option>Cortar a conexão</option></select></label>
+        <label>Status<input id="f-status" value="200" inputmode="numeric"></label>
+        <label>Atraso (ms)<input id="f-delay" value="0" inputmode="numeric"></label>
+        <label>Cabeçalho<input id="f-header" value="content-type: application/json"></label>
+      </div>
+      <label>Corpo<textarea id="f-body">{ "product": { "id": "10482", "name": "Cerveja Lager 350 ml", "price": 4.20, "discount": { "type": "percent", "value": 15 } } }</textarea></label>
+      <div class="opts"><label><input type="checkbox" checked> Ligar agora</label>
+        <span class="muted">ou escolher um arquivo: <button type="button" class="ghost">discount_pdp.json…</button></span></div>
+    </form>
+    <div class="foot"><span class="muted">Corpo até 5 MiB. Sem compressão.</span><span class="sp"></span><button class="ghost">Cancelar</button><button class="primary">Salvar regra</button></div>
+  </div>
+</section>
+
+<section aria-labelledby="s4">
+  <h2 id="s4">4. Quando um agente cria a regra</h2>
+  <div class="card" role="group" aria-label="Aprovação de regra">
+    <h3>Responder no lugar do servidor?</h3>
+    <dl class="what">
+      <dt>Terminal</dt><dd>apps-dev</dd>
+      <dt>Requisição</dt><dd>GET api.example.com/pdp/v2/products/*</dd>
+      <dt>Resposta</dt><dd>200 · 2,1 KB · atraso 0 ms</dd>
+      <dt>Alcance</dt><dd>todo emulador capturado</dd>
+    </dl>
+    <div class="acts"><button>Negar</button><button class="primary">Permitir</button></div>
+  </div>
+  <ul class="notes" style="margin-top:14px">
+    <li>Sem resposta no prazo vale Negar, e a regra nunca liga.</li>
+    <li>Regras criadas por você, pela UI ou pela CLI, valem direto.</li>
+  </ul>
+</section>
+
+</main>
+<script>
+document.querySelectorAll('.sw').forEach(function (sw) {
+  sw.addEventListener('click', function () {
+    var on = sw.getAttribute('aria-checked') !== 'true';
+    sw.setAttribute('aria-checked', String(on));
+    sw.closest('.rule').classList.toggle('off', !on);
+  });
+});
+</script>
+</body>
+</html>

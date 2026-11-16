@@ -27,6 +27,86 @@ public struct FlowDetail: Decodable, Equatable, Sendable {
     }
 }
 
+/// A `network.rule-list` row (no body: `bodySize`).
+public struct RuleRow: Decodable, Identifiable, Equatable, Sendable {
+    public struct Match: Decodable, Equatable, Sendable { public var method: String?, host: String?, path: String?; public var query: [String: String]? }
+    public let id: String
+    public let name: String?
+    public let enabled: Bool
+    public let match: Match
+    /// "local" or "drop".
+    public let action: String
+    public let status: Int?
+    public let bodySize: Int?
+    public let delayMs: Int
+    /// Matches every request.
+    public let empty: Bool
+
+    /// "GET api.example.com/pdp/* → 200 · 2.1 KB", "… → queda", plus " · atraso 8 s".
+    public var summary: String {
+        let q = (match.query ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+        let target = empty ? "toda requisição"
+            : [match.method, (match.host ?? "*") + (match.path ?? "") + (q.isEmpty ? "" : "?" + q)].compactMap { $0 }.joined(separator: " ")
+        let what = action == "drop" ? "queda" : "\(status ?? 200) · \(NetworkPanelModel.size(bodySize ?? 0))"
+        return "\(target) → \(what)" + (delayMs > 0 ? " · atraso \(NetworkPanelModel.duration(delayMs))" : "")
+    }
+}
+
+/// "Mapear esta resposta": prefilled from a captured flow, sent as `network.rule-add --from <id>` with the edits.
+public struct MapForm: Equatable, Sendable {
+    public var from: String?
+    public var name = "", method = "", host = "", path = "", query = ""
+    public var drop = false
+    public var status = 200, delayMs = 0
+    /// One "Name: value" per line.
+    public var headers = ""
+    /// nil: keep the captured body (binary, or not shown); the daemon copies it decoded.
+    public var body: String?
+    /// "escolher um arquivo": the daemon reads it (≤ 5 MiB) instead of `body`.
+    public var bodyFile: String?
+    /// Ligar agora.
+    public var enabled = true
+
+    public init() {}
+
+    /// The flow's method, host, path (no query) and query; its status, useful headers and decoded body.
+    public init(_ d: FlowDetail) {
+        let f = d.flow, u = URLComponents(string: f.url)
+        // the addon globs mitmproxy's raw path (glob characters escaped here) and compares decoded query values
+        from = f.id; method = f.method; host = u?.host ?? ""
+        path = (u?.percentEncodedPath ?? "").map { "[*?".contains($0) ? "[\($0)]" : String($0) }.joined()
+        query = (u?.queryItems ?? []).map { "\($0.name)=\($0.value ?? "")" }.joined(separator: "&")
+        status = f.status ?? 200
+        headers = f.resHeaders.filter { !["content-encoding", "content-length", "transfer-encoding", "date"].contains($0.name.lowercased()) }
+            .map { "\($0.name): \($0.value)" }.joined(separator: "\n")
+        if case .text(let t) = d.resPreview.view, !d.resPreview.isPartial { body = t }
+    }
+
+    /// Shown above "Salvar regra" when nothing narrows the match.
+    public var warning: String? {
+        [method, host, path, query].allSatisfy { $0.trimmingCharacters(in: .whitespaces).isEmpty }
+            ? "Sem método, host, caminho nem query: a regra responde a toda requisição do emulador." : nil
+    }
+
+    func args(serial: String?) -> [String: JSONValue] {
+        func t(_ s: String) -> String? { let v = s.trimmingCharacters(in: .whitespaces); return v.isEmpty ? nil : v }
+        func lines(_ s: String, _ sep: Character) -> [JSONValue] {
+            s.split(separator: sep).compactMap { t(String($0)) }.map { .string($0) }
+        }
+        var a: [String: JSONValue] = [:]
+        if let from { a["from"] = .string(from); if let serial { a["serial"] = .string(serial) } }
+        for (k, v) in [("name", name), ("method", method), ("host", host), ("path", path)] { if let v = t(v) { a[k] = .string(v) } }
+        let q = lines(query, "&"); if !q.isEmpty { a["query"] = .array(q) }
+        if delayMs > 0 { a["delay"] = .number(Double(delayMs)) }
+        if !enabled { a["disabled"] = .bool(true) }
+        if drop { a["drop"] = .bool(true); return a }
+        a["status"] = .number(Double(status))
+        let h = lines(headers, "\n"); if !h.isEmpty { a["header"] = .array(h) }
+        if let bodyFile { a["body-file"] = .string(bodyFile) } else if let body { a["body"] = .string(body) }
+        return a
+    }
+}
+
 /// A `network.flow` row: the summary and the emulator it came from (panels are not bound to a serial).
 public struct FlowRow: Identifiable, Equatable, Sendable {
     public let serial: String
@@ -68,6 +148,8 @@ public struct BodyPreview: Equatable, Sendable {
     @Published public var filter = ""
     @Published public private(set) var selected: String?
     @Published public private(set) var detail: FlowDetail?
+    /// `network.rule-list`, in order.
+    @Published public private(set) var rules: [RuleRow] = []
 
     // ponytail: same cap as the daemon's store; older rows go first
     static let maxRows = 2000
@@ -102,6 +184,8 @@ public struct BodyPreview: Equatable, Sendable {
         if let i = rows.firstIndex(where: { $0.id == summary.id && $0.serial == s }) { rows[i].summary = summary }
         else { rows.append(FlowRow(serial: s, summary: summary)); if rows.count > Self.maxRows { rows.removeFirst(rows.count - Self.maxRows) } }
         if selected == summary.id, s == serial { Task { await loadDetail() } }   // the response arrived
+        // ponytail: a rule made elsewhere (CLI, agent) shows up by name; a removed one's flows refetch per event
+        if let m = summary.mappedBy, !rules.contains(where: { $0.id == m }) { Task { await loadRules() } }
     }
 
     // MARK: commands
@@ -244,6 +328,52 @@ public struct BodyPreview: Equatable, Sendable {
         }
     }
 
+    // MARK: map rules
+
+    public func loadRules() async {
+        do throws(ProtocolError) { rules = try await fetch([RuleRow].self, "network.rule-list", [:]) }
+        catch { self.error = Self.describe(error) }
+    }
+
+    /// Ligar / desligar. The app's own rules need no card.
+    public func setRule(_ id: String, enabled: Bool) async { await ruleCall(enabled ? "network.rule-enable" : "network.rule-disable", ["id": .string(id)]) }
+    public func removeRule(_ id: String) async { await ruleCall("network.rule-remove", ["id": .string(id)]) }
+    public func clearRules() async { await ruleCall("network.rule-clear", [:]) }
+
+    /// "Salvar regra" of "Mapear esta resposta": `rule-add --from` the flow, with the form's edits.
+    public func saveMap(_ form: MapForm) async { await ruleCall("network.rule-add", form.args(serial: serial)) }
+
+    private func ruleCall(_ command: String, _ args: [String: JSONValue]) async {
+        error = nil
+        do throws(ProtocolError) { _ = try await call(command, args) } catch { self.error = Self.describe(error) }
+        await loadRules()
+    }
+
+    /// "mapeado · <rule name>" for a flow a rule answered (its id when the rule is gone or unnamed); nil otherwise.
+    public func mappedBadge(_ s: FlowSummary) -> String? {
+        guard let id = s.mappedBy else { return nil }
+        return "mapeado · " + (rules.first { $0.id == id }?.name ?? id)
+    }
+
+    /// The detail's line under a mapped flow (nil: the server answered).
+    public func mappedNotice(_ id: String?) -> String? {
+        guard let id else { return nil }
+        return "Resposta fabricada pela regra \(rules.first { $0.id == id }?.name ?? id). O servidor não foi chamado."
+    }
+
+    /// The bar's "N regras ligadas" (nil: none on).
+    public var onLabel: String? {
+        let n = rules.filter(\.enabled).count
+        return n == 0 ? nil : n == 1 ? "1 regra ligada" : "\(n) regras ligadas"
+    }
+
+    /// Rules come back off at every daemon start: say so until the user turns on what they need.
+    public var offNotice: String? {
+        let n = rules.filter { !$0.enabled }.count
+        guard n > 0 else { return nil }
+        return n == 1 ? "1 regra salva está desligada. Ligue só o que precisa." : "\(n) regras salvas estão desligadas. Ligue só o que precisa."
+    }
+
     /// The selected flow's request as cURL, on the pasteboard.
     public func copyCurl() async {
         guard let id = selected, let serial else { return }
@@ -285,14 +415,14 @@ public struct BodyPreview: Equatable, Sendable {
         }
     }
 
-    public static func size(_ bytes: Int?) -> String {
+    public nonisolated static func size(_ bytes: Int?) -> String {
         guard let b = bytes else { return "—" }
         if b < 1024 { return "\(b) B" }
         let kb = Double(b) / 1024
         return kb < 1024 ? String(format: "%.1f KB", kb) : String(format: "%.1f MB", kb / 1024)
     }
 
-    public static func duration(_ ms: Int?) -> String {
+    public nonisolated static func duration(_ ms: Int?) -> String {
         guard let ms else { return "—" }
         return ms < 1000 ? "\(ms) ms" : String(format: "%.2f s", Double(ms) / 1000)
     }

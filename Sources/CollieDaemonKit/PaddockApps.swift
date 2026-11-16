@@ -664,16 +664,21 @@ extension CommandRouter {
         let p = ws.paddocks.first { $0.id == paddock }
         let card = AppCard(kind: .confirm, paddock: paddock ?? UUID(), paddockName: p?.name ?? "", app: m.id, name: m.name, base: m.serviceOrigin,
                            call: String(shown.prefix(300)), command: c.name, by: by?.id)
+        guard await confirmCard(card, wait: PluginManifest.confirmWait) else { throw ProtocolError(code: .unauthorized, message: "the user did not allow \(m.id).\(c.name) (\(m.name) asks for a confirmation on each call)") }
+    }
+
+    /// Shows a `confirm` card and waits: true on Permitir; Negar or no answer within `wait` seconds: false. Also the
+    /// network panel's (a terminal's map rule).
+    func confirmCard(_ card: AppCard, wait: Double) async -> Bool {
         appCards.append(card)
         await hub.emit(.appCard(card))
-        let ok = await withCheckedContinuation { (w: CheckedContinuation<Bool, Never>) in
+        return await withCheckedContinuation { (w: CheckedContinuation<Bool, Never>) in
             appWaiters[card.id] = w
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(PluginManifest.confirmWait))
+                try? await Task.sleep(for: .seconds(wait))
                 await self?.expireAppCard(card.id)
             }
         }
-        guard ok else { throw ProtocolError(code: .unauthorized, message: "the user did not allow \(m.id).\(c.name) (\(m.name) asks for a confirmation on each call)") }
     }
 
     /// A live "Permitir nesta sessão" for this call; stale ones (session over, pin changed) are dropped here.

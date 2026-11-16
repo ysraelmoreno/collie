@@ -18,6 +18,8 @@ import Foundation
 //    "headers":[...],"body":<Body|null>}
 //   {"type":"error","id":"…","ts":1730000000.4,"message":"connection reset"}
 //   {"type":"tunneled","id":"…","ts":1730000000.4}      // websocket handshake completed
+// A flow answered or cut by a map rule (`--set collie_rules=<rules.json>`, see MapRule) carries "mappedBy":"<rule id>"
+// on its request, response and error lines.
 
 public enum FlowEvent: Equatable, Sendable {
     case request(Request)
@@ -34,6 +36,8 @@ public enum FlowEvent: Equatable, Sendable {
         public var headers: [Header]
         public var body: Body?
         public var tls: FlowTLS?
+        /// The map rule that answered or cut this flow (nil: it went to the server).
+        public var mappedBy: String?
     }
 
     public struct Response: Equatable, Sendable {
@@ -44,6 +48,7 @@ public enum FlowEvent: Equatable, Sendable {
         public var reason: String?
         public var headers: [Header]
         public var body: Body?
+        public var mappedBy: String?
     }
 
     private struct Wire: Decodable {
@@ -60,6 +65,7 @@ public enum FlowEvent: Equatable, Sendable {
         var status: Int?
         var reason: String?
         var message: String?
+        var mappedBy: String?
     }
 
     /// nil for blank, non-JSON or unknown lines (mitmdump may still print its own logs).
@@ -70,11 +76,12 @@ public enum FlowEvent: Equatable, Sendable {
         case "request":
             guard let method = w.method, let url = w.url else { return nil }
             return .request(Request(id: w.id, ts: ts, method: method, url: url, httpVersion: w.httpVersion ?? "",
-                                    headers: w.headers ?? [], body: w.body, tls: w.tls))
+                                    headers: w.headers ?? [], body: w.body, tls: w.tls, mappedBy: w.mappedBy))
         case "response":
             guard let status = w.status else { return nil }
             return .response(Response(id: w.id, ttfb: w.ttfb.map(Date.init(timeIntervalSince1970:)), ts: ts,
-                                      status: status, reason: w.reason, headers: w.headers ?? [], body: w.body))
+                                      status: status, reason: w.reason, headers: w.headers ?? [], body: w.body,
+                                      mappedBy: w.mappedBy))
         case "error": return .error(id: w.id, ts: ts, message: w.message ?? "")
         case "tunneled": return .tunneled(id: w.id, ts: ts)
         default: return nil

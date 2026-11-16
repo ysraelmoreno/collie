@@ -19,7 +19,7 @@ final class MitmProcess: Sendable {
     private let proc: LongProcess
     private let exitCode: OSAllocatedUnfairLock<Int32?>
     private let queue: LineQueue
-    private let tool: MitmTool, addon: URL, runDir: URL
+    private let tool: MitmTool, addon: URL, runDir: URL, rules: URL?
 
     /// The addon's per-body cap (`collie_body_cap` default, 10 MiB): base64 makes it 4/3, plus headers and JSON.
     static let bodyCap = 10 << 20
@@ -38,17 +38,18 @@ final class MitmProcess: Sendable {
     /// The last line that was not addon JSON (mitmdump's own errors), for messages.
     var lastNoise: String? { queue.lastNoise }
 
-    static func args(port: Int, confdir: URL, addon: URL) -> [String] {
+    static func args(port: Int, confdir: URL, addon: URL, rules: URL? = nil) -> [String] {
         ["--listen-host", "127.0.0.1", "-p", "\(port)", "--set", "confdir=\(confdir.path)", "--set", "http2=false", "-q", "-s", addon.path]
+            + (rules.map { ["--set", "collie_rules=\($0.path)"] } ?? [])
     }
 
-    private init(tool: MitmTool, port: Int, confdir: URL, addon: URL, runDir: URL, env: [String: String]) throws(ProtocolError) {
+    private init(tool: MitmTool, port: Int, confdir: URL, addon: URL, runDir: URL, rules: URL?, env: [String: String]) throws(ProtocolError) {
         let (stream, cont) = AsyncStream.makeStream(of: String.self)
         let code = OSAllocatedUnfairLock<Int32?>(initialState: nil)
         let queue = LineQueue(limit: Self.queueLimit, yield: { cont.yield($0) })
         let splitter = OSAllocatedUnfairLock(initialState: LineSplitter(maxLine: Self.maxLine))
         // sh only to merge stderr into stdout (LongProcess drops stderr); exec: mitmdump keeps the pid and the group
-        let sh = ["-c", "exec \"$0\" \"$@\" 2>&1", tool.url.path] + Self.args(port: port, confdir: confdir, addon: addon)
+        let sh = ["-c", "exec \"$0\" \"$@\" 2>&1", tool.url.path] + Self.args(port: port, confdir: confdir, addon: addon, rules: rules)
         proc = try LongProcess(executable: URL(fileURLWithPath: "/bin/sh"), args: sh, env: env, runDir: runDir,
             onData: { data in
                 let (lines, overlong) = splitter.withLock { $0.feed(data) }
@@ -61,22 +62,22 @@ final class MitmProcess: Sendable {
                 code.withLock { $0 = c }; cont.finish()
             })
         self.port = port; self.confdir = confdir; self.lines = stream; self.exitCode = code; self.queue = queue
-        self.tool = tool; self.addon = addon; self.runDir = runDir
+        self.tool = tool; self.addon = addon; self.runDir = runDir; self.rules = rules
     }
 
     /// Writes `addonSource` to `<runDir>/network/addon-<port>.py` (one per running mitmdump), prepares `confdir`, starts
     /// mitmdump on `port` (nil: a free one, and one retry on another if it exits first: the port may have been taken in
     /// between) and waits until it listens and the CA exists. Exiting or not ready within `ready`: stopped, and the
     /// error carries mitmdump's last line. `runDir` is the daemon's: the orphan reap looks for the pidfile there.
-    static func start(tool: MitmTool, addonSource: String, confdir: URL, runDir: URL, port: Int? = nil,
+    static func start(tool: MitmTool, addonSource: String, confdir: URL, runDir: URL, rules: URL? = nil, port: Int? = nil,
                       ready: Duration = .seconds(20)) async throws(ProtocolError) -> MitmProcess {
-        do { return try await startOnce(tool: tool, addonSource: addonSource, confdir: confdir, runDir: runDir, port: port, ready: ready) }
+        do { return try await startOnce(tool: tool, addonSource: addonSource, confdir: confdir, runDir: runDir, rules: rules, port: port, ready: ready) }
         catch where port == nil && error.code == .internal && error.message.hasPrefix("mitmdump exited") {
-            return try await startOnce(tool: tool, addonSource: addonSource, confdir: confdir, runDir: runDir, port: nil, ready: ready)
+            return try await startOnce(tool: tool, addonSource: addonSource, confdir: confdir, runDir: runDir, rules: rules, port: nil, ready: ready)
         }
     }
 
-    private static func startOnce(tool: MitmTool, addonSource: String, confdir: URL, runDir: URL, port: Int?,
+    private static func startOnce(tool: MitmTool, addonSource: String, confdir: URL, runDir: URL, rules: URL?, port: Int?,
                                   ready: Duration) async throws(ProtocolError) -> MitmProcess {
         let p: Int
         if let port { p = port } else { p = try freePort() }
@@ -87,7 +88,7 @@ final class MitmProcess: Sendable {
             try prepareConfdir(confdir)
         } catch { throw ProtocolError(code: .internal, message: "cannot prepare mitmdump files: \(error.localizedDescription)") }
         let env = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") }   // no tokens or socket
-        let m = try MitmProcess(tool: tool, port: p, confdir: confdir, addon: addon, runDir: runDir, env: env)
+        let m = try MitmProcess(tool: tool, port: p, confdir: confdir, addon: addon, runDir: runDir, rules: rules, env: env)
         let deadline = ContinuousClock.now + ready
         while true {
             if let c = m.exited {
@@ -105,13 +106,13 @@ final class MitmProcess: Sendable {
         }
     }
 
-    /// A new mitmdump on the same port, confdir and addon (this one is stopped first).
+    /// A new mitmdump on the same port, confdir, addon and rules file (this one is stopped first).
     func restarted(ready: Duration = .seconds(20)) async throws(ProtocolError) -> MitmProcess {
         let source = (try? String(contentsOf: addon, encoding: .utf8)) ?? ""   // before stop() removes it
         stop()
         let deadline = ContinuousClock.now + .seconds(3)   // the port frees once the old group is gone (TERM, KILL after 1 s)
         while Self.listening(port: port), ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(100)) }
-        return try await Self.start(tool: tool, addonSource: source, confdir: confdir, runDir: runDir, port: port, ready: ready)
+        return try await Self.start(tool: tool, addonSource: source, confdir: confdir, runDir: runDir, rules: rules, port: port, ready: ready)
     }
 
     /// Idempotent, never blocks (`LongProcess.terminate`). Its addon file goes with it.

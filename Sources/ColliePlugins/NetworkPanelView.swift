@@ -7,6 +7,8 @@ import SwiftUI
 /// Bar (emulator, Interceptar/Parar, status, Limpar, filter), notices, then the live list beside the selected flow.
 struct NetworkView: View {
     @ObservedObject var model: NetworkPanelModel
+    @State private var tab = PanelTab.flows
+    enum PanelTab: Hashable { case flows, rules }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,14 +18,17 @@ struct NetworkView: View {
                 notice("Reinicie \(model.restartSuggested.joined(separator: ", ")) no emulador para que leia a CA do Collie.",
                        tone: .collieAttention, icon: "arrow.clockwise")
             }
+            if let n = model.offNotice { notice(n, tone: .collieAttention, icon: "power") }
             Rectangle().fill(Color.collieBorder).frame(height: 1)
-            HSplitView {
-                FlowList(model: model).frame(minWidth: 320)
-                FlowDetailView(model: model).frame(minWidth: 300)
+            if tab == .rules { RulesList(model: model) } else {
+                HSplitView {
+                    FlowList(model: model).frame(minWidth: 320)
+                    FlowDetailView(model: model).frame(minWidth: 300)
+                }
             }
         }
         .background(Color.collieSurface)
-        .task { await model.pollLoop() }   // on screen only: cancelled when the view leaves its window
+        .task { await model.loadRules(); await model.pollLoop() }   // on screen only: cancelled when the view leaves its window
     }
 
     private var bar: some View {
@@ -45,7 +50,14 @@ struct NetworkView: View {
             status
             if model.pendingDetach { CollieTag("restaurando emulador", tone: .attention) }
             if model.dropped > 0 { CollieTag("\(model.dropped) perdidas", tone: .attention) }
+            if let on = model.onLabel { CollieTag(on, tone: .attention) }
             Spacer(minLength: 8)
+            Picker("", selection: $tab) {
+                Text("Fluxos").tag(PanelTab.flows)
+                Text("Regras (\(model.rules.count))").tag(PanelTab.rules)
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 170).accessibilityLabel("Fluxos ou regras de map local")
+            .onChange(of: tab) { _, t in if t == .rules { Task { await model.loadRules() } } }
             TextField("Filtrar host, caminho, método, status", text: $model.filter)
                 .collieField().frame(maxWidth: 280).accessibilityLabel("Filtrar requisições")
             Button("Limpar") { Task { await model.clear() } }
@@ -107,7 +119,9 @@ private struct FlowList: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(rows) { r in FlowRowView(row: r, selected: model.selected == r.id) { Task { await model.select(flow: r.id) } } }
+                            ForEach(rows) { r in
+                                FlowRowView(row: r, selected: model.selected == r.id, badge: model.mappedBadge(r.summary)) { Task { await model.select(flow: r.id) } }
+                            }
                         }
                     }
                     .onChange(of: rows.last?.id) { _, id in if model.selected == nil, let id { proxy.scrollTo(id, anchor: .bottom) } }
@@ -119,15 +133,19 @@ private struct FlowList: View {
 }
 
 private struct FlowRowView: View {
-    let row: FlowRow, selected: Bool, action: () -> Void
+    let row: FlowRow, selected: Bool, badge: String?, action: () -> Void
     var body: some View {
         let s = row.summary, tone = NetworkPanelModel.tone(s)
         Button(action: action) {
             HStack(spacing: 8) {
                 Text(s.method).font(.collieMono(12, .medium)).foregroundStyle(Color.collieText).frame(width: 56, alignment: .leading)
                 Text(NetworkPanelModel.statusText(s)).font(.collieMono(12, .medium)).foregroundStyle(tone.color).frame(width: 44, alignment: .leading)
-                (Text(s.host).foregroundStyle(Color.collieTextSecondary) + Text(s.path).foregroundStyle(Color.collieText))
-                    .font(.collieMono(12)).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    (Text(s.host).foregroundStyle(Color.collieTextSecondary) + Text(s.path).foregroundStyle(Color.collieText))
+                        .font(.collieMono(12)).lineLimit(1).truncationMode(.middle)
+                    if let badge { CollieTag(badge, tone: .attention).lineLimit(1) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Text(NetworkPanelModel.size(s.size)).frame(width: 64, alignment: .trailing)
                 Text(NetworkPanelModel.duration(s.durationMs)).frame(width: 60, alignment: .trailing)
             }
@@ -137,7 +155,7 @@ private struct FlowRowView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(s.method) \(s.host)\(s.path), \(NetworkPanelModel.statusText(s))")
+        .accessibilityLabel("\(s.method) \(s.host)\(s.path), \(NetworkPanelModel.statusText(s))\(badge.map { ", \($0)" } ?? "")")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -146,6 +164,7 @@ private struct FlowRowView: View {
 private struct FlowDetailView: View {
     @ObservedObject var model: NetworkPanelModel
     @State private var tab = Tab.response
+    @State private var form: MapForm?
     enum Tab: String, CaseIterable { case request = "Request", response = "Response" }
 
     var body: some View {
@@ -175,9 +194,19 @@ private struct FlowDetailView: View {
                     .help("Copiar URL")
                 Button("cURL") { Task { await model.copyCurl() } }.buttonStyle(CollieButtonStyle(.secondary))
                     .accessibilityLabel("Copiar como cURL").help("Copiar como cURL")
+                if f.status != nil {
+                    Button("Mapear") { form = MapForm(d) }.buttonStyle(CollieButtonStyle(.quiet))
+                        .accessibilityLabel("Mapear esta resposta").help("Mapear esta resposta: responder no lugar do servidor")
+                }
                 Spacer()
                 Picker("", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     .pickerStyle(.segmented).labelsHidden().frame(width: 200).accessibilityLabel("Request ou Response")
+            }
+            if let notice = model.mappedNotice(f.mappedBy) {
+                HStack(spacing: 8) {
+                    CollieTag("mapeado", tone: .attention)
+                    Text(notice).font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                }
             }
             if case .failed(let m) = f.state { Text(m).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
             let (headers, body, text, preview) = tab == .request ? (f.reqHeaders, f.reqBody, d.reqText, d.reqPreview) : (f.resHeaders, f.resBody, d.resText, d.resPreview)
@@ -188,6 +217,11 @@ private struct FlowDetailView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(isPresented: Binding(get: { form != nil }, set: { if !$0 { form = nil } })) {
+            if let f = form {
+                MapFormView(form: f, cancel: { form = nil }, save: { edited in form = nil; Task { await model.saveMap(edited) } })
+            }
+        }
     }
 
     /// "início 14:02:11 · TTFB 120 ms · total 340 ms".
@@ -268,5 +302,112 @@ private struct BodyText: NSViewRepresentable {
         guard let t = scroll.documentView as? NSTextView else { return }
         t.setAccessibilityLabel(label)
         if t.string != text { t.string = text; t.scroll(.zero) }
+    }
+}
+
+/// The map rules, in order (the first enabled match wins): on/off, what it answers, Remover.
+private struct RulesList: View {
+    @ObservedObject var model: NetworkPanelModel
+    var body: some View {
+        VStack(spacing: 0) {
+            if model.rules.isEmpty {
+                Text("Nenhuma regra. Use Mapear no detalhe de um fluxo, ou collie network rule-add.")
+                    .font(.collieUI(13)).foregroundStyle(Color.collieMuted).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(model.rules) { r in
+                            HStack(spacing: 10) {
+                                Toggle("", isOn: Binding(get: { r.enabled }, set: { on in Task { await model.setRule(r.id, enabled: on) } }))
+                                    .toggleStyle(.switch).controlSize(.small).labelsHidden()
+                                    .accessibilityLabel("\(r.enabled ? "Desligar" : "Ligar") a regra \(r.name ?? r.id)")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(r.name ?? r.id).font(.collieUI(13, .medium)).foregroundStyle(Color.collieText)
+                                    Text(r.summary).font(.collieMono(12)).foregroundStyle(Color.collieTextSecondary).lineLimit(1).truncationMode(.middle)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                if r.empty { CollieTag("toda requisição", tone: .attention) }
+                                Button("Remover") { Task { await model.removeRule(r.id) } }.buttonStyle(CollieButtonStyle(.quiet))
+                                    .accessibilityLabel("Remover a regra \(r.name ?? r.id)")
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            Rectangle().fill(Color.collieBorderSoft).frame(height: 1)
+                        }
+                    }
+                }
+                HStack {
+                    Text("A primeira regra ligada que casa vence. Todas voltam desligadas quando o Collie abre.")
+                        .font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                    Spacer()
+                    Button("Remover todas") { Task { await model.clearRules() } }.buttonStyle(CollieButtonStyle(.quiet))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+            }
+        }
+        .background(Color.collieSunken)
+    }
+}
+
+/// "Mapear esta resposta", prefilled from the flow; Salvar sends `network.rule-add --from` with the edits.
+private struct MapFormView: View {
+    @State var form: MapForm
+    let cancel: () -> Void, save: (MapForm) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Mapear esta resposta").font(.collieUI(15, .semibold))
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                row("Nome") { TextField("PDP com desconto", text: $form.name).collieField() }
+                row("Método") { TextField("qualquer", text: $form.method).collieField().frame(width: 100) }
+                row("Host") { TextField("qualquer (aceita *)", text: $form.host).collieField() }
+                row("Caminho") { TextField("qualquer (aceita *)", text: $form.path).collieField() }
+                row("Query") { TextField("k=v&k2=v2 (todas precisam estar)", text: $form.query).collieField() }
+                row("Ação") {
+                    Picker("", selection: $form.drop) { Text("Responder com…").tag(false); Text("Cortar a conexão").tag(true) }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 260)
+                }
+                if !form.drop { row("Status") { TextField("200", value: $form.status, format: .number).collieField().frame(width: 80) } }
+                row("Atraso (ms)") { TextField("0", value: $form.delayMs, format: .number).collieField().frame(width: 80) }
+            }
+            if !form.drop {
+                Text("Cabeçalhos (um por linha)").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                TextEditor(text: $form.headers).font(.collieMono(12)).frame(height: 54).accessibilityLabel("Cabeçalhos")
+                Text("Corpo (até 5 MiB, sem compressão)").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
+                HStack(spacing: 8) {
+                    Button("Escolher arquivo…") {
+                        let p = NSOpenPanel(); p.canChooseDirectories = false; p.allowsMultipleSelection = false
+                        if p.runModal() == .OK, let u = p.url { form.bodyFile = u.path }
+                    }
+                    .buttonStyle(CollieButtonStyle(.quiet))
+                    if let f = form.bodyFile {
+                        Text(URL(fileURLWithPath: f).lastPathComponent).font(.collieMono(12)).foregroundStyle(Color.collieText)
+                        Button("Usar o corpo abaixo") { form.bodyFile = nil }.buttonStyle(CollieButtonStyle(.quiet))
+                    }
+                }
+                if form.bodyFile != nil {
+                    Text("O arquivo vai como corpo, lido ao salvar.").font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                } else if form.body != nil {
+                    TextEditor(text: Binding(get: { form.body ?? "" }, set: { form.body = $0 })).font(.collieMono(12)).frame(minHeight: 120)
+                        .accessibilityLabel("Corpo")
+                } else {
+                    Text("O corpo capturado (binário ou grande) vai como está.").font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                }
+            }
+            if let w = form.warning { Label(w, systemImage: "exclamationmark.triangle").font(.collieUI(12)).foregroundStyle(Color.collieAttention) }
+            HStack {
+                Toggle("Ligar agora", isOn: $form.enabled)
+                Spacer()
+                Button("Cancelar", action: cancel).buttonStyle(CollieButtonStyle(.quiet)).keyboardShortcut(.cancelAction)
+                Button("Salvar regra") { save(form) }.buttonStyle(CollieButtonStyle(.primary)).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16).frame(width: 520)
+    }
+
+    private func row(_ label: String, @ViewBuilder _ field: () -> some View) -> some View {
+        GridRow {
+            Text(label).font(.collieUI(12)).foregroundStyle(Color.collieMuted).gridColumnAlignment(.trailing)
+            field()
+        }
     }
 }

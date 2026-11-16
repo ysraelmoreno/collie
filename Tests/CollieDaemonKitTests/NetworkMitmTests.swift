@@ -34,6 +34,9 @@ import CollieProtocol
         let args = MitmProcess.args(port: 51234, confdir: URL(fileURLWithPath: "/c/network/mitm"), addon: URL(fileURLWithPath: "/r/network/addon.py"))
         #expect(args == ["--listen-host", "127.0.0.1", "-p", "51234", "--set", "confdir=/c/network/mitm", "--set", "http2=false",
                          "-q", "-s", "/r/network/addon.py"])
+        let withRules = MitmProcess.args(port: 1, confdir: URL(fileURLWithPath: "/c"), addon: URL(fileURLWithPath: "/a.py"),
+                                         rules: URL(fileURLWithPath: "/r/network/rules.json"))
+        #expect(withRules.suffix(2) == ["--set", "collie_rules=/r/network/rules.json"])
     }
 
     @Test func freePortIsFree() throws {
@@ -186,5 +189,174 @@ import CollieProtocol
         #expect(try String(contentsOf: count, encoding: .utf8) == "xx")   // one retry, on another port
         let addons = try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("run/network").path)
         #expect(addons.isEmpty)   // each failed start removed its addon file
+    }
+
+    // MARK: map rules, through the real mitmdump and addon (COLLIE_E2E_MITM=1)
+
+    static let realMitm = ProcessInfo.processInfo.environment["COLLIE_E2E_MITM"] != nil
+        && MitmTool.locate(env: ProcessInfo.processInfo.environment) != nil
+
+    private static func local(_ status: Int, _ body: String, id: String = MapRule.makeID(), enabled: Bool = true,
+                              method: String? = nil, path: String? = "/x*", query: [String: String] = [:], delayMs: Int = 0) -> MapRule {
+        MapRule(id: id, name: nil, enabled: enabled, match: .init(method: method, host: "127.0.0.1", path: path, query: query),
+                action: .local(status: status, headers: [Header(name: "X-Mapped", value: "1")], bodyB64: Data(body.utf8).base64EncodedString()),
+                delayMs: delayMs)
+    }
+
+    @Test(.enabled(if: realMitm)) func localRuleAnswersWithoutReachingServer() async throws {
+        try await RealMitm.with([Self.local(418, "oi", id: "r418")]) { h in
+            let (code, body, _) = try await h.curl("/x/1")
+            #expect(code == 418 && body == "oi" && h.hits == 0)
+            let res = try await h.event { if case .response(let r) = $0 { r.mappedBy != nil } else { false } }
+            guard case .response(let r) = res else { return }
+            #expect(r.mappedBy == "r418" && r.status == 418)
+            let req = try await h.event { if case .request(let r) = $0 { r.id == res.id } else { false } }
+            guard case .request(let q) = req else { return }
+            #expect(q.mappedBy == "r418")
+        }
+    }
+
+    @Test(.enabled(if: realMitm)) func dropRuleCutsConnection() async throws {
+        let drop = MapRule(id: "cut", name: nil, enabled: true, match: .init(path: "/x*"), action: .drop)
+        try await RealMitm.with([drop]) { h in
+            let (code, _, _) = try await h.curl("/x")
+            #expect(code == 0 && h.hits == 0)   // curl got no response at all
+            let req = try await h.event { if case .request(let r) = $0 { r.mappedBy == "cut" } else { false } }
+            _ = try await h.event { if case .error(let id, _, _) = $0 { id == req.id } else { false } }
+        }
+    }
+
+    @Test(.enabled(if: realMitm)) func delayRuleWaits() async throws {
+        try await RealMitm.with([Self.local(200, "slow", delayMs: 1500)]) { h in
+            let (code, body, elapsed) = try await h.curl("/x")
+            #expect(code == 200 && body == "slow" && elapsed >= .milliseconds(1500) && h.hits == 0)
+        }
+    }
+
+    @Test(.enabled(if: realMitm)) func firstEnabledRuleWins() async throws {
+        try await RealMitm.with([Self.local(401, "off", enabled: false), Self.local(402, "first"), Self.local(403, "second")]) { h in
+            let (code, body, _) = try await h.curl("/x")
+            #expect(code == 402 && body == "first")
+        }
+    }
+
+    @Test(.enabled(if: realMitm)) func badRulesFileKeepsPreviousRules() async throws {
+        try await RealMitm.with([Self.local(418, "oi")]) { h in
+            #expect(try await h.curl("/x").0 == 418)
+            try Data("{\"v\":1,\"rules\":[{\"bro".utf8).write(to: h.rulesFile)   // half a file, in place
+            #expect(try await h.curl("/x").0 == 418)
+            try Data(#"{"v":99,"rules":[]}"#.utf8).write(to: h.rulesFile)   // unknown version
+            #expect(try await h.curl("/x").0 == 418)
+            #expect(h.mitm.exited == nil)
+        }
+    }
+
+    @Test(.enabled(if: realMitm)) func ruleReloadsOnMtimeChange() async throws {
+        try await RealMitm.with([]) { h in
+            #expect(try await h.curl("/x").0 == 200); #expect(h.hits == 1)
+            try h.write([Self.local(418, "oi")])
+            #expect(try await h.curl("/x").0 == 418); #expect(h.hits == 1)
+            try h.write([])
+            #expect(try await h.curl("/x").0 == 200); #expect(h.hits == 2)
+        }
+    }
+
+    @Test(.enabled(if: realMitm)) func methodAndQueryMatching() async throws {
+        try await RealMitm.with([Self.local(418, "oi", method: "get", query: ["a": "1", "b": "2"])]) { h in
+            let any = try await h.curl("/x?b=2&c=3&a=1").0, missing = try await h.curl("/x?a=1").0
+            let post = try await h.curl("/x?a=1&b=2", method: "POST").0
+            #expect(any == 418 && missing == 200 && post == 200)
+        }
+    }
+
+    @Test(.enabled(if: realMitm)) func unmatchedFlowHasNoMappedBy() async throws {
+        try await RealMitm.with([Self.local(418, "oi")]) { h in
+            let (code, body, _) = try await h.curl("/y")
+            #expect(code == 200 && body == "real" && h.hits == 1)
+            let res = try await h.event { if case .response = $0 { true } else { false } }
+            guard case .response(let r) = res else { return }
+            #expect(r.mappedBy == nil)
+        }
+    }
+}
+
+/// The real mitmdump with Collie's addon and a rules file, a local HTTP server counting its hits, and `curl` through
+/// the proxy. Every addon line is decoded and kept.
+private final class RealMitm: Sendable {
+    let mitm: MitmProcess
+    let rulesFile: URL
+    let serverPort: Int
+    private let count: URL
+    private let events = OSAllocatedUnfairLock(initialState: [FlowEvent]())
+
+    var hits: Int { ((try? String(contentsOf: count, encoding: .utf8)) ?? "").count }
+
+    private init(mitm: MitmProcess, rulesFile: URL, serverPort: Int, count: URL) {
+        self.mitm = mitm; self.rulesFile = rulesFile; self.serverPort = serverPort; self.count = count
+        Task { [events] in
+            for await line in mitm.lines {
+                mitm.consumed(line)
+                if let e = FlowEvent.decode(line: line) { events.withLock { $0.append(e) } }
+            }
+        }
+    }
+
+    static func with(_ rules: [MapRule], _ body: (RealMitm) async throws -> Void) async throws {
+        let base = URL(fileURLWithPath: "/tmp/collie-map-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let run = base.appendingPathComponent("run")
+        try FileManager.default.createDirectory(at: run.appendingPathComponent("terminals"), withIntermediateDirectories: true)
+        let rulesFile = base.appendingPathComponent("rules.json"), count = base.appendingPathComponent("hits")
+        try MapRule.activeFile(rules).write(to: rulesFile, options: .atomic)
+        let port = try MitmProcess.freePort()
+        let server = Process()
+        server.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        server.arguments = ["python3", "-c", """
+            import http.server, sys
+            class H(http.server.BaseHTTPRequestHandler):
+                def _hit(self):
+                    open(sys.argv[2], "a").write("x")
+                    b = b"real"; self.send_response(200); self.send_header("content-length", str(len(b))); self.end_headers(); self.wfile.write(b)
+                do_GET = do_POST = _hit
+                def log_message(self, *a): pass
+            http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+            """, "\(port)", count.path]
+        try server.run()
+        defer { server.terminate() }
+        for _ in 0..<50 where !MitmProcess.listening(port: port) { try await Task.sleep(for: .milliseconds(100)) }
+        let tool = MitmTool(url: MitmTool.locate(env: ProcessInfo.processInfo.environment)!)
+        let m = try await MitmProcess.start(tool: tool, addonSource: AddonScript.source, confdir: base.appendingPathComponent("mitm"),
+                                            runDir: run, rules: rulesFile)
+        defer { m.stop() }
+        try await body(RealMitm(mitm: m, rulesFile: rulesFile, serverPort: port, count: count))
+    }
+
+    func write(_ rules: [MapRule]) throws { try MapRule.activeFile(rules).write(to: rulesFile, options: .atomic) }
+
+    /// (status, body, elapsed); status 0 when curl got no response.
+    func curl(_ path: String, method: String = "GET") async throws -> (Int, String, Duration) {
+        let p = Process(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        p.arguments = ["-s", "--noproxy", "", "-x", "http://127.0.0.1:\(mitm.port)", "-X", method, "--max-time", "10",
+                       "-w", "\n%{http_code}", "http://127.0.0.1:\(serverPort)\(path)"]
+        p.standardOutput = out
+        let start = ContinuousClock.now
+        try p.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        let elapsed = ContinuousClock.now - start
+        let text = String(decoding: data, as: UTF8.self)
+        let body = text.split(separator: "\n", omittingEmptySubsequences: false).dropLast().joined(separator: "\n")
+        return (Int(text.split(separator: "\n").last ?? "") ?? 0, body, elapsed)
+    }
+
+    /// The first addon event matching, waiting up to 5 s.
+    func event(_ match: @escaping @Sendable (FlowEvent) -> Bool) async throws -> FlowEvent {
+        for _ in 0..<50 {
+            if let e = events.withLock({ $0.first(where: match) }) { return e }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        Issue.record("no matching addon event in \(events.withLock { $0 })")
+        throw CancellationError()
     }
 }

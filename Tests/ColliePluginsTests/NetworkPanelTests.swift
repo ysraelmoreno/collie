@@ -7,20 +7,34 @@ import CollieNetwork
 import CollieProtocol
 @testable import ColliePlugins
 
+// The map-rule tests write the daemon's JSON as literals (as CollieDaemonKitTests does).
+extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
+                     ExpressibleByBooleanLiteral, ExpressibleByArrayLiteral,
+                     ExpressibleByDictionaryLiteral {
+    public init(stringLiteral v: String) { self = .string(v) }
+    public init(integerLiteral v: Int) { self = .number(Double(v)) }
+    public init(booleanLiteral v: Bool) { self = .bool(v) }
+    public init(arrayLiteral v: JSONValue...) { self = .array(v) }
+    public init(dictionaryLiteral v: (String, JSONValue)...) { self = .object(Dictionary(v) { $1 }) }
+}
+
 private func summary(_ id: String, _ method: String = "GET", host: String = "api.example.com", path: String = "/v1/items",
-                     status: Int? = 200, state: JSONValue = .object(["done": .object([:])]), serial: String = "emulator-5554") -> JSONValue {
+                     status: Int? = 200, state: JSONValue = .object(["done": .object([:])]), serial: String = "emulator-5554",
+                     mappedBy: String? = nil) -> JSONValue {
     var o: [String: JSONValue] = ["id": .string(id), "method": .string(method), "host": .string(host), "path": .string(path),
                                   "state": state, "serial": .string(serial), "size": .number(2048), "durationMs": .number(120)]
     if let status { o["status"] = .number(Double(status)) }
+    if let mappedBy { o["mappedBy"] = .string(mappedBy) }
     return .object(o)
 }
 
-private func flowJSON(_ id: String, resBody: Data = Data(#"{"ok":true}"#.utf8), encoding: String? = nil, text: String? = nil) -> JSONValue {
+private func flowJSON(_ id: String, resBody: Data = Data(#"{"ok":true}"#.utf8), encoding: String? = nil, text: String? = nil,
+                      url: String = "https://api.example.com/v1/items?page=2") -> JSONValue {
     var body: [String: JSONValue] = ["size": .number(Double(resBody.count)), "truncated": .bool(false), "data": .string(resBody.base64EncodedString())]
     if let encoding { body["contentEncoding"] = .string(encoding) }
     var o: [String: JSONValue] = [
         "id": .string(id), "serial": .string("emulator-5554"), "started": .number(1_790_000_000), "method": .string("GET"),
-        "url": .string("https://api.example.com/v1/items?page=2"), "httpVersion": .string("HTTP/2.0"),
+        "url": .string(url), "httpVersion": .string("HTTP/2.0"),
         "reqHeaders": .array([.object(["name": .string("accept"), "value": .string("application/json")])]),
         "status": .number(200), "reason": .string("OK"),
         "resHeaders": .array([.object(["name": .string("content-type"), "value": .string("application/json")])]),
@@ -80,10 +94,27 @@ private actor Fake {
             if str(a["id"]) == "big" { return flowJSON("big", resBody: Data(repeating: 0xAB, count: 200 * 1024), encoding: "gzip") }
             return flowJSON(str(a["id"]), text: "{\n  \"ok\" : true\n}")
         case "network.curl": return .object(["curl": .string("curl 'https://api.example.com/v1/items?page=2'")])
+        case let c where c.hasPrefix("network.rule-"): return rule(c, a)
         default: return .object([:])
         }
     }
     func commands() -> [String] { calls.map(\.0) }
+    func args(_ cmd: String) -> [String: JSONValue]? { calls.last { $0.0 == cmd }?.1 }
+    /// `network.rule-list`, as the daemon answers it; enable/disable/remove change it.
+    var rules: [[String: JSONValue]] = []
+    func set(rules: [[String: JSONValue]]) { self.rules = rules }
+    func rule(_ cmd: String, _ a: [String: JSONValue]) -> JSONValue {
+        let id = str(a["id"])
+        switch cmd {
+        case "network.rule-enable", "network.rule-disable":
+            for i in rules.indices where rules[i]["id"] == .string(id) { rules[i]["enabled"] = .bool(cmd == "network.rule-enable") }
+        case "network.rule-remove": rules.removeAll { $0["id"] == .string(id) }
+        case "network.rule-add": rules.append(["id": "new1", "enabled": .bool(a["disabled"] != .bool(true)), "action": "local", "delayMs": 0,
+                                               "match": .object([:]), "empty": false])
+        default: break
+        }
+        return .array(rules.map { .object($0) })
+    }
     private func str(_ v: JSONValue?) -> String { if case .string(let s)? = v { s } else { "" } }
 }
 
@@ -208,7 +239,9 @@ private actor Fake {
     }
 
     @Test func stopClearsTheSelection() async {
-        let m = model(Fake())
+        let fake = Fake(), m = model(fake)
+        await fake.set(rules: [ruleRow("r1", name: "PDP com desconto", enabled: true), ruleRow("r2", name: "Checkout", enabled: false)])
+        await m.loadRules()
         await m.refresh(); await m.toggle()
         await m.select(flow: "old")
         #expect(m.detail != nil)
@@ -325,11 +358,13 @@ private actor Fake {
     /// Opt-in: `NETWORK_PANEL_SNAPSHOT=<dir> swift test --filter NetworkPanel` writes light and dark PNGs of the panel.
     @Test func snapshot() async throws {
         guard let dir = ProcessInfo.processInfo.environment["NETWORK_PANEL_SNAPSHOT"] else { return }
-        let m = model(Fake())
+        let fake = Fake(), m = model(fake)
+        await fake.set(rules: [ruleRow("r1", name: "PDP com desconto", enabled: true), ruleRow("r2", name: "Checkout", enabled: false)])
+        await m.loadRules()
         await m.refresh(); await m.toggle()
         for s in [summary("1", "POST", host: "auth.example.com", path: "/oauth/token", status: 200),
                        summary("2", host: "cdn.example.com", path: "/assets/logo.png", status: 304),
-                       summary("3", host: "api.example.com", path: "/v1/items?page=2", status: 200),
+                       summary("3", host: "api.example.com", path: "/v1/items?page=2", status: 200, mappedBy: "r1"),
                        summary("4", "DELETE", host: "api.example.com", path: "/v1/items/42", status: 404),
                        summary("5", host: "api.example.com", path: "/v1/report", status: 503),
                        summary("6", host: "telemetry.example.com", path: "/collect", status: nil, state: .object(["failed": .object(["_0": .string("TLS handshake failed")])])),
@@ -352,5 +387,83 @@ private actor Fake {
         try await render("light", .aqua); try await render("dark", .darkAqua)
         await m.select(flow: "big")
         try await render("big-body", .darkAqua)
+    }
+}
+
+// MARK: map rules
+
+private func ruleRow(_ id: String, name: String?, enabled: Bool, path: String = "/pdp/*", status: Int? = 200, drop: Bool = false) -> [String: JSONValue] {
+    var o: [String: JSONValue] = ["id": .string(id), "enabled": .bool(enabled), "delayMs": 0, "empty": false,
+                                  "match": .object(["method": "GET", "host": "api.example.com", "path": .string(path), "query": .object([:])]),
+                                  "action": .string(drop ? "drop" : "local")]
+    if let name { o["name"] = .string(name) }
+    if let status, !drop { o["status"] = .number(Double(status)); o["bodySize"] = 2150 }
+    return o
+}
+
+extension NetworkPanelTests {
+    @Test func mappedFlowShowsBadgeWithRuleName() async {
+        let fake = Fake(), m = model(fake); m.serial = "emulator-5554"
+        await fake.set(rules: [ruleRow("r1", name: "PDP com desconto", enabled: true), ruleRow("r2", name: nil, enabled: true)])
+        await m.loadRules()
+        m.apply(event: "network.flow", payload: summary("a", mappedBy: "r1"))
+        m.apply(event: "network.flow", payload: summary("b"))
+        m.apply(event: "network.flow", payload: summary("c", mappedBy: "r2"))
+        m.apply(event: "network.flow", payload: summary("d", mappedBy: "gone"))
+        #expect(m.visible.map { m.mappedBadge($0.summary) } == ["mapeado · PDP com desconto", nil, "mapeado · r2", "mapeado · gone"])
+        #expect(m.mappedNotice("r1") == "Resposta fabricada pela regra PDP com desconto. O servidor não foi chamado.")
+        #expect(m.mappedNotice(nil) == nil && m.onLabel == "2 regras ligadas")
+    }
+
+    @Test func ruleListReflectsEnableToggle() async {
+        let fake = Fake(), m = model(fake)
+        await fake.set(rules: [ruleRow("r1", name: "PDP", enabled: false), ruleRow("r2", name: "Checkout", enabled: false, drop: true)])
+        await m.loadRules()
+        #expect(m.rules.map(\.enabled) == [false, false])
+        #expect(m.offNotice == "2 regras salvas estão desligadas. Ligue só o que precisa.")
+        #expect(m.rules[0].summary == "GET api.example.com/pdp/* → 200 · 2.1 KB" && m.rules[1].summary == "GET api.example.com/pdp/* → queda")
+        await m.setRule("r1", enabled: true)
+        #expect(await fake.args("network.rule-enable")?["id"] == .string("r1"))
+        #expect(m.rules.map(\.enabled) == [true, false] && m.offNotice == "1 regra salva está desligada. Ligue só o que precisa.")
+        await m.removeRule("r2")
+        #expect(m.rules.map(\.id) == ["r1"] && m.offNotice == nil && m.onLabel == "1 regra ligada")
+    }
+
+    @Test func mapFormPrefilledFromCapturedResponse() async throws {
+        let fake = Fake(), m = model(fake); m.serial = "emulator-5554"
+        await m.select(flow: "f1")
+        let d = try #require(m.detail)
+        var form = MapForm(d)
+        #expect(form.from == "f1" && form.method == "GET" && form.host == "api.example.com" && form.path == "/v1/items")
+        #expect(form.status == 200 && form.headers == "content-type: application/json" && form.body == "{\n  \"ok\" : true\n}")
+        #expect(form.query == "page=2" && !form.drop && form.enabled && form.delayMs == 0)
+        form.status = 500; form.name = "erro"; form.body = "{}"
+        await m.saveMap(form)
+        let a = try #require(await fake.args("network.rule-add"))
+        #expect(a["from"] == "f1" && a["serial"] == "emulator-5554" && a["status"] == 500 && a["name"] == "erro" && a["body"] == "{}")
+        #expect(a["header"] == .array(["content-type: application/json"]) && a["query"] == .array(["page=2"]))
+        #expect(a["method"] == "GET" && a["host"] == "api.example.com" && a["path"] == "/v1/items" && a["disabled"] == nil)
+        #expect(m.rules.map(\.id) == ["new1"] && m.error == nil)
+        form.bodyFile = "/Users/me/json/discount_pdp.json"   // "escolher um arquivo": the daemon reads it, the typed body is dropped
+        let f = form.args(serial: "emulator-5554")
+        #expect(f["body-file"] == "/Users/me/json/discount_pdp.json" && f["body"] == nil)
+    }
+
+    @Test func mapFormKeepsRawPathAndDecodedQuery() throws {
+        // the addon globs mitmproxy's raw path and compares decoded query values
+        let v = flowJSON("e", url: "https://h.example.com/busca/caf%C3%A9/a%5B1%5D*?q=a%20b&x=1%2B2")
+        let d = try #require(NetworkPanelModel.decode(FlowDetail.self, v))
+        let form = MapForm(d)
+        #expect(form.path == "/busca/caf%C3%A9/a%5B1%5D[*]")
+        #expect(form.query == "q=a b&x=1+2")
+    }
+
+    @Test func emptyMatchShowsWarning() async throws {
+        let m = model(Fake()); m.serial = "emulator-5554"
+        await m.select(flow: "f1")
+        var form = MapForm(try #require(m.detail))
+        #expect(form.warning == nil)
+        form.method = ""; form.host = " "; form.path = ""; form.query = ""
+        #expect(form.warning == "Sem método, host, caminho nem query: a regra responde a toda requisição do emulador.")
     }
 }

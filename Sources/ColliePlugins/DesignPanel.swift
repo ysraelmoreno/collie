@@ -88,25 +88,37 @@ import WebKit
     }
 }
 
-/// Serves `collie-design://app/<path>` from the figcraft web folder: GET only, nothing outside the folder.
+public extension Notification.Name {
+    /// A plug-in asks the app to open Preferences; `object`: the page's raw value (`"desenho"`).
+    static let collieOpenPreferences = Notification.Name("collie.openPreferences")
+}
+
+/// Serves `collie-design://app/<path>` from the figcraft web folder: GET only, nothing outside the folder; no folder → 404.
 public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "collie-design"
     static let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
     static let types = ["wasm": "application/wasm", "js": "text/javascript", "html": "text/html; charset=utf-8", "css": "text/css",
                         "json": "application/json", "png": "image/png", "svg": "image/svg+xml", "woff2": "font/woff2"]
-    let root: URL
+    private var dir: URL?
+    /// The folder served (the Design panel sets it from each `design.link`).
+    var root: URL? {
+        get { dir }
+        set { dir = newValue?.standardizedFileURL.resolvingSymlinksInPath() }
+    }
     /// The artifacts folder: only for artifact pages (main document on the same scheme), never `artifacts.json` or
     /// a dot entry (`.removed/`).
     let artifacts: Bool
 
-    public init(root: URL, artifacts: Bool = false) {
-        self.root = root.standardizedFileURL.resolvingSymlinksInPath(); self.artifacts = artifacts
+    public init(root: URL?, artifacts: Bool = false) {
+        self.artifacts = artifacts
+        super.init()
+        self.root = root
     }
 
     /// Status, content type and body for a request.
     func serve(_ r: URLRequest) -> (Int, String, Data) {
         guard (r.httpMethod ?? "GET") == "GET" else { return (405, "text/plain", Data()) }
-        guard let url = r.url, url.host == "app" else { return (404, "text/plain", Data()) }
+        guard let root, let url = r.url, url.host == "app" else { return (404, "text/plain", Data()) }
         if artifacts {
             guard r.mainDocumentURL?.scheme?.lowercased() == url.scheme?.lowercased() else { return (403, "text/plain", Data()) }
             guard !url.pathComponents.contains(where: { $0.hasPrefix(".") || $0 == "artifacts.json" }) else { return (404, "text/plain", Data()) }
@@ -136,12 +148,15 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
 
 /// The Design plug-in's view: the live figcraft UI on the panel's file (`state["file"]`). On its first mount it asks
 /// the daemon for the file's edit link (`design.link`, admin only) and loads the page; a failure shows
-/// "Motor de design indisponível" + **Reconectar**. Agent commands (`design.*`) run in the daemon.
+/// "Motor de design indisponível" + **Reconectar**, or, without an engine that runs, "Motor de design não instalado" /
+/// "desatualizado" + **Abrir Preferências**. Agent commands (`design.*`) run in the daemon.
 @MainActor public final class DesignPanel: NSObject, PluginPanelView {
     let panel: Panel
     let host: PanelHostContext
     private(set) var webView: WKWebView?
-    private let box = Box()
+    let box = Box()
+    /// Always registered; its folder is the `web` of each `design.link` reply (only the daemon resolves the engine).
+    let scheme = DesignSchemeHandler(root: nil)
     private var started = false
     private var gen = 0   // bumped per connect: a stale `design.link` reply never loads
     /// Bumped per page load (its FigCraft starts with only the embedded fonts); `pushedFonts`: the files it was given since.
@@ -154,23 +169,7 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
 
     public var view: NSView { box }
 
-    /// The figcraft web build: the app's Resources, then `COLLIE_FIGCRAFT_DIR` (as the daemon), then the repo's vendor
-    /// dir (`swift run`, debug builds only).
-    static let webDirectory: URL? = {
-        var c: [URL] = []
-        if let r = Bundle.main.resourceURL { c.append(r.appendingPathComponent("figcraft/web")) }
-        if let e = ProcessInfo.processInfo.environment["COLLIE_FIGCRAFT_DIR"] { c.append(URL(fileURLWithPath: e).appendingPathComponent("web")) }
-        #if DEBUG
-        c.append(URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("vendor/figcraft/web"))
-        #endif
-        return c.first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) }
-    }()
-
-    public required convenience init(panel: Panel, host: PanelHostContext) { self.init(panel: panel, host: host, webRoot: Self.webDirectory) }
-
-    /// `webRoot`: the figcraft web build it serves (tests pass their own).
-    init(panel: Panel, host: PanelHostContext, webRoot: URL?) {
+    public required init(panel: Panel, host: PanelHostContext) {
         self.panel = panel; self.host = host
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
@@ -180,7 +179,7 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         // The page can post this, but the only effect is that reload.
         config.userContentController.add(failure, name: "collieStartFailed")
         config.userContentController.addUserScript(WKUserScript(source: Self.failureWatch, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        if let dir = webRoot { config.setURLSchemeHandler(DesignSchemeHandler(root: dir), forURLScheme: DesignSchemeHandler.scheme) }
+        config.setURLSchemeHandler(scheme, forURLScheme: DesignSchemeHandler.scheme)
         let web = WKWebView(frame: .zero, configuration: config)
         webView = web
         super.init()
@@ -288,18 +287,18 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
 
     fileprivate func windowChanged() { if box.window != nil, !started { connect() } }
 
-    fileprivate func connect() {
+    func connect() {
         guard let web = webView else { return }
         started = true; gen += 1
         let g = gen
-        guard Self.webDirectory != nil else { return failed("Rode scripts/build-figcraft.sh") }
         box.status("Abrindo…", retry: false)
         let call = host.call, name = panel.name
         Task { [weak self] in
             do throws(ProtocolError) {
                 let r = try await call("design.link", ["panel": .string(name)])
                 guard let self, self.gen == g else { return }
-                guard case .object(let o) = r, case .string(let link)? = o["editLink"] else { return self.failed(nil) }
+                guard case .object(let o) = r, case .string(let link)? = o["editLink"], case .string(let dir)? = o["web"] else { return self.failed(nil) }
+                self.scheme.root = URL(fileURLWithPath: dir)
                 let gpu = await GPUProbe.webGPUAvailable()
                 guard self.gen == g else { return }
                 guard await WebLockdown.peerConnectionsOff(web) else { return self.failed(WebLockdown.failure) }   // fail closed
@@ -307,6 +306,11 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
                 web.load(URLRequest(url: designURL(editLink: link, webGPU: gpu)))
             } catch {
                 guard let self, self.gen == g else { return }
+                // no engine that runs (`FigcraftServer.unavailable`, admin texts): the download is in Preferences
+                for state in ["Motor de design não instalado", "Motor de design desatualizado"]
+                where error.code == .unavailable && error.message.hasPrefix(state) {
+                    return self.box.status(state, retry: true, action: "Abrir Preferências")
+                }
                 self.failed(error.message)   // the daemon scrubs links from errors
             }
         }
@@ -317,6 +321,13 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         box.status("Motor de design indisponível" + (detail.map { "\n" + $0 } ?? ""), retry: true)
     }
 
+    /// The overlay button: **Abrir Preferências** asks the app for the Desenho e sandbox page, else **Reconectar**.
+    fileprivate func overlayAction() {
+        if box.retry.title == "Abrir Preferências" {
+            NotificationCenter.default.post(name: .collieOpenPreferences, object: "desenho")
+        } else { connect() }
+    }
+
     /// The header (file + "sincronizado"), then the web view inside a card; the status overlay (label + **Reconectar**)
     /// over the card.
     final class Box: NSView {
@@ -325,8 +336,8 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         let card = NSView()
         private let sync = DesignSync()
         private var header: NSView?
-        private let label = NSTextField(wrappingLabelWithString: "")
-        private let retry = NSButton(title: "Reconectar", target: nil, action: nil)
+        let label = NSTextField(wrappingLabelWithString: "")
+        let retry = NSButton(title: "Reconectar", target: nil, action: nil)
         private let overlay = NSStackView()
         override var isFlipped: Bool { true }
 
@@ -362,12 +373,13 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); applyChrome() }
 
-        func status(_ text: String?, retry showRetry: Bool) {
+        func status(_ text: String?, retry showRetry: Bool, action: String = "Reconectar") {
             overlay.isHidden = text == nil
             web?.isHidden = text != nil
             sync.synced = text == nil
             label.stringValue = text ?? ""
             retry.isHidden = !showRetry
+            retry.title = action
             needsLayout = true
         }
 
@@ -381,7 +393,7 @@ public final class DesignSchemeHandler: NSObject, WKURLSchemeHandler {
         }
 
         override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); owner?.windowChanged() }
-        @objc private func reconnect() { owner?.connect() }
+        @objc private func reconnect() { owner?.overlayAction() }
     }
 }
 

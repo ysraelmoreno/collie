@@ -62,15 +62,19 @@ actor NetworkService {
     private let pollInterval: Duration
     private let capacity: Int
     private let stopBudget: Duration
+    /// The map rules every proxy applies (one file for all: rules are global, not per serial).
+    let rules: RuleStore
 
     /// `emit(serial, name, payload)` reaches the network panels. `startProxy(serial)` returns a proxy that already
     /// listens with its CA on disk.
     init(capacity: Int = 2000, pollInterval: Duration = .seconds(5), stopBudget: Duration = .seconds(15),
+         rules: RuleStore = RuleStore(file: URL(fileURLWithPath: "/tmp/collie-rules-\(UUID().uuidString)/all.json"),
+                                      active: URL(fileURLWithPath: "/tmp/collie-rules-\(UUID().uuidString)/active.json")),
          startProxy: @escaping @Sendable (String) async throws(ProtocolError) -> any NetworkProxy,
          device: @escaping @Sendable () async throws(ProtocolError) -> any NetworkDevice,
          onlineEmulators: @escaping @Sendable () async -> [String],
          emit: @escaping @Sendable (String, String, JSONValue) async -> Void) {
-        self.capacity = capacity; self.pollInterval = pollInterval; self.stopBudget = stopBudget
+        self.capacity = capacity; self.pollInterval = pollInterval; self.stopBudget = stopBudget; self.rules = rules
         self.startProxy = startProxy; self.device = device; self.onlineEmulators = onlineEmulators; self.emit = emit
     }
 
@@ -79,10 +83,13 @@ actor NetworkService {
     init(root: URL, runDir: URL, devices: DeviceService, mitmdump: @escaping @Sendable () -> URL?,
          emit: @escaping @Sendable (String, String, JSONValue) async -> Void) {
         let confdir = root.appendingPathComponent("network/mitm")
+        let rules = RuleStore(file: root.appendingPathComponent("network/rules.json"), active: runDir.appendingPathComponent("network/rules.json"))
         self.init(
+            rules: rules,
             startProxy: { _ throws(ProtocolError) in
                 guard let u = mitmdump() else { throw MitmTool.missing }
-                return try await MitmProcess.start(tool: MitmTool(url: u), addonSource: AddonScript.source, confdir: confdir, runDir: runDir)
+                return try await MitmProcess.start(tool: MitmTool(url: u), addonSource: AddonScript.source, confdir: confdir, runDir: runDir,
+                                                   rules: rules.active)
             },
             device: { () throws(ProtocolError) in DeviceNetworkSetup(adb: try await devices.tool()) },
             onlineEmulators: { ((try? await devices.devices()) ?? []).filter { $0.state == "device" && $0.serial.hasPrefix("emulator-") }.map(\.serial) },
@@ -206,6 +213,97 @@ actor NetworkService {
         try session(serial)
         sessions[serial]?.store.clear()
         return .object(["serial": .string(serial), "flows": .number(0)])
+    }
+
+    // MARK: map rules
+
+    /// A rule from `network.rule-add`'s args. `from` (a flow of `serial`) gives status, headers (no content-encoding,
+    /// content-length or transfer-encoding) and the decoded body; the other args override it. `bodyFile`: the bytes of
+    /// `--body-file`, read by the router (which checks the caller may read it). No Content-Type given: guessed from the body.
+    func makeRule(_ a: [String: JSONValue], bodyFile: Data?, serial: String?) throws(ProtocolError) -> MapRule {
+        func s(_ k: String) -> String? { if case .string(let v)? = a[k], !v.isEmpty { v } else { nil } }
+        func on(_ k: String) -> Bool { a[k] == .bool(true) }
+        var status = 200, headers: [Header] = [], body: Data?
+        if let id = s("from") {
+            guard let serial else { throw ProtocolError(code: .invalidArgs, message: "--from needs a captured emulator") }
+            let f = try flow(serial, id)
+            guard let st = f.status else { throw ProtocolError(code: .invalidArgs, message: "Flow '\(id)' has no response yet") }
+            status = st
+            headers = f.resHeaders.filter { !["content-encoding", "content-length", "transfer-encoding"].contains($0.name.lowercased()) }
+            if let b = f.resBody {
+                guard let d = BodyDecoder.decode(b) else {
+                    throw ProtocolError(code: .invalidArgs, message: "Flow '\(id)': its body was cut or cannot be decoded; pass --body or --body-file")
+                }
+                body = d
+            }
+        }
+        if let st = try DeviceService.int(a, "status", 0...999) { status = st }
+        for h in try Self.headerArgs(a["header"]) {
+            headers.removeAll { $0.name.lowercased() == h.name.lowercased() }
+            headers.append(h)
+        }
+        switch (s("body"), bodyFile) {
+        case (_?, _?): throw ProtocolError(code: .invalidArgs, message: "Pass --body or --body-file, not both")
+        case (let t?, nil): body = Data(t.utf8)
+        case (nil, let d?): body = d
+        case (nil, nil): break
+        }
+        if let b = body, !b.isEmpty, !headers.contains(where: { $0.name.lowercased() == "content-type" }) {
+            headers.append(Header(name: "Content-Type", value: MapRule.guessedContentType(b)))
+        }
+        var query: [String: String] = [:]
+        for pair in Self.listArg(a["query"]) {
+            let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard kv.count == 2, !kv[0].isEmpty else { throw ProtocolError(code: .invalidArgs, message: "--query takes k=v, got '\(pair)'") }
+            query[String(kv[0])] = String(kv[1])
+        }
+        let match = MapRule.Match(method: s("method"), host: s("host"), path: s("path"), query: query)
+        let action: MapRule.Action = on("drop") ? .drop : .local(status: status, headers: headers, bodyB64: body?.base64EncodedString())
+        return MapRule(id: MapRule.makeID(), name: s("name"), enabled: !on("disabled"), match: match, action: action,
+                       delayMs: try DeviceService.int(a, "delay", 0...MapRule.maxDelayMs) ?? 0)
+    }
+
+    /// Every rule, in order, without bodies (`bodySize` instead).
+    func ruleList() async -> JSONValue { .array(await rules.all().map(Self.ruleJSON)) }
+
+    static func ruleJSON(_ r: MapRule) -> JSONValue {
+        var o: [String: JSONValue] = ["id": .string(r.id), "enabled": .bool(r.enabled), "delayMs": .number(Double(r.delayMs)),
+                                      "match": json(r.match), "empty": .bool(r.match.isEmpty)]
+        if let n = r.name { o["name"] = .string(n) }
+        switch r.action {
+        case .drop: o["action"] = .string("drop")
+        case .local(let status, let headers, _):
+            o["action"] = .string("local"); o["status"] = .number(Double(status)); o["headers"] = json(headers)
+            o["bodySize"] = .number(Double(r.body?.count ?? 0))
+        }
+        return .object(o)
+    }
+
+    /// Repeated values: an array (MCP, the app), or the CLI's comma-joined string.
+    static func listArg(_ v: JSONValue?) -> [String] {
+        switch v {
+        case .array(let a)?: a.compactMap { if case .string(let s) = $0 { s } else { nil } }
+        case .string(let s)?: s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        default: []
+        }
+    }
+
+    /// `"Name: value"` each. The CLI joins repeats with commas, which header values may hold too: a joined string is
+    /// split only where a new `Name:` starts.
+    // ponytail: a value holding ", Word: x" is cut there; pass an array (MCP, the app) for such values
+    static func headerArgs(_ v: JSONValue?) throws(ProtocolError) -> [Header] {
+        let items: [String]
+        switch v {
+        case .array?: items = listArg(v)
+        case .string(let s)?: items = s.replacing(/,\s*(?=[!#$%&'*+.^_`|~0-9A-Za-z-]+:)/, with: "\u{0}").split(separator: "\u{0}").map(String.init)
+        default: items = []
+        }
+        return try items.map { (h: String) throws(ProtocolError) -> Header in
+            guard let c = h.firstIndex(of: ":"), !h[..<c].trimmingCharacters(in: .whitespaces).isEmpty else {
+                throw ProtocolError(code: .invalidArgs, message: "--header takes \"Name: value\", got '\(h)'")
+            }
+            return Header(name: h[..<c].trimmingCharacters(in: .whitespaces), value: h[h.index(after: c)...].trimmingCharacters(in: .whitespaces))
+        }
     }
 
     /// Serials being captured.

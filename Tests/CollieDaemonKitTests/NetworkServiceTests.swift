@@ -2,6 +2,8 @@ import Testing
 import Foundation
 import os
 import CollieProtocol
+import CollieNetwork
+import CollieCore
 @testable import CollieDaemonKit
 
 /// A proxy whose stdout the test writes; `exit()` ends it as a dead mitmdump would.
@@ -263,6 +265,120 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
         #expect(r.proxies.withLock { $0.allSatisfy(\.stopped) })
         #expect(Set(r.device.log.filter { $0.hasPrefix("detach") }) == ["detach emulator-5560 40001", "detach emulator-5562 40002"])
         #expect(await r.service.attached.isEmpty)
+    }
+}
+
+// MARK: map rules (rule-*)
+
+private let gzipped = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1730000000.3,"status":200,"reason":"OK","headers":[{"name":"Content-Type","value":"application/json"},{"name":"Content-Encoding","value":"gzip"},{"name":"Content-Length","value":"41"},{"name":"Transfer-Encoding","value":"chunked"},{"name":"X-Keep","value":"1"}],"body":{"size":41,"truncated":false,"contentEncoding":"gzip","data":"H4sIAAAAAAAC/6tWKs4uVbJSqlDSUSooykxOVbKyrAUA0ujarhUAAAA="}}"#
+
+extension NetworkServiceTests {
+    private func captured() async throws -> NetworkService {
+        let r = rig()
+        _ = try await r.service.attach("emulator-5560")
+        r.proxy.send(request); r.proxy.send(gzipped)
+        await r.waitEvents(2)
+        return r.service
+    }
+
+    @Test func ruleAddFromFlowCopiesDecodedResponse() async throws {
+        let s = try await captured()
+        let rule = try await s.makeRule(["from": "f1", "path": "/a"], bodyFile: nil, serial: "emulator-5560")
+        guard case .local(let status, let headers, _) = rule.action else { Issue.record("\(rule)"); return }
+        #expect(status == 200 && rule.body == Data(#"{"sku":"x","price":9}"#.utf8))
+        #expect(headers.map(\.name) == ["Content-Type", "X-Keep"])   // no encoding, length or transfer-encoding
+        #expect(rule.match == .init(path: "/a") && rule.enabled)
+    }
+
+    @Test func ruleAddFlagsOverrideFrom() async throws {
+        let s = try await captured()
+        let rule = try await s.makeRule(["from": "f1", "status": 500, "header": .array(["x-keep: 2", "X-New: a, b"]), "body": "oops",
+                                         "method": "get", "host": "example.com", "query": "b=1,c=2", "delay": 250, "name": "erro"],
+                                        bodyFile: nil, serial: "emulator-5560")
+        guard case .local(let status, let headers, _) = rule.action else { Issue.record("\(rule)"); return }
+        #expect(status == 500 && rule.body == Data("oops".utf8) && rule.delayMs == 250 && rule.name == "erro")
+        #expect(headers == [Header(name: "Content-Type", value: "application/json"), Header(name: "x-keep", value: "2"), Header(name: "X-New", value: "a, b")])
+        #expect(rule.match == .init(method: "GET", host: "example.com", query: ["b": "1", "c": "2"]))
+        // CLI repeats are comma-joined: split only where a new "Name:" starts
+        let cli = try await s.makeRule(["header": "X-A: 1, 2,X-B: 3", "body": "{\"a\":1}"], bodyFile: nil, serial: nil)
+        guard case .local(_, let h, _) = cli.action else { return }
+        #expect(h == [Header(name: "X-A", value: "1, 2"), Header(name: "X-B", value: "3"), Header(name: "Content-Type", value: "application/json")])
+        let drop = try await s.makeRule(["drop": true, "path": "/x", "disabled": true], bodyFile: nil, serial: nil)
+        #expect(drop.action == .drop && !drop.enabled)
+        await #expect(throws: ProtocolError.self) { try await s.makeRule(["body": "a"], bodyFile: Data("b".utf8), serial: nil) }
+        await #expect(throws: ProtocolError.self) { try await s.makeRule(["header": "no colon"], bodyFile: nil, serial: nil) }
+    }
+
+    @Test func ruleListShowsEnabledState() async throws {
+        let s = rig().service
+        _ = try await s.rules.add(try await s.makeRule(["path": "/a", "status": 404], bodyFile: nil, serial: nil))
+        _ = try await s.rules.add(try await s.makeRule(["path": "/b", "drop": true, "disabled": true], bodyFile: nil, serial: nil))
+        guard case .array(let rows) = await s.ruleList() else { Issue.record("list"); return }
+        let objs = rows.compactMap { if case .object(let o) = $0 { o } else { nil } }
+        #expect(objs.map { $0["enabled"] } == [.bool(true), .bool(false)])
+        #expect(objs[0]["status"] == .number(404) && objs[1]["action"] == .string("drop") && objs[0]["bodyB64"] == nil)
+    }
+
+    // through the daemon, from a terminal (the leash and the caller's project)
+
+    private struct Term { var id: String; var token: String }
+    private func shepherd(_ d: Daemon, _ p: Paths, panel: Bool) async throws -> Term {
+        let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn",
+            args: ["name": "M", "preset": "shell", "cwd": "/tmp", "shepherd": true]), timeoutSeconds: 60)
+        guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
+        let t = Term(id: id, token: try await tokenOf(d, id))
+        if panel { #expect(try await call(p, t, "panel.open", ["plugin": "network"]).ok) }
+        return t
+    }
+    private func call(_ p: Paths, _ t: Term, _ cmd: String, _ args: [String: JSONValue] = [:]) async throws -> Response {
+        try await send(p, Request(id: "c", terminalId: t.id, token: t.token, command: cmd, args: args, cwd: "/tmp"), timeoutSeconds: 30)
+    }
+
+    @Test func bodyFileOutsideCercadoRefused() async throws {
+        try await withDaemon { d, p in
+            let t = try await shepherd(d, p, panel: true)
+            let outside = FileManager.default.temporaryDirectory.appendingPathComponent("collie-out-\(UUID().uuidString.prefix(6)).json")
+            let inside = URL(fileURLWithPath: "/tmp/collie-in-\(UUID().uuidString.prefix(6)).json")
+            defer { try? FileManager.default.removeItem(at: outside); try? FileManager.default.removeItem(at: inside) }
+            try Data("{}".utf8).write(to: outside); try Data(#"{"ok":1}"#.utf8).write(to: inside)
+            let out = try await call(p, t, "network.rule-add", ["path": "/x", "body-file": .string(outside.path)])
+            #expect(out.error?.code == .unauthorized, "\(out)")
+            let missing = try await call(p, t, "network.rule-add", ["path": "/x", "body-file": .string("/tmp/nope-\(UUID().uuidString)")])
+            #expect(missing.error != nil)
+            let ok = try await call(p, t, "network.rule-add", ["path": "/x", "body-file": .string(inside.lastPathComponent), "disabled": true])
+            #expect(ok.ok, "\(ok)")
+            // the app reads anywhere
+            let admin = try await send(p, Request(id: "a", token: d.adminToken, command: "network.rule-add",
+                                                  args: ["path": "/y", "body-file": .string(outside.path)]))
+            #expect(admin.ok, "\(admin)")
+        }
+    }
+
+    @Test func bodyFileOver5MiBRefused() async throws {
+        try await withDaemon { d, p in
+            let big = URL(fileURLWithPath: "/tmp/collie-big-\(UUID().uuidString.prefix(6)).bin")
+            defer { try? FileManager.default.removeItem(at: big) }
+            try Data(count: 5 << 20 + 1).write(to: big)
+            let r = try await send(p, Request(id: "a", token: d.adminToken, command: "network.rule-add", args: ["path": "/y", "body-file": .string(big.path)]))
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("5 MiB") == true, "\(r)")
+        }
+    }
+
+    @Test func ruleCommandsNeedReachableNetworkPanel() async throws {
+        try await withDaemon { d, p in
+            let t = try await shepherd(d, p, panel: false)
+            for cmd in ["network.rule-add", "network.rule-list", "network.rule-clear"] {
+                #expect(try await call(p, t, cmd, ["path": "/x"]).error?.code == .notFound)
+            }
+            let add = try await send(p, Request(id: "a", token: d.adminToken, command: "network.rule-add", args: ["path": "/x", "status": 503]))
+            guard case .object(let o)? = add.result, case .string(let id)? = o["id"] else { Issue.record("\(add)"); return }
+            #expect(o["enabled"] == .bool(true))
+            for cmd in ["network.rule-disable", "network.rule-enable", "network.rule-remove"] {
+                #expect(try await send(p, Request(id: "a", token: d.adminToken, command: cmd, args: ["id": .string(id)])).ok)
+            }
+            let list = try await send(p, Request(id: "a", token: d.adminToken, command: "network.rule-list"))
+            #expect(list.result == .array([]))
+        }
     }
 }
 

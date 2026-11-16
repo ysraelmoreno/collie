@@ -1,6 +1,7 @@
 import Foundation
 import CollieCore
 import CollieProtocol
+import CollieNetwork
 
 extension CommandRouter {
     /// A `network.*` command, run by the daemon. The leash is the permission, as for `device.*`: a terminal must reach a
@@ -12,6 +13,7 @@ extension CommandRouter {
         if let me = caller, !ConnectionGraph.reachablePanels(from: me.id, in: ws).contains(where: { $0.pluginId == "network" }) {
             throw ProtocolError(code: .notFound, message: "No network panel reachable. Open one with `panel open network`.")
         }
+        if r.command.hasPrefix("network.rule-") { return try await networkRuleCommand(r, caller: caller) }
         if r.command == "network.status", str(r, "serial") == nil, await network.attached.isEmpty {
             return .object(["attached": .bool(false)])
         }
@@ -27,6 +29,46 @@ extension CommandRouter {
         case "network.clear": return try await network.clear(serial)
         default: throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(r.command)'")
         }
+    }
+
+    /// `network.rule-*`: the map rules, global (no serial, except `rule-add --from`, whose flow is on one).
+    private func networkRuleCommand(_ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
+        let rules = network.rules
+        switch r.command {
+        case "network.rule-add":
+            var body: Data?
+            if let path = str(r, "body-file") { body = try await ruleBodyFile(path, r, caller: caller) }
+            let serial = str(r, "from") != nil ? try await networkSerial(r) : nil
+            let rule = try await rules.add(try await network.makeRule(r.args, bodyFile: body, serial: serial))
+            return NetworkService.ruleJSON(rule)
+        case "network.rule-list": return await network.ruleList()
+        case "network.rule-remove": try await rules.remove(try need(r, "id")); return .object([:])
+        case "network.rule-enable", "network.rule-disable":
+            let id = try need(r, "id")
+            try await rules.setEnabled(id, r.command == "network.rule-enable")
+            return NetworkService.ruleJSON(try await rules.rule(id))
+        case "network.rule-clear": await rules.clear(); return .object([:])
+        default: throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(r.command)'")
+        }
+    }
+
+    /// `--body-file`, read by the daemon at creation (the addon never reads a path). A terminal reads only inside its
+    /// project and never what the sandbox never opens (Collie's data, secrets); the app anywhere. Both: at most 5 MiB.
+    private func ruleBodyFile(_ path: String, _ r: Request, caller: TerminalRecord?) async throws -> Data {
+        let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? NSHomeDirectory(), isDirectory: true)
+        let real = SignedAppCheck.realPath(URL(fileURLWithPath: path, relativeTo: base).absoluteURL)
+        if let me = caller {
+            let root = try await projectRoot(of: me)
+            guard ProjectRoot.contains(real, root: root),
+                  SandboxGrantStore.readRefusal(real, home: sandboxHomeDir, collie: config.paths.root) == nil else {
+                throw ProtocolError(code: .unauthorized, message: "--body-file must be inside your project (\(root.path)): copy it there first")
+            }
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: real)[.size] as? Int) ?? nil
+        guard let size else { throw ProtocolError(code: .notFound, message: "No such file: \(real)") }
+        guard size <= MapRule.maxBody else { throw ProtocolError(code: .invalidArgs, message: MapRuleError.bodyTooLarge(size).message) }
+        do { return try Data(contentsOf: URL(fileURLWithPath: real)) }
+        catch { throw ProtocolError(code: .notFound, message: "Cannot read \(real): \(error.localizedDescription)") }
     }
 
     private func flowId(_ r: Request) throws(ProtocolError) -> String {

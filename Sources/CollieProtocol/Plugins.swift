@@ -202,6 +202,7 @@ extension PluginRegistry {
         CommandSpec(name: "network.\(n)", summary: summary, params: params, timeoutSeconds: timeout)
     }
     private static let flowId = ParamSpec("id", .string, positional: true, required: true, help: "Flow id (from network.list)")
+    private static let ruleId = ParamSpec("id", .string, positional: true, required: true, help: "Rule id (from network.rule-list)")
 
     /// HTTP(S) interceptor for an Android emulator: collied runs mitmdump and points the emulator at it.
     /// `network.flow` carries a CollieNetwork.FlowSummary.
@@ -219,6 +220,24 @@ extension PluginRegistry {
             ncmd("get", "One flow with headers and bodies (decoded when possible)", [flowId]),
             ncmd("curl", "The flow's request as a cURL command", [flowId]),
             ncmd("clear", "Forget the captured flows"),
+            ncmd("rule-add", "Map local: answer matching requests with a made-up response (or --drop the connection) instead of the server. "
+                 + "First enabled rule wins. A terminal's rule waits for the user's OK on a card",
+                 [ParamSpec("name", .string, help: "Label"), ParamSpec("method", .string, help: "GET, POST… (any case)"),
+                  ParamSpec("host", .string, help: "Host glob (fnmatch: *.example.com)"), ParamSpec("path", .string, help: "Path glob, no query (/v1/pdp*)"),
+                  ParamSpec("query", .string, help: "k=v the query must hold (repeatable)", repeatable: true),
+                  ParamSpec("status", .int, help: "Status 100-599 (default 200, or the --from flow's)"),
+                  ParamSpec("header", .string, help: "\"Name: value\" (repeatable; content-encoding/length refused)", repeatable: true),
+                  ParamSpec("body", .string, help: "Body text"), ParamSpec("body-file", .string, help: "Body from a file in your project (≤ 5 MiB), read now"),
+                  ParamSpec("delay", .int, help: "Wait this many ms first (0-60000); with --drop, a timeout"),
+                  ParamSpec("drop", .flag, help: "Cut the connection instead of answering"),
+                  ParamSpec("from", .string, help: "Start from this captured flow's response (status, headers, decoded body); flags override"),
+                  ParamSpec("serial", .string, help: "Emulator of the --from flow (default: the attached one)"),
+                  ParamSpec("disabled", .flag, help: "Create it off")]),
+            ncmd("rule-list", "Map rules in order [{id,name,enabled,match,action,status,bodySize,delayMs}]"),
+            ncmd("rule-remove", "Delete a map rule", [ruleId]),
+            ncmd("rule-enable", "Turn a map rule on (a terminal's waits for the user's OK)", [ruleId]),
+            ncmd("rule-disable", "Turn a map rule off", [ruleId]),
+            ncmd("rule-clear", "Delete every map rule"),
         ],
         events: ["network.flow"],
         runsInDaemon: true)

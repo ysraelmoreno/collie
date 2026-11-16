@@ -1,7 +1,7 @@
 # Motor de design (figcraft) baixável — design
 
-Status: aprovado pelo dono (2026-11-16), revisado (revisão independente aplicada em 2026-11-16; dois pontos
-**pendentes do dono**, ver seção própria). Nada implementado. Plano: `docs/superpowers/plans/2026-11-16-figcraft-download.md`.
+Status: aprovado pelo dono (2026-11-16), revisado (revisão independente aplicada em 2026-11-16; P1 e P2 decididos
+pelo dono no mesmo dia). Nada implementado. Plano: `docs/superpowers/plans/2026-11-16-figcraft-download.md`.
 
 Unidades: tamanhos em MB decimais (1 MB = 10⁶ bytes), como mostra o `ByteCountFormatter` (`.file`) na UI. Os números
 de `du` (MiB) foram convertidos.
@@ -76,10 +76,11 @@ compilado e publicado por um workflow próprio, só quando o pin do figcraft mud
 ## Metas
 
 1. O dmg do Collie não leva o figcraft; o release do app não compila Rust.
-2. Preferências › Desenho e sandbox mostra o estado do motor (ausente, baixando, instalado vX, atualização disponível,
-   erro) com **Baixar**, **Cancelar**, **Atualizar**, **Remover**, e progresso em bytes.
+2. Preferências › Desenho e sandbox mostra o estado do motor (ausente, baixando, instalado vX, precisa atualizar ou
+   reinstalar, erro) com **Baixar**, **Cancelar**, **Atualizar**/**Reinstalar**, **Remover**, e progresso em bytes.
 3. O motor baixado é verificado (sha256 fixado no app; assinatura Developer ID Application do time, com identificador)
-   antes de ser usado; um arquivo que não confere nunca é extraído nem executado.
+   antes de ser usado; um arquivo que não confere nunca é extraído nem executado; um motor instalado que não é o do
+   pin nunca roda.
 4. O daemon resolve o motor (Application Support e bundle), troca de motor sem reiniciar o daemon, sem janela em que o
    servidor e o CLI vêm de builds diferentes, e sem perder arquivos de design.
 5. Sem motor, o painel Design, `collie design *` e a orientação dos agentes levam a "baixe o motor em Preferências",
@@ -89,8 +90,8 @@ compilado e publicado por um workflow próprio, só quando o pin do figcraft mud
 
 ## Não metas
 
-- Atualização automática do motor ou do app (Sparkle etc.): a atualização disponível vem de um app novo que fixa um
-  motor novo.
+- Atualização automática do motor ou do app (Sparkle etc.): a necessidade de atualizar o motor vem de um app novo que
+  fixa um motor novo; o download continua sendo um clique.
 - Manifesto remoto assinado / canal de atualização do motor independente do app (ver Abordagens).
 - Retomar download interrompido: rede caiu → falha (timeout de 60 s por requisição) e **Tentar de novo** recomeça do
   zero (51,4 MB).
@@ -118,8 +119,8 @@ A assinatura do app sela o recurso (adulterá-lo quebra a assinatura do app, que
 app em quarentena); o daemon não reconfere o selo em runtime. O daemon só aceita esse arquivo exato. Atualizar o
 motor = workflow publica → commit do novo pin → próximo release do app. Simples, sem chave nova, nenhum servidor no
 caminho de confiança (GitHub só entrega bytes). Custo: um motor novo só chega com um app novo — ok, porque o
-`DesignService` depende dos patches (ex.: 0005 fontes em runtime), então motor e app já andam juntos (ver Pendente do
-dono, P1).
+`DesignService` depende dos patches (ex.: 0005 fontes em runtime), então motor e app já andam juntos: o daemon só roda o motor
+de App Support cujo sha256 instalado bate com o pin (decisão P1).
 
 **B. Manifesto remoto assinado (ed25519/minisign) que o app consulta.** Permite motor novo sem release do app.
 Custo: chave de assinatura nova para guardar e girar, formato de manifesto, rollback/freeze attacks (versão mínima,
@@ -191,6 +192,7 @@ versão publicada nunca é refeita (§9). Mais um `.sha256` ao lado, para humano
    Distribution). Redundante com o hash de propósito: pega um pin errado num commit. Nos testes o checador é
    injetado; o caminho real com Security.framework só é provado à mão (Verificação).
 7. `xattr -dr com.apple.quarantine`, se houver (§4). `URLResourceValues.isExcludedFromBackup = true` no diretório.
+   Grava `figcraft/.collie-installed` com o sha256 do asset (o mesmo conferido no passo 4).
 8. **Troca** (§5): toma o `hold` do servidor, para clientes e servidor, troca `<root>/figcraft` com o staging, solta.
 9. Apaga o staging (que agora contém o motor antigo, se havia). Job `done`.
 
@@ -211,22 +213,31 @@ e apaga o staging. Nunca toca `<root>/design/`.
   (`otool -L`). Nada de entitlement novo no daemon.
 - **Notarização**: política do projeto e útil se o arquivo for aberto à mão com quarentena; não é o que protege o
   fluxo normal.
-- A cada subida do servidor (não a cada chamada), o daemon repete o passo 6 nos binários de App Support. Falhou →
-  trata como ausente com "Motor alterado, baixe de novo". TCTOU assumido (Não metas).
+- A cada subida do servidor (não a cada chamada), o daemon confere, para o motor de App Support, `.collie-installed`
+  == `pin.sha256` (senão: precisa atualizar/reinstalar, §5) e repete o passo 6 nos binários (falhou → "Motor
+  alterado, baixe de novo"). TCTOU assumido (Não metas).
 
 ### 5. Resolução e troca no daemon
 
 `FigcraftEngine` (CollieDaemonKit, função pura testável): candidatos em ordem —
-1. `COLLIE_FIGCRAFT_DIR` (sem checagem de versão);
-2. `<root>/figcraft` (Application Support), se layout válido e `engine.json` legível;
-3. `<Helpers>/../Resources/figcraft` (bundle: v0.1.0 e build local);
+1. `COLLIE_FIGCRAFT_DIR` (sem checagem de versão nem de hash);
+2. `<Helpers>/../Resources/figcraft` (bundle: v0.1.0 e build local; selado pela assinatura do app, sem marcador);
+3. `<root>/figcraft` (Application Support), se layout válido, `engine.json` legível **e** `.collie-installed` ==
+   `pin.sha256`;
 4. DEBUG: `vendor/figcraft` do repo.
 
-(Ordem 2→3 é decisão aprovada; ver Pendente do dono, P2.)
+Bundle antes de App Support (decisão P2): em release o bundle nunca tem motor (`release.sh` falha se tiver), então a
+ordem só decide no build local, onde vale o motor recém-compilado.
 
-Resultado: `{dir, version, source: env|appSupport|bundle|vendor}` ou ausente. Estado para a UI: `absent` |
-`installed(v)` | `updateAvailable(installed, pinned)` (instalado ≠ pin; continua usável, decisão aprovada; ver P1) |
-job `downloading/verifying/installing/failed/cancelled`.
+Resultado: `{dir, version, source: env|bundle|appSupport|vendor}` ou nenhum. Um `<root>/figcraft` válido cujo
+marcador falta ou difere do pin **não roda** (decisão P1). Estado para a UI:
+- `absent`: nenhum motor;
+- `installed(v, source)`: motor em uso;
+- `needsUpdate(installed, pinned, reinstall)`: há `<root>/figcraft` que não é o do pin e nenhum candidato roda;
+  `reinstall = true` quando a versão instalada não é mais velha que a do pin (downgrade de app, mesma versão com outro
+  hash, ou marcador ausente) — a UI mostra **Reinstalar** em vez de **Atualizar**. Comparação de versão: números de
+  `X.Y.Z` e depois `N` de `-cN`, em ordem;
+- job `downloading/verifying/installing/failed/cancelled`.
 
 **Só o daemon resolve.** `design.link` passa a responder `{editLink, web: "<dir>/web", version}` e o painel serve o
 web desse diretório: app e daemon nunca escolhem diretórios diferentes (antes, ordem e ambiente diferiam).
@@ -245,35 +256,39 @@ responde `.unavailable` "motor de design sendo trocado, tente de novo" e nunca c
 o antigo). Painéis Design abertos reconectam sozinhos (comportamento atual); arquivos ficam em `<root>/design/server`,
 e o `stop()` (TERM) é o mesmo do backup.
 
-Sem motor, `ensureRunning` lança `.unavailable` com mensagem por quem pede (substitui `notBundled`):
-- app/CLI do dono (admin): "Motor de design não instalado. Baixe em Preferências › Desenho e sandbox (collie design
-  engine install)";
-- terminal: "Motor de design não instalado: peça ao usuário para baixá-lo em Preferências › Desenho e sandbox do
-  Collie." (sem o comando: o terminal não pode rodá-lo).
+Sem motor que rode, `ensureRunning` lança `.unavailable` com mensagem por estado e por quem pede (substitui
+`notBundled`):
+- `absent`, admin (app/CLI do dono): "Motor de design não instalado. Baixe em Preferências › Desenho e sandbox
+  (collie design engine install)"; terminal: "Motor de design não instalado: peça ao usuário para baixá-lo em
+  Preferências › Desenho e sandbox do Collie.";
+- `needsUpdate`, admin: "Motor de design desatualizado. Atualize em Preferências › Desenho e sandbox (collie design
+  engine install)"; terminal: "Motor de design desatualizado: peça ao usuário para atualizá-lo em Preferências ›
+  Desenho e sandbox do Collie." (o terminal nunca recebe o comando: não pode rodá-lo).
 
-**Orientação**: `CollieOrientation.text` recebe `figcraftAvailable: Bool`. Sem motor, `.figcraft` e `.ask` caem para a
-linha de `.artifact` (página na Prévia) + "FigCraft indisponível (motor não instalado); se o usuário quiser FigCraft,
-peça para baixá-lo em Preferências."
+**Orientação**: `CollieOrientation.text` recebe `figcraftAvailable: Bool` (falso em `absent` e `needsUpdate`). Sem
+motor, `.figcraft` e `.ask` caem para a linha de `.artifact` (página na Prévia) + "FigCraft indisponível (motor não
+instalado ou desatualizado); se o usuário quiser FigCraft, peça para baixá-lo em Preferências."
 
 ### 6. Comandos (só app: rota própria com `adminOnly`, como `android.*`)
 
 Rota `if req.command.hasPrefix("design.engine.")` em `CommandRouter` **antes** do despacho de plug-ins, com
 `try await adminOnly(r, peer:)`; `exposedToMCP: false`.
 
-- `design.engine.status` → `{state, installed?: {version, source}, pinned?: {version, size}, job?: {phase, bytes,
-  total, error?}}` (`pinned` ausente se o bundle não tem pin).
+- `design.engine.status` → `{state: "absent"|"installed"|"needsUpdate", installed?: {version, source},
+  reinstall?: Bool, pinned?: {version, size}, job?: {phase, bytes, total, error?}}` (`pinned` ausente se o bundle não
+  tem pin; `installed` em `needsUpdate` descreve o `<root>/figcraft` parado).
 - `design.engine.install` → `{job}` na hora (o mesmo job se já há um).
-- `design.engine.cancel`; `design.engine.remove` (`busy` com job ou `hold`; `notFound` se o motor ativo não é de App
-  Support).
+- `design.engine.cancel`; `design.engine.remove` (`busy` com job ou `hold`; `notFound` se não há
+  `<root>/figcraft`; funciona também em `needsUpdate`).
 
 CLI: `collie design engine [status|install|remove]` com a credencial do app (como `android.*`).
 
 ### 7. UX
 
 Preferências › **Desenho e sandbox**, nova seção "Motor de design" acima de `designSection`; selo na barra como o
-Android (`↓` baixando, `!` erro ou atualização), lido no laço de 5 s já existente (`PreferencesView.swift:85`). Na
+Android (`↓` baixando, `!` erro ou precisa atualizar/reinstalar), lido no laço de 5 s já existente (`PreferencesView.swift:85`). Na
 página, poll de `design.engine.status` 1 s com job, 3 s sem (como `AndroidPreferences`). Palavras-chave da página
-ganham "motor baixar instalar remover atualizar". Tamanhos com `ByteCountFormatter` (`.file`).
+ganham "motor baixar instalar remover atualizar reinstalar". Tamanhos com `ByteCountFormatter` (`.file`).
 
 ```
 Motor de design (FigCraft)
@@ -282,24 +297,30 @@ Motor de design (FigCraft)
   verificando:  Conferindo assinatura…
   instalado:    v0.7.0-c1 · 114 MB em disco · Application Support      [Remover]
                 (bundle: "v0.7.0 · embutido no app" e sem Remover)
-  atualização:  Instalado v0.7.0-c1 · disponível v0.8.0-c1 (53,2 MB)   [Atualizar] [Remover]
-                Os painéis Design abertos vão reconectar.
+  atualizar:    Motor v0.7.0-c1 desatualizado: este Collie usa v0.8.0-c1. O painel Design
+                fica indisponível até atualizar.                          [Atualizar (53,2 MB)] [Remover]
+  reinstalar:   Motor v0.9.0-c1 não é o deste Collie (v0.8.0-c1).          [Reinstalar (53,2 MB)] [Remover]
+                (também quando falta o marcador ou o hash difere na mesma versão)
   erro:         Falhou: <mensagem>                                     [Tentar de novo]
 ```
 
 **Remover** pede confirmação ("Os arquivos de design continuam; o painel Design fica indisponível até baixar de
 novo."). Painel Design: o `DesignSchemeHandler` é registrado **sempre** no `init`, com raiz mutável (nil = 404), e a
-raiz vem do `web` da resposta de `design.link` a cada `connect()`. Sem motor (erro `notInstalled` do daemon), o painel
-mostra "Motor de design não instalado" + botão **Abrir Preferências** (página Desenho e sandbox) no lugar de
-**Reconectar**.
+raiz vem do `web` da resposta de `design.link` a cada `connect()`. Sem motor que rode (erros `notInstalled`/`needsUpdate` do
+daemon), o painel mostra "Motor de design não instalado" ou "Motor de design desatualizado" + botão **Abrir
+Preferências** (página Desenho e sandbox) no lugar de **Reconectar**.
 
 ### 8. Migração
 
 - v0.1.0 instalada: não muda nada (só conhece o bundle).
 - v0.1.0 → v0.2 (dmg sem motor): o motor sai junto com o app velho; o daemon novo acha `absent`; Preferências e o
   painel oferecem **Baixar**. Um clique, 51,4 MB. Arquivos em `<root>/design/` intactos. A nota da release diz isso.
+- v0.2 → v0.3 com pin novo: o `<root>/figcraft` antigo não bate com o pin novo → `needsUpdate`; design fica
+  indisponível até **Atualizar** (um clique). A nota da release diz isso quando o pin muda.
+- Volta de v0.3 para v0.2 (motor mais novo instalado): `needsUpdate` com `reinstall`; **Reinstalar** baixa o do pin.
 - Volta de v0.2 para v0.1.0: v0.1.0 usa o próprio bundle; `<root>/figcraft` fica parado, inofensivo.
-- Build local com `vendor/figcraft`: continua embutindo (decisão aprovada), `source: bundle` (ver P2).
+- Build local com `vendor/figcraft`: continua embutindo (decisão aprovada) e vence o App Support (decisão P2),
+  `source: bundle`.
 
 ### 9. CI e build local
 
@@ -344,55 +365,34 @@ mostra "Motor de design não instalado" + botão **Abrir Preferências** (págin
 - Riscos: (a) pin com hash errado → todo usuário vê "não confere": mitigado pelo "Conferir motor" do `release.yml` e
   pelo passo 2 do `figcraft.yml`; (b) release do motor apagada → 404; nunca apagar tags `figcraft-v*`; (c) GitHub fora
   do ar → só o primeiro download falha; (d) mudar o `figcraft.yml` (até comentário) exige `-c<N+1>` e um build novo:
-  custo aceito em troca de pegar mudança de flags.
+  custo aceito em troca de pegar mudança de flags; (e) atualizar o app sem rede quando o pin mudou deixa design
+  indisponível até baixar o motor novo (decisão P1: preferido a rodar combinação app/motor não testada).
 
 ## Decisões do dono
 
 - dmg sem figcraft; botão em Preferências com progresso, remover e atualizar.
-- Ordem de busca: Application Support → bundle.
 - Sem motor, painel mostra "baixe o motor" em vez de erro.
 - Workflow separado, só quando o pin muda; asset assinado Developer ID e notarizado; o app guarda o sha256 fixado.
-- Aprovadas em 2026-11-16 (eram minhas chamadas 4–7): versão `0.7.0-c<N>` / tag `figcraft-v0.7.0-c<N>`; motor
-  desatualizado continua usável com aviso; build local continua embutindo quando existe `vendor/figcraft`; só o botão
-  de baixar (com o tamanho) como aviso antes do download.
-
-## Pendente do dono
-
-**P1. Motor desatualizado continua usável (decisão aprovada) × motor e app andam juntos.** A revisão aponta tensão:
-a abordagem A se justifica porque o `DesignService` depende dos patches de cada versão (ex.: 0005), então um motor
-antigo com app novo pode quebrar comandos de design de um jeito confuso; e a re-checagem na subida confere só a
-assinatura, não o hash, então qualquer motor antigo assinado pelo time roda (downgrade).
-- *Opção atual (aprovada)*: instalado ≠ pin roda, com "Atualização disponível". Vantagem: quem atualiza o app offline
-  continua desenhando. Custo: combinação app/motor não testada em produção; downgrade aceito.
-- *Opção do revisor*: gravar o sha256 do asset instalado em `<root>/figcraft/.collie-installed`; motor de App Support
-  só roda se bater com o pin; senão estado "Atualize o motor de design (53,2 MB)" e o painel bloqueia até atualizar;
-  motor mais novo que o pin aparece como "Reinstalar".
-- *Recomendação*: a do revisor. Pela abordagem A, app novo e motor novo sempre chegam juntos; bloquear custa um
-  clique de 51 MB uma vez por troca de pin (poucas por ano), e elimina a única combinação que nunca foi testada. O
-  caso offline-depois-de-atualizar é raro e a mensagem é clara.
-- Afeta o plano: Tasks 1, 2, 3 e 5 (marcadas "depende da decisão P1").
-
-**P2. Ordem App Support → bundle (decisão aprovada) × build local de dev.** O app de dev usa a mesma
-`Paths.defaultRoot`; se o dono baixou o motor uma vez, o `vendor/figcraft` recém-patchado embutido no build local é
-ignorado e ele testa o motor velho sem perceber.
-- *Opção atual (aprovada)*: App Support → bundle. Dev precisa remover o motor baixado ou usar `COLLIE_FIGCRAFT_DIR`.
-- *Opção do revisor A*: bundle vence quando existe. *Opção B*: App Support só se bater com o pin.
-- *Recomendação*: bundle vence quando existe (opção A). Em release o bundle nunca tem motor (`release.sh` falha se
-  tiver), então em produção a ordem é indiferente e a v0.1.0 nem lê App Support; a ordem só decide no build local, e
-  aí o certo é o motor que acabou de ser compilado. A opção B não resolve: patch novo sem subir o pin ainda perde para
-  o App Support que bate com o pin.
-- Afeta o plano: Task 1 e Task 6 (marcadas "depende da decisão P2").
+- Aprovadas em 2026-11-16 (eram minhas chamadas 4, 6 e 7): versão `0.7.0-c<N>` / tag `figcraft-v0.7.0-c<N>`; build
+  local continua embutindo quando existe `vendor/figcraft`; só o botão de baixar (com o tamanho) como aviso antes do
+  download.
+- **P1 (2026-11-16, substitui "motor desatualizado continua usável")**: o daemon grava `<root>/figcraft/.collie-installed`
+  com o sha256 do asset e só roda o motor de App Support se ele bater com o pin; senão `needsUpdate` ("Atualize o
+  motor"), e motor mais novo que o pin (downgrade do app) aparece como **Reinstalar**. Motivo: motor e app andam
+  juntos (patches), e isso elimina a combinação nunca testada e o downgrade.
+- **P2 (2026-11-16, substitui a ordem "Application Support → bundle")**: bundle primeiro, depois App Support. Motivo:
+  em release o bundle nunca tem motor, então a ordem só decide no build local, onde vale o motor recém-compilado.
 
 ## Minhas chamadas (conferir)
 
-1. **Hash fixado no app (A), sem manifesto remoto.** "Atualização disponível" só aparece depois de atualizar o app.
+1. **Hash fixado no app (A), sem manifesto remoto.** "Precisa atualizar" só aparece depois de atualizar o app.
 2. **Daemon baixa**, não o app (o agente não tem comando para isso: rota `adminOnly`).
 3. **Diretório `<root>/figcraft`** (= `~/Library/Application Support/Collie/figcraft`), um por raiz, sem versões lado a
    lado; troca por `RENAME_SWAP`.
 4. **Versão `0.7.0-c<N>`** (aprovada) e tag `figcraft-v0.7.0-c1`.
-5. **Motor desatualizado continua usável** (aprovada; ver P1).
+5. ~~Motor desatualizado continua usável~~: substituída pela decisão P1 (bloqueia).
 6. **Sem confirmação extra** (aprovada) além do clique em "Baixar (51,4 MB)"; Remover pede confirmação.
-7. **Build local continua embutindo** (aprovada; ver P2).
+7. **Build local continua embutindo** (aprovada) e vence o App Support (decisão P2).
 8. **Pin atualizado por commit manual** depois do workflow (não por PR automático): menos permissões no workflow.
 9. **Requisito de assinatura com identificador e Developer ID Application**, conferido no install, a cada subida do
    servidor e no "Conferir motor" do `release.yml`; team ID só no pin.
@@ -415,11 +415,12 @@ assinatura (não há Mach-O), só hash.
 
 Testes só com `--filter`, nunca a suíte inteira:
 
-- `FigcraftEngineTests`: ordem de candidatos; layout inválido ignorado; `updateAvailable` quando versão ≠ pin;
+- `FigcraftEngineTests`: ordem env → bundle → App Support; layout inválido ignorado; App Support sem marcador ou com
+  marcador ≠ pin não roda e dá `needsUpdate` (`reinstall` conforme a versão); comparação de versões;
   staging órfão apagado.
 - `FigcraftPinInputsTests` (Task 7): `inputs` do pin = saída de `scripts/figcraft-inputs.sh`.
 - `FigcraftInstallerTests` (fetch e checador de assinatura injetados, sem rede): sucesso; sha256 errado → nada
-  extraído, motor anterior intacto, staging limpo, sem retry; symlink/setuid no tar → recusado; assinatura recusada;
+  extraído, motor anterior intacto, staging limpo, sem retry; `.collie-installed` gravado com o sha256 do asset; symlink/setuid no tar → recusado; assinatura recusada;
   espaço insuficiente com `size + unpackedSize + 100 MB`; cancelar; install concorrente devolve o mesmo job; remover
   com `hold` → `busy`; remover não toca `<root>/design/`.
 - `FigcraftServerTests` / `DesignCommandTests`: troca sob `hold` sem cair no bundle; cliente novo usa o motor do

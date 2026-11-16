@@ -63,3 +63,12 @@ import CollieProtocol
     #expect(PreferencePage.androidBadge(s("install", needs: "needsLicense")) == "↓")
     #expect(PreferencePage.androidBadge(s(nil, needs: "ready")) == nil)
 }
+
+/// `collieOpenPreferences` (posted by the Design panel's Abrir Preferências): its object names the page.
+@Test func openRequestNamesPage() {
+    #expect(PreferencePage.requested("desenho") == .desenho)
+    #expect(PreferencePage.requested("android") == .android)
+    #expect(PreferencePage.requested("nada") == nil)
+    #expect(PreferencePage.requested(nil) == nil)
+    #expect(PreferencePage.requested(3) == nil)
+}

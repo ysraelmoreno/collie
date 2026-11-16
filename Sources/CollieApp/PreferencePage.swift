@@ -75,5 +75,11 @@ enum PreferencePage: String, CaseIterable {
         }
     }
 
+    /// Defaults key for the page a `collieOpenPreferences` notification asked for: `PreferencesView` shows it and clears
+    /// it, whether its window was already open or opens now. ponytail: defaults as the mailbox, the window may not exist yet.
+    static let requestKey = "preferences.requestedPage"
+    /// The page named by a `collieOpenPreferences` notification's object (`"desenho"`); nil for anything else.
+    static func requested(_ object: Any?) -> PreferencePage? { (object as? String).flatMap(PreferencePage.init(rawValue:)) }
+
     private static func fold(_ s: String) -> String { s.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil) }
 }

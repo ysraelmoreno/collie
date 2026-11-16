@@ -332,6 +332,11 @@ struct ContentView: View {
         .modifier(PairingConfirmHost(client: client))   // a phone read the pairing QR: the Mac's click (remote API)
         .onChange(of: client.panels) { _, ps in store.sync(ps) }   // views of closed panels are released
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.closeAll() }
+        // the Design panel's Abrir Preferências (a plug-in has no openSettings): open Preferências on the page it names
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("collieOpenPreferences"))) { n in
+            if let p = PreferencePage.requested(n.object) { UserDefaults.standard.set(p.rawValue, forKey: PreferencePage.requestKey) }
+            openSettings()
+        }
         .onAppear {
             client.panelHandler = { [store] panel, command, args, timeout throws(ProtocolError) in
                 if panel == HostTarget.importer, command.hasPrefix("deck.") {

@@ -1,22 +1,29 @@
-figcraft (embedded in Collie)
+figcraft (Collie's design engine)
 
-Collie bundles figcraft-server, figcraft-cli and the figcraft web UI (Contents/Resources/figcraft/),
-built from figcraft v0.7.0 (https://github.com/storytold/figcraft, commit
-47438dd4a2e8b49a7e6bb3dfd480262dadc37f12), dual-licensed under the MIT License or the Apache
-License, Version 2.0, at your option.
+Collie uses figcraft-server, figcraft-cli and the figcraft web UI, built from figcraft v0.7.0
+(https://github.com/storytold/figcraft, commit 47438dd4a2e8b49a7e6bb3dfd480262dadc37f12),
+dual-licensed under the MIT License or the Apache License, Version 2.0, at your option.
+Release builds of Collie don't ship it: it is downloaded on demand (Preferences › Desenho e sandbox)
+into <root>/figcraft/ (by default ~/Library/Application Support/Collie/figcraft/), with this
+notice and the licences in figcraft/licenses/. Local builds may embed it in
+Contents/Resources/figcraft/ instead.
 
 Changes made by Collie (patches/figcraft/ in the Collie source):
 - 0001-collie-branding.patch: the About window and help link point to the upstream repository and
   its licence; third-party product names and links removed.
 - 0002-headless-read-poll.patch: headless MCP reads poll the live session first.
+- 0003-inspect-hyperlink.patch: node inspection reports a text node's hyperlink.
+- 0004-web-auto-join.patch: the web UI joins the session in its #collie=1&join=<link> fragment
+  without the confirmation dialog (only links Collie's Design panel puts there).
+- 0005-runtime-fonts.patch: fonts can be added at run time (the fonts Collie downloads).
 - Built with FIGCRAFT_DEFAULT_SERVER empty: no public collaboration server is built in.
 
-The upstream NOTICE, LICENSE-APACHE and LICENSE-MIT are in Contents/Resources/figcraft/licenses/.
+The upstream NOTICE, LICENSE-APACHE and LICENSE-MIT are in figcraft/licenses/.
 
 Fonts: the binaries and web UI embed fonts from craft-fonts
 (https://github.com/storytold/craft-fonts, commit 43913056ce82a3fdad0ef69f6b88d1dc922a8104;
 the web UI embeds only Inter), licensed under the SIL Open Font License 1.1. Each family's
-licence text is in Contents/Resources/figcraft/licenses/OFL-<family>.txt.
+licence text is in figcraft/licenses/OFL-<family>.txt.
 
 Rust crate dependencies keep their own licenses (MIT, Apache-2.0, BSD, ISC, Zlib, OFL,
 CDLA-Permissive-2.0 and similar permissive licenses); see each crate's metadata in figcraft's

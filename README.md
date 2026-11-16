@@ -14,9 +14,19 @@ SwiftUI/AppKit. Antes chamado Orq.
 - **Rebanhos:** equipes prontas de terminais e painéis.
 - **Sandbox** (Seatbelt) em todo terminal, modo aberto (padrão) ou estrito.
 
-## Build
+## Instalar
 
-Requer macOS 15 e Swift 6.2.
+Baixe o [`Collie-0.1.0.dmg`](https://github.com/ysraelmoreno/collie/releases/tag/v0.1.0) (macOS 15+, só Apple Silicon)
+e arraste o app para `/Applications` antes do primeiro uso (em `~/Documents` ou `~/Downloads` o daemon trava na permissão
+de pastas). O app é assinado com Developer ID e notarizado pela Apple, então o Gatekeeper o abre normalmente. Todas as
+versões: [Releases](https://github.com/ysraelmoreno/collie/releases/latest). Para atualizar, substitua o app e use
+**Reiniciar serviço** quando o app pedir.
+
+Vindo do Orq: feche o `Orq.app`, abra o Collie (dados e serviço são migrados) e apague o `Orq.app`.
+
+## Compilar do código
+
+Requer macOS 15 e Swift 6.2. Instale o `build/Collie.app` gerado em `/Applications`, como acima.
 
 ```sh
 scripts/fetch-weblibs.sh   # obrigatório
@@ -35,12 +45,8 @@ scripts/make-signing-cert.sh    # assinatura estável, mantém permissões do ma
 
 Desenvolvimento: `swift build` e `swift test` (rode os testes fora de um terminal do Collie; o sandbox não aninha).
 
-## Instalar
-
-Copie `build/Collie.app` para `/Applications` antes do primeiro uso (em `~/Documents` ou `~/Downloads` o daemon trava na
-permissão de pastas). Para atualizar, substitua o app e use **Reiniciar serviço** quando o app pedir.
-
-Vindo do Orq: feche o `Orq.app`, abra o Collie (dados e serviço são migrados) e apague o `Orq.app`.
+Release próprio (`.dmg` assinado e notarizado, precisa de conta Apple Developer): `scripts/release.sh`, configuração em
+[docs/release.md](docs/release.md).
 
 ## Uso rápido
 

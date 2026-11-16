@@ -386,6 +386,9 @@ actor CommandRouter {
             if req.command.hasPrefix("access.") {   // request/list: a terminal; grant/deny/revoke: the app alone
                 return Response(id: req.id, ok: true, result: try await accessCommand(req, peer: peer))
             }
+            if req.command.hasPrefix("design.engine.") {   // the app's alone; before the design plug-in's commands
+                return Response(id: req.id, ok: true, result: try await designEngineCommand(req, peer: peer))
+            }
             if req.command.hasPrefix("android.") {   // the app's alone
                 return Response(id: req.id, ok: true, result: try await androidCommand(req, peer: peer))
             }

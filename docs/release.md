@@ -75,3 +75,33 @@ Como criar (só o dono da conta; nada disso vai para o git nem para outra pessoa
 
 Se a notarização passar de 4 h o job falha com o id da submissão no log; rode de novo pelo Run workflow com a
 mesma tag (é uma submissão nova).
+
+## Motor de design (figcraft)
+
+O motor do painel Design é um download à parte, fixado por `Resources/figcraft-engine.json` (o pin: versão, URL,
+tamanhos, sha256 e team ID). `.github/workflows/figcraft.yml` o publica numa release própria `figcraft-v<versão>`
+(`--prerelease --latest=false`: nunca vira a "latest", o link do `Collie.dmg` continua). Roda num push na `main` que
+mexe nos insumos ou no pin, ou à mão (Actions > figcraft > Run workflow). Mesmos secrets da tabela acima; nunca roda
+em pull request.
+
+- **Insumos**: `scripts/figcraft-inputs.sh` imprime o hash de `scripts/build-figcraft.sh`,
+  `scripts/package-figcraft.sh`, `scripts/figcraft-inputs.sh`, `.github/workflows/figcraft.yml` e
+  `patches/figcraft/*.patch`. Mudou qualquer um (até um comentário no workflow): suba o `-c<N>` da `version` e da
+  `url` do pin, ponha a saída do script em `inputs` e zere `sha256`/`size`/`unpackedSize`. O workflow e o teste
+  `FigcraftPinInputsTests` recusam um `inputs` que não bate.
+- **Release já publicada**: o workflow só confere que `sha256` e `size` do pin batem com o asset publicado (pin com
+  zeros: imprime os valores e sai verde). Uma versão publicada nunca é refeita (tar, gzip e `--timestamp` não são
+  reproduzíveis); nunca apague uma tag `figcraft-v*`.
+- **Não publicada**: build do figcraft a frio (cache só das ferramentas e do registry do cargo), keychain temporário
+  (`scripts/ci/signing-keychain.sh`, o mesmo do release), `scripts/package-figcraft.sh` assina os dois binários
+  (Developer ID, hardened runtime, `--timestamp`, identificadores `figcraft-server`/`figcraft-cli`), notariza o zip
+  de `bin/` e gera `build/figcraft-<versão>-arm64.tar.gz` + `.sha256`. A release nasce **draft**, recebe os dois
+  arquivos, o asset baixado é conferido e só então ela é publicada. Draft que sobrou de uma rodada que caiu é
+  apagado na rodada seguinte.
+- **Depois da primeira publicação**: copie `sha256`, `size` e `unpackedSize` do resumo da rodada (ou do `::notice::`)
+  para o pin num commit na `main`; a rodada que esse commit dispara confere e sai verde. O `teamId` do pin é o OU do
+  certificado Developer ID (`security find-identity -v -p codesigning`, o `(TEAMID)` do nome).
+- Local (sem CI): `scripts/build-figcraft.sh`, depois
+  `scripts/package-figcraft.sh "Developer ID Application: Seu Nome (TEAMID)"` com as mesmas credenciais de
+  notarização do `release.sh` (`COLLIE_SKIP_NOTARIZE=1` só assina e empacota). Ele imprime `sha256=`, `size=` e
+  `unpackedSize=`.

@@ -309,6 +309,16 @@ extension NetworkServiceTests {
         await #expect(throws: ProtocolError.self) { try await s.makeRule(["header": "no colon"], bodyFile: nil, serial: nil) }
     }
 
+    @Test func emptyGlobRefusedAndEmptyBodyKept() async throws {
+        let s = try await captured()
+        for k in ["host", "path"] {
+            await #expect(throws: ProtocolError.self) { try await s.makeRule([k: " ", "status": 200], bodyFile: nil, serial: nil) }
+        }
+        // the form emptied the captured body: the rule answers with no body, not the captured one
+        let empty = try await s.makeRule(["from": "f1", "body": ""], bodyFile: nil, serial: "emulator-5560")
+        #expect(empty.body?.isEmpty ?? true)
+    }
+
     @Test func ruleListShowsEnabledState() async throws {
         let s = rig().service
         _ = try await s.rules.add(try await s.makeRule(["path": "/a", "status": 404], bodyFile: nil, serial: nil))
@@ -351,6 +361,24 @@ extension NetworkServiceTests {
             let admin = try await send(p, Request(id: "a", token: d.adminToken, command: "network.rule-add",
                                                   args: ["path": "/y", "body-file": .string(outside.path)]))
             #expect(admin.ok, "\(admin)")
+        }
+    }
+
+    @Test func bodyFileFifoAndHardLinkRefused() async throws {
+        try await withDaemon { d, p in
+            let t = try await shepherd(d, p, panel: true)
+            let fifo = "/tmp/collie-fifo-\(UUID().uuidString.prefix(6))"
+            let outside = FileManager.default.temporaryDirectory.appendingPathComponent("collie-secret-\(UUID().uuidString.prefix(6))")
+            let link = "/tmp/collie-link-\(UUID().uuidString.prefix(6))"
+            defer { unlink(fifo); unlink(link); try? FileManager.default.removeItem(at: outside) }
+            #expect(mkfifo(fifo, 0o600) == 0)
+            let f = try await call(p, t, "network.rule-add", ["path": "/x", "body-file": .string(fifo)])   // must not hang the daemon
+            #expect(f.error?.code == .invalidArgs, "\(f)")
+            try Data("secret".utf8).write(to: outside)
+            #expect(Darwin.link(outside.path, link) == 0)
+            let l = try await call(p, t, "network.rule-add", ["path": "/x", "body-file": .string(link)])
+            #expect(l.error?.code == .unauthorized, "\(l)")
+            #expect(try await call(p, t, "list").ok)   // the daemon still answers
         }
     }
 

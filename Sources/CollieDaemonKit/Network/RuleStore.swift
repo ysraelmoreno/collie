@@ -12,7 +12,13 @@ actor RuleStore {
 
     init(file: URL, active: URL) {
         self.file = file; self.active = active
-        let saved = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode([MapRule].self, from: $0) } ?? []
+        var saved: [MapRule] = []
+        if let data = try? Data(contentsOf: file) {
+            if let rules = try? JSONDecoder().decode([MapRule].self, from: data), (try? MapRule.validate(rules)) != nil { saved = rules }
+            else {   // unreadable (another version, a hand edit): kept aside, never overwritten
+                try? FileManager.default.moveItem(at: file, to: file.appendingPathExtension("bad-\(Int(Date().timeIntervalSince1970))"))
+            }
+        }
         rules = saved.map { var r = $0; r.enabled = false; return r }
         try? Self.write(MapRule.activeFile([]), to: active)
         try? Self.write((try? JSONEncoder().encode(rules)) ?? Data("[]".utf8), to: file)

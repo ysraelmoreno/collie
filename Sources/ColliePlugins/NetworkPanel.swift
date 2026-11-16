@@ -72,7 +72,10 @@ public struct MapForm: Equatable, Sendable {
     /// The flow's method, host, path (no query) and query; its status, useful headers and decoded body.
     public init(_ d: FlowDetail) {
         let f = d.flow, u = URLComponents(string: f.url)
-        from = f.id; method = f.method; host = u?.host ?? ""; path = u?.path ?? ""; query = u?.percentEncodedQuery ?? ""
+        // the addon globs mitmproxy's raw path (glob characters escaped here) and compares decoded query values
+        from = f.id; method = f.method; host = u?.host ?? ""
+        path = (u?.percentEncodedPath ?? "").map { "[*?".contains($0) ? "[\($0)]" : String($0) }.joined()
+        query = (u?.queryItems ?? []).map { "\($0.name)=\($0.value ?? "")" }.joined(separator: "&")
         status = f.status ?? 200
         headers = f.resHeaders.filter { !["content-encoding", "content-length", "transfer-encoding", "date"].contains($0.name.lowercased()) }
             .map { "\($0.name): \($0.value)" }.joined(separator: "\n")

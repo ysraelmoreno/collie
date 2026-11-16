@@ -74,6 +74,19 @@ private func active(_ url: URL) throws -> ActiveFile { try JSONDecoder().decode(
         #expect(await RuleStore(file: file, active: act).all() == [off])
     }
 
+    @Test func unreadableSavedFileIsKeptAside() async throws {
+        let d = dir(); defer { try? FileManager.default.removeItem(at: d) }
+        let file = d.appendingPathComponent("rules.json")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        try Data("[{\"id\":\"x\",\"action\":{\"future\":{}}}]".utf8).write(to: file)
+        let s = RuleStore(file: file, active: d.appendingPathComponent("run/rules.json"))
+        #expect(await s.all().isEmpty)
+        let aside = try FileManager.default.contentsOfDirectory(atPath: d.path).filter { $0.hasPrefix("rules.json.bad-") }
+        let bad = try #require(aside.first)
+        let text = try String(contentsOf: d.appendingPathComponent(bad), encoding: .utf8)
+        #expect(aside.count == 1 && text.contains("future"))
+    }
+
     @Test func removeAndClear() async throws {
         let d = dir(); defer { try? FileManager.default.removeItem(at: d) }
         let act = d.appendingPathComponent("run/rules.json")

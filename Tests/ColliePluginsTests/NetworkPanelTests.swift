@@ -28,12 +28,13 @@ private func summary(_ id: String, _ method: String = "GET", host: String = "api
     return .object(o)
 }
 
-private func flowJSON(_ id: String, resBody: Data = Data(#"{"ok":true}"#.utf8), encoding: String? = nil, text: String? = nil) -> JSONValue {
+private func flowJSON(_ id: String, resBody: Data = Data(#"{"ok":true}"#.utf8), encoding: String? = nil, text: String? = nil,
+                      url: String = "https://api.example.com/v1/items?page=2") -> JSONValue {
     var body: [String: JSONValue] = ["size": .number(Double(resBody.count)), "truncated": .bool(false), "data": .string(resBody.base64EncodedString())]
     if let encoding { body["contentEncoding"] = .string(encoding) }
     var o: [String: JSONValue] = [
         "id": .string(id), "serial": .string("emulator-5554"), "started": .number(1_790_000_000), "method": .string("GET"),
-        "url": .string("https://api.example.com/v1/items?page=2"), "httpVersion": .string("HTTP/2.0"),
+        "url": .string(url), "httpVersion": .string("HTTP/2.0"),
         "reqHeaders": .array([.object(["name": .string("accept"), "value": .string("application/json")])]),
         "status": .number(200), "reason": .string("OK"),
         "resHeaders": .array([.object(["name": .string("content-type"), "value": .string("application/json")])]),
@@ -446,6 +447,15 @@ extension NetworkPanelTests {
         form.bodyFile = "/Users/me/json/discount_pdp.json"   // "escolher um arquivo": the daemon reads it, the typed body is dropped
         let f = form.args(serial: "emulator-5554")
         #expect(f["body-file"] == "/Users/me/json/discount_pdp.json" && f["body"] == nil)
+    }
+
+    @Test func mapFormKeepsRawPathAndDecodedQuery() throws {
+        // the addon globs mitmproxy's raw path and compares decoded query values
+        let v = flowJSON("e", url: "https://h.example.com/busca/caf%C3%A9/a%5B1%5D*?q=a%20b&x=1%2B2")
+        let d = try #require(NetworkPanelModel.decode(FlowDetail.self, v))
+        let form = MapForm(d)
+        #expect(form.path == "/busca/caf%C3%A9/a%5B1%5D[*]")
+        #expect(form.query == "q=a b&x=1+2")
     }
 
     @Test func emptyMatchShowsWarning() async throws {

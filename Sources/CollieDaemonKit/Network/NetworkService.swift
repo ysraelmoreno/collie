@@ -242,7 +242,13 @@ actor NetworkService {
             headers.removeAll { $0.name.lowercased() == h.name.lowercased() }
             headers.append(h)
         }
-        switch (s("body"), bodyFile) {
+        for k in ["host", "path"] {   // given but blank: refused, never a silent "match any"
+            if case .string(let v)? = a[k], v.trimmingCharacters(in: .whitespaces).isEmpty {
+                throw ProtocolError(code: .invalidArgs, message: "--\(k) cannot be empty; leave it out to match any \(k)")
+            }
+        }
+        let text: String? = if case .string(let t)? = a["body"] { t } else { nil }   // "" = an empty body, not the captured one
+        switch (text, bodyFile) {
         case (_?, _?): throw ProtocolError(code: .invalidArgs, message: "Pass --body or --body-file, not both")
         case (let t?, nil): body = Data(t.utf8)
         case (nil, let d?): body = d

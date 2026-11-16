@@ -31,9 +31,11 @@ scripts/release.sh          # gera build/Collie-<versão>.dmg assinado, notariza
 ## Pelo GitHub Actions
 
 `.github/workflows/release.yml` roda num push de tag `v*` ou à mão (Actions > release > Run workflow, com uma tag
-que já existe). Nunca roda em pull request. Runner `macos-26` (arm64, Xcode 26). Ele regera o `vendor/` (o figcraft
-fica em cache pelo hash de `scripts/build-figcraft.sh` e `patches/figcraft/`; sem cache leva 20 a 40 min), assina num
-keychain temporário, notariza com a API key, e cria a GitHub Release da tag com `Collie-<versão>.dmg` e
+que já existe). Nunca roda em pull request. Runner `macos-26` (arm64, Xcode 26), limite de 270 min. Primeiro o passo
+**Conferir motor** baixa o motor de design fixado no pin, confere `sha256`, `size` e a assinatura (seção abaixo) e
+falha se ele não estiver publicado; depois regera o `vendor/` (sem figcraft: o dmg não traz o motor e
+`scripts/release.sh` falha se `Contents/Resources/figcraft` existir), assina num keychain temporário
+(`scripts/ci/signing-keychain.sh`), notariza com a API key, e cria a GitHub Release da tag com `Collie-<versão>.dmg` e
 `Collie-<versão>.dmg.sha256`, mais as cópias idênticas `Collie.dmg` e `Collie.dmg.sha256`: o asset `Collie.dmg`
 existe para o link estável <https://github.com/ysraelmoreno/collie/releases/latest/download/Collie.dmg> (site). Se a
 release já existe, só troca esses arquivos. O keychain e as chaves são
@@ -101,6 +103,14 @@ em pull request.
 - **Depois da primeira publicação**: copie `sha256`, `size` e `unpackedSize` do resumo da rodada (ou do `::notice::`)
   para o pin num commit na `main`; a rodada que esse commit dispara confere e sai verde. O `teamId` do pin é o OU do
   certificado Developer ID (`security find-identity -v -p codesigning`, o `(TEAMID)` do nome).
+- **Release do app**: o dmg sai sem o motor (`release.sh` passa `COLLIE_BUNDLE_FIGCRAFT=0` ao `bundle-app.sh`, que
+  ainda copia o pin para `Contents/Resources/figcraft-engine.json`); o usuário baixa em Preferências › Desenho e
+  sandbox. O "Conferir motor" do `release.yml` baixa a `url` do pin, confere `sha256`/`size` e roda
+  `codesign --verify --strict -R=<requisito>` nos dois binários, com o mesmo requisito do `package-figcraft.sh` e do
+  app (Developer ID Application, identificador, `subject.OU` = `teamId` do pin). Pin zerado, release ausente ou
+  diferente: o release do app falha; publique o motor e preencha o pin **antes** da tag `v*`.
+- **Build local** (`scripts/bundle-app.sh`): com `vendor/figcraft` (de `scripts/build-figcraft.sh`) o motor continua
+  embutido em `Contents/Resources/figcraft/` e vence o baixado; sem ele, o app fica com o download.
 - Local (sem CI): `scripts/build-figcraft.sh`, depois
   `scripts/package-figcraft.sh "Developer ID Application: Seu Nome (TEAMID)"` com as mesmas credenciais de
   notarização do `release.sh` (`COLLIE_SKIP_NOTARIZE=1` só assina e empacota). Ele imprime `sha256=`, `size=` e

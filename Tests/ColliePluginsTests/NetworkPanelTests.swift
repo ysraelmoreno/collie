@@ -410,6 +410,8 @@ extension NetworkPanelTests {
         m.apply(event: "network.flow", payload: summary("c", mappedBy: "r2"))
         m.apply(event: "network.flow", payload: summary("d", mappedBy: "gone"))
         #expect(m.visible.map { m.mappedBadge($0.summary) } == ["mapeado · PDP com desconto", nil, "mapeado · r2", "mapeado · gone"])
+        #expect(m.mappedNotice("r1") == "Resposta fabricada pela regra PDP com desconto. O servidor não foi chamado.")
+        #expect(m.mappedNotice(nil) == nil && m.onLabel == "2 regras ligadas")
     }
 
     @Test func ruleListReflectsEnableToggle() async {
@@ -423,7 +425,7 @@ extension NetworkPanelTests {
         #expect(await fake.args("network.rule-enable")?["id"] == .string("r1"))
         #expect(m.rules.map(\.enabled) == [true, false] && m.offNotice == "1 regra salva está desligada. Ligue só o que precisa.")
         await m.removeRule("r2")
-        #expect(m.rules.map(\.id) == ["r1"] && m.offNotice == nil)
+        #expect(m.rules.map(\.id) == ["r1"] && m.offNotice == nil && m.onLabel == "1 regra ligada")
     }
 
     @Test func mapFormPrefilledFromCapturedResponse() async throws {
@@ -441,6 +443,9 @@ extension NetworkPanelTests {
         #expect(a["header"] == .array(["content-type: application/json"]) && a["query"] == .array(["page=2"]))
         #expect(a["method"] == "GET" && a["host"] == "api.example.com" && a["path"] == "/v1/items" && a["disabled"] == nil)
         #expect(m.rules.map(\.id) == ["new1"] && m.error == nil)
+        form.bodyFile = "/Users/me/json/discount_pdp.json"   // "escolher um arquivo": the daemon reads it, the typed body is dropped
+        let f = form.args(serial: "emulator-5554")
+        #expect(f["body-file"] == "/Users/me/json/discount_pdp.json" && f["body"] == nil)
     }
 
     @Test func emptyMatchShowsWarning() async throws {

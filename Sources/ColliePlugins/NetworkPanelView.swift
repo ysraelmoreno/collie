@@ -50,6 +50,7 @@ struct NetworkView: View {
             status
             if model.pendingDetach { CollieTag("restaurando emulador", tone: .attention) }
             if model.dropped > 0 { CollieTag("\(model.dropped) perdidas", tone: .attention) }
+            if let on = model.onLabel { CollieTag(on, tone: .attention) }
             Spacer(minLength: 8)
             Picker("", selection: $tab) {
                 Text("Fluxos").tag(PanelTab.flows)
@@ -201,9 +202,11 @@ private struct FlowDetailView: View {
                 Picker("", selection: $tab) { ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
                     .pickerStyle(.segmented).labelsHidden().frame(width: 200).accessibilityLabel("Request ou Response")
             }
-            if let badge = model.mappedBadge(f.summary) {
-                Label("\(badge). Resposta fabricada pela regra; o servidor não foi chamado.", systemImage: "arrow.triangle.swap")
-                    .font(.collieUI(12)).foregroundStyle(Color.collieAttention)
+            if let notice = model.mappedNotice(f.mappedBy) {
+                HStack(spacing: 8) {
+                    CollieTag("mapeado", tone: .attention)
+                    Text(notice).font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                }
             }
             if case .failed(let m) = f.state { Text(m).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled) }
             let (headers, body, text, preview) = tab == .request ? (f.reqHeaders, f.reqBody, d.reqText, d.reqPreview) : (f.resHeaders, f.resBody, d.resText, d.resPreview)
@@ -370,7 +373,20 @@ private struct MapFormView: View {
                 Text("Cabeçalhos (um por linha)").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
                 TextEditor(text: $form.headers).font(.collieMono(12)).frame(height: 54).accessibilityLabel("Cabeçalhos")
                 Text("Corpo (até 5 MiB, sem compressão)").font(.collieUI(12)).foregroundStyle(Color.collieMuted)
-                if form.body != nil {
+                HStack(spacing: 8) {
+                    Button("Escolher arquivo…") {
+                        let p = NSOpenPanel(); p.canChooseDirectories = false; p.allowsMultipleSelection = false
+                        if p.runModal() == .OK, let u = p.url { form.bodyFile = u.path }
+                    }
+                    .buttonStyle(CollieButtonStyle(.quiet))
+                    if let f = form.bodyFile {
+                        Text(URL(fileURLWithPath: f).lastPathComponent).font(.collieMono(12)).foregroundStyle(Color.collieText)
+                        Button("Usar o corpo abaixo") { form.bodyFile = nil }.buttonStyle(CollieButtonStyle(.quiet))
+                    }
+                }
+                if form.bodyFile != nil {
+                    Text("O arquivo vai como corpo, lido ao salvar.").font(.collieUI(12)).foregroundStyle(Color.collieTextSecondary)
+                } else if form.body != nil {
                     TextEditor(text: Binding(get: { form.body ?? "" }, set: { form.body = $0 })).font(.collieMono(12)).frame(minHeight: 120)
                         .accessibilityLabel("Corpo")
                 } else {

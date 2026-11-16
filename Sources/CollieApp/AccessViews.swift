@@ -301,7 +301,20 @@ struct AppCardView: View {
     var body: some View {
         let by = card.by.flatMap { id in client.terminals.first { $0.id == id }?.name }
         VStack(alignment: .leading, spacing: 6) {
-            if card.kind == .confirm {
+            if card.kind == .confirm, card.app == "network" {   // a terminal's map rule (NetworkCommands.cardText: request \n response)
+                let parts = (card.call ?? "").split(separator: "\n", maxSplits: 1).map(String.init)
+                Text("Responder no lugar do servidor?").font(.collieUI(13, .semibold))
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
+                    ForEach(Array(zip(["Terminal", "Requisição", "Resposta", "Alcance"],
+                                      [by ?? "?", parts.first ?? "", parts.count > 1 ? parts[1] : "", "todo emulador capturado"]).enumerated()), id: \.offset) { _, row in
+                        GridRow {
+                            Text(row.0).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary)
+                            Text(verbatim: AccessCopy.shown(row.1)).font(.collieMono(12))
+                        }
+                    }
+                }
+                Text("Sem resposta no prazo vale Negar, e a regra nunca liga.").font(.collieUI(11)).foregroundStyle(Color.collieMuted)
+            } else if card.kind == .confirm {
                 Text("\(Text(verbatim: card.name).bold()) quer: \(Text(verbatim: AccessCopy.shown(card.call ?? "")).font(.collieMono(12)))")
                     .font(.collieUI(13)).fixedSize(horizontal: false, vertical: true)
                 if let by { Text("Pedido por \(Text(verbatim: by).italic())").font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
@@ -334,7 +347,7 @@ struct AppCardView: View {
             HStack {
                 Spacer(minLength: 0)
                 Button("Negar") { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-                if card.kind == .confirm {
+                if card.kind == .confirm, card.app != "network" {
                     Button("Permitir nesta sessão") { answer(true, session: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
                         .help("Este comando de \(card.name) roda sem cartão até a sessão do terminal acabar ou o app mudar")
                 }

@@ -69,19 +69,18 @@ extension CommandRouter {
         try await network.rules.setEnabled(rule.id, true)
     }
 
-    /// "responder GET api.example.com/pdp com 418 (corpo 2 KB, atraso 300 ms)", as the card shows it after "Rede quer:".
+    /// Two lines, as the card shows them: the request ("GET api.example.com/pdp") and the response ("418 · 2 KB · atraso 300 ms").
     static func cardText(_ r: MapRule) -> String {
         let m = r.match
         let query = m.query.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
         let target = m.isEmpty ? "qualquer requisição"
             : (m.method.map { $0 + " " } ?? "") + (m.host ?? "*") + (m.path ?? "") + (query.isEmpty ? "" : "?" + query)
+        let delay = r.delayMs > 0 ? " · atraso \(r.delayMs) ms" : ""
         switch r.action {
-        case .drop:
-            return "cortar a conexão de " + target + (r.delayMs > 0 ? " após \(r.delayMs) ms" : "")
+        case .drop: return target + "\nqueda (corta a conexão)" + delay
         case .local(let status, _, _):
             let n = r.body?.count ?? 0
-            let body = n == 0 ? "sem corpo" : "corpo \(max(1, Int((Double(n) / 1024).rounded()))) KB"
-            return "responder \(target) com \(status) (\(body)" + (r.delayMs > 0 ? ", atraso \(r.delayMs) ms" : "") + ")"
+            return target + "\n\(status) · " + (n == 0 ? "sem corpo" : "\(max(1, Int((Double(n) / 1024).rounded()))) KB") + delay
         }
     }
 

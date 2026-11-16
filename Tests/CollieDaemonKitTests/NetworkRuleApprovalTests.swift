@@ -114,12 +114,12 @@ private let add: [String: JSONValue] = ["method": "GET", "host": "api.example.co
             var big = add; big["body"] = .string(String(repeating: "x", count: 2048))
             let pending = Task { try await call(p, t, "network.rule-add", big) }
             let c = try await card(d, p)
-            #expect(c.call == "responder GET api.example.com/pdp com 418 (corpo 2 KB, atraso 300 ms)", "\(c.call ?? "")")
+            #expect(c.call == "GET api.example.com/pdp\n418 · 2 KB · atraso 300 ms", "\(c.call ?? "")")
             _ = try await admin(d, p, "admin.app.answer", ["id": .string(c.id.uuidString)])
             _ = try await pending.value
             let drop = Task { try await call(p, t, "network.rule-add", ["drop": true]) }
             let c2 = try await card(d, p)
-            #expect(c2.call == "cortar a conexão de qualquer requisição", "\(c2.call ?? "")")
+            #expect(c2.call == "qualquer requisição\nqueda (corta a conexão)", "\(c2.call ?? "")")
             _ = try await admin(d, p, "admin.app.answer", ["id": .string(c2.id.uuidString)])
             _ = try await drop.value
         }

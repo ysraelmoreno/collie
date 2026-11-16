@@ -62,6 +62,8 @@ public struct MapForm: Equatable, Sendable {
     public var headers = ""
     /// nil: keep the captured body (binary, or not shown); the daemon copies it decoded.
     public var body: String?
+    /// "escolher um arquivo": the daemon reads it (≤ 5 MiB) instead of `body`.
+    public var bodyFile: String?
     /// Ligar agora.
     public var enabled = true
 
@@ -97,7 +99,7 @@ public struct MapForm: Equatable, Sendable {
         if drop { a["drop"] = .bool(true); return a }
         a["status"] = .number(Double(status))
         let h = lines(headers, "\n"); if !h.isEmpty { a["header"] = .array(h) }
-        if let body { a["body"] = .string(body) }
+        if let bodyFile { a["body-file"] = .string(bodyFile) } else if let body { a["body"] = .string(body) }
         return a
     }
 }
@@ -348,6 +350,18 @@ public struct BodyPreview: Equatable, Sendable {
     public func mappedBadge(_ s: FlowSummary) -> String? {
         guard let id = s.mappedBy else { return nil }
         return "mapeado · " + (rules.first { $0.id == id }?.name ?? id)
+    }
+
+    /// The detail's line under a mapped flow (nil: the server answered).
+    public func mappedNotice(_ id: String?) -> String? {
+        guard let id else { return nil }
+        return "Resposta fabricada pela regra \(rules.first { $0.id == id }?.name ?? id). O servidor não foi chamado."
+    }
+
+    /// The bar's "N regras ligadas" (nil: none on).
+    public var onLabel: String? {
+        let n = rules.filter(\.enabled).count
+        return n == 0 ? nil : n == 1 ? "1 regra ligada" : "\(n) regras ligadas"
     }
 
     /// Rules come back off at every daemon start: say so until the user turns on what they need.

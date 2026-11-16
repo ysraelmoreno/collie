@@ -105,8 +105,13 @@ jobs:
           DMG="Collie-$VER.dmg"
           (cd build && shasum -a 256 "$DMG" > "$DMG.sha256")
           SUM="$(cut -d' ' -f1 "build/$DMG.sha256")"
+          # fixed-name copy for the stable link /releases/latest/download/Collie.dmg: byte-identical (ticket is inside)
+          cp "build/$DMG" build/Collie.dmg
+          cmp "build/$DMG" build/Collie.dmg
+          (cd build && shasum -a 256 Collie.dmg > Collie.dmg.sha256)
+          ASSETS=("build/$DMG" "build/$DMG.sha256" build/Collie.dmg build/Collie.dmg.sha256)
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "build/$DMG" "build/$DMG.sha256" --clobber
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
             printf '%s\n' \
               "Collie $VER para macOS 15+ em Apple Silicon (arm64). Assinado com Developer ID e notarizado pela Apple." \
@@ -114,7 +119,7 @@ jobs:
               "Instalar: abra \`$DMG\` e arraste o **Collie** para **Applications**; abra pelo \`/Applications\`." \
               "" \
               "SHA-256 do dmg: \`$SUM\`" > "$RUNNER_TEMP/notes.md"
-            gh release create "$TAG" "build/$DMG" "build/$DMG.sha256" --verify-tag \
+            gh release create "$TAG" "${ASSETS[@]}" --verify-tag \
               --title "Collie $VER" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
           fi
 

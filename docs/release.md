@@ -34,7 +34,9 @@ scripts/release.sh          # gera build/Collie-<versão>.dmg assinado, notariza
 que já existe). Nunca roda em pull request. Runner `macos-26` (arm64, Xcode 26). Ele regera o `vendor/` (o figcraft
 fica em cache pelo hash de `scripts/build-figcraft.sh` e `patches/figcraft/`; sem cache leva 20 a 40 min), assina num
 keychain temporário, notariza com a API key, e cria a GitHub Release da tag com `Collie-<versão>.dmg` e
-`Collie-<versão>.dmg.sha256`. Se a release já existe, só troca esses dois arquivos. O keychain e as chaves são
+`Collie-<versão>.dmg.sha256`, mais as cópias idênticas `Collie.dmg` e `Collie.dmg.sha256`: o asset `Collie.dmg`
+existe para o link estável <https://github.com/ysraelmoreno/collie/releases/latest/download/Collie.dmg> (site). Se a
+release já existe, só troca esses arquivos. O keychain e as chaves são
 apagados no fim, mesmo com falha.
 
 ```

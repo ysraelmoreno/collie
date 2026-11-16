@@ -8,6 +8,8 @@ ID="${COLLIE_SIGN_IDENTITY:-Collie Local}"
 IDS="$(security find-identity -v -p codesigning || true)"  # variable: grep -q + pipefail can SIGPIPE
 if grep -qF "\"$ID\"" <<<"$IDS"; then SIGN="$ID"
 else SIGN="-"; echo "warning: no \"$ID\" signing identity (run scripts/make-signing-cert.sh): ad-hoc, TCC grants reset on every rebuild" >&2; fi
+# COLLIE_TIMESTAMP=1 (scripts/release.sh): secure timestamp, required by notarization; off by default (needs network)
+TS=(); [ "${COLLIE_TIMESTAMP:-}" = 1 ] && TS=(--timestamp)
 # one --product per invocation: repeated flags build only the last
 for p in CollieApp collied collie collie-ctty; do swift build -c release --product "$p"; done
 BIN="$(swift build -c release --show-bin-path)"
@@ -34,7 +36,7 @@ if [ -x vendor/figcraft/bin/figcraft-server ] && [ -f vendor/figcraft/web/index.
   mkdir -p "$APP/Contents/Resources/figcraft"
   cp -R vendor/figcraft/bin vendor/figcraft/web vendor/figcraft/licenses "$APP/Contents/Resources/figcraft/"
   # --deep doesn't sign Mach-O under Resources: sign the helpers themselves
-  codesign --force -s "$SIGN" --options runtime "$APP/Contents/Resources/figcraft/bin/"*
+  codesign --force -s "$SIGN" --options runtime ${TS[@]+"${TS[@]}"} "$APP/Contents/Resources/figcraft/bin/"*
 else echo "warning: vendor/figcraft missing (run scripts/build-figcraft.sh): no design engine" >&2; fi
 # Diagram editor (scripts/build-drawio.sh): draw.io embed web UI + licence under Resources/drawio/
 cp Resources/NOTICE-drawio "$APP/Contents/Resources/"
@@ -50,7 +52,7 @@ if [ -f vendor/weblibs/manifest.json ]; then
   rsync -a --delete vendor/weblibs/ "$APP/Contents/Resources/weblibs/"
 elif [ "${COLLIE_ALLOW_NO_WEBLIBS:-}" = 1 ]; then echo "warning: vendor/weblibs missing: pages get no offline libraries" >&2
 else echo "error: vendor/weblibs missing (run scripts/fetch-weblibs.sh; COLLIE_ALLOW_NO_WEBLIBS=1 bundles without)" >&2; exit 1; fi
-codesign --force --deep -s "$SIGN" --options runtime "$APP"
+codesign --force --deep -s "$SIGN" --options runtime ${TS[@]+"${TS[@]}"} "$APP"
 codesign -v "$APP"
 echo "ok: $APP"
 echo "Instalar: copie $APP para /Applications antes do primeiro uso (collied iniciado pelo launchd a partir de ~/Documents, ~/Desktop ou ~/Downloads trava no TCC)."

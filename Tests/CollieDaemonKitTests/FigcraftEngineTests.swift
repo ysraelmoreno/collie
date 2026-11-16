@@ -53,6 +53,11 @@ private let goodSha = String(repeating: "a", count: 64)
         #expect(e?.version == nil)
     }
 
+    @Test func envIsTakenAsIs() {
+        let d = Dirs()   // nothing on disk: the start then reports the missing binary
+        #expect(d.resolve(env: d.env)?.dir == d.env)
+    }
+
     @Test func bundleBeforeAppSupport() {
         let d = Dirs()
         d.engine(d.bundle, version: "0.7.0-c1")

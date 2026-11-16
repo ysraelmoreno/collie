@@ -47,7 +47,6 @@ actor DesignService {
     }
 
     private let server: FigcraftServer
-    private let cli: URL
     private let root: URL, runDir: URL
     private let idle: Duration
     /// Tests: a shorter deadline for every design command; settable so a test's setup runs uncapped (DX backlog 18).
@@ -59,17 +58,23 @@ actor DesignService {
     /// Panels closed so far: a command that was awaiting the engine when its panel closed writes nothing afterwards.
     /// ponytail: grows by one UUID per closed design panel for the daemon's life; fine at this scale.
     private var closed: Set<UUID> = []
-    /// `list_commands`, parsed once: the registry is fixed per figcraft build.
+    /// `list_commands`, parsed once per engine: the registry is fixed per figcraft build (`resetCaches` after a swap).
     private var commandList: [JSONValue]?
     /// Server keys and edit links seen: scrubbed from anything a caller gets back.
     private var secrets: Set<String> = []
 
-    init(server: FigcraftServer, figcraftDir: URL?, root: URL, runDir: URL, idle: Duration, timeoutCap: Duration? = nil) {
+    init(server: FigcraftServer, root: URL, runDir: URL, idle: Duration, timeoutCap: Duration? = nil) {
         self.server = server
-        // no figcraftDir: the server reports `notBundled` before the CLI is ever needed
-        self.cli = (figcraftDir ?? URL(fileURLWithPath: "/nonexistent")).appendingPathComponent("bin/figcraft-cli")
         self.root = root; self.runDir = runDir; self.idle = idle; self.timeoutCap = Mutex(timeoutCap)
     }
+
+    /// The `figcraft-cli` of the engine the server runs (or would start): never a CLI from another build than the server's.
+    private func cli() async throws(ProtocolError) -> URL {
+        try await server.engineForClient().dir.appendingPathComponent("bin/figcraft-cli")
+    }
+
+    /// After an engine swap: what was read from the old build is read again.
+    func resetCaches() { commandList = nil }
 
     /// Every `figcraft-cli`'s environment: the daemon's, plus `FIGCRAFT_EXTRA_FONTS_DIR=<root>/fonts` (patch 0005): its
     /// font scan walks the families' folders and reads the `ttf/` files `font.add` keeps for it (the woff2 are skipped).
@@ -123,7 +128,7 @@ actor DesignService {
                     try await Self.settle(c, deadline)
                     return try await c.command("file.save", ["path": .string(doc.path)], timeout: try Self.left(deadline))
                 }
-                let bridge = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-read-root", tmp.path],
+                let bridge = try await MCPStdioClient(executable: try await cli(), args: ["mcp", "--automation-read-root", tmp.path],
                                                       env: cliEnv, runDir: runDir, name: "collie-bridge")
                 defer { bridge.close() }
                 _ = try await bridge.command("file.open", ["path": .string(doc.path)], timeout: try Self.left(deadline))
@@ -132,7 +137,7 @@ actor DesignService {
                 guard case .object(let o) = r else { throw ProtocolError(code: .internal, message: "design engine: no copy of '\(src.name)'") }
                 pub = o
             } else {
-                let bridge = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-read-root", try dir(sandbox).path],
+                let bridge = try await MCPStdioClient(executable: try await cli(), args: ["mcp", "--automation-read-root", try dir(sandbox).path],
                                                       env: cliEnv, runDir: runDir, name: "collie-bridge")
                 defer { bridge.close() }
                 _ = try await bridge.command("collab.publish", ["server": .string(ep.wsURL), "name": .string(name)], timeout: try Self.left(deadline))
@@ -361,7 +366,7 @@ actor DesignService {
     func help(_ query: String?) async throws -> JSONValue {
         try await guarded {
             if commandList == nil {
-                let c = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-read-root", try dir(sandbox).path],
+                let c = try await MCPStdioClient(executable: try await cli(), args: ["mcp", "--automation-read-root", try dir(sandbox).path],
                                                  env: cliEnv, runDir: runDir, name: "collie-bridge")
                 defer { c.close() }
                 let text = try await c.call("list_commands", [:], timeout: try Self.left(deadline("design.help"))).texts.joined(separator: "\n")
@@ -405,7 +410,12 @@ actor DesignService {
             switch command {
             case "design.link":
                 let (ep, _) = try await running()   // the link names this server: it must be up for the app to join
-                return .object(["editLink": .string(rehosted(f.editLink, ep))])   // the one result not scrubbed
+                var o: [String: JSONValue] = ["editLink": .string(rehosted(f.editLink, ep))]   // the one result not scrubbed
+                if let e = await server.runningEngine {   // the panel serves this engine's web build (only the daemon resolves)
+                    o["web"] = .string(e.web.path)
+                    if let v = e.version { o["version"] = .string(v) }
+                }
+                return .object(o)
             case "design.run":
                 let cmd = try Self.allowed(str("command") ?? "")
                 let params = try str("params").map { try Self.json($0, "params") } ?? .object([:])
@@ -554,7 +564,7 @@ actor DesignService {
         try await guarded {
             let f = try file(id)
             let (ep, _) = try await running()
-            let c = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-read-root", snapshot.deletingLastPathComponent().path],
+            let c = try await MCPStdioClient(executable: try await cli(), args: ["mcp", "--automation-read-root", snapshot.deletingLastPathComponent().path],
                                              env: cliEnv, runDir: runDir, name: "collie-bridge")
             defer { c.close() }
             _ = try await c.command("file.open", ["path": .string(snapshot.path)], timeout: try Self.left(deadline))
@@ -665,7 +675,7 @@ actor DesignService {
     private func client(_ f: File, _ name: String, _ ep: FigcraftServer.Endpoint, _ out: URL,
                         _ deadline: ContinuousClock.Instant) async throws(ProtocolError) -> MCPStdioClient {
         let out = try dir(out)
-        let c = try await MCPStdioClient(executable: cli, args: ["mcp", "--automation-write-root", out.path],
+        let c = try await MCPStdioClient(executable: try await cli(), args: ["mcp", "--automation-write-root", out.path],
                                          env: cliEnv, runDir: runDir, name: name)
         do throws(ProtocolError) {
             _ = try await c.command("collab.join", ["link": .string(rehosted(f.editLink, ep))], timeout: try Self.left(deadline))

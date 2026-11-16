@@ -9,14 +9,41 @@ import CollieProtocol
 /// A server that dies is started again on its own (the Design panel's page reconnects), after a delay doubling from
 /// 1 s to 30 s per failure in a row, until it is up or `stop`; calls inside that window fail fast (`.unavailable`
 /// "design engine restarting, retry in Ns").
+/// The engine (`FigcraftEngine`) is resolved at each start, never kept across starts: an install or removal swaps it
+/// under `hold(.swap)` (`holdWhenFree`), after which the next start runs the new one.
 actor FigcraftServer {
-    static let notBundled = ProtocolError(code: .unavailable,
-                                          message: "Design engine not bundled (run scripts/build-figcraft.sh and rebuild)")
     private static let stopped = ProtocolError(code: .unavailable, message: "design engine stopped")
     typealias Endpoint = (wsURL: String, key: String)
 
-    private let binary: URL, dataDir: URL, runDir: URL, basePort: UInt16
+    /// Why no engine runs, for the app or the owner's CLI; `forTerminal` rewords it for an agent (no command it can't run).
+    static func unavailable(_ state: EngineState, admin: Bool) -> ProtocolError {
+        let outdated = if case .needsUpdate = state { true } else { false }
+        let m = switch (outdated, admin) {
+        case (false, true): "Motor de design não instalado. Baixe em Preferências › Desenho e sandbox (collie design engine install)"
+        case (false, false): "Motor de design não instalado: peça ao usuário para baixá-lo em Preferências › Desenho e sandbox do Collie."
+        case (true, true): "Motor de design desatualizado. Atualize em Preferências › Desenho e sandbox (collie design engine install)"
+        case (true, false): "Motor de design desatualizado: peça ao usuário para atualizá-lo em Preferências › Desenho e sandbox do Collie."
+        }
+        return ProtocolError(code: .unavailable, message: m)
+    }
+
+    /// An admin `unavailable` error in a terminal's words; any other error unchanged.
+    static func forTerminal(_ e: ProtocolError) -> ProtocolError {
+        let stale = EngineState.needsUpdate(installed: nil, pinned: "", reinstall: false)
+        if e == unavailable(.absent, admin: true) { return unavailable(.absent, admin: false) }
+        if e == unavailable(stale, admin: true) { return unavailable(stale, admin: false) }
+        return e
+    }
+
+    static let altered = ProtocolError(code: .unavailable, message: "Motor alterado, baixe de novo")
+
+    private let resolveEngine: @Sendable () -> FigcraftEngine?
+    private let engineState: @Sendable () -> EngineState
+    private let verify: @Sendable (FigcraftEngine) -> Bool
+    private let dataDir: URL, runDir: URL, basePort: UInt16
     private let env: [String: String]
+    /// The engine the server in `proc` was started from (nil: none up); clients use its CLI, never a newer resolve's.
+    private(set) var runningEngine: FigcraftEngine?
     private var proc: LongProcess?
     private var current: Endpoint?
     private var starting: Task<Result<Endpoint, ProtocolError>, Never>?
@@ -33,19 +60,52 @@ actor FigcraftServer {
     /// Servers started so far: a client made under an older one rejoins (its session went with that server).
     private var starts = 0
 
-    /// `env` is added to the daemon's environment for the server (tests: the fake's knobs).
-    init(binary: URL, dataDir: URL, runDir: URL, port: UInt16 = 47900, env: [String: String] = [:]) {
-        self.binary = binary; self.dataDir = dataDir; self.runDir = runDir; self.basePort = port
+    /// `engine`: resolved at each start. `state`: why none runs (picks the error's words). `verify`: the signature check
+    /// of an App Support engine, at each start. `env` is added to the daemon's environment for the server (tests: the
+    /// fake's knobs).
+    init(engine: @escaping @Sendable () -> FigcraftEngine?, state: @escaping @Sendable () -> EngineState = { .absent },
+         verify: @escaping @Sendable (FigcraftEngine) -> Bool = { _ in true },
+         dataDir: URL, runDir: URL, port: UInt16 = 47900, env: [String: String] = [:]) {
+        self.resolveEngine = engine; self.engineState = state; self.verify = verify
+        self.dataDir = dataDir; self.runDir = runDir; self.basePort = port
         self.env = ProcessInfo.processInfo.environment.merging(env) { _, new in new }
     }
 
-    /// Held by a backup export while it copies the server's data: no start meanwhile (callers retry).
-    private var held = false
-    func hold(_ on: Bool) { held = on }
+    /// Who holds the server down: a backup export while it copies the server's data, an engine swap. No start meanwhile
+    /// (callers retry); each holder releases its own.
+    enum Hold: Sendable { case backup, swap }
+    private var holds: [Hold] = []
+    var isHeld: Bool { !holds.isEmpty }
+    func hold(_ h: Hold) { holds.append(h) }
+    func release(_ h: Hold) { if let i = holds.firstIndex(of: h) { holds.remove(at: i) } }
+
+    /// Takes `reason` once no backup holds the server (checked and taken with no suspension in between), waiting up to
+    /// `within`; still held after it: `.conflict` "backup em andamento".
+    func holdWhenFree(reason: Hold, within: Duration = .seconds(60)) async throws(ProtocolError) {
+        let deadline = ContinuousClock.now + within
+        while holds.contains(.backup) {
+            guard ContinuousClock.now < deadline else { throw ProtocolError(code: .conflict, message: "backup em andamento") }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        holds.append(reason)
+    }
+
+    private func heldError() -> ProtocolError? {
+        if holds.contains(.swap) { return ProtocolError(code: .unavailable, message: "motor de design sendo trocado, tente de novo") }
+        if holds.contains(.backup) { return ProtocolError(code: .unavailable, message: "design engine: backup in progress, retry") }
+        return nil
+    }
+
+    /// The engine a new client must use: the running server's, else the one the next start would pick.
+    func engineForClient() throws(ProtocolError) -> FigcraftEngine {
+        if let e = heldError() { throw e }
+        if let runningEngine { return runningEngine }
+        guard let e = resolveEngine() else { throw Self.unavailable(engineState(), admin: true) }
+        return e
+    }
 
     func ensureRunning() async throws(ProtocolError) -> Endpoint {
-        guard FileManager.default.isExecutableFile(atPath: binary.path) else { throw Self.notBundled }
-        if held { throw ProtocolError(code: .unavailable, message: "design engine: backup in progress, retry") }
+        if let e = heldError() { throw e }
         if let current { return current }
         if starting == nil, let at = crashedAt {
             let left = backoff - (ContinuousClock.now - at)
@@ -77,7 +137,7 @@ actor FigcraftServer {
         let p = proc
         starting?.cancel()   // its healthz wait ends now; its callers get `stopped`
         restart?.cancel(); restart = nil
-        proc = nil; current = nil; starting = nil; crashes = 0; crashedAt = nil
+        proc = nil; current = nil; starting = nil; crashes = 0; crashedAt = nil; runningEngine = nil
         guard let p else { return }
         p.terminate()
         let deadline = ContinuousClock.now + .seconds(2)
@@ -91,11 +151,19 @@ actor FigcraftServer {
     private func start() async -> Result<Endpoint, ProtocolError> {
         generation += 1
         let gen = generation
+        let binary: URL
+        let engine: FigcraftEngine
+        if let e = resolveEngine(), FileManager.default.isExecutableFile(atPath: e.dir.appendingPathComponent("bin/figcraft-server").path) {
+            engine = e; binary = e.dir.appendingPathComponent("bin/figcraft-server")
+        } else {
+            return .failure(Self.unavailable(engineState(), admin: true))
+        }
+        guard engine.source != .appSupport || verify(engine) else { return .failure(Self.altered) }
         do {
             try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
             try? FileManager.default.removeItem(at: dataDir.appendingPathComponent("key"))   // an older build's copy of the key
-            let key = try await fetchKey()
+            let key = try await fetchKey(binary)
             guard gen == generation else { throw Self.stopped }
             let preferred = lastBound ?? (try? String(contentsOf: portFile, encoding: .utf8)).flatMap { UInt16($0) }
             guard let port = preferred.flatMap({ Self.isFree($0) ? $0 : nil }) ?? Self.freePort(from: basePort) else {
@@ -116,7 +184,7 @@ actor FigcraftServer {
                 p.terminate(); exited(gen)
                 throw ProtocolError(code: .unavailable, message: "design engine did not start (no answer on 127.0.0.1:\(port))")
             }
-            lastBound = port; starts += 1
+            lastBound = port; starts += 1; runningEngine = engine
             try? Data(String(port).utf8).write(to: portFile)
             current = (wsURL: "ws://127.0.0.1:\(port)/?key=\(key)", key: key)
             return .success(current!)
@@ -129,7 +197,7 @@ actor FigcraftServer {
 
     private func exited(_ gen: Int) {
         guard gen == generation, proc != nil else { return }
-        proc = nil; current = nil
+        proc = nil; current = nil; runningEngine = nil
         failed(longRun: ContinuousClock.now - startedAt >= .seconds(60))
     }
 
@@ -157,7 +225,7 @@ actor FigcraftServer {
 
     /// `figcraft-server key --data <dataDir>`: the publish address it prints carries `key=<key>` (the same each time
     /// for a data dir: the server keeps it there; Collie keeps no copy).
-    private func fetchKey() async throws(ProtocolError) -> String {
+    private func fetchKey(_ binary: URL) async throws(ProtocolError) -> String {
         let r = try await BoundedProcess.run(executable: binary, args: ["key", "--data", dataDir.path], in: dataDir, env: env,
                                              timeout: .seconds(10), cap: 64 * 1024)
         guard r.status == 0, let m = r.stdout.firstMatch(of: /key=([A-Za-z0-9_\-]+)/) else {

@@ -69,9 +69,19 @@ guard let collie = selfPath()?.deletingLastPathComponent().appendingPathComponen
 // the app bundle puts it in Contents/Resources (collied is in Contents/Helpers)
 let scrcpy = ProcessInfo.processInfo.environment["COLLIE_SCRCPY_SERVER"].map { URL(fileURLWithPath: $0) }
     ?? collie.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/scrcpy-server")
-// the bundled design engine (Contents/Resources/figcraft); a missing one is reported by the design commands
+// the design engine: COLLIE_FIGCRAFT_DIR as is, else resolved per start (bundle, then the downloaded <root>/figcraft
+// when it is the pin's); a missing one is reported by the design commands
+let resources = collie.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources")
 let figcraft = ProcessInfo.processInfo.environment["COLLIE_FIGCRAFT_DIR"].map { URL(fileURLWithPath: $0) }
-    ?? collie.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/figcraft")
+var figcraftPin = resources.appendingPathComponent("figcraft-engine.json")
+#if DEBUG
+// tests and `swift run`: another pin, and the repo's vendor/figcraft last (never in a release build: the pin is the trust anchor)
+if let p = ProcessInfo.processInfo.environment["COLLIE_FIGCRAFT_PIN"] { figcraftPin = URL(fileURLWithPath: p) }
+let figcraftVendor: URL? = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().appendingPathComponent("vendor/figcraft")
+#else
+let figcraftVendor: URL? = nil
+#endif
 // the offline web libraries (Contents/Resources/weblibs), for `artifact.libs`
 let weblibs = ProcessInfo.processInfo.environment["COLLIE_WEBLIBS_DIR"].map { URL(fileURLWithPath: $0) }
     ?? collie.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/weblibs")
@@ -80,6 +90,9 @@ do {
     var config = DaemonConfig(paths: Paths(root: root), collieExecutable: collie, workspaceId: workspace!)
     config.scrcpyServer = FileManager.default.fileExists(atPath: scrcpy.path) ? scrcpy : nil
     config.figcraftDir = figcraft
+    config.figcraftBundleDir = resources.appendingPathComponent("figcraft")
+    config.figcraftVendorDir = figcraftVendor
+    config.figcraftPinFile = figcraftPin
     config.screenRenderer = ScreenRenderer.render
     config.weblibsDir = weblibs
     config.bundledFontsDir = ProcessInfo.processInfo.environment["COLLIE_FONTS_DIR"].map { URL(fileURLWithPath: $0) }

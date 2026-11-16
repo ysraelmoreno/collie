@@ -41,6 +41,11 @@ actor CommandRouter {
     nonisolated let network: NetworkService
     /// The design engine's server; started by the first design command.
     nonisolated let figcraft: FigcraftServer
+    /// The engine this build accepts (`figcraft-engine.json`; nil: none can be downloaded or run from `<root>/figcraft`).
+    nonisolated let figcraftPin: FigcraftPin?
+    /// Which engine would run now (`FigcraftEngine.resolve`), and why none does.
+    nonisolated let resolveEngine: @Sendable () -> FigcraftEngine?
+    nonisolated let engineState: @Sendable () -> EngineState
     /// Design files and the callers' figcraft clients.
     nonisolated let design: DesignService
     /// Design systems: published libraries of design files.
@@ -175,11 +180,20 @@ actor CommandRouter {
         self.network = NetworkService(root: config.paths.root, runDir: config.paths.runDir, devices: devices,
             mitmdump: { mitmdumpPath ?? MitmTool.locate(env: ProcessInfo.processInfo.environment) },
             emit: { s, n, pl in await me.router?.networkEmitted(serial: s, name: n, payload: pl) })
-        // no figcraftDir: a binary path that never exists, so the first design command reports `notBundled`
-        self.figcraft = FigcraftServer(
-            binary: (config.figcraftDir ?? URL(fileURLWithPath: "/nonexistent")).appendingPathComponent("bin/figcraft-server"),
+        FigcraftEngine.cleanStaging(root: config.paths.root)   // an install a daemon death left behind (the throwaway side)
+        let pin = config.figcraftPinFile.flatMap(FigcraftPin.load)
+        let engineDirs = (env: config.figcraftDir, bundle: config.figcraftBundleDir, vendor: config.figcraftVendorDir,
+                          appSupport: config.paths.root.appendingPathComponent("figcraft"))
+        let resolve: @Sendable () -> FigcraftEngine? = {
+            FigcraftEngine.resolve(env: engineDirs.env, bundle: engineDirs.bundle, appSupport: engineDirs.appSupport,
+                                   vendor: engineDirs.vendor, pin: pin)
+        }
+        self.figcraftPin = pin
+        self.resolveEngine = resolve
+        self.engineState = { FigcraftEngine.state(running: resolve(), appSupport: engineDirs.appSupport, pin: pin) }
+        self.figcraft = FigcraftServer(engine: resolve, state: engineState,
             dataDir: config.paths.root.appendingPathComponent("design/server"), runDir: config.paths.runDir)
-        self.design = DesignService(server: figcraft, figcraftDir: config.figcraftDir, root: config.paths.root,
+        self.design = DesignService(server: figcraft, root: config.paths.root,
                                     runDir: config.paths.runDir, idle: config.designIdle,
                                     timeoutCap: config.designTimeoutCap)
         self.systems = DesignSystemService(design: design, root: config.paths.root)

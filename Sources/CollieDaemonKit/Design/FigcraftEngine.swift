@@ -27,11 +27,11 @@ struct FigcraftEngine: Equatable, Sendable {
     /// Written by the installer: the sha256 of the asset this App Support engine came from.
     static let marker = ".collie-installed"
 
-    /// env → bundle → App Support → vendor (DEBUG only; callers pass nil otherwise). The bundle goes before App Support
+    /// env (taken as is, like the old `figcraftDir`) → bundle → App Support → vendor (DEBUG only; callers pass nil otherwise). The bundle goes before App Support
     /// (owner decision P2: a release bundle never has an engine, so this only decides local builds, where the one just
     /// built wins). App Support runs only when its marker is the pin's sha256 (owner decision P1).
     static func resolve(env: URL?, bundle: URL?, appSupport: URL, vendor: URL?, pin: FigcraftPin?) -> FigcraftEngine? {
-        if let env, isValid(env) { return FigcraftEngine(dir: env, version: nil, source: .env) }
+        if let env { return FigcraftEngine(dir: env, version: nil, source: .env) }   // as is: a missing binary fails at start
         if let bundle, isValid(bundle) { return FigcraftEngine(dir: bundle, version: version(bundle), source: .bundle) }
         if isValid(appSupport), let pin, installedSha(appSupport) == pin.sha256 {
             return FigcraftEngine(dir: appSupport, version: version(appSupport), source: .appSupport)

@@ -22,8 +22,8 @@ jobs:
   release:
     # macos-26 = macOS 26 arm64 with Xcode 26 (swift-tools 6.2); arm64-only build
     runs-on: macos-26
-    # figcraft cold (~40 min) + swift build + notarization (can pass 1 h; release.sh polls up to 4 h)
-    timeout-minutes: 330
+    # swift build + notarization (can pass 1 h; release.sh polls up to 4 h); figcraft is built by figcraft.yml, not here
+    timeout-minutes: 270
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -40,21 +40,32 @@ jobs:
           xcodebuild -version
           swift --version
 
-      # vendor/ is git-ignored: regenerate it. figcraft (Rust → wasm) is the slow one, cached by its inputs.
-      - name: Cache figcraft
-        id: figcraft
-        uses: actions/cache@v4
-        with:
-          path: vendor/figcraft
-          key: figcraft-arm64-${{ hashFiles('scripts/build-figcraft.sh', 'patches/figcraft/**') }}
-
-      - name: Build figcraft
-        if: steps.figcraft.outputs.cache-hit != 'true'
+      # The dmg ships without figcraft: the app downloads the engine the pin fixes (Resources/figcraft-engine.json,
+      # published by figcraft.yml). Fail before the long build if that engine isn't published or its hash, size or
+      # signature differ from what the app checks (same requirement as package-figcraft.sh / FigcraftInstaller).
+      - name: Conferir motor
         run: |
-          rust="$(sed -n 's/^RUST_VERSION=//p' scripts/build-figcraft.sh)"
-          rustup toolchain install "$rust" --profile minimal --target wasm32-unknown-unknown
-          scripts/build-figcraft.sh
+          PIN=Resources/figcraft-engine.json
+          get() { plutil -extract "$1" raw -o - "$PIN"; }
+          URL="$(get url)"; SHA="$(get sha256)"; SIZE="$(get size)"; TEAM="$(get teamId)"
+          ZERO=0000000000000000000000000000000000000000000000000000000000000000
+          [ "$SHA" != "$ZERO" ] && [ "$SIZE" != 0 ] \
+            || { echo "::error::pin do motor zerado ($PIN): publique o motor antes (figcraft.yml) e preencha sha256/size/unpackedSize no pin"; exit 1; }
+          fail() { echo "::error::motor fixado não publicado, hash ou assinatura diferente: $1 ($URL)"; exit 1; }
+          D="$RUNNER_TEMP/engine"
+          mkdir -p "$D/x"
+          A="$(basename "$URL")"
+          curl -fsSL --retry 3 -o "$D/$A" "$URL" || fail "download"
+          (cd "$D" && printf '%s  %s\n' "$SHA" "$A" | shasum -a 256 -c -) || fail "sha256"
+          [ "$(stat -f %z "$D/$A")" = "$SIZE" ] || fail "size $(stat -f %z "$D/$A") != $SIZE"
+          tar -xzf "$D/$A" -C "$D/x" || fail "tar"
+          for b in figcraft-server figcraft-cli; do
+            codesign --verify --strict --verbose=2 -R="identifier \"$b\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"$TEAM\"" "$D/x/figcraft/bin/$b" \
+              || fail "assinatura de $b"
+          done
+          echo "ok: motor $(get version) publicado; sha256, size e assinatura conferem"
 
+      # vendor/ is git-ignored: regenerate it (figcraft isn't bundled in releases: no Rust here)
       - name: Fetch vendored assets
         run: |
           scripts/fetch-scrcpy-server.sh
@@ -67,26 +78,7 @@ jobs:
           P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
           NOTARY_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
-        run: |
-          [ -n "$P12_BASE64" ] && [ -n "$P12_PASSWORD" ] && [ -n "$NOTARY_KEY_P8" ] \
-            || { echo "::error::missing secrets (docs/release.md)"; exit 1; }
-          KC="$RUNNER_TEMP/collie-signing.keychain-db"
-          KC_PW="$(openssl rand -base64 32)"
-          echo "::add-mask::$KC_PW"
-          security create-keychain -p "$KC_PW" "$KC"
-          security set-keychain-settings -lut 21600 "$KC"
-          security unlock-keychain -p "$KC_PW" "$KC"
-          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
-          security import "$RUNNER_TEMP/developer-id.p12" -k "$KC" -P "$P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign
-          rm -f "$RUNNER_TEMP/developer-id.p12"
-          # Developer ID G2 intermediate: without it the identity is not "valid" when the .p12 lacks the chain
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
-          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KC"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PW" "$KC" >/dev/null
-          # shellcheck disable=SC2046 # word-split the existing keychain list on purpose
-          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
-          security find-identity -v -p codesigning "$KC"
-          printf '%s\n' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary-key.p8"
+        run: scripts/ci/signing-keychain.sh
 
       - name: Build, sign, notarize
         env:
@@ -117,6 +109,8 @@ jobs:
               "Collie $VER para macOS 15+ em Apple Silicon (arm64). Assinado com Developer ID e notarizado pela Apple." \
               "" \
               "Instalar: abra \`$DMG\` e arraste o **Collie** para **Applications**; abra pelo \`/Applications\`." \
+              "" \
+              "O motor de design não vem mais no dmg: baixe em Preferências › Desenho e sandbox." \
               "" \
               "SHA-256 do dmg: \`$SUM\`" > "$RUNNER_TEMP/notes.md"
             gh release create "$TAG" "${ASSETS[@]}" --verify-tag \

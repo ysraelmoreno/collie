@@ -23,6 +23,22 @@ func androidHex<D: Digest>(_ d: D) -> String { d.map { String(format: "%02x", $0
         for s in bad { #expect(!AndroidDownload.allowed(URL(string: s)!), "\(s)") }
     }
 
+    @Test func allowsFigcraftReleasePath() {
+        #expect(AndroidDownload.allowed(URL(string:
+            "https://github.com/ysraelmoreno/collie/releases/download/figcraft-v0.7.0-c1/figcraft-0.7.0-c1-arm64.tar.gz")!))
+    }
+    @Test func refusesOtherCollieReleasePaths() {
+        for s in ["https://github.com/ysraelmoreno/collie/releases/download/v0.1.0/Collie.dmg",
+                  "https://github.com/ysraelmoreno/collie/archive/figcraft-v1.tar.gz",
+                  "https://github.com/ysraelmoreno/other/releases/download/figcraft-v1/x"] {
+            #expect(!AndroidDownload.allowed(URL(string: s)!), "\(s)")
+        }
+    }
+    @Test func refusesDotDotInFigcraftPath() {
+        #expect(!AndroidDownload.allowed(URL(string:
+            "https://github.com/ysraelmoreno/collie/releases/download/figcraft-v1/../../../evil/x")!))
+    }
+
     @Test func verifyRejectsABadChecksumAndDeletesTheFile() throws {
         let f = FileManager.default.temporaryDirectory.appendingPathComponent("collie-verify-\(UUID().uuidString)")
         let data = Data("hello android".utf8)

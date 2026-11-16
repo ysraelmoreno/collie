@@ -78,7 +78,79 @@ private func shepherdWithPanel(_ d: Daemon, _ p: Paths, file: String = "Site", p
     return m
 }
 
+/// An engine dir whose `figcraft-cli` logs `cli-<mark>` before running the fake MCP (tells which engine a client came from).
+private func markedEngine(_ parent: URL, _ mark: String) throws -> URL {
+    let d = parent.appendingPathComponent("engine-\(mark)-\(UUID().uuidString.prefix(6))"), bin = d.appendingPathComponent("bin")
+    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent("figcraft-server"),
+                                               withDestinationURL: fixtures.appendingPathComponent("fake-figcraft-server.sh"))
+    let cli = bin.appendingPathComponent("figcraft-cli")
+    let mcp = fixtures.appendingPathComponent("fake-figcraft-mcp.py").path
+    try Data("#!/bin/sh\necho cli-\(mark) >> \"$COLLIE_FAKE_FIG_LOG\"\nexec \(mcp) \"$@\"\n".utf8).write(to: cli)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
+    return d
+}
+
 @Suite(.serialized) struct DesignCommandTests {
+    @Test func newClientUsesRunningServerEngine() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        let a = try markedEngine(fx.dir, "A"), b = try markedEngine(fx.dir, "B")
+        let box = EngineBox(a)
+        let server = FigcraftServer(engine: { box.engine }, dataDir: fx.dir.appendingPathComponent("data"),
+                                    runDir: fx.dir.appendingPathComponent("run"), port: UInt16.random(in: 52000...58000))
+        let design = DesignService(server: server, root: fx.dir.appendingPathComponent("root"), runDir: fx.dir.appendingPathComponent("run"),
+                                   idle: .seconds(300))
+        _ = try await server.ensureRunning()
+        box.engine = FigcraftEngine(dir: b, version: nil, source: .bundle)   // resolution changed, no swap yet
+        _ = try await design.help(nil)
+        #expect(fx.calls.contains("cli-A") && !fx.calls.contains("cli-B"), "\(fx.calls)")
+        await design.stop(); await server.stop()
+    }
+
+    @Test func swapClosesClientsResetsCommandListKeepsData() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        let b = try markedEngine(fx.dir.deletingLastPathComponent(), "B")
+        defer { try? FileManager.default.removeItem(at: b) }
+        try await withDesign(fx) { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            #expect(try await call(p, m, "design.help").ok)
+            let keep = p.root.appendingPathComponent("design/server/keep")
+            try FileManager.default.createDirectory(at: keep.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: keep)
+            let old = fx.dir.deletingLastPathComponent().appendingPathComponent("old-\(UUID().uuidString.prefix(6))")
+            defer { try? FileManager.default.removeItem(at: old) }
+            try await d.router.swapEngine {
+                try FileManager.default.moveItem(at: fx.dir, to: old)
+                try FileManager.default.moveItem(at: b, to: fx.dir)
+            }
+            #expect(await d.router.design.liveClients == 0)
+            #expect(await !d.router.figcraft.isRunning)
+            #expect(try await call(p, m, "design.help").ok)
+            // the new engine's CLI answered, and list_commands was read again
+            // the log moved with the old dir; calls after the swap land in a new one at the same path
+            let calls = [old, fx.dir].map { ((try? String(contentsOf: $0.appendingPathComponent("calls.log"), encoding: .utf8)) ?? "") }.joined()
+            #expect(calls.contains("cli-B"), "\(calls)")
+            #expect(calls.split(separator: "\n").filter { $0 == "tools/call list_commands " }.count == 2, "\(calls)")
+            #expect(FileManager.default.fileExists(atPath: keep.path))
+        }
+    }
+
+    @Test func linkCarriesWebDir() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDesign(fx) { d, p in
+            _ = try await shepherdWithPanel(d, p)
+            let r = try await admin(d, p, "design.link", ["panel": "design-1"])
+            #expect(field(r, "web") == .string(fx.dir.appendingPathComponent("web").path), "\(r)")
+        }
+    }
+
+    @Test func terminalGetsTerminalTextWithoutEngine() async throws {
+        try await withDaemon { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            let r = try await call(p, m, "design.help")
+            #expect(r.error?.message == "Motor de design não instalado: peça ao usuário para baixá-lo em Preferências › Desenho e sandbox do Collie.", "\(r)")
+        }
+    }
     @Test func newFileThenOpenPanel() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDesign(fx) { d, p in

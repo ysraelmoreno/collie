@@ -17,13 +17,15 @@ enum AndroidDownload {
     static let sysImgCatalog = URL(string: "https://dl.google.com/android/repository/sys-img/google_apis/sys-img2-3.xml")!
     static let temurinAPI = URL(string: "https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=aarch64&image_type=jdk&os=mac&vendor=eclipse")!
 
-    /// https on an exact listed host, default port, no credentials; on github.com only under `/adoptium/`.
-    /// Checked on the first URL and on every redirect.
+    /// https on an exact listed host, default port, no credentials; on github.com only under `/adoptium/` and Collie's
+    /// design engine releases (`figcraftReleases`). Checked on the first URL and on every redirect.
     static func allowed(_ u: URL) -> Bool {
         guard u.scheme?.lowercased() == "https", let host = u.host?.lowercased(), hosts.contains(host),
               u.port == nil, u.user == nil, u.password == nil else { return false }
-        return host != "github.com" || (u.path.hasPrefix("/adoptium/") && !u.pathComponents.contains(".."))
+        return host != "github.com"
+            || ((u.path.hasPrefix("/adoptium/") || u.path.hasPrefix(figcraftReleases)) && !u.pathComponents.contains(".."))
     }
+    static let figcraftReleases = "/ysraelmoreno/collie/releases/download/figcraft-v"
 
     /// A downloaded archive: where, how big, its checksum and the checksum's algorithm (`sha256` or `sha1`).
     struct Archive: Equatable { var url: URL, size: Int64, checksum: String, type: String }

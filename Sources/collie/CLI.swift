@@ -51,7 +51,7 @@ enum Client {
     private static func send(_ command: String, _ args: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
         var token = env["COLLIE_TOKEN"], terminalId = env["COLLIE_TERMINAL_ID"]
         // paddock.* / memory.* / work.* / lot.* outside a terminal (no COLLIE_TOKEN) is the user: admin token
-        if command.hasPrefix("admin.") || command.hasPrefix("ui.") || command.hasPrefix("android.")
+        if command.hasPrefix("admin.") || command.hasPrefix("ui.") || command.hasPrefix("android.") || command.hasPrefix("design.engine.")
             || ((command.hasPrefix("paddock.") || command.hasPrefix("memory.") || command.hasPrefix("work.") || command.hasPrefix("lot.")
                  || command.hasPrefix("plugin.")) && token == nil) {
             // inside a Collie terminal: never the admin file (the daemon refuses it from there anyway)
@@ -98,6 +98,7 @@ enum CLI {
         do {
             let result = try await Client.call(cmd.command, cmd.args)
             if cmd.command == "android.install" && !json { return await followInstall(result) }   // prints the job lines itself
+            if cmd.command == "design.engine.install" && !json { return await followInstall(result, status: "design.engine.status") }
             print(render(cmd.command, result, json: json), terminator: "")
             if case .object(let o) = result, case .bool(true)? = o["truncated"] { err("output truncated") }
             // the agent exists, its first prompt didn't get there: not a success, and a retried summon would say "already exists"
@@ -112,15 +113,18 @@ enum CLI {
         }
     }
 
-    /// `android.install` replied `{job}`: one line per change of `android.status`'s job (polled each second) until it ends;
-    /// 1 unless it ended `done`.
-    static func followInstall(_ first: JSONValue) async -> Int32 {
+    /// `android.install` (or `design.engine.install`) replied `{job}`: one line per change of `status`'s job (polled each
+    /// second) until it ends; 1 unless it ended `done`.
+    static func followInstall(_ first: JSONValue, status: String = "android.status") async -> Int32 {
         func line(_ j: JSONValue?) -> (text: String, phase: String) {
             guard case .object(let o)? = j else { return ("", "") }
             func s(_ k: String) -> String? { if case .string(let v)? = o[k] { v } else { nil } }
             var t = s("phase") ?? ""
             if let i = s("item") { t += " \(i)" }
             if case .number(let n)? = o["percent"] { t += " \(Int(n))%" }
+            if case .number(let b)? = o["bytes"], case .number(let tot)? = o["total"], tot > 0, s("phase") == "downloading" {
+                t += " \(Int(b * 100 / tot))%"
+            }
             if let e = s("error") { t += ": \(e)" }
             return (t, s("phase") ?? "")
         }
@@ -133,7 +137,7 @@ enum CLI {
             if ["done", "failed", "cancelled"].contains(phase) { return phase == "done" ? 0 : 1 }
             try? await Task.sleep(for: .seconds(1))
             do {
-                guard case .object(let st) = try await Client.call("android.status", [:]) else { continue }
+                guard case .object(let st) = try await Client.call(status, [:]) else { continue }
                 job = st["job"]
                 if job == nil { err("job lost (daemon restarted?)"); return 1 }
             } catch { err(error.message); return error.code == .daemonUnavailable ? 3 : 1 }

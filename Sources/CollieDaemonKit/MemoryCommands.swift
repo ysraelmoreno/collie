@@ -223,7 +223,8 @@ extension CommandRouter {
                     designFirst: ws.designFirst, lot: myLot.map { ($0.name, $0.goal) }, morePanels: !PluginRegistry.externalSpecs.isEmpty,
                     // only Claude and Cursor run this hook
                     agent: me.preset == .cursor || me.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent" ? "cursor" : "claude",
-                    sharedFolder: await sharedFolder(me))
+                    sharedFolder: await sharedFolder(me),
+                    figcraftAvailable: { if case .installed = engineState() { true } else { false } }())
                 // ponytail: the bare header (no memories) counts as empty
                 text = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
             } else {

@@ -21,23 +21,26 @@ enum CollieOrientation {
                      panels: [(name: String, pluginId: String)],
                      paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .artifact,
                      lot: (name: String, goal: String)? = nil, morePanels: Bool = false, agent: String = "claude",
-                     sharedFolder: [String] = []) -> String {
+                     sharedFolder: [String] = [], figcraftAvailable: Bool = true) -> String {
+        // no engine (absent or out of date): the FigCraft and ask preferences fall back to a page, with a note
+        let note = !figcraftAvailable && designFirst != .artifact
+        let designFirst = figcraftAvailable ? designFirst : .artifact
         // ponytail: 3 names per group; over the limit, retry with 1, then 0 (just the counts), then -1: also compact
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
         // the export + claude.ai import hints go first, before any name
         // a compact UI-work line goes before the names do (a Shepherd in a shared folder keeps them)
         for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact)
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note)
             if t.count <= limit { return t }
         }
-        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true)
+        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note)
     }
 
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
-                              _ k: Int, claude: Bool = false, compact: Bool = false) -> String {
+                              _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -100,6 +103,9 @@ enum CollieOrientation {
                 case .ask:
                     // ponytail: `design prefer` is pasture-only; a paddock Shepherd tells the user where to set it
                     lines.append("- UI work (screen, flow, visible change; also a bare 'design X') and no design panel: ask the user once: a page (collie artifact new prototype <name>) or FigCraft? " + (paddock == nil ? "Save the answer: collie design prefer artifact|figcraft." : "Tell the user to set it in Collie's Preferences (Onde desenhar).") + " \(notFor)")
+                }
+                if figcraftNote {
+                    lines.append("- FigCraft indisponível (motor não instalado ou desatualizado); se o usuário quiser FigCraft, peça para baixá-lo em Preferências.")
                 }
             }
             lines.append("- Herds: collie herd list | apply <id> --name <n> | save <name> --terminals a,b")

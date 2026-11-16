@@ -41,6 +41,13 @@ actor CommandRouter {
     nonisolated let network: NetworkService
     /// The design engine's server; started by the first design command.
     nonisolated let figcraft: FigcraftServer
+    /// The engine this build accepts (`figcraft-engine.json`; nil: none can be downloaded or run from `<root>/figcraft`).
+    nonisolated let figcraftPin: FigcraftPin?
+    /// Which engine would run now (`FigcraftEngine.resolve`), and why none does.
+    nonisolated let resolveEngine: @Sendable () -> FigcraftEngine?
+    nonisolated let engineState: @Sendable () -> EngineState
+    /// Downloads and swaps the engine (`design.engine.*`, the app alone).
+    nonisolated let engineInstaller: FigcraftInstaller
     /// Design files and the callers' figcraft clients.
     nonisolated let design: DesignService
     /// Design systems: published libraries of design files.
@@ -175,13 +182,36 @@ actor CommandRouter {
         self.network = NetworkService(root: config.paths.root, runDir: config.paths.runDir, devices: devices,
             mitmdump: { mitmdumpPath ?? MitmTool.locate(env: ProcessInfo.processInfo.environment) },
             emit: { s, n, pl in await me.router?.networkEmitted(serial: s, name: n, payload: pl) })
-        // no figcraftDir: a binary path that never exists, so the first design command reports `notBundled`
-        self.figcraft = FigcraftServer(
-            binary: (config.figcraftDir ?? URL(fileURLWithPath: "/nonexistent")).appendingPathComponent("bin/figcraft-server"),
+        FigcraftEngine.cleanStaging(root: config.paths.root)   // an install a daemon death left behind (the throwaway side)
+        let pin = config.figcraftPinFile.flatMap(FigcraftPin.load)
+        let engineDirs = (env: config.figcraftDir, bundle: config.figcraftBundleDir, vendor: config.figcraftVendorDir,
+                          appSupport: config.paths.root.appendingPathComponent("figcraft"))
+        let resolve: @Sendable () -> FigcraftEngine? = {
+            FigcraftEngine.resolve(env: engineDirs.env, bundle: engineDirs.bundle, appSupport: engineDirs.appSupport,
+                                   vendor: engineDirs.vendor, pin: pin)
+        }
+        self.figcraftPin = pin
+        self.resolveEngine = resolve
+        self.engineState = { FigcraftEngine.state(running: resolve(), appSupport: engineDirs.appSupport, pin: pin) }
+        let signed = config.figcraftSignatureCheck ?? FigcraftInstaller.signedByTeam
+        // a downloaded engine is checked again at each start (TOCTOU against the same user accepted, spec §4)
+        let verify: @Sendable (FigcraftEngine) -> Bool = { e in
+            guard let pin else { return false }
+            return ["figcraft-server", "figcraft-cli"].allSatisfy { signed(e.dir.appendingPathComponent("bin/\($0)"), $0, pin.teamId) }
+        }
+        let figcraft = FigcraftServer(engine: resolve, state: engineState, verify: verify,
             dataDir: config.paths.root.appendingPathComponent("design/server"), runDir: config.paths.runDir)
-        self.design = DesignService(server: figcraft, figcraftDir: config.figcraftDir, root: config.paths.root,
+        self.figcraft = figcraft
+        self.design = DesignService(server: figcraft, root: config.paths.root,
                                     runDir: config.paths.runDir, idle: config.designIdle,
                                     timeoutCap: config.designTimeoutCap)
+        self.engineInstaller = FigcraftInstaller(root: config.paths.root, pin: pin,
+            fetch: config.figcraftFetch ?? AndroidDownload.fetch, signature: signed,
+            busy: { await figcraft.isHeld },
+            swap: { op in
+                guard let r = me.router else { throw ProtocolError(code: .unavailable, message: "daemon stopping") }
+                try await r.swapEngine(op)
+            })
         self.systems = DesignSystemService(design: design, root: config.paths.root)
         self.artifacts = ArtifactStore(root: config.paths.root)
         self.plugins = PluginStore(root: config.paths.root)
@@ -355,6 +385,9 @@ actor CommandRouter {
             }
             if req.command.hasPrefix("access.") {   // request/list: a terminal; grant/deny/revoke: the app alone
                 return Response(id: req.id, ok: true, result: try await accessCommand(req, peer: peer))
+            }
+            if req.command.hasPrefix("design.engine.") {   // the app's alone; before the design plug-in's commands
+                return Response(id: req.id, ok: true, result: try await designEngineCommand(req, peer: peer))
             }
             if req.command.hasPrefix("android.") {   // the app's alone
                 return Response(id: req.id, ok: true, result: try await androidCommand(req, peer: peer))

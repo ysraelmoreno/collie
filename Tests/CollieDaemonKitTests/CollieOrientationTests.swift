@@ -149,6 +149,23 @@ import CollieProtocol
         #expect(t.contains("also a bare 'design X'): open a design panel (collie panel open design --file <feature>), design before implementing, and tell the user the file name."), "\(t)")
         #expect(!t.contains("artifact new prototype <name>"))
     }
+    /// No engine (absent or out of date): the FigCraft preference falls back to a page, with a note to ask the user.
+    @Test func figcraftPreferredButMissingFallsBackToPage() {
+        let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: nil, peers: [], panels: [], designFirst: .figcraft,
+                                       figcraftAvailable: false)
+        #expect(t.contains("design it as a page first") && t.contains("collie artifact new prototype <name>"), "\(t)")
+        #expect(t.contains("FigCraft indisponível (motor não instalado ou desatualizado); se o usuário quiser FigCraft, peça para baixá-lo em Preferências."), "\(t)")
+        #expect(!t.contains("open a design panel (collie") && !t.contains("collie design engine"))
+    }
+    @Test func askWithoutEngineFallsBackToPage() {
+        let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: nil, peers: [], panels: [], designFirst: .ask,
+                                       figcraftAvailable: false)
+        #expect(t.contains("design it as a page first") && !t.contains("ask the user once") && t.contains("FigCraft indisponível"), "\(t)")
+    }
+    @Test func artifactPreferenceWithoutEngineHasNoNote() {
+        let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: nil, peers: [], panels: [], figcraftAvailable: false)
+        #expect(!t.contains("FigCraft indisponível"))
+    }
     @Test func shepherdWithPanelUsesIt() {
         for pref in DesignFirst.allCases {
             let t = text(shepherd: true, panels: [("Home", "design")], pref: pref)

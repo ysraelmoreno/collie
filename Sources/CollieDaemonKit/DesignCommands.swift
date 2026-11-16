@@ -8,6 +8,11 @@ extension CommandRouter {
     /// `design.new` and `design.help` have no panel; `design.link` answers only the admin (the app).
     func designCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
+        do { return try await designCommand(r, caller: caller) }
+        catch let e as ProtocolError where caller != nil { throw FigcraftServer.forTerminal(e) }   // no command an agent can't run
+    }
+
+    private func designCommand(_ r: Request, caller: TerminalRecord?) async throws -> JSONValue {
         switch r.command {
         case "design.files":
             let visible = (caller.map { ConnectionGraph.reachablePanels(from: $0.id, in: ws) } ?? ws.panels).filter { $0.pluginId == "design" }
@@ -228,6 +233,19 @@ extension CommandRouter {
     }
 
     /// One scope change at a time, across the workspace and every paddock (a paddock follows the workspace).
+    /// Replaces the engine on disk (`op`: the installer's rename) with nothing of the old one left running: waits for a
+    /// backup (≤ `backupWait`, else `.conflict` "backup em andamento"), holds the server (calls meanwhile get "motor de
+    /// design sendo trocado", never the bundle's engine), closes every client and the server, runs `op`, drops what was
+    /// read from the old build, then lets the next call start the new one. Design files (`<root>/design/`) are untouched.
+    func swapEngine(backupWait: Duration = .seconds(60), _ op: @Sendable () throws -> Void) async throws {
+        try await figcraft.holdWhenFree(reason: .swap, within: backupWait)
+        await design.stop()
+        await figcraft.stop()
+        do { try op() } catch { await figcraft.release(.swap); throw error }
+        await design.resetCaches()
+        await figcraft.release(.swap)
+    }
+
     func lockDesignScopes(_ deadline: ContinuousClock.Instant) async throws {
         while designScopeBusy {
             guard ContinuousClock.now < deadline else { throw ProtocolError(code: .timeout, message: "design systems are changing; try again") }

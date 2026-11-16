@@ -64,8 +64,20 @@ public struct DaemonConfig: Sendable {
     public var remoteEventQueueBytes = 4 << 20
     /// How long a device video session outlives its last viewer.
     public var deviceGrace: Duration = .seconds(5)
-    /// The bundled figcraft (`bin/figcraft-server`, `bin/figcraft-cli`, `web/`); nil/missing: design commands report it is not bundled.
+    /// A figcraft dir taken as is, before any other (`COLLIE_FIGCRAFT_DIR`, tests): `bin/figcraft-server`,
+    /// `bin/figcraft-cli`, `web/`. Else the engine is resolved per start (`FigcraftEngine.resolve`): `figcraftBundleDir`,
+    /// then `<root>/figcraft` (downloaded, only when it is the pin's), then `figcraftVendorDir` (DEBUG builds).
     public var figcraftDir: URL?
+    /// The app bundle's engine (`Contents/Resources/figcraft`; release bundles have none).
+    public var figcraftBundleDir: URL?
+    /// The repo's `vendor/figcraft` (DEBUG builds only).
+    public var figcraftVendorDir: URL?
+    /// The pin (`Contents/Resources/figcraft-engine.json`); nil/unreadable: no downloaded engine can run.
+    public var figcraftPinFile: URL?
+    /// Tests: the engine download (default `AndroidDownload.fetch`) and the signature check of a downloaded engine's
+    /// binaries `(binary, identifier, teamId)` (default: Developer ID Application of the pin's team).
+    public var figcraftFetch: AndroidFetch?
+    public var figcraftSignatureCheck: (@Sendable (URL, String, String) -> Bool)?
     /// The offline web libraries (`manifest.json` + `<name>@<version>/`, scripts/fetch-weblibs.sh); nil/missing:
     /// `artifact.libs` reports them absent.
     public var weblibsDir: URL?

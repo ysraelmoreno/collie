@@ -58,8 +58,9 @@ private func zip(_ dir: URL) async throws -> URL {
     return out
 }
 private func server(_ root: URL) -> FigcraftServer {
-    FigcraftServer(binary: fakeServer, dataDir: root.appendingPathComponent("design/server"), runDir: root.appendingPathComponent("run"),
-                   port: UInt16.random(in: 52000...58000))
+    let e = engineDir(fakeServer, in: root.appendingPathComponent("engines"))
+    return FigcraftServer(engine: { FigcraftEngine(dir: e, version: nil, source: .env) }, dataDir: root.appendingPathComponent("design/server"),
+                          runDir: root.appendingPathComponent("run"), port: UInt16.random(in: 52000...58000))
 }
 private func manifest(_ parts: [String], format: Int = 1) -> String {
     #"{"format":\#(format),"createdAt":"2026-10-24T00:00:00Z","collieVersion":"t","parts":[\#(parts.map { "\"\($0)\"" }.joined(separator: ","))]}"#

@@ -74,7 +74,7 @@ public enum DataBackup {
             return ps
         }
         let wasUp = await server.isRunning
-        await server.hold(true)   // a design command meanwhile gets "backup in progress" instead of a new server
+        await server.hold(.backup)   // a design command meanwhile gets "backup in progress" instead of a new server
         await server.stop()
         var failed: ProtocolError?
         do {
@@ -92,7 +92,7 @@ public enum DataBackup {
             }
             await paused()
         } catch { failed = (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "backup: \(error)") }
-        await server.hold(false)
+        await server.release(.backup)
         if wasUp { _ = try? await server.ensureRunning() }   // the Design panels reconnect as after a crash
         if let failed { throw failed }
 

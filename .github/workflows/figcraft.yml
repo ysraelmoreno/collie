@@ -1,0 +1,222 @@
+# Builds figcraft cold, signs (Developer ID) and notarizes it, and publishes the downloadable engine of
+# Resources/figcraft-engine.json as the prerelease figcraft-v<version> (never "latest": Collie.dmg's link stays).
+# A published version is never rebuilt (tar, gzip and --timestamp aren't reproducible): changing any input of
+# scripts/figcraft-inputs.sh (this file too, even a comment) needs -c<N+1> and the new `inputs` in the pin.
+# Spec: docs/superpowers/specs/2026-11-16-figcraft-download-design.md §9. Never runs on pull requests (secrets + signing).
+name: figcraft
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/build-figcraft.sh
+      - scripts/package-figcraft.sh
+      - scripts/figcraft-inputs.sh
+      - .github/workflows/figcraft.yml
+      - patches/figcraft/*.patch
+      - Resources/figcraft-engine.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: figcraft
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  engine:
+    # macos-26 = macOS 26 arm64; the engine is arm64-only
+    runs-on: macos-26
+    # cold Rust → wasm build (~40 min) + notarization wait (up to 4 h)
+    timeout-minutes: 300
+    # pull-requests: the pin PR (scripts/ci/pin-pr.sh)
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Read pin, check inputs
+        id: pin
+        run: |
+          PIN=Resources/figcraft-engine.json
+          get() { plutil -extract "$1" raw -o - "$PIN"; }
+          VERSION="$(get version)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-c[0-9]+$ ]] || { echo "::error::pin version \"$VERSION\" is not X.Y.Z-cN"; exit 1; }
+          INPUTS="$(scripts/figcraft-inputs.sh)"
+          [ "$INPUTS" = "$(get inputs)" ] || { echo "::error::insumos do figcraft mudaram (inputs=$INPUTS): suba -c<N> e o inputs no pin"; exit 1; }
+          TAG="figcraft-v$VERSION"
+          ASSET="figcraft-$VERSION-arm64.tar.gz"
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET"
+          [ "$(get url)" = "$URL" ] || { echo "::error::pin url is not $URL"; exit 1; }
+          {
+            echo "version=$VERSION"; echo "figcraft=$(get figcraft)"; echo "tag=$TAG"; echo "asset=$ASSET"
+            echo "inputs=$INPUTS"; echo "sha256=$(get sha256)"; echo "size=$(get size)"
+          } >> "$GITHUB_OUTPUT"
+
+      # Published → only check the pin against it (zeros = not filled yet: print the values). Draft = a run that
+      # died before publishing: delete it and build again.
+      - name: Existing release
+        id: existing
+        env:
+          TAG: ${{ steps.pin.outputs.tag }}
+          ASSET: ${{ steps.pin.outputs.asset }}
+          INPUTS: ${{ steps.pin.outputs.inputs }}
+          PIN_SHA: ${{ steps.pin.outputs.sha256 }}
+          PIN_SIZE: ${{ steps.pin.outputs.size }}
+        run: |
+          ZERO=0000000000000000000000000000000000000000000000000000000000000000
+          rels="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$TAG\") | [.id, .draft] | @tsv")"
+          published=""
+          while IFS=$'\t' read -r id draft; do
+            [ -n "$id" ] || continue
+            if [ "$draft" = true ]; then
+              echo "deleting orphan draft release $id ($TAG)"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            else
+              published="$id"
+            fi
+          done <<<"$rels"
+          if [ -z "$published" ]; then
+            [ "$PIN_SHA" = "$ZERO" ] || { echo "::error::o pin fixa um sha256 para $TAG, mas a release não está publicada; uma versão nunca é refeita: suba -c<N>"; exit 1; }
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "build=false" >> "$GITHUB_OUTPUT"
+          body="$(gh api "repos/$GITHUB_REPOSITORY/releases/$published" --jq .body)"
+          body="${body//$'\r'/}"
+          grep -qxF "inputs: $INPUTS" <<<"$body" || { echo "::error::$TAG foi publicado com outros insumos: suba -c<N> e o inputs no pin"; exit 1; }
+          D="$RUNNER_TEMP/published"
+          mkdir -p "$D/x"
+          gh release download "$TAG" -p "$ASSET" -D "$D"
+          SUM="$(shasum -a 256 "$D/$ASSET" | cut -d' ' -f1)"
+          SIZE="$(stat -f %z "$D/$ASSET")"
+          if [ "$PIN_SHA" = "$ZERO" ]; then
+            tar -xzf "$D/$ASSET" -C "$D/x"
+            UNPACKED="$(find "$D/x/figcraft" -type f -exec stat -f %z {} + | awk '{s += $1} END {print s + 0}')"
+            echo "::notice::$TAG publicado; preencha o pin: sha256=$SUM size=$SIZE unpackedSize=$UNPACKED"
+            { echo "fill=true"; echo "sha256=$SUM"; echo "size=$SIZE"; echo "unpackedSize=$UNPACKED"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [ "$SUM" = "$PIN_SHA" ] && [ "$SIZE" = "$PIN_SIZE" ] \
+            || { echo "::error::pin difere de $TAG publicado: sha256=$SUM size=$SIZE (pin: $PIN_SHA $PIN_SIZE)"; exit 1; }
+          echo "ok: pin matches the published $TAG"
+
+      # Cold build on purpose: target/ is GBs. Only the tools (trunk, wasm-bindgen, wasm-opt; build-figcraft.sh
+      # reinstalls any whose version differs) and cargo's download cache.
+      - name: Cache figcraft tools
+        if: steps.existing.outputs.build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/figcraft-tools
+            ~/.cargo/registry
+          key: figcraft-tools-${{ hashFiles('scripts/build-figcraft.sh') }}
+          restore-keys: figcraft-tools-
+
+      - name: Build figcraft
+        if: steps.existing.outputs.build == 'true'
+        run: |
+          rust="$(sed -n 's/^RUST_VERSION=//p' scripts/build-figcraft.sh)"
+          rustup toolchain install "$rust" --profile minimal --target wasm32-unknown-unknown
+          scripts/build-figcraft.sh
+
+      - name: Signing keychain
+        if: steps.existing.outputs.build == 'true'
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+        run: scripts/ci/signing-keychain.sh
+
+      - name: Sign, notarize, package
+        id: pkg
+        if: steps.existing.outputs.build == 'true'
+        env:
+          COLLIE_NOTARY_KEY: ${{ runner.temp }}/notary-key.p8
+          COLLIE_NOTARY_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          COLLIE_NOTARY_ISSUER: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          COLLIE_NOTARY_TIMEOUT: "14400"
+        run: |
+          ID="$(security find-identity -v -p codesigning | awk -F'"' '/"Developer ID Application:/ {print $2; exit}')"
+          [ -n "$ID" ] || { echo "::error::no Developer ID Application identity in the keychain"; exit 1; }
+          scripts/package-figcraft.sh "$ID" | tee -a "$GITHUB_OUTPUT"
+
+      # Draft first, check what GitHub serves, publish last; never --clobber (a published version is immutable).
+      - name: Publish release
+        id: publish
+        if: steps.existing.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.pin.outputs.tag }}
+          ASSET: ${{ steps.pin.outputs.asset }}
+          VERSION: ${{ steps.pin.outputs.version }}
+          FIGCRAFT: ${{ steps.pin.outputs.figcraft }}
+          INPUTS: ${{ steps.pin.outputs.inputs }}
+          SHA: ${{ steps.pkg.outputs.sha256 }}
+          SIZE: ${{ steps.pkg.outputs.size }}
+          UNPACKED: ${{ steps.pkg.outputs.unpackedSize }}
+        run: |
+          [ "$(cut -d' ' -f1 "build/$ASSET.sha256")" = "$SHA" ] || { echo "::error::build/$ASSET.sha256 differs from the package output"; exit 1; }
+          printf '%s\n' \
+            "Motor de design do Collie: figcraft $FIGCRAFT com os patches do Collie (revisão $VERSION), Apple Silicon (arm64)." \
+            "Não é para instalar à mão: o Collie baixa este arquivo sob pedido (Preferências › Desenho e sandbox) e confere o sha256 fixado no app e a assinatura Developer ID." \
+            "" \
+            "sha256: $SHA" \
+            "inputs: $INPUTS" > "$RUNNER_TEMP/figcraft-notes.md"
+          gh release create "$TAG" "build/$ASSET" "build/$ASSET.sha256" --draft --prerelease --latest=false \
+            --target "$GITHUB_SHA" --title "figcraft $VERSION" --notes-file "$RUNNER_TEMP/figcraft-notes.md"
+          D="$RUNNER_TEMP/draft"
+          mkdir -p "$D"
+          gh release download "$TAG" -p "$ASSET" -p "$ASSET.sha256" -D "$D"
+          (cd "$D" && shasum -a 256 -c "$ASSET.sha256")
+          [ "$(shasum -a 256 "$D/$ASSET" | cut -d' ' -f1)" = "$SHA" ] && [ "$(stat -f %z "$D/$ASSET")" = "$SIZE" ] \
+            || { echo "::error::downloaded draft asset differs from the build"; exit 1; }
+          mkdir "$D/x" && tar -xzf "$D/$ASSET" -C "$D/x"
+          [ "$(find "$D/x/figcraft" -type f -exec stat -f %z {} + | awk '{s += $1} END {print s + 0}')" = "$UNPACKED" ] \
+            || { echo "::error::unpackedSize of the downloaded draft asset differs from the build"; exit 1; }
+          # the pin PR takes only these: what GitHub serves for the draft, checked above
+          { echo "sha256=$SHA"; echo "size=$SIZE"; echo "unpackedSize=$UNPACKED"; } >> "$GITHUB_OUTPUT"
+          gh release edit "$TAG" --draft=false --prerelease --latest=false
+
+      - name: Pin values
+        if: steps.existing.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.pin.outputs.tag }}
+          SHA: ${{ steps.publish.outputs.sha256 }}
+          SIZE: ${{ steps.publish.outputs.size }}
+          UNPACKED: ${{ steps.publish.outputs.unpackedSize }}
+        run: |
+          echo "::notice::$TAG publicado; preencha o pin: sha256=$SHA size=$SIZE unpackedSize=$UNPACKED"
+          printf '### %s\n\nResources/figcraft-engine.json:\n\n```json\n"size": %s,\n"unpackedSize": %s,\n"sha256": "%s",\n```\n' \
+            "$TAG" "$SIZE" "$UNPACKED" "$SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      # Pin zeroed or different → PR figcraft-pin-<version> (never the main itself). Values only from the asset this
+      # run downloaded and checked (draft just published, or the published release when the pin is zeroed).
+      # A failure here never touches the release: warning + the values for a manual commit.
+      - name: Pin pull request
+        if: steps.existing.outputs.build == 'true' || steps.existing.outputs.fill == 'true'
+        env:
+          VERSION: ${{ steps.pin.outputs.version }}
+          TAG: ${{ steps.pin.outputs.tag }}
+          SHA: ${{ steps.publish.outputs.sha256 || steps.existing.outputs.sha256 }}
+          SIZE: ${{ steps.publish.outputs.size || steps.existing.outputs.size }}
+          UNPACKED: ${{ steps.publish.outputs.unpackedSize || steps.existing.outputs.unpackedSize }}
+          SOURCE: ${{ steps.existing.outputs.build == 'true' && 'asset baixado do draft e conferido (sha256, size, unpackedSize) antes de publicar' || 'asset da release já publicada, baixado nesta rodada' }}
+          FRESH: ${{ steps.existing.outputs.build == 'true' && '1' || '' }}
+        run: |
+          scripts/ci/pin-pr.sh || echo "::warning::PR do pin não foi aberto (Settings > Actions > General > Allow GitHub Actions to create and approve pull requests?). A release $TAG continua publicada; preencha o pin à mão num PR: sha256=$SHA size=$SIZE unpackedSize=$UNPACKED"
+
+      - name: Remove keychain and keys
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/collie-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/notary-key.p8"

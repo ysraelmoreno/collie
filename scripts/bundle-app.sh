@@ -32,14 +32,16 @@ cp Resources/NOTICE-fonts "$APP/Contents/Resources/"
 if ls vendor/fonts/*.ttf >/dev/null 2>&1; then
   mkdir -p "$APP/Contents/Resources/Fonts"; cp vendor/fonts/*.ttf "$APP/Contents/Resources/Fonts/"
 else echo "warning: vendor/fonts missing (run scripts/fetch-fonts.sh): system fonts" >&2; fi
-# Design engine (scripts/build-figcraft.sh): helpers + web UI + licences under Resources/figcraft/
-cp Resources/NOTICE-figcraft "$APP/Contents/Resources/"
-if [ -x vendor/figcraft/bin/figcraft-server ] && [ -f vendor/figcraft/web/index.html ]; then
+# Design engine: the pin (version, URL, sha256, team) always; collied reads <Helpers>/../Resources/figcraft-engine.json.
+# The engine itself (scripts/build-figcraft.sh) only in local builds; COLLIE_BUNDLE_FIGCRAFT=0 (release.sh) skips it.
+cp Resources/NOTICE-figcraft Resources/figcraft-engine.json "$APP/Contents/Resources/"
+if [ "${COLLIE_BUNDLE_FIGCRAFT:-}" = 0 ]; then echo "note: design engine not bundled (COLLIE_BUNDLE_FIGCRAFT=0): the app downloads it" >&2
+elif [ -x vendor/figcraft/bin/figcraft-server ] && [ -f vendor/figcraft/web/index.html ]; then
   mkdir -p "$APP/Contents/Resources/figcraft"
   cp -R vendor/figcraft/bin vendor/figcraft/web vendor/figcraft/licenses "$APP/Contents/Resources/figcraft/"
   # --deep doesn't sign Mach-O under Resources: sign the helpers themselves
   codesign --force -s "$SIGN" --options runtime ${TS[@]+"${TS[@]}"} "$APP/Contents/Resources/figcraft/bin/"*
-else echo "warning: vendor/figcraft missing (run scripts/build-figcraft.sh): no design engine" >&2; fi
+else echo "note: vendor/figcraft missing: design engine left to download (scripts/build-figcraft.sh embeds it)" >&2; fi
 # Diagram editor (scripts/build-drawio.sh): draw.io embed web UI + licence under Resources/drawio/
 cp Resources/NOTICE-drawio "$APP/Contents/Resources/"
 if [ -f vendor/drawio/web/index.html ]; then

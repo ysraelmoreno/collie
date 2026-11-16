@@ -26,8 +26,10 @@ ID="${COLLIE_SIGN_IDENTITY:-$(sed -n 's/.*"\(Developer ID Application:[^"]*\)".*
 grep -qF "\"$ID\"" <<<"$IDS" || { echo "error: identity \"$ID\" not in keychain" >&2; exit 1; }
 case "$ID" in "Developer ID Application:"*) ;; *) echo "error: \"$ID\" is not a Developer ID Application identity: Gatekeeper rejects it on other Macs" >&2; exit 1;; esac
 
-COLLIE_SIGN_IDENTITY="$ID" COLLIE_TIMESTAMP=1 scripts/bundle-app.sh
+# release builds never embed figcraft: the app downloads the engine Resources/figcraft-engine.json pins
+COLLIE_BUNDLE_FIGCRAFT=0 COLLIE_SIGN_IDENTITY="$ID" COLLIE_TIMESTAMP=1 scripts/bundle-app.sh
 APP=build/Collie.app
+[ ! -e "$APP/Contents/Resources/figcraft" ] || { echo "error: $APP/Contents/Resources/figcraft exists: release builds don't embed the design engine" >&2; exit 1; }
 codesign --verify --deep --strict --verbose=2 "$APP"
 # notarization rejects binaries without hardened runtime or secure timestamp: fail here, not after the upload
 bad=0

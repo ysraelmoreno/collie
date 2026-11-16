@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rede no canvas</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+/* O painel Rede com map local dentro do canvas do Collie: o cercado de um app Android, o terminal do agente, o
+   emulador mostrando a tela mapeada, o painel Rede ao lado e o cartão de aprovação. Cena de 1400x820 ajustada à
+   largura da janela. Dados de exemplo. */
+:root {
+  --bg: #0e1326; --surface: #161c36; --sunken: #0b1020; --raised: #1b2340; --border: #262e52;
+  --text: #e8ecf8; --text2: #b6bedb; --muted: #8c95b8; --accent: #6ee7b7; --attention: #ffb86b; --secondary: #93a4ff;
+  --map: #ffb86b; --err: #ff8a80;
+  --ui: "Space Grotesk", system-ui, sans-serif; --mono: "DM Mono", ui-monospace, Menlo, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #ecebe6; --surface: #ffffff; --sunken: #f6f4ee; --raised: #efece4; --border: #d9d5ca;
+    --text: #15171c; --text2: #3b3f4b; --muted: #5a5d66; --accent: #0f7a55; --attention: #8a5a00; --secondary: #4a5bd6;
+    --map: #8a5a00; --err: #b3261e; color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #ecebe6; --surface: #ffffff; --sunken: #f6f4ee; --raised: #efece4; --border: #d9d5ca;
+  --text: #15171c; --text2: #3b3f4b; --muted: #5a5d66; --accent: #0f7a55; --attention: #8a5a00; --secondary: #4a5bd6;
+  --map: #8a5a00; --err: #b3261e; color-scheme: light;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--ui); font-size: 14px;
+  padding-block: 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width: 1400px; margin: 0 auto; display: grid; gap: 18px; }
+h1 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+.sub { margin: 0; color: var(--muted); max-width: 72ch; }
+.viewport { width: 100%; overflow: hidden; border-radius: 16px; border: 1px solid var(--border); background: var(--surface); }
+#stage { position: relative; width: 1400px; height: 820px; transform-origin: top left;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--border) 90%, transparent) 1.3px, transparent 1.4px); background-size: 28px 28px; }
+.bar { position: absolute; z-index: 5; left: 0; right: 0; top: 0; height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 18px;
+  background: var(--raised); border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+.bar b { width: 12px; height: 12px; border-radius: 50%; background: var(--border); }
+.bar span { margin-left: 14px; } .bar .r { margin-left: auto; color: var(--text2); }
+
+.paddock { position: absolute; left: 24px; top: 74px; width: 1352px; height: 700px; border: 2px dashed color-mix(in srgb, var(--secondary) 60%, transparent);
+  border-radius: 20px; background: color-mix(in srgb, var(--secondary) 4%, transparent); }
+.paddock span { position: absolute; left: 18px; top: -12px; padding: 0 8px; background: var(--surface); font-family: var(--mono); font-size: 12px; color: var(--secondary); border-radius: 6px; }
+svg.leash { position: absolute; inset: 0; width: 1400px; height: 820px; pointer-events: none; z-index: 1; }
+
+.node { position: absolute; z-index: 2; background: var(--sunken); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  box-shadow: 0 16px 36px rgba(0,0,0,.28); }
+.nh { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border);
+  font-family: var(--mono); font-size: 12px; color: var(--text2); background: var(--surface); white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.tag { margin-left: auto; font-size: 10.5px; padding: 2px 7px; border-radius: 6px; border: 1px solid; }
+.g { color: var(--accent); } .y { color: var(--attention); } .b { color: var(--secondary); } .m { color: var(--muted); }
+.term { padding: 12px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.65; color: var(--text2); white-space: pre; overflow: hidden; }
+
+/* emulador */
+.dev { background: #0a0d18; display: grid; place-items: center; padding: 14px 0 12px; }
+.phone { width: 214px; height: 430px; border-radius: 28px; background: #f4f2ec; color: #1c2034; padding: 26px 14px 14px; position: relative; border: 6px solid #1b2038; }
+.phone h4 { margin: 0 0 8px; font-size: 14px; }
+.pimg { height: 82px; border-radius: 10px; background: linear-gradient(135deg, #e7c46a, #c9923a); display: grid; place-items: center; font-weight: 700; color: #4a3210; font-size: 12px; }
+.pname { margin-top: 10px; font-weight: 700; font-size: 13px; }
+.price { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
+.price s { color: #8a8d99; font-size: 11px; } .price b { font-size: 20px; }
+.off { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 999px; background: #d8f3e5; color: #0f6a49; font-size: 10.5px; font-weight: 700; }
+.pbtn { margin-top: 14px; height: 34px; border-radius: 10px; background: #5a52f0; color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 12px; }
+.ptag { position: absolute; left: 14px; right: 14px; bottom: 14px; padding: 6px 8px; border-radius: 8px; background: #fff4dc; color: #8a5a00; font-size: 10px; border: 1px solid #f0d594; }
+
+/* painel Rede */
+.rede .tb { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--raised); font-size: 12px; }
+.pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.pill.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.pill.map { color: var(--map); border-color: color-mix(in srgb, var(--map) 50%, transparent); background: color-mix(in srgb, var(--map) 12%, transparent); }
+.rr { display: grid; grid-template-columns: 38px minmax(0, 1fr) 36px 46px; gap: 6px; align-items: center; padding: 7px 12px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.rr .m2 { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.rr .u { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr .u small { color: var(--muted); }
+.rr .s { font-family: var(--mono); font-size: 11.5px; text-align: right; } .ok { color: var(--accent); } .bad { color: var(--err); }
+.rr.mapd { box-shadow: inset 3px 0 0 var(--map); background: color-mix(in srgb, var(--secondary) 10%, transparent); }
+.rr .tg { grid-column: 2 / -1; margin-top: -3px; font-size: 10.5px; color: var(--map); }
+.rr .tg::before { content: "⇄ "; }
+.rules { padding: 8px 12px 10px; display: grid; gap: 7px; font-size: 12px; }
+.rl { display: flex; align-items: center; gap: 9px; }
+.sw { width: 28px; height: 16px; border-radius: 999px; background: var(--border); position: relative; flex: none; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--text2); }
+.sw.on { background: var(--secondary); } .sw.on::after { left: 14px; background: var(--bg); }
+.rl .mono { font-family: var(--mono); font-size: 10.5px; color: var(--muted); margin-left: auto; }
+.rl.offr { opacity: .55; }
+
+/* cartão */
+.card { position: absolute; z-index: 4; width: 330px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: grid; gap: 10px;
+  box-shadow: 0 14px 40px rgba(0,0,0,.4); }
+.card h3 { margin: 0; font-size: 14.5px; }
+.card dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12px; }
+.card dt { color: var(--muted); } .card dd { margin: 0; font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.acts { display: flex; gap: 8px; justify-content: flex-end; }
+button { font: inherit; font-size: 12.5px; color: var(--text); background: var(--raised); border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+button.p { background: var(--secondary); color: var(--bg); border-color: var(--secondary); font-weight: 700; }
+button:focus-visible { outline: 2px solid var(--secondary); outline-offset: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: 12.5px; }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2px dashed; vertical-align: middle; margin-right: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Rede no canvas</h1>
+    <p class="sub">O cercado de um app Android: o agente cria a regra, você aprova, o emulador mostra a tela mapeada e o painel Rede marca o fluxo. Cena de exemplo.</p>
+  </header>
+
+  <div class="viewport" id="vp">
+    <div id="stage" aria-label="Canvas do Collie com terminal, emulador, painel Rede e cartão de aprovação">
+      <div class="bar"><b></b><b></b><b></b><span>Pasto · acme-app-android</span><span class="r">3 terminais · 2 painéis</span></div>
+      <div class="paddock"><span>cercado · acme/app-android</span></div>
+
+      <svg class="leash" viewBox="0 0 1400 820" aria-hidden="true">
+        <g fill="none" stroke-width="2" stroke-dasharray="5 6" stroke-linecap="round">
+          <path d="M455 260 C510 260 520 300 560 330" stroke="#93a4ff"/>
+          <path d="M455 300 C700 300 760 80 1010 98 L900 160" stroke="#93a4ff"/>
+          <path d="M840 420 C870 420 880 330 900 292" stroke="#ffb86b"/>
+        </g>
+      </svg>
+
+      <div class="node" style="left:60px; top:128px; width:395px; height:372px">
+        <div class="nh"><span class="dot" style="background:var(--accent)"></span>apps-dev <span class="m">claude</span>
+          <span class="tag" style="color:var(--attention); border-color:color-mix(in srgb, var(--attention) 45%, transparent)">aguardando você</span></div>
+        <div class="term"><span class="g">●</span> Quero testar a PDP com desconto sem
+  tocar no backend. Criando a regra:
+<span class="m">  collie network rule-add \
+    --host api.example.com \
+    --path '/pdp/v2/products/*' \
+    --body-file json/discount_pdp.json</span>
+<span class="y">●</span> Esperando você permitir o cartão…
+<span class="m">  (a regra nasce desligada)</span>
+
+<span class="b">›</span> <span style="background:var(--text2)"> </span></div>
+      </div>
+
+      <div class="node dev" style="left:560px; top:100px; width:280px">
+        <div class="nh" style="width:100%"><span class="dot" style="background:var(--accent)"></span>Pixel 8 · collie-lite
+          <span class="tag" style="color:var(--map); border-color:color-mix(in srgb, var(--map) 45%, transparent)">mapeada</span></div>
+        <div class="phone">
+          <h4>Cerveja Lager 350 ml</h4>
+          <div class="pimg">foto do produto</div>
+          <div class="pname">Lager 350 ml · lata</div>
+          <div class="price"><s>R$ 4,94</s><b>R$ 4,20</b></div>
+          <span class="off">15% de desconto</span>
+          <div class="pbtn">Adicionar ao carrinho</div>
+          <div class="ptag">Esta tela usa uma resposta fabricada pela regra "PDP com desconto".</div>
+        </div>
+      </div>
+
+      <div class="node rede" style="left:900px; top:100px; width:440px">
+        <div class="nh"><span class="dot" style="background:var(--attention)"></span>Rede
+          <span class="tag" style="color:var(--accent); border-color:color-mix(in srgb, var(--accent) 45%, transparent)">capturando</span></div>
+        <div class="tb"><span class="pill on">emulator-5554</span><span class="pill">112 fluxos</span><span class="pill map" style="margin-left:auto">1 regra ligada</span></div>
+        <div class="rr"><span class="m2">GET</span><span class="u">api.example.com<small>/v1/home</small></span><span class="s ok">200</span><span class="s m">84 ms</span></div>
+        <div class="rr mapd"><span class="m2">GET</span><span class="u">api.example.com<small>/pdp/v2/products/10482</small></span><span class="s ok">200</span><span class="s m">3 ms</span><span class="tg">mapeado · PDP com desconto</span></div>
+        <div class="rr"><span class="m2">POST</span><span class="u">api.example.com<small>/cart/items</small></span><span class="s ok">201</span><span class="s m">212 ms</span></div>
+        <div class="rr"><span class="m2">GET</span><span class="u">api.example.com<small>/checkout/summary</small></span><span class="s bad">503</span><span class="s m">1,2 s</span></div>
+        <div class="rules">
+          <div class="rl"><span class="sw on"></span>PDP com desconto<span class="mono">GET /pdp/v2/products/*</span></div>
+          <div class="rl offr"><span class="sw"></span>Checkout com erro<span class="mono">POST /checkout/*</span></div>
+          <div class="rl offr"><span class="sw"></span>Home lenta<span class="mono">atraso 8 s</span></div>
+        </div>
+      </div>
+
+      <div class="card" style="left:60px; top:530px" role="group" aria-label="Aprovação de regra">
+        <h3>Responder no lugar do servidor?</h3>
+        <dl>
+          <dt>Terminal</dt><dd>apps-dev</dd>
+          <dt>Requisição</dt><dd>GET api.example.com/pdp/v2/products/*</dd>
+          <dt>Resposta</dt><dd>200 · 2,1 KB · atraso 0 ms</dd>
+        </dl>
+        <div class="acts"><button>Negar</button><button class="p">Permitir</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i style="color:var(--secondary)"></i>coleira: o agente enxerga o emulador e o painel Rede</span>
+    <span><i style="color:var(--map)"></i>fluxo mapeado, visível no emulador e na rede</span>
+  </div>
+</div>
+<script>
+(function () {
+  var vp = document.getElementById('vp'), st = document.getElementById('stage');
+  function fit() {
+    var s = Math.min(1, vp.clientWidth / 1400);
+    st.style.transform = 'scale(' + s + ')';
+    vp.style.height = (820 * s) + 'px';
+  }
+  fit(); window.addEventListener('resize', fit);
+})();
+</script>
+</body>
+</html>

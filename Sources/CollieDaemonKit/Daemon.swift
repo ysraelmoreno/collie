@@ -74,6 +74,10 @@ public struct DaemonConfig: Sendable {
     public var figcraftVendorDir: URL?
     /// The pin (`Contents/Resources/figcraft-engine.json`); nil/unreadable: no downloaded engine can run.
     public var figcraftPinFile: URL?
+    /// Tests: the engine download (default `AndroidDownload.fetch`) and the signature check of a downloaded engine's
+    /// binaries `(binary, identifier, teamId)` (default: Developer ID Application of the pin's team).
+    public var figcraftFetch: AndroidFetch?
+    public var figcraftSignatureCheck: (@Sendable (URL, String, String) -> Bool)?
     /// The offline web libraries (`manifest.json` + `<name>@<version>/`, scripts/fetch-weblibs.sh); nil/missing:
     /// `artifact.libs` reports them absent.
     public var weblibsDir: URL?

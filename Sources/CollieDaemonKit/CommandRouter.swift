@@ -46,6 +46,8 @@ actor CommandRouter {
     /// Which engine would run now (`FigcraftEngine.resolve`), and why none does.
     nonisolated let resolveEngine: @Sendable () -> FigcraftEngine?
     nonisolated let engineState: @Sendable () -> EngineState
+    /// Downloads and swaps the engine (`design.engine.*`, the app alone).
+    nonisolated let engineInstaller: FigcraftInstaller
     /// Design files and the callers' figcraft clients.
     nonisolated let design: DesignService
     /// Design systems: published libraries of design files.
@@ -191,11 +193,25 @@ actor CommandRouter {
         self.figcraftPin = pin
         self.resolveEngine = resolve
         self.engineState = { FigcraftEngine.state(running: resolve(), appSupport: engineDirs.appSupport, pin: pin) }
-        self.figcraft = FigcraftServer(engine: resolve, state: engineState,
+        let signed = config.figcraftSignatureCheck ?? FigcraftInstaller.signedByTeam
+        // a downloaded engine is checked again at each start (TOCTOU against the same user accepted, spec §4)
+        let verify: @Sendable (FigcraftEngine) -> Bool = { e in
+            guard let pin else { return false }
+            return ["figcraft-server", "figcraft-cli"].allSatisfy { signed(e.dir.appendingPathComponent("bin/\($0)"), $0, pin.teamId) }
+        }
+        let figcraft = FigcraftServer(engine: resolve, state: engineState, verify: verify,
             dataDir: config.paths.root.appendingPathComponent("design/server"), runDir: config.paths.runDir)
+        self.figcraft = figcraft
         self.design = DesignService(server: figcraft, root: config.paths.root,
                                     runDir: config.paths.runDir, idle: config.designIdle,
                                     timeoutCap: config.designTimeoutCap)
+        self.engineInstaller = FigcraftInstaller(root: config.paths.root, pin: pin,
+            fetch: config.figcraftFetch ?? AndroidDownload.fetch, signature: signed,
+            busy: { await figcraft.isHeld },
+            swap: { op in
+                guard let r = me.router else { throw ProtocolError(code: .unavailable, message: "daemon stopping") }
+                try await r.swapEngine(op)
+            })
         self.systems = DesignSystemService(design: design, root: config.paths.root)
         self.artifacts = ArtifactStore(root: config.paths.root)
         self.plugins = PluginStore(root: config.paths.root)

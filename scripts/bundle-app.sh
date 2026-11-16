@@ -20,6 +20,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN/CollieApp" "$APP/Contents/MacOS/Collie"
 cp "$BIN/collied" "$BIN/collie" "$BIN/collie-ctty" "$APP/Contents/Helpers/"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+# COLLIE_VERSION (scripts/release.sh, from the tag) overrides the version; the plist in git stays untouched
+[ -z "${COLLIE_VERSION:-}" ] || /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $COLLIE_VERSION" "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 cp Resources/NOTICE-scrcpy "$APP/Contents/Resources/"
 # collied finds it at <Helpers>/../Resources/scrcpy-server; without it device panels show an error instead of video

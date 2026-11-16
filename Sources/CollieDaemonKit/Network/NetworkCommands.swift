@@ -39,16 +39,49 @@ extension CommandRouter {
             var body: Data?
             if let path = str(r, "body-file") { body = try await ruleBodyFile(path, r, caller: caller) }
             let serial = str(r, "from") != nil ? try await networkSerial(r) : nil
-            let rule = try await rules.add(try await network.makeRule(r.args, bodyFile: body, serial: serial))
-            return NetworkService.ruleJSON(rule)
+            var rule = try await network.makeRule(r.args, bodyFile: body, serial: serial)
+            let wanted = rule.enabled
+            if caller != nil { rule.enabled = false }   // a terminal's rule is born off; only the card turns it on
+            rule = try await rules.add(rule)
+            if let me = caller, wanted { try await approveRule(rule, by: me) }
+            return NetworkService.ruleJSON(try await rules.rule(rule.id))
         case "network.rule-list": return await network.ruleList()
         case "network.rule-remove": try await rules.remove(try need(r, "id")); return .object([:])
         case "network.rule-enable", "network.rule-disable":
             let id = try need(r, "id")
-            try await rules.setEnabled(id, r.command == "network.rule-enable")
+            let on = r.command == "network.rule-enable"
+            if on, let me = caller, !(try await rules.rule(id).enabled) { try await approveRule(try await rules.rule(id), by: me) }
+            try await rules.setEnabled(id, on)
             return NetworkService.ruleJSON(try await rules.rule(id))
         case "network.rule-clear": await rules.clear(); return .object([:])
         default: throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(r.command)'")
+        }
+    }
+
+    /// A terminal's rule turns on only with the user's Permitir on a card (the apps' `confirm` card); Negar or no
+    /// answer: it stays off and the call is refused.
+    private func approveRule(_ rule: MapRule, by me: TerminalRecord) async throws {
+        let card = AppCard(kind: .confirm, paddock: me.paddockId ?? UUID(), paddockName: ws.paddocks.first { $0.id == me.paddockId }?.name ?? "",
+                           app: "network", name: "Rede", base: nil, call: String(Self.cardText(rule).prefix(300)), command: "rule", by: me.id)
+        guard await confirmCard(card, wait: config.ruleCardWait) else {
+            throw ProtocolError(code: .unauthorized, message: "the user did not allow map rule '\(rule.id)'; it stays off (network.rule-list)")
+        }
+        try await network.rules.setEnabled(rule.id, true)
+    }
+
+    /// "responder GET api.example.com/pdp com 418 (corpo 2 KB, atraso 300 ms)", as the card shows it after "Rede quer:".
+    static func cardText(_ r: MapRule) -> String {
+        let m = r.match
+        let query = m.query.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+        let target = m.isEmpty ? "qualquer requisição"
+            : (m.method.map { $0 + " " } ?? "") + (m.host ?? "*") + (m.path ?? "") + (query.isEmpty ? "" : "?" + query)
+        switch r.action {
+        case .drop:
+            return "cortar a conexão de " + target + (r.delayMs > 0 ? " após \(r.delayMs) ms" : "")
+        case .local(let status, _, _):
+            let n = r.body?.count ?? 0
+            let body = n == 0 ? "sem corpo" : "corpo \(max(1, Int((Double(n) / 1024).rounded()))) KB"
+            return "responder \(target) com \(status) (\(body)" + (r.delayMs > 0 ? ", atraso \(r.delayMs) ms" : "") + ")"
         }
     }
 

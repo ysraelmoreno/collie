@@ -1,6 +1,6 @@
 # Motor de design (figcraft) baixável — design
 
-Status: rascunho para aprovação. Nada implementado.
+Status: aprovado pelo dono (2026-11-16). Nada implementado. Plano: `docs/superpowers/plans/2026-11-16-figcraft-download.md`.
 
 ## Intenção e porquê
 
@@ -278,17 +278,20 @@ novo."). Painel Design sem motor: em vez de "Motor de design indisponível / Rod
 - Ordem de busca: Application Support → bundle.
 - Sem motor, painel mostra "baixe o motor" em vez de erro.
 - Workflow separado, só quando o pin muda; asset assinado Developer ID e notarizado; o app guarda o sha256 fixado.
+- Aprovadas em 2026-11-16 (eram minhas chamadas 4–7): versão `0.7.0-c<N>` / tag `figcraft-v0.7.0-c<N>`; motor
+  desatualizado continua usável com aviso; build local continua embutindo quando existe `vendor/figcraft`; só o botão
+  "Baixar (49 MB)" como aviso antes do download.
 
 ## Minhas chamadas (conferir)
 
 1. **Hash fixado no app (A), sem manifesto remoto.** "Atualização disponível" só aparece depois de atualizar o app.
 2. **Daemon baixa**, não o app (molde Android; o agente não tem comando MCP para isso).
 3. **Diretório `<root>/figcraft`** (= `~/Library/Application Support/Collie/figcraft`), um só, sem versões lado a lado.
-4. **Versão `0.7.0-c<N>`** e tag `figcraft-v0.7.0-c1` (o pedido sugeria `figcraft-v0.7.0`; o `-cN` permite republicar
+4. **Versão `0.7.0-c<N>`** (aprovada) e tag `figcraft-v0.7.0-c1` (o pedido sugeria `figcraft-v0.7.0`; o `-cN` permite republicar
    após mudar só patches sem sobrescrever release).
-5. **Motor desatualizado continua usável** com aviso de atualização (não bloqueia o painel).
-6. **Sem confirmação extra** além do clique em "Baixar (49 MB)"; Remover pede confirmação.
-7. **Build local continua embutindo** o motor quando `vendor/figcraft` existe; só o release força sem.
+5. **Motor desatualizado continua usável** (aprovada) com aviso de atualização (não bloqueia o painel).
+6. **Sem confirmação extra** (aprovada) além do clique em "Baixar (49 MB)"; Remover pede confirmação.
+7. **Build local continua embutindo** (aprovada) o motor quando `vendor/figcraft` existe; só o release força sem.
 8. **Pin atualizado por commit manual** depois do workflow (não por PR automático): menos permissões no workflow.
 9. **Requisito de assinatura conferido no install e a cada subida do servidor**, com o team ID gravado no pin.
 10. Tamanho no botão é do download (49 MB), não do disco.

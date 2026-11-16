@@ -34,11 +34,12 @@ public struct FlowStore: Sendable {
             flows[r.id] = Flow(
                 id: r.id, serial: serial, started: r.ts, method: r.method, url: r.url, httpVersion: r.httpVersion,
                 reqHeaders: r.headers, reqBody: r.body, status: nil, reason: nil, resHeaders: [], resBody: nil,
-                timing: FlowTiming(start: r.ts), state: .pending, tls: r.tls)
+                timing: FlowTiming(start: r.ts), state: .pending, tls: r.tls, mappedBy: r.mappedBy)
         case .response(let r):
             guard var f = flows[r.id] else { return nil }
             f.status = r.status; f.reason = r.reason; f.resHeaders = r.headers; f.resBody = r.body
             f.timing.ttfb = r.ttfb; f.timing.end = r.ts
+            if let m = r.mappedBy { f.mappedBy = m }
             if f.state == .pending { f.state = .done }
             flows[r.id] = f
         case .error(let id, let ts, let message):

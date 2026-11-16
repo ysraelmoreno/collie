@@ -83,3 +83,14 @@ private func request(_ id: String) -> FlowEvent {
     store.clear()
     #expect(store.bytes == 0)
 }
+
+@Test func mappedFlowKeepsRuleId() throws {
+    var store = FlowStore()
+    store.apply(.request(.init(id: "m", ts: .now, method: "GET", url: "http://h/x", httpVersion: "HTTP/1.1", headers: [],
+                               mappedBy: "r1")))
+    let applied = store.apply(.response(.init(id: "m", ts: .now, status: 418, headers: [], mappedBy: "r1")))
+    let s = try #require(applied)
+    #expect(s.mapped && store.flow("m")?.mappedBy == "r1")
+    store.apply(request("plain"))
+    #expect(store.summaries.last?.mapped == false && store.flow("plain")?.mappedBy == nil)
+}

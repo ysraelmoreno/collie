@@ -49,6 +49,7 @@ public struct Flow: Codable, Equatable, Sendable {
     public var timing: FlowTiming
     public var state: FlowState
     public var tls: FlowTLS?
+    public var mappedBy: String?
 
     public var summary: FlowSummary {
         let u = URLComponents(string: url)
@@ -57,7 +58,8 @@ public struct Flow: Codable, Equatable, Sendable {
         if let q = u?.percentEncodedQuery { path += "?" + q }
         return FlowSummary(
             id: id, method: method, host: u?.host ?? "", path: path, status: status, size: resBody?.size,
-            durationMs: timing.end.map { Int(($0.timeIntervalSince(timing.start) * 1000).rounded()) }, state: state)
+            durationMs: timing.end.map { Int(($0.timeIntervalSince(timing.start) * 1000).rounded()) }, state: state,
+            mapped: mappedBy != nil)
     }
 }
 
@@ -70,4 +72,6 @@ public struct FlowSummary: Codable, Equatable, Sendable {
     public var size: Int?
     public var durationMs: Int?
     public var state: FlowState
+    /// Answered or cut by a map rule (`Flow.mappedBy`), not the server.
+    public var mapped: Bool
 }

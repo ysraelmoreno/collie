@@ -52,6 +52,12 @@ public struct MapRule: Codable, Equatable, Sendable {
     public static let maxFile = 20 << 20
     public static let maxDelayMs = 60_000
 
+    /// The addon's rules file: `{"v":1,"rules":[…]}`, the enabled rules only, in order.
+    public static func activeFile(_ rules: [MapRule]) -> Data {
+        struct File: Encodable { var v = 1; var rules: [MapRule] }
+        return (try? JSONEncoder().encode(File(rules: rules.filter(\.enabled)))) ?? Data(#"{"v":1,"rules":[]}"#.utf8)
+    }
+
     /// 6 characters of `a-z0-9`.
     public static func makeID() -> String {
         String((0..<6).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })

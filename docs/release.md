@@ -92,7 +92,7 @@ em pull request.
   `url` do pin, ponha a saída do script em `inputs` e zere `sha256`/`size`/`unpackedSize`. O workflow e o teste
   `FigcraftPinInputsTests` recusam um `inputs` que não bate.
 - **Release já publicada**: o workflow só confere que `sha256` e `size` do pin batem com o asset publicado (pin com
-  zeros: imprime os valores e sai verde). Uma versão publicada nunca é refeita (tar, gzip e `--timestamp` não são
+  zeros: imprime os valores e abre o PR do pin, abaixo). Uma versão publicada nunca é refeita (tar, gzip e `--timestamp` não são
   reproduzíveis); nunca apague uma tag `figcraft-v*`.
 - **Não publicada**: build do figcraft a frio (cache só das ferramentas e do registry do cargo), keychain temporário
   (`scripts/ci/signing-keychain.sh`, o mesmo do release), `scripts/package-figcraft.sh` assina os dois binários
@@ -100,9 +100,21 @@ em pull request.
   de `bin/` e gera `build/figcraft-<versão>-arm64.tar.gz` + `.sha256`. A release nasce **draft**, recebe os dois
   arquivos, o asset baixado é conferido e só então ela é publicada. Draft que sobrou de uma rodada que caiu é
   apagado na rodada seguinte.
-- **Depois da primeira publicação**: copie `sha256`, `size` e `unpackedSize` do resumo da rodada (ou do `::notice::`)
-  para o pin num commit na `main`; a rodada que esse commit dispara confere e sai verde. O `teamId` do pin é o OU do
-  certificado Developer ID (`security find-identity -v -p codesigning`, o `(TEAMID)` do nome).
+- **Depois da primeira publicação: PR do pin**. Se o pin está zerado (ou difere do asset recém-publicado), o
+  workflow abre um pull request `figcraft-pin-<versão>` que muda só `sha256`, `size` e `unpackedSize` de
+  `Resources/figcraft-engine.json` (resto do JSON e formato iguais; `scripts/ci/update-pin.sh`, teste offline em
+  `scripts/ci/test-update-pin.sh`). Os valores vêm só do asset que a própria rodada baixou e conferiu: o do draft,
+  antes de publicar, ou o da release já publicada quando o pin está zerado; nunca de entrada externa. Branch e commit
+  saem pela API com o `GITHUB_TOKEN` (`scripts/ci/pin-pr.sh`; o checkout tem `persist-credentials: false`, nada de
+  `git push`); se já há PR aberto desse branch, ele é atualizado, não duplicado. Corpo em pt-BR com run id, tag e
+  sha256. Ninguém aprova nem mergeia automaticamente: revise e mergeie. O merge toca o pin, que dispara o
+  figcraft de novo; essa rodada acha a release publicada, confere `sha256`/`size` do pin e sai verde, sem PR.
+  - **Uma vez**: Settings > Actions > General > Workflow permissions > marque **Allow GitHub Actions to create and
+    approve pull requests** (só o dono liga; o workflow nunca aprova). O job pede `pull-requests: write`.
+  - **Se o repo bloqueia isso** (ou o PR falha por outro motivo): o passo vira um `::warning::` e a release continua
+    publicada. Copie os 3 valores do `::notice::` (ou do resumo da rodada) para o pin num PR à mão.
+  - O `teamId` do pin é o OU do certificado Developer ID (`security find-identity -v -p codesigning`, o `(TEAMID)`
+    do nome).
 - **Release do app**: o dmg sai sem o motor (`release.sh` passa `COLLIE_BUNDLE_FIGCRAFT=0` ao `bundle-app.sh`, que
   ainda copia o pin para `Contents/Resources/figcraft-engine.json`); o usuário baixa em Preferências › Desenho e
   sandbox. O "Conferir motor" do `release.yml` baixa a `url` do pin, confere `sha256`/`size` e roda

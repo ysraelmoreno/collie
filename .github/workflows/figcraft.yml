@@ -34,6 +34,10 @@ jobs:
     runs-on: macos-26
     # cold Rust → wasm build (~40 min) + notarization wait (up to 4 h)
     timeout-minutes: 300
+    # pull-requests: the pin PR (scripts/ci/pin-pr.sh)
+    permissions:
+      contents: write
+      pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -100,6 +104,7 @@ jobs:
             tar -xzf "$D/$ASSET" -C "$D/x"
             UNPACKED="$(find "$D/x/figcraft" -type f -exec stat -f %z {} + | awk '{s += $1} END {print s + 0}')"
             echo "::notice::$TAG publicado; preencha o pin: sha256=$SUM size=$SIZE unpackedSize=$UNPACKED"
+            { echo "fill=true"; echo "sha256=$SUM"; echo "size=$SIZE"; echo "unpackedSize=$UNPACKED"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           [ "$SUM" = "$PIN_SHA" ] && [ "$SIZE" = "$PIN_SIZE" ] \
@@ -148,6 +153,7 @@ jobs:
 
       # Draft first, check what GitHub serves, publish last; never --clobber (a published version is immutable).
       - name: Publish release
+        id: publish
         if: steps.existing.outputs.build == 'true'
         env:
           TAG: ${{ steps.pin.outputs.tag }}
@@ -157,6 +163,7 @@ jobs:
           INPUTS: ${{ steps.pin.outputs.inputs }}
           SHA: ${{ steps.pkg.outputs.sha256 }}
           SIZE: ${{ steps.pkg.outputs.size }}
+          UNPACKED: ${{ steps.pkg.outputs.unpackedSize }}
         run: |
           [ "$(cut -d' ' -f1 "build/$ASSET.sha256")" = "$SHA" ] || { echo "::error::build/$ASSET.sha256 differs from the package output"; exit 1; }
           printf '%s\n' \
@@ -173,19 +180,40 @@ jobs:
           (cd "$D" && shasum -a 256 -c "$ASSET.sha256")
           [ "$(shasum -a 256 "$D/$ASSET" | cut -d' ' -f1)" = "$SHA" ] && [ "$(stat -f %z "$D/$ASSET")" = "$SIZE" ] \
             || { echo "::error::downloaded draft asset differs from the build"; exit 1; }
+          mkdir "$D/x" && tar -xzf "$D/$ASSET" -C "$D/x"
+          [ "$(find "$D/x/figcraft" -type f -exec stat -f %z {} + | awk '{s += $1} END {print s + 0}')" = "$UNPACKED" ] \
+            || { echo "::error::unpackedSize of the downloaded draft asset differs from the build"; exit 1; }
+          # the pin PR takes only these: what GitHub serves for the draft, checked above
+          { echo "sha256=$SHA"; echo "size=$SIZE"; echo "unpackedSize=$UNPACKED"; } >> "$GITHUB_OUTPUT"
           gh release edit "$TAG" --draft=false --prerelease --latest=false
 
       - name: Pin values
         if: steps.existing.outputs.build == 'true'
         env:
           TAG: ${{ steps.pin.outputs.tag }}
-          SHA: ${{ steps.pkg.outputs.sha256 }}
-          SIZE: ${{ steps.pkg.outputs.size }}
-          UNPACKED: ${{ steps.pkg.outputs.unpackedSize }}
+          SHA: ${{ steps.publish.outputs.sha256 }}
+          SIZE: ${{ steps.publish.outputs.size }}
+          UNPACKED: ${{ steps.publish.outputs.unpackedSize }}
         run: |
           echo "::notice::$TAG publicado; preencha o pin: sha256=$SHA size=$SIZE unpackedSize=$UNPACKED"
           printf '### %s\n\nResources/figcraft-engine.json:\n\n```json\n"size": %s,\n"unpackedSize": %s,\n"sha256": "%s",\n```\n' \
             "$TAG" "$SIZE" "$UNPACKED" "$SHA" >> "$GITHUB_STEP_SUMMARY"
+
+      # Pin zeroed or different → PR figcraft-pin-<version> (never the main itself). Values only from the asset this
+      # run downloaded and checked (draft just published, or the published release when the pin is zeroed).
+      # A failure here never touches the release: warning + the values for a manual commit.
+      - name: Pin pull request
+        if: steps.existing.outputs.build == 'true' || steps.existing.outputs.fill == 'true'
+        env:
+          VERSION: ${{ steps.pin.outputs.version }}
+          TAG: ${{ steps.pin.outputs.tag }}
+          SHA: ${{ steps.publish.outputs.sha256 || steps.existing.outputs.sha256 }}
+          SIZE: ${{ steps.publish.outputs.size || steps.existing.outputs.size }}
+          UNPACKED: ${{ steps.publish.outputs.unpackedSize || steps.existing.outputs.unpackedSize }}
+          SOURCE: ${{ steps.existing.outputs.build == 'true' && 'asset baixado do draft e conferido (sha256, size, unpackedSize) antes de publicar' || 'asset da release já publicada, baixado nesta rodada' }}
+          FRESH: ${{ steps.existing.outputs.build == 'true' && '1' || '' }}
+        run: |
+          scripts/ci/pin-pr.sh || echo "::warning::PR do pin não foi aberto (Settings > Actions > General > Allow GitHub Actions to create and approve pull requests?). A release $TAG continua publicada; preencha o pin à mão num PR: sha256=$SHA size=$SIZE unpackedSize=$UNPACKED"
 
       - name: Remove keychain and keys
         if: always()

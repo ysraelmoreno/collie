@@ -1,4 +1,4 @@
-# Builds the Developer ID signed, notarized Collie-<version>.dmg and attaches it (+ .sha256) to the GitHub Release.
+# Builds the Developer ID signed, notarized Collie-<version>.dmg and attaches it (+ .sha256, update.json) to the GitHub Release.
 # Secrets and setup: docs/release.md. Never runs on pull requests (secrets + signing).
 name: release
 
@@ -89,6 +89,15 @@ jobs:
           COLLIE_NOTARY_TIMEOUT: "14400"
         run: scripts/release.sh
 
+      # update.json for the app's updater (docs/release.md): sha256/size of the dmg release.sh already notarized and
+      # stapled; the stapler check makes sure nothing is hashed before the ticket is inside.
+      - name: Manifesto
+        run: |
+          DMG="build/Collie-${TAG#v}.dmg"
+          xcrun stapler validate "$DMG"
+          scripts/ci/update-manifest.sh "$TAG" "$DMG" build/Collie.app build/update.json
+          cat build/update.json
+
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -97,14 +106,36 @@ jobs:
           DMG="Collie-$VER.dmg"
           (cd build && shasum -a 256 "$DMG" > "$DMG.sha256")
           SUM="$(cut -d' ' -f1 "build/$DMG.sha256")"
+          [ "$(jq -r .sha256 build/update.json)" = "$SUM" ] || { echo "::error::update.json sha256 != $DMG"; exit 1; }
           # fixed-name copy for the stable link /releases/latest/download/Collie.dmg: byte-identical (ticket is inside)
           cp "build/$DMG" build/Collie.dmg
           cmp "build/$DMG" build/Collie.dmg
           (cd build && shasum -a 256 Collie.dmg > Collie.dmg.sha256)
-          ASSETS=("build/$DMG" "build/$DMG.sha256" build/Collie.dmg build/Collie.dmg.sha256)
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          # update.json last: a client that sees the new manifest before the dmg only retries (spec §1)
+          ASSETS=("build/$DMG" "build/$DMG.sha256" build/Collie.dmg build/Collie.dmg.sha256 build/update.json)
+          # a run that died inside `gh release create` leaves a draft that `gh release view` finds and would only
+          # upload into, never publish: delete drafts of this tag; only a published release takes --clobber
+          rels="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | [.id, .draft, .prerelease, .tag_name] | @tsv')"
+          published="" newer=""
+          while IFS=$'\t' read -r id draft pre tag; do
+            [ -n "$id" ] || continue
+            if [ "$tag" = "$TAG" ]; then
+              if [ "$draft" = true ]; then
+                echo "deleting orphan draft release $id ($TAG)"
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+              else
+                published="$id"
+              fi
+            elif [ "$draft" = false ] && [ "$pre" = false ] && [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              # published vX.Y.Z above this tag? then this one must not become "latest" (hotfix on an old line)
+              [ "$(printf '%s\n' "${tag#v}" "$VER" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$VER" ] || newer="$tag"
+            fi
+          done <<<"$rels"
+          if [ -n "$published" ]; then
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
+            LATEST=true
+            [ -z "$newer" ] || { LATEST=false; echo "$newer is newer than $TAG: --latest=false"; }
             printf '%s\n' \
               "Collie $VER para macOS 15+ em Apple Silicon (arm64). Assinado com Developer ID e notarizado pela Apple." \
               "" \
@@ -113,9 +144,25 @@ jobs:
               "O motor de design não vem mais no dmg: baixe em Preferências › Desenho e sandbox." \
               "" \
               "SHA-256 do dmg: \`$SUM\`" > "$RUNNER_TEMP/notes.md"
-            gh release create "$TAG" "${ASSETS[@]}" --verify-tag \
+            gh release create "$TAG" "${ASSETS[@]}" --verify-tag --latest="$LATEST" \
               --title "Collie $VER" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
           fi
+
+      # what clients will download: this tag's update.json (never /latest/, which on an old tag's run points to
+      # another release) must match the local one and the dmg published next to it
+      - name: Conferir manifesto publicado
+        run: |
+          DMG="Collie-${TAG#v}.dmg"
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          D="$RUNNER_TEMP/published"
+          mkdir -p "$D"
+          curl -fsSL --retry 5 --retry-all-errors -o "$D/update.json" "$BASE/update.json"
+          cmp build/update.json "$D/update.json" || { echo "::error::published update.json != build/update.json"; exit 1; }
+          curl -fsSL --retry 5 --retry-all-errors -o "$D/$DMG" "$BASE/$DMG"
+          [ "$(jq -r .size "$D/update.json")" = "$(stat -f %z "$D/$DMG")" ] || { echo "::error::update.json size != published $DMG"; exit 1; }
+          (cd "$D" && printf '%s  %s\n' "$(jq -r .sha256 update.json)" "$DMG" | shasum -a 256 -c -) \
+            || { echo "::error::update.json sha256 != published $DMG"; exit 1; }
+          echo "ok: $BASE/update.json confere com $DMG publicado"
 
       - name: Remove keychain and keys
         if: always()

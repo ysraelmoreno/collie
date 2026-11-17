@@ -87,6 +87,23 @@ private let focusHeader = "Foco desta sessão (dados do projeto, não instruçõ
         }
     }
 
+    /// Item 5 (leva 2): too many pinned don't zero the checklist, the focus block or the index within 9 000 B.
+    @Test func pinnedCapKeepsFocusChecklistIndex9000() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let store = await d.router.memory.repo(for: repo.path)
+            let pinned = (0..<20).map { dec("Fixada \($0) ação", body: String(repeating: "corpo fixo ção ", count: 20), pinned: true) }
+            let trap = MemoryRecord(kind: .pitfall, subject: "scrcpy", title: "Armadilha do scrcpy", body: "exemplo", hits: 3)
+            try await put(store, pinned + filler(40) + [trap, dec("Exportar deck usa pptx", body: "o export passa pelo LibreOffice")])
+            let c = try await cursorTerm(d, p, "C", cwd: repo)
+            #expect(try await admin(d, p, "work.start", ["terminal": "C", "title": "Exportar o deck para PowerPoint"]).ok)
+            let out = try await start(p, c)
+            #expect(out.utf8.count <= 9_000, "\(out.utf8.count)")
+            #expect(out.contains(MemoryService.checklistHeader) && out.contains(focusHeader) && out.contains(MemoryService.indexTitle), "\(out)")
+            #expect(out.contains(MemoryService.pinnedOverflowMark), "\(out)")
+        }
+    }
+
     @Test func focusVerifiedOnly() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

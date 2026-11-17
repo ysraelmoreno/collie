@@ -78,6 +78,12 @@ public struct DaemonConfig: Sendable {
     /// binaries `(binary, identifier, teamId)` (default: Developer ID Application of the pin's team).
     public var figcraftFetch: AndroidFetch?
     public var figcraftSignatureCheck: (@Sendable (URL, String, String) -> Bool)?
+    /// The app updater (spec 2026-11-17): `COLLIE_UPDATE_MANIFEST` (only `file://`, any build) in place of the release
+    /// manifest; tests: the download and the dmg check; `updateLoop` starts the periodic check (collied only).
+    public var updateManifestOverride: URL?
+    var updateFetch: UpdateFetch?
+    var updateDmgCheck: (@Sendable (URL) -> Bool)?
+    public var updateLoop = false
     /// The offline web libraries (`manifest.json` + `<name>@<version>/`, scripts/fetch-weblibs.sh); nil/missing:
     /// `artifact.libs` reports them absent.
     public var weblibsDir: URL?
@@ -231,6 +237,10 @@ public final class Daemon: Sendable {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         chmod(root.path, 0o700)      // even if it pre-existed with a looser mode
         try server.start()           // refuses if another daemon owns the socket; only then touch admin.token
+        if config.updateLoop {       // the app updater's periodic check (spec 2026-11-17 §3); collied only, never tests
+            let updates = router.updates, root = root
+            Task.detached { await updates.loop(download: { CollieSettings.load(root).updates?.download ?? true }) }
+        }
         // denials: before any terminal can launch (`log stream` takes 1-2 s to attach; SandboxWatcher)
         if let src = config.denialSource ?? (config.watchDenials ? SandboxWatcher.logStream : nil) {
             await router.startSandboxWatch(src, base: config.denialBackoff)

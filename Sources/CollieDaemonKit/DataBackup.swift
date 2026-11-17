@@ -52,12 +52,16 @@ public enum DataBackup {
     /// while the parts are copied (`paused` runs then: tests) and started again after, even when the copy fails. `work/`
     /// is copied while `work` and `chat` write nothing, so work.json and its archive agree, and so do the chat's files.
     static func export(root: URL, to out: URL, server: FigcraftServer, work: WorkStore? = nil, chat: ChatLog? = nil, version: String,
-                       paused: @Sendable () async -> Void = {}) async throws(ProtocolError) -> Summary {
-        let tmp = try await UnixSocketClient.offPool { try scratch(root, "backup") }
+                       maintenance: Maintenance? = nil, paused: @Sendable () async -> Void = {}) async throws(ProtocolError) -> Summary {
+        try await maintenance?.enter("backup")   // not under the updater's download (spec 2026-11-17 §5)
         let r: Result<Summary, ProtocolError>
-        do { r = .success(try await export(root: root, tmp: tmp, to: out, server: server, work: work, chat: chat, version: version, paused: paused)) }
-        catch { r = .failure(error) }
-        _ = try? await UnixSocketClient.offPool { try? FileManager.default.removeItem(at: tmp) }
+        do {
+            let tmp = try await UnixSocketClient.offPool { try scratch(root, "backup") }
+            do { r = .success(try await export(root: root, tmp: tmp, to: out, server: server, work: work, chat: chat, version: version, paused: paused)) }
+            catch { r = .failure(error) }
+            _ = try? await UnixSocketClient.offPool { try? FileManager.default.removeItem(at: tmp) }
+        } catch { await maintenance?.leave("backup"); throw error }
+        await maintenance?.leave("backup")
         return try r.get()
     }
 
@@ -182,7 +186,15 @@ public enum DataBackup {
     /// Checks `from` and returns what it holds; unless `dryRun`, stages it for the next daemon start (a staged import
     /// not yet applied is replaced). Refused (`.invalidArgs`, nothing touched): no `manifest.json` of format 1, a part
     /// not known, an entry outside the listed parts, an absolute or `..` path, a symlink or a hard link.
-    static func stage(root: URL, from: URL, dryRun: Bool) async throws(ProtocolError) -> Summary {
+    static func stage(root: URL, from: URL, dryRun: Bool, maintenance: Maintenance? = nil) async throws(ProtocolError) -> Summary {
+        try await maintenance?.enter("import")   // not under the updater's download (spec 2026-11-17 §5)
+        let r: Result<Summary, ProtocolError>
+        do { r = .success(try await stageChecked(root: root, from: from, dryRun: dryRun)) } catch { r = .failure(error) }
+        await maintenance?.leave("import")
+        return try r.get()
+    }
+
+    private static func stageChecked(root: URL, from: URL, dryRun: Bool) async throws(ProtocolError) -> Summary {
         guard FileManager.default.fileExists(atPath: from.path) else {
             throw ProtocolError(code: .invalidArgs, message: "no backup at \(from.path)")
         }

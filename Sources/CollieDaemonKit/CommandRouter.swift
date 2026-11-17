@@ -48,6 +48,10 @@ actor CommandRouter {
     nonisolated let engineState: @Sendable () -> EngineState
     /// Downloads and swaps the engine (`design.engine.*`, the app alone).
     nonisolated let engineInstaller: FigcraftInstaller
+    /// One heavy job at a time on Collie's data: backup, import, the updater's download.
+    nonisolated let maintenance = Maintenance()
+    /// The app updater's daemon side (`app.update.*`, the app alone).
+    nonisolated let updates: UpdateChecker
     /// Design files and the callers' figcraft clients.
     nonisolated let design: DesignService
     /// Design systems: published libraries of design files.
@@ -207,11 +211,25 @@ actor CommandRouter {
                                     timeoutCap: config.designTimeoutCap)
         self.engineInstaller = FigcraftInstaller(root: config.paths.root, pin: pin,
             fetch: config.figcraftFetch ?? AndroidDownload.fetch, signature: signed,
-            busy: { await figcraft.isHeld },
+            busy: { [maintenance] in
+                if await figcraft.isHeld { return true }
+                return await maintenance.active != nil
+            },
             swap: { op in
                 guard let r = me.router else { throw ProtocolError(code: .unavailable, message: "daemon stopping") }
                 try await r.swapEngine(op)
             })
+        let ua = ["User-Agent": "Collie/\(config.version ?? "dev")"]
+        let release = URL(string: "https://github.com/ysraelmoreno/collie/releases/latest/download/update.json")!
+        let updateRoot = config.paths.root
+        self.updates = UpdateChecker(root: updateRoot, installedVersion: config.version ?? "dev",
+            manifestURL: config.updateManifestOverride ?? release,
+            fetch: config.updateFetch ?? { url, to, limit, progress in
+                try await AndroidDownload.fetch(url, to: to, limit: limit, headers: ua, progress: progress)
+            },
+            dmgCheck: config.updateDmgCheck ?? { CodeSignature.dmgNotarized($0, teamId: CodeSignature.team) },
+            freeSpace: AndroidInstaller.free, maintenance: maintenance,
+            enabled: { CollieSettings.load(updateRoot).updates?.auto ?? true })
         self.systems = DesignSystemService(design: design, root: config.paths.root)
         self.artifacts = ArtifactStore(root: config.paths.root)
         self.plugins = PluginStore(root: config.paths.root)
@@ -801,10 +819,10 @@ actor CommandRouter {
                 guard !exportBusy else { throw ProtocolError(code: .unavailable, message: "export in progress") }
                 exportBusy = true; defer { exportBusy = false }   // two would stop and restart the server under each other
                 return .object(try await DataBackup.export(root: config.paths.root, to: url, server: figcraft, work: work, chat: chat,
-                                                           version: config.build ?? "dev").json)
+                                                           version: config.build ?? "dev", maintenance: maintenance).json)
             }
             let dry = flag(r, "dryRun")
-            var o = try await DataBackup.stage(root: config.paths.root, from: url, dryRun: dry).json
+            var o = try await DataBackup.stage(root: config.paths.root, from: url, dryRun: dry, maintenance: maintenance).json
             if !dry { o["restartNeeded"] = .bool(true) }   // applied by collied at its next start (DataBackup.applyPending)
             return .object(o)
         default:

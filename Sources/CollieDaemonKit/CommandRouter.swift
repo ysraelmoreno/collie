@@ -143,6 +143,7 @@ actor CommandRouter {
     var accessCards = SandboxCards()
     var sandboxKnown: Set<UUID> = []
     var sandboxDetection: Bool?
+    var sandboxDetectionReason: String?
     var sandboxWatch: Task<Void, Never>?
     /// The Collie-wide sandbox mode (`<root>/preferences.json`); nil: `config.defaultSandboxMode`.
     var sandboxPref: SandboxMode?

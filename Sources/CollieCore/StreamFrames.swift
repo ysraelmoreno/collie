@@ -144,8 +144,9 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
          herdApplied(by: UUID?, anchor: UUID?, frames: [String: HerdFrame], paddock: UUID?),
          /// An access card for the app (new, or its count updated): a sandbox denial or an agent's request.
          sandboxDenied(SandboxDenial),
-         /// Whether the daemon sees sandbox denials (its `log stream` runs); false: "detecção indisponível".
-         sandboxDetection(available: Bool),
+         /// Whether the daemon sees sandbox denials (its `log stream` runs); false: "detecção indisponível", with why
+         /// (pt-BR, short; nil from a daemon that predates it: additive, an old app ignores it).
+         sandboxDetection(available: Bool, reason: String? = nil),
          /// A correction that is probably the user's waits for Confirmar (digest `entry`); `title` is the rule.
          confirmCorrection(terminal: UUID, entry: UUID, title: String),
          /// The loaded external plug-ins changed (install, uninstall, enable, disable): all of them, as manifests.
@@ -187,7 +188,7 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
                                      frames: try c.decode([String: HerdFrame].self, forKey: .frames),
                                      paddock: try c.decodeIfPresent(UUID.self, forKey: .paddock))
         case "sandboxDenied": self = .sandboxDenied(try c.decode(SandboxDenial.self, forKey: .d))
-        case "sandboxDetection": self = .sandboxDetection(available: try c.decode(Bool.self, forKey: .ok))
+        case "sandboxDetection": self = .sandboxDetection(available: try c.decode(Bool.self, forKey: .ok), reason: try c.decodeIfPresent(String.self, forKey: .reason))
         case "confirmCorrection":
             self = .confirmCorrection(terminal: try id(), entry: try c.decode(UUID.self, forKey: .e), title: try c.decode(String.self, forKey: .name))
         case "remotePairing": self = .remotePairing(try c.decode(RemotePairingRequest.self, forKey: .d))
@@ -227,7 +228,8 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
             try c.encode("herdApplied", forKey: .t); try c.encodeIfPresent(by, forKey: .by)
             try c.encodeIfPresent(anchor, forKey: .anchor); try c.encode(frames, forKey: .frames); try c.encodeIfPresent(paddock, forKey: .paddock)
         case .sandboxDenied(let x): try c.encode("sandboxDenied", forKey: .t); try c.encode(x, forKey: .d)
-        case .sandboxDetection(let ok): try c.encode("sandboxDetection", forKey: .t); try c.encode(ok, forKey: .ok)
+        case .sandboxDetection(let ok, let why):
+            try c.encode("sandboxDetection", forKey: .t); try c.encode(ok, forKey: .ok); try c.encodeIfPresent(why, forKey: .reason)
         case .confirmCorrection(let t, let e, let title):
             try c.encode("confirmCorrection", forKey: .t); try c.encode(t, forKey: .id); try c.encode(e, forKey: .e); try c.encode(title, forKey: .name)
         case .pluginsChanged(let m): try c.encode("pluginsChanged", forKey: .t); try c.encode(m, forKey: .m)
@@ -240,4 +242,9 @@ public enum WorkspaceEvent: Codable, Sendable, Equatable {
             try c.encode("remoteReveal", forKey: .t); try c.encodeIfPresent(t, forKey: .id); try c.encodeIfPresent(a, forKey: .e); try c.encode(dev, forKey: .d)
         }
     }
+}
+
+/// Why sandbox detection is off: the one reason the app explains at length (`log stream` refuses non-admin accounts).
+public enum SandboxDetection {
+    public static let notAdmin = "requer conta de administrador"
 }

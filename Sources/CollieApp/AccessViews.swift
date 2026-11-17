@@ -5,6 +5,18 @@ import CollieTheme
 
 /// The access cards' copy (tested without the app). Agent-written text (paths, reasons) is shown verbatim, never as markdown.
 enum AccessCopy {
+    /// The "detecção indisponível" tag and its tooltip: why, what is lost, what still works, how to fix it.
+    static func detection(reason: String?) -> (tag: String, help: String) {
+        let tag = "detecção indisponível" + (reason.map { ": " + $0 } ?? "")
+        let lost = "Sem isso, não aparecem os cartões de liberação quando o agente esbarra no sandbox. "
+            + "O sandbox continua protegendo, e 'collie access request' continua funcionando (o agente pede, você libera)."
+        if reason == SandboxDetection.notAdmin {
+            return (tag, "O Collie não vê os bloqueios do sandbox: o macOS só deixa contas de administrador lerem o log do sistema (log stream). "
+                + lost + " Para resolver: use uma conta de administrador (Ajustes do Sistema › Usuários e Grupos) e entre de novo na sessão. "
+                + "Até lá o Collie não tenta de novo.")
+        }
+        return (tag, "O Collie não está vendo os bloqueios do sandbox agora (\(reason ?? "log stream parado"); tentando de novo). " + lost)
+    }
     static func verb(_ op: String) -> String {
         ["read": "ler", "write": "escrever", "delete": "apagar", "exec": "executar"][op] ?? op
     }
@@ -56,8 +68,8 @@ struct AccessBadge: View {
         let mine = client.grants.filter { $0.scope == .terminal && $0.owner == id }
         HStack(spacing: 6) {
             if client.detection == false {
-                CollieTag("detecção indisponível", tone: .danger)
-                    .help("O Collie não está vendo os bloqueios do sandbox agora (log stream parado; tentando de novo). Os bloqueios continuam valendo.")
+                let c = AccessCopy.detection(reason: client.detectionReason)
+                CollieTag(c.tag, tone: .danger).lineLimit(1).help(c.help)
             }
             if !cards.isEmpty || !mine.isEmpty {
                 let open = AccessPopoverState.shared.binding(id)

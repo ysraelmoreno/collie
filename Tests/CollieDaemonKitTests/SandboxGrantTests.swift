@@ -123,12 +123,44 @@ private final class Rig {
             await SandboxWatcher.supervise(source: {
                 rec.l.withLock { rec.runs += 1 }
                 return AsyncStream { $0.finish() }   // dies at once, like a `log` that can't start
-            }, base: .milliseconds(5), max: .milliseconds(20), state: { ok in rec.l.withLock { rec.s.append(ok) } }, line: { _ in })
+            }, base: .milliseconds(5), max: .milliseconds(20), state: { ok, _ in rec.l.withLock { rec.s.append(ok) } }, line: { _ in })
         }
         #expect(await waitFor(20) { rec.l.withLock { rec.runs >= 4 } })
         task.cancel(); await task.value
         let s = rec.l.withLock { rec.s }
         #expect(s.starts(with: [true, false, true, false]))
+    }
+
+    /// Why detection is off reaches the state: a non-admin account stops for good (no restart loop), a `log` that
+    /// can't start or dies after running is retried with its reason, and the reason clears once a run starts again.
+    @Test func superviseReportsWhy() async {
+        final class Rec: @unchecked Sendable { let l = NSLock(); var s: [String?] = []; var runs = 0 }
+        func run(admin: Bool, max runs: Int, _ next: @escaping @Sendable (Int) -> [String]) async -> (states: [String?], runs: Int) {
+            let rec = Rec()
+            let task = Task {
+                await SandboxWatcher.supervise(source: {
+                    let n = rec.l.withLock { rec.runs += 1; return rec.runs }
+                    return AsyncStream { c in for l in next(n) { c.yield(l) }; c.finish() }
+                }, base: .milliseconds(5), max: .milliseconds(5), isAdmin: { admin },
+                   state: { ok, why in rec.l.withLock { rec.s.append(ok ? nil : why ?? "?") } }, line: { _ in })
+            }
+            _ = await waitFor(10) { rec.l.withLock { rec.runs >= runs } }
+            try? await Task.sleep(for: .milliseconds(50))
+            task.cancel(); await task.value
+            return rec.l.withLock { (rec.s, rec.runs) }
+        }
+        // not admin (checked before starting): never runs `log`, says so, and stays off
+        let pre = await run(admin: false, max: 0) { _ in [] }
+        #expect(pre.runs == 0 && pre.states == [SandboxDetection.notAdmin])
+        // `log` itself says so (the check missed it): stops too, after one run
+        let said = await run(admin: true, max: 1) { _ in [SandboxWatcher.failed("log: Must be admin to run 'stream' command")] }
+        #expect(said.runs == 1 && said.states == [nil, SandboxDetection.notAdmin])
+        // `log` can't start, then runs: the reason, then cleared
+        let start = await run(admin: true, max: 2) { n in n == 1 ? [SandboxWatcher.failed(nil, started: false)] : [] }
+        #expect(start.states.count >= 3 && start.states[1]?.hasPrefix("log stream não iniciou") == true && start.states[2] == nil, "\(start.states)")
+        // dies after running: its stderr's last line (bounded), retried
+        let died = await run(admin: true, max: 2) { n in n == 1 ? ["{}", SandboxWatcher.failed("x\nerro: " + String(repeating: "z", count: 500) + "\n")] : [] }
+        #expect(died.runs >= 2 && died.states[1]?.hasPrefix("log stream parou: erro: zz") == true && died.states[1]!.count <= 120 && died.states[2] == nil, "\(died.states)")
     }
 
     @Test func cardsDedupedBoundedRateLimited() {

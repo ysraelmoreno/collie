@@ -37,9 +37,11 @@ falha se ele não estiver publicado; depois regera o `vendor/` (sem figcraft: o 
 `scripts/release.sh` falha se `Contents/Resources/figcraft` existir), assina num keychain temporário
 (`scripts/ci/signing-keychain.sh`), notariza com a API key, e cria a GitHub Release da tag com `Collie-<versão>.dmg` e
 `Collie-<versão>.dmg.sha256`, mais as cópias idênticas `Collie.dmg` e `Collie.dmg.sha256`: o asset `Collie.dmg`
-existe para o link estável <https://github.com/ysraelmoreno/collie/releases/latest/download/Collie.dmg> (site). Se a
-release já existe, só troca esses arquivos. O keychain e as chaves são
-apagados no fim, mesmo com falha.
+existe para o link estável <https://github.com/ysraelmoreno/collie/releases/latest/download/Collie.dmg> (site), e o
+`update.json` (seção abaixo). Se a release já está **publicada**, só troca esses arquivos (`--clobber`); um draft da
+mesma tag que sobrou de uma rodada que caiu é apagado antes de criar a release de novo. A release nova só vira a
+"latest" do GitHub se a tag é a maior `vX.Y.Z` publicada (um hotfix numa linha antiga sai com `--latest=false`). O
+keychain e as chaves são apagados no fim, mesmo com falha.
 
 ```
 git tag v0.2.0 && git push origin v0.2.0
@@ -77,6 +79,71 @@ Como criar (só o dono da conta; nada disso vai para o git nem para outra pessoa
 
 Se a notarização passar de 4 h o job falha com o id da submissão no log; rode de novo pelo Run workflow com a
 mesma tag (é uma submissão nova).
+
+## Manifesto de atualização (`update.json`)
+
+O atualizador do app lê `https://github.com/ysraelmoreno/collie/releases/latest/download/update.json` (até 64 KB) e
+monta a URL do dmg a partir da `tag` e do `dmg` (`…/releases/download/<tag>/Collie-<versão>.dmg`). O passo
+**Manifesto** do `release.yml` roda depois de `scripts/release.sh` (dmg já notarizado e grampeado:
+`xcrun stapler validate` antes) e chama `scripts/ci/update-manifest.sh <tag> build/Collie-<versão>.dmg
+build/Collie.app build/update.json`:
+
+```json
+{
+  "format": 1,
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "dmg": "Collie-0.2.0.dmg",
+  "size": 41711021,
+  "sha256": "<64 hex do dmg>",
+  "minimumSystemVersion": "15.0",
+  "teamId": "AG8JQAH6YB",
+  "figcraftEngine": "0.7.0-c1",
+  "page": "https://github.com/ysraelmoreno/collie/releases/tag/v0.2.0"
+}
+```
+
+- `size`/`sha256`: do dmg final; `minimumSystemVersion`: `LSMinimumSystemVersion` do app gerado (que também tem de
+  ter `CFBundleShortVersionString` = versão da tag); `teamId`: `TeamIdentifier=` do `codesign -dv` do app, igual ao
+  `teamId` do pin; `figcraftEngine`: `version` do pin que vai no app (`Contents/Resources/figcraft-engine.json`).
+- O script recusa tag fora de `vX.Y.Z`, dmg com outro nome, app sem time e `size` fora de (0, 500 MB].
+  Teste offline: `scripts/ci/test-update-manifest.sh`.
+- Depois de publicar, o passo **Conferir manifesto publicado** baixa `…/releases/download/<tag>/update.json` (nunca
+  `latest`, que na rodada de uma tag antiga aponta para outra release), compara com o gerado e confere `size` e
+  `sha256` contra o dmg publicado.
+- Release sem `update.json` (as anteriores a isto): o app trata como "nada novo".
+- `requiresServiceRestart: true` (opcional, não gerado hoje) só entra à mão quando uma versão quebrar a
+  compatibilidade do daemon antigo com o app novo.
+
+### Testar com outra fonte (`COLLIE_UPDATE_MANIFEST`)
+
+O daemon (`collied`) lê `COLLIE_UPDATE_MANIFEST` em qualquer build, só com `file://` (outro esquema é ignorado, com
+log); a página Atualizações mostra "fonte de teste: <url>". O dmg continua tendo de ser do time e notarizado. Use
+sempre numa **conta de usuário macOS separada**, nunca no daemon do dia a dia:
+
+```
+launchctl setenv COLLIE_UPDATE_MANIFEST file:///Users/teste/update.json   # depois reinicie o serviço dessa conta
+launchctl unsetenv COLLIE_UPDATE_MANIFEST                                 # volta ao GitHub (reinicie de novo)
+```
+
+### Voltar para a versão anterior
+
+Depois de uma troca, o app anterior fica guardado em `.Collie-update-XXXXXX/Collie.app`, na mesma pasta do app
+(`/Applications` ou `~/Applications`), até a segunda abertura saudável da versão nova. Enquanto isso, Preferências ›
+Atualizações mostra **Voltar para <versão>**. Se o app novo nem abre, pelo Terminal (troque `/Applications` pela
+pasta onde o Collie está):
+
+```
+osascript -e 'quit app "Collie"'
+ls -d /Applications/.Collie-update-*/Collie.app                     # se houver mais de uma, use a mais nova
+P="$(ls -td /Applications/.Collie-update-*/Collie.app | head -1)"
+codesign --verify --deep --strict "$P" && defaults read "$P/Contents/Info" CFBundleShortVersionString
+mv /Applications/Collie.app "/Applications/Collie-quebrado.app"
+mv "$P" /Applications/Collie.app
+open /Applications/Collie.app
+```
+
+Depois, apague `/Applications/Collie-quebrado.app` e a pasta `.Collie-update-*` que ficou vazia.
 
 ## Motor de design (figcraft)
 

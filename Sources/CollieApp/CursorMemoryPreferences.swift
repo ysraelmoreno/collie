@@ -105,3 +105,25 @@ struct CursorMemoryPreferences: View {
 
     private func muted(_ s: String) -> some View { Text(s).font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true) }
 }
+
+/// The memory badge on a Cursor terminal's title bar (`CursorMemoryBadge`): `memory.stats` for this terminal, the last
+/// 24 h, read when shown and every 30 s while connected. ponytail: per card; a shared poll if many Cursors are open.
+struct CursorMemoryTag: View {
+    let name: String
+    let client: DaemonClient
+    @State private var state: CursorMemoryBadge.State?
+
+    var body: some View {
+        Group {
+            if let state { CollieTag(state.text, tone: state.warn ? .attention : .secondary).lineLimit(1).help(state.help) }
+        }
+        .task(id: client.state == .connected) {
+            while client.state == .connected, !Task.isCancelled {
+                if let r = try? await client.adminCall("memory.stats", ["terminal": .string(name), "since": .string("24h")]) {
+                    state = CursorMemoryBadge.state(r)
+                }
+                try? await Task.sleep(for: .seconds(30))
+            }
+        }
+    }
+}

@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 import CollieProtocol
 
 /// Preferências › Memória › "Memória no Cursor" (`memory.cursor-mode`, spec 2026-11-17 cursor memory §7): the three
@@ -100,5 +101,33 @@ struct UntrustedMemory: Equatable, Identifiable {
         let k = Int(n)
         return k == 1 ? "1 memória que já existia foi aceita como do Collie na primeira leitura."
             : "\(k) memórias que já existiam foram aceitas como do Collie na primeira leitura."
+    }
+}
+
+/// The terminal card's memory badge for a Cursor terminal (C6): from `memory.stats --terminal <name>`'s `byAgent.cursor`.
+/// The obedience it hints at covers Collie's asks only (spec 2026-11-17 cursor memory §6).
+enum CursorMemoryBadge {
+    struct State: Equatable { var text: String; var help: String; var warn: Bool }
+    static let scope = "cobre só pedidos feitos pelo Collie; o que você digita no Cursor não é visto"
+
+    /// A Cursor terminal: the preset, or a custom command whose program (past `env` and `VAR=…`) is `cursor-agent`.
+    static func isCursor(preset: Preset, command: String?) -> Bool {
+        if preset == .cursor { return true }
+        guard preset == .custom, let command else { return false }
+        let program = command.split(separator: " ").map(String.init)
+            .first { $0 != "env" && !$0.hasSuffix("/env") && !($0.contains("=") && !$0.hasPrefix("/")) }
+        return program.map { URL(fileURLWithPath: $0).lastPathComponent } == "cursor-agent"
+    }
+
+    /// nil: no Cursor events yet (nothing to show).
+    static func state(_ stats: JSONValue) -> State? {
+        guard case .object(let o) = stats, case .object(let by)? = o["byAgent"], case .object(let c)? = by["cursor"] else { return nil }
+        func n(_ k: String) -> Int { if case .number(let x)? = c[k] { Int(x) } else { 0 } }
+        let pulls = n("pulls"), asks = n("asksDelivered")
+        let text = "Memória: " + (n("sessionsWithStart") > 0 ? "início ✓" : "sem início") + " · \(pulls) " + (pulls == 1 ? "consulta" : "consultas")
+        let warn = asks >= 2 && pulls == 0
+        let help = (warn ? "o agente não está consultando a memória (\(asks) pedidos do Collie sem memory_task). " : "")
+            + "Consultas memory_task nas últimas 24 h; " + scope + "."
+        return State(text: text, help: help, warn: warn)
     }
 }

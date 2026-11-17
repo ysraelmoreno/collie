@@ -55,3 +55,31 @@ struct CursorMemoryModelTests {
         #expect(r?.hasPrefix("O registro de quem gravou cada memória estava danificado e recomeçou") == true, "\(r ?? "nil")")
     }
 }
+
+/// The terminal card's memory badge for a Cursor (C6), from `memory.stats --terminal` (`byAgent.cursor`).
+struct CursorMemoryBadgeTests {
+    private func stats(_ cursor: [String: JSONValue]?) -> JSONValue {
+        .object(["byAgent": .object(cursor.map { ["cursor": .object($0)] } ?? [:])])
+    }
+
+    @Test func onlyCursorTerminals() {
+        #expect(CursorMemoryBadge.isCursor(preset: .cursor, command: nil))
+        #expect(CursorMemoryBadge.isCursor(preset: .custom, command: "/usr/bin/env FOO=1 /opt/bin/cursor-agent --model m"))
+        #expect(!CursorMemoryBadge.isCursor(preset: .custom, command: "codex"))
+        #expect(!CursorMemoryBadge.isCursor(preset: .claude, command: nil))
+    }
+
+    @Test func countsPullsAndStart() {
+        let b = CursorMemoryBadge.state(stats(["sessionsWithStart": .number(1), "pulls": .number(3), "asksDelivered": .number(0)]))
+        #expect(b?.text == "Memória: início ✓ · 3 consultas" && b?.warn == false)
+        #expect(CursorMemoryBadge.state(stats(["sessionsWithStart": .number(0), "pulls": .number(1)]))?.text == "Memória: sem início · 1 consulta")
+        #expect(b?.help.contains("cobre só pedidos feitos pelo Collie; o que você digita no Cursor não é visto") == true)
+        #expect(CursorMemoryBadge.state(stats(nil)) == nil && CursorMemoryBadge.state(.null) == nil)
+    }
+
+    @Test func warnsAfterTwoAsksWithoutAPull() {
+        let b = CursorMemoryBadge.state(stats(["sessionsWithStart": .number(1), "pulls": .number(0), "asksDelivered": .number(2)]))
+        #expect(b?.warn == true && b?.help.hasPrefix("o agente não está consultando a memória") == true, "\(b?.help ?? "")")
+        #expect(CursorMemoryBadge.state(stats(["pulls": .number(0), "asksDelivered": .number(1)]))?.warn == false)
+    }
+}

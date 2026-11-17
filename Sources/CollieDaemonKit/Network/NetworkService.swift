@@ -12,6 +12,8 @@ protocol NetworkProxy: Sendable {
     /// Lines lost (too long, or the queue was full).
     var dropped: Int { get }
     var exited: Int32? { get }
+    /// What upstream servers are verified with (`UpstreamTrust.resolve`).
+    var upstreamCA: UpstreamCA { get }
     /// A new proxy on the same port (this one stopped first).
     func restart() async throws(ProtocolError) -> any NetworkProxy
     func stop()
@@ -84,12 +86,16 @@ actor NetworkService {
          emit: @escaping @Sendable (String, String, JSONValue) async -> Void) {
         let confdir = root.appendingPathComponent("network/mitm")
         let rules = RuleStore(file: root.appendingPathComponent("network/rules.json"), active: runDir.appendingPathComponent("network/rules.json"))
+        let bundle = root.appendingPathComponent("network/upstream-ca.pem")
         self.init(
             rules: rules,
             startProxy: { _ throws(ProtocolError) in
                 guard let u = mitmdump() else { throw MitmTool.missing }
                 return try await MitmProcess.start(tool: MitmTool(url: u), addonSource: AddonScript.source, confdir: confdir, runDir: runDir,
-                                                   rules: rules.active)
+                                                   rules: rules.active, upstreamCA: {
+                    UpstreamTrust.resolve(confdir: confdir, out: bundle, snapshot: UpstreamTrust.systemSnapshot,
+                                          log: { FileHandle.standardError.write(Data(("collied: " + $0 + "\n").utf8)) })
+                })
             },
             device: { () throws(ProtocolError) in DeviceNetworkSetup(adb: try await devices.tool()) },
             onlineEmulators: { ((try? await devices.devices()) ?? []).filter { $0.state == "device" && $0.serial.hasPrefix("emulator-") }.map(\.serial) },
@@ -178,11 +184,15 @@ actor NetworkService {
             if pendingDetach[serial] != nil { o["pendingDetach"] = .bool(true) }
             return .object(o)
         }
-        return .object([
+        let up = s.proxy.upstreamCA
+        var o: [String: JSONValue] = [
             "serial": .string(serial), "attached": .bool(true), "port": .number(Double(s.proxy.port)),
             "flows": .number(Double(s.store.summaries.count)), "sdk": .number(Double(s.attach.sdk)), "ca": .string(s.attach.hash),
             "proxyRunning": .bool(s.proxy.exited == nil), "dropped": .number(Double(s.proxy.dropped)),
-        ])
+            "upstreamCA": .string(up.mode.rawValue),
+        ]
+        if let n = up.certs { o["certs"] = .number(Double(n)) }
+        return .object(o)
     }
 
     /// The newest `limit` summaries (oldest first), those whose host contains `host` when given.

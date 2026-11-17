@@ -171,6 +171,8 @@ actor CommandRouter {
                                                 app: SandboxInput.appBundle(of: config.collieExecutable)) == nil }
         self.usage = UsageService(dir: config.paths.root.appendingPathComponent("usage/providers"))
         self.memory = MemoryService(globalDir: config.paths.root.appendingPathComponent("memory"), embedder: config.embedder)
+        let events = memory.events
+        asks.askEvents.set { events.emit($0) }   // ask delivery/end in the memory event log (memory_task obedience)
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
         let adbPath = config.adbPath, axePath = config.axePath, emulatorPath = config.emulatorPath
         self.devices = DeviceService(root: config.paths.root, runDir: config.paths.runDir, pollInterval: config.devicePollInterval,

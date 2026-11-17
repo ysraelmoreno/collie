@@ -150,4 +150,17 @@ private let transcript = "/tmp/collie-task-tests/sess-task.jsonl"
             #expect(!es.contains { $0.type == .noHit && $0.where != "pull" })
         }
     }
+
+    /// Task 8: a search names what it returned (ids, never text) and the agent that asked.
+    @Test func searchedCarriesIdsAndAgent() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await term(d, p, "A", cwd: repo)
+            try await save(p, a, "pool", "Postgres pool timeout 30s", body: "pool timeout")
+            #expect(try await call(p, a, "memory.search", ["query": "postgres pool"]).ok)
+            d.router.memory.events.flush()
+            let s = try #require(d.router.memory.events.read(since: .distantPast).last(where: { $0.type == .searched }))
+            #expect(s.ids?.count == 1 && s.hits == 1 && s.agent == "other", "\(s)")
+        }
+    }
 }

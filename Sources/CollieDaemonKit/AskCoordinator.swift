@@ -309,6 +309,8 @@ public actor AskCoordinator {
         var replyHint = false
         /// `ask --no-wait`: told once the prompt is written (and, for a Claude TUI, submitted) — the inbox's deliveredAt.
         var onDelivered: (@Sendable () -> Void)?
+        /// `askDelivered` logged (once); `finish` then logs `askDone`.
+        var announced = false
         var cont: CheckedContinuation<Result<AskResult, ProtocolError>, Never>?
         var timer: Task<Void, Never>?
     }
@@ -328,6 +330,8 @@ public actor AskCoordinator {
     private let idleQuiet: Duration
     /// R12: what the app typed into each terminal, tainted by every write made here (asks, injects, the chat).
     nonisolated let provenance = InputProvenance()
+    /// Where an ask's delivery and end go (the router points it at the memory event log; spec 2026-11-17 cursor memory §6).
+    nonisolated let askEvents = AskEventSink()
     private var targets: [UUID: Target] = [:]
     private var waiters: [UUID: Waiter] = [:]   // queued + in-flight asks; also the deadlock graph (from -> to)
     /// `collie wait` callers blocked on a working agent: the deadlock graph's other edges (from -> to).
@@ -727,6 +731,7 @@ public actor AskCoordinator {
     private func finish(_ id: UUID, _ r: Result<AskResult, ProtocolError>) {
         guard let w = waiters.removeValue(forKey: id) else { return }
         w.timer?.cancel()
+        if w.announced { askEvents.emit(MemoryEvent(type: .askDone, terminal: w.to, ask: id)) }
         if targets[w.to]?.inflight?.id == id { targets[w.to]?.inflight = nil }
         if targets[w.to]?.awaitingSubmit == id { targets[w.to]?.awaitingSubmit = nil }
         targets[w.to]?.queue.removeAll { $0 == id }
@@ -900,6 +905,10 @@ public actor AskCoordinator {
     /// Inject written: resume its caller now; the waiter keeps the slot until its turn ends.
     private func delivered(_ id: UUID) {
         waiters[id]?.onDelivered?(); waiters[id]?.onDelivered = nil
+        if let w = waiters[id], !w.announced {
+            waiters[id]?.announced = true
+            askEvents.emit(MemoryEvent(type: .askDelivered, terminal: w.to, ask: id))
+        }
         // an ask's caller waits for the turn's reply (hook/idle): only an inject resumes on delivery
         guard waiters[id]?.inject == true else { return }
         waiters[id]?.cont?.resume(returning: .success(AskResult(output: "", source: .hook, truncated: false)))
@@ -951,4 +960,12 @@ public actor AskCoordinator {
         finish(id, .success(AskResult(output: s.text, source: .idle, truncated: s.truncated)))
         return false
     }
+}
+
+/// A settable, thread-safe sink for ask events (set once by the router; nil: dropped).
+final class AskEventSink: @unchecked Sendable {   // `sink` is touched only under `lock`
+    private let lock = NSLock()
+    private var sink: (@Sendable (MemoryEvent) -> Void)?
+    func set(_ f: @escaping @Sendable (MemoryEvent) -> Void) { lock.withLock { sink = f } }
+    func emit(_ e: MemoryEvent) { lock.withLock { sink }?(e) }
 }

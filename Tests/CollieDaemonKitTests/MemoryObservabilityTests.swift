@@ -343,3 +343,42 @@ private func top(_ repo: URL) -> String {
 extension JSONDecoder {
     static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }
 }
+
+/// Task 8 (spec 2026-11-17 cursor memory §6): per-agent usage and the Cursor's obedience to memory_task.
+@Suite struct MemoryAgentStatsTests {
+    private let cur = UUID(), cla = UUID()
+    private func base() -> [MemoryEvent] {
+        [ev(.injected, ago(2)) { $0.agent = "cursor"; $0.terminal = cur; $0.session = "s1"; $0.where = "focus"; $0.ids = [UUID()] },
+         ev(.injected, ago(2)) { $0.agent = "claude"; $0.terminal = cla; $0.session = "s2"; $0.where = "start"; $0.ids = [UUID()] },
+         ev(.injected, ago(2)) { $0.agent = "claude"; $0.terminal = cla; $0.session = "s2"; $0.where = "prompt"; $0.ids = [UUID()] }]
+    }
+
+    @Test func obedienceCountsPullBeforeDone() {
+        let a1 = UUID(), a2 = UUID()
+        var es = base()
+        es += [ev(.askDelivered, ago(1.5)) { $0.agent = "cursor"; $0.terminal = cur; $0.ask = a1 },
+               ev(.injected, ago(1.49)) { $0.agent = "cursor"; $0.terminal = cur; $0.session = "s1"; $0.where = "pull"; $0.ids = [UUID()] },
+               ev(.askDone, ago(1.4)) { $0.agent = "cursor"; $0.terminal = cur; $0.ask = a1 },
+               ev(.askDelivered, ago(1)) { $0.agent = "cursor"; $0.terminal = cur; $0.ask = a2 },
+               ev(.askDone, ago(0.9)) { $0.agent = "cursor"; $0.terminal = cur; $0.ask = a2 },
+               ev(.noHit, ago(0.8)) { $0.agent = "cursor"; $0.terminal = cur; $0.session = "s1"; $0.where = "pull" }]   // after the ask: not counted
+        let c = try! #require(compute(es).byAgent["cursor"])
+        #expect(c.sessions == 1 && c.sessionsWithStart == 1 && c.pulls == 2 && c.pullsPerSession == 2)
+        #expect(c.asksDelivered == 2 && c.obedience == 0.5, "\(c)")
+        let l = try! #require(compute(es).byAgent["claude"])
+        #expect(l.sessions == 1 && l.pulls == 0 && l.obedience == nil)
+    }
+
+    @Test func obedienceNilWithoutAsks() {
+        #expect(compute(base()).byAgent["cursor"]?.obedience == nil)
+        #expect(compute(base()).byAgent["cursor"]?.asksDelivered == 0)
+    }
+
+    /// No prompt is visible in a Cursor: its useful uses are the flags only.
+    @Test func cursorUsefulOnlyFromFlags() {
+        var es = base()
+        es += [ev(.flagged, ago(1)) { $0.agent = "cursor"; $0.terminal = cur; $0.verdict = "useful" },
+               ev(.flagged, ago(1)) { $0.agent = "cursor"; $0.terminal = cur; $0.verdict = "wrong" }]
+        #expect(compute(es).byAgent["cursor"]?.useful == 1)
+    }
+}

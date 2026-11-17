@@ -137,6 +137,24 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
         }
     }
 
+    /// Task 8 (spec 2026-11-17 cursor memory §6): an ask's delivery and end are in the memory event log.
+    @Test func askDeliveredAndDoneEmitted() async throws {
+        try await withHookDaemon { d, p in
+            let a = try await term(d, p, "A")
+            let b = try await term(d, p, "B", preset: "custom", command: fakeAgent(hook: true))
+            try await connect(d, p, "A", "B")
+            let w = hookWatcher(d, p, b); defer { w.cancel() }
+            #expect(result(try await ask(p, a, "B", "hello", timeout: 15)).output == "answer:hello")
+            let to = try #require(UUID(uuidString: b.id))
+            #expect(await waitFor(5) {
+                d.router.memory.events.flush()
+                let es = d.router.memory.events.read(since: .distantPast).filter { $0.terminal == to }
+                guard let del = es.first(where: { $0.type == .askDelivered }), let done = es.first(where: { $0.type == .askDone }) else { return false }
+                return del.ask != nil && del.ask == done.ask && del.at <= done.at
+            })
+        }
+    }
+
     /// A slow-starting agent that drops typeahead (tcflush, like a shell resetting its tty during init):
     /// an ask sent right after spawn must wait for the target's first output instead of being lost.
     @Test func askRightAfterSpawnIsDelivered() async throws {

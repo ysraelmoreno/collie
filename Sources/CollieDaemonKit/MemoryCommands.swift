@@ -14,6 +14,7 @@ extension CommandRouter {
 
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
+        if let me = caller { memory.events.noteAgent(me.id, Self.agentName(me)) }   // the events of this terminal say who it runs
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let paddockName = caller?.paddockId.flatMap { id in ws.paddocks.first { $0.id == id }?.name }
         let myLot = caller.flatMap { ws.lot(of: $0.id) }
@@ -106,7 +107,7 @@ extension CommandRouter {
                 }
             }
             let hits = MemoryIndex.rank(cands, lang: vector?.lang).prefix(limit).map { (hit: $0, store: from[$0.record.id]!) }   // one scale (R10)
-            if let me = caller { searched(me, hits: hits.count, lot: myLot?.id, project: project.root?.path) }
+            if let me = caller { searched(me, ids: hits.map(\.hit.record.id), lot: myLot?.id, project: project.root?.path) }
             for s in stores {
                 let ids = hits.filter { $0.store === s }.map(\.hit.record.id)
                 if !ids.isEmpty { _ = try? await s.run { m in m.index()?.noteRead(ids) } }
@@ -180,7 +181,7 @@ extension CommandRouter {
                 if let d = st?.lastReadAt { extra["lastReadAt"] = .string(isoString(d)) }
                 if let d = st?.missingSince { extra["missingSince"] = .string(isoString(d)) }
                 _ = try? await s.run { m in m.index()?.noteRead([id]) }
-                if let me = caller { searched(me, hits: 1, lot: myLot?.id, project: project.root?.path) }
+                if let me = caller { searched(me, ids: [rec.id], lot: myLot?.id, project: project.root?.path) }
                 return try memJSON(rec, s, extra)
             }
             throw ProtocolError(code: .notFound, message: "memory \(id.uuidString.lowercased()) not found")
@@ -556,8 +557,8 @@ extension CommandRouter {
 
     private func isoString(_ d: Date) -> String { ISO8601DateFormatter().string(from: d) }
 
-    private func searched(_ me: TerminalRecord, hits: Int, lot: UUID?, project: String?) {
-        memory.events.emit(MemoryEvent(type: .searched, terminal: me.id, lot: lot, project: project, hits: hits))
+    private func searched(_ me: TerminalRecord, ids: [UUID], lot: UUID?, project: String?) {
+        memory.events.emit(MemoryEvent(type: .searched, terminal: me.id, lot: lot, project: project, ids: ids, hits: ids.count))
     }
 
     /// `memory.stats`: the period's events (and 30 days before it, for dead memories and repeats) in the caller's scope —

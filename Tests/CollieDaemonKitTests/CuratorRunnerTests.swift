@@ -10,12 +10,13 @@ private let fixture = #"{"type":"result","is_error":false,"result":"…","struct
 private struct Fake {
     let f: FakeHome
     var bin: URL { f.base.appendingPathComponent("bin") }
-    var rec: URL { f.base.appendingPathComponent("rec") }
+    /// In Claude's state: writable under the curator's profile, like nothing else in the home.
+    var rec: URL { f.home.appendingPathComponent(".claude/projects/rec") }
     init(_ script: String) throws { try self.init { _ in script } }
-    /// `script(rec)`: `rec` is a file next to the fake home (temp, outside it: writable under the profile).
+    /// `script(rec)`: `rec` is `self.rec`. Under the profile only `/bin/sh` runs: the scripts use its builtins.
     init(_ script: (URL) -> String) throws {
         f = try FakeHome(git: false, socket: false)
-        let script = script(f.base.appendingPathComponent("rec"))
+        let script = script(f.home.appendingPathComponent(".claude/projects/rec"))
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let claude = bin.appendingPathComponent("claude")
         try ("#!/bin/sh\n" + script).write(to: claude, atomically: false, encoding: .utf8)
@@ -29,6 +30,18 @@ private struct Fake {
         return ClaudeCuratorRunner(root: f.collie, home: f.home, env: { env }, retryAfter: retryAfter)
     }
 }
+
+/// sandbox-exec can't nest: inside an agent's sandbox the real-profile tests are skipped (the owner's R2 runs them).
+private let canSandbox: Bool = {
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
+    p.arguments = ["-p", "(version 1)(allow default)", "/usr/bin/true"]
+    p.standardError = FileHandle.nullDevice
+    guard (try? p.run()) != nil else { return false }
+    p.waitUntilExit()
+    return p.terminationStatus == 0
+}()
+private let nested: Comment = "already inside a sandbox: sandbox-exec can't nest"
 
 private let call = CuratorCall(instructions: "be terse", input: "--dangerously-skip-permissions oi", schema: #"{"type":"object"}"#)
 
@@ -70,12 +83,16 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         }
     }
 
-    @Test func fakeClaudeRunsSandboxed() async throws {
+    @Test(.enabled(if: canSandbox, nested)) func fakeClaudeRunsSandboxed() async throws {
         let fake = try Fake { rec in """
-            { printf '%s\\n' "$@"; echo ---; env; echo ---; pwd; } > "$PWD/argv"
-            cp "$PWD/argv" '\(rec.path)'
-            touch "$HOME/outside" 2>/dev/null
+            { printf '%s\\n' "$@"; echo ---; printf 'HOME=%s\\nTMPDIR=%s\\n' "$HOME" "$TMPDIR"; export -p; echo ---; pwd; } > '\(rec.path)'
+            : > "$HOME/outside" 2>/dev/null
+            : > "$HOME/../escape" 2>/dev/null
             echo x >> "$HOME/.claude/settings.json" 2>/dev/null
+            read l < "$HOME/.ssh/id_ed25519" 2>/dev/null && echo LEAK-ssh >> '\(rec.path)'
+            read l < "$HOME/.claude.json" 2>/dev/null && echo LEAK-claude.json >> '\(rec.path)'
+            read l < "$HOME/.config/gh/hosts.yml" 2>/dev/null && echo LEAK-gh >> '\(rec.path)'
+            /usr/bin/true 2>/dev/null && echo EXEC >> '\(rec.path)'
             printf '%s' '\(fixture)'
             """ }
         let settings = fake.f.home.appendingPathComponent(".claude/settings.json")
@@ -84,6 +101,7 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         let o = try await fake.runner().run(call, model: "haiku", timeout: .seconds(30))
         #expect(o.json == .object(["ops": .array([])]) && o.inputTokens == 812)
         let rec = try String(contentsOf: fake.rec, encoding: .utf8)
+        #expect(!rec.contains("LEAK") && !rec.contains("EXEC"), "\(rec)")
         let parts = rec.components(separatedBy: "---\n")
         #expect(parts.count == 3)
         #expect(parts[0].contains("--strict-mcp-config\n") && parts[0].hasSuffix("--\n\(call.input)\n"))
@@ -92,12 +110,38 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         for k in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"] {
             #expect(!parts[1].contains(k + "="), "R5: the plan login, never a key or another provider (\(k))")
         }
-        #expect(!FileManager.default.fileExists(atPath: fake.f.home.appendingPathComponent("outside").path))
+        for f in ["outside", "../escape"] { #expect(!FileManager.default.fileExists(atPath: fake.f.home.appendingPathComponent(f).path)) }
         #expect(try Data(contentsOf: settings) == before)
         let cwd = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(!cwd.isEmpty && !FileManager.default.fileExists(atPath: cwd))
-        let profile = fake.f.collie.appendingPathComponent("curator/curator.sb")
-        #expect((try FileManager.default.attributesOfItem(atPath: profile.path)[.posixPermissions] as? Int) == 0o600)
+        #expect(parts[1].contains("TMPDIR=\(cwd)\n"))   // temp files land in the cwd
+    }
+
+    /// Each call writes its own `run-<uuid>.sb` (0600), removed after; the fixed `curator.sb` is gone.
+    @Test(.enabled(if: canSandbox, nested)) func perCallFile() async throws {
+        let fake = try Fake { rec in "while [ ! -f '\(rec.path).go' ]; do :; done\nprintf '%s' '\(fixture)'\n" }
+        let r = fake.runner(), dir = fake.f.collie.appendingPathComponent("curator")
+        func profiles() -> [String] { ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasSuffix(".sb") } }
+        async let a = r.run(call, model: "haiku", timeout: .seconds(20))
+        async let b = r.run(call, model: "haiku", timeout: .seconds(20))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while profiles().count < 2 && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        let seen = profiles()
+        #expect(seen.count == 2 && seen.allSatisfy { $0.hasPrefix("run-") }, "\(seen)")
+        for s in seen {
+            #expect((try FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(s).path)[.posixPermissions] as? Int) == 0o600)
+        }
+        try Data().write(to: URL(fileURLWithPath: fake.rec.path + ".go"))
+        _ = try await (a, b)
+        #expect(profiles().isEmpty)
+    }
+
+    /// Whatever the run's outcome (here sandbox-exec may refuse to nest), no profile file is left behind.
+    @Test func noProfileLeft() async throws {
+        let fake = try Fake("printf '%s' '\(fixture)'\n")
+        _ = try? await fake.runner().run(call, model: "haiku", timeout: .seconds(10))
+        let left = try FileManager.default.contentsOfDirectory(atPath: fake.f.collie.appendingPathComponent("curator").path)
+        #expect(!left.contains { $0.hasSuffix(".sb") }, "\(left)")
     }
 
     @Test func missingClaudeUnavailable() async throws {
@@ -116,8 +160,8 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         #expect(await ok.runner().availability() == .available)
     }
 
-    @Test func timeoutKills() async throws {
-        let fake = try Fake { rec in "echo $$ > '\(rec.path)'; sleep 5 & echo $! >> '\(rec.path)'; wait\n" }
+    @Test(.enabled(if: canSandbox, nested)) func timeoutKills() async throws {
+        let fake = try Fake { rec in "echo $$ > '\(rec.path)'; while :; do :; done & echo $! >> '\(rec.path)'; wait\n" }
         let start = ContinuousClock.now
         await #expect(throws: ProtocolError(code: .timeout, message: "claude não respondeu")) {
             try await fake.runner().run(call, model: "haiku", timeout: .seconds(1))

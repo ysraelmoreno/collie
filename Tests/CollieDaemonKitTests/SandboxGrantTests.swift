@@ -350,7 +350,7 @@ private final class Rig {
         try await Rig().run { rig in
             let a = try await rig.spawn("A", token: false)
             #expect(await waitFor(20) { rig.feed.starts >= 1 })
-            rig.feed.send(denialLine(ClaudeCuratorRunner.sandboxId, "file-write-create", rig.docs.path + "/x"))
+            rig.feed.send(denialLine(UUID(), "file-write-create", rig.docs.path + "/x"))   // an id no terminal has (the curator's profile carries none)
             rig.feed.send(denialLine(a.id, "file-write-create", rig.docs.path + "/mine"))   // the marker: processed after it
             #expect(await waitFor(20) { (try? await rig.list().cards.count) == 1 })
             #expect(try await rig.list().cards.map(\.path) == [rig.docs.path + "/mine"])

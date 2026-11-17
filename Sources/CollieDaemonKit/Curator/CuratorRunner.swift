@@ -31,7 +31,6 @@ protocol CuratorRunner: Sendable {
 /// `claude -p` with no tools, no MCP, no user settings/hooks/plugins, in an empty temp cwd, under its own Seatbelt profile
 /// (writes: its temp dir and Claude's own state). Its sandbox id is in no `sandboxKnown`: its denials raise no card.
 struct ClaudeCuratorRunner: CuratorRunner {
-    static let sandboxId = UUID(uuidString: "00000000-0000-0000-0000-00000000c0de")!
     static let outputCap = 256 << 10
     static let availabilityTTL: Duration = .seconds(600)
 
@@ -158,16 +157,13 @@ struct ClaudeCuratorRunner: CuratorRunner {
         let e = await environment()
         guard let claude = Self.locate(e) else { throw ProtocolError(code: .unavailable, message: "claude não encontrado") }
         let fm = FileManager.default
-        let dir = root.appendingPathComponent("curator"), profile = dir.appendingPathComponent("curator.sb")
+        // per call: concurrent calls never share (or delete) each other's profile
+        let dir = root.appendingPathComponent("curator"), profile = dir.appendingPathComponent("run-\(UUID().uuidString).sb")
         return try await inTempDir { cwd throws(ProtocolError) in
+            defer { try? fm.removeItem(at: profile) }
             do {
-                for d in [dir, dir.appendingPathComponent("sandbox")] {
-                    try fm.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-                }
-                let text = SandboxProfile.render(SandboxInput(
-                    terminal: Self.sandboxId, project: cwd, mainGitDir: nil, home: home, collieRoot: root,
-                    terminalDir: dir.appendingPathComponent("sandbox"), socket: dir.appendingPathComponent("no-socket"), agent: .claude))
-                try? fm.removeItem(at: profile)
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                let text = CuratorSandboxProfile.render(CuratorSandboxProfile.claude(executable: claude, cwd: cwd, home: home))
                 guard fm.createFile(atPath: profile.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
                     throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: profile.path])
                 }
@@ -175,6 +171,8 @@ struct ClaudeCuratorRunner: CuratorRunner {
                 throw ProtocolError(code: .internal, message: "curator: \(error.localizedDescription)")
             }
             SandboxLaunch.makeHomeDirs(EssentialPaths.agentHome(.claude, command: nil), in: home)   // R19: its state dirs
+            var e = e
+            e["TMPDIR"] = cwd.path   // the profile writes only the cwd and Claude's state
             let r: ProcessResult
             do throws(ProtocolError) {
                 r = try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
@@ -184,6 +182,9 @@ struct ClaudeCuratorRunner: CuratorRunner {
                 throw ProtocolError(code: .timeout, message: Self.noAnswer)   // the fallback's motivo; the queue retries
             }
             do throws(ProtocolError) { return try Self.parse(r.stdout) } catch where error.message == Self.unreadable && r.status != 0 {
+                if let p = CuratorSandboxProfile.blocked(r.stderr) {
+                    throw ProtocolError(code: .unavailable, message: "curador bloqueado pelo sandbox: \(p)")
+                }
                 throw ProtocolError(code: .unavailable, message: "claude saiu com \(r.status): \(r.stderr.prefix(300))")
             }
         }

@@ -323,9 +323,12 @@ actor MemoryService {
 
     /// One `injected` event: the memories in full (an index of titles counts in `bytes` only).
     private func note(_ terminal: UUID, _ place: String, _ recs: [MemoryRecord], bytes: Int, work: UUID?, lot: UUID?, project: String?) {
-        events.emit(MemoryEvent(type: .injected, terminal: terminal, session: sessions[terminal], work: work, lot: lot, project: project,
-                                ids: recs.map(\.id), kinds: recs.map(\.kind.rawValue), scopes: recs.map(\.scope.rawValue),
-                                bytes: bytes, tokens: MemoryEvent.estimate(bytes: bytes), where: place))
+        var e = MemoryEvent(type: .injected, terminal: terminal, session: sessions[terminal], work: work, lot: lot, project: project,
+                            ids: recs.map(\.id), kinds: recs.map(\.kind.rawValue), scopes: recs.map(\.scope.rawValue),
+                            bytes: bytes, tokens: MemoryEvent.estimate(bytes: bytes), where: place)
+        // Leva 1 precision: what `setPending` below will hold (no session: no pending, no candidate)
+        if place == "prompt", sessions[terminal] != nil { e.eligible = recs.filter(LifecycleRules.eligible).count }
+        events.emit(e)
     }
 
     /// Pinned memories of every readable store in full, then an index (titles) of the rest of the lot's — or, outside a
@@ -737,8 +740,12 @@ actor MemoryService {
     func resolvePending(for terminal: UUID, correction: Bool, now: Date = Date()) async {
         guard let s = sessions[terminal] else { return }
         let ids = await lifecycle.takePending(session: s)
-        guard !correction, !ids.isEmpty else { return }
-        await lifecycle.addUse(ids, key: UseKey(day: Self.dayFormatter.string(from: now), session: s), now: now)
+        guard !ids.isEmpty else { return }
+        var e = MemoryEvent(type: .used, terminal: terminal, session: s, ids: [], hits: ids.count)
+        if correction { e.reason = "correction" } else {
+            e.ids = await lifecycle.addUse(ids, key: UseKey(day: Self.dayFormatter.string(from: now), session: s), now: now)
+        }
+        events.emit(e)
     }
     /// The caller's session and the injected id `prefix` names (full UUID or a case-insensitive prefix of 4+ characters).
     func flagTarget(_ terminal: UUID?, prefix: String) async throws(ProtocolError) -> (session: String, id: UUID) {
@@ -754,13 +761,13 @@ actor MemoryService {
 
     /// `record` nil = not in a store the caller reads (flag recorded, nothing else). Refuses the 21st wrong/outdated flag of a session.
     func applyFlag(session: String, id: UUID, record: MemoryRecord?, verdict: FlagVerdict, reason: String,
-                   now: Date = Date()) async throws(ProtocolError) -> (contested: Bool, queued: Bool) {
+                   terminal: UUID? = nil, now: Date = Date()) async throws(ProtocolError) -> (contested: Bool, queued: Bool) {
         let live = record.map { LifecycleRules.eligible($0) } ?? false
         let sticky = record.map { $0.pinned || $0.reviewed } ?? false
         let day = Self.dayFormatter.string(from: now)
         if verdict == .useful {
             if live { await lifecycle.addUse([id], key: UseKey(day: day, session: session), now: now) }
-            noteLifecycle(.flagged, id, store: await lifecycle.entry(id)?.store, verdict: verdict.rawValue)
+            noteLifecycle(.flagged, id, store: await lifecycle.entry(id)?.store, verdict: verdict.rawValue, terminal: terminal)
             return (false, false)
         }
         // 14 days after a re-check a flag on it changes nothing (stored, it would block earning again)
@@ -773,7 +780,7 @@ actor MemoryService {
         case .limit: throw ProtocolError(code: .invalidArgs, message: "limite de \(LifecycleRules.maxFlagsPerSession) marcações por sessão")
         case .added: break
         }
-        noteLifecycle(.flagged, id, store: was?.store, verdict: verdict.rawValue)
+        noteLifecycle(.flagged, id, store: was?.store, verdict: verdict.rawValue, terminal: terminal)
         if live, was?.tier == .longTerm, was?.contestedNow != true { noteLifecycle(.demoted, id, store: was?.store) }
         guard live else { return (contest, false) }
         let before = await scores.factor(id)
@@ -838,8 +845,8 @@ actor MemoryService {
     }
 
     /// A lifecycle event (ids and a verdict word only), placed in the entry's store.
-    nonisolated func noteLifecycle(_ kind: MemoryEvent.Kind, _ id: UUID, store: String?, verdict: String? = nil) {
-        var e = MemoryEvent(type: kind, ids: [id], verdict: verdict)
+    nonisolated func noteLifecycle(_ kind: MemoryEvent.Kind, _ id: UUID, store: String?, verdict: String? = nil, terminal: UUID? = nil) {
+        var e = MemoryEvent(type: kind, terminal: terminal, ids: [id], verdict: verdict)   // the terminal: the log stamps its agent
         if let store { e.place(store: store) }
         events.emit(e)
     }

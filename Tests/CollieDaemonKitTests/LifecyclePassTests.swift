@@ -151,6 +151,23 @@ private let bad = "deadbee1"
         }
     }
 
+    @Test func pitfallLivesLongerAndItsArchiveUndoes() async throws {
+        try await run { d, store in
+            var r = dec("Armadilha rara"); r.kind = .pitfall
+            try await put(store, [r])
+            let now = Date()
+            await d.router.lifecyclePass(store, now: now)
+            await d.router.lifecyclePass(store, now: now.addingTimeInterval(59 * 86_400))
+            #expect(try await status(store, r.id) == .active)
+            await d.router.lifecyclePass(store, now: now.addingTimeInterval(60 * 86_400))
+            #expect(try await status(store, r.id) == .archived)
+            let row = try #require(await d.router.digest.since(.distantPast).first { $0.before.first?.id == r.id })
+            #expect(row.action == "aposentado" && row.reason == "provisória sem uso há 60 dias (prazo de armadilha: 60)", "\(row)")
+            _ = try await d.router.undoDigest(row.id)
+            #expect(try await status(store, r.id) == .active)
+        }
+    }
+
     @Test func usefulUseExtendsLife() async throws {
         try await run { d, store in
             let r = dec("Usada")

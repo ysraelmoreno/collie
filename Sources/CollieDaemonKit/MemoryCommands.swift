@@ -43,7 +43,7 @@ extension CommandRouter {
         let adminCommands: Set<String> = ["memory.review", "memory.restore", "memory.pin", "memory.unpin",
                                           "memory.cleanup", "memory.purge", "memory.repos", "memory.curator",
                                           "memory.digest", "memory.undo", "memory.resolve", "memory.confirm", "memory.consolidate", "memory.doc-add",
-                                          "memory.trust"]
+                                          "memory.trust", "memory.untrusted", "memory.provenance-status", "memory.cursor-mode"]
         if caller != nil, adminCommands.contains(r.command) {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is admin-only")
         }
@@ -263,6 +263,46 @@ extension CommandRouter {
             }
             return .object(["output": .string(text)])
 
+        case "memory.untrusted":
+            // spec 2026-11-17 cursor memory §7 (Confiar): every memory that isn't what the daemon wrote, in the workspace's
+            // stores, with the daemon's last text for it (`before`; absent: it never wrote this id) and the text now
+            var out: [JSONValue] = []
+            var seen: [RepoMemory] = []
+            for cwd in ws.terminals.map(\.cwd) + ws.paddocks.flatMap({ [$0.repoRoot, $0.path] }) {
+                let m = await memory.repo(for: cwd)
+                if !seen.contains(where: { $0 === m }) { seen.append(m) }
+            }
+            if !seen.contains(where: { $0 === memory.global }) { seen.append(memory.global) }
+            var lots: [(RepoMemory, Lot)] = []
+            for l in ws.lots { lots.append((await memory.lotStore(l.id), l)) }
+            let prov = memory.provenance
+            for (s, lot) in seen.map({ ($0, Lot?.none) }) + lots.map({ ($0.0, Optional($0.1)) }) {
+                let recs = (try? await s.run { m in m.store.all().records.filter { !prov.isVerified($0) } }) ?? []
+                for rec in recs {
+                    var o: [String: JSONValue] = ["id": .string(rec.id.uuidString.lowercased()), "kind": .string(rec.kind.rawValue),
+                                                  "title": .string(rec.title), "status": .string(rec.status.rawValue),
+                                                  "after": .string(MemoryFile.render(rec)), "file": .string(s.file(rec))]
+                    if let lot { o["lot"] = .string(lot.name) } else { o["repo"] = .string(s.path) }
+                    if let t = prov.entry(rec.id)?.text { o["before"] = .string(t) }
+                    out.append(.object(o))
+                }
+            }
+            return .array(out)
+
+        case "memory.provenance-status":
+            return .object(["restarted": .bool(memory.provenance.restartedAt != nil), "adopted": .number(Double(memory.provenance.adoptedCount))]
+                .merging(memory.provenance.restartedAt.map { ["restartedAt": .string(isoString($0))] } ?? [:]) { a, _ in a })
+
+        case "memory.cursor-mode":
+            // Preferências › Memória › "Memória no Cursor"; for sessions started after the change
+            var s = CollieSettings.load(config.paths.root)
+            if let v = str(r, "value") {
+                guard let m = CursorMemoryMode(rawValue: v) else { throw invalid("value must be full|start|off") }
+                s.cursorMemory = m.rawValue
+                do { try s.save(config.paths.root) } catch { throw ProtocolError(code: .internal, message: "preferences.json: \(error)") }
+            }
+            return .object(["mode": .string(s.cursorMemoryMode.rawValue)])
+
         case "memory.mcp-profile":
             // spec 2026-11-17 cursor memory §4: memory_task and its MCP instructions only for a hookless agent with the
             // preference on (Claude has the prompt hook: the tool would be tokens for nothing)
@@ -406,7 +446,7 @@ extension CommandRouter {
                 .trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
             var rec: MemoryRecord?
             for s in stores where rec == nil { rec = try await s.run { m in m.store.all().records.first { $0.id == target } } }
-            let (contested, queued) = try await memory.applyFlag(session: session, id: target, record: rec, verdict: verdict, reason: reason)
+            let (contested, queued) = try await memory.applyFlag(session: session, id: target, record: rec, verdict: verdict, reason: reason, terminal: caller?.id)
             return .object(["id": .string(target.uuidString.lowercased()), "contested": .bool(contested), "queued": .bool(queued)])
 
         case "memory.cleanup":

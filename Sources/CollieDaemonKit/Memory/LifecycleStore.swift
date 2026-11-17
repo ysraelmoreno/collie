@@ -67,16 +67,21 @@ actor LifecycleStore {
         }
     }
 
-    /// One useful use `key` for each id, in one write; skips an id `key.session` flagged wrong/outdated.
-    func addUse(_ ids: [UUID], key: UseKey, now: Date) {
+    /// One useful use `key` for each id, in one write; skips an id `key.session` flagged wrong/outdated. Returns the ids
+    /// taken (a `key` already held counts as taken: the set just doesn't grow).
+    @discardableResult
+    func addUse(_ ids: [UUID], key: UseKey, now: Date) -> [UUID] {
+        var taken: [UUID] = []
         mutate { s in
             for id in ids {
                 var e = s.entries[id] ?? LifecycleEntry(tierSince: now)
                 guard !e.flags.contains(where: { $0.session == key.session && $0.verdict != .useful }) else { continue }
                 e.usefulUses.insert(key)
                 s.entries[id] = e
+                taken.append(id)
             }
         }
+        return taken
     }
 
     enum FlagOutcome: Sendable { case added, duplicate, limit }

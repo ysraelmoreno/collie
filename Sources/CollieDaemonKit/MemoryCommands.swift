@@ -209,29 +209,42 @@ extension CommandRouter {
                     head = head.filter { !$0.isEmpty }
                 }
                 let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
-                await refreshSkills(me.id)   // a session (re)starts: its skills as the stores are now (a hand edit, a pull)
-                let w = try? await work.active(terminal: me.id)
-                await memory.resetDocs(me.id)
-                let docs = await memory.docsLine(cwd: me.cwd, paddock: paddockName, lot: myLot?.id)
-                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used - (docs.isEmpty ? 0 : docs.utf8.count + 2),
-                                                source: str(r, "source"), workTitle: w?.title,
-                                                openTasks: (w?.tasks ?? []).filter { [.open, .inProgress].contains($0.state) }.map(\.title),
-                                                lotGoal: myLot?.goal)
-                let mem = (head + [rest == MemoryService.header ? "" : rest, docs]).filter { !$0.isEmpty }.joined(separator: "\n\n")
-                    // P2: a secret in a memory (a hand-written file skips `memory.save`'s hiding) never reaches the agent
-                    .scrubbed(await auth.secrets())
+                // only Claude and Cursor run this hook
+                let cursor = me.preset == .cursor || me.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent"
+                let mode: CursorMemoryMode = cursor ? CollieSettings.load(config.paths.root).cursorMemoryMode : .start
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
                     peers: ConnectionGraph.reachable(from: me.id, in: ws).map(\.name),
                     panels: ConnectionGraph.reachablePanels(from: me.id, in: ws).map { ($0.name, $0.pluginId) },
                     paddockPanels: ws.panels.filter { $0.paddockId != nil && $0.paddockId == me.paddockId }.map { ($0.name, $0.pluginId) },
                     designFirst: ws.designFirst, lot: myLot.map { ($0.name, $0.goal) }, morePanels: !PluginRegistry.externalSpecs.isEmpty,
-                    // only Claude and Cursor run this hook
-                    agent: me.preset == .cursor || me.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent" ? "cursor" : "claude",
+                    agent: cursor ? "cursor" : "claude",
                     sharedFolder: await sharedFolder(me),
                     figcraftAvailable: { if case .installed = engineState() { true } else { false } }())
+                if cursor && mode == .off { text = orientation; return .object(["output": .string(text)]) }   // "Desligada": no memory block
+                // Cursor `full`: the time line (≤ 70 B) and the focus block, all under `cursorCap` with the orientation
+                let stamp = cursor && mode == .full ? "memória de \(Self.hourMinute.string(from: Date())); novidades e memória da tarefa: memory_task" : ""
+                let total = Self.cursorCap - orientation.utf8.count - 2 - (stamp.isEmpty ? 0 : stamp.utf8.count + 2)
+                await refreshSkills(me.id)   // a session (re)starts: its skills as the stores are now (a hand edit, a pull)
+                let w = try? await work.active(terminal: me.id)
+                await memory.resetDocs(me.id)
+                let docs = await memory.docsLine(cwd: me.cwd, paddock: paddockName, lot: myLot?.id)
+                let docsRoom = docs.isEmpty ? 0 : docs.utf8.count + 2
+                let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id,
+                                                limit: Swift.min(4096, total) - used - docsRoom,
+                                                source: str(r, "source"), workTitle: w?.title,
+                                                openTasks: (w?.tasks ?? []).filter { [.open, .inProgress].contains($0.state) }.map(\.title),
+                                                lotGoal: myLot?.goal,
+                                                focusBlock: mode == .full && cursor ? (Self.focusBudget, Self.focusMax, total - used - docsRoom) : nil)
+                let mem = (head + [rest == MemoryService.header ? "" : rest, docs]).filter { !$0.isEmpty }.joined(separator: "\n\n")
+                    // P2: a secret in a memory (a hand-written file skips `memory.save`'s hiding) never reaches the agent
+                    .scrubbed(await auth.secrets())
                 // ponytail: the bare header (no memories) counts as empty
-                text = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
+                var full = mem.isEmpty || mem == MemoryService.header ? orientation : orientation + "\n\n" + mem
+                if !stamp.isEmpty { full += "\n\n" + stamp }
+                // the hard cap (B1: no client check on sessionStart, the server's limit unknown): whole lines off the end,
+                // never the orientation. ponytail: the budgets above keep it from firing; this is the guard
+                text = cursor ? Self.capped(full, keep: orientation, max: Self.cursorCap) : full
             } else {
                 // one 2048-byte budget: retractions, the rules pushed to the caller, board posts addressed to it (newest
                 // first), the user's comments on its pages, then memories
@@ -588,6 +601,19 @@ private extension String {
 }
 
 extension CommandRouter {
+    /// Cursor's sessionStart (spec 2026-11-17 cursor memory §1–2): the whole text, the focus block's bytes and memories.
+    static let cursorCap = 9_000, focusBudget = 2_500, focusMax = 8
+    static let hourMinute: DateFormatter = { let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "HH:mm"; return f }()
+
+    /// `text` in at most `max` UTF-8 bytes: whole lines dropped from the end, never into `keep` (its prefix).
+    static func capped(_ text: String, keep: String, max: Int) -> String {
+        guard text.utf8.count > max else { return text }
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        while lines.joined(separator: "\n").utf8.count > max, lines.joined(separator: "\n").utf8.count > keep.utf8.count { lines.removeLast() }
+        let out = lines.joined(separator: "\n")
+        return out.utf8.count <= max ? out : String(decoding: Array(keep.utf8.prefix(max)), as: UTF8.self)
+    }
+
     /// One 2048-byte budget: retractions, the rules pushed to the caller (`pull`: also the user's rules changed since its
     /// session started), board posts addressed to it (newest first), the user's comments on its pages, then memories
     /// relevant to `query` and document chunks; scrubbed. `pull`: `memory.task` (relevance leaves the pending uses alone).

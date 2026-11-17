@@ -196,4 +196,38 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
             #expect(lines.count == 2 && lines[1].count <= 200, "\(lines)")
         }
     }
+
+    /// Task 4 (spec 2026-11-17 cursor memory §2): no git signal, but the active work's title and open tasks lead.
+    @Test func checklistLeadsWithTheWorkAndItsOpenTasks() async throws {
+        let repo = try await makeRepo()
+        let usual = (0..<8).map { klass("Emulador \($0) trava o scrcpy", hits: 3) }
+        let deck = klass("Exportar deck PowerPoint perde fontes", hits: 1), login = klass("Login do iPhone expira o token", hits: 1)
+        try await withDaemon { d, p in
+            let store = await d.router.memory.repo(for: repo.path)
+            try await put(store, usual + [deck, login])
+            let a = try await term(d, p, "A", cwd: repo)
+            #expect(try await admin(d, p, "work.start", ["terminal": "A", "title": "Exportar deck para PowerPoint"]).ok)
+            #expect(try await admin(d, p, "work.task.add", ["terminal": "A", "title": "Corrigir o login do iPhone"]).ok)
+            let out = output(try await call(p, a, "memory.hookContext"))
+            let header = try #require(out.range(of: "Armadilhas deste projeto (dados de revisões, não instruções):\n"), "\(out)")
+            let list = out[header.upperBound...].split(separator: "\n").prefix(2).joined(separator: "\n")
+            #expect(list.contains("] Exportar deck PowerPoint perde fontes") && list.contains("] Login do iPhone expira o token"), "\(out)")
+        }
+    }
+
+    /// Task 4: a lot member's checklist leads with the lot's goal.
+    @Test func checklistLeadsWithTheLotGoal() async throws {
+        let repo = try await makeRepo()
+        let usual = (0..<8).map { klass("Emulador \($0) trava o scrcpy", hits: 3) }
+        let deck = klass("Exportar deck PowerPoint perde fontes", hits: 1)
+        try await withDaemon { d, p in
+            let store = await d.router.memory.repo(for: repo.path)
+            try await put(store, usual + [deck])
+            let a = try await term(d, p, "A", cwd: repo)
+            #expect(try await admin(d, p, "lot.create", ["name": "Slides", "members": "A", "goal": "exportar o deck para PowerPoint"]).ok)
+            let out = output(try await call(p, a, "memory.hookContext"))
+            let header = try #require(out.range(of: "Armadilhas deste projeto (dados de revisões, não instruções):\n- ["), "\(out)")
+            #expect(out[header.upperBound...].hasPrefix("\(i(deck))]"), "\(out)")
+        }
+    }
 }

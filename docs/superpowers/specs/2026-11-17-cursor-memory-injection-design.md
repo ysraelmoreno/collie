@@ -1,9 +1,10 @@
 # Memória no Cursor: início de sessão mais rico + consulta por tarefa — design
 
-Status: **rascunho para o dono, revisado** (ask 63f428c3; escopo do dono no ask fbc719bd: opções 2 e 3). Revisão
+Status: **aprovado pelo dono (2026-11-17, ask e652b858)**, com C1–C7 como recomendadas. Em implementação:
+Tarefas 3 e 4 primeiro; 1 e 2 (proveniência) esperam a Task 4 do curador. Origem: ask 63f428c3 (escopo do dono no ask fbc719bd: opções 2 e 3). Revisão
 independente aplicada (ask bd8deea5: B1–B3, I1–I11, M1–M8), com cada evidência conferida no código e no bundle; as
 discordâncias estão em “Revisão: onde discordei”. Sem código de produto. As chamadas de gosto estão em “Minhas
-chamadas (conferir)”. Plano: `docs/superpowers/plans/2026-11-17-cursor-memory-injection.md`.
+chamadas”. Plano: `docs/superpowers/plans/2026-11-17-cursor-memory-injection.md`.
 
 ## Intenção e porquê
 
@@ -263,7 +264,7 @@ O plano B antigo (hook `beforeSubmitPrompt` **do plugin**) deixou de ser alterna
 - `mcp.profile` decide ferramenta e `instructions` (agente, versão do daemon, Preferência).
 - Saída em texto; nada escrito em `~/.cursor` nem no repositório do usuário.
 
-## Minhas chamadas (conferir)
+## Minhas chamadas (aprovadas pelo dono em 2026-11-17, todas como recomendadas)
 
 - **C1. Orçamentos**: foco até 2 500 B e 8 memórias; teto total 9 000 B (≈ 2 250 tokens por sessão Cursor, contra
   ≈ 1 400 hoje). Recomendo assim.

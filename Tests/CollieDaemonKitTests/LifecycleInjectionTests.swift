@@ -62,7 +62,7 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let line = "memória errada ou velha: `collie memory flag <id> --wrong|--outdated`"
         #expect(MemoryService.header.contains(line))
         let (mem, repo) = try await setup([x()])
-        #expect((await mem.relevant(for: t, cwd: repo.path, prompt: prompt)).hasPrefix("Memória relacionada (Collie):\n" + line))
+        #expect((await mem.relevant(for: t, cwd: repo.path, prompt: prompt)).hasPrefix(MemoryService.relevantHeader) && MemoryService.relevantHeader.hasSuffix(line))
     }
 
     @Test func nextPromptWithoutCorrectionCountsOneUsePerDaySession() async throws {

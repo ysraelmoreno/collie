@@ -96,3 +96,68 @@ enum UpstreamTrust {
         return (SecPolicyCopyProperties(p as! SecPolicy) as? [String: Any])?[kSecPolicyOid as String] as? String
     }
 }
+
+/// What a mitmdump was started with for upstream verification; `network.status` shows `mode` and `certs`.
+struct UpstreamCA: Sendable, Equatable {
+    enum Mode: String, Sendable { case system, userConfig = "user-config", unavailable }
+    var url: URL?
+    var mode: Mode
+    var certs: Int?
+    var reason: String?
+    static let none = UpstreamCA(url: nil, mode: .unavailable, certs: nil, reason: "not configured")
+}
+
+extension UpstreamTrust {
+    struct UserConfig: Equatable { var decides: Bool; var insecure: Bool }
+
+    /// Whether `<confdir>/config.yaml` or `config.yml` (mitmproxy reads both, and they win over `--set`) settles
+    /// upstream verification: a top-level `ssl_verify_upstream_trusted_ca`/`_confdir`, or `ssl_insecure: true`.
+    /// Only regular files up to 64 KiB, never through a symlink, opened non-blocking (a FIFO must not hang the daemon).
+    // ponytail: line scan, not YAML; quoted keys, flow style or a BOM are missed and the status is an estimate
+    static func userConfig(_ confdir: URL) -> UserConfig {
+        var out = UserConfig(decides: false, insecure: false)
+        for name in ["config.yaml", "config.yml"] {
+            guard let text = readSmallRegular(confdir.appendingPathComponent(name).path) else { continue }
+            for raw in text.split(whereSeparator: \.isNewline) {
+                let line = String(raw)
+                if line.wholeMatch(of: /(ssl_verify_upstream_trusted_ca|ssl_verify_upstream_trusted_confdir)\s*:.*/) != nil {
+                    out.decides = true
+                } else if line.wholeMatch(of: /ssl_insecure\s*:\s*(?i:true|yes|on)\s*(#.*)?/) != nil {
+                    out.decides = true; out.insecure = true
+                }
+            }
+        }
+        return out
+    }
+
+    private static func readSmallRegular(_ path: String, limit: Int = 64 << 10) -> String? {
+        var st = stat()
+        guard lstat(path, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_size <= limit else { return nil }
+        let fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)
+        guard fd >= 0 else { return nil }
+        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        guard let data = try? h.read(upToCount: limit + 1), data.count <= limit else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Called on every mitmdump start. The user's config decides → no bundle. Else the bundle is written to `out`
+    /// before its URL is returned. Any failure → no bundle (certifi), one log line, and an existing file is left alone:
+    /// another session's mitmdump may still read it at its next upstream handshake.
+    static func resolve(confdir: URL, out: URL, snapshot: () throws -> TrustSnapshot, log: (String) -> Void) -> UpstreamCA {
+        let user = userConfig(confdir)
+        if user.insecure { log("upstream CA: config.yaml sets ssl_insecure: true, upstream verification is off") }
+        if user.decides { return UpstreamCA(url: nil, mode: .userConfig, certs: nil, reason: nil) }
+        func unavailable(_ why: String) -> UpstreamCA {
+            log("upstream CA: unavailable, using mitmproxy's own CAs: \(why)")
+            return UpstreamCA(url: nil, mode: .unavailable, certs: nil, reason: why)
+        }
+        let b: (pem: String, count: Int, denied: Int)
+        do { b = bundle(try snapshot()) } catch { return unavailable("keychain read failed: \(error.localizedDescription)") }
+        guard b.count > 0 else { return unavailable("no trusted certificates found") }
+        do {
+            try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
+            _ = try write(b.pem, to: out)
+        } catch { return unavailable("cannot write the bundle: \(error.localizedDescription)") }
+        return UpstreamCA(url: out, mode: .system, certs: b.count, reason: nil)
+    }
+}

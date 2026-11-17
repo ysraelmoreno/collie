@@ -152,3 +152,115 @@ import Foundation
         #expect(try FileManager.default.attributesOfItem(atPath: f.path)[.systemFileNumber] as? Int == inode)
     }
 }
+
+/// `resolve` and the user's `config.yaml` (Task 2). Snapshots are fixtures; files live in a temp dir.
+@Suite struct UpstreamResolveTests {
+    private let snap = TrustSnapshot(anchors: [Data("USERTrust RSA Certification Authority".utf8)],
+                                     admin: [TrustEntry(der: Data("ca.example.com".utf8), selfSigned: true, settings: [])], user: [])
+    private struct Boom: Error {}
+
+    private func dirs() throws -> (confdir: URL, out: URL, base: URL) {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("collie-resolve-\(UUID().uuidString.prefix(8))")
+        let confdir = base.appendingPathComponent("network/mitm")
+        try FileManager.default.createDirectory(at: confdir, withIntermediateDirectories: true)
+        return (confdir, base.appendingPathComponent("network/upstream-ca.pem"), base)
+    }
+    private func config(_ confdir: URL, _ text: String, name: String = "config.yaml") throws {
+        try Data(text.utf8).write(to: confdir.appendingPathComponent(name))
+    }
+    private func resolve(_ confdir: URL, _ out: URL, snapshot: () throws -> TrustSnapshot, calls: inout Int, logs: inout [String]) -> UpstreamCA {
+        var c = 0, l: [String] = []
+        let r = UpstreamTrust.resolve(confdir: confdir, out: out, snapshot: { c += 1; return try snapshot() }, log: { l.append($0) })
+        calls = c; logs = l
+        return r
+    }
+
+    @Test(arguments: ["ssl_verify_upstream_trusted_ca: /x.pem", "ssl_verify_upstream_trusted_confdir: /d", "ssl_insecure: true",
+                      "ssl_insecure: True  # mine"])
+    func configDecides(_ line: String) throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        try config(d.confdir, "listen_port: 8080\n" + line + "\n")
+        var calls = 0, logs: [String] = []
+        let r = resolve(d.confdir, d.out, snapshot: { snap }, calls: &calls, logs: &logs)
+        #expect(r.mode == .userConfig && r.url == nil && calls == 0)
+        #expect(!FileManager.default.fileExists(atPath: d.out.path))
+    }
+
+    @Test func configYmlAlsoDecides() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        try config(d.confdir, "ssl_verify_upstream_trusted_ca: /x.pem\n", name: "config.yml")
+        #expect(UpstreamTrust.userConfig(d.confdir).decides)
+    }
+
+    @Test(arguments: ["ssl_insecure: false", "# ssl_insecure: true", "  ssl_verify_upstream_trusted_ca: /x.pem",
+                      "ssl_insecure_extra: true", "ssl_verify_upstream_trusted_ca_x: 1"])
+    func doesNotDecide(_ line: String) throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        try config(d.confdir, line + "\n")
+        #expect(UpstreamTrust.userConfig(d.confdir) == UpstreamTrust.UserConfig(decides: false, insecure: false))
+    }
+
+    /// Known limit: a quoted key is not seen, so the status says `system` while mitmdump follows the file.
+    @Test func quotedKeyIsEstimate() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        try config(d.confdir, "\"ssl_insecure\": true\n")
+        #expect(UpstreamTrust.userConfig(d.confdir).decides == false)
+    }
+
+    @Test func configYamlNotRegularIsIgnored() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        let yaml = d.confdir.appendingPathComponent("config.yaml"), yml = d.confdir.appendingPathComponent("config.yml")
+        #expect(mkfifo(yaml.path, 0o600) == 0)   // a FIFO would block a plain read forever
+        try FileManager.default.createDirectory(at: yml, withIntermediateDirectories: false)
+        #expect(UpstreamTrust.userConfig(d.confdir).decides == false)
+    }
+
+    @Test func configYamlSymlinkIsIgnored() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        let real = d.base.appendingPathComponent("elsewhere.yaml")
+        try Data("ssl_insecure: true\n".utf8).write(to: real)
+        try FileManager.default.createSymbolicLink(at: d.confdir.appendingPathComponent("config.yaml"), withDestinationURL: real)
+        #expect(UpstreamTrust.userConfig(d.confdir).decides == false)
+    }
+
+    @Test func configYamlOver64KiBIsIgnored() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        try config(d.confdir, "ssl_insecure: true\n" + String(repeating: "#", count: 65_536) + "\n")
+        #expect(UpstreamTrust.userConfig(d.confdir).decides == false)
+    }
+
+    @Test func insecureTrueLogs() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        try config(d.confdir, "ssl_insecure: true\n")
+        var calls = 0, logs: [String] = []
+        _ = resolve(d.confdir, d.out, snapshot: { snap }, calls: &calls, logs: &logs)
+        #expect(logs.count == 1 && logs[0].contains("ssl_insecure"))
+    }
+
+    @Test func resolveWritesAndReturnsSystem() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        var calls = 0, logs: [String] = []
+        let r = resolve(d.confdir, d.out, snapshot: { snap }, calls: &calls, logs: &logs)
+        #expect(r == UpstreamCA(url: d.out, mode: .system, certs: 2, reason: nil))
+        #expect(try String(contentsOf: d.out, encoding: .utf8) == UpstreamTrust.bundle(snap).pem)
+        #expect(logs.isEmpty)
+    }
+
+    @Test func emptySnapshotIsUnavailable() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        var calls = 0, logs: [String] = []
+        let r = resolve(d.confdir, d.out, snapshot: { TrustSnapshot(anchors: [], admin: [], user: []) }, calls: &calls, logs: &logs)
+        #expect(r.mode == .unavailable && r.url == nil && r.reason != nil && logs.count == 1)
+        #expect(!FileManager.default.fileExists(atPath: d.out.path))
+    }
+
+    @Test func failureKeepsExistingFile() throws {
+        let d = try dirs(); defer { try? FileManager.default.removeItem(at: d.base) }
+        try Data("old".utf8).write(to: d.out)
+        var calls = 0, logs: [String] = []
+        let r = resolve(d.confdir, d.out, snapshot: { throw Boom() }, calls: &calls, logs: &logs)
+        #expect(r.mode == .unavailable && r.url == nil)
+        #expect(try String(contentsOf: d.out, encoding: .utf8) == "old")   // another session's mitmdump may read it late
+        #expect(logs.count == 1 && !logs[0].contains("BEGIN") && !logs[0].contains("tlsproxy"))
+    }
+}

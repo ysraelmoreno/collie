@@ -17,6 +17,23 @@ enum AccessCopy {
         }
         return (tag, "O Collie não está vendo os bloqueios do sandbox agora (\(reason ?? "log stream parado"); tentando de novo). " + lost)
     }
+    /// The bar's red tag: only while detection may come back (log stream not started or died). Not admin is a fact of
+    /// the account, not a fault: no tag, a one-time toast, the detail in the popover and Preferências.
+    static func showsDetectionTag(detection: Bool?, reason: String?) -> Bool {
+        detection == false && reason != SandboxDetection.notAdmin
+    }
+    /// Versioned: a new text can be shown again once by bumping it.
+    static let notAdminToastKey = "sandbox.detectionNotice.notAdmin.v1"
+    static let notAdminToastText = "Nesta conta o Collie não vê os bloqueios do sandbox: o macOS só mostra esse log a administradores. "
+        + "Por isso não aparecem os cartões automáticos de liberação. O sandbox continua protegendo, e 'collie access request' continua funcionando. "
+        + "Para ter os cartões, use uma conta de administrador e entre de novo na sessão."
+    /// The not-admin toast, once (recorded in `defaults`); detection back on clears the record, so losing admin again explains again.
+    static func notAdminToast(detection: Bool?, reason: String?, defaults: UserDefaults) -> String? {
+        if detection == true { defaults.removeObject(forKey: notAdminToastKey); return nil }
+        guard detection == false, reason == SandboxDetection.notAdmin, !defaults.bool(forKey: notAdminToastKey) else { return nil }
+        defaults.set(true, forKey: notAdminToastKey)
+        return notAdminToastText
+    }
     static func verb(_ op: String) -> String {
         ["read": "ler", "write": "escrever", "delete": "apagar", "exec": "executar"][op] ?? op
     }
@@ -45,6 +62,23 @@ enum AccessCopy {
     }
 }
 
+/// The not-admin toast: once (`AccessCopy.notAdminToast`), in the update notice's card, dismissed with OK.
+struct DetectionNoticeHost: ViewModifier {
+    let client: DaemonClient
+    @State private var text: String?
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottomTrailing) {
+                if let text { NoticeCard(text: text) { Button("OK") { self.text = nil }.buttonStyle(CollieButtonStyle(.quiet)) } }
+            }
+            .task(id: "\(String(describing: client.detection))|\(client.detectionReason ?? "")") {
+                if let t = AccessCopy.notAdminToast(detection: client.detection, reason: client.detectionReason, defaults: .standard) { text = t }
+                else if client.detection == true { text = nil }
+            }
+    }
+}
+
 /// The title-bar entry of a sandboxed terminal's access: its open cards (attention) or its grants, and the
 /// "detecção indisponível" state. Opens `AccessPopover`.
 /// Which terminals' access popovers are open: the tag, the node's strip (and a notification click) share it.
@@ -67,7 +101,7 @@ struct AccessBadge: View {
         let cards = client.accessCards.filter { $0.terminal == id }
         let mine = client.grants.filter { $0.scope == .terminal && $0.owner == id }
         HStack(spacing: 6) {
-            if client.detection == false {
+            if AccessCopy.showsDetectionTag(detection: client.detection, reason: client.detectionReason) {
                 let c = AccessCopy.detection(reason: client.detectionReason)
                 CollieTag(c.tag, tone: .danger).lineLimit(1).help(c.help)
             }
@@ -178,6 +212,10 @@ struct AccessPopover: View {
         ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
+                if client.detection == false, client.detectionReason == SandboxDetection.notAdmin {   // neutral: a fact of the account
+                    Text(AccessCopy.detection(reason: SandboxDetection.notAdmin).help).font(.collieUI(11)).foregroundStyle(Color.collieMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ForEach(cards, id: \.cardId) { AccessCard(card: $0, client: client).id($0.cardId) }
                 if !mine.isEmpty {
                     Text("LIBERADOS PARA ESTE TERMINAL").font(.collieMono(10)).kerning(1.2).foregroundStyle(Color.collieMuted)

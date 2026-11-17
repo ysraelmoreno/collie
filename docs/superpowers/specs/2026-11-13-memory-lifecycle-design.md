@@ -35,7 +35,7 @@ The owner wants the user out of the loop: the working agent judges whether an in
 ## Constraints
 
 - Project memory lives as `.md` in `<repo>/.collie/memory`, which a sandboxed agent can write. Lifecycle state must therefore live in a daemon-owned file outside the repo (like `ScoreStore`: `<root>/learning/…`, 0600), never in the `.md` frontmatter. `pinned` and `reviewed` keep meaning "the user's"; the new tiers are separate and never set either.
-- The curator is the on-device model (macOS 26 with Apple Intelligence), under a daily cap (`Curator.limit`, corrections reserved a quarter). Without the model, only the deterministic path and the two-flag rule run.
+- The curator is the headless curator (`claude -p` today; the provider becomes choosable in spec 2026-11-17-curator-provider), under a daily cap (`Curator.limit`, corrections reserved a quarter). Without the model, only the deterministic path and the two-flag rule run.
 - Injected memory text is data, not instructions (existing headers). Flag reasons are agent text: scrub (`LotBoards.scrub`), cap 200 characters, shown to the curator inside the existing nonce-delimited input, never injected into another session.
 - Tests: only changed or created tests via `--filter`; never the full suite.
 

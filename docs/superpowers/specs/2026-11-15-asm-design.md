@@ -61,7 +61,7 @@ Product for any company; **first pilot is the owner's own team**.
 - Memory files are truth, FTS5 index is cache (`MemoryStore`, `MemoryIndex`). Lot/global stores are 0700/0600 in the
   app's data dir (`MemoryStore(secureRoot:)`) — the space mirror follows the same rule.
 - Prompt injection has a 2048-byte budget shared with lot posts; hooks have a 5 s budget and fail open.
-- The curator is the on-device model (macOS 26 + Apple Intelligence) with a daily cap. It may be absent.
+- The curator is the headless curator (`claude -p` today; the provider becomes choosable in spec 2026-11-17-curator-provider) with a daily cap. It may be absent.
 - Lifecycle rules (provisional → earned → long-term, flags, contested) exist for project scope
   (`2026-11-13-memory-lifecycle-design.md`), with daemon-owned state.
 - Deterministic scrub exists: `LotBoards.scrub` (`Sources/CollieDaemonKit/Lots/LotBoard.swift:167`).

@@ -55,6 +55,31 @@ import CollieProtocol
         #expect(mode == 0o700)
     }
 
+    @Test func argsWithUpstreamCA() {
+        let a = MitmProcess.args(port: 1, confdir: URL(fileURLWithPath: "/c"), addon: URL(fileURLWithPath: "/a.py"),
+                                 upstreamCA: URL(fileURLWithPath: "/c/up.pem"))
+        #expect(Array(a.suffix(2)) == ["--set", "ssl_verify_upstream_trusted_ca=/c/up.pem"])
+        #expect(!a.contains { $0.contains("ssl_insecure") })
+        #expect(!MitmProcess.args(port: 1, confdir: URL(fileURLWithPath: "/c"), addon: URL(fileURLWithPath: "/a.py"))
+            .contains { $0.contains("ssl_verify_upstream") })
+    }
+
+    /// Every start attempt (attach, its one retry, and `restarted`) asks for the bundle again: a mitmdump that exits at
+    /// once (/usr/bin/false) makes `start` retry on another port, so the closure runs twice.
+    @Test func everyStartAttemptResolves() async throws {
+        let base = URL(fileURLWithPath: "/tmp/collie-mitm-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let run = base.appendingPathComponent("run")
+        try FileManager.default.createDirectory(at: run.appendingPathComponent("terminals"), withIntermediateDirectories: true)
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        await #expect(throws: ProtocolError.self) {
+            _ = try await MitmProcess.start(tool: MitmTool(url: URL(fileURLWithPath: "/usr/bin/false")), addonSource: "",
+                                            confdir: base.appendingPathComponent("network/mitm"), runDir: run,
+                                            upstreamCA: { calls.withLock { $0 += 1 }; return .none })
+        }
+        #expect(calls.withLock { $0 } == 2)
+    }
+
     /// Runs the real mitmdump when installed (`COLLIE_E2E_MITM=1`): starts, has a CA and a listener, echoes the addon's lines, stops.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["COLLIE_E2E_MITM"] != nil
                    && MitmTool.locate(env: ProcessInfo.processInfo.environment) != nil))

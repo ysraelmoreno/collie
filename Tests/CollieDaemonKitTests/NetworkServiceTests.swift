@@ -10,6 +10,7 @@ import CollieCore
 private final class FakeProxy: NetworkProxy, @unchecked Sendable {
     let port: Int
     let caCert = URL(fileURLWithPath: "/tmp/fake-ca.pem")
+    let upstreamCA = UpstreamCA(url: URL(fileURLWithPath: "/tmp/fake-up.pem"), mode: .system, certs: 156, reason: nil)
     let lines: AsyncStream<String>
     private let cont: AsyncStream<String>.Continuation
     private let state = OSAllocatedUnfairLock(initialState: (exited: Int32?.none, stopped: false))
@@ -132,6 +133,15 @@ private let response = #"{"type":"response","id":"f1","ttfb":1730000000.2,"ts":1
         #expect(od["attached"] == .bool(false) && r.proxy.stopped)
         #expect(r.device.log.last == "detach emulator-5560 40001")
         await #expect(throws: ProtocolError.self) { try await r.service.list("emulator-5560") }
+    }
+
+    @Test func statusShowsUpstreamCA() async throws {
+        let r = rig()
+        guard case .object(let o) = try await r.service.attach("emulator-5560") else { Issue.record("attach"); return }
+        #expect(o["upstreamCA"] == .string("system") && o["certs"] == .number(156))
+        _ = try await r.service.detach("emulator-5560")
+        guard case .object(let off) = await r.service.status("emulator-5560") else { Issue.record("status"); return }
+        #expect(off["attached"] == .bool(false) && off["upstreamCA"] == nil && off["certs"] == nil)
     }
 
     @Test func attachAnswerCarriesTheRestartHintOnce() async throws {

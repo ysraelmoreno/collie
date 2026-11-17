@@ -114,6 +114,16 @@ do {
     // hash of the file this process started from; read off the cooperative pool
     config.build = await Task.detached { selfPath().flatMap(BuildID.of) }.value
     config.version = selfPath().flatMap(DaemonConfig.bundleVersion)
+    // the updater's test source (spec 2026-11-17 §8): only file://, in any build; the dmg must still be the team's
+    if let s = ProcessInfo.processInfo.environment["COLLIE_UPDATE_MANIFEST"] {
+        if let u = URL(string: s), u.isFileURL {
+            config.updateManifestOverride = u
+            FileHandle.standardError.write(Data("collied: update manifest override \(u.absoluteString)\n".utf8))
+        } else {
+            FileHandle.standardError.write(Data("collied: COLLIE_UPDATE_MANIFEST ignored (only file://): \(s)\n".utf8))
+        }
+    }
+    config.updateLoop = true
     daemon = try Daemon(config: config)
     try await daemon.start()
 } catch {

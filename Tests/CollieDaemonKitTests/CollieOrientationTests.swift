@@ -96,6 +96,20 @@ import CollieProtocol
         #expect(tight.count <= 1500 && tight.contains("summon (no --preset: cursor)"), "\(tight.count) \(tight)")
     }
 
+    /// "Delegate to a terminal" = collie summon, not the agent's own subagents: normal and tight, Claude and Cursor.
+    @Test func shepherdDelegatesWithSummon() {
+        let ps = ["design", "browser", "device"].flatMap { id in (1...20).map { (name: "\(id)-" + String(repeating: "x", count: 60) + "\($0)", pluginId: id) } }
+        let lot = (name: String(repeating: "L", count: 64), goal: String(repeating: "objetivo ", count: 60))
+        for agent in ["claude", "cursor"] {
+            let normal = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: nil, peers: [], panels: [], agent: agent)
+            #expect(normal.contains("  Delegate (no own subagents): collie summon dev --connect design-1"), "\(agent)\n\(normal)")
+            let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: String(repeating: "f", count: 80), peers: (1...20).map { "peer\($0)" },
+                                               panels: ps, lot: lot, morePanels: true, agent: agent)
+            #expect(tight.count <= 1500 && tight.contains("Delegate (no own subagents): collie summon|dismiss"), "\(agent) \(tight.count)\n\(tight)")
+        }
+        #expect(!text().contains("collie summon") && !text().contains("own subagents"))   // not a Shepherd: no summon
+    }
+
     @Test func orientationTeachesSandboxAccess() {
         for t in [text(), text(shepherd: true, peers: ["Bob"], panels: [("Home", "design")])] {
             #expect(t.contains("collie access request <path> --write --reason") && t.contains("collie open <url|app>"))

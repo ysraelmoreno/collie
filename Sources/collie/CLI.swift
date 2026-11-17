@@ -69,7 +69,8 @@ enum Client {
                     cwd: FileManager.default.currentDirectoryPath),
             to: socket, timeoutSeconds: timeout(command, args))
         if r.ok { return r.result ?? .null }
-        throw r.error ?? ProtocolError(code: .internal, message: "request failed")
+        // CLI and MCP (both call through here): a command an older daemon lacks says to restart the service
+        throw RestartHint.wrap(r.error ?? ProtocolError(code: .internal, message: "request failed"))
     }
 }
 

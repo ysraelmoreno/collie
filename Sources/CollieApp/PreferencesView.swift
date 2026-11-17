@@ -56,6 +56,7 @@ struct PreferencesView: View {
     @State private var query = ""
     @State private var androidBadge: String?
     @State private var designBadge: String?
+    @State private var updateBadge: String?
     @AppStorage(PreferencePage.requestKey) private var requestedPage = ""
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
@@ -92,9 +93,11 @@ struct PreferencesView: View {
                 androidBadge = PreferencePage.androidBadge(r.flatMap(AndroidSetupStatus.from))
                 let d = try? await client.adminCall("design.engine.status", [:])
                 designBadge = PreferencePage.designBadge(d.flatMap(DesignEngineStatus.from))
+                let u = try? await client.adminCall("app.update.status", [:])
+                updateBadge = UpdateModel.badge(u.flatMap(UpdateStatus.from))
                 try? await Task.sleep(for: .seconds(5))
             }
-            androidBadge = nil; designBadge = nil   // connection dropped: no stale ↓
+            androidBadge = nil; designBadge = nil; updateBadge = nil   // connection dropped: no stale ↓
         }
         .onChange(of: theme) { CollieApp.applyTheme() }
         .onChange(of: query) {   // the search hid the open page: show the first match (none: keep it)
@@ -134,7 +137,7 @@ struct PreferencesView: View {
                 Text(p.icon).font(.collieMono(12)).foregroundStyle(Color.collieMuted).frame(width: 18)
                 Text(p.title).font(.collieUI(13)).foregroundStyle(Color.collieText)
                 Spacer()
-                if let b = p == .android ? androidBadge : p == .desenho ? designBadge : nil {
+                if let b = p == .android ? androidBadge : p == .desenho ? designBadge : p == .atualizacoes ? updateBadge : nil {
                     Text(b).font(.collieMono(11, .semibold))
                         .foregroundStyle(b == "!" ? Color.collieDanger : Color.collieAccent)
                 }
@@ -152,6 +155,7 @@ struct PreferencesView: View {
         switch page {
         case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; structureSection }
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
+        case .atualizacoes: UpdatePreferences(client: client)
         case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
         case .memoria: memorySection
         case .plugins: PluginsPreferences(client: client)

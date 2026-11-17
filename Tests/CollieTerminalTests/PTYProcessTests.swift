@@ -217,9 +217,17 @@ private final class Tally: @unchecked Sendable {
     var result: (Int, [String]) { l.lock(); defer { l.unlock() }; return (total, lost) }
 }
 
-/// `collie-ctty`, built with the tests (CollieTerminalTests depends on it).
-private let cttyHelper = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-    .deletingLastPathComponent().appendingPathComponent(".build/debug/collie-ctty").path
+/// `collie-ctty`, built with the tests (CollieTerminalTests depends on it): next to the test bundle (any
+/// `--scratch-path`), else the default `.build/debug`.
+private let cttyHelper: String = {
+    let fm = FileManager.default
+    let dir = Bundle(for: Box.self).bundleURL.deletingLastPathComponent()
+    if fm.isExecutableFile(atPath: dir.appendingPathComponent("collie-ctty").path) {
+        return dir.appendingPathComponent("collie-ctty").path
+    }
+    return URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent(".build/debug/collie-ctty").path
+}()
 
 @Suite struct ControllingTerminalTests {
     /// zsh spawned straight onto the PTY had no controlling terminal: a resize changed the size but sent no SIGWINCH,
@@ -234,6 +242,37 @@ private let cttyHelper = URL(fileURLWithPath: #filePath).deletingLastPathCompone
         #expect(!sb.text(since: 0).text.contains("tty=??"), "\(sb.text(since: 0).text)")
         p.resize(cols: 127, rows: 38)
         #expect(await waitUntil { sb.text(since: 0).text.contains("winch 38 127") }, "\(sb.text(since: 0).text)")
+    }
+
+    /// `exe args` → stdout (stdin/stderr null).
+    static func output(_ exe: String, _ args: [String]) throws -> String {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: exe); p.arguments = args
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice; p.standardInput = FileHandle.nullDevice
+        try p.run(); p.waitUntilExit()
+        return String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    }
+    /// Seatbelt can't nest: under an outer sandbox (a run inside a sandboxed Collie terminal) `sandbox_apply` fails.
+    static let canSandbox = ((try? output("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/bin/echo", "ok"])) ?? "") == "ok\n"
+    /// A file the profile denies, and the profile; `$0` is the file, `$@` printed as `a|b|`, then READ or DENIED.
+    static func fixture() throws -> (dir: URL, secret: String, profile: String, script: String) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ctty-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let secret = dir.resolvingSymlinksInPath().appendingPathComponent("secret"), profile = dir.appendingPathComponent("p.sb")
+        try Data("s".utf8).write(to: secret)
+        try #"(version 1)(allow default)(deny file-read* (literal "\#(secret.path)"))"#.write(to: profile, atomically: true, encoding: .utf8)
+        return (dir, secret.path, profile.path, #"printf '%s|' "$@"; /bin/cat "$0" >/dev/null && echo READ || echo DENIED"#)
+    }
+    /// The daemon (older or newer than the bundle) spawns `collie-ctty [--sandbox <profile>] <cmd> <args>`: that line
+    /// is stable (spec §4); the arguments pass through verbatim.
+    @Test(.timeLimit(.minutes(1))) func cttyAcceptsPlainLine() throws {
+        let f = try Self.fixture(); defer { try? FileManager.default.removeItem(at: f.dir) }
+        #expect(try Self.output(cttyHelper, ["/bin/sh", "-c", f.script, f.secret, "a b", "c"]) == "a b|c|READ\n")
+    }
+    /// With `--sandbox <profile>` the profile applies too. Needs an unsandboxed test run (Seatbelt can't nest).
+    @Test(.timeLimit(.minutes(1)), .enabled(if: ControllingTerminalTests.canSandbox, "already inside a sandbox: sandbox-exec can't nest"))
+    func cttyAcceptsSandboxLine() throws {
+        let f = try Self.fixture(); defer { try? FileManager.default.removeItem(at: f.dir) }
+        #expect(try Self.output(cttyHelper, ["--sandbox", f.profile, "/bin/sh", "-c", f.script, f.secret, "a b", "c"]) == "a b|c|DENIED\n")
     }
 
     @Test func wrapsTheCommand() {

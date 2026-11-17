@@ -398,7 +398,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// `timeout` nil: `adminTimeout(command)`.
     public func adminCall(_ command: String, _ args: [String: JSONValue], timeout: Double? = nil) async throws(ProtocolError) -> JSONValue {
         do { return try await admin(command, args, timeout: timeout ?? Self.adminTimeout(command)) ?? .null }
-        catch let e as ProtocolError { throw e }
+        catch let e as ProtocolError { throw RestartHint.wrap(e) }   // an older daemon: "reinicie o serviço para usar isto"
         catch { throw ProtocolError(code: .internal, message: "\(error)") }
     }
     /// An admin `ui.*` stream for app-side plug-in views (`PanelHostContext.openStream`, e.g. `ui.device`).

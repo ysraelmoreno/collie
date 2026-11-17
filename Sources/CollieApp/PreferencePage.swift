@@ -3,12 +3,13 @@ import Foundation
 /// Preferências option B: the sidebar's pages, in group order, with the search keywords of
 /// `docs/pages/preferencias-b/index.html` (`NAV`/`PG`).
 enum PreferencePage: String, CaseIterable {
-    case aparencia, terminal, desenho, memoria, plugins, celular, android
+    case aparencia, terminal, atualizacoes, desenho, memoria, plugins, celular, android
 
     var title: String {
         switch self {
         case .aparencia: "Aparência"
         case .terminal: "Terminal e fontes"
+        case .atualizacoes: "Atualizações"
         case .desenho: "Desenho e sandbox"
         case .memoria: "Memória"
         case .plugins: "Plug-ins"
@@ -19,7 +20,7 @@ enum PreferencePage: String, CaseIterable {
 
     var group: String {
         switch self {
-        case .aparencia, .terminal: "Interface"
+        case .aparencia, .terminal, .atualizacoes: "Interface"
         case .desenho, .memoria, .plugins: "Agentes"
         case .celular, .android: "Dispositivos"
         }
@@ -29,6 +30,7 @@ enum PreferencePage: String, CaseIterable {
         switch self {
         case .aparencia: "◐"
         case .terminal: "›_"
+        case .atualizacoes: "↻"
         case .desenho: "✎"
         case .memoria: "◈"
         case .plugins: "⚙"
@@ -41,6 +43,7 @@ enum PreferencePage: String, CaseIterable {
         switch self {
         case .aparencia: "tema paleta escuro claro sistema estrutura moldura completa compacta barra"
         case .terminal: "terminal fonte tamanho google fonts baixar família"
+        case .atualizacoes: "atualização atualizar versão nova instalar pular github release dmg voltar anterior"
         case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor motor baixar instalar remover atualizar reinstalar"
         case .memoria: "memória aprendizado aviso notificação correção"
         case .plugins: "plug-ins extensões"

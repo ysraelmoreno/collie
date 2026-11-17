@@ -180,6 +180,27 @@ import CollieProtocol
         AgentLaunch.removeHooks(for: r.id, in: dir)
         #expect(!FileManager.default.fileExists(atPath: plugin.deletingLastPathComponent().path))
     }
+    /// Agents already running call the newer `collie hook <x>` after an app-only update (spec §4): a name is never
+    /// removed or renamed without a version in between. Changing this list must mean editing this test, on purpose.
+    @Test func hookSubcommandsFrozen() {
+        #expect(AgentLaunch.hookSubcommands == ["claude-session-start", "claude-prompt", "cursor-session-start", "claude-tool",
+                                                "claude-subagent-stop", "claude-precompact", "claude-session-end",
+                                                "claude-notification", "claude-statusline", "claude-stop", "codex-notify",
+                                                "generic-stop"])
+    }
+    @Test func hooksUseFrozenNames() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        var text = try AgentLaunch.launchSpec(for: rec(.codex), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh").arguments.joined(separator: " ")
+        _ = try AgentLaunch.launchSpec(for: rec(.claude), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        _ = try AgentLaunch.launchSpec(for: rec(.cursor), env: ["PATH": try cursorPath()], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+        for f in FileManager.default.enumerator(atPath: dir.path)?.allObjects as? [String] ?? [] {
+            text += " " + ((try? String(contentsOf: dir.appendingPathComponent(f), encoding: .utf8)) ?? "")
+        }
+        // `… hook claude-stop` (commands) and `["…","hook","codex-notify"]` (codex notify)
+        let names = Set(text.matches(of: /\bhook["', ]+([a-z][a-z0-9-]*)/).map { String($0.1) })
+        #expect(names.count >= 11, "\(names)")
+        #expect(names.isSubset(of: AgentLaunch.hookSubcommands), "\(names.subtracting(AgentLaunch.hookSubcommands))")
+    }
     @Test func missingBinaryFailsFast() throws {
         #expect { try AgentLaunch.launchSpec(for: rec(.cursor), env: ["PATH": "/usr/bin:/bin"], hooksDir: tmp(), collie: collie, shell: "/bin/zsh") }
             throws: { ($0 as? ProtocolError)?.code == .invalidArgs && ($0 as? ProtocolError)?.message.contains("cursor-agent não encontrado") == true }

@@ -6,6 +6,9 @@ import CollieCore
 /// External plug-ins never appear by name (`morePanels`: one fixed line for a Shepherd when any is loaded).
 enum CollieOrientation {
     private static let maxName = 40, limit = 1500
+    /// "Delegate to a terminal" means a Collie terminal (collie summon): agents reach for their own subagents otherwise.
+    /// ponytail: a Shepherd is 10-20 characters under the cap; it labels the Team line instead of adding one
+    static let delegate = "Delegate (no own subagents):"
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {
@@ -75,14 +78,14 @@ enum CollieOrientation {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             // built-ins only: external plug-ins are user-installed text, kept out of the agent's context (one fixed line below)
             // ponytail: no Prévia here (length cap); the Artifacts line teaches `artifact new`, which opens one
-            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: " | ")
+            let open = PluginRegistry.builtIn.filter { $0.placements.contains(.canvas) && $0.id != "preview" }.map(\.id).map { hints[$0] ?? $0 }.joined(separator: "|")
             if tight {
-                lines.append("- As Shepherd: collie panel open \(open); collie leash <agent> <panel>; panel close|move. Team: collie summon|dismiss|unleash, paddock …; summon (no --preset: \(agent))|panel open --connect <names>; collie model <agent> <m> (summon --model m)" + (morePanels ? "; +collie plugin list" : ""))
+                lines.append("- As Shepherd: collie panel open \(open); leash <agent> <panel>; panel close|move. \(delegate) collie summon|dismiss|unleash, paddock; summon (no --preset: \(agent))|panel open --connect <names>; model <agent> <m> (summon --model m)" + (morePanels ? "; +collie plugin list" : ""))
             } else {
                 lines.append("- As Shepherd: collie panel open \(open)")
                 // ponytail: at the length cap (orientationSanitizesNames keeps 3 names); `leash <agent> <panel>` hands one over later
                 // the asker's own agent: "open a terminal" once summoned a plain shell from Cursor
-                lines.append("  Team: collie summon dev --connect design-1 (no --preset: \(agent), yours; shell if asked) | panel open design --file F --connect dev; leash|unleash|dismiss|paddock, panel close|move")
+                lines.append("  \(delegate) collie summon dev --connect design-1 (no --preset: \(agent), yours; shell if asked) | panel open design --file F --connect dev; (un)leash|dismiss|paddock|panel close|move")
             }
             // leashed design panels are usable; a paddock-only one is not reachable until the user leashes it
             let notFor = compact ? "" : "Not for backend, refactors, tests, docs, invisible fixes."
@@ -108,7 +111,7 @@ enum CollieOrientation {
                     lines.append("- FigCraft indisponível (motor não instalado ou desatualizado); se o usuário quiser FigCraft, peça para baixá-lo em Preferências.")
                 }
             }
-            lines.append("- Herds: collie herd list | apply <id> --name <n> | save <name> --terminals a,b")
+            lines.append("- Herds: collie herd list|apply <id> --name <n>|save <name> --terminals a,b")
             if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")

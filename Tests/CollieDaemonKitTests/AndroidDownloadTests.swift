@@ -27,8 +27,22 @@ func androidHex<D: Digest>(_ d: D) -> String { d.map { String(format: "%02x", $0
         #expect(AndroidDownload.allowed(URL(string:
             "https://github.com/ysraelmoreno/collie/releases/download/figcraft-v0.7.0-c1/figcraft-0.7.0-c1-arm64.tar.gz")!))
     }
+    @Test func allowsCollieLatestDownload() {
+        #expect(AndroidDownload.allowed(URL(string: "https://github.com/ysraelmoreno/collie/releases/latest/download/update.json")!))
+    }
+    @Test func allowsCollieVersionedDownload() {
+        #expect(AndroidDownload.allowed(URL(string: "https://github.com/ysraelmoreno/collie/releases/download/v0.2.0/Collie-0.2.0.dmg")!))
+        #expect(AndroidDownload.allowed(URL(string: "https://github.com/ysraelmoreno/collie/releases/download/v0.1.0/Collie.dmg")!))
+    }
+    @Test func stillAllowsFigcraft() {
+        #expect(AndroidDownload.allowed(URL(string:
+            "https://github.com/ysraelmoreno/collie/releases/download/figcraft-v0.7.0-c1/figcraft-0.7.0-c1-arm64.tar.gz")!))
+    }
     @Test func refusesOtherCollieReleasePaths() {
-        for s in ["https://github.com/ysraelmoreno/collie/releases/download/v0.1.0/Collie.dmg",
+        for s in ["https://github.com/ysraelmoreno/collie/releases/download/x0.1.0/Collie.dmg",
+                  "https://github.com/ysraelmoreno/collie/releases/download/v0.2.0/../../../evil/x",
+                  "https://github.com/ysraelmoreno/collie/releases/latest/download/../../evil",
+                  "https://github.com/ysraelmoreno/collie/releases/latest/x",
                   "https://github.com/ysraelmoreno/collie/archive/figcraft-v1.tar.gz",
                   "https://github.com/ysraelmoreno/other/releases/download/figcraft-v1/x"] {
             #expect(!AndroidDownload.allowed(URL(string: s)!), "\(s)")
@@ -122,5 +136,93 @@ func androidHex<D: Digest>(_ d: D) -> String { d.map { String(format: "%02x", $0
         #expect(a.url.host == "github.com" && a.url.path.hasPrefix("/adoptium/"))
         #expect(a.size == 200 && a.checksum == "ABC123" && a.type == "sha256")
         #expect(throws: ProtocolError.self) { try AndroidDownload.temurin(json: Data("[]".utf8)) }
+    }
+}
+
+/// Serves canned responses by URL, in-process (no network); requests seen are kept for assertions.
+final class FetchStub: URLProtocol, @unchecked Sendable {
+    struct Canned { var status = 200; var headers: [String: String] = [:]; var chunks: [Data] }
+    nonisolated(unsafe) static var canned: [String: Canned] = [:]
+    nonisolated(unsafe) static var seen: [String: URLRequest] = [:]
+    static let lock = NSLock()
+    static func serve(_ url: URL, _ c: Canned) { lock.withLock { canned[url.absoluteString] = c } }
+    static func request(_ url: URL) -> URLRequest? { lock.withLock { seen[url.absoluteString] } }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!
+        let c = Self.lock.withLock { () -> Canned? in Self.seen[url.absoluteString] = request; return Self.canned[url.absoluteString] }
+        guard let c else { client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist)); return }
+        let r = HTTPURLResponse(url: url, statusCode: c.status, httpVersion: "HTTP/1.1", headerFields: c.headers)!
+        client?.urlProtocol(self, didReceive: r, cacheStoragePolicy: .notAllowed)
+        for d in c.chunks { client?.urlProtocol(self, didLoad: d) }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+
+    static var configuration: URLSessionConfiguration {
+        let c = URLSessionConfiguration.ephemeral
+        c.protocolClasses = [FetchStub.self]
+        return c
+    }
+}
+
+struct AndroidFetchLimitTests {
+    static func dest() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("fetch-\(UUID().uuidString)") }
+    static let ua = ["User-Agent": "Collie/0.2.0"]
+
+    @Test func fetchesWithinLimit() async throws {
+        let url = URL(string: "https://github.com/ysraelmoreno/collie/releases/latest/download/update.json?t=ok")!
+        FetchStub.serve(url, .init(chunks: [Data(repeating: 1, count: 1000)]))
+        let to = Self.dest(); defer { try? FileManager.default.removeItem(at: to) }
+        try await AndroidDownload.fetch(url, to: to, limit: 65_536, headers: Self.ua, configuration: FetchStub.configuration) { _, _ in }
+        #expect(try Data(contentsOf: to).count == 1000)
+    }
+
+    @Test func limitCancels() async {
+        let url = URL(string: "https://github.com/ysraelmoreno/collie/releases/latest/download/update.json?t=big")!
+        FetchStub.serve(url, .init(chunks: [Data(repeating: 1, count: 40_000), Data(repeating: 1, count: 30_000)]))
+        let to = Self.dest(); defer { try? FileManager.default.removeItem(at: to) }
+        await #expect(throws: ProtocolError.self) {
+            try await AndroidDownload.fetch(url, to: to, limit: 65_536, headers: Self.ua, configuration: FetchStub.configuration) { _, _ in }
+        }
+        #expect(!FileManager.default.fileExists(atPath: to.path))
+    }
+
+    @Test func limitByContentLength() async {
+        let url = URL(string: "https://github.com/ysraelmoreno/collie/releases/latest/download/update.json?t=len")!
+        FetchStub.serve(url, .init(headers: ["Content-Length": "70000"], chunks: [Data(repeating: 1, count: 100)]))
+        let to = Self.dest(); defer { try? FileManager.default.removeItem(at: to) }
+        do {
+            try await AndroidDownload.fetch(url, to: to, limit: 65_536, headers: Self.ua, configuration: FetchStub.configuration) { _, _ in }
+            Issue.record("expected a refusal")
+        } catch let e as ProtocolError {
+            #expect(e.message == AndroidDownload.tooLarge)
+        } catch { Issue.record("unexpected \(error)") }
+        #expect(!FileManager.default.fileExists(atPath: to.path))
+    }
+
+    @Test func sendsUserAgent() async throws {
+        let url = URL(string: "https://github.com/ysraelmoreno/collie/releases/latest/download/update.json?t=ua")!
+        FetchStub.serve(url, .init(chunks: [Data("{}".utf8)]))
+        let to = Self.dest(); defer { try? FileManager.default.removeItem(at: to) }
+        try await AndroidDownload.fetch(url, to: to, limit: 65_536, headers: Self.ua, configuration: FetchStub.configuration) { _, _ in }
+        #expect(FetchStub.request(url)?.value(forHTTPHeaderField: "User-Agent") == "Collie/0.2.0")
+    }
+
+    @Test func noCacheWithHeaders() {
+        let c = AndroidDownload.sessionConfiguration(.ephemeral, headers: Self.ua)
+        #expect(c.urlCache == nil)
+        #expect(c.requestCachePolicy == .reloadIgnoringLocalCacheData)
+        #expect(AndroidDownload.sessionConfiguration(.ephemeral, headers: [:]).urlCache != nil)   // the Android path as it was
+    }
+
+    @Test func refusesDisallowedHostBeforeFetching() async {
+        let url = URL(string: "https://example.com/update.json")!
+        await #expect(throws: ProtocolError.self) {
+            try await AndroidDownload.fetch(url, to: Self.dest(), limit: 65_536, headers: Self.ua, configuration: FetchStub.configuration) { _, _ in }
+        }
+        #expect(FetchStub.request(url) == nil)
     }
 }

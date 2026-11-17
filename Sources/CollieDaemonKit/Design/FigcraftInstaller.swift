@@ -2,6 +2,7 @@ import Foundation
 import Darwin
 import Security
 import CollieProtocol
+import CollieCore
 
 /// Downloads, checks and installs the design engine the pin names into `<root>/figcraft` (spec §3), only when the app
 /// asks (`design.engine.install`). Everything happens in `<root>/.figcraft-staging` and nothing outside it is touched
@@ -187,13 +188,6 @@ actor FigcraftInstaller {
 
     /// Developer ID Application of `teamId`, with `identifier`, every architecture, strict (spec §3.6).
     static let signedByTeam: @Sendable (URL, String, String) -> Bool = { binary, identifier, teamId in
-        var code: SecStaticCode?
-        guard SecStaticCodeCreateWithPath(binary as CFURL, [], &code) == errSecSuccess, let code else { return false }
-        let req = "identifier \"\(identifier)\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
-            + " and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"\(teamId)\""
-        var requirement: SecRequirement?
-        guard SecRequirementCreateWithString(req as CFString, [], &requirement) == errSecSuccess else { return false }
-        let flags = SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures)
-        return SecStaticCodeCheckValidityWithErrors(code, flags, requirement, nil) == errSecSuccess
+        CodeSignature.signedByTeam(binary, identifier: identifier, teamId: teamId)
     }
 }

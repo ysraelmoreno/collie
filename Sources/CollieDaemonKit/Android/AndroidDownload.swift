@@ -23,9 +23,13 @@ enum AndroidDownload {
         guard u.scheme?.lowercased() == "https", let host = u.host?.lowercased(), hosts.contains(host),
               u.port == nil, u.user == nil, u.password == nil else { return false }
         return host != "github.com"
-            || ((u.path.hasPrefix("/adoptium/") || u.path.hasPrefix(figcraftReleases)) && !u.pathComponents.contains(".."))
+            || (["/adoptium/", figcraftReleases, collieLatest, collieReleases].contains(where: u.path.hasPrefix)
+                && !u.pathComponents.contains(".."))
     }
     static let figcraftReleases = "/ysraelmoreno/collie/releases/download/figcraft-v"
+    /// The app updater: `update.json` through the stable latest link, the dmg by its `vX.Y.Z` tag (spec 2026-11-17 §2).
+    static let collieLatest = "/ysraelmoreno/collie/releases/latest/download/"
+    static let collieReleases = "/ysraelmoreno/collie/releases/download/v"
 
     /// A downloaded archive: where, how big, its checksum and the checksum's algorithm (`sha256` or `sha1`).
     struct Archive: Equatable { var url: URL, size: Int64, checksum: String, type: String }
@@ -144,21 +148,45 @@ enum AndroidDownload {
     /// streamed by URLSession to a temp file and moved to `to` only on a 200 from an allowed final URL. Cancelling the
     /// calling task cancels the download.
     static let fetch: AndroidFetch = { url, to, progress in
+        try await fetch(url, to: to, limit: nil, headers: [:], progress: progress)
+    }
+
+    static let tooLarge = "download maior que o esperado"
+
+    /// `fetch` with a byte cap (past `limit` written, or announced by Content-Length, the download is cancelled and
+    /// nothing lands at `to`) and request headers; with headers (the updater) the session keeps no cache at all.
+    static func fetch(_ url: URL, to: URL, limit: Int64?, headers: [String: String],
+                      configuration: URLSessionConfiguration = .ephemeral,
+                      progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         guard allowed(url) else { throw ProtocolError(code: .invalidArgs, message: "download host not allowed: \(url.absoluteString)") }
         try Task.checkCancellation()
-        let dl = Download(to: to, progress: progress)
-        let session = URLSession(configuration: .ephemeral, delegate: dl, delegateQueue: nil)
+        let dl = Download(to: to, limit: limit, progress: progress)
+        let session = URLSession(configuration: sessionConfiguration(configuration, headers: headers), delegate: dl, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
-        let task = session.downloadTask(with: URLRequest(url: url, timeoutInterval: 60))
+        var request = URLRequest(url: url, timeoutInterval: 60)
+        for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+        let task = session.downloadTask(with: request)
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, any Error>) in dl.start(c, task) }
         } onCancel: { task.cancel() }
     }
 
+    /// `base` as is without headers (the Android downloads); with headers no URL cache and no cached answers.
+    static func sessionConfiguration(_ base: URLSessionConfiguration, headers: [String: String]) -> URLSessionConfiguration {
+        guard !headers.isEmpty else { return base }
+        let c = base.copy() as! URLSessionConfiguration
+        c.urlCache = nil
+        c.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return c
+    }
+
     private final class Download: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-        private let to: URL, progress: @Sendable (Int64, Int64) -> Void, lock = NSLock()
+        private let to: URL, limit: Int64?, progress: @Sendable (Int64, Int64) -> Void, lock = NSLock()
         private var done: CheckedContinuation<Void, any Error>?, failure: (any Error)?, result: Result<Void, any Error>?
-        init(to: URL, progress: @escaping @Sendable (Int64, Int64) -> Void) { self.to = to; self.progress = progress }
+        init(to: URL, limit: Int64?, progress: @escaping @Sendable (Int64, Int64) -> Void) {
+            self.to = to; self.limit = limit; self.progress = progress
+        }
+        private func over(_ n: Int64) -> Bool { limit.map { n > $0 } ?? false }
         /// A cancel can complete the task before `start` stores `c`: then the stored result resumes it here.
         func start(_ c: CheckedContinuation<Void, any Error>, _ task: URLSessionDownloadTask) {
             let early = lock.withLock { () -> Result<Void, any Error>? in if result == nil { done = c }; return result }
@@ -169,21 +197,31 @@ enum AndroidDownload {
             newRequest.url.map(AndroidDownload.allowed) == true ? newRequest : nil
         }
         func urlSession(_ s: URLSession, downloadTask: URLSessionDownloadTask, didWriteData _: Int64, totalBytesWritten w: Int64, totalBytesExpectedToWrite t: Int64) {
+            if over(w) || over(t) {
+                lock.withLock { failure = ProtocolError(code: .unavailable, message: AndroidDownload.tooLarge) }
+                downloadTask.cancel()
+                return
+            }
             progress(w, t)
         }
         /// The temp file is gone once this returns: move it now (or record why not).
         func urlSession(_ s: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo tmp: URL) {
             let http = downloadTask.response as? HTTPURLResponse
             let err: (any Error)?
-            if http?.statusCode != 200 || !(http?.url.map(AndroidDownload.allowed) ?? false) {
+            let size = (try? tmp.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            if lock.withLock({ failure != nil }) {
+                return   // already refused (over the limit)
+            } else if http?.statusCode != 200 || !(http?.url.map(AndroidDownload.allowed) ?? false) {
                 err = ProtocolError(code: .unavailable, message: "download answered \(http?.statusCode ?? 0) from \(http?.url?.host ?? "?")")
+            } else if over(size) {
+                err = ProtocolError(code: .unavailable, message: AndroidDownload.tooLarge)
             } else {
                 do { try FileManager.default.moveItem(at: tmp, to: to); err = nil } catch { err = error }
             }
             lock.withLock { failure = err }
         }
         func urlSession(_ s: URLSession, task: URLSessionTask, didCompleteWithError e: (any Error)?) {
-            let r: Result<Void, any Error> = lock.withLock { (e ?? failure).map { .failure($0) } ?? .success(()) }
+            let r: Result<Void, any Error> = lock.withLock { (failure ?? e).map { .failure($0) } ?? .success(()) }
             let c = lock.withLock { () -> CheckedContinuation<Void, any Error>? in
                 defer { done = nil }
                 if done == nil { result = r }

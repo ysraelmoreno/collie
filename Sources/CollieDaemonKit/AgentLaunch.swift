@@ -4,6 +4,16 @@ import CollieProtocol
 import CollieTerminal
 
 public enum AgentLaunch {
+    /// Every `collie hook <x>` name (HookCommands). Agents already running call the newer `collie` after an app-only
+    /// update: a name is never removed or renamed without a version in between (spec §4; AgentLaunchTests freezes it).
+    static let hookSubcommands = ["claude-session-start", "claude-prompt", "cursor-session-start", "claude-tool",
+                                  "claude-subagent-stop", "claude-precompact", "claude-session-end", "claude-notification",
+                                  "claude-statusline", "claude-stop", "codex-notify", "generic-stop"]
+    /// ` hook <sub>` for a launch command; `sub` must be in `hookSubcommands`.
+    static func hookCommand(_ collie: URL, _ sub: String) -> String {
+        assert(hookSubcommands.contains(sub), "hook \(sub) is not in AgentLaunch.hookSubcommands")
+        return quote(collie.path) + " hook " + sub
+    }
     /// Single-quote for POSIX sh.
     static func quote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
@@ -41,7 +51,7 @@ public enum AgentLaunch {
         let dir = cursorPluginDir(id, in: hooksDir)
         try write(["name": "collie", "version": "1.0.0", "description": "Collie orientation and tools"],
                   dir.appendingPathComponent(".cursor-plugin/plugin.json"))
-        try write(["version": 1, "hooks": ["sessionStart": [["command": quote(collie.path) + " hook cursor-session-start"]]]],
+        try write(["version": 1, "hooks": ["sessionStart": [["command": hookCommand(collie, "cursor-session-start")]]]],
                   dir.appendingPathComponent("hooks/hooks.json"))
         try write(["mcpServers": ["collie": ["command": collie.path, "args": ["mcp"],
                                              "env": Dictionary(uniqueKeysWithValues: mcpEnv.map { ($0, "${env:\($0)}") })]]],
@@ -98,13 +108,13 @@ public enum AgentLaunch {
             let f = settingsFile(rec.id, in: hooksDir)
             try FileManager.default.createDirectory(at: hooksDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             func hook(_ sub: String, _ timeout: Int, matcher: String? = nil) -> [[String: Any]] {
-                var e: [String: Any] = ["hooks": [["type": "command", "command": quote(collie.path) + " hook " + sub, "timeout": timeout]]]
+                var e: [String: Any] = ["hooks": [["type": "command", "command": hookCommand(collie, sub), "timeout": timeout]]]
                 if let matcher { e["matcher"] = matcher }
                 return [e]
             }
             var json: [String: Any] = [
                 // plan usage (ClaudeRateLimits): the hook records rate_limits, then runs the user's own statusLine
-                "statusLine": ["type": "command", "command": quote(collie.path) + " hook claude-statusline", "padding": 0],
+                "statusLine": ["type": "command", "command": hookCommand(collie, "claude-statusline"), "padding": 0],
                 "hooks": ["Stop": hook("claude-stop", 10),
                                                  "SessionStart": hook("claude-session-start", 5),
                                                  "UserPromptSubmit": hook("claude-prompt", 5),

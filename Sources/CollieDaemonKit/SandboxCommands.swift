@@ -202,6 +202,8 @@ struct CollieSettings: Codable {
     var googleFonts: Bool?
     /// "Acesso pelo iPhone" (remote API); nil: off.
     var remote: RemoteSettings?
+    /// Preferences › Atualizações (spec 2026-11-17 §3); nil: both on.
+    var updates: UpdateSettings?
     static func file(_ root: URL) -> URL { root.appendingPathComponent("preferences.json") }
     /// A missing file: nothing set; one that can't be read: strict (fail closed).
     static func load(_ root: URL) -> CollieSettings {

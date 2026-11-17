@@ -4,7 +4,24 @@ import CollieCore
 
 /// Pure tier and lifetime rules; state lives in `LifecycleStore`.
 enum LifecycleRules {
-    static let provisionalTTL: TimeInterval = 21 * 86_400
+    /// How long a provisional memory lives with no useful use, by kind. Pitfalls and procedures are rarely used and
+    /// costly to lose, so they get longer. The user's feedback has none (out of the cycle).
+    static func ttl(_ k: MemoryKind) -> TimeInterval? {
+        switch k {
+        case .decision, .map: 21 * 86_400
+        case .pitfall, .procedure: 60 * 86_400
+        case .feedback: nil
+        }
+    }
+    private static func kindLabel(_ k: MemoryKind) -> String {
+        switch k {
+        case .decision: "decisão"
+        case .map: "mapa"
+        case .pitfall: "armadilha"
+        case .procedure: "procedimento"
+        case .feedback: "feedback"
+        }
+    }
     static let earnedUses = 2, earnedDays = 2, earnedSessions = 2
     static let longTermUses = 8, longTermDays = 4
     static let longTermSpan: TimeInterval = 14 * 86_400, contestedWindow: TimeInterval = 30 * 86_400
@@ -52,11 +69,12 @@ enum LifecycleRules {
 
     static func unusedPlan(records: [MemoryRecord], entries: [UUID: LifecycleEntry], now: Date) -> [CleanupItem] {
         records.compactMap { r in
-            guard eligible(r), let e = entries[r.id], tier(for: e, now: now) == .provisional else { return nil }
+            guard eligible(r), let ttl = ttl(r.kind), let e = entries[r.id], tier(for: e, now: now) == .provisional else { return nil }
             let last = max(e.tierSince, e.usefulUses.compactMap { date($0.day) }.max() ?? .distantPast)
             let age = now.timeIntervalSince(last)
-            guard age >= provisionalTTL else { return nil }
-            return CleanupItem(action: .archiveUnused, id: r.id, into: nil, reason: "provisória sem uso há \(Int((age / 86_400).rounded(.down))) dias")
+            guard age >= ttl else { return nil }
+            return CleanupItem(action: .archiveUnused, id: r.id, into: nil,
+                               reason: "provisória sem uso há \(Int((age / 86_400).rounded(.down))) dias (prazo de \(kindLabel(r.kind)): \(Int(ttl / 86_400)))")
         }
     }
 

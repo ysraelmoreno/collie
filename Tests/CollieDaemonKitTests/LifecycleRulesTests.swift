@@ -65,13 +65,41 @@ import CollieCore
         func plan(_ e: LifecycleEntry) -> [CleanupItem] { LifecycleRules.unusedPlan(records: [r], entries: [r.id: e], now: now) }
         #expect(plan(entry([], since: 20)).isEmpty)
         let p = plan(entry([], since: 22))
-        #expect(p.count == 1 && p[0].action == .archiveUnused && p[0].reason == "provisória sem uso há 22 dias")
+        #expect(p.count == 1 && p[0].action == .archiveUnused && p[0].reason == "provisória sem uso há 22 dias (prazo de decisão: 21)")
         #expect(plan(entry([], since: 21)).count == 1)                     // exactly 21 days
         var earned = entry([], since: 90); earned.tier = .earned
         #expect(plan(earned).isEmpty)
         #expect(plan(entry(uses([(5, "a")]), since: 60)).isEmpty)          // used 5 days ago
         #expect(plan(entry(uses([(25, "a")]), since: 60)).count == 1)
         #expect(LifecycleRules.unusedPlan(records: [r], entries: [:], now: now).isEmpty)   // no entry: not planned
+    }
+
+    @Test func ttlPerKind() {
+        #expect(LifecycleRules.ttl(.decision) == 21 * 86_400 && LifecycleRules.ttl(.map) == 21 * 86_400)
+        #expect(LifecycleRules.ttl(.pitfall) == 60 * 86_400 && LifecycleRules.ttl(.procedure) == 60 * 86_400)
+        #expect(LifecycleRules.ttl(.feedback) == nil)
+        for (kind, days, label) in [(MemoryKind.decision, 21.0, "decisão"), (.map, 21, "mapa"), (.pitfall, 60, "armadilha"), (.procedure, 60, "procedimento")] {
+            let r = MemoryRecord(kind: kind, subject: "a", title: "t", createdAt: ago(200))
+            func plan(_ since: Double) -> [CleanupItem] { LifecycleRules.unusedPlan(records: [r], entries: [r.id: entry([], since: since)], now: now) }
+            #expect(plan(days - 1).isEmpty, "\(kind) N-1")
+            #expect(plan(days).map(\.reason) == ["provisória sem uso há \(Int(days)) dias (prazo de \(label): \(Int(days)))"], "\(kind) N")
+            #expect(LifecycleRules.unusedPlan(records: [r], entries: [r.id: entry(uses([(Int(days) - 1, "a")]), since: 300)], now: now).isEmpty,
+                    "\(kind) used recently")
+        }
+        let fb = MemoryRecord(kind: .feedback, subject: "a", title: "t", createdAt: ago(400))
+        #expect(LifecycleRules.unusedPlan(records: [fb], entries: [fb.id: entry([], since: 365)], now: now).isEmpty)
+    }
+
+    @Test func pitfallArchiveGoesThroughUndo() throws {
+        let s = MemoryStore(dir: tmpDir()); defer { try? FileManager.default.removeItem(at: s.dir) }
+        let r = MemoryRecord(kind: .pitfall, subject: "a", title: "t", createdAt: ago(90))
+        try s.write(r)
+        #expect(LifecycleRules.unusedPlan(records: s.all().records, entries: [r.id: entry([], since: 30)], now: now).isEmpty)
+        let plan = LifecycleRules.unusedPlan(records: s.all().records, entries: [r.id: entry([], since: 61)], now: now)
+        #expect(plan.count == 1)
+        _ = try MemoryCleanup.apply(plan, store: s)
+        #expect(s.all().records.first { $0.id == r.id }?.status == .archived)
+        #expect(try MemoryCleanup.restore(r.id, store: s).status == .active)
     }
 
     @Test func ineligibleRecordsNeverInPlan() {

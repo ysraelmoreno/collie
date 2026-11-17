@@ -94,6 +94,8 @@ The owner wants the user out of the loop: the working agent judges whether an in
 
 `memory.stats` gains: counts per tier, promotions, demotions, flags by verdict, contested open, `verify` results (valid/invalid/deferred), provisional archived. The digest lists every promotion and archive with `memory.undo`.
 
+Precision (2026-11-17, Leva 1): beside coverage, `usage.precision` = useful uses counted at the next prompt ÷ the prompt-injected ids that can earn one (also per agent and in the weekly trend). Definitions in `2026-11-17-memory-measurement-baseline.md`. Measurement only: no cut, tier or TTL rule changed.
+
 ### Testing
 
 - Pure units: tier transition function (uses → tier), lifetime/archival plan, claim checks against a fixture repo (merged branch, missing SHA, missing path).

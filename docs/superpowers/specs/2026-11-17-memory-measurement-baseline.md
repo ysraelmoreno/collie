@@ -41,3 +41,19 @@ O log não registra o uso útil (`addUse`): `resolvePending` grava só em `lifec
 ## O que o sandbox bloqueou
 
 `~/Library/Application Support/Collie` (log `metrics/memory-*.jsonl` e `learning/lifecycle.json`): `Operation not permitted`. Uma reconstrução retroativa (casar injeções em `prompt` com `usefulUses` por dia e sessão) precisaria dessa leitura.
+
+## A métrica nova (Leva 1): definições
+
+`memory stats` ganha `usage.precision`, `byAgent.<agente>.precision` e `trends.{current,previous}.precision` (só a taxa). No painel: uma linha "Precisão" abaixo da Cobertura.
+
+- **Unidade: id de memória, não prompt.** `addUse` conta por id; a cobertura já responde "prompts com hit".
+- **`injected`**: ids injetados por relevância ao prompt (`injected` com `where = prompt`). Pull do Cursor (`memory.task`), início de sessão, foco, regras e retratações ficam fora: não geram pendência de uso.
+- **`candidates`** (denominador): desses, os que podem ganhar uso (`LifecycleRules.eligible`: projeto, ativa, não fixada, não revisada). Gravado no evento de injeção (campo novo opcional `eligible`) quando há sessão. Sem isso a taxa ficaria abaixo de 100% mesmo com tudo usado, porque revisadas e fixadas nunca ganham uso.
+- **`used`** (numerador): ids que o próximo prompt contou (evento novo `used`, com os ids que o `addUse` aceitou). Uso repetido no mesmo dia e sessão conta de novo aqui (é por injeção), embora o `usefulUses` do lifecycle não cresça.
+- **`corrected`**: ids descartados porque o próximo prompt foi correção (`used` com `reason = correction`, `hits` = quantos estavam pendentes).
+- **`unresolved`** = candidates − used − corrected: sessão terminou sem próximo prompt, marcação wrong/outdated da mesma sessão, ou ainda pendente. Conta como injeção sem uso.
+- **`flags`**: marcações `--useful` explícitas, **fora** da taxa (podem apontar qualquer memória injetada, inclusive de início de sessão ou pull, que não estão no denominador).
+- **`rate`** = used ÷ candidates; `nil` (painel: "–") quando não há candidato. Nunca 0/0.
+- **Agente**: o uso acontece no próximo prompt **do mesmo terminal**, então o evento `used` leva o terminal e o log carimba o mesmo agente da injeção. Um agente sem hook de prompt (Cursor, Codex) tem `candidates` 0 e `rate` nil; o sinal dele são os `flags`. As marcações agora levam o terminal (antes `byAgent.useful` nunca achava o agente).
+- **Bordas do período**: injeção e uso são contados pelo horário do próprio evento; um par que cruza a borda se separa (no máximo um prompt por borda e terminal).
+- **Compatibilidade**: linhas antigas sem `eligible`/`used` contam como injetadas, nunca como candidatas. Daemon antigo + app novo: o painel mostra "o daemon instalado ainda não mede". Daemon antigo lendo log novo: a linha `used` é ignorada (decodificação falha, linha pulada).

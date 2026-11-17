@@ -13,7 +13,7 @@ public struct AppUpdateSwap {
     public typealias Mount = (_ dmg: URL) throws -> (point: URL, detach: () -> Void)
 
     static let siblingPrefix = ".Collie-update-"
-    static let previousKey = "update.previous", previousVersionKey = "update.previousVersion",
+    public static let previousKey = "update.previous", previousVersionKey = "update.previousVersion",
                launchesKey = "update.healthyLaunches"
 
     let app: URL
@@ -161,7 +161,7 @@ public struct AppUpdateSwap {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    static func version(_ app: URL) -> String? {
+    public static func version(_ app: URL) -> String? {
         info(app)?["CFBundleShortVersionString"] as? String
     }
 

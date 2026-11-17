@@ -4,8 +4,16 @@ import CollieProtocol
 
 /// Preferências option B: the sidebar's pages, groups and search.
 @Test func emptyQueryListsAllPagesInSidebarOrder() {
-    #expect(PreferencePage.matching("") == [.aparencia, .terminal, .desenho, .memoria, .plugins, .celular, .android])
-    #expect(PreferencePage.matching("").map(\.group) == ["Interface", "Interface", "Agentes", "Agentes", "Agentes", "Dispositivos", "Dispositivos"])
+    #expect(PreferencePage.matching("") == [.aparencia, .terminal, .atualizacoes, .desenho, .memoria, .plugins, .celular, .android])
+    #expect(PreferencePage.matching("").map(\.group) == ["Interface", "Interface", "Interface", "Agentes", "Agentes", "Agentes", "Dispositivos", "Dispositivos"])
+}
+
+/// Spec 2026-11-17 §3: Atualizações in the Interface group, found by its words.
+@Test func atualizacoesInInterfaceGroup() {
+    #expect(PreferencePage.atualizacoes.title == "Atualizações" && PreferencePage.atualizacoes.group == "Interface")
+    #expect(PreferencePage.atualizacoes.icon == "↻")
+    #expect(PreferencePage.matching("versão").contains(.atualizacoes))
+    #expect(PreferencePage.matching("atualizacao").contains(.atualizacoes))
 }
 
 @Test func searchMatchesTitleOrKeywords() {

@@ -330,6 +330,7 @@ struct ContentView: View {
         }
         .onChange(of: herdsOpen) { _, open in if open { herdsOpen = false; sheet = .herds(nil, nil) } }
         .modifier(PairingConfirmHost(client: client))   // a phone read the pairing QR: the Mac's click (remote API)
+        .modifier(UpdateLaunchHost(client: client, bundledBuild: bundledBuild))   // launch check, notice, "Instalar ao sair"
         .onChange(of: client.panels) { _, ps in store.sync(ps) }   // views of closed panels are released
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.closeAll() }
         // the Design panel's Abrir Preferências (a plug-in has no openSettings): open Preferências on the page it names

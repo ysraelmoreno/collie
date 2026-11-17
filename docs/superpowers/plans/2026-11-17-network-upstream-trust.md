@@ -102,7 +102,10 @@ Os DER dos testes são bytes quaisquer (`Data("a".utf8)`): a regra não interpre
   `denyRemovesAnchor` (mesmo DER nas âncoras e com `3` no user → fora, `denied == 1`); `dedupeByDER` (mesmo DER
   nas âncoras e no admin → `count == 1`); `pemFormat` (cada bloco `-----BEGIN CERTIFICATE-----`, base64 em linhas
   de 64, `-----END CERTIFICATE-----`); `emptySnapshotCountsZero` (`count == 0`, `pem` vazio); `writeReplacesWhenChanged`; `unchangedWriteKeepsInode` (segunda `write` igual →
-  `false`, mesmo `fileSystemFileNumber`).
+  `false`, mesmo `fileSystemFileNumber`). Caso real (Task 0) como fixture **só de forma**, sem certificado: `tlsproxyRootIn` (raiz autoassinada
+  com o Policy/Result que a Task 0 anotar → entra) e `tlsproxyIntermediateTrustRootOut` (não autoassinada, `TrustRoot`
+  → fora); se a Task 0 ainda não voltou, use settings vazias para a raiz e marque o teste com o comentário
+  `// ponytail: ajustar à tabela da Task 0`.
 - [ ] **Step 2: Run** `--filter UpstreamTrustTests`. Expected: FAIL (tipos não existem).
 - [ ] **Step 3: Implement** `bundle` e `write`. Um item vale se `(policyOID == nil || policyOID == sslOID) &&
   policyString == nil` e `(result ?? 1) == 1 && selfSigned || result == 2 && !selfSigned`; lista vazia vale; `Deny`
@@ -190,13 +193,18 @@ Tudo só leitura; nada muda trust settings nem o Keychain.
 
 **A. Antes de implementar (Task 0), na máquina corporativa:**
 
-1. Descobrir o nome da CA da empresa: abrir um site HTTPS no Safari, ver o certificado, anotar o emissor da raiz.
-2. A CA aparece nas trust settings?
-   - `security dump-trust-settings -d` (admin; sem sudo)
-   - `security dump-trust-settings` (user)
-   - `security find-certificate -a -c "<nome da CA>" -Z /Library/Keychains/System.keychain ~/Library/Keychains/login.keychain-db`
+Já sabido: o inspetor é o TLSProxy; `ca.example.com` e `eproxy.ca.example.com` aparecem em
+`security dump-trust-settings` (domínio não confirmado). Falta o resto:
+
+1. Em qual domínio e com que Policy/Result:
+   - `security dump-trust-settings -d | grep -i -A12 tlsproxy` (admin; sem sudo)
+   - `security dump-trust-settings | grep -i -A12 tlsproxy` (user)
+   - Anotar, por certificado: domínio, `Policy OID` (ou "nenhuma"), `Result` (ou ausente), `Policy String` se houver.
+2. Quem é autoassinado (subject == issuer):
+   - `security find-certificate -a -c "tlsproxy" -p /Library/Keychains/System.keychain ~/Library/Keychains/login.keychain-db | awk '/BEGIN/{n++} {print > ("ns" n ".pem")}' && for f in ns*.pem; do openssl x509 -in $f -noout -subject -issuer; done`
    - `profiles list` e `system_profiler SPConfigurationProfileDataType | grep -i -B2 -A6 certificate` (veio por MDM?)
-3. Protótipo B e B′ (arquivo temporário fora do repo; trocar `NOME` pelo nome da CA):
+   - Nada disso é commitado; só os nomes e o par (Policy, Result, autoassinado) voltam para o spec.
+3. Protótipo B e B′ (arquivo temporário fora do repo; `NOME = "tlsproxy"`):
 
    ```swift
    import Foundation; import Security
@@ -218,8 +226,11 @@ Tudo só leitura; nada muda trust settings nem o Keychain.
    }
    ```
    `swiftc -O proto.swift -o proto && ./proto`. Conferir que **nenhum diálogo** de keychain aparece.
-4. Decisão: B contém a CA → B (padrão). Só B′ contém → B′, e o plano volta para revisão. Nenhum → a CA não está
-   no Keychain deste usuário; anotar e parar.
+   O "B contém" do protótipo é só presença; a regra completa é a do passo 1 aplicada à tabela: a raiz
+   `ca.example.com` tem de sair "entra" (autoassinada com `TrustRoot`/ausente, ou settings vazias, sem
+   `Policy String`, política nenhuma ou SSL).
+4. Decisão: a raiz do TLSProxy entra pela regra → B (padrão). Só B′ a aceita → B′, e o plano volta para revisão.
+   Nenhum → anotar e parar.
 
 **B. Depois das Tasks 1–2, na máquina corporativa** (com o app do dono atualizado pelo caminho normal dele):
 

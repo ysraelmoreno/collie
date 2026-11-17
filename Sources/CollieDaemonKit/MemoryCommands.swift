@@ -215,6 +215,8 @@ extension CommandRouter {
                 let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used - (docs.isEmpty ? 0 : docs.utf8.count + 2),
                                                 source: str(r, "source"))
                 let mem = (head + [rest == MemoryService.header ? "" : rest, docs]).filter { !$0.isEmpty }.joined(separator: "\n\n")
+                    // P2: a secret in a memory (a hand-written file skips `memory.save`'s hiding) never reaches the agent
+                    .scrubbed(await auth.secrets())
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
                     peers: ConnectionGraph.reachable(from: me.id, in: ws).map(\.name),
@@ -253,7 +255,7 @@ extension CommandRouter {
                 let w = try? await work.active(terminal: me.id)
                 if left > 0 { add(await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, prompt: prompt, limit: left)) }
                 if left > 0 { add(await memory.docHits(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, prompt: prompt, limit: min(left, 1_800))) }
-                text = parts.joined(separator: "\n\n")
+                text = parts.joined(separator: "\n\n").scrubbed(await auth.secrets())
             }
             return .object(["output": .string(text)])
 
@@ -569,4 +571,9 @@ extension CommandRouter {
                                          openDigest: open, curator: await curator.status(), lifecycle: await memory.lifecycle.all())
         return try isoJSON(report)
     }
+}
+
+private extension String {
+    /// `LotBoards.scrub` (live tokens, key=/password=/Bearer/sk-) on injected memory text.
+    func scrubbed(_ secrets: Set<String>) -> String { LotBoards.scrub(self, secrets: secrets) }
 }

@@ -151,4 +151,17 @@ extension MemoryHookTests {
             #expect(after.hasPrefix("You are running inside Collie") && after.contains("Browser panel \"Web\"") && after.contains("\n\nMemória") && after.contains("Use Postgres"))
         }
     }
+
+    /// Task 3: a secret in a memory never reaches the agent, at session start or on a prompt.
+    @Test func hookOutputScrubsSecrets() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: repo)
+            try await save(p, t, "staging deploy", "Staging deploy uses password=hunter2", body: "staging login")
+            let start = try #require(additional(await MemoryHookClient.output(event: .sessionStart, prompt: nil, env: t.env(p)), "SessionStart"))
+            #expect(start.contains("Staging deploy uses [hidden]") && !start.contains("hunter2"), "\(start)")
+            let prompt = try #require(additional(await MemoryHookClient.output(event: .userPromptSubmit, prompt: "how is the staging deploy login done?", env: t.env(p)), "UserPromptSubmit"))
+            #expect(prompt.contains("[hidden]") && !prompt.contains("hunter2"), "\(prompt)")
+        }
+    }
 }

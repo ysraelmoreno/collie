@@ -1,8 +1,8 @@
 # Provedor do curador de memória — design
 
-Status: rascunho para o dono revisar (2026-11-17). Revisão independente aplicada (B1–B5, I1–I13, M1–M10). Reescopo
-do dono (ask e4d07547): **v1 = Claude (atual, endurecido) + Cursor**; Codex, modelos locais, Apple e chave de API
-ficam para depois. Nada implementado. Plano: `docs/superpowers/plans/2026-11-17-curator-provider.md`.
+Status: **aprovado pelo dono (2026-11-17, ask 199a4388)**, com as 8 chamadas como recomendadas. Revisão
+independente aplicada (B1–B5, I1–I13, M1–M10). Reescopo do dono (ask e4d07547): **v1 = Claude (atual, endurecido) +
+Cursor**; Codex, modelos locais, Apple e chave de API ficam para depois. Em implementação. Plano: `docs/superpowers/plans/2026-11-17-curator-provider.md`.
 
 ## Intenção e porquê
 
@@ -370,7 +370,7 @@ stdin e env; fixtures `status` e `json`). Só `--filter`; nada chama `claude`/`c
 - Schema no prompt quando o provedor não tem schema nativo; validação e pausa fazem o resto.
 - Config por Mac, decodificação tolerante; consentimento só para não-Claude; nunca troca automática.
 
-## Minhas chamadas (conferir)
+## Minhas chamadas (aprovadas pelo dono em 2026-11-17, todas como recomendadas)
 
 1. **Confiança do Cursor**: recomendo **`limited` na v1** (sem schema nativo, modelo variável); revisar depois de
    2 semanas olhando a pausa e o digest. Alternativa: `full` e contar com o undo.

@@ -54,6 +54,44 @@ private let oneCall: Curator.Handler = { j, call in
 }
 
 @Suite(.serialized) struct CuratorQueueTests {
+    // E7: config.json read field by field, both ways (an older daemon rewrites it with only cap and model)
+    private func config(_ json: String) throws -> Curator.Config { try Curator.decoder.decode(Curator.Config.self, from: Data(json.utf8)) }
+
+    @Test func newReadsOld() async throws {
+        let c = try config(#"{"cap":7,"model":"sonnet"}"#)
+        #expect(c.cap == 7 && c.model == "sonnet" && c.provider == "claude" && c.models.isEmpty && c.consented.isEmpty)
+        // through the curator: an old file keeps its cap (a strict decode used to reset everything to 40)
+        let dir = tempDir()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(#"{"cap":7,"model":"sonnet"}"#.utf8).write(to: dir.appendingPathComponent("config.json"))
+        #expect(await Curator(dir: dir, runner: FakeCurator(), clock: ManualClock()).status().cap == 7)
+    }
+
+    @Test func oldRewriteFallsBackToClaude() throws {
+        var c = try config(#"{"cap":9,"model":"haiku","provider":"cursor","models":{"cursor":"x"},"consented":["cursor"]}"#)
+        #expect(c.provider == "cursor" && c.consented == ["cursor"] && c.models == ["cursor": "x"])
+        // what an older daemon's `setCap` writes back: only the keys it knows
+        struct Old: Codable { var cap: Int; var model: String }
+        let old = try Curator.encoder.encode(Old(cap: 9, model: "haiku"))
+        c = try Curator.decoder.decode(Curator.Config.self, from: old)
+        #expect(c.cap == 9 && c.provider == "claude" && c.consented.isEmpty)
+    }
+
+    @Test func unknownProviderIsClaude() throws {
+        #expect(try config(#"{"provider":"gpt-9"}"#).provider == "claude")
+    }
+
+    @Test func wrongTypeKeepsOthers() throws {
+        let c = try config(#"{"cap":"x","model":"sonnet","consented":"cursor"}"#)
+        #expect(c.cap == 40 && c.model == "sonnet" && c.consented.isEmpty)
+    }
+
+    @Test func configRoundTrip() throws {
+        var c = Curator.Config(); c.cap = 12; c.provider = "cursor"; c.models = ["claude": "haiku"]; c.consented = ["cursor"]
+        let back = try Curator.decoder.decode(Curator.Config.self, from: Curator.encoder.encode(c))
+        #expect(back.cap == 12 && back.model == "haiku" && back.provider == "cursor" && back.models == ["claude": "haiku"] && back.consented == ["cursor"])
+    }
+
     @Test func oneJobAtATime() async throws {
         let fake = FakeCurator(); fake.gated = true
         let c = Curator(dir: tempDir(), runner: fake, clock: ManualClock())

@@ -48,7 +48,28 @@ actor Curator {
     static let queueMax = 200
     static let dedupeWindow: TimeInterval = 60
 
-    struct Config: Codable { var cap = 40; var model = "haiku" }
+    /// `model` stays Claude's (an older daemon reads only `cap` and `model`). E7: each field decoded on its own — missing or
+    /// of a wrong type is its default, an unknown provider is `claude` — so an older file keeps its cap, and an older
+    /// daemon's rewrite (only `cap`/`model`) falls back to Claude with nothing consented (the safe side).
+    struct Config: Codable {
+        static let providers: Set = ["claude", "cursor"]
+        var cap = 40
+        var model = "haiku"
+        var provider = "claude"
+        /// Provider → model (`""` or missing: the provider's default).
+        var models: [String: String] = [:]
+        /// Providers other than Claude the user confirmed sending data to.
+        var consented: [String] = []
+
+        init() {}
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            func field<T: Decodable>(_ k: CodingKeys, _ fallback: T) -> T { ((try? c.decodeIfPresent(T.self, forKey: k)) ?? nil) ?? fallback }
+            cap = field(.cap, cap); model = field(.model, model); models = field(.models, models); consented = field(.consented, consented)
+            let p = field(.provider, provider)
+            provider = Self.providers.contains(p) ? p : "claude"
+        }
+    }
     struct Usage: Codable { var day = ""; var today = 0; var inputTokens = 0; var outputTokens = 0; var costUSD = 0.0 }
 
     private let dir: URL, runner: any CuratorRunner, clock: any Clock<Duration>, now: @Sendable () -> Date

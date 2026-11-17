@@ -903,3 +903,49 @@ struct SandboxToolchainTests {
         #expect(r.status == 0, "\(r.out)")
     }
 }
+
+/// The updater's sibling (`<app parent>/.Collie-update-XXXXXX`, spec 2026-11-17 §2 rule 2): never writable from a
+/// terminal, in both modes. Text checks (no sandbox-exec); the real probe is in SandboxOpenTests.
+@Suite(.serialized) struct SandboxUpdateSiblingTests {
+    static func rule(_ app: URL) -> String {
+        let parent = SignedAppCheck.realPath(app.deletingLastPathComponent())
+        return "(regex " + SandboxProfile.q("^" + SandboxProfile.re(parent) + "/\\.Collie-update-") + ")"
+    }
+    func render(_ f: FakeHome, _ mode: SandboxMode, app: URL?) -> String {
+        var i = f.input(); i.mode = mode; i.appBundle = app
+        return SandboxProfile.render(i)
+    }
+
+    @Test func openDeniesUpdateSibling() throws {
+        let f = try FakeHome(git: false, socket: false), app = URL(fileURLWithPath: "/Applications/Collie.app")
+        #expect(Self.rule(app) == #"(regex "^/Applications/\\.Collie-update-")"#)
+        #expect(render(f, .open, app: app).contains(Self.rule(app)))
+    }
+
+    @Test func strictDeniesUpdateSibling() throws {
+        let f = try FakeHome(git: false, socket: false), app = URL(fileURLWithPath: "/Applications/Collie.app")
+        let p = render(f, .strict, app: app)
+        #expect(p.contains(Self.rule(app)))
+        // after every allow-back that could cover it (the last matching rule wins); the later Collie section only
+        // re-allows the terminal's own state dir under the Collie root
+        let collieSection = try #require(p.range(of: ";; Collie: closed"))
+        let deny = try #require(p.range(of: Self.rule(app)))
+        let allow = try #require(p.range(of: "(allow file-write*", options: .backwards, range: p.startIndex..<collieSection.lowerBound))
+        #expect(deny.lowerBound > allow.lowerBound && deny.lowerBound < collieSection.lowerBound)
+    }
+
+    @Test func siblingRuleFollowsRealParent() throws {
+        let f = try FakeHome(git: false, socket: false)
+        let apps = f.home.appendingPathComponent("Applications")
+        try FileManager.default.createDirectory(at: apps, withIntermediateDirectories: true)
+        let app = apps.appendingPathComponent("Collie.app")
+        let real = SignedAppCheck.realPath(apps)
+        #expect(Self.rule(app).contains(SandboxProfile.re(real)))
+        for mode in [SandboxMode.open, .strict] { #expect(render(f, mode, app: app).contains(Self.rule(app)), "\(mode)") }
+    }
+
+    @Test func noAppBundleNoSiblingRule() throws {
+        let f = try FakeHome(git: false, socket: false)
+        for mode in [SandboxMode.open, .strict] { #expect(!render(f, mode, app: nil).contains("Collie-update-"), "\(mode)") }
+    }
+}

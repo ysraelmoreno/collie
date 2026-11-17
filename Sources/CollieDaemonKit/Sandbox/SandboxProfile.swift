@@ -107,13 +107,17 @@ enum SandboxProfile {
             out.append("(\(verb) \(op)\(tagged ? " " + tag : "")\n  " + filters.joined(separator: "\n  ") + ")")
         }
         func under(_ p: String, _ root: String) -> Bool { URL(fileURLWithPath: p).pathComponents.starts(with: URL(fileURLWithPath: root).pathComponents) }
+        // the updater's sibling next to the app (`.Collie-update-XXXXXX`, spec 2026-11-17 §2): a verified bundle waits
+        // there for its swap into the app's name; no terminal plants or edits one, in either mode
+        let updateSibling = i.appBundle.map { rx("^" + re(real($0.deletingLastPathComponent())) + "/\\.Collie-update-") }
         if i.mode == .open {
             // user decision (2026-10-25): everything in the account is open but Collie's internals: its data (below), the
             // app bundle and its LaunchAgents (writes), and their parents (renaming one away, writing inside and renaming
             // back would get past the leaves), every ancestor. Signals out and the socket rule stay (below)
             out.append(";; open mode: only Collie's internals closed")
             let app = i.appBundle.map(real), agents = home + "/Library/LaunchAgents"
-            rule("deny", "file-write*", tagged: true, [app].compactMap { $0.map(sub) } + [rx("^" + re(agents + "/dev.collie.") + ".*")])
+            rule("deny", "file-write*", tagged: true, [app].compactMap { $0.map(sub) } + [rx("^" + re(agents + "/dev.collie.") + ".*")]
+                 + [updateSibling].compactMap { $0 })
             var parents: Set<String> = [agents]
             for p in [collie, agents] + [app].compactMap({ $0 }) {
                 var u = URL(fileURLWithPath: p).deletingLastPathComponent()
@@ -183,7 +187,8 @@ enum SandboxProfile {
             rule("allow", "file-write*", [rx("^" + re(project) + "/(\\.build|Carthage/Checkouts)/.+")])
             // R32: what no project root (the home itself included) and no grant re-opens: config run outside, preferences,
             // launchd agents, ~/Applications, the app bundle (I3). R23: secrets. (N2: after the `.build/` re-allow above)
-            rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } })
+            rule("deny", "file-write*", tagged: true, EssentialPaths.neverWritable.map { entry(home, $0) } + [i.appBundle].compactMap { $0.map { sub(real($0)) } }
+                 + [updateSibling].compactMap { $0 })
             rule("deny", "file-write*", tagged: true, closing(EssentialPaths.readClosed))   // M1: what is never read, never moved away
             // R35: their parents themselves (never their other children): renaming `~/Library` or `~/.config` away, writing
             // inside and renaming back would get past the denies on the leaves. From the home down, computed from the lists

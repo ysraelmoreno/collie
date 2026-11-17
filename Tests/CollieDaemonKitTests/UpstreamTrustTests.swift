@@ -22,7 +22,7 @@ import Foundation
     }
 
     @Test func adminEmptySettingsIn() {
-        #expect(ders(TrustSnapshot(anchors: [], admin: [entry("Example Internal Root CA")], user: [])) == [der("Example Internal Root CA")])
+        #expect(ders(TrustSnapshot(anchors: [], admin: [entry("Corp Internal Root CA")], user: [])) == [der("Corp Internal Root CA")])
     }
 
     @Test func trustRootSelfSignedIn() {
@@ -97,11 +97,12 @@ import Foundation
         #expect(ders(s) == [der("z"), der("m"), der("a")])
     }
 
-    /// The corporate machine's shape (Task 0): TLSProxy's root and its signing intermediate.
-    // ponytail: ajustar à tabela da Task 0 (Policy/Result reais ainda não vieram; raiz com settings vazias)
+    /// The corporate machine (Task 0, validated by the owner): in the admin domain, TLSProxy's root and its signing
+    /// intermediate both have "Number of trust settings : 0". An empty list is full trust, self-signed or not.
     @Test func tlsproxyRootIn() {
-        let s = TrustSnapshot(anchors: [], admin: [entry("ca.example.com")], user: [])
-        #expect(ders(s) == [der("ca.example.com")])
+        let s = TrustSnapshot(anchors: [], admin: [entry("ca.example.com"), entry("eproxy.ca.example.com", selfSigned: false),
+                                                   entry("Corp Internal Root CA")], user: [])
+        #expect(ders(s) == [der("ca.example.com"), der("eproxy.ca.example.com"), der("Corp Internal Root CA")])
     }
 
     @Test func tlsproxyIntermediateTrustRootOut() {

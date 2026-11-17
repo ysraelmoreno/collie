@@ -446,7 +446,7 @@ extension CommandRouter {
                 .trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
             var rec: MemoryRecord?
             for s in stores where rec == nil { rec = try await s.run { m in m.store.all().records.first { $0.id == target } } }
-            let (contested, queued) = try await memory.applyFlag(session: session, id: target, record: rec, verdict: verdict, reason: reason)
+            let (contested, queued) = try await memory.applyFlag(session: session, id: target, record: rec, verdict: verdict, reason: reason, terminal: caller?.id)
             return .object(["id": .string(target.uuidString.lowercased()), "contested": .bool(contested), "queued": .bool(queued)])
 
         case "memory.cleanup":

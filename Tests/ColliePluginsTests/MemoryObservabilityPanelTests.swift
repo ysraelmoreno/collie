@@ -74,4 +74,23 @@ private final class Calls: @unchecked Sendable {   // `lock` guards `args`
         #expect(MemoryPanelModel.trendLine("X", current: 2, previous: nil) { "\($0)" } == "X: sem dados para comparar")
         #expect(MemoryPanelModel.tokens(812) == "812" && MemoryPanelModel.tokens(1_250_000) == "1,2 mi" && MemoryPanelModel.usd(0.04) == "US$ 0,04")
     }
+
+    /// Leva 1: precision decodes from a new daemon, is nil from an old one (no `precision` key), and reads as one line.
+    @Test func precisionLineOldAndNewDaemon() async throws {
+        let json = try reportJSON([ev(.injected, ago(1)) { $0.where = "prompt"; $0.ids = [UUID(), UUID()]; $0.eligible = 2 },
+                                   ev(.used, ago(0.9)) { $0.ids = [UUID()]; $0.hits = 2 }])
+        let (m, _) = model(json)
+        await m.loadStats()
+        let p = try #require(m.stats?.usage.precision)
+        #expect(p.rate == 0.5 && p.candidates == 2 && p.used == 1 && p.unresolved == 1)
+        #expect(MemoryPanelModel.precisionLine(p) == "Precisão: 50% das memórias injetadas por relevância foram usadas (1 de 2; 0 corrigidas, 1 sem desfecho)")
+        guard case .object(var o) = json, case .object(var u) = o["usage"] else { Issue.record("shape"); return }
+        u["precision"] = nil; o["usage"] = .object(u)
+        let (old, _) = model(.object(o))
+        await old.loadStats()
+        #expect(old.stats != nil && old.stats?.usage.precision == nil)
+        #expect(MemoryPanelModel.precisionLine(nil) == "Precisão: o daemon instalado ainda não mede")
+        #expect(MemoryPanelModel.precisionLine(.init(injected: 3, candidates: 0, used: 0, corrected: 0, unresolved: 0, flags: 0, rate: nil))
+                == "Precisão: – (nenhuma memória injetada por relevância pode contar uso no período)")
+    }
 }

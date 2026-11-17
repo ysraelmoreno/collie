@@ -27,6 +27,19 @@ enum MemoryObservability {
         /// Active memories older than 30 days that were not injected in the last 30 (`deadShare` of those old enough).
         var dead: [MemoryRef] = [], deadShare: Double?
         var searches = 0, searchHits = 0
+        /// Beside `coverage` (prompts with a memory), how often an injected memory was used (Leva 1).
+        var precision = Precision()
+    }
+    /// Leva 1 precision (spec 2026-11-17 memory measurement baseline). Per memory id, not per prompt: `addUse` counts ids.
+    /// `injected`: ids injected by prompt relevance (`injected` at `prompt`; pulls, start, rules not). `candidates`: those of
+    /// them that can earn a use (`eligible`, logged since Leva 1). `used`: ids the next prompt counted (`used` events);
+    /// `corrected`: ids a correction dropped; `unresolved`: the rest (no next prompt, a wrong/outdated flag, or still pending).
+    /// `rate` = used ÷ candidates, nil without a candidate. `flags`: explicit `--useful` flags, outside the rate (they can
+    /// name any injected memory, not only a prompt's). Each side is counted by its own event's time: an injection and its
+    /// use on two sides of the period's edge fall apart (ponytail: one prompt per edge; pair by session if it matters).
+    struct Precision: Codable, Sendable, Equatable {
+        var injected = 0, candidates = 0, used = 0, corrected = 0, unresolved = 0, flags = 0
+        var rate: Double?
     }
     struct Maintenance: Codable, Sendable, Equatable {
         var createdBySource: [String: Int] = [:]
@@ -54,6 +67,7 @@ enum MemoryObservability {
         var start: Date
         var tokensPerTask: Double?, searchesPerTask: Double?, coverage: Double?
         var repeatCorrections = 0, completedTasks = 0
+        var precision: Double?
     }
     struct Lifecycle: Codable, Sendable, Equatable {
         /// Effective tiers of the eligible active project records, and how many of them are contested now.
@@ -74,6 +88,8 @@ enum MemoryObservability {
         var asksDelivered = 0
         var obedience: Double?
         var useful = 0
+        /// Its prompts' precision (a hookless agent has none: `candidates` 0, `rate` nil).
+        var precision = Precision()
     }
     struct Report: Codable, Sendable, Equatable {
         var since: Date, until: Date
@@ -125,6 +141,7 @@ enum MemoryObservability {
         r.usage.deadShare = old.isEmpty ? nil : Double(dead.count) / Double(old.count)
         let searched = inPeriod.filter { $0.type == .searched }
         r.usage.searches = searched.count; r.usage.searchHits = searched.reduce(0) { $0 + ($1.hits ?? 0) }
+        r.usage.precision = precision(inPeriod)
 
         // maintenance
         var m = Maintenance()
@@ -219,9 +236,26 @@ enum MemoryObservability {
                 u.obedience = Double(obeyed.count) / Double(delivered.count)
             }
             u.useful = xs.filter { $0.type == .flagged && $0.verdict == "useful" }.count
+            u.precision = precision(xs)
             out[agent] = u
         }
         return out
+    }
+
+    static func precision(_ es: [MemoryEvent]) -> Precision {
+        var p = Precision()
+        for e in es {
+            switch e.type {
+            case .injected where e.where == "prompt": p.injected += e.ids?.count ?? 0; p.candidates += e.eligible ?? 0
+            case .used where e.reason == "correction": p.corrected += e.hits ?? 0
+            case .used: p.used += e.ids?.count ?? 0
+            case .flagged where e.verdict == "useful": p.flags += 1
+            default: break
+            }
+        }
+        p.unresolved = max(0, p.candidates - p.used - p.corrected)
+        p.rate = p.candidates == 0 ? nil : Double(p.used) / Double(p.candidates)
+        return p
     }
 
     /// A prompt is a `noHit` or an `injected` at `prompt` (pushed rules are `rule`: not a prompt of their own).
@@ -267,7 +301,7 @@ enum MemoryObservability {
         let searches = w.filter { $0.type == .searched }.count
         return Week(start: from, tokensPerTask: t.perTask, searchesPerTask: t.count == 0 ? nil : Double(searches) / Double(t.count),
                     coverage: prompts(w).coverage, repeatCorrections: repeats(events, from: from, to: to.addingTimeInterval(-0.001)).list.reduce(0) { $0 + $1.repeats },
-                    completedTasks: t.count)
+                    completedTasks: t.count, precision: precision(w).rate)
     }
 
     /// One value per local day from `from` to `to` (days without events: 0).

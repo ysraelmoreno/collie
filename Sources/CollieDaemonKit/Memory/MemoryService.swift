@@ -291,9 +291,10 @@ actor MemoryService {
     /// Session summary; its pinned memories count as injected for `terminal` (a new session replaces the old set) and,
     /// for scoring, for its open `work`.
     /// `source`: the SessionStart's (compact|resume are logged as `compact`, anything else as `start`).
+    /// `workTitle`/`openTasks`/`lotGoal`: what the session is about beyond git (they join `sessionFocus`).
     func context(for terminal: UUID, cwd: String, paddock: String? = nil, lot: UUID? = nil, work: UUID? = nil, limit: Int = 4096,
-                 source: String? = nil) async -> String {
-        let focus = await sessionFocus(cwd: cwd, paddock: paddock)
+                 source: String? = nil, workTitle: String? = nil, openTasks: [String] = [], lotGoal: String? = nil) async -> String {
+        let focus = await sessionFocus(cwd: cwd, paddock: paddock, workTitle: workTitle, openTasks: openTasks, lotGoal: lotGoal)
         let c = await contextParts(cwd: cwd, paddock: paddock, lot: lot, limit: limit, focus: focus)
         injected[terminal] = (lot, c.ids.merging(skills[terminal]?.ids ?? [:]) { a, _ in a })
         if let work { await scores.noteInjected(Set(c.ids.keys), work: work) }
@@ -369,10 +370,10 @@ actor MemoryService {
         return (c.text, Set(c.ids.keys))
     }
 
-    /// What this session is about, from the repo's own state (branch, last commits, changed paths) and the cercado: the
-    /// query that orders the start-of-session checklist (`ChecklistRanking`). "" when there is no repo or git fails or is
-    /// slow (the hook has 5 s: it fails open to the old order).
-    func sessionFocus(cwd: String, paddock: String?) async -> String {
+    /// What this session is about, from the repo's own state (branch, last commits, changed paths), the cercado, the
+    /// active work (title, open tasks) and the lot's goal: the query that orders the start-of-session checklist
+    /// (`ChecklistRanking`). No repo: "" (git fails or is slow: just the work and lot; the hook has 5 s).
+    func sessionFocus(cwd: String, paddock: String?, workTitle: String? = nil, openTasks: [String] = [], lotGoal: String? = nil) async -> String {
         guard let root = await repo(for: cwd).root else { return "" }
         func git(_ args: [String]) async -> String? {
             guard let r = try? await GitRunner.run(args, in: root, timeout: .seconds(1)), r.status == 0 else { return nil }
@@ -387,7 +388,8 @@ actor MemoryService {
             let p = String(line.dropFirst(3))
             return p.components(separatedBy: " -> ").last ?? p   // a rename: the new name
         }
-        return ChecklistFocus.build(branch: b == "HEAD" ? nil : b, workTitle: nil, commitSubjects: subjects, paths: paths, paddock: paddock)
+        return ChecklistFocus.build(branch: b == "HEAD" ? nil : b, workTitle: workTitle, openTasks: openTasks, commitSubjects: subjects,
+                                    paths: paths, paddock: paddock, lotGoal: lotGoal)
     }
 
     /// `focus`: `sessionFocus` ("" = no signal: ranked by hits only, as `memory.checklist` always is).

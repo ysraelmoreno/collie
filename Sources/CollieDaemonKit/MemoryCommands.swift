@@ -213,7 +213,9 @@ extension CommandRouter {
                 await memory.resetDocs(me.id)
                 let docs = await memory.docsLine(cwd: me.cwd, paddock: paddockName, lot: myLot?.id)
                 let rest = await memory.context(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, limit: 4096 - used - (docs.isEmpty ? 0 : docs.utf8.count + 2),
-                                                source: str(r, "source"))
+                                                source: str(r, "source"), workTitle: w?.title,
+                                                openTasks: (w?.tasks ?? []).filter { [.open, .inProgress].contains($0.state) }.map(\.title),
+                                                lotGoal: myLot?.goal)
                 let mem = (head + [rest == MemoryService.header ? "" : rest, docs]).filter { !$0.isEmpty }.joined(separator: "\n\n")
                     // P2: a secret in a memory (a hand-written file skips `memory.save`'s hiding) never reaches the agent
                     .scrubbed(await auth.secrets())

@@ -52,3 +52,15 @@ private func card(_ i: Int, refused: Bool = false) -> SandboxDenial {
     #expect(!AccessCopy.grantLine(mac).contains("liberado do"))
     #expect(AccessCopy.grantLine(phone).hasSuffix(" · liberado do iPhone de Ana (Tailscale)"), "\(AccessCopy.grantLine(phone))")
 }
+
+/// The "detecção indisponível" tag names why, and its tooltip says what is lost, what still works and how to fix it.
+@Test func detectionTagSaysWhy() {
+    let admin = AccessCopy.detection(reason: SandboxDetection.notAdmin)
+    #expect(admin.tag == "detecção indisponível: requer conta de administrador")
+    #expect(admin.help.contains("cartões de liberação") && admin.help.contains("continua protegendo")
+            && admin.help.contains("collie access request") && admin.help.contains("administrador"))
+    #expect(admin.help.contains("não tenta de novo"))
+    let died = AccessCopy.detection(reason: "log stream parou: x")
+    #expect(died.tag == "detecção indisponível: log stream parou: x" && died.help.contains("tentando de novo"))
+    #expect(AccessCopy.detection(reason: nil).tag == "detecção indisponível")   // a daemon that predates the reason
+}

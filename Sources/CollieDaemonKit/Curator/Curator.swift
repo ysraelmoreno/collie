@@ -32,6 +32,11 @@ struct CuratorStatus: Codable, Sendable {
     var inputTokens: Int
     var outputTokens: Int
     var costUSD: Double
+    /// The chosen curator (`CuratorProvider`), its model (`""`: its default), trust and where its data goes.
+    var provider = "claude"
+    var model = "haiku"
+    var trust = "full"
+    var destination = "Anthropic"
 }
 
 /// One job at a time from a durable queue (`<dir>/jobs/<createdAt ms>-<id>.json`, 0600 in 0700 dirs), by kind priority.
@@ -72,7 +77,7 @@ actor Curator {
     }
     struct Usage: Codable { var day = ""; var today = 0; var inputTokens = 0; var outputTokens = 0; var costUSD = 0.0 }
 
-    private let dir: URL, runner: any CuratorRunner, clock: any Clock<Duration>, now: @Sendable () -> Date
+    private let dir: URL, runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration>, now: @Sendable () -> Date
     /// Each call is a `curatorRun` event (nil: not logged).
     private let events: MemoryEventLog?
     private var jobs: [CuratorJob] = []
@@ -88,9 +93,15 @@ actor Curator {
     /// The file each job was loaded from or written to (a name recomputed from a decoded date could miss it).
     private var names: [UUID: String] = [:]
 
+    /// One runner: the only provider it knows is its own.
     init(dir: URL, runner: any CuratorRunner, clock: any Clock<Duration> = ContinuousClock(), now: @escaping @Sendable () -> Date = Date.init,
          events: MemoryEventLog? = nil) {
-        self.dir = dir; self.runner = runner; self.clock = clock; self.now = now; self.events = events
+        self.init(dir: dir, runners: [runner.info.provider: runner], clock: clock, now: now, events: events)
+    }
+
+    init(dir: URL, runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration> = ContinuousClock(),
+         now: @escaping @Sendable () -> Date = Date.init, events: MemoryEventLog? = nil) {
+        self.dir = dir; self.runners = runners; self.clock = clock; self.now = now; self.events = events
         let fm = FileManager.default
         for d in [dir, dir.appendingPathComponent("jobs"), dir.appendingPathComponent("failed")] {
             try? fm.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -167,6 +178,44 @@ actor Curator {
         recent[j.dedupe] = now()
     }
 
+    /// The chosen provider (config.json; an unknown one already read as Claude).
+    private var provider: CuratorProvider { CuratorProvider(rawValue: config.provider) ?? .claude }
+    /// The chosen provider's model (`""`: its default). Claude's stays in `model` (older daemons read it).
+    private func model(_ p: CuratorProvider) -> String { p == .claude ? config.model : config.models[p.rawValue] ?? "" }
+    /// The chosen runner's info; a provider this build has no runner for is shown as limited, its data going to it.
+    var active: CuratorProviderInfo {
+        runners[provider]?.info ?? CuratorProviderInfo(provider: provider, trust: .limited, destination: provider.rawValue.capitalized,
+                                                       structuredOutput: false, reportsUsage: false, timeout: Self.timeout,
+                                                       inputMax: Self.inputMax)
+    }
+
+    /// Claude needs no consent (it is today's curator); any other provider only after `consent`. `model` nil keeps the
+    /// stored one. The running job finishes on the old provider; the next ones go to the new one.
+    func setProvider(_ p: CuratorProvider, model m: String?) throws(ProtocolError) {
+        guard p == .claude || config.consented.contains(p.rawValue) else {
+            throw ProtocolError(code: .unavailable, message: "falta confirmar nas Preferências")
+        }
+        config.provider = p.rawValue
+        if let m { if p == .claude { config.model = m } else { config.models[p.rawValue] = m } }
+        write(config, to: dir.appendingPathComponent("config.json"))
+        wake()
+    }
+
+    /// The user confirmed sending data to `p` (the consent sheet).
+    func consent(_ p: CuratorProvider) {
+        guard !config.consented.contains(p.rawValue) else { return }
+        config.consented.append(p.rawValue)
+        write(config, to: dir.appendingPathComponent("config.json"))
+    }
+
+    /// The chosen provider's availability: unconsented or missing in this build is unavailable, never run.
+    private func availability() async -> CuratorAvailability {
+        let p = provider
+        guard p == .claude || config.consented.contains(p.rawValue) else { return .unavailable("falta confirmar nas Preferências") }
+        guard let r = runners[p] else { return .unavailable("\(p.rawValue) não encontrado") }
+        return await r.availability()
+    }
+
     func setCap(_ n: Int) {
         config.cap = max(0, n)
         write(config, to: dir.appendingPathComponent("config.json"))
@@ -177,20 +226,20 @@ actor Curator {
         rollDay()
         var reason = capReason()
         if reason == nil {
-            switch await runner.availability() {
+            switch await availability() {
             case .available: break
             case .unavailable(let why): reason = why
             case .exhausted(_, let until):
-                // ponytail: "claude" until the provider task names the active one
                 let f = DateFormatter(); f.dateFormat = "HH:mm"
-                reason = "cota do claude esgotada até " + f.string(from: until ?? now().addingTimeInterval(ClaudeCuratorRunner.exhaustedFor))
+                reason = "cota do \(provider.rawValue) esgotada até " + f.string(from: until ?? now().addingTimeInterval(ClaudeCuratorRunner.exhaustedFor))
             }
         }
         rollDay()
         return CuratorStatus(available: reason == nil, reason: reason, today: usage.today, cap: config.cap, queued: jobs.count,
                              failed: ((try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("failed").path)) ?? [])
                                  .filter { $0.hasSuffix(".json") }.count,
-                             inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUSD: usage.costUSD)
+                             inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUSD: usage.costUSD,
+                             provider: provider.rawValue, model: model(provider), trust: active.trust.rawValue, destination: active.destination)
     }
 
     func start(handler: @escaping Handler) {
@@ -251,7 +300,7 @@ actor Curator {
         while !Task.isCancelled, let handler {
             let next = jobs.filter { (backoff[$0.id].map { $0 < ticks } ?? true) && capReason($0.kind) == nil }
                 .min { ($0.kind.priority, $0.createdAt) < ($1.kind.priority, $1.createdAt) }
-            guard let job = next, await runner.availability() == .available else { return }
+            guard let job = next, await availability() == .available else { return }
             count(job, +1)   // R9: on disk before the run (a crash still counts)
             do {
                 try await handler(job, { c throws(ProtocolError) in try await self.call(c, job: job) })
@@ -294,8 +343,12 @@ actor Curator {
     /// is rethrown as `.internal`, so it spends an attempt — a poison job reaches `failed/` instead of heading the queue.
     private func call(_ c: CuratorCall, job: CuratorJob) async throws(ProtocolError) -> CuratorOutput {
         if let why = capReason(job.kind) { throw ProtocolError(code: .unavailable, message: why) }
+        // the provider is fixed for this call: a switch meanwhile takes the next one
+        let p = provider, m = model(p)
+        guard let runner = runners[p] else { throw ProtocolError(code: .unavailable, message: "\(p.rawValue) não encontrado") }
+        let info = runner.info
         var c = c
-        c.input = String(String.UnicodeScalarView(c.input.unicodeScalars.prefix(Self.inputMax)))
+        c.input = String(String.UnicodeScalarView(c.input.unicodeScalars.prefix(info.inputMax)))
         usage.today += 1
         write(usage, to: dir.appendingPathComponent("usage.json"))
         let out: CuratorOutput, started = ContinuousClock.now
@@ -304,12 +357,13 @@ actor Curator {
             var e = MemoryEvent(type: .curatorRun, job: job.kind.rawValue, ok: ok, reason: reason, inputTokens: o?.inputTokens,
                                 outputTokens: o?.outputTokens, costUSD: o?.costUSD,
                                 durationMs: Int(d.components.seconds * 1000 + d.components.attoseconds / 1_000_000_000_000_000))
+            e.provider = p.rawValue; e.model = m
             e.place(store: job.store)
             events?.emit(e)
         }
         do {
-            var o = try await runner.run(c, model: config.model, timeout: Self.timeout)
-            o.curatedBy = CuratedBy(provider: "claude", model: config.model, trust: .full)   // ponytail: Claude only until the provider task
+            var o = try await runner.run(c, model: m, timeout: info.timeout)
+            o.curatedBy = CuratedBy(provider: p.rawValue, model: m, trust: info.trust)
             out = o
         } catch {
             logged(false, String(error.message.prefix(200)), nil)
@@ -318,7 +372,7 @@ actor Curator {
             throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error
         }
         logged(true, nil, out)
-        usage.inputTokens += out.inputTokens; usage.outputTokens += out.outputTokens; usage.costUSD += out.costUSD
+        usage.inputTokens += out.inputTokens ?? 0; usage.outputTokens += out.outputTokens ?? 0; usage.costUSD += out.costUSD ?? 0
         write(usage, to: dir.appendingPathComponent("usage.json"))
         return out
     }

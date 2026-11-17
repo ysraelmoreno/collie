@@ -122,6 +122,8 @@ public struct DaemonConfig: Sendable {
     var localModel: any LocalModel = FoundationLocalModel()
     /// The memory curator (`ClaudeCuratorRunner` in collied; tests pass a fake: they never spend tokens); nil: the live `ClaudeCuratorRunner`.
     var curatorRunner: (any CuratorRunner)? = nil
+    /// One runner per provider (tests: fakes); wins over `curatorRunner`. nil: the live runners (Claude for now).
+    var curatorRunners: [CuratorProvider: any CuratorRunner]? = nil
     /// Git and disk facts of a repo root for the memory claim checks (tests pass a fixed answer).
     var gitFacts: @Sendable (URL) -> any GitFacts = { GitFactsLive(root: $0) }
     /// Whether the installed claude takes `--plugin-dir` (procedures as skills), given the agent env; tests pass a fixed answer.

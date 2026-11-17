@@ -11,9 +11,10 @@ struct CuratorCall: Sendable {
 
 struct CuratorOutput: Sendable {
     var json: JSONValue
-    var inputTokens: Int
-    var outputTokens: Int
-    var costUSD: Double
+    /// nil: the provider reports no usage (Cursor).
+    var inputTokens: Int?
+    var outputTokens: Int?
+    var costUSD: Double?
     /// Who answered (E2): the `Curator` stamps it on every call; handlers write it on what they create, activate or merge.
     var curatedBy = CuratedBy(provider: "claude", model: "", trust: .full)
 }
@@ -26,9 +27,29 @@ enum CuratorAvailability: Equatable, Sendable {
     case exhausted(String, until: Date?)
 }
 
+/// The curators this build knows (spec 2026-11-17-curator-provider). Raw values are in config.json and events.
+enum CuratorProvider: String, Codable, CaseIterable, Sendable { case claude, cursor }
+
+/// What a runner is: who answers, how far its answers are trusted, where the data goes, and its limits.
+struct CuratorProviderInfo: Sendable, Equatable {
+    var provider: CuratorProvider
+    var trust: CuratorTrust
+    /// Where the fenced data goes (the consent sheet and the panel line).
+    var destination: String
+    /// The CLI enforces the JSON Schema itself (else the schema goes in the prompt).
+    var structuredOutput: Bool
+    var reportsUsage: Bool
+    var timeout: Duration
+    /// Input cap, in unicode scalars.
+    var inputMax: Int
+}
+
 /// The low-cost headless model that curates memory (tests inject a fake: they never spend tokens).
 protocol CuratorRunner: Sendable {
+    var info: CuratorProviderInfo { get }
     func availability() async -> CuratorAvailability
+    /// The models it can pick from without generating anything ([]: free text).
+    func models() async -> [String]
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput
 }
 
@@ -45,6 +66,10 @@ extension CuratorRunner {
 /// `claude -p` with no tools, no MCP, no user settings/hooks/plugins, in an empty temp cwd, under its own Seatbelt profile
 /// (writes: its temp dir and Claude's own state). Its sandbox id is in no `sandboxKnown`: its denials raise no card.
 struct ClaudeCuratorRunner: CuratorRunner {
+    static let claudeInfo = CuratorProviderInfo(provider: .claude, trust: .full, destination: "Anthropic", structuredOutput: true,
+                                                reportsUsage: true, timeout: .seconds(60), inputMax: 12_000)
+    var info: CuratorProviderInfo { Self.claudeInfo }
+    func models() async -> [String] { ["haiku", "sonnet"] }
     static let outputCap = 256 << 10
     static let availabilityTTL: Duration = .seconds(600)
 

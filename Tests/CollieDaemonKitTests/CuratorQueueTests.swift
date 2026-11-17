@@ -20,9 +20,15 @@ final class FakeCurator: CuratorRunner, @unchecked Sendable {
     var calls: Int { inputs.count }
     var gated: Bool { get { lock.withLock { _gated } } set { lock.withLock { _gated = newValue } } }
     func open() { let w = lock.withLock { let w = waiters; waiters = []; _gated = false; return w }; w.forEach { $0.resume() } }
+    /// What it says it is (default: Claude, full trust); `models`, `timeouts`: what each run got.
+    var info: CuratorProviderInfo { get { lock.withLock { _info } } set { lock.withLock { _info = newValue } } }
+    private var _info = ClaudeCuratorRunner.claudeInfo, _models: [String] = [], _timeouts: [Duration] = []
+    var models: [String] { lock.withLock { _models } }
+    var timeouts: [Duration] { lock.withLock { _timeouts } }
+    func models() async -> [String] { [] }
     func availability() async -> CuratorAvailability { avail }
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput {
-        lock.withLock { _inputs.append(c.input) }
+        lock.withLock { _inputs.append(c.input); _models.append(model); _timeouts.append(timeout) }
         if gated { await withCheckedContinuation { c in lock.withLock { if _gated { waiters.append(c) } else { c.resume() } } } }
         if let f = failOn, c.input.contains(f) { throw ProtocolError(code: .unavailable, message: "claude saiu com 1") }
         if let (f, until) = exhaustOn, c.input.contains(f) {

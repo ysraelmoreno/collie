@@ -24,6 +24,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
     var job: String? = nil, ok: Bool? = nil, reason: String? = nil
     var inputTokens: Int? = nil, outputTokens: Int? = nil, cacheRead: Int? = nil, cacheCreation: Int? = nil
     var costUSD: Double? = nil, durationMs: Int? = nil
+    /// `curatorRun`: which curator answered (`CuratorProvider`); its model is `model`.
+    var provider: String? = nil
     /// `sessionUsage`: the model and how many assistant messages the totals cover.
     var model: String? = nil, messages: Int? = nil
     /// `correction`: active|proposed and the subject key repeats are matched on. `workClosed`: merged.

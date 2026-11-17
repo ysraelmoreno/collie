@@ -333,6 +333,7 @@ actor MemoryService {
     /// `contextText`, with each injected id's store key: header, pinned, the pitfall checklist (≤ 1 200 B), the index.
     private func contextParts(cwd: String, paddock: String?, lot: UUID?, limit: Int, focus: String = "") async -> ContextParts {
         var pinned: [MemoryRecord] = [], rest: [MemoryRecord] = [], pool: [MemoryRecord] = [], owner: [UUID: String] = [:]
+        var unverified = Set<UUID>()   // P1: not what the daemon wrote: a title in the index, marked, never in full
         let (keep, asked) = await proposalState?() ?? ([], [])
         for s in await readable(cwd, lot: lot) {
             let recs = (try? await s.run { m -> [MemoryRecord] in
@@ -341,10 +342,12 @@ actor MemoryService {
                 // a map whose path is gone from disk stays out
                 return m.store.all().records.filter { $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId) && m.present($0) }
             }) ?? []
-            pinned += recs.filter(\.pinned)
+            let odd = Set(recs.filter { !provenance.isVerified($0) }.map(\.id)), ok = recs.filter { !odd.contains($0.id) }
+            unverified.formUnion(odd)
+            pinned += ok.filter(\.pinned)
             for r in recs { owner[r.id] = s.key }
-            if lot == nil || s.lotId != nil { rest += recs.filter { !$0.pinned } }
-            pool += recs.filter { !$0.pinned }   // longTerm reaches a lot member too, as pinned does
+            if lot == nil || s.lotId != nil { rest += recs.filter { !$0.pinned || odd.contains($0.id) } }
+            pool += ok.filter { !$0.pinned }   // longTerm reaches a lot member too, as pinned does
         }
         let entries = await lifecycle.all()
         var (text, ids) = Self.renderContext(pinned, limit: limit, entries: entries)
@@ -355,7 +358,7 @@ actor MemoryService {
         let room = Swift.min(Self.checklistMax, limit - text.utf8.count - 2)
         let cl = room > 0 ? await checklistParts(cwd: cwd, lot: lot, limit: room, exclude: ids, focus: focus) : (text: "", ids: [:], recs: [])
         if !cl.text.isEmpty { text += "\n\n" + cl.text; owned.merge(cl.ids) { a, _ in a } }
-        Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil && !ids.contains($0.id) }, limit: limit)
+        Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil && !ids.contains($0.id) }, limit: limit, unverified: unverified)
         return ContextParts(text: text, ids: owned, recs: (pinned + pool).filter { ids.contains($0.id) } + cl.recs, checklist: cl.ids,
                             checklistText: cl.text.isEmpty ? "" : "\n\n" + cl.text)
     }
@@ -400,7 +403,7 @@ actor MemoryService {
     private func checklistParts(cwd: String, lot: UUID?, limit: Int, max: Int = 7, exclude: Set<UUID> = [], focus: String = "") async -> (text: String, ids: [UUID: String], recs: [MemoryRecord]) {
         var sections = [(Self.checklistHeader, await repo(for: cwd))]
         if let lot { sections.append((Self.lotChecklistHeader, lotStore(lot))) }
-        let factors = await scores.all(), now = Date()
+        let factors = await scores.all(), now = Date(), prov = provenance
         let focusTerms = Self.significantTerms(focus).joined(separator: " ")
         let focusVector = focusTerms.isEmpty ? nil : await embed(focus, wait: Self.promptEmbedWait)
         func rank(_ r: MemoryRecord) -> Double {
@@ -410,7 +413,7 @@ actor MemoryService {
         for (title, s) in sections where ids.count < max {
             let recs = (try? await s.run { m in
                 m.store.all().records.filter { $0.status == .active && $0.kind == .pitfall && $0.hits != nil && !exclude.contains($0.id)
-                    && Self.visible($0, paddock: nil, lot: m.lotId) }
+                    && Self.visible($0, paddock: nil, lot: m.lotId) && prov.isVerified($0) }
             }) ?? []
             var relevance: [UUID: Double] = [:]
             if !focusTerms.isEmpty {
@@ -463,7 +466,7 @@ actor MemoryService {
         for s in await readable(cwd, lot: lot) {
             let recs = (try? await s.run { m in m.index()?.records(ids) ?? [:] }) ?? [:]
             for r in recs.values where found[r.id] == nil && r.status == .active && seen[r.id] == nil
-                && Self.visible(r, paddock: paddock, lot: s.lotId) && s.present(r) { found[r.id] = (r, s.key) }
+                && Self.visible(r, paddock: paddock, lot: s.lotId) && s.present(r) && provenance.isVerified(r) { found[r.id] = (r, s.key) }
         }
         var out = Self.rulesHeader, chosen: [UUID: String] = [:], wait: [UUID] = []
         let entries = await lifecycle.all()
@@ -582,7 +585,7 @@ actor MemoryService {
         var cands: [MemoryIndex.Candidate] = [], from: [UUID: RepoMemory] = [:]
         for s in await readable(cwd, lot: lot) {
             let found = (try? await s.run { m in (m.index()?.candidates(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
-            for var c in found where Self.visible(c.record, paddock: paddock, lot: s.lotId) {
+            for var c in found where Self.visible(c.record, paddock: paddock, lot: s.lotId) && provenance.isVerified(c.record) {
                 c.m *= (s.lotId != nil ? Self.lotBoost : 1) * (factors[c.record.id] ?? 1)
                 cands.append(c); from[c.record.id] = s
             }
@@ -795,9 +798,11 @@ actor MemoryService {
 
     private func renderSkills(cwd: String, paddock: String?, lot: UUID?, into dir: URL) async -> [UUID: String]? {
         var procs: [MemoryRecord] = [], owner: [UUID: String] = [:]
+        let prov = provenance
         for s in await readable(cwd, lot: lot) {
             let recs = (try? await s.run { m in
-                m.store.all().records.filter { $0.kind == .procedure && $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId) }
+                m.store.all().records.filter { $0.kind == .procedure && $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId)
+                    && prov.isVerified($0) }
             }) ?? []
             procs += recs
             for r in recs { owner[r.id] = s.key }
@@ -912,10 +917,14 @@ actor MemoryService {
         return (out, ids)
     }
 
-    static func appendIndex(_ out: inout String, _ index: [MemoryRecord], limit: Int) {
+    /// The index's mark for a memory that isn't what the daemon wrote (P1).
+    static let unverifiedMark = " (editada fora do Collie)"
+
+    static func appendIndex(_ out: inout String, _ index: [MemoryRecord], limit: Int, unverified: Set<UUID> = []) {
         var started = false
         for r in index.sorted(by: { $0.updatedAt > $1.updatedAt }) {
             let add = (started ? "" : "\n\n\(indexTitle)") + "\n- " + (r.kind == .procedure ? "[procedimento] " : "") + (r.kind == .map ? r.path.map { "\(oneLine($0, max: 200)) — " } ?? "" : "") + oneLine(r.title, max: 200)
+                + (unverified.contains(r.id) ? unverifiedMark : "")
             guard out.utf8.count + add.utf8.count <= limit else { break }
             out += add; started = true
         }

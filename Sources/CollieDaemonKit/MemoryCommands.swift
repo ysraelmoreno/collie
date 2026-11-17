@@ -41,7 +41,8 @@ extension CommandRouter {
         }
         let adminCommands: Set<String> = ["memory.review", "memory.restore", "memory.pin", "memory.unpin",
                                           "memory.cleanup", "memory.purge", "memory.repos", "memory.curator",
-                                          "memory.digest", "memory.undo", "memory.resolve", "memory.confirm", "memory.consolidate", "memory.doc-add"]
+                                          "memory.digest", "memory.undo", "memory.resolve", "memory.confirm", "memory.consolidate", "memory.doc-add",
+                                          "memory.trust"]
         if caller != nil, adminCommands.contains(r.command) {
             throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is admin-only")
         }
@@ -318,6 +319,18 @@ extension CommandRouter {
             // L3: the user decided on a waiting quote: its correction job is moot (never a second rule)
             await cancelCorrection(quote: id)
             return out
+
+        case "memory.trust":
+            // P1 "Confiar": the memory as it reads now becomes the daemon's (the file is left as the user edited it)
+            let id = try id()
+            let rec = try await repo.run { m -> MemoryRecord in
+                guard let rec = m.store.all().records.first(where: { $0.id == id }) else {
+                    throw ProtocolError(code: .notFound, message: "memory \(id.uuidString.lowercased()) not found")
+                }
+                return rec
+            }
+            memory.provenance.record(rec)
+            return .object(["id": .string(id.uuidString.lowercased()), "trusted": .bool(true)])
 
         case "memory.promote":
             let id = try id()

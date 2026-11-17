@@ -107,6 +107,18 @@ import CollieCore
         #expect(!p.isVerified(got) && e.origin == "T (cursor)" && e.curatedBy?.trust == .limited)
     }
 
+    /// A pasture and a paddock worktree hold the same id with different texts: both are the daemon's.
+    @Test func sameIdTwoStoresBothVerified() throws {
+        let d = dirs(); defer { try? FileManager.default.removeItem(at: d.root) }
+        let p = MemoryProvenance(file: d.ledger)
+        let a = MemoryStore(dir: d.store, provenance: p), b = MemoryStore(dir: d.root.appendingPathComponent("paddock/.collie/memory"), provenance: p)
+        var r = rec(); try a.write(r)
+        r.body = "editado no cercado"; try b.write(r)
+        let ra = try #require(a.all().records.first), rb = try #require(b.all().records.first)
+        #expect(p.isVerified(ra) && p.isVerified(rb))
+        #expect(p.entry(r.id)?.sha256 == MemoryProvenance.digest(r))
+    }
+
     /// "Confiar" (the app): the record as it is now becomes the daemon's.
     @Test func trustRecordsTheCurrentText() throws {
         let d = dirs(); defer { try? FileManager.default.removeItem(at: d.root) }

@@ -191,6 +191,25 @@ private let bad = "deadbee1"
         }
     }
 
+    /// Task 2 (cursor memory P1): the 14-day rule trusts the ledger's curatedBy, not the file's: a planted file claiming a
+    /// full curator, or a limited one's file edited to say full, is treated as limited.
+    @Test func fourteenDayRuleTreatsUnverifiedAsLimited() async throws {
+        try await run { d, store in
+            var planted = dec("Plantada", age: 15, status: .proposed); planted.curatedBy = CuratedBy(provider: "claude", model: "", trust: .full)
+            var edited = dec("Editada", age: 15, status: .proposed); edited.curatedBy = CuratedBy(provider: "cursor", model: "", trust: .limited)
+            try await put(store, [edited])
+            edited.curatedBy = CuratedBy(provider: "claude", model: "", trust: .full)
+            for r in [planted, edited] {   // by hand, past the store
+                let f = store.store.dir.appendingPathComponent(MemoryFile.fileName(r))
+                try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(MemoryFile.render(r).utf8).write(to: f)
+            }
+            await d.router.lifecyclePass(store, now: Date())
+            #expect(try await status(store, planted.id) == .proposed)
+            #expect(try await status(store, edited.id) == .proposed)
+        }
+    }
+
     @Test func proposalWithFailingClaimStaysProposed() async throws {
         try await run { d, store in
             let p = dec("Commit sumido", body: "corrigido em \(bad)", age: 15, status: .proposed)

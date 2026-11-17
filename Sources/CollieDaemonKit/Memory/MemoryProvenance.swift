@@ -8,7 +8,9 @@ import CollieCore
 /// can. A record is *verified* when its text, as Collie reads it, is the text the daemon wrote: a hand edit, a planted
 /// file, a clone's or an edited index row is not. The file's `origin`/`curatedBy` stay as readable history; a decision
 /// that trusts them reads `entry(id)` of a verified record.
-/// Not tied to a store: ids are unique, and a paddock's memory merged into its pasture keeps the same text.
+/// Not tied to a store: the same id lives in a pasture and its paddock worktrees, with the text of either side until a
+/// land, so an id keeps the last `versionsMax` texts the daemon wrote for it (each with its own origin/curatedBy).
+/// ponytail: a reverted file matching an older version the daemon itself wrote counts as verified (bounded by the cap).
 /// ponytail: one JSON file rewritten on each write (like `lifecycle.json`); a store with tens of thousands of writes a day
 /// would want an append log.
 final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only under `lock`
@@ -23,9 +25,11 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
         var createdAt: Date
         /// Store dirs already adopted (their first read happened).
         var adopted: Set<String> = []
-        var entries: [UUID: Entry] = [:]
+        /// Newest first, at most `versionsMax`.
+        var entries: [UUID: [Entry]] = [:]
     }
 
+    static let versionsMax = 8
     let file: URL
     private let lock = NSLock()
     private var state: State
@@ -49,14 +53,20 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
     /// The daemon wrote `r` (every `MemoryStore.write`), or the user trusted it as it is ("Confiar").
     func record(_ r: MemoryRecord, now: Date = Date()) {
         let e = Entry(sha256: Self.digest(r), origin: r.origin, curatedBy: r.curatedBy, at: now)
-        lock.withLock { state.entries[r.id] = e; save() }
+        lock.withLock {
+            var vs = state.entries[r.id] ?? []
+            vs.removeAll { $0.sha256 == e.sha256 }
+            state.entries[r.id] = Array(([e] + vs).prefix(Self.versionsMax))
+            save()
+        }
     }
 
     func forget(_ id: UUID) {
         lock.withLock { if state.entries.removeValue(forKey: id) != nil { save() } }
     }
 
-    func entry(_ id: UUID) -> Entry? { lock.withLock { state.entries[id] } }
+    /// The latest text the daemon wrote for `id`.
+    func entry(_ id: UUID) -> Entry? { lock.withLock { state.entries[id]?.first } }
 
     /// `r` (from its file or from the index) is the text the daemon last wrote for its id.
     func isVerified(_ r: MemoryRecord) -> Bool { trustedEntry(r) != nil }
@@ -64,8 +74,8 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
     /// The daemon's own copy of `r`'s origin and curation, when `r` is verified; nil otherwise (callers treat an
     /// unverified record as the least trusted: never the user's, curated with limited trust).
     func trustedEntry(_ r: MemoryRecord) -> Entry? {
-        guard let e = entry(r.id), e.sha256 == Self.digest(r) else { return nil }
-        return e
+        let d = Self.digest(r)
+        return lock.withLock { state.entries[r.id]?.first { $0.sha256 == d } }
     }
 
     func hasAdopted(_ store: String) -> Bool { lock.withLock { state.adopted.contains(store) } }
@@ -78,7 +88,7 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
             guard state.adopted.insert(store).inserted else { return 0 }
             var n = 0
             for f in files where f.mtime < state.createdAt && state.entries[f.record.id] == nil {
-                state.entries[f.record.id] = Entry(sha256: Self.digest(f.record), origin: f.record.origin, curatedBy: f.record.curatedBy, at: now)
+                state.entries[f.record.id] = [Entry(sha256: Self.digest(f.record), origin: f.record.origin, curatedBy: f.record.curatedBy, at: now)]
                 n += 1
             }
             save()

@@ -10,7 +10,7 @@ import CollieProtocol
 extension CommandRouter {
     /// `memory.*` commands that change no record (the rest re-render the skills dirs).
     static let memoryReads: Set<String> = ["memory.search", "memory.list", "memory.get", "memory.context", "memory.hookContext",
-                                           "memory.hookRelevant", "memory.digest", "memory.repos", "memory.curator", "memory.stats", "memory.doc-search"]
+                                           "memory.hookRelevant", "memory.task", "memory.digest", "memory.repos", "memory.curator", "memory.stats", "memory.doc-search"]
 
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
@@ -245,22 +245,16 @@ extension CommandRouter {
                 if correction || CorrectionDetector.isProcedure(prompt) {
                     Task { await self.enqueueCorrection(terminal: me.id, prompt: prompt, user: user, likely: likely && correction) }
                 }
-                var left = 2048, parts: [String] = []
-                func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
-                let ret = await memory.retractions(for: me.id, paddock: paddockName, lot: myLot?.id, limit: left)
-                add(ret)
-                await refreshSkills(me.id, force: !ret.isEmpty)   // a retracted procedure leaves its dir; a new lot, its set
-                // ponytail: retractions that overflowed hold the rest for the next prompt (titles are one line: no "\n…" inside)
-                if ret.contains("\n… e mais ") { left = 0 }
-                add(await memory.pushedRules(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, limit: left))
-                if let myLot, left > 0 { add(await boards.inject(to: me.id, lot: myLot, limit: left)) }
-                if left > 0 { add(await commentsInject(to: me.id, limit: left)) }   // the user's comments on its pages, also outside a lot
-                let w = try? await work.active(terminal: me.id)
-                if left > 0 { add(await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, work: w?.id, prompt: prompt, limit: left)) }
-                if left > 0 { add(await memory.docHits(for: me.id, cwd: me.cwd, paddock: paddockName, lot: myLot?.id, prompt: prompt, limit: min(left, 1_800))) }
-                text = parts.joined(separator: "\n\n").scrubbed(await auth.secrets())
+                text = await promptBlock(me, paddock: paddockName, lot: myLot, query: prompt, pull: false)
             }
             return .object(["output": .string(text)])
+
+        case "memory.task":
+            // spec 2026-11-17 cursor memory §3: what a prompt would bring, pulled by an agent with no prompt hook (Cursor,
+            // Codex). The text is the agent's: no provenance, no correction capture, no pending uses (B3)
+            guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'memory.task' is for terminals only") }
+            let text = await promptBlock(me, paddock: paddockName, lot: myLot, query: HookPayload.boundedPrompt(try need(r, "task")), pull: true)
+            return .object(["output": .string(text.isEmpty ? "Nada novo para esta tarefa." : text)])
 
         case "memory.review":
             let id = try id()
@@ -591,4 +585,27 @@ extension CommandRouter {
 private extension String {
     /// `LotBoards.scrub` (live tokens, key=/password=/Bearer/sk-) on injected memory text.
     func scrubbed(_ secrets: Set<String>) -> String { LotBoards.scrub(self, secrets: secrets) }
+}
+
+extension CommandRouter {
+    /// One 2048-byte budget: retractions, the rules pushed to the caller (`pull`: also the user's rules changed since its
+    /// session started), board posts addressed to it (newest first), the user's comments on its pages, then memories
+    /// relevant to `query` and document chunks; scrubbed. `pull`: `memory.task` (relevance leaves the pending uses alone).
+    fileprivate func promptBlock(_ me: TerminalRecord, paddock: String?, lot myLot: Lot?, query: String, pull: Bool) async -> String {
+        var left = 2048, parts: [String] = []
+        func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
+        let ret = await memory.retractions(for: me.id, paddock: paddock, lot: myLot?.id, limit: left)
+        add(ret)
+        await refreshSkills(me.id, force: !ret.isEmpty)   // a retracted procedure leaves its dir; a new lot, its set
+        // ponytail: retractions that overflowed hold the rest for the next prompt (titles are one line: no "\n…" inside)
+        if ret.contains("\n… e mais ") { left = 0 }
+        add(await memory.pushedRules(for: me.id, cwd: me.cwd, paddock: paddock, lot: myLot?.id, limit: left))
+        if pull, left > 0 { add(await memory.newRules(for: me.id, cwd: me.cwd, paddock: paddock, lot: myLot?.id, limit: left)) }
+        if let myLot, left > 0 { add(await boards.inject(to: me.id, lot: myLot, limit: left)) }
+        if left > 0 { add(await commentsInject(to: me.id, limit: left)) }   // the user's comments on its pages, also outside a lot
+        let w = try? await work.active(terminal: me.id)
+        if left > 0 { add(await memory.relevant(for: me.id, cwd: me.cwd, paddock: paddock, lot: myLot?.id, work: w?.id, prompt: query, limit: left, pull: pull)) }
+        if left > 0 { add(await memory.docHits(for: me.id, cwd: me.cwd, paddock: paddock, lot: myLot?.id, prompt: query, limit: min(left, 1_800))) }
+        return parts.joined(separator: "\n\n").scrubbed(await auth.secrets())
+    }
 }

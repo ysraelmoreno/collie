@@ -35,12 +35,10 @@ funcionou. O Collie deve fazer isso sozinho.
 8. A falha de verificação chega ao addon como `error` com `flow.error.msg = "Certificate verify failed: <motivo>"`
    (`proxy/layers/tls.py:310-321`), mesmo com `-q`; o cliente recebe um 502 HTML.
 9. O módulo Network não tem logger; o padrão do daemon é `FileHandle.standardError` (`DataBackup.swift:344`).
-10. **Evidência da máquina corporativa** (só nomes, `security dump-trust-settings`, domínio ainda não confirmado):
-    seis certificados com trust settings: `<empresa> Example Built-in Certificate Authority`, `Example Internal Root CA`,
-    `ca.example.com`, `eproxy.ca.example.com`, `USERTrust RSA Certification Authority`,
-    `<empresa> Example Private Root CA`. O inspetor de TLS é o TLSProxy e a CA dele entra por trust settings. Isso mostra que
-    a CA aparece; **não** prova que a regra B a inclui (falta ver Policy/Result de cada entrada e quem é
-    autoassinado: `eproxy.ca.example.com` parece intermediária de `ca.example.com`).
+10. **Tarefa 0 validada pelo dono na máquina corporativa** (`security dump-trust-settings -d`, domínio admin): o
+    inspetor de TLS é o TLSProxy; `ca.example.com` e `eproxy.ca.example.com` (além de uma raiz pública e
+    de CAs internas da empresa) aparecem com "Number of trust settings : 0", ou seja, lista vazia = confiança plena
+    como raiz para qualquer uso. A regra B os inclui; sem diálogo de keychain. B′ não é necessária.
 
 ## Metas
 
@@ -75,10 +73,10 @@ funcionou. O Collie deve fazer isso sozinho.
   como folha (key usage, basic constraints) e pode recusar CAs legítimas (testar também com
   `SecPolicyCreateBasicX509`); uma chamada ao trustd por certificado; não é função pura.
 
-**Recomendação:** B como padrão **se** o protótipo B da Tarefa 1 incluir `ca.example.com` (ou a raiz que
-assina a cadeia do TLSProxy) pela regra completa; senão B′. A CA já aparece nas trust settings (Estado atual, item
-10); falta a regra. Uma intermediária com `TrustRoot` (não autoassinada) fica fora pela regra, o que é coerente: sem
-`X509_V_FLAG_PARTIAL_CHAIN` o OpenSSL do `mitmdump` exige a raiz autoassinada no pacote de qualquer jeito.
+**Decisão:** B (validada; Estado atual, item 10). B′ fica registrada como alternativa se outro ambiente mostrar
+uma CA fora das trust settings. Lista vazia entra autoassinada ou não (como o macOS a trata como âncora); uma
+intermediária com `TrustRoot` **explícito** fica fora, o que é coerente: sem `X509_V_FLAG_PARTIAL_CHAIN` o OpenSSL do
+`mitmdump` exige a raiz autoassinada no pacote de qualquer jeito.
 
 **Como passar ao `mitmdump`:** `--set ssl_verify_upstream_trusted_ca=<pacote>` em `MitmProcess.args`. Escrever no
 `config.yaml` foi descartado (clobraria o do usuário).
@@ -89,7 +87,7 @@ assina a cadeia do TLSProxy) pela regra completa; senão B′. A CA já aparece 
 
 - Fonte injetável: `certificates: @Sendable () throws -> TrustSnapshot`, com as âncoras (`[Data]` DER) e, por domínio
   admin/user, `[(der: Data, selfSigned: Bool, settings: [[String: Any]])]`. A real usa o Security.framework; os
-  testes passam fixtures. (Se a Tarefa 1 escolher B′, a fonte devolve a lista já avaliada e a regra abaixo cai.)
+  testes passam fixtures.
 - Regra B (função pura `bundle(_:) -> (pem: String, count: Int, denied: Int)`), comparada com o Go 1.14
   (`root_cgo_darwin.go`):
   - entra toda âncora de `SecTrustCopyAnchorCertificates` (domínio system mais admin/user com trust settings vazias);
@@ -114,7 +112,7 @@ assina a cadeia do TLSProxy) pela regra completa; senão B′. A CA já aparece 
 - `MitmProcess.start(…, upstreamCA: @Sendable () -> UpstreamCA)` guarda a closure e a chama em todo `startOnce`
   (attach e restart). `UpstreamCA = (url: URL?, mode: "system" | "user-config" | "unavailable", certs: Int?)`.
 - `MitmProcess.args(…, upstreamCA: URL?)` acrescenta `--set ssl_verify_upstream_trusted_ca=<path>` quando não nulo.
-- A closure devolve `user-config` (e não monta o pacote) quando o `<confdir>/config.yaml` define
+- A closure devolve `user-config` (e não monta o pacote) quando o `<confdir>/config.yaml` (ou `config.yml`, que o mitmproxy também lê, `main.py:85-91`) define
   `ssl_verify_upstream_trusted_ca`, `ssl_verify_upstream_trusted_confdir` ou `ssl_insecure: true`
   (`ssl_insecure: false` não conta). Leitura tolerante: chave de topo na coluna 0, ignora comentários. Como o
   arquivo vence o `--set` de qualquer jeito, isso só serve ao status e para não montar à toa; YAML não trivial
@@ -156,7 +154,7 @@ assina a cadeia do TLSProxy) pela regra completa; senão B′. A CA já aparece 
 
 ## Minhas chamadas (conferir)
 
-- B como padrão, condicionado à Tarefa 1; B′ como plano B.
+- B como padrão (validada pelo dono); B′ só registrada.
 - Sem interruptor por ora: quem não quer põe a opção no próprio `config.yaml`.
 - Pacote em `<root>/network/upstream-ca.pem`, refeito a cada subida, sem vigiar o Keychain.
 
@@ -172,8 +170,7 @@ assina a cadeia do TLSProxy) pela regra completa; senão B′. A CA já aparece 
 
 ## Tarefas independentes
 
-1. **Validação na máquina corporativa** (antes de tudo): `dump-trust-settings -d` e sem `-d` com Policy/Result da
-   entrada TLSProxy, autoassinado ou não, protótipo B (regra completa) e B′; escolhe o critério.
+1. ~~Validação na máquina corporativa~~: feita pelo dono (Estado atual, item 10); escolheu B.
 2. `UpstreamTrust`: snapshot injetável, regra B com dedupe, escrita atômica, fonte real.
 3. `MitmProcess.start(upstreamCA:)` + args + leitura tolerante do `config.yaml`; `upstreamCA` no `NetworkProxy`, no
    `FakeProxy` e no status.

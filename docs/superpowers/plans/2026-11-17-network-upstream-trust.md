@@ -18,9 +18,8 @@ leitura tolerante do `config.yaml` e a fonte real (Security.framework). `MitmPro
 
 ## Global Constraints
 
-- **A Task 0 (roteiro do dono) vem antes de tudo.** Se ela escolher B′ (avaliação pelo trustd), pare: a Task 1 muda
-  (a regra pura cai, a fonte devolve a lista avaliada) e o plano precisa ser revisto. Sem resultado da Task 0, as
-  Tasks 1–3 seguem com B, que é o padrão recomendado.
+- **Task 0 validada pelo dono**: no domínio admin, as CAs do TLSProxy têm lista de trust settings vazia (confiança
+  plena); B é o critério, B′ não é necessária.
 - Testes: só os criados ou alterados, `swift test --disable-sandbox --scratch-path <tmp>/.build --filter <Suite>`
   numa worktree `git worktree add --detach <tmp> HEAD` (removida no fim). **Nunca** a suíte inteira.
 - **O executor NÃO deve**: instalar, abrir ou reiniciar o app; rodar `scripts/bundle-app.sh`, `scripts/release.sh`
@@ -34,7 +33,7 @@ leitura tolerante do `config.yaml` e a fonte real (Security.framework). `MitmPro
   - Pacote: `<root>/network/upstream-ca.pem`; escrita atômica (temp no mesmo diretório + rename), só quando os bytes
     mudam; **nunca apagado** pelo daemon.
   - Opção passada: `--set ssl_verify_upstream_trusted_ca=<path>`. Nunca `ssl_insecure`.
-  - Chaves que fazem o usuário decidir (no `config.yaml`, chave de topo na coluna 0): `ssl_verify_upstream_trusted_ca`,
+  - Chaves que fazem o usuário decidir (no `config.yaml` ou `config.yml` do confdir, chave de topo na coluna 0): `ssl_verify_upstream_trusted_ca`,
     `ssl_verify_upstream_trusted_confdir`, `ssl_insecure: true`. `ssl_insecure: false` não conta.
   - Modos: `system` (com `certs`), `user-config`, `unavailable` (com `reason`).
   - Política SSL da Apple: OID `1.2.840.113635.100.1.3`. Resultados: `1` TrustRoot, `2` TrustAsRoot, `3` Deny,
@@ -73,7 +72,8 @@ leitura tolerante do `config.yaml` e a fonte real (Security.framework). `MitmPro
 
 ### Task 0: Validação na máquina corporativa — passo do dono, não do executor
 
-Ver "Roteiro manual do dono", parte A. Resultado: B ou B′, anotado no spec ("Minhas chamadas").
+**Validada pelo dono** (2026-11-17): `security dump-trust-settings -d` mostra `ca.example.com` e
+`eproxy.ca.example.com` com "Number of trust settings : 0" no domínio admin. Resultado: B.
 
 ---
 
@@ -102,10 +102,9 @@ Os DER dos testes são bytes quaisquer (`Data("a".utf8)`): a regra não interpre
   `denyRemovesAnchor` (mesmo DER nas âncoras e com `3` no user → fora, `denied == 1`); `dedupeByDER` (mesmo DER
   nas âncoras e no admin → `count == 1`); `pemFormat` (cada bloco `-----BEGIN CERTIFICATE-----`, base64 em linhas
   de 64, `-----END CERTIFICATE-----`); `emptySnapshotCountsZero` (`count == 0`, `pem` vazio); `writeReplacesWhenChanged`; `unchangedWriteKeepsInode` (segunda `write` igual →
-  `false`, mesmo `fileSystemFileNumber`). Caso real (Task 0) como fixture **só de forma**, sem certificado: `tlsproxyRootIn` (raiz autoassinada
-  com o Policy/Result que a Task 0 anotar → entra) e `tlsproxyIntermediateTrustRootOut` (não autoassinada, `TrustRoot`
-  → fora); se a Task 0 ainda não voltou, use settings vazias para a raiz e marque o teste com o comentário
-  `// ponytail: ajustar à tabela da Task 0`.
+  `false`, mesmo `fileSystemFileNumber`). Caso real (Task 0) como fixture **só de forma**, sem certificado: `tlsproxyRootIn` (admin, lista vazia,
+  raiz e intermediária → entram) e `tlsproxyIntermediateTrustRootOut` (não autoassinada, `TrustRoot` explícito →
+  fora). Nomes internos da empresa viram genéricos (`Corp Internal Root CA`); o repo é público.
 - [ ] **Step 2: Run** `--filter UpstreamTrustTests`. Expected: FAIL (tipos não existem).
 - [ ] **Step 3: Implement** `bundle` e `write`. Um item vale se `(policyOID == nil || policyOID == sslOID) &&
   policyString == nil` e `(result ?? 1) == 1 && selfSigned || result == 2 && !selfSigned`; lista vazia vale; `Deny`
@@ -191,7 +190,7 @@ Os DER dos testes são bytes quaisquer (`Data("a".utf8)`): a regra não interpre
 
 Tudo só leitura; nada muda trust settings nem o Keychain.
 
-**A. Antes de implementar (Task 0), na máquina corporativa:**
+**A. Antes de implementar (Task 0), na máquina corporativa — feito pelo dono, resultado B:**
 
 Já sabido: o inspetor é o TLSProxy; `ca.example.com` e `eproxy.ca.example.com` aparecem em
 `security dump-trust-settings` (domínio não confirmado). Falta o resto:

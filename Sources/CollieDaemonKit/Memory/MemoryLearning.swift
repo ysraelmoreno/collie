@@ -330,6 +330,10 @@ extension CommandRouter {
         func users(_ r: MemoryRecord) -> Bool { r.pinned || r.reviewed }
         /// R19: a feedback or a procedure (the user's kinds, active or proposed) is changed only by a correction with the user's provenance.
         func untouchable(_ r: MemoryRecord) -> Bool { MemoryLearning.usersKind(r.kind) && !(correction && ctx.user) }
+        /// Task 10, the laundering rule: a record the daemon didn't write (not verified in the provenance ledger: planted, hand
+        /// edited, from a clone) is never a target, whatever the curator's trust: writing it would record the planted text as
+        /// the daemon's (verified, injected in full, or trusted after a restore). Every op on one is a question.
+        func verified(_ r: MemoryRecord) -> Bool { memory.provenance.isVerified(r) }
         func ask(_ what: String, _ reason: String, _ recs: [MemoryRecord], _ s: RepoMemory) {
             entry("ask", "O curador quer \(what) \"\(MemoryLearning.oneLine(recs.first?.title ?? "", max: 60))\"" + (reason.isEmpty ? "" : ": \(reason)"),
                   reason, s, before: recs)
@@ -384,7 +388,7 @@ extension CommandRouter {
                 continue
             }
             let old = await replaced(rec, in: target)
-            if let old, users(old), !correction { ask("substituir", "nova versão: \(rec.title)", [old], target); continue }
+            if let old, !verified(old) || users(old) && !correction { ask("substituir", "nova versão: \(rec.title)", [old], target); continue }
             let toSave = rec
             let (saved, sup) = try await target.run { try $0.store.save(toSave) }
             // a correction beats the user's older pin; L1: the record as `save` left it (superseded), never `old`
@@ -412,9 +416,12 @@ extension CommandRouter {
             case .create, .score, .bump: continue
             case .supersede(let id, let by, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .active, !untouchable(r) else { continue }
-                if users(r) && !correction || limited { ask("aposentar", reason, [r], s); continue }   // an ask changes nothing: not touched
+                if users(r) && !correction || limited || !verified(r) { ask("aposentar", reason, [r], s); continue }   // an ask changes nothing: not touched
                 guard let byId = by ?? created?.id, byId != id else { continue }
-                if by != nil { guard let b = await find(byId), b.rec.status == .active else { continue } }
+                if by != nil {
+                    guard let b = await find(byId), b.rec.status == .active else { continue }
+                    if !verified(b.rec) { ask("aposentar", reason, [r, b.rec], s); continue }
+                }
                 var n = r; n.status = .superseded; n.supersededBy = byId; n.pinned = false; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id); supersedes += 1
                 if correction { await memory.scores.penalize(id, ScoreStore.correction, reason: "substituída por correção do usuário") }
@@ -425,7 +432,8 @@ extension CommandRouter {
                 var from: [(store: RepoMemory, rec: MemoryRecord)] = []
                 for id in ids { if let f = await find(id), [.active, .proposed].contains(f.rec.status), !untouchable(f.rec) { from.append(f) } }
                 guard from.count == ids.count else { continue }
-                if limited || users(target) && (title != nil || body != nil) || from.contains(where: { users($0.rec) }) {
+                if limited || !verified(target) || from.contains(where: { !verified($0.rec) })
+                    || users(target) && (title != nil || body != nil) || from.contains(where: { users($0.rec) }) {
                     ask("mesclar em", reason, [target] + from.map(\.rec), s); continue
                 }
                 if s === memory.global, family !== memory.global, leaks([title, body].compactMap { $0 } + aliases) { continue }
@@ -445,24 +453,24 @@ extension CommandRouter {
                 entry("mesclado", t.title, reason, s, before: [target] + from.map(\.rec))
             case .retire(let id, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .active, !untouchable(r) else { continue }
-                if users(r) || limited { ask("aposentar", reason, [r], s); continue }
+                if users(r) || limited || !verified(r) { ask("aposentar", reason, [r], s); continue }
                 var n = r; n.status = .archived; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id)
                 entry("aposentado", r.title, reason, s, before: [r])
             case .activate(let id, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed, !untouchable(r) else { continue }
-                if limited { ask("ativar", reason, [r], s); continue }
+                if limited || !verified(r) { ask("ativar", reason, [r], s); continue }
                 var n = r; n.status = .active; n.updatedAt = Date()
                 if let curatedBy { n.curatedBy = curatedBy }
                 let old = await replaced(n, in: s)
-                if let old, users(old), !correction { ask("ativar", reason, [r, old], s); continue }
+                if let old, !verified(old) || users(old) && !correction { ask("ativar", reason, [r, old], s); continue }
                 let act = n
                 _ = try await s.run { try $0.store.save(act) }
                 touched.insert(id); if let old { touched.insert(old.id) }
                 entry("ativado", r.title, reason, s, before: [r] + (old.map { [$0] } ?? []))
             case .drop(let id, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed, !untouchable(r) || id == ctx.proposal else { continue }
-                if limited { ask("descartar", reason, [r], s); continue }
+                if limited || !verified(r) { ask("descartar", reason, [r], s); continue }
                 var n = r; n.status = .discarded; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id)
                 entry("descartado", r.title, reason, s, before: [r])

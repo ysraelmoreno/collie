@@ -208,6 +208,8 @@ extension CommandRouter {
         var out: [DigestEntry] = [], pending = p.instance?.id, created = 0, bumped = Set<UUID>()
         var caseText = p.review.map { "revisão \($0.file)" }
         if let i = p.instance { caseText = await record(i.id, store).map(PitfallClasses.example) }
+        // Task 10, the laundering rule: an instance the daemon didn't write is never absorbed (rewritten as superseded)
+        if let i = pending, let r = await record(i, store), !memory.provenance.isVerified(r) { pending = nil }
         for op in ops {
             var bump: (id: UUID, example: String, reason: String)?
             switch op {
@@ -251,6 +253,9 @@ extension CommandRouter {
             default: continue
             }
             guard let b = bump, !bumped.contains(b.id), bumped.count < Self.bumpsMax else { continue }
+            if let c = await record(b.id, store), !memory.provenance.isVerified(c) {   // a planted class: never bumped (rewritten)
+                out.append(ask(c, "somar uma ocorrência", store: store)); continue
+            }
             bumped.insert(b.id)
             if let e = try await absorb(pending, into: b.id, example: b.example, store: store, reason: b.reason) {
                 out.append(e)

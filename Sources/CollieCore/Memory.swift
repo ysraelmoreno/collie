@@ -29,6 +29,8 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     public var supersedes: UUID?
     public var supersededBy: UUID?
     public var origin: String          // "<terminal> (<preset>)" or "app"
+    /// Who curated it (created, activated or merged it); nil: the user, an agent or the daemon's own rules.
+    public var curatedBy: CuratedBy?
     public var createdAt: Date
     public var updatedAt: Date
     /// Search keywords the curator adds (FTS only, never injected): normalized like `subject`, ≤ 8 of ≤ 40 characters.
@@ -36,7 +38,7 @@ public struct MemoryRecord: Codable, Sendable, Equatable, Identifiable {
     private var _aliases: [String]?   // nil when none: Codable omits it (rows and entries from before aliases decode)
     private enum CodingKeys: String, CodingKey {
         case id, kind, scope, paddock, lotId, unknownScope, subject, title, body, path, status, reviewed, pinned, hits, supersedes,
-             supersededBy, origin, createdAt, updatedAt, _aliases = "aliases"
+             supersededBy, origin, curatedBy, createdAt, updatedAt, _aliases = "aliases"
     }
     public init(id: UUID = UUID(), kind: MemoryKind, scope: MemoryScope = .project, paddock: String? = nil, lotId: UUID? = nil, subject: String,
                 title: String, body: String = "", path: String? = nil, status: MemoryStatus = .active,
@@ -86,6 +88,7 @@ public enum MemoryFile {
         if let s = r.supersedes { l.append("supersedes: \(s.uuidString.lowercased())") }
         if let s = r.supersededBy { l.append("superseded_by: \(s.uuidString.lowercased())") }
         l.append("origin: \(str(r.origin))")
+        if let c = r.curatedBy, let d = try? sorted.encode(c), let t = String(data: d, encoding: .utf8) { l.append("curated_by: \(t)") }
         l.append("created: \(iso(r.createdAt))"); l.append("updated: \(iso(r.updatedAt))")
         return "---\n" + l.joined(separator: "\n") + "\n---\n\n" + r.body + "\n"
     }
@@ -160,6 +163,8 @@ public enum MemoryFile {
             supersededBy: supersededBy,
             origin: try field("origin"), createdAt: created, updatedAt: try date("updated"))
         rec.unknownScope = unknownScope
+        // malformed: not curated (never a parse error: the file stays readable)
+        rec.curatedBy = kv["curated_by"].flatMap { try? JSONDecoder().decode(CuratedBy.self, from: Data($0.utf8)) }
         if let v = kv["aliases"] {
             guard let a = try? JSONDecoder().decode([String].self, from: Data(v.utf8)) else { throw bad("bad 'aliases'") }
             rec.aliases = a
@@ -190,6 +195,7 @@ public enum MemoryFile {
         let e = JSONEncoder(); e.outputFormatting = .withoutEscapingSlashes
         return (try? e.encode(s)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
     }
+    private static let sorted: JSONEncoder = { let e = JSONEncoder(); e.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]; return e }()
     private static func json(_ v: [String]) -> String {
         let e = JSONEncoder(); e.outputFormatting = .withoutEscapingSlashes
         return (try? e.encode(v)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"

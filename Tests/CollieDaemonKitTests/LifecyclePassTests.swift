@@ -179,6 +179,18 @@ private let bad = "deadbee1"
         }
     }
 
+    /// E2: a limited curator's proposal never activates by age alone (the user, or a full curator, decides).
+    @Test func fourteenDayRuleSkipsLimited() async throws {
+        try await run { d, store in
+            var lim = dec("Do Cursor", age: 15, status: .proposed); lim.curatedBy = CuratedBy(provider: "cursor", model: "", trust: .limited)
+            var full = dec("Do Claude", age: 15, status: .proposed); full.curatedBy = CuratedBy(provider: "claude", model: "haiku", trust: .full)
+            try await put(store, [lim, full])
+            await d.router.lifecyclePass(store, now: Date())
+            #expect(try await status(store, lim.id) == .proposed)
+            #expect(try await status(store, full.id) == .active)
+        }
+    }
+
     @Test func proposalWithFailingClaimStaysProposed() async throws {
         try await run { d, store in
             let p = dec("Commit sumido", body: "corrigido em \(bad)", age: 15, status: .proposed)

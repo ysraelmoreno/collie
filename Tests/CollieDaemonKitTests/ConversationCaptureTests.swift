@@ -78,6 +78,20 @@ private func withEnv(idle: Duration = .seconds(60), _ body: (Env) async throws -
         #expect(r.map(\.kind) == [.decision, .pitfall])
     }
 
+    @Test func conversationStampsCuratedBy() {
+        let by = CuratedBy(provider: "claude", model: "haiku", trust: .full)
+        let r = ConversationCapture.apply(.init(items: [item()]), chunk: chunk, candidates: [], terminal: "dev", secrets: [], curatedBy: by)
+        #expect(r.count == 1 && r[0].curatedBy == by && r[0].status == .active)
+    }
+
+    /// A limited curator's findings wait for the user, decisions and pitfalls too.
+    @Test func conversationLimitedIsProposed() {
+        let by = CuratedBy(provider: "cursor", model: "", trust: .limited)
+        let r = ConversationCapture.apply(.init(items: [item(), item("pitfall", "O build quebra sem --filter")]), chunk: chunk,
+                                          candidates: [], terminal: "dev", secrets: [], curatedBy: by)
+        #expect(r.count == 2 && r.allSatisfy { $0.status == .proposed && $0.curatedBy == by })
+    }
+
     @Test func applyCapsAtFive() {
         let r = ConversationCapture.apply(.init(items: (0..<8).map { item("decision", "D\($0)") }), chunk: chunk, candidates: [], terminal: "dev", secrets: [])
         #expect(r.count == 5)

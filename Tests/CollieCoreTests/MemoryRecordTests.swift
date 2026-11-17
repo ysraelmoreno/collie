@@ -39,6 +39,25 @@ import CollieProtocol
         #expect(MemoryFile.render(try MemoryFile.parse(old)) == old)
     }
 
+    // E2: who curated a record, in its file (the readable history; trust comes from the daemon's own copy, spec P1)
+    @Test func recordWithoutCuratedByDecodes() throws {
+        let text = MemoryFile.render(full())
+        #expect(!text.contains("curated_by"))
+        #expect(try MemoryFile.parse(text).curatedBy == nil)
+        #expect(MemoryFile.render(try MemoryFile.parse(text)) == text)   // an old file is byte-identical after a rewrite
+    }
+
+    @Test func curatedByRoundTrips() throws {
+        var r = full(); r.curatedBy = CuratedBy(provider: "cursor", model: "auto", trust: .limited)
+        let text = MemoryFile.render(r)
+        #expect(text.contains("origin: claude-1 (claude)\ncurated_by: {\"model\":\"auto\",\"provider\":\"cursor\",\"trust\":\"limited\"}\n"))
+        #expect(try MemoryFile.parse(text) == r)
+        #expect(try JSONDecoder().decode(MemoryRecord.self, from: JSONEncoder().encode(r)) == r)
+        // a malformed line reads as not curated (never a parse error: the file stays readable)
+        let bad = text.replacingOccurrences(of: "\"trust\":\"limited\"", with: "\"trust\":\"x\"")
+        #expect(try MemoryFile.parse(bad).curatedBy == nil)
+    }
+
     @Test func subjectIsNormalized() {
         #expect(MemoryRecord(kind: .decision, subject: "  Use   SQLite\tNow ", title: "t").subject == "use sqlite now")
     }

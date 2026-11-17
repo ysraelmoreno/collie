@@ -162,8 +162,10 @@ extension CommandRouter {
         let scope = CuratorScope(ids: [], scopes: [.project], kinds: [.procedure], maxOps: 1)
         guard case .create(let n)? = CuratorOps.validate(out.json, scope: scope).ops.first,
               let body = MemoryLearning.procedureBody(when: n.howToApply.isEmpty ? n.title : n.howToApply, steps: n.body) else { return }
-        let rec = MemoryRecord(id: j.id, kind: .procedure, scope: .project, subject: MemoryFile.slug(n.title), title: n.title, body: body,
-                               status: .proposed, origin: "curador (trabalhos)", aliases: n.aliases)
+        var fresh = MemoryRecord(id: j.id, kind: .procedure, scope: .project, subject: MemoryFile.slug(n.title), title: n.title, body: body,
+                                 status: .proposed, origin: "curador (trabalhos)", aliases: n.aliases)
+        fresh.curatedBy = out.curatedBy
+        let rec = fresh
         try await store.run { m in
             guard !m.store.all().records.contains(where: { $0.id == rec.id }) else { return }
             try m.store.write(rec)

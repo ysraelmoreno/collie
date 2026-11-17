@@ -14,6 +14,8 @@ struct CuratorOutput: Sendable {
     var inputTokens: Int
     var outputTokens: Int
     var costUSD: Double
+    /// Who answered (E2): the `Curator` stamps it on every call; handlers write it on what they create, activate or merge.
+    var curatedBy = CuratedBy(provider: "claude", model: "", trust: .full)
 }
 
 /// `unavailable` carries the pt-BR reason shown as "curador indisponível: <motivo>".

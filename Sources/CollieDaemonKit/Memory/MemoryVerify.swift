@@ -118,7 +118,7 @@ extension CommandRouter {
         let verdict = MemoryVerify.verdict(ops, id: p.id)
         let home = await memory.store(key: j.store)   // opened after a restart: applyVerdict counts its longTerm
         if j.kind == .verifyContested, verdict == .invalid, let retire = ops.first(where: { if case .retire = $0 { true } else { false } }) {
-            let entries = try await applyOps([retire], job: j)
+            let entries = try await applyOps([retire], job: j, curatedBy: out.curatedBy)
             do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
         }
         let promoted = await memory.applyVerdict(p.id, kind: j.kind, verdict: verdict)

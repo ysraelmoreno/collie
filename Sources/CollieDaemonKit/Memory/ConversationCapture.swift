@@ -72,8 +72,9 @@ enum ConversationCapture {
 
     /// The items as new records (pure): ≤ 5, known kinds only, a feedback only with its user quote in the chunk (as a
     /// proposal), a duplicate of a `candidates` id skipped (an unknown id: new), every text cleaned, capped and scrubbed.
+    /// `curatedBy` (E2) goes on each record; a `limited` curator's are all proposals, decisions and pitfalls too.
     static func apply(_ o: Output, chunk: String, candidates: [UUID], terminal: String, lot: UUID? = nil,
-                      secrets: Set<String>) -> [MemoryRecord] {
+                      secrets: Set<String>, curatedBy: CuratedBy? = nil) -> [MemoryRecord] {
         let said = squash(userText(chunk))
         func clean(_ s: String, _ cap: Int, multiline: Bool) -> String {
             CuratorOps.clean(LotBoards.scrub(s, secrets: secrets), cap: cap, multiline: multiline)
@@ -87,10 +88,12 @@ enum ConversationCapture {
             }
             let title = clean(i.title, MemoryCapture.maxTitle, multiline: false)
             guard !title.isEmpty else { continue }
-            out.append(MemoryRecord(kind: kind, scope: lot == nil ? .project : .lot, lotId: lot, subject: title, title: title,
-                                    body: clean(i.body, MemoryCapture.maxBody, multiline: true),
-                                    status: kind == .feedback ? .proposed : .active,
-                                    origin: "conversa (\(clean(terminal, MemoryCapture.maxTitle, multiline: false)))"))
+            var r = MemoryRecord(kind: kind, scope: lot == nil ? .project : .lot, lotId: lot, subject: title, title: title,
+                                 body: clean(i.body, MemoryCapture.maxBody, multiline: true),
+                                 status: kind == .feedback || curatedBy?.trust == .limited ? .proposed : .active,
+                                 origin: "conversa (\(clean(terminal, MemoryCapture.maxTitle, multiline: false)))")
+            r.curatedBy = curatedBy
+            out.append(r)
         }
         return out
     }
@@ -201,7 +204,8 @@ extension CommandRouter {
                                              input: ConversationCapture.input(chunk: chunk.text, candidates: cands, nonce: nonce),
                                              schema: ConversationCapture.schema))
         guard let o = ConversationCapture.decode(out.json) else { throw ProtocolError(code: .internal, message: "curator: unreadable answer") }
-        var recs = ConversationCapture.apply(o, chunk: chunk.text, candidates: cands.map(\.id), terminal: p.name, lot: store.lotId, secrets: secrets)
+        var recs = ConversationCapture.apply(o, chunk: chunk.text, candidates: cands.map(\.id), terminal: p.name, lot: store.lotId, secrets: secrets,
+                                             curatedBy: out.curatedBy)
         if store === memory.global { for i in recs.indices { recs[i].scope = .global } }   // outside git
         let new = recs
         // `write`, not `save`: a new record supersedes nothing (stored ones, pinned or edited, are never changed here)

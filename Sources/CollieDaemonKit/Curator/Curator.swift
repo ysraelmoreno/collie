@@ -298,7 +298,11 @@ actor Curator {
             e.place(store: job.store)
             events?.emit(e)
         }
-        do { out = try await runner.run(c, model: config.model, timeout: Self.timeout) } catch {
+        do {
+            var o = try await runner.run(c, model: config.model, timeout: Self.timeout)
+            o.curatedBy = CuratedBy(provider: "claude", model: config.model, trust: .full)   // ponytail: Claude only until the provider task
+            out = o
+        } catch {
             logged(false, String(error.message.prefix(200)), nil)
             throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error
         }

@@ -192,7 +192,8 @@ extension CommandRouter {
         let out = try await call(CuratorCall(instructions: p.review != nil ? PitfallClasses.reviewInstructions : PitfallClasses.instructions,
                                              input: PitfallClasses.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
-        let entries = try await applyPitfallOps(CuratorOps.validate(out.json, scope: Self.pitfallScope(p)).ops, p, job: j, store: store)
+        let entries = try await applyPitfallOps(CuratorOps.validate(out.json, scope: Self.pitfallScope(p)).ops, p, job: j, store: store,
+                                                curatedBy: out.curatedBy)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
     }
 
@@ -200,7 +201,8 @@ extension CommandRouter {
     /// A create whose subject is an active class's bumps that class instead; one whose subject another active record has is
     /// an ask (R7: written with `write`, never an implicit same-subject supersede). The first created class takes the
     /// job's id (a retry writes no second).
-    func applyPitfallOps(_ ops: [CuratorOp], _ p: PitfallPayload, job: CuratorJob, store: RepoMemory) async throws -> [DigestEntry] {
+    func applyPitfallOps(_ ops: [CuratorOp], _ p: PitfallPayload, job: CuratorJob, store: RepoMemory,
+                         curatedBy: CuratedBy? = nil) async throws -> [DigestEntry] {
         var out: [DigestEntry] = [], pending = p.instance?.id, created = 0, bumped = Set<UUID>()
         var caseText = p.review.map { "revisão \($0.file)" }
         if let i = p.instance { caseText = await record(i.id, store).map(PitfallClasses.example) }
@@ -227,8 +229,10 @@ extension CommandRouter {
                 if let same { out.append(ask(same, "substituir por \"\(MemoryLearning.oneLine(n.title, max: 60))\"", store: store)); continue }
                 let body = [n.body, n.why.isEmpty ? "" : "Por quê: \(n.why)", n.howToApply.isEmpty ? "" : "Como aplicar: \(n.howToApply)"]
                     .filter { !$0.isEmpty }.joined(separator: "\n\n")
-                let rec = MemoryRecord(id: id, kind: .pitfall, scope: p.scope, lotId: store.lotId, subject: subject, title: n.title,
-                                       body: PitfallClasses.withExamples(body, ex.isEmpty ? [] : [ex]), hits: 1, origin: "curador")
+                var fresh = MemoryRecord(id: id, kind: .pitfall, scope: p.scope, lotId: store.lotId, subject: subject, title: n.title,
+                                         body: PitfallClasses.withExamples(body, ex.isEmpty ? [] : [ex]), hits: 1, origin: "curador")
+                fresh.curatedBy = curatedBy
+                let rec = fresh
                 try await store.run { try $0.store.write(rec) }
                 var before: [MemoryRecord] = []
                 if var x = inst {

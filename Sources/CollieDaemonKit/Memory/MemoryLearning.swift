@@ -193,7 +193,7 @@ extension CommandRouter {
         // R9: the only curator call; ops are applied after it (a cap hit mid-job leaves nothing half done)
         let out = try await call(CuratorCall(instructions: MemoryLearning.instructions, input: MemoryLearning.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
-        let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.correctionScope(p)).ops, job: j)
+        let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.correctionScope(p)).ops, job: j, curatedBy: out.curatedBy)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
         // an active pitfall it created (its id is the job's; R6: a proposed one waits for the user) joins its store's classes
         for key in Set([p.family, "global"]) {
@@ -297,7 +297,9 @@ extension CommandRouter {
     /// Corrections: R12 without the user's provenance only the create is written, as `proposed` (nothing else changes);
     /// R13 with it, at most 3 supersedes, no merge/retire, activate/drop only of its own waiting quote.
     /// R15 L4: the created record's id is the job's, so a retry after a half-applied attempt doesn't write a second rule.
-    func applyOps(_ ops: [CuratorOp], job: CuratorJob) async throws -> [DigestEntry] {
+    /// `curatedBy`: the answer's (E2), written on what is created, activated or merged; nil when no curator answered
+    /// (the lifecycle's own activation, the no-model verify fallback, a confirmed replay).
+    func applyOps(_ ops: [CuratorOp], job: CuratorJob, curatedBy: CuratedBy? = nil) async throws -> [DigestEntry] {
         let ctx = try Self.context(job)
         guard let family = await memory.store(key: ctx.family) else { throw ProtocolError(code: .internal, message: "curator: store \(ctx.family) gone") }
         let stores = family === memory.global ? [family] : [family, memory.global]
@@ -363,6 +365,7 @@ extension CommandRouter {
             if scope == .global, family !== memory.global, leaks([n.title, n.subject, body] + n.aliases) { target = family; scope = familyScope }
             var rec = MemoryRecord(id: job.id, kind: n.kind, scope: scope, lotId: target.lotId, subject: subject, title: n.title, body: body,
                                    origin: ctx.name.map { "curador (\($0))" } ?? "curador", aliases: n.aliases)
+            rec.curatedBy = curatedBy
             // a retry: already written (a confirmed likely-user proposal is written again, active)
             if let done = await find(job.id), !(ctx.user && done.rec.status == .proposed) { created = done.rec; touched.insert(done.rec.id); continue }
             if correction, !ctx.user {
@@ -423,6 +426,7 @@ extension CommandRouter {
                 if let body { t.body = body }
                 // the union: the op's, then each merged record's, newest first (≤ 8)
                 t.aliases = aliases + ([target] + from.map(\.rec)).sorted { $0.updatedAt > $1.updatedAt }.flatMap(\.aliases)
+                if let curatedBy, t != target { t.curatedBy = curatedBy }
                 if title != nil || body != nil { t.updatedAt = Date() }   // aliases only: search-only, recency unchanged
                 if t != target { try await write(s, t) }
                 for f in from {
@@ -440,6 +444,7 @@ extension CommandRouter {
             case .activate(let id, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed, !untouchable(r) else { continue }
                 var n = r; n.status = .active; n.updatedAt = Date()
+                if let curatedBy { n.curatedBy = curatedBy }
                 let old = await replaced(n, in: s)
                 if let old, users(old), !correction { ask("ativar", reason, [r, old], s); continue }
                 let act = n
@@ -558,7 +563,7 @@ extension CommandRouter {
         // one curator call; the ops are applied after it
         let out = try await call(CuratorCall(instructions: MemoryLearning.proposalsInstructions, input: MemoryLearning.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
-        let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.proposalsScope(p)).ops, job: j)
+        let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.proposalsScope(p)).ops, job: j, curatedBy: out.curatedBy)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
     }
 

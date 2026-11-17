@@ -76,7 +76,10 @@ extension CommandRouter {
         // (6) a work-capture proposal 14 days old that nobody is handling and whose claims hold: active, provisional from now
         let (keep, asked) = await proposalState()
         for r in records where r.scope == .project && r.status == .proposed && !r.reviewed && !MemoryLearning.usersKind(r.kind)
-            && !keep.contains(r.id) && !asked.contains(r.id) && now.timeIntervalSince(r.createdAt) >= MemoryCleanup.proposalAge {
+            && !keep.contains(r.id) && !asked.contains(r.id) && now.timeIntervalSince(r.createdAt) >= MemoryCleanup.proposalAge
+            // E2: a limited curator's proposal never activates by age alone. ponytail: reads the file's curatedBy; the
+            // provenance ledger (cursor-memory-injection P1) makes this read its verified copy and treat unverified as limited
+            && r.curatedBy?.trust != .limited {
             guard await ClaimChecks.check(r, facts: facts, knownIds: byId.keys).isEmpty else { continue }
             let job = CuratorJob(id: UUID(), kind: .verifyContested, store: store.key, payload: .null, dedupe: "", createdAt: now, attempts: 0)
             do {

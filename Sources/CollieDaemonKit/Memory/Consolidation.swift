@@ -208,7 +208,7 @@ extension CommandRouter {
             default: return op
             }
         }
-        let entries = try await applyOps(ops, job: j)
+        let entries = try await applyOps(ops, job: j, curatedBy: out.curatedBy)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
     }
 }

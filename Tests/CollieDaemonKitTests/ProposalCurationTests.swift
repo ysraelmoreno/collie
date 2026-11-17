@@ -53,6 +53,24 @@ private func withStore(_ recs: [MemoryRecord], _ body: (Daemon, RepoMemory) asyn
         }
     }
 
+    /// E2: what the curator activates, merges or creates carries who curated it.
+    @Test func applyOpsStampsCuratedBy() async throws {
+        let by = CuratedBy(provider: "claude", model: "haiku", trust: .full)
+        let m = rec("Cache no Redis", body: "ttl 60"), pr = rec("Cache Redis ttl", status: .proposed), act = rec("Use tabs", status: .proposed)
+        try await withStore([m, pr, act]) { d, store in
+            _ = try await d.router.applyOps([.merge(ids: [pr.id], into: m.id, title: nil, body: "ttl 60; chave", reason: "mesma"),
+                                             .activate(id: act.id, reason: "boa")], job: job(store, [pr, act], [m]), curatedBy: by)
+            let recs = try await all(store)
+            #expect(recs.first { $0.id == m.id }?.curatedBy == by)
+            #expect(recs.first { $0.id == act.id }?.curatedBy == by)
+            // without a curator (the lifecycle's own activation, a replay): nothing stamped
+            let other = rec("Outra", status: .proposed)
+            try await store.run { try $0.store.write(other) }
+            _ = try await d.router.applyOps([.activate(id: other.id, reason: "x")], job: job(store, [other]))
+            #expect(try await all(store).first { $0.id == other.id }?.curatedBy == nil)
+        }
+    }
+
     @Test func proposalMerged() async throws {
         let m = rec("Cache no Redis", body: "ttl 60"), pr = rec("Cache Redis ttl", status: .proposed)
         try await withStore([m, pr]) { d, store in

@@ -1,7 +1,10 @@
 # Memória, leva 3: regras de estágio (vagas por mérito, mapa que acompanha o código, ciclo de vida da global) — design
 
-Data: 2026-11-17. Status: rascunho para aprovação. Nada implementado. Itens 4, 7 e 8 das 8 melhorias de memória pedidas
-pelo dono. O item 8 depende de uma decisão do dono (ver "Minhas chamadas").
+Data: 2026-11-17. Itens 4, 7 e 8 das 8 melhorias de memória pedidas pelo dono.
+
+**Decisões do dono (2026-11-17):** item 8 = opção A (nada novo: a poda fria de 60 dias da global já existe; zero código).
+Item 7 liberado para implementação com as chamadas 5 a 8 como estão (e a 9: o curador recebe só numstat e assuntos de
+commit). Item 4 adiado (dormente enquanto longTerm = 0).
 
 ## Intenção e porquê
 
@@ -220,10 +223,10 @@ Não desenhado como decidido: depende da pergunta 1 em "Minhas chamadas". O que 
 
 ## Ordem sugerida de implementação
 
-1. **Item 7** primeiro: único com efeito hoje (mapas já existem; longTerm = 0), e não depende do dono.
-2. **Item 4**: dormente até um projeto encher 12 vagas. Pode esperar `memory.stats` mostrar algum projeto com ≥ 9 longTerm;
-   a parte "portão sem desperdício" é barata e pode ir junto.
-3. **Item 8**: só depois da resposta do dono.
+1. **Item 7**: liberado pelo dono; tarefas T1–T4 e a parte do item 7 em T10.
+2. **Item 4**: adiado pelo dono. Retomar quando `memory.stats` mostrar algum projeto com ≥ 9 longTerm; a parte "portão sem
+   desperdício" vai junto.
+3. **Item 8**: encerrado (opção A, zero código). T9 não será feita.
 
 ## Tarefas independentes (lista, não o plano)
 
@@ -265,7 +268,7 @@ Não desenhado como decidido: depende da pergunta 1 em "Minhas chamadas". O que 
 
 ## Minhas chamadas (conferir)
 
-1. **Item 8, pergunta ao dono (bloqueia o item).** O spec de 2026-11-13 registra sua decisão: global "sem promoção automática;
+1. **Item 8, respondida: opção A.** Pergunta original: O spec de 2026-11-13 registra sua decisão: global "sem promoção automática;
    mantém as regras de hoje". As regras de hoje **já** podam global por falta de uso: arquivada fria após 60 dias sem leitura.
    Podar por "uso útil" é regra nova, não promoção. Pela letra ("mantém as regras de hoje"), muda o que você decidiu; pelo
    espírito (o medo era promover), não. Qual você quer?

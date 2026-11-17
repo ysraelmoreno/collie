@@ -71,7 +71,32 @@ import CollieCore
         #expect(p.isVerified(try #require(recs.first { $0.id == old.id })))
         // a new process reads the same ledger: still strict
         let again = MemoryProvenance(file: d.ledger)
-        #expect(!again.isVerified(late) && again.isVerified(old))
+        #expect(!again.isVerified(late) && again.isVerified(old) && again.restartedAt == nil)
+    }
+
+    /// Limitation 3 (owner, 2026-11-17): a corrupt ledger adopts nothing; what it knew is unverified until "Confiar".
+    @Test func corruptLedgerAdoptsNothing() throws {
+        let d = dirs(); defer { try? FileManager.default.removeItem(at: d.root) }
+        let known = rec("Escrita pelo daemon")
+        try MemoryStore(dir: d.store, provenance: MemoryProvenance(file: d.ledger)).write(known)
+        let old = rec("Arquivo antigo")
+        try plant(old, in: d.store, age: 3600)
+        try Data("{not json".utf8).write(to: d.ledger)
+        let p = MemoryProvenance(file: d.ledger), s = MemoryStore(dir: d.store, provenance: p)
+        let recs = s.all().records
+        #expect(recs.count == 2 && !recs.contains { p.isVerified($0) })
+        #expect(p.restartedAt != nil)
+        let aside = try FileManager.default.contentsOfDirectory(atPath: d.ledger.deletingLastPathComponent().path)
+        #expect(aside.contains { $0.hasPrefix("provenance.json.corrupt-") }, "\(aside)")
+        // the next process reads the new (good) ledger: still no adoption, still marked restarted
+        let again = MemoryProvenance(file: d.ledger)
+        let other = d.root.appendingPathComponent("other/.collie/memory")
+        let older = rec("Outro antigo"); try plant(older, in: other, age: 7200)
+        let o = MemoryStore(dir: other, provenance: again)
+        #expect(!again.isVerified(try #require(o.all().records.first)) && again.restartedAt != nil)
+        // "Confiar" still works, and the daemon's own writes are verified as usual
+        again.record(known); try o.write(rec("Nova"))
+        #expect(again.isVerified(known) && o.all().records.contains { $0.title == "Nova" && again.isVerified($0) })
     }
 
     /// A file newer than the ledger in a store never read before (a clone after the upgrade) is not adopted.

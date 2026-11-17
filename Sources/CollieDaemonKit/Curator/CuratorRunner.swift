@@ -18,16 +18,28 @@ struct CuratorOutput: Sendable {
     var curatedBy = CuratedBy(provider: "claude", model: "", trust: .full)
 }
 
-/// `unavailable` carries the pt-BR reason shown as "curador indisponível: <motivo>".
+/// `unavailable` carries the pt-BR reason shown as "curador indisponível: <motivo>". `exhausted` (E6): the provider
+/// refused for credit or quota (its raw message) until about `until`; jobs wait without spending attempts.
 enum CuratorAvailability: Equatable, Sendable {
     case available
     case unavailable(String)
+    case exhausted(String, until: Date?)
 }
 
 /// The low-cost headless model that curates memory (tests inject a fake: they never spend tokens).
 protocol CuratorRunner: Sendable {
     func availability() async -> CuratorAvailability
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput
+}
+
+extension CuratorRunner {
+    /// How long an exhausted provider waits when it didn't say.
+    static var exhaustedFor: TimeInterval { 30 * 60 }
+    /// A credit/quota refusal (case-insensitive): the provider is `.exhausted`, not the job broken.
+    static func exhausted(_ text: String) -> Bool {
+        let t = text.lowercased()
+        return ["credit balance", "usage limit", "rate limit", "quota", "upgrade"].contains { t.contains($0) }
+    }
 }
 
 /// `claude -p` with no tools, no MCP, no user settings/hooks/plugins, in an empty temp cwd, under its own Seatbelt profile
@@ -65,12 +77,12 @@ struct ClaudeCuratorRunner: CuratorRunner {
     }
 
     /// Pinned from `claude --help` (2.1.310) and the tokenless gate. Never `--bare` (it skips the keychain login).
-    /// `--` keeps an input that starts with `-` the prompt.
+    /// E4: no input here: `claude -p` reads its prompt from stdin (argv is readable by other processes).
     static func arguments(_ c: CuratorCall, model: String) -> [String] {
         ["-p", "--model", model, "--output-format", "json", "--json-schema", c.schema, "--tools", "",
          "--strict-mcp-config", "--mcp-config", #"{"mcpServers":{}}"#, "--setting-sources", "project,local", "--safe-mode",
          "--disable-slash-commands", "--no-session-persistence", "--permission-prompts", "none", "--max-budget-usd", "0.05",
-         "--system-prompt", c.instructions, "--", c.input]
+         "--system-prompt", c.instructions]
     }
 
     /// `--output-format json`'s result: `structured_output`, else `result` parsed as JSON (a ```json fence stripped);
@@ -179,11 +191,15 @@ struct ClaudeCuratorRunner: CuratorRunner {
             do throws(ProtocolError) {
                 r = try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
                                                  args: ["-f", profile.path, claude.path] + Self.arguments(c, model: model),
-                                                 in: cwd, env: e, timeout: timeout, cap: Self.outputCap)
+                                                 in: cwd, env: e, timeout: timeout, cap: Self.outputCap, stdin: Data(c.input.utf8))
             } catch where error.code == .timeout {
                 throw ProtocolError(code: .timeout, message: Self.noAnswer)   // the fallback's motivo; the queue retries
             }
-            do throws(ProtocolError) { return try Self.parse(r.stdout) } catch where error.message == Self.unreadable && r.status != 0 {
+            do throws(ProtocolError) { return try Self.parse(r.stdout) } catch where Self.exhausted(error.message) || Self.exhausted(r.stderr) {
+                let why = Self.exhausted(error.message) ? error.message : String(r.stderr.prefix(300))
+                await cache.set(.exhausted(why, until: Date().addingTimeInterval(Self.exhaustedFor)), for: .seconds(Int64(Self.exhaustedFor)))
+                throw ProtocolError(code: .unavailable, message: why)
+            } catch where error.message == Self.unreadable && r.status != 0 {
                 if let p = CuratorSandboxProfile.blocked(r.stderr) {
                     throw ProtocolError(code: .unavailable, message: "curador bloqueado pelo sandbox: \(p)")
                 }

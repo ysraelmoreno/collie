@@ -61,7 +61,8 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         #expect(a[a.firstIndex(of: "--max-budget-usd")! + 1] == "0.05")
         #expect(a[a.firstIndex(of: "--system-prompt")! + 1] == call.instructions)
         #expect(a[a.firstIndex(of: "--json-schema")! + 1] == call.schema)
-        #expect(a.suffix(2) == ["--", call.input])   // an input that looks like a flag stays the prompt
+        // E4: the input goes on stdin, never in argv (other processes read argv)
+        #expect(a.last == call.instructions && !a.contains(call.input) && !a.contains("--"))
         for bad in ["--bare", "--settings", "--plugin-dir", "--continue"] { #expect(!a.contains(bad)) }
     }
 
@@ -75,6 +76,40 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         let o = try ClaudeCuratorRunner.parse(#"{"type":"result","is_error":false,"result":"{\"ops\":[]}","usage":{"input_tokens":812,"output_tokens":40},"total_cost_usd":0.0011}"#)
         #expect(o.json == .object(["ops": .array([])]))
         #expect(o.inputTokens == 812 && o.outputTokens == 40 && o.costUSD == 0.0011)
+    }
+
+    /// E4: the prompt reaches the child on stdin (and an early-exiting child never kills the daemon with SIGPIPE).
+    @Test func stdinDelivered() async throws {
+        let big = String(repeating: "oi ", count: 100_000)
+        let r = try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/sh"), args: ["-c", "cat"], in: URL(fileURLWithPath: "/tmp"),
+                                             env: [:], timeout: .seconds(10), stdin: Data(big.utf8))
+        #expect(r.stdout == big)
+        let gone = try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/sh"), args: ["-c", "exit 0"], in: URL(fileURLWithPath: "/tmp"),
+                                                env: [:], timeout: .seconds(10), stdin: Data(big.utf8))
+        #expect(gone.status == 0)
+    }
+
+    @Test(.enabled(if: canSandbox, nested)) func inputViaStdin() async throws {
+        let fake = try Fake { rec in "printf '%s\\n' \"$@\" > '\(rec.path)'; read -r l; printf '%s' \"$l\" > '\(rec.path).in'; printf '%s' '\(fixture)'\n" }
+        _ = try await fake.runner().run(call, model: "haiku", timeout: .seconds(20))
+        #expect(try String(contentsOf: URL(fileURLWithPath: fake.rec.path + ".in"), encoding: .utf8) == call.input)
+        #expect(!(try String(contentsOf: fake.rec, encoding: .utf8)).contains(call.input))
+    }
+
+    /// E6: credit or quota errors make the runner `.exhausted` (the queue waits without spending attempts).
+    @Test func creditErrorIsExhausted() {
+        for t in ["Credit balance is too low", "You've hit your usage limit", "Rate limit exceeded", "quota reached", "Please upgrade your plan"] {
+            #expect(ClaudeCuratorRunner.exhausted(t), "\(t)")
+        }
+        #expect(!ClaudeCuratorRunner.exhausted("claude saiu com 1: boom"))
+    }
+
+    @Test(.enabled(if: canSandbox, nested)) func creditErrorRunIsExhausted() async throws {
+        let fake = try Fake(#"[ "$1" = "auth" ] && { echo '{"loggedIn": true}'; exit 0; }; printf '%s' '{"type":"result","is_error":true,"result":"Credit balance is too low"}'"# + "\n")
+        let r = fake.runner()
+        await #expect(throws: ProtocolError.self) { try await r.run(call, model: "haiku", timeout: .seconds(20)) }
+        guard case .exhausted(_, let until)? = Optional(await r.availability()) else { Issue.record("not exhausted"); return }
+        #expect(until.map { $0 > Date() } ?? false)
     }
 
     @Test func parseIsError() {
@@ -104,7 +139,7 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         #expect(!rec.contains("LEAK") && !rec.contains("EXEC"), "\(rec)")
         let parts = rec.components(separatedBy: "---\n")
         #expect(parts.count == 3)
-        #expect(parts[0].contains("--strict-mcp-config\n") && parts[0].hasSuffix("--\n\(call.input)\n"))
+        #expect(parts[0].contains("--strict-mcp-config\n") && !parts[0].contains(call.input))
         #expect(!parts[1].contains("COLLIE_SOCKET") && !parts[1].contains("COLLIE_TOKEN") && !parts[1].contains("COLLIE_TERMINAL_ID"))
         #expect(parts[1].contains("HOME=\(fake.f.home.path)\n"))
         for k in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"] {

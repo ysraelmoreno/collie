@@ -52,18 +52,24 @@ enum BoundedProcess {
     static func track(_ pid: pid_t) { live.withLock { _ = $0.insert(pid) } }
     static func untrack(_ pid: pid_t) { live.withLock { _ = $0.remove(pid) } }
 
+    /// `stdin`: written to the child's stdin, then closed (nil: `/dev/null`). A child that exits without reading it never
+    /// raises SIGPIPE in the daemon (`F_SETNOSIGPIPE`).
     static func run(executable: URL, args: [String], in dir: URL, env: [String: String], timeout: Duration,
-                    cap: Int = 1 << 20, salvage: (@Sendable (Data) -> Bool)? = nil) async throws(ProtocolError) -> ProcessResult {
+                    cap: Int = 1 << 20, salvage: (@Sendable (Data) -> Bool)? = nil,
+                    stdin: Data? = nil) async throws(ProtocolError) -> ProcessResult {
         let secs = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
         return try await UnixSocketClient.offPool {
             var o: [Int32] = [0, 0], e: [Int32] = [0, 0]
             guard pipe(&o) == 0 else { throw ProtocolError(code: .internal, message: "pipe: \(errno)") }
             guard pipe(&e) == 0 else { close(o[0]); close(o[1]); throw ProtocolError(code: .internal, message: "pipe: \(errno)") }
-            for fd in o + e { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+            var i: [Int32] = [-1, -1]
+            if stdin != nil, pipe(&i) != 0 { close(o[0]); close(o[1]); close(e[0]); close(e[1]); throw ProtocolError(code: .internal, message: "pipe: \(errno)") }
+            for fd in o + e + i where fd >= 0 { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+            if i[1] >= 0 { _ = fcntl(i[1], F_SETNOSIGPIPE, 1) }
             var fa: posix_spawn_file_actions_t? ; posix_spawn_file_actions_init(&fa)
             var at: posix_spawnattr_t? ; posix_spawnattr_init(&at)
             defer { posix_spawn_file_actions_destroy(&fa); posix_spawnattr_destroy(&at) }
-            posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0)
+            if i[0] >= 0 { posix_spawn_file_actions_adddup2(&fa, i[0], 0) } else { posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0) }
             posix_spawn_file_actions_adddup2(&fa, o[1], 1)
             posix_spawn_file_actions_adddup2(&fa, e[1], 2)
             posix_spawn_file_actions_addchdir_np(&fa, dir.path)
@@ -77,9 +83,25 @@ enum BoundedProcess {
             let child = pid
             if rc == 0 { track(child) }
             close(o[1]); close(e[1])
+            if i[0] >= 0 { close(i[0]) }
             guard rc == 0 else {
-                close(o[0]); close(e[0])
+                close(o[0]); close(e[0]); if i[1] >= 0 { close(i[1]) }
                 throw ProtocolError(code: .internal, message: "cannot launch \(executable.path): \(String(cString: strerror(rc)))")
+            }
+            if let stdin, i[1] >= 0 {
+                let w = i[1]
+                Thread {   // a child that stops reading gets EPIPE here (no signal), and the fd is closed either way
+                    stdin.withUnsafeBytes { (b: UnsafeRawBufferPointer) in
+                        var off = 0
+                        while off < b.count {
+                            let n = write(w, b.baseAddress! + off, b.count - off)
+                            if n < 0 && errno == EINTR { continue }
+                            if n <= 0 { break }
+                            off += n
+                        }
+                    }
+                    close(w)
+                }.start()
             }
             let so = Sink(cap: cap), se = Sink(cap: cap), group = DispatchGroup()
             for (sink, fd) in [(so, o[0]), (se, e[0])] {

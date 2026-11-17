@@ -11,6 +11,9 @@ final class FakeCurator: CuratorRunner, @unchecked Sendable {
     private var _avail = CuratorAvailability.available, _inputs: [String] = [], _gated = false, waiters: [CheckedContinuation<Void, Never>] = []
     var failOn: String? { get { lock.withLock { _failOn } } set { lock.withLock { _failOn = newValue } } }
     private var _failOn: String?
+    /// A run whose input contains `.0` turns the runner `.exhausted` until `.1`, then fails (the real runner's way).
+    var exhaustOn: (String, Date)? { get { lock.withLock { _exhaustOn } } set { lock.withLock { _exhaustOn = newValue } } }
+    private var _exhaustOn: (String, Date)?
     var output = CuratorOutput(json: .object(["ops": .array([])]), inputTokens: 812, outputTokens: 40, costUSD: 0.0011)
     var avail: CuratorAvailability { get { lock.withLock { _avail } } set { lock.withLock { _avail = newValue } } }
     var inputs: [String] { lock.withLock { _inputs } }
@@ -22,6 +25,10 @@ final class FakeCurator: CuratorRunner, @unchecked Sendable {
         lock.withLock { _inputs.append(c.input) }
         if gated { await withCheckedContinuation { c in lock.withLock { if _gated { waiters.append(c) } else { c.resume() } } } }
         if let f = failOn, c.input.contains(f) { throw ProtocolError(code: .unavailable, message: "claude saiu com 1") }
+        if let (f, until) = exhaustOn, c.input.contains(f) {
+            avail = .exhausted("Credit balance is too low", until: until)
+            throw ProtocolError(code: .unavailable, message: "Credit balance is too low")
+        }
         return output
     }
 }
@@ -194,6 +201,41 @@ private let oneCall: Curator.Handler = { j, call in
         fake.avail = .available
         _ = await c.enqueue(job())   // an enqueue wakes it too
         #expect(await waitFor(10) { fake.calls == 3 })
+        await c.stop()
+    }
+
+    /// E6: a run that leaves the runner `.exhausted` (credit, quota) spends no attempt: the job waits, never reaches failed/.
+    @Test func exhaustedSpendsNoAttempt() async throws {
+        let fake = FakeCurator(), clock = ManualClock(), dir = tempDir()
+        let until = Date().addingTimeInterval(3600)
+        fake.exhaustOn = ("cota", until)
+        let c = Curator(dir: dir, runner: fake, clock: clock)
+        _ = await c.enqueue(job(prompt: "cota"))
+        await c.start(handler: oneCall)
+        #expect(await waitFor(10) { fake.calls == 1 })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await c.queued(kind: .correction).first?.attempts == 0)
+        let f = DateFormatter(); f.dateFormat = "HH:mm"
+        #expect(await c.status().reason == "cota do claude esgotada até \(f.string(from: until))")
+        for _ in 0..<3 { await clock.waitForSleepers(1); clock.advance(by: Curator.tick) }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(fake.calls == 1)   // still exhausted: nothing runs, nothing is spent
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("failed").path).isEmpty)
+        await c.stop()
+    }
+
+    /// Once the quota is back, the waiting job runs on the next tick.
+    @Test func exhaustedWaitsUntil() async throws {
+        let fake = FakeCurator(), clock = ManualClock()
+        fake.exhaustOn = ("cota", Date().addingTimeInterval(3600))
+        let c = Curator(dir: tempDir(), runner: fake, clock: clock)
+        _ = await c.enqueue(job(prompt: "cota"))
+        await c.start(handler: oneCall)
+        #expect(await waitFor(10) { fake.calls == 1 })
+        fake.exhaustOn = nil; fake.avail = .available
+        await clock.waitForSleepers(1); clock.advance(by: Curator.tick)
+        #expect(await waitFor(10) { await c.queued(kind: .correction).isEmpty })
+        #expect(fake.calls == 2)
         await c.stop()
     }
 

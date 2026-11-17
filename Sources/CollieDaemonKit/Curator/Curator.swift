@@ -176,7 +176,16 @@ actor Curator {
     func status() async -> CuratorStatus {
         rollDay()
         var reason = capReason()
-        if reason == nil, case .unavailable(let why) = await runner.availability() { reason = why }
+        if reason == nil {
+            switch await runner.availability() {
+            case .available: break
+            case .unavailable(let why): reason = why
+            case .exhausted(_, let until):
+                // ponytail: "claude" until the provider task names the active one
+                let f = DateFormatter(); f.dateFormat = "HH:mm"
+                reason = "cota do claude esgotada até " + f.string(from: until ?? now().addingTimeInterval(ClaudeCuratorRunner.exhaustedFor))
+            }
+        }
         rollDay()
         return CuratorStatus(available: reason == nil, reason: reason, today: usage.today, cap: config.cap, queued: jobs.count,
                              failed: ((try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("failed").path)) ?? [])
@@ -304,6 +313,8 @@ actor Curator {
             out = o
         } catch {
             logged(false, String(error.message.prefix(200)), nil)
+            // E6: a credit/quota refusal left the runner exhausted: the job waits, no attempt spent (`drain` gives it back)
+            if case .exhausted = await runner.availability() { throw ProtocolError(code: .unavailable, message: error.message) }
             throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error
         }
         logged(true, nil, out)

@@ -197,6 +197,10 @@ extension CommandRouter {
     }
 }
 
+/// "Memória no Cursor": the focus block and the per-task pull (`full`), today's start-of-session memory only (`start`),
+/// or no memory block at all (`off`; the orientation stays).
+enum CursorMemoryMode: String, Codable, Sendable { case full, start, off }
+
 /// Collie-wide preferences the daemon keeps (`<root>/preferences.json`, closed to every terminal with the data root).
 struct CollieSettings: Codable {
     var terminalSandbox: SandboxMode?
@@ -206,6 +210,10 @@ struct CollieSettings: Codable {
     var remote: RemoteSettings?
     /// Preferences › Atualizações (spec 2026-11-17 §3); nil: both on.
     var updates: UpdateSettings?
+    /// Preferences › Memória › "Memória no Cursor" (spec 2026-11-17 cursor memory §7): `full|start|off`, nil: full.
+    /// A string, not the enum: a value this build doesn't know must not fail the whole file (that would mean strict).
+    var cursorMemory: String?
+    var cursorMemoryMode: CursorMemoryMode { cursorMemory.flatMap(CursorMemoryMode.init(rawValue:)) ?? .full }
     static func file(_ root: URL) -> URL { root.appendingPathComponent("preferences.json") }
     /// A missing file: nothing set; one that can't be read: strict (fail closed).
     static func load(_ root: URL) -> CollieSettings {

@@ -189,7 +189,7 @@ enum MemoryObservability {
     /// A prompt is a `noHit` or an `injected` at `prompt` (pushed rules are `rule`: not a prompt of their own).
     private static func prompts(_ es: [MemoryEvent]) -> (all: Int, with: Int, coverage: Double?) {
         let with = es.filter { $0.type == .injected && $0.where == "prompt" }.count
-        let all = with + es.filter { $0.type == .noHit }.count
+        let all = with + es.filter { $0.type == .noHit && $0.where != "pull" }.count   // a `memory.task` pull is not a prompt
         return (all, with, all == 0 ? nil : Double(with) / Double(all))
     }
 

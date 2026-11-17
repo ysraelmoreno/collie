@@ -4,8 +4,8 @@
   "commit": "47438dd4a2e8b49a7e6bb3dfd480262dadc37f12",
   "inputs": "100d083c6c6cef0851466c2cdf2498dc7bfef45613444ae46c678a6f62e46a17",
   "url": "https://github.com/ysraelmoreno/collie/releases/download/figcraft-v0.7.0-c1/figcraft-0.7.0-c1-arm64.tar.gz",
-  "size": 0,
-  "unpackedSize": 0,
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "size": 51480699,
+  "unpackedSize": 115352339,
+  "sha256": "e5a4865aeea9cd8bae026d7c34b4e1045bffdc6548be362ce675c4d8535b29d9",
   "teamId": "AG8JQAH6YB"
 }

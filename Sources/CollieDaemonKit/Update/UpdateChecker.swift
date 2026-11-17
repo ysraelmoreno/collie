@@ -35,6 +35,8 @@ actor UpdateChecker {
         var lastCheck: Date?
         var error: String?
         var override: String?
+        /// The verified dmg, once `ready` (the app mounts it).
+        var staged: String?
     }
 
     static let changed = "a release mudou durante o download"
@@ -83,7 +85,7 @@ actor UpdateChecker {
 
     func status() -> Status {
         var s = Status(state: "none", available: available, job: job, lastCheck: lastCheck, error: lastError,
-                       override: manifestURL.isFileURL ? manifestURL.absoluteString : nil)
+                       override: manifestURL.isFileURL ? manifestURL.absoluteString : nil, staged: stagedDMG?.path)
         if job?.phase == "failed" { s.state = "failed"; s.error = job?.error }
         else if available != nil { s.state = stagedDMG != nil ? "ready" : "available" }
         else if !enabled() { s.state = "disabled" }

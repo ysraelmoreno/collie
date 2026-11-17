@@ -407,6 +407,9 @@ actor CommandRouter {
             if req.command.hasPrefix("design.engine.") {   // the app's alone; before the design plug-in's commands
                 return Response(id: req.id, ok: true, result: try await designEngineCommand(req, peer: peer))
             }
+            if req.command.hasPrefix("app.update.") {   // the app's alone; before the paddock apps' `app.*` and the plug-ins
+                return Response(id: req.id, ok: true, result: try await updateCommand(req, peer: peer))
+            }
             if req.command.hasPrefix("android.") {   // the app's alone
                 return Response(id: req.id, ok: true, result: try await androidCommand(req, peer: peer))
             }

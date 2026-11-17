@@ -100,6 +100,27 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         #expect(await mem.lifecycle.entry(r.id) == nil)
     }
 
+    /// Leva 1 precision: the prompt injection logs how many ids can earn a use; each resolution logs a `used`.
+    @Test func resolutionLogsUsedEvents() async throws {
+        let r = x(), rv = MemoryRecord(kind: .decision, subject: "q", title: "Pool size twenty", body: "postgres pool sizing twenty", reviewed: true)
+        let (mem, repo) = try await setup([r, rv])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.resolvePending(for: t, correction: false, now: Date())
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.resolvePending(for: t, correction: true, now: Date())
+        await mem.resolvePending(for: t, correction: false, now: Date())   // nothing pending: no event
+        _ = try await mem.applyFlag(session: "s1", id: r.id, record: r, verdict: .useful, reason: "", terminal: t)
+        mem.events.flush()
+        let es = mem.events.read(since: Date().addingTimeInterval(-60))
+        let inj = es.filter { $0.type == .injected && $0.where == "prompt" }
+        #expect(inj.count == 1 && inj[0].ids?.count == 2 && inj[0].eligible == 1, "\(inj)")
+        let used = es.filter { $0.type == .used }
+        #expect(used.count == 2, "\(used)")
+        #expect(used.first?.ids == [r.id] && used.first?.hits == 1 && used.first?.reason == nil && used.first?.terminal == t && used.first?.session == "s1")
+        #expect(used.last?.ids == [] && used.last?.hits == 1 && used.last?.reason == "correction")
+        #expect(es.first { $0.type == .flagged }?.terminal == t)   // the log can stamp the flagging agent
+    }
+
     @Test func reviewedAndPinnedHaveNoTagsAndNoEntries() async throws {
         let r = x(reviewed: true), p = MemoryRecord(kind: .decision, subject: "q", title: "Pool size twenty", body: "postgres pool sizing twenty",
                                                   pinned: true)

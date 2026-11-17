@@ -82,10 +82,21 @@ The owner wants the user out of the loop: the working agent judges whether an in
 
 | Tier | How it gets there | Injected as | Lifetime |
 |---|---|---|---|
-| provisional | any new `active` memory not from the user | `(provisória)` | archived 21 days after `max(tierSince, last useful use)` with no useful use |
+| provisional | any new `active` memory not from the user | `(provisória)` | archived after the kind's TTL (below) counted from `max(tierSince, last useful use)` with no useful use |
 | earned | ≥ 2 useful uses on ≥ 2 distinct days and ≥ 2 distinct sessions, never contested | no tag | existing cold rule (60 days unread) |
 | longTerm | earned + ≥ 8 useful uses over ≥ 4 distinct days spanning ≥ 14 days, not contested in 30 days, **and** a `verify` pass says valid | no tag; up to 3 injected in full at session start (≤ 600 B), rest in the index | no decay, no cold archive; at most 12 per project |
 
+- Provisional TTL per kind (2026-11-17; was 21 days for all):
+
+  | Kind | TTL | Digest reason |
+  |---|---|---|
+  | decision | 21 days | `provisória sem uso há N dias (prazo de decisão: 21)` |
+  | map | 21 days | `provisória sem uso há N dias (prazo de mapa: 21)` |
+  | pitfall | 60 days | `provisória sem uso há N dias (prazo de armadilha: 60)` |
+  | procedure | 60 days | `… (prazo de procedimento: 60)`; today out of the cycle as a user's kind, the value only guards the rule |
+  | feedback | none | user's kind, never archived by the lifecycle |
+
+  Pitfalls and procedures are used rarely and cost a lot to lose, so they wait as long as the earned cold rule (60 days). Archive stays reversible (digest + `memory.undo`). At the change: 230 eligible (126 pitfall, 104 decision, 0 map), 48 provisional, all with a clock started at the migration (≥ 2026-11-14), so the first pass archives nothing under either rule; the first decisions can go from ~2026-12-05, the first pitfalls from ~2027-01-13.
 - Demotion: a contested longTerm falls back to earned until re-checked.
 - Work-capture proposals (`proposed`, 14-day expiry today) become `provisional` active once the claim checks pass, instead of expiring unseen; their provisional clock starts at that moment, not at proposal creation. (My call; see below.)
 - The label `(não revisada, <origem>)` is replaced by `(provisória)` on provisional memories only. Earned, longTerm, reviewed and pinned memories carry none.
@@ -93,6 +104,8 @@ The owner wants the user out of the loop: the working agent judges whether an in
 ### Observability
 
 `memory.stats` gains: counts per tier, promotions, demotions, flags by verdict, contested open, `verify` results (valid/invalid/deferred), provisional archived. The digest lists every promotion and archive with `memory.undo`.
+
+Precision (2026-11-17, Leva 1): beside coverage, `usage.precision` = useful uses counted at the next prompt ÷ the prompt-injected ids that can earn one (also per agent and in the weekly trend). Definitions in `2026-11-17-memory-measurement-baseline.md`. Measurement only: no cut, tier or TTL rule changed.
 
 ### Testing
 
@@ -110,7 +123,7 @@ File and type names, the exact short-id format, the scrub of reasons, how the co
 
 - Lifecycle state outside the repo (a sandboxed agent can write `.md` files).
 - Passive "no correction" counts as use, but longTerm needs the curator gate; absence of objection is weak evidence and a planted memory could collect it.
-- The numbers: 21 days, 2 uses / 2 days / 2 sessions, 8 uses / 4 days / 14 days, 12 longTerm per project, 3 in full at start, −0.3 per flag, 14-day cooldown.
+- The numbers: 21 days (decision/map; 60 for pitfall/procedure since 2026-11-17), 2 uses / 2 days / 2 sessions, 8 uses / 4 days / 14 days, 12 longTerm per project, 3 in full at start, −0.3 per flag, 14-day cooldown.
 - One flag contests; only a curator `invalid` verdict, or a failed claim check with no curator available, archives. Two flags from distinct sessions just make the re-check urgent. (Closes the "two planted sessions" hole.)
 - A session is the agent conversation (memory event log session id); injected-to-you is persisted; a use whose next prompt never arrives is dropped, not counted.
 - Verify budget order: corrections, contested re-checks, promotion gates (≤ 3 a day), routine.

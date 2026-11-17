@@ -157,7 +157,7 @@ struct PreferencesView: View {
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
         case .atualizacoes: UpdatePreferences(client: client)
         case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
-        case .memoria: memorySection
+        case .memoria: VStack(alignment: .leading, spacing: 22) { memorySection; CursorMemoryPreferences(client: client) }
         case .plugins: PluginsPreferences(client: client)
         case .celular: CelularPreferences(client: client)
         case .android: AndroidPreferences(client: client)

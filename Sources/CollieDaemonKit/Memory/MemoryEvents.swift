@@ -12,6 +12,9 @@ struct MemoryEvent: Codable, Sendable, Equatable {
         /// An ask written to a terminal, and its end (reply, idle, timeout, failure): `ask` is its id (spec 2026-11-17
         /// cursor memory §6: did the Cursor pull its memory between the two?).
         case askDelivered, askDone
+        /// The next prompt resolved the last prompt injection's pending ids (Leva 1 precision): `ids` counted as a useful
+        /// use (`addUse` took them), `hits` how many were pending, `reason` `correction` when the prompt dropped them all.
+        case used
     }
     var at = Date.distantPast   // stamped by the log
     var type: Kind
@@ -21,6 +24,9 @@ struct MemoryEvent: Codable, Sendable, Equatable {
     var ids: [UUID]? = nil, kinds: [String]? = nil, scopes: [String]? = nil
     /// `injected`: the text's UTF-8 bytes and its estimate (`bytes / 4` rounded up); start|prompt|rule|compact|checklist|retraction.
     var bytes: Int? = nil, tokens: Int? = nil, `where`: String? = nil
+    /// `injected` at `prompt` with a session: how many of `ids` can earn a useful use (`LifecycleRules.eligible`). Absent in
+    /// lines from before Leva 1: such an injection counts as injected, never as a precision candidate.
+    var eligible: Int? = nil
     /// `searched`: results returned (and their ids, in `ids`).
     var hits: Int? = nil
     /// Lifecycle events: correction|conversation|proposal|review|consolidation|agent|user.

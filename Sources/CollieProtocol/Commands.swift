@@ -259,6 +259,14 @@ public enum Commands {
         CommandSpec(name: "memory.task", summary: "Call at the start of every task: new rules, retractions and memory relevant to it",
                     params: [ParamSpec("task", .rest, positional: true, required: true, help: "One line: what you are about to do")],
                     timeoutSeconds: 10),
+        // the app's (Preferências › Memória): "Confiar" list, the ledger's status, "Memória no Cursor"
+        CommandSpec(name: "memory.untrusted", summary: "Memories edited outside Collie, with the text Collie last wrote for each",
+                    params: [], timeoutSeconds: 30, exposedToMCP: false),
+        CommandSpec(name: "memory.provenance-status", summary: "The provenance ledger: restarted after damage, files adopted",
+                    params: [], timeoutSeconds: 5, exposedToMCP: false),
+        CommandSpec(name: "memory.cursor-mode", summary: "Memory for Cursor: full|start|off (sessions started after it)",
+                    params: [ParamSpec("value", .string, positional: true, help: "full|start|off; none: read")],
+                    timeoutSeconds: 5, exposedToMCP: false),
         // `collie mcp` asks at `initialize`: which agent runs it and whether to offer memory_task (with its instructions)
         CommandSpec(name: "memory.mcp-profile", summary: "MCP: this terminal's agent and whether memory_task is offered",
                     params: [], timeoutSeconds: 5, exposedToMCP: false),

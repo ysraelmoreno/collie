@@ -500,6 +500,7 @@ struct NodeTitleBar: View {
             if t?.sandbox == .free { CollieTag("livre", tone: .danger).help("Terminal livre: sem sandbox, nenhuma guia chega a ele") }
             else if t != nil { AccessBadge(id: id, client: client) }
             if let l = client.lot(of: id) { CollieTag(l.name, tone: .secondary).help(l.goal.isEmpty ? "Lote \(l.name)" : "Lote \(l.name): \(l.goal)") }
+            if let t, CursorMemoryBadge.isCursor(preset: t.preset, command: t.command) { CursorMemoryTag(name: t.name, client: client) }
             if case .disconnected = client.state { Text("desconectado").foregroundStyle(Color.collieDanger) }
             if let text = status.text { Text(text).foregroundStyle(color(status)).lineLimit(1) }
             if case .stopped = status { Button("Reiniciar", action: restart).controlSize(.mini) }

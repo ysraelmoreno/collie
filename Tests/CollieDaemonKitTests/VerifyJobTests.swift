@@ -99,16 +99,83 @@ private func candidate(_ e: inout LifecycleEntry) {
         }
     }
 
-    /// Validation keeps only a retire of the job's own memory.
-    @Test func retireOfAnotherIdIsDropped() async throws {
-        let fake = FakeCurator()
+    /// A contested `ids[0]` (one flag) and a verify job for it, run by hand (the queue's runner stays unavailable).
+    private func contestedJob(_ d: Daemon, _ store: RepoMemory, _ id: UUID, _ kind: CuratorJobKind = .verifyContested) async throws -> CuratorJob {
+        await d.router.memory.lifecycle.update(id, now: Date()) { e in
+            e.flags.append(LifecycleFlag(verdict: .wrong, session: "s9", day: "2026-11-17", reason: "stale")); e.contestedNow = true
+        }
+        let r = try #require(try await store.run { $0.store.all().records.first { $0.id == id } })
+        return CuratorJob(id: UUID(), kind: kind, store: store.key, payload: MemoryVerify.payload(memory: r, flags: [], facts: []),
+                          dedupe: "", createdAt: Date(), attempts: 0)
+    }
+    private func answer(_ json: JSONValue) -> Curator.Call { { _ in CuratorOutput(json: json, inputTokens: 1, outputTokens: 1, costUSD: 0) } }
+    /// Still contested, its flag kept, never re-checked.
+    private func stillContested(_ d: Daemon, _ id: UUID) async -> Bool {
+        let e = await d.router.memory.lifecycle.entry(id)
+        return e?.contestedNow == true && e?.flags.count == 1 && e?.recheckedAt == nil
+    }
+
+    /// E1: an answer that isn't `{"ops":[…]}` fails the job (an attempt spent), never reads as valid.
+    @Test func junkNeverValid() async throws {
+        let fake = FakeCurator(); fake.avail = .unavailable("sem modelo")
         try await withDaemon(configure: { $0.curatorRunner = fake; $0.gitFacts = { _ in VerifyFacts() } }) { d, p in
-            let (t, ids, store) = try await setup(d, p, n: 2)
-            fake.output = retire(ids[1])
-            #expect(try await flag(p, t, ids[0])["queued"] == .bool(true))
-            #expect(await waitFor(10) { await d.router.memory.lifecycle.entry(ids[0])?.recheckedAt != nil })   // read as valid
+            let (_, ids, store) = try await setup(d, p)
+            let job = try await contestedJob(d, store, ids[0])
+            await #expect(throws: ProtocolError.self) { try await d.router.runVerifyJob(job, call: answer(.string("x"))) }
+            #expect(await stillContested(d, ids[0]))
+        }
+    }
+
+    @Test func emptyObjectNeverValid() async throws {
+        let fake = FakeCurator(); fake.avail = .unavailable("sem modelo")
+        try await withDaemon(configure: { $0.curatorRunner = fake; $0.gitFacts = { _ in VerifyFacts() } }) { d, p in
+            let (_, ids, store) = try await setup(d, p)
+            let job = try await contestedJob(d, store, ids[0])
+            await #expect(throws: ProtocolError.self) { try await d.router.runVerifyJob(job, call: answer(.object([:]))) }
+            #expect(await stillContested(d, ids[0]))
+        }
+    }
+
+    /// An op that validates but isn't a retire of this memory decides nothing: the contest stays, nothing is promoted.
+    @Test func strayOpIsUndecided() async throws {
+        let fake = FakeCurator(); fake.avail = .unavailable("sem modelo")
+        try await withDaemon(configure: { $0.curatorRunner = fake; $0.gitFacts = { _ in VerifyFacts() } }) { d, p in
+            let (_, ids, store) = try await setup(d, p)
+            let job = try await contestedJob(d, store, ids[0])
+            try await d.router.runVerifyJob(job, call: answer(.object(["ops": .array([.object(["op": .string("activate"), "id": .string(ids[0].uuidString)])])])))
+            #expect(await stillContested(d, ids[0]))
+            #expect(try await status(store, ids[0]) == .active)
+            d.router.memory.events.flush()
+            #expect(d.router.memory.events.read(since: Date().addingTimeInterval(-60)).contains { $0.type == .verified && $0.verdict == "undecided" })
+        }
+    }
+
+    /// A retire of another memory is dropped by validation: the job fails instead of reading as valid.
+    @Test func droppedOpFails() async throws {
+        let fake = FakeCurator(); fake.avail = .unavailable("sem modelo")
+        try await withDaemon(configure: { $0.curatorRunner = fake; $0.gitFacts = { _ in VerifyFacts() } }) { d, p in
+            let (_, ids, store) = try await setup(d, p, n: 2)
+            let job = try await contestedJob(d, store, ids[0])
+            await #expect(throws: ProtocolError.self) { try await d.router.runVerifyJob(job, call: { _ in retire(ids[1]) }) }
+            #expect(await stillContested(d, ids[0]))
             let (a, b) = (try await status(store, ids[0]), try await status(store, ids[1]))
             #expect(a == .active && b == .active)
+        }
+    }
+
+    /// An undecided promotion gate neither promotes nor marks the gate (it is tried again later).
+    @Test func promotionNeedsValid() async throws {
+        let fake = FakeCurator(); fake.avail = .unavailable("sem modelo")
+        try await withDaemon(configure: { $0.curatorRunner = fake; $0.gitFacts = { _ in VerifyFacts() } }) { d, p in
+            let (_, ids, store) = try await setup(d, p)
+            let lc = d.router.memory.lifecycle
+            await lc.update(ids[0], now: Date()) { candidate(&$0) }
+            let r = try #require(try await store.run { $0.store.all().records.first { $0.id == ids[0] } })
+            let job = CuratorJob(id: UUID(), kind: .verifyPromotion, store: store.key, payload: MemoryVerify.payload(memory: r, flags: [], facts: []),
+                                 dedupe: "", createdAt: Date(), attempts: 0)
+            try await d.router.runVerifyJob(job, call: answer(.object(["ops": .array([.object(["op": .string("activate"), "id": .string(ids[0].uuidString)])])])))
+            let e = await lc.entry(ids[0])
+            #expect(e?.tier != .longTerm && e?.gatedAt == nil)
         }
     }
 

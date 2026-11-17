@@ -703,14 +703,18 @@ actor MemoryService {
         return false
     }
 
-    /// A verify job's verdict: a `retire` of `id` is `invalid` (the router archived it, reversibly), anything else `valid`.
-    /// Contested valid: flags cleared, uncontested, 14-day cooldown. Promotion valid: longTerm if still a candidate and its
-    /// project holds < 12; otherwise (or invalid) it stays earned and is not gated again for 14 days.
+    /// A verify job's verdict (`MemoryVerify.verdict`; `invalid`: the router archived it, reversibly). Contested valid: flags
+    /// cleared, uncontested, 14-day cooldown. Promotion valid: longTerm if still a candidate and its project holds < 12;
+    /// otherwise (or invalid) it stays earned and is not gated again for 14 days. `undecided` changes nothing (E1: fail closed).
     /// Returns true when `id` was promoted to longTerm (the router writes its "promovida" digest row).
     @discardableResult
-    func applyVerdict(_ id: UUID, kind: CuratorJobKind, ops: [CuratorOp], now: Date = Date()) async -> Bool {
-        let invalid = ops.contains { if case .retire(let r, _) = $0 { r == id } else { false } }
+    func applyVerdict(_ id: UUID, kind: CuratorJobKind, verdict: VerifyVerdict, now: Date = Date()) async -> Bool {
+        let invalid = verdict == .invalid
         let store = await lifecycle.entry(id)?.store
+        guard verdict != .undecided else {
+            if kind == .verifyContested || kind == .verifyPromotion { noteLifecycle(.verified, id, store: store, verdict: verdict.rawValue) }
+            return false
+        }
         switch kind {
         case .verifyContested:
             noteLifecycle(.verified, id, store: store, verdict: invalid ? "invalid" : "valid")

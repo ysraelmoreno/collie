@@ -93,7 +93,7 @@ private let bad = "deadbee1"
             await d.router.lifecyclePass(store, now: now)
             #expect(await lc.entry(r.id)?.tier == .longTerm)   // never demoted on disk
             #expect(MemoryService.renderLongTerm([r], entries: await lc.all(), limit: 4096).ids.isEmpty)
-            await d.router.memory.applyVerdict(r.id, kind: .verifyContested, ops: [], now: now)
+            await d.router.memory.applyVerdict(r.id, kind: .verifyContested, verdict: .valid, now: now)
             #expect(MemoryService.renderLongTerm([r], entries: await lc.all(), limit: 4096).ids == [r.id])
         }
     }
@@ -111,7 +111,7 @@ private let bad = "deadbee1"
                 e.usefulUses = Set((0..<8).map { UseKey(day: dayString(now.addingTimeInterval(-ago[$0 % 4] * 86_400)), session: "u\($0)") })
             }
             #expect(LifecycleRules.promotionCandidate(try #require(await lc.entry(next.id)), now: now))
-            await d.router.memory.applyVerdict(next.id, kind: .verifyPromotion, ops: [], now: now)
+            await d.router.memory.applyVerdict(next.id, kind: .verifyPromotion, verdict: .valid, now: now)
             let e = await lc.entry(next.id)
             #expect(e?.tier != .longTerm && e?.gatedAt == now && e?.recheckedAt == nil)
         }
@@ -308,7 +308,7 @@ private let bad = "deadbee1"
             #expect(await mem.scores.factor(r.id) <= MemoryCleanup.lowScore)
             await d.router.consolidate(store, now: now)
             #expect(try await status(store, r.id) == .active)
-            await mem.applyVerdict(r.id, kind: .verifyContested, ops: [], now: now)
+            await mem.applyVerdict(r.id, kind: .verifyContested, verdict: .valid, now: now)
             #expect(abs(await mem.scores.factor(r.id) - 1) < 1e-9)
         }
     }
@@ -321,11 +321,11 @@ private let bad = "deadbee1"
             try await put(store, [r, c])
             let mem = d.router.memory, lc = mem.lifecycle, now = Date()
             await lc.update(r.id, now: now) { $0.usefulUses = self.eightUses(now) }
-            #expect(await mem.applyVerdict(r.id, kind: .verifyPromotion, ops: [], now: now))
+            #expect(await mem.applyVerdict(r.id, kind: .verifyPromotion, verdict: .valid, now: now))
             let pe = await lc.entry(r.id)
             #expect(pe?.gatedAt == now && pe?.recheckedAt == nil)
             #expect(try await mem.applyFlag(session: "s", id: r.id, record: r, verdict: .wrong, reason: "x", now: now).contested)
-            await mem.applyVerdict(c.id, kind: .verifyContested, ops: [], now: now)
+            await mem.applyVerdict(c.id, kind: .verifyContested, verdict: .valid, now: now)
             #expect(try await !mem.applyFlag(session: "s", id: c.id, record: c, verdict: .wrong, reason: "x", now: now).contested)
         }
     }
@@ -384,7 +384,7 @@ private let bad = "deadbee1"
             let mem = d.router.memory, now = Date()
             for s in ["a", "b", "c"] { _ = try await mem.applyFlag(session: s, id: r.id, record: r, verdict: .wrong, reason: "x", now: now) }
             #expect(abs(await mem.scores.factor(r.id) - ScoreStore.floor) < 1e-9)
-            await mem.applyVerdict(r.id, kind: .verifyContested, ops: [], now: now)
+            await mem.applyVerdict(r.id, kind: .verifyContested, verdict: .valid, now: now)
             #expect(abs(await mem.scores.factor(r.id) - 1) < 1e-9)
             #expect(await mem.lifecycle.entry(r.id)?.flagPenalty == nil)
         }

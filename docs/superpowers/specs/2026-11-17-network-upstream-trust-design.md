@@ -35,6 +35,12 @@ funcionou. O Collie deve fazer isso sozinho.
 8. A falha de verificação chega ao addon como `error` com `flow.error.msg = "Certificate verify failed: <motivo>"`
    (`proxy/layers/tls.py:310-321`), mesmo com `-q`; o cliente recebe um 502 HTML.
 9. O módulo Network não tem logger; o padrão do daemon é `FileHandle.standardError` (`DataBackup.swift:344`).
+10. **Evidência da máquina corporativa** (só nomes, `security dump-trust-settings`, domínio ainda não confirmado):
+    seis certificados com trust settings: `<empresa> Example Built-in Certificate Authority`, `Example Internal Root CA`,
+    `ca.example.com`, `eproxy.ca.example.com`, `USERTrust RSA Certification Authority`,
+    `<empresa> Example Private Root CA`. O inspetor de TLS é o TLSProxy e a CA dele entra por trust settings. Isso mostra que
+    a CA aparece; **não** prova que a regra B a inclui (falta ver Policy/Result de cada entrada e quem é
+    autoassinado: `eproxy.ca.example.com` parece intermediária de `ca.example.com`).
 
 ## Metas
 
@@ -69,8 +75,10 @@ funcionou. O Collie deve fazer isso sozinho.
   como folha (key usage, basic constraints) e pode recusar CAs legítimas (testar também com
   `SecPolicyCreateBasicX509`); uma chamada ao trustd por certificado; não é função pura.
 
-**Recomendação:** B como padrão **se** a Tarefa 1 mostrar a CA da empresa em `security dump-trust-settings -d` (ou
-sem `-d`) e no protótipo B; senão B′. B é mais simples de testar e de explicar; B′ só se B não cobrir o caso real.
+**Recomendação:** B como padrão **se** o protótipo B da Tarefa 1 incluir `ca.example.com` (ou a raiz que
+assina a cadeia do TLSProxy) pela regra completa; senão B′. A CA já aparece nas trust settings (Estado atual, item
+10); falta a regra. Uma intermediária com `TrustRoot` (não autoassinada) fica fora pela regra, o que é coerente: sem
+`X509_V_FLAG_PARTIAL_CHAIN` o OpenSSL do `mitmdump` exige a raiz autoassinada no pacote de qualquer jeito.
 
 **Como passar ao `mitmdump`:** `--set ssl_verify_upstream_trusted_ca=<pacote>` em `MitmProcess.args`. Escrever no
 `config.yaml` foi descartado (clobraria o do usuário).
@@ -164,7 +172,8 @@ sem `-d`) e no protótipo B; senão B′. B é mais simples de testar e de expli
 
 ## Tarefas independentes
 
-1. **Validação na máquina corporativa** (antes de tudo): `dump-trust-settings`, protótipo B e B′; escolhe o critério.
+1. **Validação na máquina corporativa** (antes de tudo): `dump-trust-settings -d` e sem `-d` com Policy/Result da
+   entrada TLSProxy, autoassinado ou não, protótipo B (regra completa) e B′; escolhe o critério.
 2. `UpstreamTrust`: snapshot injetável, regra B com dedupe, escrita atômica, fonte real.
 3. `MitmProcess.start(upstreamCA:)` + args + leitura tolerante do `config.yaml`; `upstreamCA` no `NetworkProxy`, no
    `FakeProxy` e no status.

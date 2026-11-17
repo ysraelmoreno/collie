@@ -234,6 +234,8 @@ extension CommandRouter {
                 var fresh = MemoryRecord(id: id, kind: .pitfall, scope: p.scope, lotId: store.lotId, subject: subject, title: n.title,
                                          body: PitfallClasses.withExamples(body, ex.isEmpty ? [] : [ex]), hits: 1, origin: "curador")
                 fresh.curatedBy = curatedBy
+                // Task 10: a limited curator's class is a proposal, and absorbs nothing until the user approves it
+                if curatedBy?.trust == .limited { fresh.status = .proposed; inst = nil }
                 let rec = fresh
                 try await store.run { try $0.store.write(rec) }
                 var before: [MemoryRecord] = []

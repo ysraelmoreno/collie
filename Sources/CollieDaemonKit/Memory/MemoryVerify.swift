@@ -75,6 +75,8 @@ extension CommandRouter {
     /// reached) and a failed claim check is archived now instead, reversibly (`memory.undo` / `memory.restore`); with no
     /// failed check the job waits. false: not queued.
     func enqueueVerify(_ id: UUID, kind: CuratorJobKind) async -> Bool {
+        // Task 10: longTerm needs a full curator's gate; with a limited one the promotion isn't even queued
+        if kind == .verifyPromotion, await curator.active.trust == .limited { return false }
         var found: (store: RepoMemory, rec: MemoryRecord)?
         var ids: [UUID] = []
         for s in await knownStores() where s.root != nil && found == nil {
@@ -116,9 +118,11 @@ extension CommandRouter {
         // E1: fail closed — an unreadable answer or a dropped op spends an attempt, never reads as valid
         let (ops, dropped) = CuratorOps.validate(out.json, scope: CuratorScope(ids: [p.id], scopes: [], kinds: [], maxOps: 4))
         guard dropped == 0 else { throw Curator.junk("verdict") }
-        let verdict = MemoryVerify.verdict(ops, id: p.id)
+        let said = MemoryVerify.verdict(ops, id: p.id)
+        // Task 10: a limited curator decides nothing (its retire is a question, its "valid" clears and promotes nothing)
+        let verdict: VerifyVerdict = out.curatedBy.trust == .limited ? .undecided : said
         let home = await memory.store(key: j.store)   // opened after a restart: applyVerdict counts its longTerm
-        if j.kind == .verifyContested, verdict == .invalid, let retire = ops.first(where: { if case .retire = $0 { true } else { false } }) {
+        if j.kind == .verifyContested, said == .invalid, let retire = ops.first(where: { if case .retire = $0 { true } else { false } }) {
             let entries = try await applyOps([retire], job: j, curatedBy: out.curatedBy)
             do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
         }

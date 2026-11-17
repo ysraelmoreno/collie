@@ -310,6 +310,8 @@ extension CommandRouter {
         guard let family = await memory.store(key: ctx.family) else { throw ProtocolError(code: .internal, message: "curator: store \(ctx.family) gone") }
         let stores = family === memory.global ? [family] : [family, memory.global]
         let correction = job.kind == .correction
+        /// Task 10 (spec §2.3): a limited curator proposes and asks; it never activates, retires, drops, supersedes or merges.
+        let limited = curatedBy?.trust == .limited
         var out: [DigestEntry] = [], touched: Set<UUID> = [], created: MemoryRecord?
         func entry(_ action: String, _ title: String, _ reason: String, _ s: RepoMemory, created: [UUID] = [], by: UUID? = nil,
                    before: [MemoryRecord]) {
@@ -374,8 +376,8 @@ extension CommandRouter {
             rec.curatedBy = curatedBy
             // a retry: already written (a confirmed likely-user proposal is written again, active)
             if let done = await find(job.id), !(ctx.user && done.rec.status == .proposed) { created = done.rec; touched.insert(done.rec.id); continue }
-            if correction, !ctx.user {
-                rec.status = .proposed   // R12: not proven the user's: the user approves it in the panel
+            if correction && !ctx.user || limited {
+                rec.status = .proposed   // R12: not proven the user's (or a limited curator's): the user approves it in the panel
                 let r = rec
                 try await target.run { try $0.store.write(r) }
                 created = rec; touched.insert(rec.id)
@@ -410,7 +412,7 @@ extension CommandRouter {
             case .create, .score, .bump: continue
             case .supersede(let id, let by, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .active, !untouchable(r) else { continue }
-                if users(r), !correction { ask("aposentar", reason, [r], s); continue }   // an ask changes nothing: not touched
+                if users(r) && !correction || limited { ask("aposentar", reason, [r], s); continue }   // an ask changes nothing: not touched
                 guard let byId = by ?? created?.id, byId != id else { continue }
                 if by != nil { guard let b = await find(byId), b.rec.status == .active else { continue } }
                 var n = r; n.status = .superseded; n.supersededBy = byId; n.pinned = false; n.updatedAt = Date()
@@ -423,7 +425,7 @@ extension CommandRouter {
                 var from: [(store: RepoMemory, rec: MemoryRecord)] = []
                 for id in ids { if let f = await find(id), [.active, .proposed].contains(f.rec.status), !untouchable(f.rec) { from.append(f) } }
                 guard from.count == ids.count else { continue }
-                if users(target) && (title != nil || body != nil) || from.contains(where: { users($0.rec) }) {
+                if limited || users(target) && (title != nil || body != nil) || from.contains(where: { users($0.rec) }) {
                     ask("mesclar em", reason, [target] + from.map(\.rec), s); continue
                 }
                 if s === memory.global, family !== memory.global, leaks([title, body].compactMap { $0 } + aliases) { continue }
@@ -443,12 +445,13 @@ extension CommandRouter {
                 entry("mesclado", t.title, reason, s, before: [target] + from.map(\.rec))
             case .retire(let id, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .active, !untouchable(r) else { continue }
-                if users(r) { ask("aposentar", reason, [r], s); continue }
+                if users(r) || limited { ask("aposentar", reason, [r], s); continue }
                 var n = r; n.status = .archived; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id)
                 entry("aposentado", r.title, reason, s, before: [r])
             case .activate(let id, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed, !untouchable(r) else { continue }
+                if limited { ask("ativar", reason, [r], s); continue }
                 var n = r; n.status = .active; n.updatedAt = Date()
                 if let curatedBy { n.curatedBy = curatedBy }
                 let old = await replaced(n, in: s)
@@ -459,6 +462,7 @@ extension CommandRouter {
                 entry("ativado", r.title, reason, s, before: [r] + (old.map { [$0] } ?? []))
             case .drop(let id, let reason):
                 guard !touched.contains(id), let (s, r) = await find(id), r.status == .proposed, !untouchable(r) || id == ctx.proposal else { continue }
+                if limited { ask("descartar", reason, [r], s); continue }
                 var n = r; n.status = .discarded; n.updatedAt = Date()
                 try await write(s, n); touched.insert(id)
                 entry("descartado", r.title, reason, s, before: [r])

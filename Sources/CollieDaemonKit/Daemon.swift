@@ -273,7 +273,7 @@ public final class Daemon: Sendable {
         await router.memory.setProposalState { [weak router] in await router?.proposalState() ?? ([], []) }
         await router.memory.setVerifier { [weak router] id, kind in await router?.enqueueVerify(id, kind: kind) ?? false }
         await router.migrateProposals()   // once: the proposals already waiting go through the curator
-        await router.curator.start { [router] job, call in try await router.curate(job, call) }
+        await router.curator.start(job: { [router] job, call, inputMax in try await router.curate(job, call, inputMax: inputMax) })
         await router.startConsolidation()
         await router.startRemote()
     }

@@ -58,6 +58,16 @@ enum Consolidation {
             .prefix(max).map { Array($0.prefix(clusterSize.upperBound)) }
     }
 
+    /// `p` inside `inputMax` with its instructions (the fence nonce is 32 hex): the last clusters go first. At enqueue with
+    /// the default cap, and again at run with the chosen provider's (Task 9).
+    static func fit(_ p: ConsolidatePayload, inputMax: Int) -> ConsolidatePayload {
+        var p = p
+        while !p.clusters.isEmpty, instructions.count + input(p, nonce: String(repeating: "0", count: 32)).unicodeScalars.count > inputMax {
+            p.clusters.removeLast()
+        }
+        return p
+    }
+
     static func input(_ p: ConsolidatePayload, nonce: String) -> String {
         func d(_ s: String) -> String { s.replacingOccurrences(of: "DADOS-", with: "DADOS_", options: .caseInsensitive) }
         let mark = "DADOS-\(nonce)", f = ISO8601DateFormatter()
@@ -160,12 +170,9 @@ extension CommandRouter {
                   updatedAt: r.updatedAt)
         }
         let lot = store.lotId.flatMap { id in ws.lots.first { $0.id == id } }
-        var p = ConsolidatePayload(family: store.key, lot: lot?.id, lotName: lot?.name, root: store.root?.path,
-                                   clusters: Consolidation.clusters(recs, max: Consolidation.clustersMax).map { $0.map(item) })
-        // inside the curator's input cap (the fence nonce is 32 hex)
-        while !p.clusters.isEmpty, Consolidation.instructions.count + Consolidation.input(p, nonce: String(repeating: "0", count: 32)).unicodeScalars.count > Curator.inputMax {
-            p.clusters.removeLast()
-        }
+        let p = Consolidation.fit(ConsolidatePayload(family: store.key, lot: lot?.id, lotName: lot?.name, root: store.root?.path,
+                                                     clusters: Consolidation.clusters(recs, max: Consolidation.clustersMax).map { $0.map(item) }),
+                                  inputMax: Curator.inputMax)
         guard !p.clusters.isEmpty, let payload = try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p)) else { return }
         let ids = p.clusters.flatMap { $0.map(\.id.uuidString) }.sorted().joined(separator: ",")
         _ = await curator.enqueue(CuratorJob(id: UUID(), kind: .consolidate, store: store.key, payload: payload,
@@ -186,13 +193,16 @@ extension CommandRouter {
 
     /// The curator's ops, newest wins: no creates; a supersede of a newer memory by an older one becomes an ask (R20: an
     /// ask changes nothing). `applyOps` does the rest (a pinned/edited one → ask, a feedback never, the digest rows).
-    func runConsolidateJob(_ j: CuratorJob, call: Curator.Call) async throws {
-        let p = try Self.consolidatePayload(j)
+    @discardableResult
+    func runConsolidateJob(_ j: CuratorJob, call: Curator.Call, inputMax: Int = Curator.inputMax) async throws -> CuratorJobResult {
+        let p = Consolidation.fit(try Self.consolidatePayload(j), inputMax: inputMax)
+        guard !p.clusters.isEmpty else { return .ok }
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let out = try await call(CuratorCall(instructions: Consolidation.instructions, input: Consolidation.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
         let at = Dictionary(p.clusters.flatMap { $0.map { ($0.id, $0.updatedAt) } }, uniquingKeysWith: { a, _ in a })
-        let ops = CuratorOps.validate(out.json, scope: Self.consolidateScope(p)).ops.compactMap { op -> CuratorOp? in
+        let v = CuratorOps.validate(out.json, scope: Self.consolidateScope(p))
+        let ops = v.ops.compactMap { op -> CuratorOp? in
             switch op {
             case .create, .score, .bump: return nil
             case .supersede(let id, let by, let reason):
@@ -210,5 +220,6 @@ extension CommandRouter {
         }
         let entries = try await applyOps(ops, job: j, curatedBy: out.curatedBy)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
+        return CuratorOps.result(out.json, v)
     }
 }

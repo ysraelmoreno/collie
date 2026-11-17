@@ -107,14 +107,15 @@ extension CommandRouter {
 
     /// One call; only a `retire` of the job's memory gets through validation. A contested one's retire archives it through
     /// `applyOps` (the digest row is its Desfazer); the lifecycle side is `MemoryService.applyVerdict`.
-    func runVerifyJob(_ j: CuratorJob, call: Curator.Call) async throws {
+    @discardableResult
+    func runVerifyJob(_ j: CuratorJob, call: Curator.Call) async throws -> CuratorJobResult {
         let p = try Self.verifyPayload(j)
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let out = try await call(CuratorCall(instructions: MemoryVerify.instructions, input: MemoryVerify.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
         // E1: fail closed — an unreadable answer or a dropped op spends an attempt, never reads as valid
         let (ops, dropped) = CuratorOps.validate(out.json, scope: CuratorScope(ids: [p.id], scopes: [], kinds: [], maxOps: 4))
-        guard dropped == 0 else { throw ProtocolError(code: .internal, message: "curator: unreadable verdict") }
+        guard dropped == 0 else { throw Curator.junk("verdict") }
         let verdict = MemoryVerify.verdict(ops, id: p.id)
         let home = await memory.store(key: j.store)   // opened after a restart: applyVerdict counts its longTerm
         if j.kind == .verifyContested, verdict == .invalid, let retire = ops.first(where: { if case .retire = $0 { true } else { false } }) {
@@ -128,5 +129,6 @@ extension CommandRouter {
                                   created: [], before: [rec], undone: false, resolved: false)
             do { try MemoryEventLog.$source.withValue("verify") { try digest.append([row]) } } catch { memoryLog("digest: \(error)") }
         }
+        return .ok
     }
 }

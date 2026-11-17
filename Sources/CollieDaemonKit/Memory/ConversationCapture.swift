@@ -46,7 +46,7 @@ enum ConversationCapture {
 
     /// The fenced input (`MemoryLearning.input`'s marks), at most `Curator.inputMax` scalars: the candidates first, then
     /// the newest part of the chunk that fits (the curator cuts from the end, which would drop the closing mark).
-    static func input(chunk: String, candidates: [CorrectionPayload.Candidate], nonce: String) -> String {
+    static func input(chunk: String, candidates: [CorrectionPayload.Candidate], nonce: String, inputMax: Int = Curator.inputMax) -> String {
         func d(_ s: String) -> String { s.replacingOccurrences(of: "DADOS-", with: "DADOS_", options: .caseInsensitive) }
         let mark = "DADOS-\(nonce)"
         var head = [mark]
@@ -56,7 +56,7 @@ enum ConversationCapture {
         }
         head.append("Conversa:")
         let h = head.joined(separator: "\n") + "\n", tail = "\n" + mark
-        let room = max(0, Curator.inputMax - h.unicodeScalars.count - tail.unicodeScalars.count)
+        let room = max(0, inputMax - h.unicodeScalars.count - tail.unicodeScalars.count)
         return h + String(String.UnicodeScalarView(d(chunk).unicodeScalars.suffix(room))) + tail
     }
 
@@ -177,11 +177,13 @@ extension CommandRouter {
 
     /// The job: the chunk after the mark (scrubbed with the live secrets), the 8 nearest records of the store family, one
     /// call, the new records written, then the mark. A failed call or junk answer throws (the mark stays: read again).
-    func runConversationJob(_ j: CuratorJob, call: Curator.Call) async throws {
+    @discardableResult
+    func runConversationJob(_ j: CuratorJob, call: Curator.Call, inputMax: Int = Curator.inputMax) async throws -> CuratorJobResult {
         let p = try Self.conversationPayload(j)
         conversations.running.insert(p.transcript)
-        do { try await conversationRun(j, p, call: call) } catch { await conversationDone(p.transcript); throw error }
+        do { try await conversationRun(j, p, call: call, inputMax: inputMax) } catch { await conversationDone(p.transcript); throw error }
         await conversationDone(p.transcript)
+        return .ok   // an unreadable answer threw `Curator.junk`
     }
 
     /// The run is over: a trigger that came meanwhile is captured now (from the new mark).
@@ -190,20 +192,20 @@ extension CommandRouter {
         if let f = conversations.followUp.removeValue(forKey: path) { await captureConversation(f.tid, transcript: path, force: f.force) }
     }
 
-    private func conversationRun(_ j: CuratorJob, _ p: ConversationPayload, call: Curator.Call) async throws {
+    private func conversationRun(_ j: CuratorJob, _ p: ConversationPayload, call: Curator.Call, inputMax: Int) async throws {
         guard let url = TranscriptChunk.allowed(p.transcript, projectsDir: URL(fileURLWithPath: p.projects)) else {
             memoryLog("conversation capture: transcript refused for \(p.name)"); return
         }
         let mark = ConversationCapture.marks(captureMarksFile)[url.path] ?? 0, secrets = await auth.secrets()
-        guard let chunk = TranscriptChunk.read(url, from: mark, secrets: secrets, maxScalars: Curator.inputMax) else { return }
+        guard let chunk = TranscriptChunk.read(url, from: mark, secrets: secrets, maxScalars: inputMax) else { return }
         guard !chunk.text.isEmpty else { try ConversationCapture.setMark(captureMarksFile, path: url.path, to: chunk.end); return }
         let store = if let lot = p.lot { await memory.lotStore(lot) } else { await memory.repo(for: p.cwd) }
         let cands = await nearest(chunk.text, store: store)
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let out = try await call(CuratorCall(instructions: ConversationCapture.instructions,
-                                             input: ConversationCapture.input(chunk: chunk.text, candidates: cands, nonce: nonce),
+                                             input: ConversationCapture.input(chunk: chunk.text, candidates: cands, nonce: nonce, inputMax: inputMax),
                                              schema: ConversationCapture.schema))
-        guard let o = ConversationCapture.decode(out.json) else { throw ProtocolError(code: .internal, message: "curator: unreadable answer") }
+        guard let o = ConversationCapture.decode(out.json) else { throw Curator.junk("items") }
         var recs = ConversationCapture.apply(o, chunk: chunk.text, candidates: cands.map(\.id), terminal: p.name, lot: store.lotId, secrets: secrets,
                                              curatedBy: out.curatedBy)
         if store === memory.global { for i in recs.indices { recs[i].scope = .global } }   // outside git

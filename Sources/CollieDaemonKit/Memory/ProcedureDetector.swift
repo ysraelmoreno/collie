@@ -153,15 +153,17 @@ extension CommandRouter {
 
     /// One call; a named procedure is written `proposed` (agent-sourced: the user approves it in the panel, then it is a
     /// skill), never active. Its id is the job's (a retry writes nothing twice).
-    func runProcedureJob(_ j: CuratorJob, call: Curator.Call) async throws {
+    @discardableResult
+    func runProcedureJob(_ j: CuratorJob, call: Curator.Call) async throws -> CuratorJobResult {
         let p = try Self.procedurePayload(j)
-        guard let store = await memory.store(key: p.family) else { return }
+        guard let store = await memory.store(key: p.family) else { return .ok }
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let out = try await call(CuratorCall(instructions: MemoryLearning.procedureInstructions, input: MemoryLearning.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
         let scope = CuratorScope(ids: [], scopes: [.project], kinds: [.procedure], maxOps: 1)
-        guard case .create(let n)? = CuratorOps.validate(out.json, scope: scope).ops.first,
-              let body = MemoryLearning.procedureBody(when: n.howToApply.isEmpty ? n.title : n.howToApply, steps: n.body) else { return }
+        let v = CuratorOps.validate(out.json, scope: scope)
+        guard case .create(let n)? = v.ops.first,
+              let body = MemoryLearning.procedureBody(when: n.howToApply.isEmpty ? n.title : n.howToApply, steps: n.body) else { return CuratorOps.result(out.json, v) }
         var fresh = MemoryRecord(id: j.id, kind: .procedure, scope: .project, subject: MemoryFile.slug(n.title), title: n.title, body: body,
                                  status: .proposed, origin: "curador (trabalhos)", aliases: n.aliases)
         fresh.curatedBy = out.curatedBy
@@ -170,5 +172,6 @@ extension CommandRouter {
             guard !m.store.all().records.contains(where: { $0.id == rec.id }) else { return }
             try m.store.write(rec)
         }
+        return CuratorOps.result(out.json, v)
     }
 }

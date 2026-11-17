@@ -42,9 +42,19 @@ struct CuratorStatus: Codable, Sendable {
 /// One job at a time from a durable queue (`<dir>/jobs/<createdAt ms>-<id>.json`, 0600 in 0700 dirs), by kind priority.
 /// Runs on an enqueue, a cap change or the 10-minute tick; stops while the daily cap is reached, the cap is 0 or the
 /// runner is unavailable (jobs wait). A job whose handler fails `maxAttempts` times goes to `failed/`.
+/// How a job's answer read (Task 9): `junk` = not the expected shape, `allDropped` = every op dropped by validation.
+/// An empty answer (`{"ops":[]}`, `{"items":[]}`, `{"chunks":[]}`) is `ok`.
+enum CuratorJobResult: Sendable, Equatable { case ok, junk, allDropped }
+
 actor Curator {
     typealias Call = @Sendable (CuratorCall) async throws(ProtocolError) -> CuratorOutput
+    /// The router's: the job, its one-call door, the chosen provider's input cap; how the answer read.
+    typealias JobHandler = @Sendable (CuratorJob, Call, _ inputMax: Int) async throws -> CuratorJobResult
+    /// Tests' shorthand (every answer `ok`).
     typealias Handler = @Sendable (CuratorJob, Call) async throws -> Void
+    /// A handler throws this for an answer it can't read: it spends an attempt and counts toward the pause.
+    static func junk(_ what: String) -> ProtocolError { ProtocolError(code: .internal, message: "curator: junk answer (\(what))") }
+    static let pauseWindow = 20, pauseBad = 10
 
     static let tick: Duration = .seconds(600)
     static let inputMax = 12_000
@@ -84,7 +94,11 @@ actor Curator {
     private var config = Config(), usage = Usage()
     /// dedupe key → when last enqueued or finished (in memory: a restart forgets the 60 s window)
     private var recent: [String: Date] = [:]
-    private var handler: Handler?
+    private var handler: JobHandler?
+    /// The chosen provider's last `pauseWindow` calls (true: bad). In memory: a restart starts afresh.
+    private var outcomes: [CuratorProvider: [Bool]] = [:]
+    /// Runner calls made (a job that never called adds nothing to `outcomes`).
+    private var calls = 0
     private var loop: Task<Void, Never>?, ticker: Task<Void, Never>?
     private var waiter: CheckedContinuation<Void, Never>?, woken = false
     /// Jobs whose last attempt failed → the tick count at that failure: retried after a later tick, not on every enqueue
@@ -197,6 +211,7 @@ actor Curator {
         }
         config.provider = p.rawValue
         if let m { if p == .claude { config.model = m } else { config.models[p.rawValue] = m } }
+        outcomes[p] = nil   // another provider or model: the pause starts afresh
         write(config, to: dir.appendingPathComponent("config.json"))
         wake()
     }
@@ -213,6 +228,8 @@ actor Curator {
         let p = provider
         guard p == .claude || config.consented.contains(p.rawValue) else { return .unavailable("falta confirmar nas Preferências") }
         guard let r = runners[p] else { return .unavailable("\(p.rawValue) não encontrado") }
+        let w = outcomes[p] ?? [], bad = w.filter { $0 }.count
+        if bad >= Self.pauseBad { return .unavailable("saída inválida em \(bad) de \(w.count) (troque de modelo)") }
         return await r.availability()
     }
 
@@ -242,7 +259,9 @@ actor Curator {
                              provider: provider.rawValue, model: model(provider), trust: active.trust.rawValue, destination: active.destination)
     }
 
-    func start(handler: @escaping Handler) {
+    func start(handler: @escaping Handler) { start(job: { j, call, _ in try await handler(j, call); return .ok }) }
+
+    func start(job handler: @escaping JobHandler) {
         guard loop == nil else { return }
         self.handler = handler
         loop = Task { await self.run() }
@@ -302,18 +321,38 @@ actor Curator {
                 .min { ($0.kind.priority, $0.createdAt) < ($1.kind.priority, $1.createdAt) }
             guard let job = next, await availability() == .available else { return }
             count(job, +1)   // R9: on disk before the run (a crash still counts)
+            let p = provider, before = calls
             do {
-                try await handler(job, { c throws(ProtocolError) in try await self.call(c, job: job) })
+                let r = try await handler(job, { c throws(ProtocolError) in try await self.call(c, job: job) }, active.inputMax)
+                if calls > before { note(p, bad: r != .ok) }
                 remove(job)
                 recent[job.dedupe] = now()
             } catch let e as ProtocolError where e.code == .unavailable {
                 count(job, -1)
                 return   // logged out / cap mid-run (before any run): the job waits, no attempt spent
             } catch {
+                if (error as? ProtocolError)?.message.hasPrefix("curator: junk answer") == true { note(p, bad: true) }
                 backoff[job.id] = ticks
                 fail(job)
             }
         }
+    }
+
+    private func note(_ p: CuratorProvider, bad: Bool) {
+        var w = outcomes[p, default: []]
+        w.append(bad)
+        outcomes[p] = Array(w.suffix(Self.pauseWindow))
+    }
+
+    /// `s` within `max` unicode scalars, cut inside its fence: the data before the closing `DADOS-<nonce>` mark loses its
+    /// end, both marks stay. nil: too long with no fence, or not even the opening mark fits.
+    static func fit(_ s: String, max: Int) -> String? {
+        if s.unicodeScalars.count <= max { return s }
+        guard let close = s.matches(of: /DADOS-[0-9a-f]{32}/).last?.range,
+              let open = s.range(of: String(s[close])), open.lowerBound < close.lowerBound else { return nil }
+        let tail = s[close.lowerBound...], room = max - tail.unicodeScalars.count - 1
+        guard room >= s[..<open.upperBound].unicodeScalars.count else { return nil }
+        return String(String.UnicodeScalarView(s[..<close.lowerBound].unicodeScalars.prefix(room))) + "\n" + tail
     }
 
     private func count(_ job: CuratorJob, _ d: Int) {
@@ -348,7 +387,10 @@ actor Curator {
         guard let runner = runners[p] else { throw ProtocolError(code: .unavailable, message: "\(p.rawValue) não encontrado") }
         let info = runner.info
         var c = c
-        c.input = String(String.UnicodeScalarView(c.input.unicodeScalars.prefix(info.inputMax)))
+        // never a cut outside the fence (the closing mark would go): over the cap with no fence, the job fails
+        guard let fitted = Self.fit(c.input, max: info.inputMax) else { throw ProtocolError(code: .internal, message: "curator: input over limit") }
+        c.input = fitted
+        calls += 1
         usage.today += 1
         write(usage, to: dir.appendingPathComponent("usage.json"))
         let out: CuratorOutput, started = ContinuousClock.now
@@ -367,6 +409,7 @@ actor Curator {
             out = o
         } catch {
             logged(false, String(error.message.prefix(200)), nil)
+            if error.message.hasPrefix("resposta ilegível") { note(p, bad: true) }   // the runner couldn't read it either
             // E6: a credit/quota refusal left the runner exhausted: the job waits, no attempt spent (`drain` gives it back)
             if case .exhausted = await runner.availability() { throw ProtocolError(code: .unavailable, message: error.message) }
             throw error.code == .unavailable ? ProtocolError(code: .internal, message: error.message) : error

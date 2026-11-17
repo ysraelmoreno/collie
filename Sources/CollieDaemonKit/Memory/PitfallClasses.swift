@@ -181,20 +181,22 @@ extension CommandRouter {
                            before: before, undone: false, resolved: false)
     }
 
-    func runPitfallJob(_ j: CuratorJob, call: Curator.Call) async throws {
+    @discardableResult
+    func runPitfallJob(_ j: CuratorJob, call: Curator.Call) async throws -> CuratorJobResult {
         let p = try Self.pitfallPayload(j)
         guard let store = await memory.store(key: p.family) else { throw ProtocolError(code: .internal, message: "curator: store \(p.family) gone") }
         if let i = p.instance {
             // absorbed, dropped or edited away meanwhile: nothing to ask
-            guard let r = await record(i.id, store), Self.clusterable(r), !Self.users(r) else { return }
+            guard let r = await record(i.id, store), Self.clusterable(r), !Self.users(r) else { return .ok }
         }
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let out = try await call(CuratorCall(instructions: p.review != nil ? PitfallClasses.reviewInstructions : PitfallClasses.instructions,
                                              input: PitfallClasses.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
-        let entries = try await applyPitfallOps(CuratorOps.validate(out.json, scope: Self.pitfallScope(p)).ops, p, job: j, store: store,
-                                                curatedBy: out.curatedBy)
+        let v = CuratorOps.validate(out.json, scope: Self.pitfallScope(p))
+        let entries = try await applyPitfallOps(v.ops, p, job: j, store: store, curatedBy: out.curatedBy)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
+        return CuratorOps.result(out.json, v)
     }
 
     /// `bump` (≤ 10 a job, one a class) and `create pitfall` only; the instance is absorbed by the first one that applies.

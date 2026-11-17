@@ -11,6 +11,8 @@ final class FakeCurator: CuratorRunner, @unchecked Sendable {
     private var _avail = CuratorAvailability.available, _inputs: [String] = [], _gated = false, waiters: [CheckedContinuation<Void, Never>] = []
     var failOn: String? { get { lock.withLock { _failOn } } set { lock.withLock { _failOn = newValue } } }
     private var _failOn: String?
+    var failMessage: String { get { lock.withLock { _failMessage } } set { lock.withLock { _failMessage = newValue } } }
+    private var _failMessage = "claude saiu com 1"
     /// A run whose input contains `.0` turns the runner `.exhausted` until `.1`, then fails (the real runner's way).
     var exhaustOn: (String, Date)? { get { lock.withLock { _exhaustOn } } set { lock.withLock { _exhaustOn = newValue } } }
     private var _exhaustOn: (String, Date)?
@@ -30,7 +32,7 @@ final class FakeCurator: CuratorRunner, @unchecked Sendable {
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput {
         lock.withLock { _inputs.append(c.input); _models.append(model); _timeouts.append(timeout) }
         if gated { await withCheckedContinuation { c in lock.withLock { if _gated { waiters.append(c) } else { c.resume() } } } }
-        if let f = failOn, c.input.contains(f) { throw ProtocolError(code: .unavailable, message: "claude saiu com 1") }
+        if let f = failOn, c.input.contains(f) { throw ProtocolError(code: .unavailable, message: failMessage) }
         if let (f, until) = exhaustOn, c.input.contains(f) {
             avail = .exhausted("Credit balance is too low", until: until)
             throw ProtocolError(code: .unavailable, message: "Credit balance is too low")
@@ -300,21 +302,103 @@ private let oneCall: Curator.Handler = { j, call in
         #expect(await c.queued(kind: .correction).count == 1)
     }
 
+    /// Over the cap, the data is cut inside the fence: both marks stay (the closing one last).
     @Test func inputCapped() async throws {
+        let mark = "DADOS-" + String(repeating: "a", count: 32)
+        func fenced(_ s: String) -> String { "Escopos: project\n\(mark)\n\(s)\n\(mark)" }
         let fake = FakeCurator()
         let c = Curator(dir: tempDir(), runner: fake, clock: ManualClock())
         _ = await c.enqueue(job())
-        await c.start { _, call in _ = try await call(CuratorCall(instructions: "", input: String(repeating: "é", count: 20_000), schema: "{}")) }
+        let e1 = fenced(String(repeating: "é", count: 20_000)), e2 = fenced(String(repeating: "e\u{301}\u{302}", count: 20_000))
+        await c.start { _, call in _ = try await call(CuratorCall(instructions: "", input: e1, schema: "{}")) }
         #expect(await waitFor(10) { fake.calls == 1 })
-        #expect(fake.inputs.first?.count == Curator.inputMax && Curator.inputMax == 12_000)
+        let got = try #require(fake.inputs.first)
+        #expect(got.unicodeScalars.count == Curator.inputMax && Curator.inputMax == 12_000)
+        #expect(got.hasPrefix("Escopos: project\n\(mark)\n") && got.hasSuffix("\n\(mark)"))
         await c.stop()
-        // combining marks: capped by unicode scalars, not characters (the input goes in argv)
+        // combining marks: capped by unicode scalars, not characters
         let z = FakeCurator(), c2 = Curator(dir: tempDir(), runner: z, clock: ManualClock())
         _ = await c2.enqueue(job())
-        await c2.start { _, call in _ = try await call(CuratorCall(instructions: "", input: String(repeating: "e\u{301}\u{302}", count: 20_000), schema: "{}")) }
+        await c2.start { _, call in _ = try await call(CuratorCall(instructions: "", input: e2, schema: "{}")) }
         #expect(await waitFor(10) { z.calls == 1 })
-        #expect(z.inputs.first?.unicodeScalars.count == Curator.inputMax)
+        #expect(z.inputs.first?.unicodeScalars.count == Curator.inputMax && z.inputs.first?.hasSuffix(mark) == true)
         await c2.stop()
+    }
+
+    /// An input over the cap with no fence to cut inside fails the job (an attempt spent), never runs cut.
+    @Test func overLimitWithoutFenceFails() async throws {
+        let fake = FakeCurator(), c = Curator(dir: tempDir(), runner: fake, clock: ManualClock())
+        _ = await c.enqueue(job())
+        await c.start { _, call in _ = try await call(CuratorCall(instructions: "", input: String(repeating: "x", count: 20_000), schema: "{}")) }
+        #expect(await waitFor(10) { await c.queued(kind: .correction).first?.attempts == 1 })
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(fake.calls == 0)
+        await c.stop()
+    }
+
+    @Test func fitKeepsBothMarks() {
+        let m = "DADOS-" + String(repeating: "b", count: 32)
+        #expect(Curator.fit("curto", max: 100) == "curto")
+        #expect(Curator.fit(String(repeating: "x", count: 200), max: 100) == nil)   // no fence
+        let s = "\(m)\n" + String(repeating: "y", count: 500) + "\n\(m)"
+        let f = try! #require(Curator.fit(s, max: 120))
+        #expect(f.unicodeScalars.count == 120 && f.hasPrefix(m + "\n") && f.hasSuffix("\n" + m))
+        #expect(Curator.fit(s, max: 60) == nil)   // the opening mark itself wouldn't fit
+    }
+
+    // the bad-output pause: the last 20 calls of the chosen provider, ≥ 10 junk or all-dropped
+    private func results(_ c: Curator, _ rs: [CuratorJobResult], fake: FakeCurator) async {
+        let box = Trace()
+        for _ in rs { _ = await c.enqueue(job()) }
+        await c.start(job: { j, call, _ in
+            _ = try await call(CuratorCall(instructions: "", input: "x", schema: "{}"))
+            let n = await box.events.count; await box.add("r")
+            return rs[n]
+        })
+        _ = await waitFor(10) {
+            if fake.calls == rs.count { return true }
+            let why = await c.status().reason ?? ""
+            return why.hasPrefix("saída inválida")
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+    }
+
+    @Test func tenOfTwentyPauses() async throws {
+        let fake = FakeCurator(), c = Curator(dir: tempDir(), runner: fake, clock: ManualClock())
+        let rs: [CuratorJobResult] = Array(repeating: .ok, count: 5) + Array(repeating: .junk, count: 5) + Array(repeating: .allDropped, count: 5) + [.ok]
+        await results(c, rs, fake: fake)
+        let s = await c.status()
+        #expect(s.available == false && s.reason == "saída inválida em 10 de 15 (troque de modelo)" && fake.calls == 15 && s.queued == 1)
+        await c.stop()
+    }
+
+    @Test func switchClearsPause() async throws {
+        let fake = FakeCurator(), c = Curator(dir: tempDir(), runner: fake, clock: ManualClock())
+        let rs: [CuratorJobResult] = Array(repeating: .junk, count: 10) + [.ok]
+        await results(c, rs, fake: fake)
+        #expect(await c.status().available == false)
+        try await c.setProvider(.claude, model: "sonnet")   // another model: a fresh start
+        #expect(await waitFor(10) { fake.calls == 11 })
+        #expect(await c.status().available == true)
+        await c.stop()
+    }
+
+    /// A runner answer it can't read counts against the provider like a junk answer.
+    @Test func runnerUnreadableCountsAsJunk() async throws {
+        let fake = FakeCurator(); fake.failOn = "x"; fake.failMessage = "resposta ilegível do claude"
+        let c = Curator(dir: tempDir(), runner: fake, clock: ManualClock())
+        for _ in 0..<10 { _ = await c.enqueue(job(prompt: "x")) }
+        await c.start { _, call in _ = try await call(CuratorCall(instructions: "", input: "x", schema: "{}")) }
+        #expect(await waitFor(10) { (await c.status().reason ?? "").hasPrefix("saída inválida em 10") })
+        await c.stop()
+    }
+
+    @Test func junkCountsAsBad() {
+        #expect(CuratorOps.result(.object(["ops": .array([])]), ([], 0)) == .ok)
+        #expect(CuratorOps.result(.object([:]), ([], 1)) == .junk)
+        #expect(CuratorOps.result(.string("x"), ([], 1)) == .junk)
+        #expect(CuratorOps.result(.object(["ops": .array([.object(["op": .string("nada")])])]), ([], 1)) == .allDropped)
+        #expect(DocTerms.result(.object(["chunks": .array([])])) == .ok && DocTerms.result(.object([:])) == .junk)
     }
 
     /// R7: a run that fails (nonzero exit, is_error, junk) spends an attempt; the next job still runs; 3 → failed/.

@@ -79,6 +79,12 @@ enum CuratorOps {
         return (kept, raw.count - kept.count)
     }
 
+    /// How an `{"ops":[…]}` answer read: not that shape → `junk`; ops sent and every one dropped → `allDropped`.
+    static func result(_ json: JSONValue, _ v: (ops: [CuratorOp], dropped: Int)) -> CuratorJobResult {
+        guard case .object(let o) = json, case .array? = o["ops"] else { return .junk }
+        return v.ops.isEmpty && v.dropped > 0 ? .allDropped : .ok
+    }
+
     /// Injected text can't hide anything: control (Cc) and format (Cf: bidi overrides/isolates, zero-width) scalars go;
     /// a one-line field's line breaks and tabs become one space (no fake "Não vale mais:" line); a multi-line one keeps
     /// `\n` and `\t`. Capped in scalars, not Characters (a combining-mark pile is one Character).

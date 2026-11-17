@@ -161,7 +161,9 @@ extension CommandRouter {
 
     /// The curator's work: one call (input fenced), then the validated ops applied, the digest written, the new rule
     /// pushed to the corrected terminal (after it is on disk).
-    func curate(_ job: CuratorJob, _ call: Curator.Call) async throws {
+    /// `inputMax`: the chosen provider's input cap (the builders that size themselves use it).
+    @discardableResult
+    func curate(_ job: CuratorJob, _ call: Curator.Call, inputMax: Int = Curator.inputMax) async throws -> CuratorJobResult {
         // what the job writes to the digest is logged with its source
         let source = switch job.kind {
         case .correction: "correction"
@@ -172,28 +174,31 @@ extension CommandRouter {
         case .docTerms: "docs"
         case .verifyContested, .verifyPromotion: "verify"
         }
-        try await MemoryEventLog.$source.withValue(source) {
+        let r = try await MemoryEventLog.$source.withValue(source) { () async throws -> CuratorJobResult in
             switch job.kind {
             case .correction: try await runLearningJob(job, call: call)
             case .proposals: try await runProposalsJob(job, call: call)
-            case .conversation: try await runConversationJob(job, call: call)
+            case .conversation: try await runConversationJob(job, call: call, inputMax: inputMax)
             case .pitfall: try await runPitfallJob(job, call: call)
-            case .consolidate: try await runConsolidateJob(job, call: call)
+            case .consolidate: try await runConsolidateJob(job, call: call, inputMax: inputMax)
             case .procedure: try await runProcedureJob(job, call: call)
             case .docTerms: try await runDocTermsJob(job, call: call)
             case .verifyContested, .verifyPromotion: try await runVerifyJob(job, call: call)
             }
         }
         await refreshSkills()   // a procedure may have been created or retired
+        return r
     }
 
-    func runLearningJob(_ j: CuratorJob, call: Curator.Call) async throws {
+    @discardableResult
+    func runLearningJob(_ j: CuratorJob, call: Curator.Call) async throws -> CuratorJobResult {
         let p = try Self.payload(j)
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         // R9: the only curator call; ops are applied after it (a cap hit mid-job leaves nothing half done)
         let out = try await call(CuratorCall(instructions: MemoryLearning.instructions, input: MemoryLearning.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
-        let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.correctionScope(p)).ops, job: j, curatedBy: out.curatedBy)
+        let v = CuratorOps.validate(out.json, scope: Self.correctionScope(p))
+        let entries = try await applyOps(v.ops, job: j, curatedBy: out.curatedBy)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
         // an active pitfall it created (its id is the job's; R6: a proposed one waits for the user) joins its store's classes
         for key in Set([p.family, "global"]) {
@@ -204,6 +209,7 @@ extension CommandRouter {
         // only an active rule (the user's own correction) is pushed
         for e in entries where e.action == "aprendido" && p.user == true { for id in e.created { await memory.pushRule(id, to: p.terminal) } }
         if p.likelyUser == true, p.user != true { await askConfirmation(j, p, ops: out.json) }
+        return CuratorOps.result(out.json, v)
     }
 
     /// "Parece uma correção sua — confirmar?": the rule the job proposed (its id is the job's) gets a digest row holding
@@ -557,14 +563,17 @@ extension CommandRouter {
         return all
     }
 
-    func runProposalsJob(_ j: CuratorJob, call: Curator.Call) async throws {
+    @discardableResult
+    func runProposalsJob(_ j: CuratorJob, call: Curator.Call) async throws -> CuratorJobResult {
         let p = try Self.proposalsPayload(j)
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         // one curator call; the ops are applied after it
         let out = try await call(CuratorCall(instructions: MemoryLearning.proposalsInstructions, input: MemoryLearning.input(p, nonce: nonce),
                                              schema: CuratorOps.schema))
-        let entries = try await applyOps(CuratorOps.validate(out.json, scope: Self.proposalsScope(p)).ops, job: j, curatedBy: out.curatedBy)
+        let v = CuratorOps.validate(out.json, scope: Self.proposalsScope(p))
+        let entries = try await applyOps(v.ops, job: j, curatedBy: out.curatedBy)
         do { try digest.append(entries) } catch { memoryLog("digest: \(error)") }
+        return CuratorOps.result(out.json, v)
     }
 
     /// First run with the curator: the proposals already waiting go through it once (one job per store, 10 a job);

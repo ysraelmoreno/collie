@@ -54,6 +54,11 @@ enum DocTerms {
 
     /// The curator's answer as `id → terms`: only ids that were sent, each term cleaned (no control or format characters,
     /// blanks collapsed, ≤ 80 characters), ≤ 10 per chunk, repeats dropped.
+    /// Not `{"chunks":[…]}` → `junk`.
+    static func result(_ json: JSONValue) -> CuratorJobResult {
+        if case .object(let o) = json, case .array? = o["chunks"] { .ok } else { .junk }
+    }
+
     static func parse(_ json: JSONValue, sent: Set<Int>) -> [Int: [String]] {
         guard case .object(let o) = json, case .array(let items)? = o["chunks"] else { return [:] }
         var out: [Int: [String]] = [:]
@@ -90,7 +95,8 @@ extension CommandRouter {
         return n
     }
 
-    func runDocTermsJob(_ j: CuratorJob, call: Curator.Call) async throws {
+    @discardableResult
+    func runDocTermsJob(_ j: CuratorJob, call: Curator.Call) async throws -> CuratorJobResult {
         guard let data = try? JSONEncoder().encode(j.payload), let p = try? JSONDecoder().decode(DocTermsPayload.self, from: data) else {
             throw ProtocolError(code: .internal, message: "curator: unreadable payload")
         }
@@ -98,7 +104,8 @@ extension CommandRouter {
         let out = try await call(CuratorCall(instructions: DocTerms.instructions, input: DocTerms.input(p, nonce: nonce), schema: DocTerms.schema))
         let terms = DocTerms.parse(out.json, sent: Set(p.chunks.map(\.id)))
         let items = p.chunks.compactMap { c in terms[c.id].map { (id: c.id, prefix: c.body, terms: $0) } }
-        guard let store = await memory.store(key: p.family) else { return }   // evicted meanwhile: the words stay
+        guard let store = await memory.store(key: p.family) else { return DocTerms.result(out.json) }   // evicted meanwhile: the words stay
         _ = try await store.run { m in m.index()?.setChunkTerms(source: p.source, items) ?? 0 }
+        return DocTerms.result(out.json)
     }
 }

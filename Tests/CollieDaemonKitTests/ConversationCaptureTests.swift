@@ -78,6 +78,13 @@ private func withEnv(idle: Duration = .seconds(60), _ body: (Env) async throws -
         #expect(r.map(\.kind) == [.decision, .pitfall])
     }
 
+    /// Task 9: the provider's cap reaches the builder: the newest part of the chunk is kept, the closing mark survives.
+    @Test func smallInputMaxKeepsClosingMark() {
+        let nonce = String(repeating: "d", count: 32), chunk = "Usuário: " + String(repeating: "z", count: 20_000)
+        let i = ConversationCapture.input(chunk: chunk, candidates: [], nonce: nonce, inputMax: 3_000)
+        #expect(i.unicodeScalars.count <= 3_000 && i.hasPrefix("DADOS-\(nonce)") && i.hasSuffix("\nDADOS-\(nonce)"))
+    }
+
     @Test func conversationStampsCuratedBy() {
         let by = CuratedBy(provider: "claude", model: "haiku", trust: .full)
         let r = ConversationCapture.apply(.init(items: [item()]), chunk: chunk, candidates: [], terminal: "dev", secrets: [], curatedBy: by)

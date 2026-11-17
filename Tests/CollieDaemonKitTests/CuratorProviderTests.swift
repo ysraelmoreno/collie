@@ -22,7 +22,10 @@ private func cursorFake(inputMax: Int = 12_000) -> FakeCurator {
 /// Records each run's output (who answered) through the handler.
 actor Outputs { var all: [CuratorOutput] = []; func add(_ o: CuratorOutput) { all.append(o) } }
 private func recording(_ outs: Outputs) -> Curator.Handler {
-    { j, call in await outs.add(try await call(CuratorCall(instructions: "i", input: "\(j.payload)", schema: "{}"))) }
+    { j, call in
+        guard case .object(let o) = j.payload, case .string(let s)? = o["prompt"] else { return }
+        await outs.add(try await call(CuratorCall(instructions: "i", input: s, schema: "{}")))
+    }
 }
 
 @Suite(.serialized) struct CuratorProviderTests {
@@ -130,7 +133,8 @@ private func recording(_ outs: Outputs) -> Curator.Handler {
         let cursor = cursorFake(inputMax: 500)
         let c = Curator(dir: dir(), runners: [.claude: FakeCurator(), .cursor: cursor], clock: ManualClock())
         await c.consent(.cursor); try await c.setProvider(.cursor, model: nil)
-        _ = await c.enqueue(job(String(repeating: "x", count: 2_000)))
+        let mark = "DADOS-" + String(repeating: "c", count: 32)
+        _ = await c.enqueue(job("\(mark)\n" + String(repeating: "x", count: 2_000) + "\n\(mark)"))
         await c.start(handler: recording(Outputs()))
         #expect(await waitFor(10) { cursor.calls == 1 })
         #expect(cursor.inputs[0].unicodeScalars.count <= 500 && cursor.timeouts == [.seconds(120)])

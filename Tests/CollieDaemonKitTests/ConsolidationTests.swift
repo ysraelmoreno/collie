@@ -22,6 +22,16 @@ private func tailwind() -> [MemoryRecord] {
 private func status(_ s: RepoMemory, _ id: UUID) async throws -> MemoryStatus? { try await all(s).first { $0.id == id }?.status }
 
 @Suite(.serialized) struct ConsolidationTests {
+    /// Task 9: a payload sized at enqueue is cut again to the running provider's cap (whole clusters dropped, oldest kept first).
+    @Test func consolidationTrimsAtRun() {
+        func item(_ n: Int) -> ConsolidatePayload.Item { .init(id: UUID(), kind: .decision, title: "t\(n)", body: String(repeating: "b", count: 400), updatedAt: Date()) }
+        let p = ConsolidatePayload(family: "repo:/x", lot: nil, lotName: nil, root: nil, clusters: (0..<10).map { i in [item(2 * i), item(2 * i + 1)] })
+        let full = Consolidation.fit(p, inputMax: Curator.inputMax), small = Consolidation.fit(p, inputMax: 3_000)
+        #expect(full.clusters.count == 10 && small.clusters.count < 10 && !small.clusters.isEmpty)
+        #expect(small.clusters.map { $0.map(\.id) } == Array(p.clusters.prefix(small.clusters.count)).map { $0.map(\.id) })
+        #expect(Consolidation.instructions.count + Consolidation.input(small, nonce: String(repeating: "0", count: 32)).unicodeScalars.count <= 3_000)
+    }
+
     @Test func clustersFound() {
         let t = tailwind()
         let map = rec("Mapa do estilo", "O estilo do app usa Tailwind v4 com classes utilitárias.", kind: .map, path: "Sources/Style.swift")

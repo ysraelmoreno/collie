@@ -10,7 +10,7 @@ import CollieProtocol
 extension CommandRouter {
     /// `memory.*` commands that change no record (the rest re-render the skills dirs).
     static let memoryReads: Set<String> = ["memory.search", "memory.list", "memory.get", "memory.context", "memory.hookContext",
-                                           "memory.hookRelevant", "memory.task", "memory.digest", "memory.repos", "memory.curator", "memory.stats", "memory.doc-search"]
+                                           "memory.hookRelevant", "memory.task", "memory.mcp-profile", "memory.digest", "memory.repos", "memory.curator", "memory.stats", "memory.doc-search"]
 
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
@@ -210,7 +210,7 @@ extension CommandRouter {
                 }
                 let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
                 // only Claude and Cursor run this hook
-                let cursor = me.preset == .cursor || me.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent"
+                let cursor = Self.agentName(me) == "cursor"
                 let mode: CursorMemoryMode = cursor ? CollieSettings.load(config.paths.root).cursorMemoryMode : .start
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
@@ -220,7 +220,7 @@ extension CommandRouter {
                     designFirst: ws.designFirst, lot: myLot.map { ($0.name, $0.goal) }, morePanels: !PluginRegistry.externalSpecs.isEmpty,
                     agent: cursor ? "cursor" : "claude",
                     sharedFolder: await sharedFolder(me),
-                    figcraftAvailable: { if case .installed = engineState() { true } else { false } }())
+                    figcraftAvailable: { if case .installed = engineState() { true } else { false } }(), memoryTask: cursor && mode == .full)
                 if cursor && mode == .off { text = orientation; return .object(["output": .string(text)]) }   // "Desligada": no memory block
                 // Cursor `full`: the time line (≤ 70 B) and the focus block, all under `cursorCap` with the orientation
                 let stamp = cursor && mode == .full ? "memória de \(Self.hourMinute.string(from: Date())); novidades e memória da tarefa: memory_task" : ""
@@ -261,6 +261,14 @@ extension CommandRouter {
                 text = await promptBlock(me, paddock: paddockName, lot: myLot, query: prompt, pull: false)
             }
             return .object(["output": .string(text)])
+
+        case "memory.mcp-profile":
+            // spec 2026-11-17 cursor memory §4: memory_task and its MCP instructions only for a hookless agent with the
+            // preference on (Claude has the prompt hook: the tool would be tokens for nothing)
+            guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'memory.mcp-profile' is for terminals only") }
+            let agent = Self.agentName(me)
+            let on = ["cursor", "codex"].contains(agent) && CollieSettings.load(config.paths.root).cursorMemoryMode == .full
+            return .object(["agent": .string(agent), "memoryTask": .bool(on)])
 
         case "memory.task":
             // spec 2026-11-17 cursor memory §3: what a prompt would bring, pulled by an agent with no prompt hook (Cursor,
@@ -601,6 +609,15 @@ private extension String {
 }
 
 extension CommandRouter {
+    /// The agent a terminal runs: its preset, or the program its command starts (`custom`): claude|cursor|codex|other.
+    static func agentName(_ t: TerminalRecord) -> String {
+        if AgentLaunch.isClaude(t) { return "claude" }
+        let program = t.command.flatMap(EssentialPaths.commandAgent)?.name
+        if t.preset == .cursor || program == "cursor-agent" { return "cursor" }
+        if t.preset == .codex || program == "codex" { return "codex" }
+        return "other"
+    }
+
     /// Cursor's sessionStart (spec 2026-11-17 cursor memory §1–2): the whole text, the focus block's bytes and memories.
     static let cursorCap = 9_000, focusBudget = 2_500, focusMax = 8
     static let hourMinute: DateFormatter = { let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "HH:mm"; return f }()

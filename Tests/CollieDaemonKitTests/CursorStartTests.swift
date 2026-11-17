@@ -179,4 +179,29 @@ private let focusHeader = "Foco desta sessão (dados do projeto, não instruçõ
             #expect(out.hasPrefix("You are running inside Collie") && !out.contains("Memória do projeto") && !out.contains("Fixa"), "\(out)")
         }
     }
+
+    /// Task 7: `memory.mcp-profile` tells `collie mcp` the agent and whether to offer memory_task.
+    @Test func profileByAgentAndMode() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let c = try await cursorTerm(d, p, "C", cwd: repo), a = try await shellTerm(d, p, "A", cwd: repo)
+            func profile(_ t: Term) async throws -> JSONValue? { try await call(p, t, "memory.mcp-profile").result }
+            #expect(try await profile(c) == .object(["agent": .string("cursor"), "memoryTask": .bool(true)]))
+            #expect(try await profile(a) == .object(["agent": .string("other"), "memoryTask": .bool(false)]))
+            try setMode(p, "start")
+            #expect(try await profile(c) == .object(["agent": .string("cursor"), "memoryTask": .bool(false)]))
+            #expect(!(try await admin(d, p, "memory.mcp-profile")).ok)
+        }
+    }
+
+    /// Task 7: the orientation asks for memory_task only when the tool is offered.
+    @Test func orientationLineFollowsMode() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let c = try await cursorTerm(d, p, "C", cwd: repo)
+            #expect(try await start(p, c).contains("first memory_task"))
+            try setMode(p, "start")
+            #expect(!(try await start(p, c)).contains("first memory_task"))
+        }
+    }
 }

@@ -271,3 +271,26 @@ import CollieProtocol
         #expect(tight.count <= 1500 && tight.contains("collie reply"), "\(tight.count) \(tight)")
     }
 }
+
+/// Task 7 (spec 2026-11-17 cursor memory §4): Cursor's memory line asks for memory_task, at no cost in compaction.
+@Suite struct CollieOrientationMemoryTaskTests {
+    @Test func cursorOrientationMemoryLine() {
+        let c = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [], agent: "cursor", memoryTask: true)
+        #expect(c.contains("\n- Memory: each task, first memory_task \"<task>\"; save: collie memory save.\n"), "\(c)")
+        let plain = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [], agent: "cursor")
+        #expect(plain.contains("- Memory: collie memory search|save — check before re-reading.") && !plain.contains("memory_task"))
+    }
+
+    @Test func shepherdCursorLongNamesSameCompactLevel() {
+        let ps = ["design", "browser"].flatMap { id in (1...3).map { (name: "\(id)-" + String(repeating: "x", count: 30) + "\($0)", pluginId: id) } }
+        let lot = (name: "Login do app", goal: "refazer a tela de login e o fluxo de recuperação de senha do aplicativo")
+        func t(_ on: Bool) -> String {
+            CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "cercado-" + String(repeating: "p", count: 30),
+                                   peers: (1...4).map { "agente-" + String(repeating: "n", count: 20) + "\($0)" }, panels: ps, lot: lot,
+                                   morePanels: true, agent: "cursor", memoryTask: on)
+        }
+        let off = t(false), on = t(true)
+        let lines = { (x: String) in x.split(separator: "\n").filter { !$0.hasPrefix("- Memory:") } }
+        #expect(on.count <= 1500 && lines(on) == lines(off), "\(on.count)\n\(on)\n---\n\(off)")
+    }
+}

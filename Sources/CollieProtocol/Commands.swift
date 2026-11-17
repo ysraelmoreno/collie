@@ -259,6 +259,9 @@ public enum Commands {
         CommandSpec(name: "memory.task", summary: "Call at the start of every task: new rules, retractions and memory relevant to it",
                     params: [ParamSpec("task", .rest, positional: true, required: true, help: "One line: what you are about to do")],
                     timeoutSeconds: 10),
+        // `collie mcp` asks at `initialize`: which agent runs it and whether to offer memory_task (with its instructions)
+        CommandSpec(name: "memory.mcp-profile", summary: "MCP: this terminal's agent and whether memory_task is offered",
+                    params: [], timeoutSeconds: 5, exposedToMCP: false),
         CommandSpec(name: "memory.unpin", summary: "Unpin a memory",
                     params: [ParamSpec("id", .string, positional: true, required: true), ParamSpec("lot", .string), ParamSpec("repo", .string)],
                     timeoutSeconds: 30, exposedToMCP: false),

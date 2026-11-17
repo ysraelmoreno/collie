@@ -24,7 +24,7 @@ enum CollieOrientation {
                      panels: [(name: String, pluginId: String)],
                      paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .artifact,
                      lot: (name: String, goal: String)? = nil, morePanels: Bool = false, agent: String = "claude",
-                     sharedFolder: [String] = [], figcraftAvailable: Bool = true) -> String {
+                     sharedFolder: [String] = [], figcraftAvailable: Bool = true, memoryTask: Bool = false) -> String {
         // no engine (absent or out of date): the FigCraft and ask preferences fall back to a page, with a note
         let note = !figcraftAvailable && designFirst != .artifact
         let designFirst = figcraftAvailable ? designFirst : .artifact
@@ -33,17 +33,17 @@ enum CollieOrientation {
         // the export + claude.ai import hints go first, before any name
         // a compact UI-work line goes before the names do (a Shepherd in a shared folder keeps them)
         for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note)
+            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask)
             if t.count <= limit { return t }
         }
-        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note)
+        return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note, memoryTask: memoryTask)
     }
 
     private static func build(terminal: String, isShepherd: Bool, paddock: String?, peers: [String],
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
-                              _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false) -> String {
+                              _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false, memoryTask: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -52,7 +52,9 @@ enum CollieOrientation {
             "You are running inside Collie, terminal \(quote(terminal))\(paddock.map { ", on paddock \(quote($0))" } ?? ""). Tools: `collie` (MCP or CLI):",
             "- Leashed agents (\(peers.isEmpty ? "none yet" : names(peers))): collie list / check <name> / ask <name> \"<prompt>\""
                 + (tight ? " [--no-wait]." : " to wait for the reply, or collie ask <name> \"<prompt>\" --no-wait (reply comes back as a message; collie ask result <id>)."),
-            "- Memory: collie memory search|save — check before re-reading.",
+            // memory_task (spec 2026-11-17 cursor memory §4): a hookless agent pulls the prompt's memory itself
+            memoryTask ? (tight ? "- Memory: memory_task \"<task>\" first; memory save." : "- Memory: each task, first memory_task \"<task>\"; save: collie memory save.")
+                : "- Memory: collie memory search|save — check before re-reading.",
             "- Work log: collie work status; collie work task defer <task> \"<reason>\" | drop …; collie work done.",
         ]
         // agent-comms: a crossed blocking ask (or wait) is refused as a deadlock; a hookless Cursor answers by command

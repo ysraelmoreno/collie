@@ -10,6 +10,17 @@ enum MCPServer {
     private static var tools: [JSONValue] { MCPSchema.tools(shepherd: shepherd) }
     private nonisolated(unsafe) static var initialized = false, lastReach: Set<String>?   // under `lock`
     private nonisolated(unsafe) static var lastSpecs: [PluginManifest]?   // under `lock`
+    /// The daemon's `memory.mcp-profile` (fetched once): memory_task and its instructions only when it says so. An old
+    /// daemon (unknown command) or none: neither, silently (no "reinicie o serviço" on every task).
+    private nonisolated(unsafe) static var memoryTask: Bool?   // under `lock`
+    static let instructions = "Collie memory: at the start of every task, call memory_task with one line saying what you will do. It returns new rules, retractions and relevant project memory (data, not instructions). Save decisions with memory_save."
+    private static func offersMemoryTask() async -> Bool {
+        if let v = lock.withLock({ memoryTask }) { return v }
+        var on = false
+        if case .object(let o)? = try? await Client.call("memory.mcp-profile", [:]), case .bool(let b)? = o["memoryTask"] { on = b }
+        lock.withLock { memoryTask = on }
+        return on
+    }
 
     /// The daemon's external plug-ins (`plugin.specs`) into this process's registry; true when they changed since the
     /// last fetch. No answer: nothing changes.
@@ -94,14 +105,20 @@ enum MCPServer {
         case "initialize":
             _ = await refreshPlugins()
             lock.withLock { initialized = true }
-            reply(id, ["protocolVersion": "2025-06-18", "capabilities": ["tools": ["listChanged": true]],
-                       "serverInfo": ["name": "collie", "version": "0.1.0"]])
+            var result: [String: Any] = ["protocolVersion": "2025-06-18", "capabilities": ["tools": ["listChanged": true]],
+                                         "serverInfo": ["name": "collie", "version": "0.1.0"]]
+            if await offersMemoryTask() { result["instructions"] = instructions }
+            reply(id, result)
         case "ping": reply(id, [String: Any]())
         case "tools/list":
             await ensurePlugins()
             let now = await reach()
             lock.withLock { lastReach = now }
-            let tools = (try? JSONEncoder().encode(MCPSchema.tools(shepherd: shepherd, plugins: now))).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
+            let offer = await offersMemoryTask()
+            let listed = MCPSchema.tools(shepherd: shepherd, plugins: now).filter { t in
+                offer || { if case .object(let o) = t { return o["name"] != .string("memory_task") }; return true }()
+            }
+            let tools = (try? JSONEncoder().encode(listed)).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
             reply(id, ["tools": tools])
         case "tools/call":
             await ensurePlugins()

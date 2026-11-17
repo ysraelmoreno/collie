@@ -59,7 +59,7 @@ extension CommandRouter {
         }
         entries = await lc.all()
 
-        // (5) provisional and unused for 21 days: archived (reversible), each in the digest
+        // (5) provisional and unused past its kind's ttl (21 or 60 days): archived (reversible), each in the digest
         let items = LifecycleRules.unusedPlan(records: eligible, entries: entries, now: now)
         if !items.isEmpty {
             do {

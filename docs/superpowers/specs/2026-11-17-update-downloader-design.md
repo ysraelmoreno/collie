@@ -1,6 +1,7 @@
 # Atualizador automático do Collie — design
 
-Status: rascunho para o dono revisar (2026-11-17). Nada implementado. Sem plano ainda.
+Status: rascunho para o dono revisar (2026-11-17), revisado (revisão independente aplicada em 2026-11-17: B1, B2,
+I1–I11 e menores). Nada implementado. Plano: `docs/superpowers/plans/2026-11-17-update-downloader.md`.
 
 ## Intenção e porquê
 
@@ -10,123 +11,140 @@ e instale com um clique, **sem derrubar sem aviso os terminais e agentes que est
 App Store, então não há atualizador do sistema: é preciso um próprio ou uma biblioteca.
 
 O que tornaria isto um fracasso mesmo funcionando: instalar e fechar agentes no meio do trabalho; aceitar um app que
-não é do time AG8JQAH6YB; tratar a release do motor `figcraft-v*` como versão do app; um laço de downloads que
-falham sem fim; mandar qualquer identificador do usuário para fora.
+não é do time AG8JQAH6YB; deixar um agente num terminal trocar o app entre a verificação e a instalação; tratar a
+release do motor `figcraft-v*` como versão do app; um laço de downloads que falham sem fim; mandar qualquer
+identificador do usuário para fora; validar o atualizador derrubando o daemon real do dono.
 
 ## Estado atual (verificado no código, main em 0fb2323)
 
 - **Release**: `.github/workflows/release.yml` roda em tag `vX.Y.Z` (ou manual com tag existente), chama
   `scripts/release.sh` e cria a GitHub Release com `Collie-<v>.dmg`, `Collie-<v>.dmg.sha256` e as cópias idênticas
-  `Collie.dmg`/`Collie.dmg.sha256` (link estável `releases/latest/download/Collie.dmg`). Release já existente: só
-  `gh release upload --clobber` (os bytes do dmg mudam: a notarização não é reproduzível). Notas: um texto fixo +
-  `--generate-notes`. Não há draft nesse fluxo.
+  `Collie.dmg`/`Collie.dmg.sha256` (link estável `releases/latest/download/Collie.dmg`). Se `gh release view "$TAG"`
+  acha a release (inclusive um **draft**), só faz `gh release upload --clobber` (`release.yml:105-106`). Notas: um
+  texto fixo + `--generate-notes`. O `gh release create` com assets cria um draft, sobe os assets e só então publica
+  (<https://cli.github.com/manual/gh_release_create>); se o job morre no meio, sobra um draft que a rodada seguinte
+  só atualiza e nunca publica. O `figcraft.yml:78-83` já apaga drafts órfãos; o `release.yml` não.
+- **Tamanho**: `Collie-0.1.1.dmg` publicado = 41 711 021 bytes (41,7 MB, `gh release view v0.1.1`).
 - **Assinatura**: `release.sh` assina o app (hardened runtime, `--timestamp`), confere cada Mach-O, cria o dmg UDZO,
-  assina o dmg, notariza **o dmg** e grampeia **só o dmg** (`stapler staple "$DMG"`). O `.app` dentro do dmg não tem
-  ticket próprio grampeado; o ticket da Apple cobre o conteúdo, consultável online.
-- **Motor**: `figcraft.yml` publica `figcraft-v<versão>` com `--prerelease --latest=false`; `/releases/latest` e
-  `/releases/latest/download/...` nunca apontam para ele. O pin `Resources/figcraft-engine.json` vai para
-  `Contents/Resources/` do app.
-- **Versão**: `CFBundleShortVersionString` (`Resources/Info.plist`, hoje `0.1.0`; o CI sobrescreve com a tag).
-  `DaemonConfig.bundleVersion(executable:)` (`Daemon.swift:130`) lê o `Info.plist` do bundle **do disco** a cada
-  chamada.
-- **Daemon**: `DaemonLauncher` (`Sources/CollieClient/DaemonLauncher.swift`) instala o LaunchAgent
-  `dev.collie.daemon` (`KeepAlive`, `RunAtLoad`) apontando para `<app>/Contents/Helpers/collied`.
-  `ensureRunning` só reescreve e reinicia se o plist mudar; o caminho é o mesmo depois de trocar o app em
-  `/Applications`, então **trocar o .app não reinicia o daemon**. O processo antigo segue rodando (o inode antigo
-  fica aberto) até alguém reiniciar.
-- **Banner de serviço desatualizado**: o app compara o `BuildID` do `collied` empacotado com o do daemon conectado
-  (`CollieApp.swift:198`) e mostra "O serviço do Collie está desatualizado… Os terminais abertos serão encerrados"
-  com **Reiniciar serviço** (`DaemonLauncher.restart` = `kickstart -k`) e **Depois** (`CollieApp.swift:212-227`). É
-  esse reinício que fecha os terminais (a memória do projeto chama isso de "instalar reinicia o daemon": o efeito
-  vem do reinício, não da cópia).
-- **Admin**: `SignedAppCheck` (`AdminPeerCheck.swift`) aceita só o app cujo cdhash bate com o
-  `Contents/MacOS/Collie` em disco ao lado do `collied`; relê o arquivo quando muda (dev, inode, mtime, size). Depois
-  de uma troca, a instância antiga do app passa a ser recusada; a nova é aceita até pelo daemon antigo.
-- **Helpers**: `TerminalRegistry.spawn` confere `collie-ctty` a cada spawn ("an app update can replace Helpers/
-  under a running daemon"), ou seja, o código já prevê daemon antigo com bundle novo. Não há número de versão de
-  protocolo no handshake do `DaemonClient`: o app novo com daemon antigo só funciona porque o protocolo é aditivo.
-- **Local do app**: `Config.tccWarning` (`CollieApp.swift:29`) avisa quando o app está em `~/Documents`, `~/Desktop`
-  ou `~/Downloads`. Nada trata App Translocation.
-- **Moldes de download**: `AndroidDownload.fetch` (sessão efêmera, sem cookies/cache, todo redirect e a URL final
-  checados por `allowed`: https, host da lista, porta padrão, sem credenciais; em `github.com` só `/adoptium/` e
-  `/ysraelmoreno/collie/releases/download/figcraft-v`), `AndroidDownload.verify` (sha256), `FigcraftInstaller`
-  (actor com `Job{phase,bytes,total,error}`, staging 0700, sha256 antes de extrair e sem retentar, `scan` sem
-  symlink/setuid, `signedByTeam` = Developer ID Application do team com identificador, `kSecCSStrictValidate |
-  kSecCSCheckAllArchitectures`, `stripQuarantine`, troca com `renamex_np(RENAME_SWAP)`). Comandos do motor ficam
-  `adminOnly` e o app faz poll (`DesignEngineModel.swift`, estado `needsUpdate`).
-- **Preferências**: `PreferencePage` = `aparencia, terminal, desenho, memoria, plugins, celular, android`, em grupos
-  Interface / Agentes / Dispositivos. Não há página de atualizações.
-- **Backup/import**: `DataBackup` grava `collieVersion` no manifesto; o import de dados pede confirmação e reinicia o
-  serviço (`CollieApp.swift:465-480`), o mesmo padrão de confirmação que este design reusa.
+  assina o dmg, notariza **o dmg** e grampeia **só o dmg** (`release.sh:67`). O `.app` de dentro não tem ticket
+  próprio.
+- **Versões**: `CFBundleShortVersionString` (`Resources/Info.plist`, `0.1.0`; o CI sobrescreve com a tag).
+  `CFBundleVersion` é fixo em `"1"`. O daemon lê a versão do bundle **uma vez, ao subir**
+  (`DaemonConfig.bundleVersion`, `Daemon.swift:132`, chamado em `collied/main.swift:116`): informa a versão com que
+  subiu.
+- **Daemon e LaunchAgent**: `DaemonLauncher.ensureRunning` (`Sources/CollieClient/DaemonLauncher.swift:99-109`)
+  reescreve o plist `dev.collie.daemon` e faz `bootout` + `bootstrap` **só se o plist mudar** (o plist leva o caminho
+  do `collied` do app aberto). `KeepAlive: true` (`:34`): se o `collied` morrer, o launchd sobe o binário que estiver
+  no caminho.
+- **O que de fato reinicia o daemon** (e fecha os terminais) — conferido:
+  1. `kickstart -k`: o botão **Reiniciar serviço** do banner de serviço desatualizado (`CollieApp.swift:215-229`), a
+     confirmação do import de dados (`:470`) e `scripts/dev/reload.sh:25` (que faz `rsync` para `/Applications` e
+     logo depois `kickstart -k`).
+  2. Abrir o app de **outro caminho** (ex.: `build/Collie.app`): o plist muda e há `bootout`/`bootstrap`.
+  3. **Escrever por cima** de um Mach-O em execução (`cp` sobre arquivo existente, `rsync --inplace`): as páginas
+     do binário assinado mudam, o kernel mata o processo por *Code Signature Invalid* e o `KeepAlive` sobe o binário
+     novo (<https://developer.apple.com/forums/thread/696460>, <https://developer.apple.com/forums/thread/781548>).
+  4. Qualquer morte do daemon antigo (crash, logout) sobe o binário novo pelo `KeepAlive`.
+  Trocar o `.app` **por rename** (inode novo, `renamex_np`, Finder) no mesmo caminho **não** reinicia: o processo
+  antigo segue com o inode antigo. O app não reinicia sozinho por `BuildID` (`CollieApp.swift:197-229`): só mostra o
+  banner.
+- **Bundle visto pelo daemon antigo**: o daemon resolve `collie`, `collie-ctty`, `Resources/scrcpy-server`,
+  `weblibs`, `Fonts` e o pin **por caminho** (`collied/main.swift:65-101`). Depois de trocar o bundle: todo spawn novo
+  usa o `collie-ctty` novo (`TerminalRegistry.swift:27-32`, conferido por spawn); hooks, `statusLine`, notify e MCP
+  dos agentes, mesmo os já rodando, chamam `…/Helpers/collie` **novo** contra o daemon antigo
+  (`AgentLaunch.swift:44,101,107`); o MCP novo anuncia ferramentas compiladas no CLI (`collie/MCPServer.swift`). O
+  pin só é lido ao subir (`CommandRouter.swift:186`). Não há versão de protocolo no handshake.
+- **Admin**: `SignedAppCheck` (`AdminPeerCheck.swift`) aceita como admin quem bate com o cdhash do
+  `Contents/MacOS/Collie` em disco ao lado do `collied`, relido quando o arquivo muda: quem estiver naquele caminho
+  vira o app confiável.
+- **Sandbox dos terminais**: o modo padrão é `.open` (`Daemon.swift:104`): escrita liberada em toda a conta, exceto
+  os internos do Collie: `<root>`, o subpath do app, os LaunchAgents `dev.collie.*` e os ancestrais deles como
+  literal (`SandboxProfile.swift:110-125`). **Um agente pode escrever em `/Applications/<outro nome>`.**
+- **Local do app**: `Config.tccWarning` (`CollieApp.swift:29`) avisa em `~/Documents`, `~/Desktop`, `~/Downloads`.
+  Nada trata App Translocation. `Config.root`/`Config.label` aceitam `COLLIE_ROOT`/`COLLIE_LABEL` **só em DEBUG**
+  (`CollieApp.swift:12-19`); `bundle-app.sh` e `release.sh` compilam `-c release` (`bundle-app.sh:14`).
+- **Moldes de download**: `AndroidDownload.fetch` (`AndroidDownload.swift:146-184`): sessão `.ephemeral` (sem
+  cookies e sem cache em disco, mas com cache em memória), `URLRequest(url:timeoutInterval:)` sem cabeçalho próprio
+  (o User-Agent padrão do CFNetwork expõe nome do binário e versão do Darwin), **sem limite de bytes**; todo
+  redirect e a URL final checados por `allowed` (https, host da lista, porta padrão, sem credenciais; em
+  `github.com` só `/adoptium/` e `/ysraelmoreno/collie/releases/download/figcraft-v`). `AndroidDownload.verify`
+  (sha256). `FigcraftInstaller`: `Job{phase,bytes,total,error}`, staging 0700, sha256 antes de extrair e sem
+  retentar, `scan`, `signedByTeam`, `stripQuarantine`, `renamex_np(RENAME_SWAP)`. O `busy` dele é
+  `figcraft.isHeld` (`CommandRouter.swift:210`): cobre o backup (que segura o servidor) mas não o import.
+- **Motor**: `FigcraftEngine.resolve` só usa o motor de `<root>/figcraft` se o marcador é o sha256 do pin
+  (`FigcraftEngine.swift:36`): com pin novo, o desenho fica indisponível até baixar o motor novo (decisão P1 do
+  spec do figcraft).
+- **Workspace**: não há comando de admin para gravar o workspace (`workspace.*` não existe em `Commands.swift`).
+- **Preferências**: `PreferencePage` = `aparencia, terminal, desenho, memoria, plugins, celular, android`. Sem página
+  de atualizações. O app trata `NSApplication.willTerminateNotification` (`CollieApp.swift:334`); não há
+  `AppDelegate`.
+- **Build local do dono**: o `/Applications/Collie.app` do dono é assinado com "Collie Local" (sem TeamIdentifier).
 - **Dependências**: SwiftPM só com SwiftTerm `exact: "1.99.0"`.
 
 ## Metas
 
 1. Descobrir versão nova sozinho (na abertura e periodicamente) e avisar sem atrapalhar.
-2. Baixar em segundo plano e verificar: sha256, assinatura Developer ID do team AG8JQAH6YB, versão maior que a
-   instalada.
-3. Instalar com um clique, trocando o `.app` de forma atômica e reabrindo.
+2. Baixar em segundo plano e verificar: sha256, dmg do time e notarizado, `.app` Developer ID do time AG8JQAH6YB,
+   versão maior que a instalada.
+3. Instalar com um clique, trocando o `.app` **só por rename**, de forma atômica, e reabrindo.
 4. Nunca fechar terminais sem confirmação que diga quantos e quais estão ativos; permitir atualizar o app **sem**
-   reiniciar o serviço.
-5. Avisar quando a versão nova traz pin de motor de design novo.
+   reiniciar o serviço, com contrato de compatibilidade explícito.
+5. Avisar quando a versão nova traz pin de motor novo e que o desenho para até baixá-lo.
 6. Zero identificadores na checagem; funcionar calado offline.
+7. Validável sem tocar no daemon real do dono.
 
 ## Não metas
 
 - Atualização delta, canal beta, rollout em fases.
-- Instalar quando o usuário não tem permissão de escrita na pasta do app (pedir senha de admin): nesse caso o app
-  abre a página da release. Fica para depois se alguém pedir.
-- Atualizar o motor figcraft junto (continua no fluxo próprio das Preferências).
-- Rebaixar versão (downgrade) por qualquer caminho automático.
-- Intel / Rosetta (o app é arm64 só).
+- Instalar quando o usuário não tem permissão de escrita na pasta do app (pedir senha de admin): abre a página da
+  release.
+- Atualizar o motor figcraft junto (continua no fluxo próprio das Preferências; só oferecemos o atalho).
+- Rebaixar versão por caminho automático (voltar para a versão anterior guardada é ação explícita, §4).
+- Atualizar build local ("Collie Local", sem time): recusado, ela segue pelos scripts.
+- Intel / Rosetta.
 
 ## Abordagens
 
 ### A. Sparkle 2
 
-Fonte: documentação pública em <https://sparkle-project.org/documentation/> (seções *Publishing an update*, *EdDSA
-signatures*, *Sandboxing*, *Customization*). Citado de leitura anterior desta documentação, não buscada nesta sessão:
-conferir antes de citar números.
+Fontes (lidas pelo revisor em 2026-11-17): <https://sparkle-project.org/documentation/>,
+`/documentation/publishing/` ("you must cryptographically sign your updates"), `/documentation/customization/`,
+`/documentation/custom-user-interfaces/`, `/documentation/eddsa-migration/`.
 
-- **Como é**: framework (SwiftPM `https://github.com/sparkle-project/Sparkle`), `SUFeedURL` com um appcast RSS
-  (pode morar em GitHub Pages ou como asset), `SUPublicEDKey` no `Info.plist`, `generate_keys` cria a chave Ed25519 no
-  keychain de quem publica, `sign_update`/`generate_appcast` assinam o arquivo. Aceita zip, dmg e pkg. Para app **não
-  sandboxed** (o caso do Collie) não precisa dos serviços XPC; o instalador é o helper `Autoupdate` embutido no
-  framework, que espera o app sair, troca o bundle e relança. Confere EdDSA e também que o app novo tem a mesma
-  assinatura de código do antigo.
-- **UX**: janela própria com notas (HTML do appcast), "Pular esta versão", "Lembrar depois", checagem automática
-  configurável, *gentle reminders*. Delegate `SPUUpdaterDelegate` permite adiar (`updater(_:willInstallUpdateOnQuit:
-  immediateInstallationBlock:)`) e decidir o relançamento.
-- **Daemon launchd**: o Sparkle não sabe dele. Quem cuida de avisar dos terminais e de reiniciar (ou não) o
-  `collied` seria o delegate, do mesmo jeito que num atualizador próprio.
-- **Custo**: dependência nova (framework + helpers que `bundle-app.sh`/`release.sh` precisam embutir e assinar com
-  hardened runtime e timestamp; o laço de `release.sh` que confere cada Mach-O passa a cobri-los); segundo segredo de
-  assinatura (chave EdDSA) no CI; appcast novo; UI em inglês com tradução pt-BR do projeto, visualmente fora do
-  padrão das Preferências do Collie; o fluxo crítico (terminais) fica dividido entre o delegate e a janela do Sparkle.
-- **Ganho real**: código maduro e auditado de troca/relançamento, atualização com senha de admin, delta.
+- **Como é**: framework SwiftPM, `SUFeedURL` com appcast RSS, `SUPublicEDKey` no `Info.plist`, chave Ed25519
+  obrigatória (`generate_keys`, `sign_update`, `generate_appcast`). Aceita dmg, zip, tar e aar. Para app não
+  sandboxed os serviços XPC são opcionais; o helper `Autoupdate` espera o app sair, troca e relança. Compara versões
+  por `CFBundleVersion`. Tem delta. O delegate `SPUUpdaterDelegate` permite adiar
+  (`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`) e decidir o relançamento. UI própria é
+  possível via `SPUUserDriver` (custom user interfaces): a UI **não** é impedimento.
+- **Daemon launchd, terminais, Helpers sob o daemon antigo, motor figcraft**: o Sparkle não sabe de nada disso.
+  Tudo o que §3–§5 descrevem teria de ser feito no delegate e num `SPUUserDriver` próprio, igual.
+- **Custo**: dependência nova (framework + helpers a embutir e assinar com hardened runtime e timestamp em
+  `bundle-app.sh`; o laço de `release.sh` que confere cada Mach-O passa a cobri-los); segundo segredo (chave EdDSA)
+  no CI; appcast novo; `CFBundleVersion` teria de virar incremental (hoje é `"1"`); a troca do Sparkle não sabe da
+  regra de proteção da irmã (§2) contra agentes no mesmo usuário. O revisor só achou documentada a conferência de
+  assinatura Apple igual entre versões no contexto de migração de chaves; não confirmado para o fluxo normal.
+- **Ganho real**: troca/relançamento maduros, instalação com senha de admin, delta.
 
 ### B. Atualizador próprio no molde do `FigcraftInstaller` (recomendada)
 
-- Manifesto `update.json` como asset de cada release do app, lido pelo link estável
-  `https://github.com/ysraelmoreno/collie/releases/latest/download/update.json` (sem API, sem limite de taxa, já
-  ignora prerelease e draft).
-- Download do `Collie-<v>.dmg` (o mesmo que o usuário baixaria), sha256 do manifesto, montagem somente leitura,
-  `signedByTeam` no `.app` de dentro (identificador `dev.collie.app`), versão do `Info.plist` de dentro conferida,
-  troca atômica do bundle, relançamento, e reinício do daemon **separado e opcional**.
-- **Custo**: ~uma tela de Preferências, um actor no daemon e uma rotina de troca no app; quase tudo reaproveita
-  `AndroidDownload.fetch/verify`, `FigcraftInstaller.signedByTeam/stripQuarantine/scan`, o padrão `Job` + poll e o
-  padrão de confirmação do import. Sem dependência nova, sem segredo novo.
-- **Perde**: delta, instalação com senha de admin, a maturidade do Sparkle no relançamento (cobrimos com testes de
-  troca e um relançador mínimo).
+- Manifesto `update.json` como asset de cada release, pelo link estável
+  `https://github.com/ysraelmoreno/collie/releases/latest/download/update.json`.
+- Daemon: checa, baixa o `Collie-<v>.dmg` com limite de bytes, confere sha256 e a assinatura notarizada do dmg.
+  App: monta o dmg, copia o `.app` para uma pasta irmã de nome único, confere a assinatura, troca por rename,
+  confere de novo no caminho final, relança; reiniciar o serviço é passo separado e opcional.
+- **Custo**: uma página de Preferências, um actor no daemon, uma rotina de troca no app, uma regra nova no perfil
+  do sandbox; reaproveita `AndroidDownload.fetch/verify`, `signedByTeam`, `stripQuarantine`, o padrão `Job` + poll e
+  o padrão de confirmação do import. Sem dependência nova, sem segredo novo.
+- **Perde**: delta, senha de admin, maturidade do relançamento (cobrimos com testes de troca e o roteiro manual).
 
-### C. Só avisar (sem instalar)
+### C. Só avisar
 
-Checar o manifesto e mostrar "Collie X disponível — Baixar" abrindo `Collie.dmg`. Barato, mas não resolve o pedido
-(o usuário ainda arrasta e reabre). Vira o **fallback** de B quando não dá para instalar no lugar.
+Mostrar "Collie X disponível — Baixar". Não resolve o pedido; vira o **fallback** de B.
 
-**Recomendação: B.** O pedaço difícil (não derrubar terminais, daemon launchd, figcraft) é igual nas duas; o Sparkle
-não o resolve e cobra dependência, segundo segredo, embutir/assinar helpers e UI fora do padrão. O resto do B já
-existe no código. A assinatura Developer ID por team é a mesma garantia que o motor figcraft já usa.
+**Recomendação: B.** O difícil (daemon launchd, terminais, Helpers trocados sob o daemon antigo, sandbox dos
+agentes, motor figcraft) é o mesmo nas duas e o Sparkle não resolve; ele cobra dependência, segundo segredo,
+`CFBundleVersion` incremental e helpers a embutir. O resto do B já existe no código.
 
 ## Design
 
@@ -140,248 +158,278 @@ existe no código. A assinatura Developer ID por team é a mesma garantia que o 
     "version": "0.2.0",
     "tag": "v0.2.0",
     "dmg": "Collie-0.2.0.dmg",
-    "size": 42123456,
+    "size": 41711021,
     "sha256": "<64 hex do dmg>",
     "minimumSystemVersion": "15.0",
     "teamId": "AG8JQAH6YB",
     "figcraftEngine": "0.7.0-c1",
-    "notes": "<texto curto em Markdown, até 4 KB>",
     "page": "https://github.com/ysraelmoreno/collie/releases/tag/v0.2.0"
   }
   ```
 
+  Sem campo de notas: as notas de `--generate-notes` só existem depois da criação da release. O cartão mostra o
+  link "Ver novidades no GitHub" (`page`).
   A URL do dmg **não** vem do manifesto: o cliente monta
   `https://github.com/ysraelmoreno/collie/releases/download/<tag>/<dmg>` e recusa `tag` fora de `^v\d+\.\d+\.\d+$`,
-  `dmg` diferente de `Collie-<version>.dmg` e `tag` diferente de `v<version>`. Assim um manifesto adulterado não
-  aponta para outro lugar.
-- **Por que manifesto e não a API**: `api.github.com/repos/.../releases/latest` sem token tem limite de 60
-  pedidos/hora por IP (rede compartilhada esgota) e devolve JSON grande. O link `releases/latest/download/<asset>` é
-  um redirect sem limite documentado e já tem a semântica certa: release publicada, não draft, não prerelease, a
-  marcada como latest. `figcraft-v*` é prerelease com `--latest=false`: nunca entra.
-- **dmg, não zip**: é o artefato que já existe, notarizado e grampeado; um zip exigiria segunda notarização (o app
-  não é grampeado sozinho) ou um zip sem ticket. Montar dmg custa um `hdiutil attach` (ver §4).
-- **Ordem de versões**: `X.Y.Z` comparado como três inteiros. Oferece só se `manifesto.version > instalada`. A
-  instalada vem de `Bundle.main` (`CFBundleShortVersionString`), não do daemon (que lê do disco).
-- **Downgrade**: recusado em dois pontos: o manifesto (`version > instalada`) e o `Info.plist` **de dentro do dmg**
-  (tem que ser igual a `manifesto.version`). Um dmg antigo legítimo servido no lugar do novo falha no sha256 ou na
-  versão.
-- **Release trocada** (`--clobber` regera o dmg com bytes novos): o sha256 do manifesto e o dmg são lidos na mesma
-  rodada; se o sha256 não bate, a rodada falha com "a release mudou durante o download" e **não** retenta na hora; a
-  próxima checagem lê o manifesto novo. Registra o sha256 que falhou para não baixar o mesmo de novo em laço.
-- **Manifesto ausente** (404, releases antigas sem `update.json`): "nada novo", sem erro visível.
+  `dmg` diferente de `Collie-<version>.dmg`, `tag` diferente de `v<version>`, `page` diferente de
+  `…/releases/tag/<tag>`, `size` ≤ 0 ou > 500 MB.
+- **Por que manifesto e não a API**: a API sem token tem limite de 60 pedidos/hora por IP. O link
+  `releases/latest/download/<asset>` é um redirect que já ignora draft e prerelease; `figcraft-v*` é prerelease com
+  `--latest=false`. A "latest" do GitHub é a mais recente por `created_at`, com `make_latest` verdadeiro por padrão
+  (<https://docs.github.com/en/rest/releases/releases#get-the-latest-release>): um hotfix numa linha antiga
+  viraria a latest. O CI passa `--latest=false` quando a tag não é a maior `vX.Y.Z` publicada (§6); o cliente ainda
+  recusa downgrade.
+- **dmg, não zip**: é o artefato que já existe, notarizado e grampeado.
+- **Ordem de versões**: `X.Y.Z` como três inteiros; só oferece se `version > instalada` (`Bundle.main`, não o
+  daemon).
+- **Downgrade**: recusado no manifesto e no `Info.plist` de dentro do dmg (tem de ser igual a `version`).
+- **Lista de recusados**: guarda o `sha256` do manifesto **só** quando o dmg baixado diverge desse sha256 ou a
+  assinatura/versão de dentro é recusada; não baixa de novo esse sha256. 404, erro de rede, timeout, limite de
+  bytes por rede truncada e cancelamento **não** entram: retentam na próxima checagem. Motivo: `gh release upload
+  --clobber` apaga e sobe sem ordem documentada (<https://cli.github.com/manual/gh_release_upload>); um cliente pode
+  ver o manifesto novo e levar 404 no dmg por alguns minutos. Um manifesto novo traz sha novo, que não está na
+  lista.
+- **Manifesto ausente** (404, releases sem `update.json`): "nada novo", sem erro visível.
 
 ### 2. Segurança
 
-- **Hash**: sha256 do dmg inteiro antes de montar (`AndroidDownload.verify`). Falhou: apaga, não monta, não
-  retenta.
-- **Assinatura**: no `.app` copiado para o staging, `signedByTeam(app, "dev.collie.app", "AG8JQAH6YB")` com
-  `kSecCSStrictValidate | kSecCSCheckAllArchitectures`, mais `kSecCSCheckNestedCode` para cobrir `Helpers/collied`,
-  `collie`, `collie-ctty` (a variante com aninhados é uma flag a mais na mesma função; os binários de Helpers também
-  são conferidos um a um com seus identificadores, como o motor). O team ID esperado é **constante do app**, não do
-  manifesto (o campo `teamId` do manifesto só precisa bater).
-- **Notarização**: o dmg é grampeado; o app novo é verificado com `spctl --assess --type execute` (avaliação do
-  Gatekeeper, online se preciso) antes da troca. Falha de rede nessa avaliação: aceita se a assinatura do team passou
-  (o Gatekeeper nem é consultado num app sem quarentena; ver §4), e registra.
-- **Quem pode publicar**: só o CI com os secrets do Developer ID (`DEVELOPER_ID_P12_*`) produz um app que passa. Quem
-  tem push de tag no repo dispara o CI; hoje é só o dono.
-- **EdDSA**: não. Uma chave EdDSA no mesmo CI protege contra o mesmo atacante que já teria o `.p12`; só agregaria se
-  ficasse **fora** do CI (assinatura local), o que quebra o fluxo de release por tag. Ver "Minhas chamadas".
-- **Hosts**: `AndroidDownload.allowed` ganha, em `github.com`, os prefixos `/ysraelmoreno/collie/releases/latest/download/`
-  e `/ysraelmoreno/collie/releases/download/v` (o `v` não casa com `figcraft-v`, que já tem o seu). Redirects para
-  `objects.githubusercontent.com` / `release-assets.githubusercontent.com` já estão na lista. Manifesto limitado a
-  64 KB e decodificado estrito (campo faltando = recusa).
-- **Falha de verificação**: estado `failed` com a frase do motivo nas Preferências, staging apagado, nada tocado em
-  `/Applications`, nenhum retry automático para o mesmo sha256.
-- **Staging**: `<root>/.update-staging` (0700). Os terminais são sandboxed e só escrevem no projeto, então um agente
-  não troca o app verificado entre a checagem e a cópia; mesmo assim a assinatura é conferida de novo na cópia final,
-  já ao lado do app (§4).
+- **Download**: `fetch` ganha limite de bytes e cabeçalhos (ver tarefa no plano): manifesto até 64 KB, dmg até o
+  `size` do manifesto; passou, cancela e falha. `User-Agent: Collie/<versão>` fixo; `requestCachePolicy =
+  .reloadIgnoringLocalCacheData` e `urlCache = nil` na sessão do atualizador.
+- **Hash**: sha256 do dmg inteiro antes de qualquer outra coisa.
+- **dmg**: `SecStaticCodeCheckValidity` no dmg com o requisito `anchor apple generic and certificate
+  leaf[subject.OU] = "AG8JQAH6YB" and notarized`. O ticket está grampeado no dmg, então a checagem vale offline. Se
+  falhar, recusa (sem exceção para "rede"). O `spctl --assess` saiu: no app sem ticket próprio, offline ele falha
+  com o mesmo código de uma rejeição e não acrescenta nada. Validar à mão que o requisito `notarized` passa offline
+  num dmg grampeado; se não passar, o requisito fica só o do time e isso é dito no plano.
+- **`.app`**: `signedByTeam(app, "dev.collie.app", "AG8JQAH6YB")` com `kSecCSStrictValidate |
+  kSecCSCheckAllArchitectures | kSecCSCheckNestedCode`, e `collied`, `collie`, `collie-ctty` um a um com seus
+  identificadores. O team ID é **constante do app**; o `teamId` do manifesto só precisa bater.
+- **Irmã de nome único e o sandbox dos agentes** (o ponto crítico da segurança): no modo `open`, um agente pode
+  escrever em `/Applications/qualquer-outra-coisa`, e o que estiver em `/Applications/Collie.app` depois da troca
+  vira o app admin. Regras:
+  1. A pasta irmã é criada com `mkdtemp("<pasta-mãe>/.Collie-update-XXXXXX")` (exclusiva, 0700): nunca reaproveita
+     caminho existente nem mescla conteúdo plantado.
+  2. O perfil do sandbox nega escrita em `^<pasta-mãe-do-app>/\.Collie-update-` (regra nova em
+     `SandboxProfile`, modo `open` e `strict`). Como o checador mora no daemon, todo daemon capaz de atualizar já
+     gerou esse perfil para todos os seus terminais.
+  3. Depois do `renamex_np`, confere `signedByTeam` de novo **no caminho final** (que já é protegido pelo deny do
+     subpath do app). Falhou: destroca (`renamex_np` de novo) e aborta com erro.
+  4. Não verificado: se o Seatbelt checa o diretório-pai em `file-write-create` (o literal `/Applications` está
+     negado como ancestral). Entra no roteiro manual (§8): se a criação da irmã por um terminal **já** é negada pelo
+     literal, a regra 2 é redundante mas fica.
+- **Quem pode publicar**: só o CI com os secrets do Developer ID. Quem tem push de tag dispara o CI; hoje só o
+  dono.
+- **EdDSA**: não (ver "Minhas chamadas" 4). Só agregaria com a chave **fora** do CI.
+- **Hosts**: `AndroidDownload.allowed` ganha, em `github.com`, `/ysraelmoreno/collie/releases/latest/download/` e
+  `/ysraelmoreno/collie/releases/download/v`. Os redirects para `objects.githubusercontent.com` /
+  `release-assets.githubusercontent.com` já estão na lista. Manifesto decodificado estrito.
+- **Falha de verificação**: estado `failed` com o motivo, staging e irmã apagados, nada tocado no app instalado.
+- **Build local**: se o app instalado não é do time AG8JQAH6YB (`signedByTeam` no próprio `Bundle.main` falha), a
+  página mostra "Build local: atualize pelos scripts" e não checa. Evita trocar o "Collie Local" do dono (que
+  pediria TCC de novo para o app e o `collied`, e não teria o benefício do App Management do mesmo time).
 
 ### 3. UX
 
-- **Checagem**: 60 s depois de abrir e a cada 12 h enquanto aberto (laço como o do resumo diário). Botão
-  **Procurar agora** nas Preferências.
+- **Checagem**: 60 s depois de abrir e a cada 12 h enquanto o daemon roda. Botão **Procurar agora**.
 - **Página nova** `PreferencePage.atualizacoes`, título **"Atualizações"**, grupo **Interface**, ícone `↻`:
   - "Versão instalada 0.1.0 · última verificação há 2 h" (ou "sem conexão").
-  - Interruptores: **Procurar atualizações automaticamente** (ligado) e **Baixar em segundo plano** (ligado).
-  - Com versão nova: cartão "Collie 0.2.0 disponível · 42 MB", as `notes` (Markdown simples), link "Ver no GitHub"
-    (`page`), botões **Instalar…**, **Pular esta versão**, progresso de download.
-  - Selo na barra lateral da página, como o selo do Android.
-- **Aviso discreto**: um ponto no ícone de Preferências/menu e, só uma vez por versão, uma notificação do sistema
-  (`Notifier`) "Collie 0.2.0 pronto para instalar". Nada de janela modal ao abrir.
+  - **Procurar atualizações automaticamente** (ligado) e **Baixar em segundo plano** (ligado).
+  - Com versão nova: cartão "Collie 0.2.0 disponível · 41,7 MB", link "Ver novidades no GitHub", **Instalar…**,
+    **Pular esta versão**, progresso.
+  - Com a versão anterior guardada (§4): **Voltar para 0.1.0**.
+  - Selo na barra lateral, como o do Android.
+- **Aviso discreto**: selo e, uma vez por versão pronta, notificação do sistema (`Notifier`).
 - **Pular esta versão**: guarda a versão em `UserDefaults`; some até sair uma maior.
-- **Download em segundo plano**: com o interruptor ligado, baixa e verifica logo que acha; fica pronto no staging.
-  Desligado: baixa quando o usuário clica **Instalar…**.
-- **Instalar… (ponto crítico)**: abre uma folha de confirmação que lista o estado atual, pedido ao daemon
-  (`list`/registro de terminais):
+- **Download em segundo plano**: ligado, baixa e verifica ao achar. Desligado, baixa ao clicar **Instalar…**.
+- **Instalar…**: folha de confirmação com o estado pedido ao daemon (terminais abertos e ocupados; "ocupado" = o
+  sinal de `targetBusy`):
 
   ```
   Instalar Collie 0.2.0
   Há 3 terminais abertos (2 agentes trabalhando agora: collie-dx, apps-dev).
 
   ( ) Atualizar só o app — os terminais continuam rodando.
-      O serviço antigo segue até você reiniciá-lo (o aviso de serviço
-      desatualizado aparece no app novo).
+      O serviço antigo segue até você reiniciá-lo. Os hooks e o MCP dos
+      agentes já passam a ser os da versão nova; um comando novo responde
+      "reinicie o serviço para usar isto".
   ( ) Atualizar e reiniciar o serviço — fecha os 3 terminais.
       Agentes voltam pelo resume.
-                                   [Cancelar]  [Instalar e reabrir]
+                       [Cancelar]  [Instalar ao sair]  [Instalar e reabrir]
   ```
 
-  - Sem terminais abertos: a folha não tem opções, só "O Collie vai fechar e reabrir".
-  - Com agente ocupado, a opção "reiniciar o serviço" mostra quem está ocupado e o botão fica **Esperar e instalar**:
-    o app espera até nenhum agente estar ocupado (checa a cada 5 s, mostra "esperando collie-dx…" com Cancelar) e só
-    então instala. "Ocupado" usa o mesmo sinal do `targetBusy` do `ask`.
-  - **Instalar ao sair**: botão secundário; marca a instalação para quando o usuário fechar o app (sempre "só o app":
-    nunca reinicia o serviço sem estar na frente do usuário).
-- **Salvar estado**: antes de trocar, o app pede ao daemon que grave o workspace (o mesmo caminho do encerramento
-  normal); os terminais são do daemon, não do app, então "só o app" não perde nada.
-- **Depois de reabrir**: o app novo mostra "Atualizado para 0.2.0" uma vez. Se o usuário escolheu "só o app", o
-  banner existente de serviço desatualizado aparece com o texto de sempre. Se escolheu reiniciar, o reinício já foi
-  feito antes de reabrir.
+  - Sem terminais abertos: sem opções, só "O Collie vai fechar e reabrir".
+  - Com agente ocupado e a opção reiniciar: o botão vira **Esperar e instalar** (checa a cada 5 s, "esperando
+    collie-dx…", Cancelar).
+  - **Instalar ao sair**: a irmã é preparada e conferida **na hora do clique**; na saída
+    (`willTerminateNotification`) só roda `renamex_np` + a conferência pós-troca. Nunca reinicia o serviço e não
+    relança.
+  - Pin de motor novo: a folha diz "O desenho fica indisponível até baixar o motor 0.8.0 (51 MB) depois de
+    reiniciar o serviço" (§5).
+- **Depois de reabrir**: "Atualizado para 0.2.0" uma vez. Com "só o app", o banner de serviço desatualizado
+  existente aparece como sempre. Com motor novo e serviço reiniciado: o aviso traz **Baixar motor agora** (chama o
+  `design.engine.install` existente).
+- **Sem passo de "salvar estado"**: não existe comando para isso e não é preciso; os terminais e o workspace são do
+  daemon, e o reinício do serviço já é o caminho de sempre (resume).
 
 ### 4. Mecânica de instalação
 
-Divisão: **daemon** checa, baixa, verifica e prepara (tem o `fetch`, o padrão de `Job` e fica vivo); **app** faz a
-troca e o relançamento (é ele que sai, e é o processo do usuário na frente).
+Divisão: **daemon** checa, baixa, confere sha256 e o dmg (tem o `fetch`, fica vivo com o app fechado); **app**
+monta, copia, confere o `.app`, troca e relança (está na frente do usuário, então um pedido de TCC aparece para
+ele; o `collied` do launchd sem interface poderia travar num pedido de "Volumes removíveis" ao montar,
+<https://eclecticlight.co/2025/02/24/gaining-access-to-privacy-protected-folders/>,
+<https://developer.apple.com/forums/thread/686498>).
 
-1. **Daemon** (`UpdateInstaller`, actor no molde do `FigcraftInstaller`), comandos `adminOnly`:
-   `app.update.check` → `{state: none|available|ready|failed, available?:{version,size,notes,page,figcraftEngine}, job?}`,
-   `app.update.download`, `app.update.cancel`, `app.update.status`. Fases: `downloading → verifying → ready`.
-   Em `verifying`: sha256 → `hdiutil attach -nobrowse -readonly -noautoopen -mountrandom <staging>` →
-   `ditto` do `Collie.app` para `<staging>/Collie.app` → `hdiutil detach` → `scan` (sem symlink fora do bundle; o
-   `scan` do motor recusa todo symlink e um `.app` tem symlinks em `Frameworks` se um dia houver: aceitar só symlinks
-   relativos que resolvem dentro do bundle) → `signedByTeam` (app + Helpers) → `Info.plist` versão e
-   `LSMinimumSystemVersion` ≤ sistema → `stripQuarantine`. Espaço livre: `size` × 3 + margem.
+1. **Daemon** (`UpdateChecker`, actor no molde do `FigcraftInstaller`), comandos `adminOnly`:
+   `app.update.status` → `{state: none|available|ready|failed|disabled, available?:{version,size,page,
+   figcraftEngine,figcraftSize?}, job?, lastCheck?, error?}`, `app.update.check`, `app.update.download`,
+   `app.update.cancel`, `app.update.skip`. Fases: `downloading → verifying → ready`. Em `verifying`: sha256 →
+   assinatura notarizada do dmg. `ready` deixa `<root>/.update-staging/Collie-<v>.dmg` (0700; `<root>` é negado
+   aos terminais).
 2. **App**, ao confirmar:
-   1. Resolve o destino: `Bundle.main.bundleURL`. Recusa e cai no fallback (abrir `page`) se: o caminho tem
-      `/AppTranslocation/`; está num volume somente leitura (rodando do dmg); a pasta-mãe não é gravável
-      (`access(W_OK)`); `Config.tccWarning` não é nil. Mensagem: "Mova o Collie para /Applications para atualizar
-      por aqui" com **Baixar o dmg**.
-   2. `ditto` do staging para uma irmã `<pasta-mãe>/.Collie-<v>.app.update` (mesmo volume: `renamex_np` exige; o
-      staging do daemon pode estar em outro volume se o app estiver fora do disco principal). Confere
-      `signedByTeam` de novo nessa cópia.
-   3. Grava o workspace, e se escolheu reiniciar o serviço, ainda não reinicia.
-   4. `renamex_np(irmã, Bundle.main.bundleURL, RENAME_SWAP)`: o app novo ocupa o nome; o antigo vai para a irmã. O
-      processo em execução continua com seus arquivos abertos; daqui em diante o app atual não carrega nada novo do
-      bundle (troca é o último passo antes de sair).
-   5. Se escolheu reiniciar: `DaemonLauncher.restart` (`kickstart -k`): o launchd sobe o `Helpers/collied` do
-      bundle novo, mesmo caminho, mesmo plist.
-   6. Lança o relançador e sai: `/bin/sh -c 'while kill -0 <pid>; do sleep 0.2; done; /usr/bin/open <bundle>'`
-      destacado (`posix_spawn` com `setsid`), e `NSApp.terminate`.
-   7. O app novo, na abertura, apaga `.Collie-*.app.update` irmãos (o antigo) e o staging.
-   - Falha em 2–4: nada trocado (a irmã é apagada); falha depois de 4 e antes de 6: o app novo já está no lugar, o
-     usuário reabre à mão. Rollback não é preciso: a troca é atômica.
-- **Gatekeeper e quarentena**: `URLSession` não põe `com.apple.quarantine`; o `hdiutil attach` de um arquivo sem
-  quarentena gera cópia sem quarentena; `stripQuarantine` garante. Sem quarentena, o macOS não roda a avaliação de
-  primeira abertura nem translocation. Por isso a assinatura por team (e o `spctl` do §2) é a barreira real.
-- **App Management** (macOS 13+): o macOS deixa um app modificar outro assinado pelo **mesmo time**; o Collie troca
-  a si mesmo, mesmo time. Se o macOS recusar (EPERM), cai no fallback com a mensagem e um link para Ajustes ›
-  Privacidade › Gestão de apps.
-- **Permissão de `/Applications`**: admin escreve; usuário padrão não. Não pedimos senha (não meta).
-- **Admin depois da troca**: o `SignedAppCheck` do daemon (antigo ou novo) passa a aceitar o app novo e a recusar o
-  antigo; como o antigo sai logo em seguida, não há janela de recusas visível.
-- **Daemon antigo + app novo** ("só o app"): é o caso que o banner de serviço desatualizado já cobre. Risco: sem
-  versão de protocolo no handshake, um comando novo do app chamado num daemon antigo recebe "unknown command". Regra
-  para o builder: o app novo trata `unknown command` como "reinicie o serviço para usar isto" e nunca trava. Se uma
-  versão um dia quebrar o protocolo de forma incompatível, o manifesto ganha `requiresServiceRestart: true` e a folha
-  esconde a opção "só o app" (campo opcional, não implementar antes de precisar).
+   1. Resolve o destino `Bundle.main.bundleURL`. Fallback (abrir `page`) se: caminho com `/AppTranslocation/`;
+      volume só leitura; pasta-mãe sem escrita (`access(W_OK)`); `Config.tccWarning` não nil; build local (§2).
+      Mensagem: "Mova o Collie para /Applications para atualizar por aqui" com **Baixar o dmg**.
+   2. Espaço livre: `size` × 3 + 100 MB em `<root>` (o daemon confere antes de baixar) e em `size` × 3 na
+      pasta-mãe do app (o app confere antes de montar).
+   3. `hdiutil attach -nobrowse -readonly -noautoopen -mountrandom <tmp do app> <dmg>` → `mkdtemp` da irmã →
+      `ditto` do `Collie.app` para `<irmã>/Collie.app` → `hdiutil detach` → `Info.plist` (versão = manifesto,
+      `LSMinimumSystemVersion` ≤ sistema) → `signedByTeam` com aninhados → `stripQuarantine`. Symlinks: um `.app`
+      pode ter symlinks relativos de framework; aceitar só os relativos que resolvem dentro do bundle, recusar
+      setuid/setgid.
+   4. Se escolheu reiniciar, espera agentes ocupados (§3).
+   5. `renamex_np(<irmã>/Collie.app, Bundle.main.bundleURL, RENAME_SWAP)`; o antigo fica em `<irmã>/Collie.app`.
+      **Nunca** escrever por cima de um arquivo do bundle em uso (gatilho 3 do estado atual).
+   6. Conferência pós-troca no caminho final (§2 regra 3); falhou, destroca e aborta.
+   7. Se escolheu reiniciar: `DaemonLauncher.restart` (`kickstart -k`).
+   8. Grava em `UserDefaults` `{previous: "<irmã>/Collie.app", previousVersion, launches: 0}`, lança o relançador e
+      sai: `/bin/sh -c 'while kill -0 <pid>; do sleep 0.2; done; /usr/bin/open <bundle>'` destacado
+      (`posix_spawn` com `POSIX_SPAWN_SETSID`), e `NSApp.terminate`.
+   - Falha em 1–6: nada trocado (ou destrocado), irmã apagada.
+3. **Versão anterior guardada**: o app novo só apaga a irmã com o bundle antigo na **segunda** abertura em que
+   conectou ao daemon (e, se o serviço foi reiniciado, com o `BuildID` do daemon igual ao do bundle). Até lá, a
+   página mostra **Voltar para 0.1.0** (mesma troca por rename, ao contrário, com a mesma conferência de assinatura;
+   o reinício do serviço segue a mesma folha). Se o app novo nem abre, o bundle antigo está na pasta oculta
+   `.Collie-update-*` ao lado; `docs/` explica como trazê-lo de volta pelo Terminal.
+- **Gatekeeper e quarentena**: `URLSession` não põe `com.apple.quarantine`; montar dmg sem quarentena gera cópia
+  sem quarentena; `stripQuarantine` garante. Sem quarentena, sem avaliação de primeira abertura e sem translocation:
+  a barreira é a assinatura do time no dmg (notarizado) e no `.app`.
+- **App Management** (macOS 13+): o macOS deixa um app modificar outro do **mesmo time**
+  (<https://developer.apple.com/documentation/bundleresources/information-property-list/nsupdatesecuritypolicy>).
+  EPERM: fallback com link para Ajustes › Privacidade › Gestão de apps.
+- **TCC entre versões**: a identidade Developer ID (identificador + time) é estável, então as permissões do app e do
+  `collied` se mantêm de uma versão para a outra.
+- **Daemon antigo + app novo ("só o app")** — contrato de compatibilidade, de uma versão `X.Y` para a seguinte:
+  - O app novo trata `unknown command` (e campo ausente na resposta) como "reinicie o serviço para usar isto",
+    nunca trava.
+  - O `collie` novo (CLI, hooks `hook <nome>`, `statusLine`, notify, MCP) contra um daemon antigo: subcomandos de
+    hook nunca são removidos nem renomeados sem passar uma versão; ferramenta MCP que o daemon não conhece responde
+    erro com "reinicie o serviço"; o MCP não falha ao listar.
+  - A linha de comando do `collie-ctty` (`--sandbox <perfil>` + comando) é estável; flag nova só opcional.
+  - Recursos do bundle lidos pelo daemon antigo (`weblibs`, `Fonts`, `scrcpy-server`) passam a ser os novos: só
+    mudanças aditivas.
+  - Se uma versão precisar quebrar isso, o manifesto ganha `requiresServiceRestart: true` e a folha esconde "só o
+    app" (campo opcional, só quando precisar).
+- **Checador no daemon**: quem atualizar à mão e deixar rodando um daemon de antes do atualizador fica sem
+  checagem até reiniciar o serviço; a página diz "reinicie o serviço para procurar atualizações" (o
+  `app.update.status` responde `unknown command`).
 
 ### 5. Motor figcraft, Preferências, backup/import
 
-- **Pin novo**: o manifesto traz `figcraftEngine` (a `version` do pin daquela release). Se difere da versão do motor
-  instalado, o cartão diz "Esta versão usa o motor de design 0.8.0: depois de atualizar, baixe-o em Preferências ›
-  Desenho e sandbox". Nada é baixado sozinho. O estado `needsUpdate` existente aparece quando o **daemon novo**
-  estiver rodando (o daemon antigo ainda lê o pin antigo); com "só o app", o aviso do motor só vale depois de
-  reiniciar o serviço, e o cartão diz isso.
-- **Pin igual**: o motor em `<root>/figcraft` é dado do usuário fora do bundle; trocar o app não o toca e o estado
-  continua `installed`.
-- **Preferências**: página nova "Atualizações" (§3); a página do motor não muda.
-- **Backup/import e motor ocupados**: `app.update.download` e a instalação recusam com `conflict` enquanto há backup,
-  import ou troca do motor (o mesmo `busy` do `FigcraftInstaller`), e vice-versa durante `verifying`. A atualização
-  nunca toca `<root>`, só o staging. Um backup feito na versão nova importa na antiga? Não é deste design: o
-  `collieVersion` do manifesto do backup já existe para essa regra.
+- **Pin novo**: o manifesto traz `figcraftEngine`. Se difere do motor instalado (`design.engine.status`), a folha e
+  o cartão dizem que **o desenho fica indisponível** até baixar o motor novo, e que isso vale depois de reiniciar o
+  serviço (o daemon antigo segue com o pin antigo, `CommandRouter.swift:186`). Depois do reinício, o aviso
+  "Atualizado" traz **Baixar motor agora**. Nada é baixado sozinho.
+- **Pin igual**: `<root>/figcraft` não é tocado; continua `installed`.
+- **Ocupado**: um sinal novo `maintenance` no daemon (backup, import, troca do motor, verificação do atualizador)
+  substitui o uso de `figcraft.isHeld` como "ocupado" para o atualizador; `app.update.download` e a instalação
+  recusam com `conflict` enquanto ele está ativo, e vice-versa. A atualização nunca toca `<root>` além do staging.
 
-### 6. CI (`release.yml`, sem mexer nesta tarefa)
+### 6. CI (`release.yml`, não nesta tarefa)
 
-- Depois de gerar os `.sha256`, um passo **Manifesto** escreve `build/update.json` com `jq`/`plutil`: `version`,
-  `tag`, `dmg`, `size` (`stat -f %z`), `sha256`, `minimumSystemVersion` (do `Info.plist` do app gerado),
-  `teamId` (do `Resources/figcraft-engine.json`, já é o do certificado), `figcraftEngine` (`version` do pin),
-  `notes` (primeiras linhas das notas, até 4 KB) e `page`.
-- Sobe junto com os quatro assets atuais, **por último** na lista (num `upload --clobber` a cópia do dmg precede o
-  manifesto). Release recém-criada: conferir se `gh release create` com assets publica só depois de subir todos
-  (se não, criar como draft, subir, publicar, como o `figcraft.yml` faz).
-- Um passo de checagem baixa o `update.json` publicado e confere `sha256`/`size` contra o dmg publicado (molde do
-  "Conferir motor").
-- **Nada muda** em `Collie.dmg`, notarização, pin, secrets. Nenhum secret novo.
-- Teste offline do gerador de manifesto como os de `scripts/ci/test-update-pin.sh`.
+- **Draft órfão**: antes de criar, apagar drafts com a mesma tag (o laço de `figcraft.yml:78-83`); só uma release
+  publicada leva `upload --clobber`.
+- **Latest**: `--latest=false` quando a tag não é a maior `vX.Y.Z` entre as releases publicadas.
+- **Manifesto**: depois dos `.sha256`, escrever `build/update.json` com `version`, `tag`, `dmg`, `size`
+  (`stat -f %z`), `sha256`, `minimumSystemVersion` (do `Info.plist` do app gerado), `teamId` (de `codesign -dv` do
+  app gerado, `TeamIdentifier=`), `figcraftEngine` (`version` do pin) e `page`. Subir junto com os quatro assets.
+- **Checagem pós-publicação**: baixar `…/releases/download/<tag>/update.json` (nunca `latest`, que numa rodada de
+  tag antiga aponta para outra) e conferir `sha256`/`size` contra o dmg publicado.
+- Nada muda em `Collie.dmg`, notarização, pin, secrets.
+- Teste offline do gerador do manifesto como `scripts/ci/test-update-pin.sh`.
 
 ### 7. Privacidade
 
-- A checagem é um GET a `github.com/ysraelmoreno/collie/releases/latest/download/update.json` com sessão efêmera
-  (sem cookies, sem cache), `User-Agent: Collie/<versão>` e nada mais: sem ID de instalação, e-mail, nome de
-  máquina, contagem de uso. O GitHub vê o IP, como em qualquer download do site.
-- Offline/erro: silencioso; a página mostra "sem conexão" e a hora da última verificação boa. Erro só aparece em
-  **Procurar agora**.
+- A checagem é um GET a `github.com/ysraelmoreno/collie/releases/latest/download/update.json`, sessão efêmera sem
+  cache, `User-Agent: Collie/<versão>` e nenhum outro cabeçalho próprio: sem ID de instalação, e-mail, nome de
+  máquina, contagem de uso. O GitHub vê o IP.
+- Offline/erro: silencioso; a página mostra "sem conexão" e a última checagem boa. Erro só aparece em **Procurar
+  agora**.
 - Proxy: `URLSession` usa o proxy do sistema.
-- Desligar "Procurar atualizações automaticamente" zera todo tráfego do atualizador.
+- Desligar a checagem automática zera o tráfego do atualizador.
 
 ### 8. Testes e validação
 
-- Só `swift test --filter`, sem rede: `fetch` injetado (como `FigcraftInstallerTests`), `signature` injetada,
-  `hdiutil` atrás de um runner injetável (`AndroidInstaller.run`).
-- `UpdateManifestTests`: decodificação estrita, tamanho máximo, `tag`/`dmg`/`version` coerentes, comparação de
-  versões, downgrade e versão igual recusados, `minimumSystemVersion`.
-- `UpdateInstallerTests`: sha256 errado não monta e não retenta o mesmo sha; assinatura recusada; `Info.plist` com
-  versão diferente; cancelamento; `busy` → `conflict`; staging limpo em todo caminho.
-- `UpdateSwapTests`: dois `.app` de teste montados em diretório temporário (pastas com `Contents/Info.plist`):
-  troca atômica, irmã apagada na abertura seguinte, destino translocado/só leitura/sem escrita cai no fallback.
-- `AndroidDownloadTests`: os prefixos novos do `allowed` e que `figcraft-v` e outras rotas continuam como estão.
-- Validar sem publicar release: build `DEBUG` aceita `COLLIE_UPDATE_MANIFEST=file:///…` (ignorado no release, como
-  os overrides `COLLIE_ROOT`), com um dmg de `COLLIE_SKIP_NOTARIZE=1 scripts/release.sh` feito pelo dono (assinado
-  com o Developer ID, sem notarizar); a versão maior via `COLLIE_VERSION`. Testa download, verificação, troca e
-  relançamento num app copiado para uma pasta gravável fora de `/Applications` (ex.: `~/Applications`).
-- Validação final com release real: só o dono, numa versão de patch.
+- Só `swift test --filter`, sem rede: `fetch`, assinatura e `hdiutil` injetáveis.
+- **Unitários**: manifesto (estrito, coerência, versões, downgrade); `fetch` com limite de bytes e User-Agent (num
+  `URLProtocol` de teste, sem rede); lista de recusados (sha divergente entra; 404/rede/cancelamento não);
+  checador (fases, `maintenance` → `conflict`, staging limpo); `allowed` com os prefixos novos; perfil do sandbox
+  com o deny `\.Collie-update-`; troca com dois `.app` de teste em diretório temporário (irmã exclusiva,
+  `mkdtemp` recusa caminho existente, troca, conferência pós-troca que falha → destroca, apagar só na segunda
+  abertura, voltar para a anterior, fallbacks de destino); compatibilidade (CLI novo com router sem um comando →
+  mensagem "reinicie o serviço"; MCP lista sem falhar; `collie-ctty` aceita a linha antiga).
+- **Override de fonte para teste**: `COLLIE_UPDATE_MANIFEST=file:///…` lido pelo **daemon** em qualquer build,
+  só `file://`, logado e mostrado na página ("fonte de teste: …"). Não reduz a segurança: o dmg continua tendo de
+  ser do time e notarizado (ou, em teste, do time, ver roteiro). Sem isso não há como validar com um app de
+  release, porque `COLLIE_ROOT`/`COLLIE_LABEL` são só DEBUG e um app de release roda sempre com o label e o root
+  reais.
+- **Roteiro manual do dono** (nunca na conta do dono, para não tocar no daemon real): numa **conta de usuário
+  macOS separada** (outro domínio `gui/<uid>`, outro `~/Library`, outro LaunchAgent):
+  1. Dois dmgs de teste: `COLLIE_SKIP_NOTARIZE=1 COLLIE_VERSION=0.90.0 scripts/release.sh` e o mesmo com `0.90.1`
+     (Developer ID, sem notarizar). Sem notarização o requisito `notarized` falha: o roteiro usa a 0.90.1 para
+     provar a **recusa**, e uma release real de patch (passo 6) para o caminho feliz completo.
+  2. Instalar a 0.90.0 em `~/Applications` da conta de teste; `launchctl setenv COLLIE_UPDATE_MANIFEST file:///…`
+     e reiniciar o serviço da conta de teste.
+  3. Conferir: download, recusa do dmg sem notarização, mensagem e lista de recusados.
+  4. Conferir à mão o que teste unitário não cobre: `hdiutil attach` pelo app (pedido de TCC de Volumes
+     removíveis?, `log stream --predicate 'subsystem == "com.apple.TCC"'`); se o Seatbelt nega a um terminal criar
+     `~/Applications/.Collie-update-x` e `/Applications/.Collie-update-x`; App Management; troca real e
+     relançamento via LaunchServices; "só o app" com um agente rodando (hooks novos contra o daemon antigo).
+  5. Repetir 3–4 com `/Applications` (conta de teste admin) se o dono quiser cobrir o caminho padrão.
+  6. Caminho feliz real: duas releases de patch publicadas (a primeira com atualizador e a seguinte), na conta de
+     teste.
 
 ## Decisões
 
-- Atualizador próprio (B), não Sparkle; fallback de só avisar (C) quando não dá para instalar no lugar.
-- Manifesto `update.json` como asset no link `releases/latest/download`, não API do GitHub nem appcast no Pages.
-- Instala do dmg existente; sem zip.
-- Sem EdDSA; a garantia é sha256 + Developer ID do team AG8JQAH6YB (constante no app) + versão dentro do bundle.
-- Daemon baixa e verifica; app troca e relança.
-- Atualizar o app e reiniciar o serviço são passos separados; reiniciar só com confirmação na frente do usuário.
-- Sem senha de admin, sem delta, sem beta.
+- Atualizador próprio (B); fallback "só avisar" (C).
+- Manifesto `update.json` como asset no link `releases/latest/download`; URL do dmg derivada da tag.
+- Instala do dmg existente; troca **só por rename**.
+- Sem EdDSA; garantia = sha256 + dmg do time notarizado + `.app` do time (constante no app) + versão do bundle.
+- Daemon checa, baixa e confere o dmg; app monta, copia, confere, troca e relança.
+- Irmã exclusiva + deny no sandbox + conferência pós-troca com destroca.
+- Atualizar o app e reiniciar o serviço são passos separados, com contrato de compatibilidade de uma versão.
+- Versão anterior guardada até a segunda abertura saudável; voltar é ação explícita.
+- Build local não se atualiza.
+- `maintenance` como sinal de ocupado do daemon.
+- Override `COLLIE_UPDATE_MANIFEST` só `file://`, em qualquer build; validação manual em outra conta macOS.
 
 ## Minhas chamadas (conferir)
 
 1. **Intervalo**: 60 s após abrir e a cada 12 h. Poderia ser 24 h.
-2. **Padrões**: checagem automática e download em segundo plano **ligados**. Download de ~42 MB sem perguntar pode
-   incomodar em rede limitada.
-3. **Opção padrão na folha** com terminais abertos: "Atualizar só o app" (os agentes seguem). Alternativa: padrão
-   reiniciar, para não deixar serviço velho rodando.
-4. **Sem EdDSA**: aceito que quem tiver o `.p12` (CI) pode publicar atualização. Se o dono quiser uma segunda chave
-   fora do CI, o CI passa a esperar uma assinatura feita localmente antes de publicar.
-5. **Página própria "Atualizações"** no grupo Interface, em vez de uma seção numa página existente.
-6. **Notificação do sistema** uma vez por versão pronta. Pode ser só o selo.
-7. **Instalar ao sair** existe e nunca reinicia o serviço.
-8. **"Esperar e instalar"** espera agentes ocupados sem limite de tempo (até Cancelar).
-9. `spctl` com falha de rede não bloqueia se a assinatura do team passou.
+2. **Padrões**: checagem e download em segundo plano **ligados** (~42 MB sem perguntar).
+3. **Opção padrão na folha** com terminais abertos: "Atualizar só o app". Alternativa: padrão reiniciar, para não
+   deixar o serviço antigo rodando com hooks novos.
+4. **Sem EdDSA**: quem tiver o `.p12` (CI) pode publicar atualização. Com uma chave fora do CI, a release passaria
+   a esperar uma assinatura feita localmente.
+5. **Página própria "Atualizações"** no grupo Interface.
+6. **Notificação do sistema** uma vez por versão pronta (pode ser só o selo).
+7. **"Instalar ao sair"** existe, não reinicia o serviço e não relança.
+8. **"Esperar e instalar"** espera sem limite de tempo (até Cancelar).
+9. **"Voltar para a versão anterior"** como botão na página (em vez de só instruções em `docs/`).
+10. **Validação em outra conta macOS** do Mac do dono (alternativa: outro Mac).
 
-## Tarefas (independentes onde marcado)
+## Tarefas (resumo; o plano detalha)
 
-1. `UpdateManifest` (modelo, decodificação estrita, comparação de versões) + testes. Independente.
-2. Prefixos novos em `AndroidDownload.allowed` + testes. Independente.
-3. `UpdateInstaller` no daemon (fetch, sha256, `hdiutil`, `scan` para bundle, assinatura com aninhados, `Info.plist`,
-   quarentena, staging, `busy`) + testes. Depende de 1 e 2.
-4. Comandos `app.update.*` em `Commands.swift`/router, `adminOnly`, + `CommandsTests` e `MCPTests` (armadilha do
-   esquema ordenado). Depende de 3.
-5. Troca e relançamento no app (`UpdateSwap`: destino, fallback, irmã, `renamex_np`, relançador, limpeza na
-   abertura) + testes com `.app` de teste. Independente de 3/4 (só usa um caminho de staging).
-6. Página "Atualizações" + folha de confirmação com terminais/ocupados + selo + notificação. Depende de 4 e 5.
-7. Aviso do motor figcraft no cartão. Depende de 6.
-8. Override `COLLIE_UPDATE_MANIFEST` só em DEBUG. Junto com 3.
-9. `release.yml`: passo Manifesto + checagem pós-publicação + teste offline do gerador; atualizar `docs/release.md`.
-   Independente do código do app. **Passo do dono**: revisar e mergear (mexe em `.github/`).
-10. **Passo do dono**: dmg de teste com `COLLIE_SKIP_NOTARIZE=1 COLLIE_VERSION=<maior> scripts/release.sh` para a
-    validação local; depois, uma release de patch real para validar ponta a ponta (a primeira versão com
-    atualizador só consegue atualizar para a seguinte: quem está na 0.1.0 ainda baixa à mão uma vez).
-11. **Passo do dono**: conferir se `gh release create` com assets publica antes de subir todos (ver §6).
+1. Manifesto. 2. `fetch` com limite e cabeçalhos. 3. `allowed`. 4. Checador no daemon. 5. Comandos `app.update.*`.
+6. Deny `\.Collie-update-` no sandbox. 7. Verificação do `.app` e troca no app. 8. Compatibilidade CLI/ctty/app.
+9. Página e folha. 10. Motor. 11. CI (**passo do dono**: revisar e mergear). 12. Roteiro manual (**passo do dono**).

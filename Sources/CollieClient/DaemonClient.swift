@@ -27,6 +27,8 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     public private(set) var grants: [SandboxGrant] = []
     /// Whether the daemon sees sandbox denials; false: "detecção indisponível"; nil: no watcher (sandbox off).
     public private(set) var detection: Bool?
+    /// Why detection is off (pt-BR, short); nil when on, or from a daemon that predates it.
+    public private(set) var detectionReason: String?
     /// `BuildID` of the connected daemon (nil: not connected yet, or a daemon that predates it).
     public private(set) var daemonBuild: String?
     /// The daemon's loaded external plug-ins (also this process's `PluginRegistry` external list).
@@ -216,7 +218,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .sandboxDenied(let d):
             if let i = accessCards.firstIndex(where: { Self.sameCard($0, d) }) { accessCards[i] = d }
             else { accessCards.append(d); if d.refusal == nil { onAccessCard?(d) } }
-        case .sandboxDetection(let ok): detection = ok
+        case .sandboxDetection(let ok, let why): detection = ok; detectionReason = ok ? nil : why
         case .confirmCorrection(let t, let e, let title): onConfirmCorrection?(t, e, title)
         case .pluginsChanged(let ms): setPlugins(ms)
         case .leashRequest(let r): if !leashRequests.contains(where: { $0.id == r.id }) { leashRequests.append(r) }
@@ -314,6 +316,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         accessCards = decode(o["cards"]) ?? []
         grants = decode(o["grants"]) ?? []
         if case .bool(let b)? = o["detection"] { detection = b } else { detection = nil }
+        if case .string(let s)? = o["detectionReason"], detection == false { detectionReason = s } else { detectionReason = nil }
         if let r = try? await admin("admin.leash.requests", [:]) { leashRequests = decode(r) ?? [] }
         if let r = try? await admin("admin.app.cards", [:]) { appCards = decode(r) ?? [] }
     }

@@ -243,7 +243,10 @@ public final class Daemon: Sendable {
         }
         // denials: before any terminal can launch (`log stream` takes 1-2 s to attach; SandboxWatcher)
         if let src = config.denialSource ?? (config.watchDenials ? SandboxWatcher.logStream : nil) {
-            await router.startSandboxWatch(src, base: config.denialBackoff)
+            // the admin check is the live `log stream`'s only (an injected source is the tests')
+            let live = config.denialSource == nil
+            let admin: @Sendable () -> Bool = { !live || SandboxWatcher.isAdmin() }
+            await router.startSandboxWatch(src, base: config.denialBackoff, isAdmin: admin)
         }
         // The admin token is still the in-memory one no client has seen (admin.token is rewritten below), so
         // nothing can authenticate until the reap and sweeps are done. A failed bind never gets here.

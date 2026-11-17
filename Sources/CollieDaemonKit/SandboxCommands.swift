@@ -47,7 +47,8 @@ extension CommandRouter {
         case "access.list":
             if let me = caller { return try isoJSON(SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)) }
             return .object(["grants": try isoJSON(sandboxGrants), "cards": try isoJSON(accessCards.all),
-                            "detection": sandboxDetection.map(JSONValue.bool) ?? .null, "dropped": .number(Double(accessCards.dropped)),
+                            "detection": sandboxDetection.map(JSONValue.bool) ?? .null,
+                            "detectionReason": sandboxDetectionReason.map(JSONValue.string) ?? .null, "dropped": .number(Double(accessCards.dropped)),
                             "silent": .object(Dictionary(uniqueKeysWithValues: accessCards.silent.map { ($0.key.uuidString, .number(Double($0.value))) }))])
         case "access.grant":
             try appOnly()
@@ -177,10 +178,11 @@ extension CommandRouter {
         if sandboxGrants != before { try? saveGrants() }
     }
 
-    func startSandboxWatch(_ source: @escaping @Sendable () -> AsyncStream<String>, base: Duration) {
+    func startSandboxWatch(_ source: @escaping @Sendable () -> AsyncStream<String>, base: Duration,
+                           isAdmin: @escaping @Sendable () -> Bool = { true }) {
         sandboxWatch = Task { [weak self] in
-            await SandboxWatcher.supervise(source: source, base: base, max: .seconds(60),
-                                           state: { [weak self] ok in await self?.detectionChanged(ok) },
+            await SandboxWatcher.supervise(source: source, base: base, max: .seconds(60), isAdmin: isAdmin,
+                                           state: { [weak self] ok, why in await self?.detectionChanged(ok, why) },
                                            line: { [weak self] l in
                                                await self?.raise(SandboxDenial(terminal: l.terminal, op: l.op, path: l.path, count: l.count))
                                            })
@@ -188,10 +190,10 @@ extension CommandRouter {
     }
     func stopSandboxWatch() { sandboxWatch?.cancel(); sandboxWatch = nil }
 
-    private func detectionChanged(_ ok: Bool) async {
-        guard sandboxDetection != ok else { return }
-        sandboxDetection = ok
-        await hub.emit(.sandboxDetection(available: ok))
+    private func detectionChanged(_ ok: Bool, _ why: String?) async {
+        guard sandboxDetection != ok || sandboxDetectionReason != why else { return }
+        sandboxDetection = ok; sandboxDetectionReason = why
+        await hub.emit(.sandboxDetection(available: ok, reason: why))
     }
 }
 

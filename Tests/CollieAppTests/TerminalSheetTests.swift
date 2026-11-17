@@ -54,9 +54,11 @@ import CollieProtocol
     #expect(AccessCopy.shown("a\u{202E}txt.exe\nb é") == "a\\u{202E}txt.exe\\u{A}b é")
     // the card and the detection state cross the events stream intact
     let d = SandboxDenial(terminal: UUID(), op: "read", path: "/Users/u/Doc é/x", count: 3, requested: true, reason: "r", refusal: nil, folderRefusal: "Amplo")
-    for e in [WorkspaceEvent.sandboxDenied(d), .sandboxDetection(available: false)] {
+    for e in [WorkspaceEvent.sandboxDenied(d), .sandboxDetection(available: false), .sandboxDetection(available: false, reason: SandboxDetection.notAdmin)] {
         #expect(try JSONDecoder().decode(WorkspaceEvent.self, from: JSONEncoder().encode(e)) == e)
     }
+    // a daemon that predates the reason: still decodes, without one
+    #expect(try JSONDecoder().decode(WorkspaceEvent.self, from: Data(#"{"t":"sandboxDetection","ok":false}"#.utf8)) == .sandboxDetection(available: false))
     #expect(d.folder == "/Users/u/Doc é" && d.access == .read)
 }
 

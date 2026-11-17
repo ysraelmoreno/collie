@@ -51,34 +51,72 @@ enum SandboxWatcher {
     }
 
     /// Runs `source` and restarts it whenever it ends, with backoff (`base` doubling to `max`, reset after a minute of
-    /// running). `state(true)` when a run starts, `state(false)` when it ends ("detecção indisponível"). Until cancelled.
+    /// running). `state(true, nil)` when a run starts, `state(false, why)` when it ends ("detecção indisponível: why").
+    /// Until cancelled — but a non-admin account (`isAdmin` before the first run, or `log` saying so) stops for good:
+    /// macOS lets only admins `log stream`, and group membership only changes with a new login (a new daemon).
     static func supervise(source: @escaping @Sendable () -> AsyncStream<String>, base: Duration, max: Duration,
-                          state: @escaping @Sendable (Bool) async -> Void, line: @escaping @Sendable (Line) async -> Void) async {
+                          isAdmin: @Sendable () -> Bool = { true },
+                          state: @escaping @Sendable (Bool, String?) async -> Void, line: @escaping @Sendable (Line) async -> Void) async {
+        guard isAdmin() else { await state(false, SandboxDetection.notAdmin); return }
         var delay = base
         while !Task.isCancelled {
             let started = ContinuousClock.now
-            await state(true)
-            for await l in source() { if let d = parse(l) { await line(d) } }
-            await state(false)
+            await state(true, nil)
+            var why = "log stream parou"
+            for await l in source() {
+                if l.hasPrefix(failMark) { why = String(l.dropFirst(failMark.count)) } else if let d = parse(l) { await line(d) }
+            }
+            await state(false, why)
+            if why == SandboxDetection.notAdmin { return }
             if ContinuousClock.now - started > .seconds(60) { delay = base }
             try? await Task.sleep(for: delay)
             delay = Swift.min(delay * 2, max)
         }
     }
 
+    /// ponytail: a source's last element says why it ended (stdout lines are ndjson or log's banner, never a NUL).
+    static let failMark = "\u{0}collie-watch:"
+    /// That element, from `log`'s stderr (its last line, bounded) or a launch failure.
+    static func failed(_ stderr: String?, started: Bool = true) -> String {
+        let last = stderr?.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        if last.contains("Must be admin") { return failMark + SandboxDetection.notAdmin }
+        let head = started ? "log stream parou" : "log stream não iniciou"
+        return failMark + String((last.isEmpty ? head : head + ": " + last).prefix(120))
+    }
+
+    /// Whether this account is in the `admin` group (gid 80), as `log stream` requires. Unknown: true (`log` says).
+    @Sendable static func isAdmin() -> Bool {
+        guard getuid() != 0, let pw = getpwuid(getuid()) else { return true }
+        var groups = [Int32](repeating: 0, count: 1024), n = Int32(groups.count)   // getgroups stops at 16 on macOS
+        guard getgrouplist(pw.pointee.pw_name, Int32(bitPattern: pw.pointee.pw_gid), &groups, &n) != -1 else { return true }
+        return groups.prefix(Int(n)).contains(80)
+    }
+
     private final class Child: @unchecked Sendable { let p = Process() }   // terminated from onTermination only
 
     /// The live source: `log stream --style ndjson`, one line per element (bounded: the newest 4096 kept). Ends when
-    /// the child exits or can't start; the stream's end (cancellation included) terminates the child.
+    /// the child exits or can't start, with `failed(…)` last (stderr's tail, 4 KB kept); the stream's end
+    /// (cancellation included) terminates the child.
     @Sendable static func logStream() -> AsyncStream<String> {
         AsyncStream(bufferingPolicy: .bufferingNewest(4096)) { cont in
-            let c = Child(), pipe = Pipe()
+            let c = Child(), pipe = Pipe(), errPipe = Pipe()
             c.p.executableURL = URL(fileURLWithPath: "/usr/bin/log")   // not zsh's `log` builtin
             c.p.arguments = ["stream", "--style", "ndjson", "--predicate", predicate]
-            c.p.standardOutput = pipe; c.p.standardError = FileHandle.nullDevice; c.p.standardInput = FileHandle.nullDevice
-            do { try c.p.run() } catch { cont.finish(); return }
+            c.p.standardOutput = pipe; c.p.standardError = errPipe; c.p.standardInput = FileHandle.nullDevice
+            do { try c.p.run() } catch { cont.yield(failed(error.localizedDescription, started: false)); cont.finish(); return }
             cont.onTermination = { _ in if c.p.isRunning { c.p.terminate() } }
-            let h = pipe.fileHandleForReading
+            let h = pipe.fileHandleForReading, eh = errPipe.fileHandleForReading
+            let errDone = DispatchSemaphore(value: 0)
+            final class Tail: @unchecked Sendable { var d = Data() }
+            let tail = Tail()
+            Thread {   // drained apart: a chatty stderr can't fill its pipe and stall stdout
+                while true {
+                    let d = autoreleasepool { eh.availableData }
+                    if d.isEmpty { break }
+                    tail.d.append(d); if tail.d.count > 4096 { tail.d.removeFirst(tail.d.count - 4096) }
+                }
+                errDone.signal()
+            }.start()
             Thread {
                 var buf = Data()
                 while true {
@@ -93,6 +131,8 @@ enum SandboxWatcher {
                     if buf.count > 1 << 20 { buf.removeAll() }   // a runaway line: dropped
                 }
                 c.p.waitUntilExit()
+                errDone.wait()
+                cont.yield(failed(String(decoding: tail.d, as: UTF8.self)))
                 cont.finish()
             }.start()
         }

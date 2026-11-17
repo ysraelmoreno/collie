@@ -64,3 +64,24 @@ private func card(_ i: Int, refused: Bool = false) -> SandboxDenial {
     #expect(died.tag == "detecção indisponível: log stream parou: x" && died.help.contains("tentando de novo"))
     #expect(AccessCopy.detection(reason: nil).tag == "detecção indisponível")   // a daemon that predates the reason
 }
+
+/// Not admin: no tag on the bar (the reason lives in the popover and Preferências), one toast ever, until detection
+/// comes back (then the key clears, so losing admin again explains again). The other reasons keep the tag, no toast.
+@Test func notAdminToastsOnceAndHidesTag() {
+    let d = UserDefaults(suiteName: "test.\(UUID())")!
+    #expect(!AccessCopy.showsDetectionTag(detection: false, reason: SandboxDetection.notAdmin))
+    #expect(AccessCopy.showsDetectionTag(detection: false, reason: "log stream parou: x"))
+    #expect(AccessCopy.showsDetectionTag(detection: false, reason: nil))
+    #expect(!AccessCopy.showsDetectionTag(detection: true, reason: nil) && !AccessCopy.showsDetectionTag(detection: nil, reason: nil))
+
+    let t = AccessCopy.notAdminToast(detection: false, reason: SandboxDetection.notAdmin, defaults: d)
+    #expect(t != nil && t!.contains("cartões") && t!.contains("continua protegendo") && t!.contains("collie access request")
+            && t!.contains("administrador") && t!.contains("entre de novo na sessão"))
+    #expect(d.bool(forKey: AccessCopy.notAdminToastKey))
+    #expect(AccessCopy.notAdminToast(detection: false, reason: SandboxDetection.notAdmin, defaults: d) == nil)   // once
+    #expect(AccessCopy.notAdminToast(detection: false, reason: "log stream parou: x", defaults: d) == nil)
+    #expect(AccessCopy.notAdminToast(detection: nil, reason: nil, defaults: d) == nil && d.bool(forKey: AccessCopy.notAdminToastKey))
+    #expect(AccessCopy.notAdminToast(detection: true, reason: nil, defaults: d) == nil)   // became admin: key cleared
+    #expect(!d.bool(forKey: AccessCopy.notAdminToastKey))
+    #expect(AccessCopy.notAdminToast(detection: false, reason: SandboxDetection.notAdmin, defaults: d) != nil)
+}

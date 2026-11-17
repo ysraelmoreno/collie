@@ -156,6 +156,21 @@ struct UpdateInstallSheet: View {
     }
 }
 
+/// The app's ephemeral notice (bottom right, over the window): text and its buttons. Update and detection notices share it.
+struct NoticeCard<Actions: View>: View {
+    let text: String
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(text).font(.collieUI(13)).foregroundStyle(Color.collieText).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 420, alignment: .leading)
+            actions
+        }
+        .padding(12).background(Color.collieSurface, in: .rect(cornerRadius: 8)).padding(16)
+    }
+}
+
 /// What the app does around updates outside Preferências: one check at launch, one notification per version ready,
 /// the "Atualizado para X" notice (with the engine's download when the new pin blocks the Design panel), the previous
 /// bundle's healthy-launch count and the "Instalar ao sair" swap.
@@ -176,8 +191,7 @@ struct UpdateLaunchHost: ViewModifier {
     }
 
     private func noticeView(_ text: String) -> some View {
-        HStack(spacing: 10) {
-            Text(text).font(.collieUI(13)).foregroundStyle(Color.collieText)
+        NoticeCard(text: text) {
             if engineBlocked {
                 Button("Baixar motor agora") {
                     Task { _ = try? await client.adminCall("design.engine.install", [:]) }
@@ -188,7 +202,6 @@ struct UpdateLaunchHost: ViewModifier {
             }
             Button("OK") { notice = nil }.buttonStyle(CollieButtonStyle(.quiet))
         }
-        .padding(12).background(Color.collieSurface, in: .rect(cornerRadius: 8)).padding(16)
     }
 
     private func launched() async {

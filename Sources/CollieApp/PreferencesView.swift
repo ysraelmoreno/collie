@@ -229,6 +229,10 @@ struct PreferencesView: View {
                  ? "Aberto: o agente lê e escreve tudo na sua conta (chaves e tokens incluídos); só os dados e o app do Collie ficam fechados. Vale para terminais abertos depois."
                  : "Estrito: escrita só no projeto, segredos fechados, cartões para liberar. Vale para terminais abertos depois.")
                 .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+            if client.detection == false, client.detectionReason == SandboxDetection.notAdmin {   // neutral, for who wants to know
+                Text(AccessCopy.detection(reason: SandboxDetection.notAdmin).help).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

@@ -144,6 +144,20 @@ import CollieCore
         #expect(p.entry(r.id)?.sha256 == MemoryProvenance.digest(r))
     }
 
+    /// Task 9: the latest text the daemon wrote is kept (the app shows the difference before "Confiar"); older versions
+    /// keep their hash only. Adoptions are counted.
+    @Test func latestTextKeptAndAdoptionsCounted() throws {
+        let d = dirs(); defer { try? FileManager.default.removeItem(at: d.root) }
+        let old = rec("Antiga"); try plant(old, in: d.store, age: 3600)
+        let p = MemoryProvenance(file: d.ledger), s = MemoryStore(dir: d.store, provenance: p)
+        _ = s.all()
+        #expect(p.adoptedCount == 1 && p.entry(old.id)?.text == MemoryFile.render(old))
+        var r = rec(); try s.write(r)
+        r.body = "segunda"; try s.write(r)
+        #expect(p.entry(r.id)?.text == MemoryFile.render(r))
+        #expect(MemoryProvenance(file: d.ledger).adoptedCount == 1)
+    }
+
     /// "Confiar" (the app): the record as it is now becomes the daemon's.
     @Test func trustRecordsTheCurrentText() throws {
         let d = dirs(); defer { try? FileManager.default.removeItem(at: d.root) }

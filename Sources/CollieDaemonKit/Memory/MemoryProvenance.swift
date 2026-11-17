@@ -19,6 +19,8 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
         var origin: String
         var curatedBy: CuratedBy?
         var at: Date
+        /// The text written (`MemoryFile.render`), on the newest version only: what "Confiar" shows the difference from.
+        var text: String?
     }
     private struct State: Codable {
         /// When this ledger was born: a store's first read adopts the files older than this (C3), once.
@@ -28,6 +30,8 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
         /// Set when an existing ledger couldn't be read and this one started over: from then on nothing is adopted (the
         /// owner's call on limitation 3); what the old one knew stays unverified until "Confiar" (`memory.trust`).
         var restartedAt: Date?
+        /// Files taken as the daemon's by C3's one-time adoption (the app's note).
+        var adoptedCount: Int?
         /// Newest first, at most `versionsMax`.
         var entries: [UUID: [Entry]] = [:]
     }
@@ -57,6 +61,7 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
 
     /// When this ledger started over from an unreadable one (nil: never). For the app's status (task 9).
     var restartedAt: Date? { lock.withLock { state.restartedAt } }
+    var adoptedCount: Int { lock.withLock { state.adoptedCount ?? 0 } }
 
     static func digest(_ r: MemoryRecord) -> String {
         SHA256.hash(data: Data(MemoryFile.render(r).utf8)).map { String(format: "%02x", $0) }.joined()
@@ -64,9 +69,10 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
 
     /// The daemon wrote `r` (every `MemoryStore.write`), or the user trusted it as it is ("Confiar").
     func record(_ r: MemoryRecord, now: Date = Date()) {
-        let e = Entry(sha256: Self.digest(r), origin: r.origin, curatedBy: r.curatedBy, at: now)
+        let text = MemoryFile.render(r)
+        let e = Entry(sha256: Self.digest(r), origin: r.origin, curatedBy: r.curatedBy, at: now, text: text)
         lock.withLock {
-            var vs = state.entries[r.id] ?? []
+            var vs = (state.entries[r.id] ?? []).map { var v = $0; v.text = nil; return v }   // older versions: the hash only
             vs.removeAll { $0.sha256 == e.sha256 }
             state.entries[r.id] = Array(([e] + vs).prefix(Self.versionsMax))
             save()
@@ -101,9 +107,11 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
             guard state.restartedAt == nil else { save(); return 0 }   // limitation 3: a restarted ledger adopts nothing
             var n = 0
             for f in files where f.mtime < state.createdAt && state.entries[f.record.id] == nil {
-                state.entries[f.record.id] = [Entry(sha256: Self.digest(f.record), origin: f.record.origin, curatedBy: f.record.curatedBy, at: now)]
+                state.entries[f.record.id] = [Entry(sha256: Self.digest(f.record), origin: f.record.origin, curatedBy: f.record.curatedBy, at: now,
+                                                    text: MemoryFile.render(f.record))]
                 n += 1
             }
+            if n > 0 { state.adoptedCount = (state.adoptedCount ?? 0) + n }
             save()
             return n
         }

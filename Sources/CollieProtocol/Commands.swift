@@ -214,6 +214,10 @@ public enum Commands {
                     params: [ParamSpec("id", .string, positional: true, required: true, help: "Memory id"), ParamSpec("lot", .string, help: "Lot name (yours; another only for the app or a Shepherd reaching all its members)"),
                              ParamSpec("repo", .string, help: "Repository path (admin only)")],
                     timeoutSeconds: 30),
+        CommandSpec(name: "memory.trust", summary: "Trust a memory edited outside Collie (as it reads now): it is injected in full again",
+                    params: [ParamSpec("id", .string, positional: true, required: true, help: "Memory id"),
+                             ParamSpec("repo", .string, help: "Repository path (admin only)")],
+                    timeoutSeconds: 30, exposedToMCP: false),
         // Hooks (Claude Code SessionStart / UserPromptSubmit): terminal-only, reply is the text to inject.
         CommandSpec(name: "memory.hookContext", summary: "Hook: memory summary for a new Claude session",
                     params: [ParamSpec("source", .string, help: "startup|resume|compact|clear (compact/resume restore the work state and the board)"),

@@ -65,6 +65,16 @@ enum MemoryObservability {
         struct Verify: Codable, Sendable, Equatable { var valid = 0, invalid = 0, deferred = 0 }
     }
     struct Trends: Codable, Sendable, Equatable { var current: Week; var previous: Week }
+    /// One agent's memory use (spec 2026-11-17 cursor memory §6). `obedience`: of the Collie asks delivered to it, the
+    /// share followed by a `memory_task` before the ask ended (nil without asks); the user's own typing is not seen.
+    /// `useful`: its `--useful` flags (a hookless agent has no prompt to count a use by).
+    struct AgentUsage: Codable, Sendable, Equatable {
+        var sessions = 0, sessionsWithStart = 0, pulls = 0
+        var pullsPerSession: Double?
+        var asksDelivered = 0
+        var obedience: Double?
+        var useful = 0
+    }
     struct Report: Codable, Sendable, Equatable {
         var since: Date, until: Date
         /// The oldest event read (the log may be younger than the period: dead memories need 30 days of it).
@@ -72,6 +82,8 @@ enum MemoryObservability {
         var caveat = MemoryObservability.caveat
         var usage = Usage(), maintenance = Maintenance(), learning = Learning(), cost = Cost(), lifecycle = Lifecycle()
         var trends: Trends
+        /// Keyed by agent; events from before the agent was logged are in none.
+        var byAgent: [String: AgentUsage] = [:]
     }
 
     /// `since` — `7d`, `24h`, `2w` or an ISO 8601 date — as a date before `now`; nil when unreadable.
@@ -176,6 +188,7 @@ enum MemoryObservability {
             c.sessionInput += e.inputTokens ?? 0; c.sessionOutput += e.outputTokens ?? 0
             c.sessionCacheRead += e.cacheRead ?? 0; c.sessionCacheCreation += e.cacheCreation ?? 0
         }
+        r.byAgent = agents(inPeriod, now: now)
         let t = tasks(events, from: since, to: now)
         c.completedTasks = t.count; c.sessionTokensPerTask = t.perTask
         r.cost = c
@@ -184,6 +197,31 @@ enum MemoryObservability {
 
     static func sessionTokens(_ e: MemoryEvent) -> Int {
         (e.inputTokens ?? 0) + (e.outputTokens ?? 0) + (e.cacheRead ?? 0) + (e.cacheCreation ?? 0)
+    }
+
+    private static func agents(_ es: [MemoryEvent], now: Date) -> [String: AgentUsage] {
+        var out: [String: AgentUsage] = [:]
+        for (agent, xs) in Dictionary(grouping: es.filter { $0.agent != nil }, by: { $0.agent! }) {
+            func key(_ e: MemoryEvent) -> String? { e.session ?? e.terminal?.uuidString }
+            var u = AgentUsage()
+            u.sessions = Set(xs.compactMap { [.injected, .noHit, .searched].contains($0.type) ? key($0) : nil }).count
+            u.sessionsWithStart = Set(xs.filter { $0.type == .injected && ["start", "compact", "focus"].contains($0.where ?? "") }.compactMap(key)).count
+            let pulls = xs.filter { [.injected, .noHit].contains($0.type) && $0.where == "pull" }
+            u.pulls = pulls.count
+            u.pullsPerSession = u.sessions == 0 ? nil : Double(u.pulls) / Double(u.sessions)
+            let delivered = xs.filter { $0.type == .askDelivered }
+            u.asksDelivered = delivered.count
+            if !delivered.isEmpty {
+                let obeyed = delivered.filter { d in
+                    let end = xs.first { $0.type == .askDone && $0.ask == d.ask }?.at ?? now
+                    return pulls.contains { $0.terminal == d.terminal && $0.at >= d.at && $0.at <= end }
+                }
+                u.obedience = Double(obeyed.count) / Double(delivered.count)
+            }
+            u.useful = xs.filter { $0.type == .flagged && $0.verdict == "useful" }.count
+            out[agent] = u
+        }
+        return out
     }
 
     /// A prompt is a `noHit` or an `injected` at `prompt` (pushed rules are `rule`: not a prompt of their own).

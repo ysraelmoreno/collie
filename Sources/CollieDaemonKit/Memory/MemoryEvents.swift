@@ -9,14 +9,19 @@ struct MemoryEvent: Codable, Sendable, Equatable {
         case sessionUsage, workClosed
         /// Lifecycle: a flag, a promotion to longTerm, a longTerm contested, a verify result, a provisional archived for no use.
         case flagged, promoted, demoted, verified, archivedUnused
+        /// An ask written to a terminal, and its end (reply, idle, timeout, failure): `ask` is its id (spec 2026-11-17
+        /// cursor memory §6: did the Cursor pull its memory between the two?).
+        case askDelivered, askDone
     }
     var at = Date.distantPast   // stamped by the log
     var type: Kind
     var terminal: UUID? = nil, session: String? = nil, work: UUID? = nil, lot: UUID? = nil, project: String? = nil
+    /// The terminal's agent (claude|cursor|codex|other), stamped by the log once told (`noteAgent`). `askDelivered|askDone`: the ask.
+    var agent: String? = nil, ask: UUID? = nil
     var ids: [UUID]? = nil, kinds: [String]? = nil, scopes: [String]? = nil
     /// `injected`: the text's UTF-8 bytes and its estimate (`bytes / 4` rounded up); start|prompt|rule|compact|checklist|retraction.
     var bytes: Int? = nil, tokens: Int? = nil, `where`: String? = nil
-    /// `searched`: results returned.
+    /// `searched`: results returned (and their ids, in `ids`).
     var hits: Int? = nil
     /// Lifecycle events: correction|conversation|proposal|review|consolidation|agent|user.
     var source: String? = nil
@@ -71,8 +76,16 @@ final class MemoryEventLog: @unchecked Sendable {   // `lastDay` is touched only
     func emit(_ e: MemoryEvent) {
         var e = e
         e.at = now()
-        queue.async { self.append(e) }
+        queue.async {
+            if e.agent == nil, let t = e.terminal { e.agent = self.agents[t] }
+            self.append(e)
+        }
     }
+
+    /// Each terminal's agent, told by the router when it serves the terminal (`queue` only). ponytail: in memory; a
+    /// restarted daemon learns it again at the terminal's next memory command (its hooks call one at once).
+    private var agents: [UUID: String] = [:]
+    func noteAgent(_ terminal: UUID, _ agent: String) { queue.async { self.agents[terminal] = agent } }
 
     /// Waits for every event emitted so far to be on disk (tests, and `read`).
     func flush() { queue.sync {} }

@@ -54,3 +54,17 @@ private func date(_ s: String) -> Date { ISO8601DateFormatter().date(from: s)! }
         #expect(a.lot == lot && a.project == nil && b.project == "/repo" && c.lot == nil && c.project == nil)
     }
 }
+
+/// Task 8: every event of a terminal carries its agent once the log has been told it.
+@Suite struct MemoryEventAgentTests {
+    @Test func eventsCarryAgent() throws {
+        let dir = tempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let log = MemoryEventLog(dir: dir), t = UUID(), u = UUID()
+        log.noteAgent(t, "cursor")
+        log.emit(MemoryEvent(type: .searched, terminal: t, hits: 1))
+        log.emit(MemoryEvent(type: .searched, terminal: u, hits: 1))
+        log.emit(MemoryEvent(type: .searched, hits: 1))
+        log.flush()
+        #expect(log.read(since: .distantPast).map(\.agent) == ["cursor", nil, nil])
+    }
+}

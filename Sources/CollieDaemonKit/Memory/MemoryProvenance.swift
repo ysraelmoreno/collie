@@ -25,6 +25,9 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
         var createdAt: Date
         /// Store dirs already adopted (their first read happened).
         var adopted: Set<String> = []
+        /// Set when an existing ledger couldn't be read and this one started over: from then on nothing is adopted (the
+        /// owner's call on limitation 3); what the old one knew stays unverified until "Confiar" (`memory.trust`).
+        var restartedAt: Date?
         /// Newest first, at most `versionsMax`.
         var entries: [UUID: [Entry]] = [:]
     }
@@ -39,12 +42,21 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
         self.file = file
         if let data = try? Data(contentsOf: file), let s = try? Self.decoder.decode(State.self, from: data) {
             state = s
+        } else if FileManager.default.fileExists(atPath: file.path) {
+            // unreadable or corrupt: kept aside for a look, and a ledger that never adopts (a file planted before the
+            // damage would otherwise be taken as the daemon's)
+            let aside = file.deletingLastPathComponent().appendingPathComponent("provenance.json.corrupt-\(Int(now.timeIntervalSince1970))")
+            try? FileManager.default.moveItem(at: file, to: aside)
+            memoryLog("provenance: \(file.path) unreadable; moved to \(aside.lastPathComponent), started over without adoption (Confiar restores)")
+            state = State(createdAt: now, restartedAt: now)
+            lock.withLock { save() }
         } else {
-            // ponytail: an unreadable ledger starts over (re-adopts only files older than now); nothing becomes trusted
-            // that a fresh install wouldn't trust
             state = State(createdAt: now)
         }
     }
+
+    /// When this ledger started over from an unreadable one (nil: never). For the app's status (task 9).
+    var restartedAt: Date? { lock.withLock { state.restartedAt } }
 
     static func digest(_ r: MemoryRecord) -> String {
         SHA256.hash(data: Data(MemoryFile.render(r).utf8)).map { String(format: "%02x", $0) }.joined()
@@ -86,6 +98,7 @@ final class MemoryProvenance: @unchecked Sendable {   // `state` is touched only
     func adoptOnce(store: String, _ files: [(record: MemoryRecord, mtime: Date)], now: Date = Date()) -> Int {
         lock.withLock {
             guard state.adopted.insert(store).inserted else { return 0 }
+            guard state.restartedAt == nil else { save(); return 0 }   // limitation 3: a restarted ledger adopts nothing
             var n = 0
             for f in files where f.mtime < state.createdAt && state.entries[f.record.id] == nil {
                 state.entries[f.record.id] = [Entry(sha256: Self.digest(f.record), origin: f.record.origin, curatedBy: f.record.curatedBy, at: now)]

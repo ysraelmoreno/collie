@@ -381,4 +381,25 @@ extension JSONDecoder {
                ev(.flagged, ago(1)) { $0.agent = "cursor"; $0.terminal = cur; $0.verdict = "wrong" }]
         #expect(compute(es).byAgent["cursor"]?.useful == 1)
     }
+
+    /// Leva 1: useful uses at the next prompt ÷ the prompt-injected ids that can earn one, by period, week and agent.
+    @Test func precisionByPeriodWeekAndAgent() {
+        var es = base()   // its claude prompt injection predates `eligible`: injected, not a candidate
+        es += [ev(.injected, ago(10)) { $0.agent = "claude"; $0.terminal = cla; $0.where = "prompt"; $0.ids = [UUID()]; $0.eligible = 5 },
+               ev(.injected, ago(1.9)) { $0.agent = "claude"; $0.terminal = cla; $0.where = "prompt"; $0.ids = [UUID(), UUID(), UUID()]; $0.eligible = 2 },
+               ev(.used, ago(1.8)) { $0.agent = "claude"; $0.terminal = cla; $0.ids = [UUID()]; $0.hits = 2 },
+               ev(.injected, ago(1.5)) { $0.agent = "claude"; $0.terminal = cla; $0.where = "prompt"; $0.ids = [UUID()]; $0.eligible = 1 },
+               ev(.used, ago(1.4)) { $0.agent = "claude"; $0.terminal = cla; $0.ids = []; $0.hits = 1; $0.reason = "correction" },
+               ev(.injected, ago(1)) { $0.where = "prompt"; $0.ids = [UUID()]; $0.eligible = 1 },   // no agent known, never resolved
+               ev(.injected, ago(1)) { $0.where = "pull"; $0.ids = [UUID()] },                      // a pull is not a prompt
+               ev(.flagged, ago(1)) { $0.agent = "claude"; $0.terminal = cla; $0.verdict = "useful" }]
+        let r = compute(es)
+        let p = r.usage.precision
+        #expect(p == MemoryObservability.Precision(injected: 6, candidates: 4, used: 1, corrected: 1, unresolved: 2, flags: 1, rate: 0.25), "\(p)")
+        #expect(r.byAgent["claude"]?.precision == MemoryObservability.Precision(injected: 5, candidates: 3, used: 1, corrected: 1,
+                                                                                  unresolved: 1, flags: 1, rate: 1.0 / 3), "\(String(describing: r.byAgent["claude"]))")
+        #expect(r.byAgent["cursor"]?.precision.rate == nil && r.byAgent["cursor"]?.precision.candidates == 0)
+        #expect(r.trends.current.precision == 0.25 && r.trends.previous.precision == 0)
+        #expect(compute(base()).usage.precision.rate == nil)   // no candidate: no rate, never 0/0
+    }
 }

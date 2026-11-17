@@ -7,7 +7,12 @@ struct MemoryStore {
     /// Private (a lot's store in the app's data dir): every folder from `secureRoot` down is 0700, files 0600, like the
     /// work registry. Folders are made only on the first write: reading a store never creates it.
     let secureRoot: URL?
-    init(dir: URL, secureRoot: URL? = nil) { self.dir = dir; self.secureRoot = secureRoot }
+    /// Who wrote what (`MemoryProvenance`): every write and delete goes in; a store's first read adopts its older files.
+    /// nil: no ledger (a bare store in tests; `MemoryService` always passes one).
+    let provenance: MemoryProvenance?
+    init(dir: URL, secureRoot: URL? = nil, provenance: MemoryProvenance? = nil) {
+        self.dir = dir; self.secureRoot = secureRoot; self.provenance = provenance
+    }
     private var secure: Bool { secureRoot != nil }
 
     func all() -> (records: [MemoryRecord], problems: [(file: String, error: String)]) {
@@ -15,11 +20,18 @@ struct MemoryStore {
         let base = dir.standardizedFileURL.path + "/"
         let urls = (FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? [])
             .filter { $0.pathExtension == "md" }.sorted { $0.path < $1.path }
+        let adopt = provenance.map { !$0.hasAdopted(dir.standardizedFileURL.path) } ?? false
+        var mtimes: [(record: MemoryRecord, mtime: Date)] = []
         for u in urls {
             let rel = u.standardizedFileURL.path.replacingOccurrences(of: base, with: "")
             guard let text = try? String(contentsOf: u, encoding: .utf8) else { problems.append((rel, "unreadable")); continue }
-            do { records.append(try MemoryFile.parse(text)) } catch { problems.append((rel, error.message)) }
+            do {
+                let r = try MemoryFile.parse(text)
+                records.append(r)
+                if adopt { mtimes.append((r, ((try? FileManager.default.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date) ?? .distantFuture)) }
+            } catch { problems.append((rel, error.message)) }
         }
+        if adopt, let n = provenance?.adoptOnce(store: dir.standardizedFileURL.path, mtimes), n > 0 { memoryLog("provenance: adopted \(n) in \(dir.path)") }
         return (records, problems)
     }
 
@@ -38,6 +50,7 @@ struct MemoryStore {
             if secure, chmod(tmp.path, 0o600) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
             if rename(tmp.path, dest.path) != 0 { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         } catch { try? FileManager.default.removeItem(at: tmp); throw error }
+        provenance?.record(r)
         // A changed subject renames the file: drop stale copies of this id.
         for u in files(for: r.id) where u.standardizedFileURL != dest.standardizedFileURL { try FileManager.default.removeItem(at: u) }
     }
@@ -62,6 +75,7 @@ struct MemoryStore {
 
     func delete(_ id: UUID) throws {
         for u in files(for: id) { try FileManager.default.removeItem(at: u) }
+        provenance?.forget(id)
     }
 
     /// Files whose frontmatter id == id (name suffix is only a prefilter).

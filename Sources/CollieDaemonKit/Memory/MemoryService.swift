@@ -23,9 +23,10 @@ final class RepoMemory: @unchecked Sendable {   // the mutable state below is to
     static let refreshEvery: TimeInterval = 5
     static let vectorBatch = 16
 
-    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil, secureRoot: URL? = nil, embedder: (any MemoryEmbedder)? = nil) {
+    init(root: URL?, storeDir: URL, dbFile: URL, commonDir: URL?, lotId: UUID? = nil, secureRoot: URL? = nil, embedder: (any MemoryEmbedder)? = nil,
+         provenance: MemoryProvenance? = nil) {
         self.root = root; self.dbFile = dbFile; self.commonDir = commonDir; self.lotId = lotId; self.embedder = embedder
-        store = MemoryStore(dir: storeDir, secureRoot: secureRoot)
+        store = MemoryStore(dir: storeDir, secureRoot: secureRoot, provenance: provenance)
         queue = DispatchQueue(label: "collie.memory.\(storeDir.path)")
     }
 
@@ -180,6 +181,8 @@ actor MemoryService {
     static let retractedHeader = "Memória retirada (Collie):"
 
     nonisolated let embedder: (any MemoryEmbedder)?
+    /// Who wrote each memory (`<root>/learning/provenance.json`, P1): every store of this service writes into it.
+    nonisolated let provenance: MemoryProvenance
     /// Outcome scores (`<root>/learning/scores.json`, beside `memory/`): multiply relevance, feed cleanup.
     nonisolated let scores: ScoreStore
     /// Usage-based tiers (`<root>/learning/lifecycle.json`): tags on injected lines, the session's injected ids, pending uses.
@@ -197,10 +200,11 @@ actor MemoryService {
         scores = ScoreStore(file: globalDir.deletingLastPathComponent().appendingPathComponent("learning/scores.json"))
         lifecycle = LifecycleStore(file: globalDir.deletingLastPathComponent().appendingPathComponent("learning/lifecycle.json"))
         events = MemoryEventLog(dir: globalDir.deletingLastPathComponent().appendingPathComponent("metrics"))
+        provenance = MemoryProvenance(file: globalDir.deletingLastPathComponent().appendingPathComponent("learning/provenance.json"))
         lotsDir = globalDir.deletingLastPathComponent().appendingPathComponent("lots")   // beside `work/`
         global = RepoMemory(root: nil, storeDir: globalDir,
                             dbFile: globalDir.deletingLastPathComponent().appendingPathComponent("cache/memory.sqlite"), commonDir: nil,
-                            embedder: embedder)
+                            embedder: embedder, provenance: provenance)
     }
 
     /// A query's vector: its first 1 000 characters (the prompt hook's 5 s budget); nil without a model for its language.
@@ -237,7 +241,7 @@ actor MemoryService {
         let dir = LegacyOrq.repoDirName(repoRoot: common.lastPathComponent == ".git" ? common.deletingLastPathComponent() : top)
         let r = byRoot[top.path] ?? RepoMemory(root: top, storeDir: top.appendingPathComponent("\(dir)/memory"),
                                                dbFile: top.appendingPathComponent("\(dir)/cache/memory.sqlite"),
-                                               commonDir: common, embedder: embedder)
+                                               commonDir: common, embedder: embedder, provenance: provenance)
         byRoot[top.path] = r
         byCwd[cwd] = r
         return r
@@ -250,7 +254,7 @@ actor MemoryService {
         let dir = lotsDir.appendingPathComponent(id.uuidString.lowercased())
         let r = RepoMemory(root: nil, storeDir: dir.appendingPathComponent("memory"),
                            dbFile: dir.appendingPathComponent("cache/memory.sqlite"), commonDir: nil, lotId: id, secureRoot: lotsDir,
-                           embedder: embedder)
+                           embedder: embedder, provenance: provenance)
         byLot[id] = r
         return r
     }

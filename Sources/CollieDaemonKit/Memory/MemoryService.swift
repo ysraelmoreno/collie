@@ -364,7 +364,7 @@ actor MemoryService {
             pool += ok.filter { !$0.pinned }   // longTerm reaches a lot member too, as pinned does
         }
         let entries = await lifecycle.all()
-        var (text, ids) = Self.renderContext(pinned, limit: Swift.min(limit, Self.pinnedMax), entries: entries)
+        var (text, ids) = Self.renderContext(pinned, limit: Self.pinnedLimit(limit), entries: entries)
         guard !text.isEmpty else { return ContextParts() }
         let overflow = pinned.filter { !ids.contains($0.id) }   // past the cap: a marked index line, never dropped
         let lt = Self.renderLongTerm(pool, entries: entries, limit: limit - text.utf8.count)
@@ -1014,14 +1014,15 @@ actor MemoryService {
     /// The index's mark for a memory that isn't what the daemon wrote (P1).
     static let unverifiedMark = " (editada fora do Collie)"
 
-    /// The index's mark for a pinned memory past `pinnedMax` (its body is a `collie memory get` away).
+    /// The index's mark for a pinned memory past `pinnedLimit` (its body is a `collie memory get` away).
     static let pinnedOverflowMark = " (fixada)"
 
-    /// Header and pinned memories in full take at most this many UTF-8 bytes of the session start, so the long-term block
-    /// (≤ 600), the checklist (≤ 1 200) and the index keep ≥ 1 696 B of 4 096. Measured 2026-11-17: the real project has 0
-    /// pinned (the block is the ~250 B header), so the cap binds only past ~4 pinned lines (≤ ~420 B each: title + first line).
-    /// ponytail: one fixed cap; a share of `limit` if callers ever pass budgets far from 4 096
-    static let pinnedMax = 1_600
+    /// Bytes of the session start header + pinned memories leave to the long-term block (≤ 600), the checklist (≤ 1 200)
+    /// and the index (≥ 696): of 4 096, pinned get 1 600. Measured 2026-11-17: the real project has 0 pinned (the block is
+    /// the ~250 B header), so this binds only past ~4 pinned lines (≤ ~420 B each: title + first line).
+    static let pinnedReserve = 2_496
+    /// Header + pinned in full within `limit`: `limit - pinnedReserve`, never below the header (an empty start otherwise).
+    static func pinnedLimit(_ limit: Int) -> Int { Swift.min(limit, Swift.max(limit - pinnedReserve, header.utf8.count)) }
 
     /// One title line per record: `pinned` (pinned past the cap, marked) first, then the most used (`usefulUses` in
     /// `entries`), ties newest first, records without a lifecycle entry last. A line that doesn't fit is skipped, not the end.

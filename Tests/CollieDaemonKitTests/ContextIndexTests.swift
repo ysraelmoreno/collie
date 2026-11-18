@@ -50,7 +50,9 @@ private func indexLines(_ text: String) -> [String] {
         let (text, ids) = await mem.contextText(cwd: repo.path, paddock: nil)
         #expect(text.utf8.count <= 4096, "\(text.utf8.count)")
         let head = text.components(separatedBy: "\n\n" + MemoryService.checklistHeader).first ?? text
-        #expect(head.utf8.count <= MemoryService.pinnedMax, "\(head.utf8.count)")
+        #expect(head.utf8.count <= 4096 - MemoryService.pinnedReserve, "\(head.utf8.count)")
+        #expect(MemoryService.pinnedLimit(4096) == 1_600 && MemoryService.pinnedLimit(100) == 100
+                && MemoryService.pinnedLimit(2_600) == MemoryService.header.utf8.count)   // never below the header
         #expect(text.contains(MemoryService.checklistHeader) && text.contains("Armadilha A"), "\(text)")
         let index = indexLines(text)
         let full = pinned.filter { ids.contains($0.id) }, over = pinned.filter { !ids.contains($0.id) }

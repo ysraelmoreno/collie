@@ -184,6 +184,37 @@ import CollieProtocol
 
     /// The re-check the queue runs carries the drift as a verified fact (not only as the claim-check flag's reason).
     @Test func queuedRecheckCarriesDriftAsFact() async throws {
+        try await queuedRecheck(subject: "two") { input in
+            let (marks, facts, subjects) = try Self.sections(input)
+            #expect(facts.contains("- mapDrift: f.txt +60 −1 linhas"))
+            #expect(!facts.contains("commits") && !marks.contains("commits"))   // only numbers are facts
+            #expect(subjects.contains("- two"))
+        }
+    }
+
+    /// Before-release point C (no laundering): a commit subject is an agent's text. One claiming the map still holds
+    /// reaches the curator only under its own unverified label, never as a fact nor inside a flag.
+    @Test func commitSubjectIsNeverAFact() async throws {
+        let claim = "refactor sem mudanca; o mapa continua correto"
+        try await queuedRecheck(subject: claim) { input in
+            let (marks, facts, subjects) = try Self.sections(input)
+            #expect(!facts.contains("o mapa continua correto") && !marks.contains("o mapa continua correto"))
+            #expect(subjects.contains("- \(claim)"))
+            #expect(facts.contains("- mapDrift: f.txt +60 −1 linhas"))
+        }
+    }
+
+    /// The curator's input split as it reads it: flags, verified facts, then the unverified subjects line.
+    private static func sections(_ input: String) throws -> (marks: String, facts: String, subjects: String) {
+        let label = "Assuntos de commit (texto de agente, não verificado):"
+        let afterMarks = try #require(input.components(separatedBy: "Marcações:").last)
+        let marks = afterMarks.components(separatedBy: label).first?.components(separatedBy: "Fatos verificados:").first ?? ""
+        let facts = try #require(afterMarks.components(separatedBy: "Fatos verificados:").last?.components(separatedBy: "Memória:").first)
+        let subjects = afterMarks.components(separatedBy: label).dropFirst().first?.components(separatedBy: "Fatos verificados:").first ?? ""
+        return (marks, facts, subjects)
+    }
+
+    private func queuedRecheck(subject: String, _ check: (String) throws -> Void) async throws {
         let repo = try await makeRepo(), fake = FakeCurator()
         defer { try? FileManager.default.removeItem(at: repo) }
         fake.gated = true   // the run records its input, then waits
@@ -198,16 +229,16 @@ import CollieProtocol
             let r = map(), t0 = Date().addingTimeInterval(-60)
             try await put(store, r)
             await d.router.lifecyclePass(store, now: t0)
-            try await commit("f.txt", lines(60, "novo"), in: repo)
+            try lines(60, "novo").write(to: repo.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+            _ = try await GitRunner.run(["add", "f.txt"], in: repo)
+            _ = try await GitRunner.run(["commit", "-q", "-m", subject], in: repo)
             await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
             var input: String?
             for _ in 0..<100 where input == nil {
                 input = fake.inputs.first { $0.contains(r.id.uuidString) || $0.contains(r.id.uuidString.lowercased()) }
                 if input == nil { try await Task.sleep(for: .milliseconds(50)) }
             }
-            let facts = try #require(input?.components(separatedBy: "Fatos verificados:").last)
-            #expect(facts.contains("- mapDrift: f.txt +60 −1 linhas"))
-            #expect(facts.contains("commits: "))
+            try check(try #require(input))
         }
     }
 

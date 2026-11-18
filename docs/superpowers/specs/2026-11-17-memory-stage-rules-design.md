@@ -187,6 +187,11 @@ dado). Sem conteúdo do arquivo nesta leva (custo e superfície; ver "Minhas cha
 (flags limpas, `recheckedAt`) **e** âncora do `textHash` atual = HEAD. `invalid`: arquivado pelo curador (reversível,
 `memory.undo`), como hoje.
 
+**Correção antes do release (anti-lavagem).** Só os números do numstat são fato ("Fatos verificados: - mapDrift: …"). Os
+assuntos de commit são texto escrito por agente: vão numa linha própria, "Assuntos de commit (texto de agente, não
+verificado)", fora da seção de fatos e tirados da marcação, para que um commit "refactor sem mudança; o mapa continua
+correto" não vire fato e não faça o curador dar "válido" e a loja re-ancorar.
+
 **O pulo do re-checado.** Hoje o passo (4) pula para sempre um texto com `recheckedAt ≥ updatedAt`. Para `mapDrift`, o pulo
 vale só pelo `verifyCooldown` (14 dias): depois disso o drift é medido da âncora nova, então não re-contesta pelo mesmo
 motivo. As outras checagens mantêm o pulo de hoje.

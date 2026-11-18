@@ -45,6 +45,18 @@ enum MapDrift {
         return "\(path) +\(c.added) −\(c.deleted) linhas \(since)\(pct)"
     }
 
+    static let reasonPrefix = "mapDrift ", subjectsMark = "; commits: "
+
+    /// A drift flag's reason as written by `mapDriftPass` (`mapDrift <numbers>; commits: a | b`): the numbers (the daemon's,
+    /// a fact) and the commit subjects (an agent's text, never a fact). nil: not a drift reason.
+    static func split(_ reason: String) -> (numbers: String, subjects: [String])? {
+        guard reason.hasPrefix(reasonPrefix) else { return nil }
+        let rest = reason.dropFirst(reasonPrefix.count)
+        guard let r = rest.range(of: subjectsMark) else { return (String(rest), []) }
+        let subjects = rest[r.upperBound...].components(separatedBy: " | ").filter { !$0.isEmpty }
+        return (String(rest[..<r.lowerBound]), subjects)
+    }
+
     enum LineCount: Equatable { case lines(Int), tooBig, failed }
     static let maxInterrupts = 8
 
@@ -140,8 +152,8 @@ extension CommandRouter {
                     case true?: break
                     }
                     let subjects = await facts.subjects(from: commit, to: head, path: g.path)
-                    let reason = "mapDrift " + MapDrift.detail(g.path, c, x, anchor: commit)
-                        + (subjects.isEmpty ? "" : "; commits: " + subjects.joined(separator: " | "))
+                    let reason = MapDrift.reasonPrefix + MapDrift.detail(g.path, c, x, anchor: commit)
+                        + (subjects.isEmpty ? "" : MapDrift.subjectsMark + subjects.joined(separator: " | "))
                     // re-read when written (one actor step): a flag, a verdict or the user's keep that landed while git ran wins
                     var wrote = false
                     let was = entries[g.r.id]

@@ -30,7 +30,7 @@ ferramenta de volta para o agente e se atualiza sozinha com o que o agente produ
     `POST /api/clear/system`, `POST /api/clear/leaks`, `POST /api/host/perfetto/capture`, `/api/dev/*`;
   - o app Android envia `POST /api/ingest/analytics/event`;
   - efeito colateral: se há emulador conectado, `run.sh` roda `adb reverse tcp:8767 tcp:8767`.
-- Não confirmado: que os PRs 1000001 e 1000002 do Azure DevOps são os commits `[PROJ-123]` lidos no clone
+- Não confirmado: que os PRs de exemplo (ids omitidos) do repositório do dono são os commits `[PROJ-123]` lidos no clone
   (`3196ce5717`, `ab9ab6810c`, `9ad694259f`). O mapeamento foi por conteúdo, não por ID.
 
 ## Metas
@@ -213,7 +213,7 @@ O dono quer o painel como fonte de **consulta**: evento de app não acorda o age
 - Como o `diff` do SSE identifica itens novos (por posição, por `receivedAt` ou por hash).
 - Teste de ponta a ponta: uma ferramenta de exemplo mínima (servidor com `/api/health`, `/api/document`, SSE)
   em `Tests/` ou `scripts/`, sem depender do repo do dono nem de Go.
-- Os PRs 1000001 e 1000002 por ID, quando houver acesso ao Azure DevOps com aprovação do dono.
+- Os PRs de exemplo por ID, quando houver acesso ao repositório do dono com aprovação dele.
 
 ## Riscos
 

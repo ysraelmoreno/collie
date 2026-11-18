@@ -159,6 +159,7 @@ Nothing was written to `~/.cursor` except the CLI's own per-project state (`~/.c
    is taken before the plugin hooks are merged in. The only working sources are `~/.cursor/hooks.json` and the repo's
    `.cursor/hooks.json`, both forbidden. **Decision: Task 3 is skipped; `ask` to a Cursor terminal completes on idle.**
    Recheck on a later `cursor-agent` version: if plugin turn hooks start firing, Task 3 can run as planned.
+   **Retest 2026-11-17 (`cursor-agent` 2026.11.17): unchanged, only `sessionStart`/`sessionEnd` fire; idle now also waits for the `ctrl+c to stop` footer to leave the latest frame.**
 2. Hook commands inherit the terminal's environment (`COLLIE_X=1` reached the hook). The `sessionStart` payload on stdin has
    `conversation_id`, `session_id`, `hook_event_name`, `cursor_version`, `workspace_roots`, `user_email`, `transcript_path`.
 3. Screen texts, as rendered: ready shows `Plan, search, build anything` and, after a turn, `Add a follow-up`. They are drawn

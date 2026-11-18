@@ -275,6 +275,8 @@ public actor AskCoordinator {
         var captureHold: UUID?
         /// Claude as launched by Collie (no custom command): it enables bracketed paste and has our hooks.
         var claudeTUI = false
+        /// Cursor (preset or a custom `cursor-agent` command): idle waits while its footer says it is working.
+        var cursorTUI = false
         /// A prompt was written: `ask`'s fresh-agent guard is over.
         var typed = false
         var sessionHooked = false   // SessionStart reached the daemon: this Claude's hooks work
@@ -366,6 +368,7 @@ public actor AskCoordinator {
         targets[rec.id] = Target(name: rec.name, preset: rec.preset, process: process, scrollback: scrollback, paste: paste,
                                  approval: approval)
         targets[rec.id]?.claudeTUI = rec.command == nil && rec.preset == .claude
+        targets[rec.id]?.cursorTUI = rec.preset == .cursor || rec.command.flatMap(EssentialPaths.commandAgent)?.name == "cursor-agent"
         let id = rec.id, me = ObjectIdentifier(process)
         // replays if already exited; ignored once the terminal was replaced by a new launch with the same id
         let prevExit = process.onExit
@@ -950,10 +953,17 @@ public actor AskCoordinator {
     }
 
     /// Idle fallback; returns false once `id` is no longer in flight (stops the poller).
+    /// cursor-agent's right footer placeholder while it works (spike REPORT §4).
+    static let cursorWorking = "ctrl+c to stop"
+
     private func pollIdle(_ to: UUID, _ id: UUID) -> Bool {
         guard let t = targets[to], let (cur, mark) = t.inflight, cur == id, !t.hookCapable else { return false }
         guard t.scrollback.mark() > mark, let last = t.process.lastOutputAt,
               ContinuousClock.now - last >= idleQuiet else { return true }
+        // Cursor has no turn hook: its working footer on the latest frame means the turn is still running (the
+        // waiter's timeout still caps it). ponytail: "latest frame" = last 10 non-empty lines, since scrollback
+        // appends every repaint; a taller footer redraw would need a screen grid (spike REPORT §4).
+        if t.cursorTUI, ApprovalTracker.lines(t.scrollback, 10).contains(where: { $0.contains(Self.cursorWorking) }) { return true }
         let s = t.scrollback.text(since: mark)
         targets[to]?.idleOwed = true   // never consumed if the target really has no hook
         targets[to]?.owedText = String(s.text.suffix(64 * 1024))

@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import CollieCore
+import CollieProtocol
 @testable import CollieDaemonKit
 
 /// Item 7 in the lifecycle pass: anchor, measure, contest (never archive on its own), re-anchor.
@@ -178,6 +179,35 @@ import CollieCore
             _ = try await d.router.undoDigest(row.id)
             let back = try await store.run { $0.store.all().records.first { $0.id == r.id }?.status }
             #expect(back == .active)
+        }
+    }
+
+    /// The re-check the queue runs carries the drift as a verified fact (not only as the claim-check flag's reason).
+    @Test func queuedRecheckCarriesDriftAsFact() async throws {
+        let repo = try await makeRepo(), fake = FakeCurator()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        fake.gated = true   // the run records its input, then waits
+        try await withDaemon(configure: { $0.curatorRunner = fake }) { d, paths in
+            defer { fake.open() }   // a failed expectation must not leave the job waiting (the daemon's stop would hang)
+            // a terminal in the repo makes its store a known one (`enqueueVerify` looks there)
+            let spawned = try await UnixSocketClient.send(Request(id: "x", token: d.adminToken, command: "admin.spawn",
+                                                                  args: ["name": .string("T"), "preset": .string("shell"), "cwd": .string(repo.path)]),
+                                                          to: paths.socket, timeoutSeconds: 60)
+            #expect(spawned.ok)
+            let store = await d.router.memory.repo(for: repo.path)
+            let r = map(), t0 = Date().addingTimeInterval(-60)
+            try await put(store, r)
+            await d.router.lifecyclePass(store, now: t0)
+            try await commit("f.txt", lines(60, "novo"), in: repo)
+            await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
+            var input: String?
+            for _ in 0..<100 where input == nil {
+                input = fake.inputs.first { $0.contains(r.id.uuidString) || $0.contains(r.id.uuidString.lowercased()) }
+                if input == nil { try await Task.sleep(for: .milliseconds(50)) }
+            }
+            let facts = try #require(input?.components(separatedBy: "Fatos verificados:").last)
+            #expect(facts.contains("- mapDrift: f.txt +60 −1 linhas"))
+            #expect(facts.contains("commits: "))
         }
     }
 }

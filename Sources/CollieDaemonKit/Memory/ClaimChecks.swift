@@ -146,7 +146,8 @@ extension GitFactsLive {
 }
 
 struct ClaimFailure: Equatable, Sendable {
-    enum Kind: String, Sendable { case pathMissing, branchMerged, branchMissing, commitMissing }
+    /// `mapDrift`: never from `check` (a drift is soft); only a fact for the curator (`enqueueVerify`).
+    enum Kind: String, Sendable { case pathMissing, branchMerged, branchMissing, commitMissing, mapDrift }
     var kind: Kind
     var detail: String
 }

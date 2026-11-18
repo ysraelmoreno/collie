@@ -18,6 +18,22 @@ Update 2026-11-18, after the independent review (all changed in code; this text 
 - **Starter gone** stops the loop; a daemon stop spends no attempt; a task dropped mid-attempt keeps its state; notes
   carry the task id and hide secrets.
 
+Update 2026-11-18, slice 2 planned (`docs/superpowers/plans/2026-11-18-work-loop-command.md`): `/collie:loop` is a static
+command in a per-terminal plugin named `collie`, passed with `--plugin-dir` (checked on Claude Code 2.1.327: it runs as
+`/collie:loop`). Whether a Cursor plugin can carry it is the plan's first task. The owner's approval of the list is the
+conversation; the app card from slice 1 is what binds.
+Update 2026-11-18, Task 1 of that plan: a Cursor plugin lists its commands by file name, not namespaced by the plugin
+(outcome B, spike report §9), so Cursor terminals get `commands/collie:loop.md`.
+
+Update 2026-11-18, slice 2 built (branch `feat/work-loop-command`): `/collie:loop` reaches Claude as a per-terminal
+plugin `collie` (`<root>/sandbox/<terminal>/plugin/collie`, a second `--plugin-dir` beside `collie-procedures`; a
+`claude` without the flag or a failed render launches as before) and Cursor as `commands/collie:loop.md` in its existing
+plugin; Codex has none. The Shepherd's `Loop:` line names the command for Claude and Cursor where it fits the cap. The
+work panel shows the loop's state, "Parar laço", and each task's attempts, last failure and check; `work list` carries
+the loop line. "Left to the builder" turned into: the command's route (above); the prompt text (slice 1); patches under
+`<root>/work-loops/<work>/` (slice 1); the check under the loop's own paddock profile (slice 1); test doubles are
+shell commands that commit or not (slice 1) and a stub `claude` that records its argv (`LoopCommandTests`).
+
 ## Why
 
 The owner wants to hand a list of tasks to Collie and come back to finished, verified commits ("ships while I sleep",

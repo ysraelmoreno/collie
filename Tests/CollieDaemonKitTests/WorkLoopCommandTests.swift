@@ -344,4 +344,26 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         #expect(after?.tasks.map(\.state) == [.open, .done])
         #expect(after?.jobs.first?.state == .gone && after?.jobs.first?.endedAt != nil)
     }
+
+    @Test func workListCarriesTheLoopLine() async throws {
+        let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))"))
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let dir = paths.root.appendingPathComponent("work")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var looped = Work(title: "looped", terminalId: UUID(), tasks: [WorkTask(id: "a", title: "A", state: .deferred, check: "false")])
+        looped.loop = WorkLoopState(state: .stopped, used: 2)
+        let plain = Work(title: "plain", terminalId: UUID(), tasks: [WorkTask(id: "b", title: "B")])
+        let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
+        try e.encode([looped, plain]).write(to: dir.appendingPathComponent("work.json"))
+        let d = try Daemon(config: testConfig(paths))
+        do { try await d.start() } catch { await d.stop(); throw error }
+        let r = try await work(d, paths, nil, "work.list")
+        await d.stop()
+        guard case .array(let a)? = r.result else { Issue.record("\(r)"); return }
+        func entry(_ id: UUID) -> [String: JSONValue]? {
+            a.lazy.compactMap { if case .object(let o) = $0, o["id"] == .string(id.uuidString.lowercased()) { return o } else { return nil } }.first
+        }
+        #expect(entry(looped.id)?["loop"] == .string("laço parado (2 tentativas)"), "\(a)")
+        #expect(entry(plain.id) != nil && entry(plain.id)?["loop"] == nil, "\(a)")
+    }
 }

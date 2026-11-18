@@ -301,4 +301,41 @@ private actor Fake {
         #expect(PluginRegistry.spec("work")?.events == ["work.changed", "work.chat", "work.approval"])
         #expect(PluginRegistry.spec("work")?.placements.contains(.canvas) == false)
     }
+
+    @Test func loopBadgeFollowsTheLoopState() async {
+        let (m, _) = make()
+        var w = Work(title: "Piso", terminalId: UUID(), tasks: [WorkTask(id: "a1", title: "Piso de relevância", state: .inProgress)])
+        #expect(m.loopBadge(w) == nil)
+        w.loop = WorkLoopState(state: .running, task: "a1", attempt: 2, tries: 3, max: 10, used: 4)
+        #expect(m.loopBadge(w) == .init(text: "em laço: Piso de relevância (tentativa 2/3) · 4/10 no total", running: true))
+        w.loop?.max = nil
+        #expect(m.loopBadge(w)?.text == "em laço: Piso de relevância (tentativa 2/3)")
+        w.loop?.state = .stopped
+        #expect(m.loopBadge(w) == .init(text: "laço parado (4 tentativas)", running: false))
+        w.loop?.state = .finished
+        #expect(m.loopBadge(w) == .init(text: "laço terminou (4 tentativas)", running: false))
+    }
+
+    @Test func stopLoopCallsWorkStopOnTheTerminal() async {
+        let (m, f) = make()
+        await m.stopLoop("Collie Main")
+        #expect(await f.all("work.stop") == [["terminal": .string("Collie Main")]])
+    }
+
+    /// Review Focus 4: a loop that just ended, or whose terminal is gone: the refusal reads in Portuguese.
+    @Test func aRefusedStopReadsInPortuguese() async {
+        let (m, f) = make()
+        await f.set(failure: ProtocolError(code: .invalidArgs, message: "no loop is running on 'Collie Main's work"))
+        await m.stopLoop("Collie Main")
+        #expect(m.error == "Nenhum laço está rodando neste trabalho.")
+        await f.set(failure: ProtocolError(code: .notFound, message: "Terminal 'Collie Main' not found"))
+        await m.stopLoop("Collie Main")
+        #expect(m.error == "Trabalho ou terminal não encontrado.")
+    }
+
+    @Test func attemptLineShowsTriesAndTheLastFailure() {
+        #expect(WorkPanelModel.attemptLine(WorkTask(id: "a", title: "t")) == nil)
+        #expect(WorkPanelModel.attemptLine(WorkTask(id: "a", title: "t", tries: 2, lastFailure: "check failed")) == "2 tentativas · check failed")
+        #expect(WorkPanelModel.attemptLine(WorkTask(id: "a", title: "t", tries: 1)) == "1 tentativa")
+    }
 }

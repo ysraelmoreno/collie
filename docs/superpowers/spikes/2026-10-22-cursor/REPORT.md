@@ -177,3 +177,18 @@ Nothing was written to `~/.cursor` except the CLI's own per-project state (`~/.c
    did **not** fire.
 6. Not seen: the not-logged-in screen (it would have needed a logout). `--trust` avoided the workspace-trust prompt; the
    preset does not pass it (trusting a folder is the user's call), so the first run in a folder shows Cursor's own prompt.
+
+## 9. Plugin commands (2026-11-18, `cursor-agent` 2026.11.17)
+
+Question: can the per-terminal `--plugin-dir` plugin carry `/collie:loop` (plan `2026-11-18-work-loop-command.md`, Task 1)?
+
+A probe plugin named `collieprobe` carried two command files: `commands/loop.md` and `commands/collie:loop.md`. The owner
+typed `/colli` in a TUI running it: the menu listed `/collie:loop` with the description of `commands/collie:loop.md`.
+
+- **Outcome B.** A plugin's commands are listed, and **not** namespaced by the plugin's name: the file's own name is the
+  command. The Cursor plugin writes `commands/collie:loop.md` only (`LoopCommand.cursorCommandFile`).
+- Listed only: the command was not run in the probe. Running `/collie:loop` in a Cursor Shepherd is a by-hand check left
+  to the owner (plan Task 3, Step 5).
+- Print mode (`-p "/collie:loop …"`) returned nothing in 70 s, and `collie ask` refuses to send a slash command, so only
+  a person in the TUI can check it.
+- The probe (`.collie/loop-probe`, terminal `cur-probe`) is gone.

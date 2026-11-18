@@ -20,27 +20,9 @@ enum ProcedureSkills {
     /// The text is data: the name is the subject's slug; the description one JSON-quoted line; the body only the trigger and
     /// the numbered steps, each re-cleaned to one line (no line can close the frontmatter or open another).
     static func render(_ procs: [MemoryRecord], into dir: URL) throws -> Set<UUID> {
-        let fm = FileManager.default, parent = dir.deletingLastPathComponent()
-        func refuseLinks() throws {
-            for u in [dir, parent, parent.deletingLastPathComponent()] {
-                if (try? fm.attributesOfItem(atPath: u.path))?[.type] as? FileAttributeType == .typeSymbolicLink {
-                    throw ProtocolError(code: .unavailable, message: "\(u.path) is a symlink; refusing to write skills there")
-                }
-            }
-        }
-        try refuseLinks()
-        try fm.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try refuseLinks()   // ponytail: checked again after mkdir; the dir is the daemon's, the sandbox can't write it
-        let tmp = parent.appendingPathComponent(".\(name)-\(UUID().uuidString)")
-        func mkdir(_ u: URL) throws { try fm.createDirectory(at: u, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
-        func write(_ text: String, _ u: URL) throws {
-            guard fm.createFile(atPath: u.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
-                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: u.path])
-            }
-        }
         var ids = Set<UUID>()
-        do {
-            try mkdir(tmp); try mkdir(tmp.appendingPathComponent(".claude-plugin")); try mkdir(tmp.appendingPathComponent("skills"))
+        try swapIn(dir) { tmp in
+            try mkdir(tmp.appendingPathComponent(".claude-plugin")); try mkdir(tmp.appendingPathComponent("skills"))
             try write(#"{"name":"collie-procedures","version":"1.0.0","description":"Procedimentos aprendidos pelo Collie"}"#,
                       tmp.appendingPathComponent(".claude-plugin/plugin.json"))
             var used = Set<String>()
@@ -55,6 +37,29 @@ enum ProcedureSkills {
                 try mkdir(d); try write(md, d.appendingPathComponent("SKILL.md"))
                 ids.insert(r.id)
             }
+        }
+        return ids
+    }
+
+    /// A per-terminal plugin dir rebuilt whole: `fill` writes into a fresh dir beside `dir`, which is then swapped in (a
+    /// live session never reads half of it). Refuses a symlink at `dir`, its parent or the terminal's dir. Dirs 0700.
+    /// Shared by `ProcedureSkills` and `LoopCommand`.
+    static func swapIn(_ dir: URL, _ fill: (URL) throws -> Void) throws {
+        let fm = FileManager.default, parent = dir.deletingLastPathComponent()
+        func refuseLinks() throws {
+            for u in [dir, parent, parent.deletingLastPathComponent()] {
+                if (try? fm.attributesOfItem(atPath: u.path))?[.type] as? FileAttributeType == .typeSymbolicLink {
+                    throw ProtocolError(code: .unavailable, message: "\(u.path) is a symlink; refusing to write a plugin there")
+                }
+            }
+        }
+        try refuseLinks()
+        try fm.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try refuseLinks()   // ponytail: checked again after mkdir; the dir is the daemon's, the sandbox can't write it
+        let tmp = parent.appendingPathComponent(".\(dir.lastPathComponent)-\(UUID().uuidString)")
+        do {
+            try mkdir(tmp)
+            try fill(tmp)
             if fm.fileExists(atPath: dir.path) {
                 guard renamex_np(tmp.path, dir.path, UInt32(RENAME_SWAP)) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
                 try? fm.removeItem(at: tmp)   // now the old one
@@ -62,7 +67,15 @@ enum ProcedureSkills {
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
         } catch { try? fm.removeItem(at: tmp); throw error }
-        return ids
+    }
+    static func mkdir(_ u: URL) throws {
+        try FileManager.default.createDirectory(at: u, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    }
+    /// A new file, 0600.
+    static func write(_ text: String, _ u: URL) throws {
+        guard FileManager.default.createFile(atPath: u.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: u.path])
+        }
     }
 
     /// SKILL.md of `r`, or nil when it has no step.

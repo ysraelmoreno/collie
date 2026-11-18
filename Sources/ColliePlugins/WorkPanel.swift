@@ -74,6 +74,27 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
     }
     public static let stateOrder: [TaskState] = [.inProgress, .open, .deferred, .abandoned, .done]
 
+    public struct LoopBadge: Equatable, Sendable { public let text: String; public let running: Bool }
+    /// nil: a sequential work. Running: "em laço: <task title> (tentativa 2/3) · 4/10 no total" (the "· n/max" part only
+    /// when `max` is set); else how it ended. Same words as the daemon's `WorkStatusText.loopLine`.
+    public func loopBadge(_ w: Work) -> LoopBadge? {
+        guard let l = w.loop else { return nil }
+        switch l.state {
+        case .running:
+            let title = w.tasks.first { $0.id == l.task }?.title ?? "?"
+            return LoopBadge(text: "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.max.map { " · \(l.used)/\($0) no total" } ?? ""),
+                             running: true)
+        case .stopped: return LoopBadge(text: "laço parado (\(l.used) tentativas)", running: false)
+        case .finished: return LoopBadge(text: "laço terminou (\(l.used) tentativas)", running: false)
+        }
+    }
+    /// One line under a task that a loop ran: "2 tentativas · <lastFailure>" (nil when it has neither).
+    public static func attemptLine(_ t: WorkTask) -> String? {
+        let tries = t.tries.map { "\($0) " + ($0 == 1 ? "tentativa" : "tentativas") }
+        let parts = [tries, t.lastFailure].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
     // MARK: events
 
     public func handleEvent(_ name: String, _ payload: JSONValue) async {
@@ -208,6 +229,12 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
         rerailing.remove(terminal)
     }
 
+    /// `work.stop` on the work's terminal: it ends after the current attempt's verdict. A refusal goes to `error` in
+    /// Portuguese; the loop's own update (`work.changed`) refreshes the row.
+    public func stopLoop(_ terminal: String) async {
+        await attempt(terminal) { () throws(ProtocolError) in _ = try await self.call("work.stop", ["terminal": .string(terminal)]) }
+    }
+
     // ponytail: `work.done --id` rather than `--terminal`: also closes a work whose terminal was removed
     public func closeWork(_ id: UUID) async {
         await run(nil) { () throws(ProtocolError) in _ = try await self.call("work.done", ["id": .string(id.uuidString.lowercased())]) }
@@ -259,6 +286,7 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
         let quoted = m.split(separator: "'", omittingEmptySubsequences: false)
         let name = terminal ?? (quoted.count >= 3 ? String(quoted[1]) : "O terminal")
         if m.contains("no active work") { return "Nenhum trabalho ativo." }
+        if m.hasPrefix("no loop is running") { return "Nenhum laço está rodando neste trabalho." }
         if m.hasPrefix("work already open: ") {
             return "\(terminal ?? "O terminal") já tem um trabalho aberto (\(m.dropFirst("work already open: ".count)))."
         }
@@ -401,6 +429,7 @@ struct WorkView: View {
                             }
                         }
                         Text((model.terminalName(of: w) ?? "terminal removido") + (w.branch.map { " · \($0)" } ?? "")).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                        if let badge = model.loopBadge(w) { CollieTag(badge.text, tone: badge.running ? .accent : .secondary) }
                         HStack(spacing: 4) { ForEach(model.counts(w), id: \.state) { CollieTag("\($0.n) \($0.state.label)", tone: $0.state.tone) } }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
@@ -410,6 +439,9 @@ struct WorkView: View {
                 Menu {
                     if let t = model.terminalName(of: w) {   // a removed terminal can't be put back on track
                         Button("Recolocar no trilho") { Task { await model.rerail(t) } }.disabled(model.rerailing.contains(t))
+                        if model.loopBadge(w)?.running == true {
+                            Button("Parar laço") { Task { await model.stopLoop(t) } }.help("Para depois do veredito da tentativa atual")
+                        }
                     }
                     Button("Fechar…") { closing = w }
                 } label: { Image(systemName: "ellipsis.circle") }
@@ -454,6 +486,10 @@ struct WorkView: View {
                     Text(s.label.capitalized).font(.collieUI(12, .semibold)).foregroundStyle(Color.collieTextSecondary)
                     ForEach(ts, id: \.id) { t in
                         Text("• " + t.title + (t.reason.map { " — \($0)" } ?? "")).font(.collieUI(12)).foregroundStyle(Color.collieText)
+                        if let a = WorkPanelModel.attemptLine(t) { Text(a).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary) }
+                        if w.loop != nil, let c = t.check {
+                            Text(c).font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(1).textSelection(.enabled)
+                        }
                     }
                 }
             }

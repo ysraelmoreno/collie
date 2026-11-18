@@ -43,9 +43,15 @@ public enum AgentLaunch {
             throw CocoaError(.fileWriteUnknown)
         }
     }
+    private static func write(_ text: String, _ to: URL) throws {
+        try FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard FileManager.default.createFile(atPath: to.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+    }
     /// Collie's orientation and MCP server for Cursor, as a plugin in Collie's data (never ~/.cursor or the repo).
     /// sessionStart is the only plugin hook cursor-agent 2026.10.22 fires (spike REPORT §8); its `additional_context`
-    /// (max 10 000 chars) carries the text Claude gets at SessionStart. A stdio MCP child gets only HOME/LOGNAME/PATH/
+    /// (max 10 000 chars) carries the text Claude gets at SessionStart. `commands/` carries `/collie:loop` (`LoopCommand`). A stdio MCP child gets only HOME/LOGNAME/PATH/
     /// SHELL/TERM/USER from cursor, so the COLLIE_* names are listed as `${env:NAME}` (cursor expands them; no values on disk).
     static func cursorPlugin(_ id: UUID, hooksDir: URL, collie: URL) throws -> URL {
         let dir = cursorPluginDir(id, in: hooksDir)
@@ -56,6 +62,7 @@ public enum AgentLaunch {
         try write(["mcpServers": ["collie": ["command": collie.path, "args": ["mcp"],
                                              "env": Dictionary(uniqueKeysWithValues: mcpEnv.map { ($0, "${env:\($0)}") })]]],
                   dir.appendingPathComponent(".mcp.json"))
+        try write(LoopCommand.markdown(arguments: false), dir.appendingPathComponent("commands/\(LoopCommand.cursorCommandFile)"))
         return dir
     }
     /// Env names the `collie mcp` child needs from the agent (names only: values never reach argv or files).
@@ -99,10 +106,11 @@ public enum AgentLaunch {
     /// `--sandbox danger-full-access`; a custom `cursor-agent` command `--sandbox disabled`). Collie's still applies.
     /// `filesDir`: the sandboxed terminal's handed-over files (`SandboxLaunch.handOver`); Claude gets it as a working
     /// directory (`permissions.additionalDirectories`, in Collie's settings file only), so reading one never prompts.
-    /// `pluginDir`: Claude only, `--plugin-dir` (the terminal's procedures as skills, `ProcedureSkills`).
+    /// `pluginDirs`: Claude only, one `--plugin-dir` each, in order (the terminal's procedures as skills, `ProcedureSkills`;
+    /// `/collie:loop`, `LoopCommand`).
     public static func launchSpec(for rec: TerminalRecord, env: [String: String], hooksDir: URL, collie: URL, shell: String,
                                   codexMCP: Bool = false, innerSandboxOff: Bool = false, resume: Bool = false,
-                                  filesDir: URL? = nil, pluginDir: URL? = nil) throws -> LaunchSpec {
+                                  filesDir: URL? = nil, pluginDirs: [URL] = []) throws -> LaunchSpec {
         func spec(_ args: [String]) -> LaunchSpec { LaunchSpec(executable: shell, arguments: args, environment: env, cwd: rec.cwd) }
         func claude(_ base: String) throws -> LaunchSpec {
             let f = settingsFile(rec.id, in: hooksDir)
@@ -135,7 +143,7 @@ public enum AgentLaunch {
             // the model it ran (summon --model, collie model, its transcript), unless the command picks one itself
             let model = rec.model.flatMap { base.contains("--model") ? nil : " --model " + quote($0) } ?? ""
             return spec(["-lc", base + model + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path)
-                         + (pluginDir.map { " --plugin-dir " + quote($0.path) } ?? "") + (resume ? " --continue" : "")])
+                         + pluginDirs.map { " --plugin-dir " + quote($0.path) }.joined() + (resume ? " --continue" : "")])
         }
         if let c = rec.command {
             // M4: the program past `env VAR=…` and a path (R19/B3's detection): Claude gets Collie's settings file

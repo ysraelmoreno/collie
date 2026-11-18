@@ -55,13 +55,21 @@ import CollieProtocol
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let plugin = URL(fileURLWithPath: "/tmp/o rq/sandbox/x/plugin/collie-procedures")
         for r in [rec(.claude), rec(.claude, "claude --model x"), rec(.custom, "env A=1 /usr/local/bin/claude")] {
-            let s = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", resume: true, pluginDir: plugin)
+            let s = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", resume: true, pluginDirs: [plugin])
             #expect(s.arguments[1].hasSuffix(" --plugin-dir '/tmp/o rq/sandbox/x/plugin/collie-procedures' --continue"), "\(s.arguments)")
         }
         for r in [rec(.codex), rec(.shell), rec(.custom, "cursor-agent"), rec(.custom, "codex"), rec(.claude, "echo hi")] {
-            let s = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", pluginDir: plugin)
+            let s = try AgentLaunch.launchSpec(for: r, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", pluginDirs: [plugin])
             #expect(!s.arguments.joined(separator: " ").contains(plugin.path), "\(s.arguments)")
         }
+    }
+    @Test func twoPluginDirsEachGetAFlagInOrder() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let a = URL(fileURLWithPath: "/tmp/o rq/plugin/collie-procedures"), b = URL(fileURLWithPath: "/tmp/o rq/plugin/collie")
+        let s = try AgentLaunch.launchSpec(for: rec(.claude), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", pluginDirs: [a, b])
+        #expect(s.arguments[1].hasSuffix(" --plugin-dir '/tmp/o rq/plugin/collie-procedures' --plugin-dir '/tmp/o rq/plugin/collie'"), "\(s.arguments)")
+        let r = try AgentLaunch.launchSpec(for: rec(.claude), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", resume: true, pluginDirs: [a, b])
+        #expect(r.arguments[1].hasSuffix(" --plugin-dir '/tmp/o rq/plugin/collie-procedures' --plugin-dir '/tmp/o rq/plugin/collie' --continue"), "\(r.arguments)")
     }
     @Test func codexSpecUsesNotifyOverride() throws {
         let s = try AgentLaunch.launchSpec(for: rec(.codex), env: [:], hooksDir: tmp(), collie: collie, shell: "/bin/zsh")
@@ -179,6 +187,17 @@ import CollieProtocol
         #expect(perm == 0o600)
         AgentLaunch.removeHooks(for: r.id, in: dir)
         #expect(!FileManager.default.fileExists(atPath: plugin.deletingLastPathComponent().path))
+    }
+    @Test func cursorPluginCarriesTheLoopCommand() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        for r in [rec(.cursor), rec(.custom, "cursor-agent")] {
+            _ = try AgentLaunch.launchSpec(for: r, env: ["PATH": try cursorPath()], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+            let plugin = AgentLaunch.cursorPluginDir(r.id, in: dir), cmd = plugin.appendingPathComponent("commands/\(LoopCommand.cursorCommandFile)")
+            #expect(try String(contentsOf: cmd, encoding: .utf8) == LoopCommand.markdown(arguments: false))
+            #expect(try FileManager.default.attributesOfItem(atPath: cmd.path)[.posixPermissions] as? Int == 0o600)
+            let hooks = try JSONSerialization.jsonObject(with: Data(contentsOf: plugin.appendingPathComponent("hooks/hooks.json"))) as! [String: Any]
+            #expect((hooks["hooks"] as! [String: Any]).keys.sorted() == ["sessionStart"])
+        }
     }
     /// Agents already running call the newer `collie hook <x>` after an app-only update (spec §4): a name is never
     /// removed or renamed without a version in between. Changing this list must mean editing this test, on purpose.

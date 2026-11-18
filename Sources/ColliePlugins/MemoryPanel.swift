@@ -46,6 +46,15 @@ public struct DigestRow: Decodable, Identifiable, Equatable, Sendable {
 /// The curator's availability and today's usage (`memory.digest`'s `curator`).
 public struct CuratorInfo: Decodable, Equatable, Sendable {
     public let available: Bool, reason: String?, today: Int, cap: Int, inputTokens: Int, outputTokens: Int, costUSD: Double
+    /// The chosen provider, its model, where its data goes and its trust; every provider of the build. nil: an older daemon.
+    public let provider: String?, model: String?, destination: String?, trust: String?
+    public let providers: [CuratorProviderEntry]?
+}
+/// One provider in `memory.curator`'s `providers`: installed (its CLI found), available and why not; `consentNeeded`:
+/// choosing it opens the consent sheet first.
+public struct CuratorProviderEntry: Decodable, Equatable, Sendable, Identifiable {
+    public let provider: String, installed: Bool, available: Bool, availability: String, consentNeeded: Bool, destination: String
+    public var id: String { provider }
 }
 
 /// The opt-in daily notification (off by default): at 18:00 local, once a day, when today's digest has something.
@@ -172,10 +181,18 @@ public enum MemoryDigestNotice {
         ]
         return groups.filter { !$0.1.isEmpty }.map { (title: $0.0, rows: $0.1) }
     }
-    /// "Curador: 12/40 hoje · 18 mil tokens · US$ 0,04", or "curador indisponível: <motivo>".
+    /// "Curador: 12/40 hoje · 18 mil tokens · US$ 0,04", or "curador indisponível: <motivo>" (naming another provider that
+    /// can be chosen; never switched to by itself). A provider that reports no usage: "Curador: 12/40 hoje · Cursor (sem
+    /// custo informado)"; out of quota: "cota do <provedor> esgotada até HH:MM".
     public var curatorLine: String? {
         guard let c = curator else { return nil }
-        if !c.available { return "curador indisponível: \(c.reason ?? "desconhecido")" }
+        if !c.available {
+            let why = c.reason ?? "desconhecido"
+            if why.hasPrefix("cota do ") { return why }
+            let other = c.providers?.first { $0.provider != (c.provider ?? "claude") && $0.installed && ($0.available || $0.consentNeeded) }
+            return "curador indisponível: \(why)" + (other.map { " · \($0.provider.capitalized) instalado: escolha em Preferências › Memória" } ?? "")
+        }
+        if let p = c.provider, p != "claude" { return "Curador: \(c.today)/\(c.cap) hoje · \(c.destination ?? p.capitalized) (sem custo informado)" }
         return "Curador: \(c.today)/\(c.cap) hoje · \(Self.tokens(c.inputTokens + c.outputTokens)) tokens · \(Self.usd(c.costUSD))"
     }
     /// Corrections that are probably the user's, waiting for Confirmar (the top of Aprendizado), newest first.

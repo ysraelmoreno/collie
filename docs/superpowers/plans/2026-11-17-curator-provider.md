@@ -438,13 +438,38 @@ implementando `billing()` do protocolo.
   AGENT_CLI_CREDENTIAL_STORE=file cursor-agent login` (cria `cursor-home` 0700 antes); escolher Cursor abre a folha
   com o texto exato.
 
-- [ ] **Step 1: Write the failing tests**: `lineCursor`, `lineExhausted`, `oldDaemonDecodes` (JSON sem `provider`),
-  `preferencePageListsCurator`.
-- [ ] **Step 2: Run** `--filter MemoryPanelTests`, `--filter MemoryObservabilityPanelTests`, `--filter PreferencePageTests`.
-  Expected: FAIL.
-- [ ] **Step 3: Implement**.
-- [ ] **Step 4: Run** os três filtros. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(app): curator provider preferences`.
+- [x] **Step 1: Write the failing tests**: `lineCursor`, `lineExhausted`, `oldDaemonDecodes` (JSON sem `provider`),
+  `lineNamesAnotherProvider`, `preferencePageListsCurator`, e `CuratorPreferencesTests` (modelo puro da seção).
+- [x] **Step 2: Run** `--filter MemoryPanelTests`, `--filter MemoryObservabilityPanelTests`, `--filter PreferencePageTests`,
+  `--filter CuratorPreferencesTests`. Expected: FAIL.
+- [x] **Step 3: Implement**.
+- [x] **Step 4: Run** os quatro filtros. Expected: PASS.
+- [x] **Step 5: Commit** `feat(app): curator provider preferences`.
+
+**Desvios (2026-11-18, sem a Task 11):**
+- A lógica da seção está no modelo puro `CuratorSettings` (`CuratorPreferences.swift`, como o `CursorMemoryModel`);
+  a tela não tem teste automático (roteiro visual do dono abaixo). Cada provedor mostra instalado ou não, disponível ou
+  não e o motivo; só os disponíveis ou a um consentimento de distância podem ser escolhidos. Escolher um que pede
+  consentimento abre a folha e só grava (`consent` + `provider` numa chamada) depois de Confirmar. O Claude logado por
+  conta de API tem folha própria (Task 12) e um botão “Confirmar…” quando já é o escolhido.
+- Sem “Entrar no Cursor para o curador”: depende do `cursor-home` da Task 11/R2. Entra com ela.
+- Linha do painel: mantém o prefixo “Curador: ” (“Curador: 12/40 hoje · Cursor (sem custo informado)”); esgotado mostra
+  só “cota do <provedor> esgotada até HH:MM”; sem Claude e com outro provedor escolhível: “curador indisponível:
+  claude não encontrado · Cursor instalado: escolha em Preferências › Memória” (texto, não botão).
+- Modelo: lista do `test` (`models()`, sem token); o Claude não oferece “padrão da conta” (iria `--model ""`).
+  “Desligado” é o limite 0, não uma linha. `MemoryObservability.swift` não mudou (nada nela depende do provedor).
+
+**Roteiro visual do dono (Task 13):** Preferências › Memória › Curador da memória:
+1. Mac com claude logado na assinatura: Claude marcado, “instalado · disponível · dados vão para a Anthropic”; Cursor
+   “… indisponível: provedor ainda não habilitado nesta versão”, não clicável.
+2. Mac sem claude (ou com o PATH do shell estourando): Claude “não instalado · indisponível: claude não encontrado” (ou
+   “ambiente do usuário não capturado…”); painel Memória com a mesma razão.
+3. claude logado por conta de API: “instalado · falta seu consentimento: login com cobrança por uso”, botão
+   “Confirmar…” abre a folha com o texto da Anthropic; Cancelar não grava; Confirmar deixa disponível.
+4. Modelo haiku → sonnet grava (reabrir a janela mostra sonnet); Limite 40 → 10 + Enter mostra 10/… no painel.
+5. “Testar agora” mostra “Teste: disponível · modelos: haiku, sonnet” e o painel não conta nada hoje.
+6. “Testar com uma chamada…” pede confirmação; depois “Chamada de teste: ops … · items … · chunks …” e o painel conta 3.
+7. Daemon antigo com app novo: a seção diz “reinicie o serviço para usar isto”.
 
 ## Roteiro manual do dono (não é tarefa de executor)
 

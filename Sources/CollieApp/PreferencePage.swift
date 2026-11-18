@@ -45,7 +45,7 @@ enum PreferencePage: String, CaseIterable {
         case .terminal: "terminal fonte tamanho google fonts baixar família"
         case .atualizacoes: "atualização atualizar versão nova instalar pular github release dmg voltar anterior"
         case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor motor baixar instalar remover atualizar reinstalar"
-        case .memoria: "memória aprendizado aviso notificação correção cursor consulta início confiar editada fora"
+        case .memoria: "memória aprendizado aviso notificação correção cursor consulta início confiar editada fora curador provedor claude modelo limite consentimento testar"
         case .plugins: "plug-ins extensões"
         case .celular: "celular iphone acesso remoto qr pareamento aparelhos leitura completo"
         case .android: "android java sdk emulador adb imagem licença licenças avd collie-lite platform-tools command-line cmdline"

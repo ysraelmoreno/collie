@@ -80,3 +80,7 @@ import CollieProtocol
     #expect(PreferencePage.requested(nil) == nil)
     #expect(PreferencePage.requested(3) == nil)
 }
+
+@Test func preferencePageListsCurator() {
+    for q in ["curador", "provedor", "consentimento", "Cursor"] { #expect(PreferencePage.matching(q).contains(.memoria), "\(q)") }
+}

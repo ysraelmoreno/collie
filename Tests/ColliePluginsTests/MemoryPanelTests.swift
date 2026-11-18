@@ -253,6 +253,60 @@ private actor FakeDaemon {
         #expect(m.curatorLine == "curador indisponível: claude sem login")
     }
 
+    /// Task 13: a newer daemon's status (provider, destination, providers); `extra` merges into it.
+    private func curator13(_ extra: [String: JSONValue]) -> JSONValue {
+        guard case .object(var o) = curator() else { return .null }
+        o["provider"] = .string("claude"); o["destination"] = .string("Anthropic"); o["trust"] = .string("full"); o["model"] = .string("haiku")
+        o.merge(extra) { _, n in n }
+        return .object(o)
+    }
+    private func entry(_ p: String, installed: Bool, available: Bool, why: String, consent: Bool = false) -> JSONValue {
+        .object(["provider": .string(p), "installed": .bool(installed), "available": .bool(available), "availability": .string(why),
+                 "consentNeeded": .bool(consent), "destination": .string(p == "claude" ? "Anthropic" : "Cursor")])
+    }
+
+    @Test func lineCursor() async {
+        let (m, d) = make([])
+        await d.setDigest(.object(["entries": .array([]), "curator": curator13(["provider": .string("cursor"), "destination": .string("Cursor"),
+                                                                                "trust": .string("limited"), "costUSD": .number(0)])]))
+        await m.load()
+        #expect(m.curatorLine == "Curador: 12/40 hoje · Cursor (sem custo informado)")
+    }
+
+    @Test func lineExhausted() async {
+        let (m, d) = make([])
+        await d.setDigest(.object(["entries": .array([]), "curator": curator13(["available": .bool(false),
+                                                                                "reason": .string("cota do claude esgotada até 14:30")])]))
+        await m.load()
+        #expect(m.curatorLine == "cota do claude esgotada até 14:30")
+    }
+
+    /// An older daemon's status (no provider fields) still decodes; the Claude line is today's.
+    @Test func oldDaemonDecodes() async {
+        let (m, d) = make([])
+        await d.setDigest(.object(["entries": .array([]), "curator": curator()]))
+        await m.load()
+        #expect(m.curator?.provider == nil && m.curator?.providers == nil)
+        #expect(m.curatorLine == "Curador: 12/40 hoje · 18 mil tokens · US$ 0,04")
+    }
+
+    /// Without Claude, another provider that can be chosen is named (never switched to by itself).
+    @Test func lineNamesAnotherProvider() async {
+        let (m, d) = make([])
+        let providers: JSONValue = .array([entry("claude", installed: false, available: false, why: "claude não encontrado"),
+                                           entry("cursor", installed: true, available: false, why: "falta confirmar nas Preferências", consent: true)])
+        await d.setDigest(.object(["entries": .array([]), "curator": curator13(["available": .bool(false), "reason": .string("claude não encontrado"),
+                                                                                "providers": providers])]))
+        await m.load()
+        #expect(m.curatorLine == "curador indisponível: claude não encontrado · Cursor instalado: escolha em Preferências › Memória")
+        let notInBuild: JSONValue = .array([entry("claude", installed: false, available: false, why: "claude não encontrado"),
+                                            entry("cursor", installed: true, available: false, why: "provedor ainda não habilitado nesta versão")])
+        await d.setDigest(.object(["entries": .array([]), "curator": curator13(["available": .bool(false), "reason": .string("claude não encontrado"),
+                                                                                "providers": notInBuild])]))
+        await m.load()
+        #expect(m.curatorLine == "curador indisponível: claude não encontrado")
+    }
+
     @Test func capEditable() async {
         let (m, d) = make([])
         await m.setCap(25)

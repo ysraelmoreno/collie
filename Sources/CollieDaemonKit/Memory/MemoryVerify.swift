@@ -102,8 +102,11 @@ extension CommandRouter {
             return false
         }
         let flags = await memory.lifecycle.entry(id)?.flags ?? []
+        // a map's drift (the lifecycle pass's claim-check flag) is a fact for the curator, never a failed check above
+        let drift = r.kind != .map ? [] : flags.filter { $0.session == "claim-check" && $0.reason.hasPrefix("mapDrift ") }
+            .map { ClaimFailure(kind: .mapDrift, detail: String($0.reason.dropFirst("mapDrift ".count))) }
         return await curator.enqueue(CuratorJob(id: UUID(), kind: kind, store: s.key,
-                                                payload: MemoryVerify.payload(memory: r, flags: flags, facts: failures),
+                                                payload: MemoryVerify.payload(memory: r, flags: flags, facts: failures + drift),
                                                 dedupe: "verify:\(kind.rawValue):\(id.uuidString.lowercased())", createdAt: Date(), attempts: 0))
     }
 

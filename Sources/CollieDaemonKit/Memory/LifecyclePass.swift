@@ -57,6 +57,9 @@ extension CommandRouter {
             if e.tier == .longTerm { memory.noteLifecycle(.demoted, r.id, store: store.key) }
             _ = await enqueueVerify(r.id, kind: .verifyContested)   // no curator: the failed check archives it now
         }
+        // (4b) a map whose file changed past the threshold since its anchor commit: contested, never archived on its own
+        await mapDriftPass(store, eligible: eligible, fresh: fresh, facts: facts, room: LifecycleRules.maxClaimContestsPerPass - contests,
+                           now: now, day: day)
         entries = await lc.all()
 
         // (5) provisional and unused past its kind's ttl (21 or 60 days): archived (reversible), each in the digest

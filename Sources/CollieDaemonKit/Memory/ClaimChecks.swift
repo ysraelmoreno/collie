@@ -7,6 +7,13 @@ protocol GitFacts: Sendable {
     func branch(_ name: String) async -> BranchState
     func commitExists(_ sha: String) async -> Bool
     func pathExists(_ rel: String) -> Bool
+    // Map drift (spec 2026-11-17-memory-stage-rules, item 7); defaults in MapDrift.swift: nothing known, the check is off.
+    func head() async -> String?
+    func changes(from anchor: String, to head: String, paths: [String]) async -> MapDriftFacts
+    func extent(_ rel: String) async -> PathExtent?
+    func subjects(from anchor: String, to head: String, path: String) async -> [String]
+    /// `path` (a file or a directory) is in `commit`'s tree; nil = unknown.
+    func existed(at commit: String, _ path: String) async -> Bool?
 }
 
 /// Git and disk facts for a repo root. A git error, timeout or non-repo root is "unknown", never a failure.
@@ -28,12 +35,23 @@ struct GitFactsLive: GitFacts {
         (try? await GitRunner.run(args, in: root, timeout: Self.timeout))?.status
     }
 
-    /// Exit status of `args`, but only when the root is a git repo (checked once, cached); nil = unknown.
-    private func checked(_ args: [String]) async -> Int32? {
+    /// The root is a git repo (checked once, cached); false also when unknown.
+    private func inRepo() async -> Bool {
         if repo.get() == nil {   // only a definitive answer is cached: 0 = repo, 128 = not; a timeout/throw is retried next time
             switch await status(["rev-parse", "--git-dir"]) { case 0: repo.set(true); case 128: repo.set(false); default: break }
         }
-        return repo.get() == true ? await status(args) : nil
+        return repo.get() == true
+    }
+
+    /// Exit status of `args`, but only when the root is a git repo; nil = unknown.
+    private func checked(_ args: [String]) async -> Int32? {
+        await inRepo() ? await status(args) : nil
+    }
+
+    /// `args`' whole output (exit 0, not truncated by `GitRunner`'s 1 MiB cap), only in a git repo; nil = unknown.
+    private func output(_ args: [String]) async -> ProcessResult? {
+        guard await inRepo(), let r = try? await GitRunner.run(args, in: root, timeout: Self.timeout), r.status == 0, !r.truncated else { return nil }
+        return r
     }
 
     /// true = ref exists (0), false = absent (1), nil = anything else.
@@ -66,8 +84,90 @@ struct GitFactsLive: GitFacts {
     func pathExists(_ rel: String) -> Bool { repoPathExists(rel, root: root) }
 }
 
+/// Map drift (item 7): commit against commit only, never the working tree (no clean/smudge filter runs), with
+/// `MapDrift.safe` and no diff driver, textconv or signature check: the repo's config may be an agent's.
+extension GitFactsLive {
+    func head() async -> String? {
+        guard let r = await output(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]) else { return nil }
+        let h = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MapDrift.isCommit(h) ? h : nil
+    }
+
+    func changes(from anchor: String, to head: String, paths: [String]) async -> MapDriftFacts {
+        guard MapDrift.isCommit(anchor), MapDrift.isCommit(head), await inRepo() else { return .unknown }
+        switch await checked(["rev-parse", "--verify", "--quiet", "\(anchor)^{commit}"]) {
+        case 0: break
+        case 1: return .anchorGone
+        default: return .unknown
+        }
+        let ps = Array(Set(paths.compactMap(MapDrift.norm))).sorted()
+        var out: [String: PathChange] = [:]
+        for chunk in stride(from: 0, to: ps.count, by: MapDrift.maxPerPass).map({ Array(ps[$0..<min($0 + MapDrift.maxPerPass, ps.count)]) }) {
+            guard let r = await output(MapDrift.safe + ["diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--no-renames",
+                                                        "--no-color", anchor, head, "--"] + chunk) else { return .unknown }
+            for rec in r.stdout.split(separator: "\0") {
+                let f = rec.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+                guard f.count == 3, let a = Int(f[0]), let d = Int(f[1]) else { continue }   // "-\t-": binary, ignored
+                let file = String(f[2])
+                for p in chunk where file == p || file.hasPrefix(p + "/") {
+                    var c = out[p] ?? PathChange()
+                    c.added += a; c.deleted += d; c.files += 1
+                    out[p] = c
+                }
+            }
+        }
+        return .changes(out)
+    }
+
+    func extent(_ rel: String) async -> PathExtent? {
+        guard let p = MapDrift.norm(rel) else { return nil }
+        let u = root.appendingPathComponent(p)
+        // never through a symlink, at the end or on the way (it could point anywhere)
+        let base = root.resolvingSymlinksInPath().path
+        guard u.resolvingSymlinksInPath().path.hasPrefix(base + "/") else { return nil }
+        // one open, never following the last component nor blocking on a FIFO; the type comes from that very fd
+        let fd = open(u.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0 else { return nil }
+        switch st.st_mode & S_IFMT {
+        case S_IFDIR:
+            let files = await output(MapDrift.safe + ["ls-files", "-z", "--", p]).map { $0.stdout.split(separator: "\0").count }
+            return PathExtent(isDir: true, lines: nil, files: files)
+        case S_IFREG:
+            guard st.st_size <= MapDrift.maxReadBytes else { return PathExtent(isDir: false, lines: nil, files: nil) }
+            var lines = 0, total = 0, last: UInt8 = 0x0A, chunk = [UInt8](repeating: 0, count: 64 << 10)
+            while true {   // bounded: a file that grew past the cap after fstat is "unknown size"
+                let n = read(fd, &chunk, chunk.count)
+                guard n >= 0 else { return nil }
+                if n == 0 { break }
+                total += n
+                guard total <= MapDrift.maxReadBytes else { return PathExtent(isDir: false, lines: nil, files: nil) }
+                for b in chunk[0..<n] where b == 0x0A { lines += 1 }
+                last = chunk[n - 1]
+            }
+            return PathExtent(isDir: false, lines: lines + (total > 0 && last != 0x0A ? 1 : 0), files: nil)
+        default: return nil
+        }
+    }
+
+    func existed(at commit: String, _ path: String) async -> Bool? {
+        guard MapDrift.isCommit(commit), let p = MapDrift.norm(path) else { return nil }
+        switch await checked(["rev-parse", "--verify", "--quiet", "\(commit):\(p)"]) { case 0: return true; case 1: return false; default: return nil }
+    }
+
+    func subjects(from anchor: String, to head: String, path: String) async -> [String] {
+        guard MapDrift.isCommit(anchor), MapDrift.isCommit(head), let p = MapDrift.norm(path),
+              let r = await output(MapDrift.safe + ["log", "--no-show-signature", "--no-mailmap", "--format=%s", "-n", "\(MapDrift.subjectsMax)",
+                                                    "\(anchor)..\(head)", "--", p]) else { return [] }
+        return r.stdout.split(separator: "\n").map { CuratorOps.clean(String($0), cap: MapDrift.subjectMax, multiline: false) }.filter { !$0.isEmpty }
+    }
+}
+
 struct ClaimFailure: Equatable, Sendable {
-    enum Kind: String, Sendable { case pathMissing, branchMerged, branchMissing, commitMissing }
+    /// `mapDrift`: never from `check` (a drift is soft); only a fact for the curator (`enqueueVerify`).
+    enum Kind: String, Sendable { case pathMissing, branchMerged, branchMissing, commitMissing, mapDrift }
     var kind: Kind
     var detail: String
 }

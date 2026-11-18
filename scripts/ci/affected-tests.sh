@@ -31,5 +31,5 @@ fi
 swift package dump-package | jq -r --arg seeds "$SEEDS" '
   ($seeds | split("\n")) as $s
   | (.targets | map({key: .name, value: [.dependencies[] | (.byName // .target // .product)[0]]}) | from_entries) as $deps
-  | def closure: . as $n | [$n] + [($deps[$n] // [])[] | closure] | unique;
+  | def closure: . as $n | [$n] + [($deps[$n] // [])[] | closure[]] | unique;
   [.targets[] | select(.type == "test") | .name | select((closure - $s) != closure)] | sort | join("|")'

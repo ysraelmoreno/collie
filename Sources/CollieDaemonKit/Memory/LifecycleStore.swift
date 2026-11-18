@@ -25,6 +25,11 @@ struct LifecycleEntry: Codable, Sendable, Equatable {
     var promotionUndone: Bool? = nil
     /// What open flags took from its score (after the floor clamp); a valid re-check gives back exactly this.
     var flagPenalty: Double? = nil
+    /// Item 2 phase 1 (shadow, no rule reads it): the uses that also had evidence (cited, `get`, `--useful`); always a
+    /// subset of `usefulUses` (`addEvidence`). nil: none yet, or written before item 2.
+    var evidencedUses: Set<UseKey>? = nil
+    /// `implicit`|`evidence`: what an earned tier was given by (phase 2 writes it); nil counts as `implicit`.
+    var earnedBy: String? = nil
     /// A map's anchor commits, one per store and text (the pasture and each paddock worktree measure against their own
     /// `HEAD`, on their own branch, and may hold different texts), newest first, at most `MapAnchor.max` (spec
     /// 2026-11-17-memory-stage-rules, item 7). Daemon-owned: never in the `.md`.
@@ -109,6 +114,16 @@ actor LifecycleStore {
                 taken.append(id)
             }
         }
+        return taken
+    }
+
+    /// Evidence beside a use: `key` joins `evidencedUses` of each id that already holds it in `usefulUses` (so evidence
+    /// never outgrows the implicit count), in one write. Returns those ids; an id without that use is skipped.
+    @discardableResult
+    func addEvidence(_ ids: [UUID], key: UseKey, now: Date) -> [UUID] {
+        let taken = ids.filter { load().entries[$0]?.usefulUses.contains(key) == true }
+        guard !taken.isEmpty else { return [] }
+        mutate { s in for id in taken { let had = s.entries[id]?.evidencedUses ?? []; s.entries[id]?.evidencedUses = had.union([key]) } }
         return taken
     }
 

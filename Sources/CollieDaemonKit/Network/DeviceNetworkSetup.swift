@@ -140,20 +140,31 @@ struct DeviceNetworkSetup: Sendable {
     }
 
     /// `adb root`, then waits for adbd to answer as uid 0 (wait-for-device can return before the restart is done).
-    private func root(_ serial: String) async throws(ProtocolError) {
-        do { _ = try await adb.run(["root"], serial: serial, timeout: .seconds(20)) } catch {
-            if error.message.contains("cannot run as root") {
-                throw ProtocolError(code: .unavailable, message: "\(serial) is not rootable (Google Play images refuse adb root); use a Google APIs or AOSP image")
-            }
+    /// A production image (`ro.build.type=user`) may print "cannot run as root" and still exit 0: that fails at once.
+    /// `wait` is the deadline for uid 0 (a parameter only so tests stay fast).
+    func root(_ serial: String, deadline wait: Duration = .seconds(30)) async throws(ProtocolError) {
+        let notRootable = ProtocolError(code: .unavailable, message: "\(serial) is not rootable (Google Play images refuse adb root); use a Google APIs or AOSP image")
+        let out: ProcessResult
+        do { out = try await adb.run(["root"], serial: serial, timeout: .seconds(20)) } catch {
+            if error.message.lowercased().contains("cannot run as root") { throw notRootable }
             throw error
         }
-        let deadline = ContinuousClock.now + .seconds(30)
+        if (out.stdout + out.stderr).lowercased().contains("cannot run as root") { throw notRootable }
+        let deadline = ContinuousClock.now + wait
+        var lastId = "?"
         while ContinuousClock.now < deadline {
             _ = try? await adb.run(["wait-for-device"], serial: serial, timeout: .seconds(10))
-            if let id = try? await shell(serial, "id -u"), id.trimmingCharacters(in: .whitespacesAndNewlines) == "0" { return }
+            if let id = try? await shell(serial, "id -u") {
+                lastId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+                if lastId == "0" { return }
+            }
             try? await Task.sleep(for: .milliseconds(300))
         }
-        throw ProtocolError(code: .unavailable, message: "adbd on \(serial) did not come back as root")
+        let type = ((try? await shell(serial, "getprop ro.build.type")) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if type == "user" {
+            throw ProtocolError(code: .unavailable, message: "\(serial) runs a production image (ro.build.type=user) that refuses adb root; use a 'Google APIs' image without Play Store, or the collie-lite AVD")
+        }
+        throw ProtocolError(code: .unavailable, message: "adbd on \(serial) did not come back as root in \(wait) (last id -u \(lastId)); try again with the emulator idle")
     }
 
     private func targets(_ serial: String) async throws(ProtocolError) -> [Int] {

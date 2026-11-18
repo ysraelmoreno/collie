@@ -142,6 +142,56 @@ private let negativeSerialCA = """
         #expect(throws: Never.self) { try DeviceNetworkSetup.guardEmulator("emulator-5560") }
     }
 
+    /// A fake `adb` (sh script): `root` prints `rootOut` and exits `rootStatus`; `shell id -u` → `uid`;
+    /// `shell getprop ro.build.type` → `type`. Returns the root error message, nil on success.
+    private func rootError(rootOut: String, rootStatus: Int = 0, uid: Int, type: String = "user",
+                           deadline: Duration = .seconds(30)) async throws -> String? {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fake-adb-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = """
+            #!/bin/sh
+            shift 2
+            case "$1" in
+            root) echo \(NetShell.shq(rootOut)); [ \(rootStatus) -eq 0 ] || echo \(NetShell.shq(rootOut)) >&2; exit \(rootStatus) ;;
+            shell) case "$2" in "id -u") echo \(uid) ;; "getprop ro.build.type") echo \(type) ;; esac ;;
+            esac
+            exit 0
+            """
+        let adb = dir.appendingPathComponent("adb")
+        FileManager.default.createFile(atPath: adb.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
+        do { try await DeviceNetworkSetup(adb: Adb(url: adb)).root("emulator-5554", deadline: deadline); return nil }
+        catch { #expect(error.code == .unavailable); return error.message }
+    }
+
+    @Test func rootOnProductionImageFailsFastWithTheCause() async throws {
+        let start = ContinuousClock.now
+        let msg = try await rootError(rootOut: "adbd cannot run as root in production builds", uid: 2000)
+        #expect(msg?.contains("is not rootable") == true)
+        #expect(ContinuousClock.now - start < .seconds(10))
+    }
+
+    @Test func rootThatThrowsCannotRunAsRootKeepsTheMessage() async throws {
+        let msg = try await rootError(rootOut: "adbd cannot run as root in production builds", rootStatus: 1, uid: 2000)
+        #expect(msg?.contains("is not rootable") == true)
+    }
+
+    @Test func rootTimeoutOnUserBuildNamesTheProductionImage() async throws {
+        let msg = try await rootError(rootOut: "", uid: 2000, type: "user", deadline: .milliseconds(500))
+        #expect(msg?.contains("ro.build.type=user") == true)
+        #expect(msg?.contains("collie-lite") == true)
+    }
+
+    @Test func rootTimeoutOnUserdebugSaysRetry() async throws {
+        let msg = try await rootError(rootOut: "restarting adbd as root", uid: 2000, type: "userdebug", deadline: .milliseconds(500))
+        #expect(msg?.contains("did not come back as root") == true)
+        #expect(msg?.contains("id -u 2000") == true)
+    }
+
+    @Test func rootSucceedsWhenUidIsZero() async throws {
+        #expect(try await rootError(rootOut: "restarting adbd as root", uid: 0, type: "userdebug") == nil)
+    }
+
     /// Against a real rootable emulator: `COLLIE_E2E_SERIAL=emulator-5560 COLLIE_E2E_CA=<mitmproxy-ca-cert.pem> swift test --filter NetworkSetupTests`.
     /// Attaches twice (idempotent), checks the device, detaches twice; leaves the device as it found it.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["COLLIE_E2E_SERIAL"] != nil))

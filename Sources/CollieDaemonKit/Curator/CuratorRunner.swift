@@ -37,7 +37,11 @@ enum CuratorBilling: Equatable, Sendable {
 }
 
 /// The curators this build knows (spec 2026-11-17-curator-provider). Raw values are in config.json and events.
-enum CuratorProvider: String, Codable, CaseIterable, Sendable { case claude, cursor }
+enum CuratorProvider: String, Codable, CaseIterable, Sendable {
+    case claude, cursor
+    /// Its CLI's name (`BinaryLocator`: installed or not, no token spent).
+    var binary: String { self == .cursor ? "cursor-agent" : rawValue }
+}
 
 /// What a runner is: who answers, how far its answers are trusted, where the data goes, and its limits.
 struct CuratorProviderInfo: Sendable, Equatable {

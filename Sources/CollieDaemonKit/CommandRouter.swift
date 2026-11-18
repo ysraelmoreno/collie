@@ -256,7 +256,8 @@ actor CommandRouter {
         let curatorDir = config.paths.root.appendingPathComponent("curator")
         let runners = config.curatorRunners ?? config.curatorRunner.map { [$0.info.provider: $0] }
             ?? [.claude: ClaudeCuratorRunner(root: config.paths.root, home: home, env: { await userEnv.current() })]
-        self.curator = Curator(dir: curatorDir, runners: runners, events: memory.events)
+        self.curator = Curator(dir: curatorDir, runners: runners, events: memory.events, installed: { p in
+            BinaryLocator.locate(p.binary, env: await userEnv.current(), home: NSHomeDirectory()) != nil })
         // L3: one Collie-wide preference; a workspace's value (before) moves there once
         let settings = CollieSettings.load(root)
         let remoteDevices = RemoteDevices(dir: root.appendingPathComponent("remote")), remotePairing = RemotePairing()

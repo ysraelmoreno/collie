@@ -324,6 +324,9 @@ env: HOME=<root>/curator/cursor-home  CURSOR_CONFIG_DIR=<root>/curator/cursor-ho
   Mode e o plano da sua conta. Se o seu plano cobra por uso além do incluído, os jobs do curador contam. Nada é
   enviado por chave de API.” Confirmar grava `consented`; sem isso, “falta confirmar nas Preferências”.
 - Claude: consentimento implícito (é o de hoje); o destino aparece na linha do painel.
+- Desvio (Task 12, 2026-11-18): login com cobrança por uso ou não reconhecido (`metered`/`unknown`) só cura com o
+  consentimento do provedor gravado, **Claude incluído** (conta de API): a folha do Claude diz o destino (Anthropic) e
+  que cada job conta na cobrança por token. Com assinatura, o Claude continua sem folha.
 
 ### 7. UX
 

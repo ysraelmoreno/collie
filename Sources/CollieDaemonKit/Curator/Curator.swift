@@ -37,6 +37,20 @@ struct CuratorStatus: Codable, Sendable {
     var model = "haiku"
     var trust = "full"
     var destination = "Anthropic"
+    /// Every provider this build knows (Task 12), chosen or not: what the Preferences picker shows.
+    var providers: [CuratorProviderStatus] = []
+}
+
+/// One provider in the picker: installed (its CLI found, no token spent), available now and, when not, why;
+/// `consentNeeded`: choosing it opens the consent sheet first.
+struct CuratorProviderStatus: Codable, Sendable, Equatable {
+    var provider: String
+    var installed: Bool
+    var available: Bool
+    /// "disponível", or the reason it isn't ("claude não encontrado", "claude sem login", …).
+    var availability: String
+    var consentNeeded: Bool
+    var destination: String
 }
 
 /// One job at a time from a durable queue (`<dir>/jobs/<createdAt ms>-<id>.json`, 0600 in 0700 dirs), by kind priority.
@@ -90,6 +104,8 @@ actor Curator {
     private let dir: URL, runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration>, now: @Sendable () -> Date
     /// Each call is a `curatorRun` event (nil: not logged).
     private let events: MemoryEventLog?
+    /// Its CLI is on the user's PATH or in a known dir (`BinaryLocator`); never runs it.
+    private let installed: @Sendable (CuratorProvider) async -> Bool
     private var jobs: [CuratorJob] = []
     private var config = Config(), usage = Usage()
     /// dedupe key → when last enqueued or finished (in memory: a restart forgets the 60 s window)
@@ -114,8 +130,10 @@ actor Curator {
     }
 
     init(dir: URL, runners: [CuratorProvider: any CuratorRunner], clock: any Clock<Duration> = ContinuousClock(),
-         now: @escaping @Sendable () -> Date = Date.init, events: MemoryEventLog? = nil) {
-        self.dir = dir; self.runners = runners; self.clock = clock; self.now = now; self.events = events
+         now: @escaping @Sendable () -> Date = Date.init, events: MemoryEventLog? = nil,
+         installed: @escaping @Sendable (CuratorProvider) async -> Bool = {
+             BinaryLocator.locate($0.binary, env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) != nil }) {
+        self.dir = dir; self.runners = runners; self.clock = clock; self.now = now; self.events = events; self.installed = installed
         let fm = FileManager.default
         for d in [dir, dir.appendingPathComponent("jobs"), dir.appendingPathComponent("failed")] {
             try? fm.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -209,6 +227,7 @@ actor Curator {
         guard p == .claude || config.consented.contains(p.rawValue) else {
             throw ProtocolError(code: .unavailable, message: "falta confirmar nas Preferências")
         }
+        guard runners[p] != nil else { throw ProtocolError(code: .unavailable, message: Self.notInBuild) }
         config.provider = p.rawValue
         if let m { if p == .claude { config.model = m } else { config.models[p.rawValue] = m } }
         outcomes[p] = nil   // another provider or model: the pause starts afresh
@@ -223,23 +242,77 @@ actor Curator {
         write(config, to: dir.appendingPathComponent("config.json"))
     }
 
+    static let notInBuild = "provedor ainda não habilitado nesta versão"
+    static let consentMissing = "falta confirmar nas Preferências"
+
     /// The chosen provider's availability: unconsented or missing in this build is unavailable, never run.
-    private func availability() async -> CuratorAvailability {
-        let p = provider
-        guard p == .claude || config.consented.contains(p.rawValue) else { return .unavailable("falta confirmar nas Preferências") }
-        guard let r = runners[p] else { return .unavailable("\(p.rawValue) não encontrado") }
-        let w = outcomes[p] ?? [], bad = w.filter { $0 }.count
-        if bad >= Self.pauseBad { return .unavailable("saída inválida em \(bad) de \(w.count) (troque de modelo)") }
+    private func availability() async -> CuratorAvailability { await availability(provider).0 }
+
+    /// `p`'s availability (no token: the runner's cached login check) and whether only a consent stands in the way.
+    /// The runner's own reason comes first (not installed, logged out): consenting wouldn't fix those.
+    private func availability(_ p: CuratorProvider) async -> (CuratorAvailability, consentNeeded: Bool) {
+        guard let r = runners[p] else { return (.unavailable(Self.notInBuild), false) }
         let a = await r.availability()
-        return a == .available ? Self.admit(await r.billing(), provider: p) : a
+        guard a == .available else { return (a, false) }
+        let consented = config.consented.contains(p.rawValue)
+        guard p == .claude || consented else { return (.unavailable(Self.consentMissing), true) }
+        let w = outcomes[p] ?? [], bad = w.filter { $0 }.count
+        if bad >= Self.pauseBad { return (.unavailable("saída inválida em \(bad) de \(w.count) (troque de modelo)"), false) }
+        let admitted = Self.admit(await r.billing(), provider: p, consented: consented)
+        return (admitted, admitted != .available)
     }
 
     /// The billing policy (spec 2026-11-17 E3), the same for every provider: a login billed in a plan curates; one
-    /// billed per use, or not recognized, doesn't (no silent token billing).
-    static func admit(_ b: CuratorBilling, provider p: CuratorProvider) -> CuratorAvailability {
+    /// billed per use, or not recognized, only with that provider's consent on file (Task 12: no silent token billing).
+    static func admit(_ b: CuratorBilling, provider p: CuratorProvider, consented: Bool) -> CuratorAvailability {
         if case .included = b { return .available }
-        // TODO(Task 12): with consent per provider, metered/unknown ask for it here instead of refusing
+        if consented { return .available }
         return .unavailable("\(p.rawValue.capitalized): login com cobrança por uso ou não reconhecido; consentimento necessário")
+    }
+
+    /// Every provider of this build, in `allCases` order (the picker's).
+    private func providerStatuses() async -> [CuratorProviderStatus] {
+        var out: [CuratorProviderStatus] = []
+        for p in CuratorProvider.allCases {
+            let (a, consent) = await availability(p)
+            let why: String = switch a {
+            case .available: "disponível"
+            case .unavailable(let w): w
+            case .exhausted(let w, _): w
+            }
+            out.append(CuratorProviderStatus(provider: p.rawValue, installed: await installed(p), available: a == .available,
+                                             availability: why, consentNeeded: consent,
+                                             destination: runners[p]?.info.destination ?? p.rawValue.capitalized))
+        }
+        return out
+    }
+
+    /// "Testar agora": the chosen provider's availability and model list; zero generation.
+    func test() async -> (availability: String, models: [String]) {
+        let why: String = switch await availability() {
+        case .available: "disponível"
+        case .unavailable(let w): w
+        case .exhausted(let w, _): w
+        }
+        return (why, await runners[provider]?.models() ?? [])
+    }
+
+    /// "Testar com uma chamada": one synthetic call per answer format through `call` (each counts in today's cap and is
+    /// logged); nothing is applied. `ok`: the answer has the format's list; `junk`: it doesn't; else the error's text.
+    func testCalls() async throws(ProtocolError) -> [(format: String, result: String)] {
+        if case .unavailable(let why) = await availability() { throw ProtocolError(code: .unavailable, message: why) }
+        let instructions = "Isto é um teste do Collie, sem dados reais. Responda só com a lista vazia."
+        var out: [(String, String)] = []
+        for (key, schema) in [("ops", CuratorOps.schema), ("items", ConversationCapture.schema), ("chunks", DocTerms.schema)] {
+            let job = CuratorJob(id: UUID(), kind: .correction, store: "", payload: .null, dedupe: "", createdAt: now(), attempts: 0)
+            do throws(ProtocolError) {
+                let o = try await call(CuratorCall(instructions: instructions, input: "teste", schema: schema), job: job)
+                if case .object(let x) = o.json, case .array? = x[key] { out.append((key, "ok")) } else { out.append((key, "junk")) }
+            } catch {
+                out.append((key, String(error.message.prefix(200))))
+            }
+        }
+        return out
     }
 
     func setCap(_ n: Int) {
@@ -265,7 +338,8 @@ actor Curator {
                              failed: ((try? FileManager.default.contentsOfDirectory(atPath: dir.appendingPathComponent("failed").path)) ?? [])
                                  .filter { $0.hasSuffix(".json") }.count,
                              inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, costUSD: usage.costUSD,
-                             provider: provider.rawValue, model: model(provider), trust: active.trust.rawValue, destination: active.destination)
+                             provider: provider.rawValue, model: model(provider), trust: active.trust.rawValue, destination: active.destination,
+                             providers: await providerStatuses())
     }
 
     func start(handler: @escaping Handler) { start(job: { j, call, _ in try await handler(j, call); return .ok }) }

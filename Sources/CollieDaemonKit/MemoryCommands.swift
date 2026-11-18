@@ -504,9 +504,30 @@ extension CommandRouter {
         case "memory.stats":
             return try await memoryStats(r, caller: caller, myLot: myLot, lotArg: lotArg, project: project, stores: stores, paddock: paddockName)
 
-        case "memory.curator":
+        case "memory.curator":   // admin-only (the app's Preferências): cap, consent, provider/model, test, testCall
+            func provider(_ k: String) throws(ProtocolError) -> CuratorProvider? {
+                guard let v = str(r, k) else { return nil }
+                guard let p = CuratorProvider(rawValue: v) else {
+                    throw invalid("'\(k)' must be one of \(CuratorProvider.allCases.map(\.rawValue).joined(separator: ", "))")
+                }
+                return p
+            }
             if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }
-            return try isoJSON(await curator.status())
+            if let p = try provider("consent") { await curator.consent(p) }   // the sheet was accepted: before the switch
+            if let p = try provider("provider") { try await curator.setProvider(p, model: str(r, "model")) }
+            var extra: [String: JSONValue] = [:]
+            if flag(r, "test") {
+                let t = await curator.test()
+                extra["test"] = .object(["availability": .string(t.availability), "models": .array(t.models.map { .string($0) })])
+            }
+            if flag(r, "testCall") {
+                extra["testCall"] = .array(try await curator.testCalls().map {
+                    .object(["format": .string($0.format), "result": .string($0.result)])
+                })
+            }
+            guard case .object(var o) = try isoJSON(await curator.status()) else { throw ProtocolError(code: .internal, message: "curator status") }
+            o.merge(extra) { _, new in new }
+            return .object(o)
 
         case "memory.purge":
             let n = try await repo.run { m -> Int in

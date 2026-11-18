@@ -398,13 +398,26 @@ implementando `billing()` do protocolo.
   em `memoryReads`. `CuratorStatus.providers: [{provider, installed: Bool, availability: String}]` (detecção sem
   token: PATH e existência de `cursor-home`; nenhum `status` só para listar).
 
-- [ ] **Step 1: Write the failing tests**: `curatorCommandSetsProvider` (sem consent → erro “falta confirmar nas
+- [x] **Step 1: Write the failing tests**: `curatorCommandSetsProvider` (sem consent → erro “falta confirmar nas
   Preferências”; com consent → status.provider); `nonAdminRefused`; `testSpendsNothing` (calls == 0);
-  `testCallSpendsThree`; `providersListed`.
-- [ ] **Step 2: Run** `--filter CuratorQueueTests`. Expected: FAIL.
-- [ ] **Step 3: Implement**.
-- [ ] **Step 4: Run** `--filter CuratorQueueTests`, `--filter RouterTests`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(curator): choose, consent and test the provider`.
+  `testCallSpendsThree`; `providersListed`; `meteredNeedsConsent`.
+- [x] **Step 2: Run** `--filter CuratorQueueTests`. Expected: FAIL.
+- [x] **Step 3: Implement**.
+- [x] **Step 4: Run** `--filter CuratorQueueTests`, `--filter RouterTests`, `--filter CuratorProviderTests`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(curator): choose, consent and test the provider`.
+
+**Desvios (2026-11-18, feita sem a Task 11, pedido do dono):**
+- `CuratorStatus.providers` lista todo `CuratorProvider.allCases` com `{provider, installed, available, availability,
+  consentNeeded, destination}` (`availability`: “disponível” ou o motivo). Provedor sem runner nesta versão (cursor
+  hoje): “provedor ainda não habilitado nesta versão” (antes “cursor não encontrado”), e `setProvider` o recusa com
+  esse texto. Quando a Task 11 registrar o runner, nada aqui muda.
+- `installed` = o CLI (`CuratorProvider.binary`: `claude`, `cursor-agent`) no PATH do usuário ou nos diretórios do
+  `BinaryLocator` (home real); `cursor-home` fica para a Task 11 (é estado de login, não instalação).
+- Consentimento vale para a cobrança: `Curator.admit(_:provider:consented:)` aceita `metered`/`unknown` **só** com o
+  provedor em `consented`. Isso inclui o Claude logado por conta de API (antes só recusado): a Task 13 mostra para ele
+  uma folha própria. O motivo do runner (não encontrado, sem login) vem antes do pedido de consentimento.
+- `testCall`: 3 chamadas sintéticas (formatos `ops`, `items`, `chunks`) pelo mesmo `call` (contam no limite, viram
+  evento), nada é aplicado; cada uma devolve `ok`, `junk` ou o texto do erro. Timeout do comando 200 s (3 × 60 s).
 
 ### Task 13: Preferências e painel
 

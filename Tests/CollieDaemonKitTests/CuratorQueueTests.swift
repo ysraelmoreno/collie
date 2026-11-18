@@ -501,6 +501,95 @@ private let oneCall: Curator.Handler = { j, call in
         await d.stop()
     }
 
+    // Task 12: choose, consent and test the provider (admin-only, through `memory.curator`)
+    private func cursorRunner() -> FakeCurator {
+        let f = FakeCurator()
+        f.info = CuratorProviderInfo(provider: .cursor, trust: .limited, destination: "Cursor", structuredOutput: false,
+                                     reportsUsage: false, timeout: .seconds(120), inputMax: 12_000)
+        return f
+    }
+    private func curatorCmd(_ d: Daemon, _ p: Paths, _ args: [String: JSONValue]) async throws -> Response {
+        try await send(p, Request(id: "c", token: d.adminToken, command: "memory.curator", args: args), timeoutSeconds: 30)
+    }
+
+    @Test func curatorCommandSetsProvider() async throws {
+        let cursor = cursorRunner()
+        try await withDaemon(configure: { $0.curatorRunners = [.claude: FakeCurator(), .cursor: cursor] }) { d, p in
+            let refused = try await curatorCmd(d, p, ["provider": .string("cursor")])
+            #expect(refused.error == ProtocolError(code: .unavailable, message: "falta confirmar nas Preferências"), "\(refused)")
+            let ok = try await curatorCmd(d, p, ["consent": .string("cursor"), "provider": .string("cursor"), "model": .string("auto")])
+            guard case .object(let o)? = ok.result else { Issue.record("\(ok)"); return }
+            #expect(o["provider"] == .string("cursor") && o["model"] == .string("auto") && o["destination"] == .string("Cursor"))
+            let bad = try await curatorCmd(d, p, ["provider": .string("ollama")])
+            #expect(bad.error?.code == .invalidArgs, "\(bad)")
+        }
+    }
+
+    @Test func nonAdminRefused() async throws {
+        try await withDaemon(configure: { $0.curatorRunner = FakeCurator() }) { d, p in
+            let t = try await spawn(d, p, "W")
+            let tok = try await tokenOf(d, t.id)
+            for args: [String: JSONValue] in [[:], ["consent": .string("cursor")], ["test": .bool(true)]] {
+                let r = try await send(p, Request(id: "t", terminalId: t.id, token: tok, command: "memory.curator", args: args))
+                #expect(r.error?.code == .unauthorized, "\(r)")
+            }
+        }
+    }
+
+    @Test func testSpendsNothing() async throws {
+        let fake = FakeCurator()
+        try await withDaemon(configure: { $0.curatorRunner = fake }) { d, p in
+            let r = try await curatorCmd(d, p, ["test": .bool(true)])
+            guard case .object(let o)? = r.result, case .object(let t)? = o["test"] else { Issue.record("\(r)"); return }
+            #expect(t["availability"] == .string("disponível") && t["models"] == .array([]))
+            #expect(fake.calls == 0 && o["today"] == .number(0))
+        }
+    }
+
+    @Test func testCallSpendsThree() async throws {
+        let fake = FakeCurator()   // answers {"ops":[]}: right for the ops format only
+        try await withDaemon(configure: { $0.curatorRunner = fake }) { d, p in
+            let r = try await curatorCmd(d, p, ["testCall": .bool(true)])
+            guard case .object(let o)? = r.result, case .array(let calls)? = o["testCall"] else { Issue.record("\(r)"); return }
+            #expect(calls == [.object(["format": .string("ops"), "result": .string("ok")]),
+                              .object(["format": .string("items"), "result": .string("junk")]),
+                              .object(["format": .string("chunks"), "result": .string("junk")])])
+            #expect(fake.calls == 3 && o["today"] == .number(3))
+        }
+    }
+
+    /// Every provider of this build, registered or not, with installed (no token spent), availability and its reason.
+    @Test func providersListed() async throws {
+        let fake = FakeCurator()
+        let c = Curator(dir: tempDir(), runners: [.claude: fake], clock: ManualClock(), installed: { $0 == .claude })
+        var s = await c.status()
+        #expect(s.providers.map(\.provider) == CuratorProvider.allCases.map(\.rawValue))
+        #expect(s.providers[0] == CuratorProviderStatus(provider: "claude", installed: true, available: true, availability: "disponível",
+                                                       consentNeeded: false, destination: "Anthropic"))
+        #expect(s.providers[1] == CuratorProviderStatus(provider: "cursor", installed: false, available: false,
+                                                       availability: "provedor ainda não habilitado nesta versão",
+                                                       consentNeeded: false, destination: "Cursor"))
+        await #expect(throws: ProtocolError(code: .unavailable, message: "provedor ainda não habilitado nesta versão")) {
+            await c.consent(.cursor); try await c.setProvider(.cursor, model: nil)
+        }
+        fake.avail = .unavailable("claude não encontrado")
+        s = await c.status()
+        #expect(s.providers[0].availability == "claude não encontrado" && !s.providers[0].available && fake.calls == 0)
+    }
+
+    /// A login billed per use (or not recognized) curates only once its consent is on file, Claude's too.
+    @Test func meteredNeedsConsent() async throws {
+        let fake = FakeCurator()
+        fake.bills = .metered("conta de API (cobrança por token)")
+        let c = Curator(dir: tempDir(), runners: [.claude: fake], clock: ManualClock(), installed: { _ in true })
+        var s = await c.status()
+        let why = "Claude: login com cobrança por uso ou não reconhecido; consentimento necessário"
+        #expect(!s.available && s.reason == why && s.providers[0].consentNeeded && s.providers[0].availability == why)
+        await c.consent(.claude)
+        s = await c.status()
+        #expect(s.available && !s.providers[0].consentNeeded)
+    }
+
     /// R8: a flood of other jobs stops at cap − cap/4; the reserved rest is the corrections'.
     @Test func reviewFloodCantBlockCorrection() async throws {
         let fake = FakeCurator()

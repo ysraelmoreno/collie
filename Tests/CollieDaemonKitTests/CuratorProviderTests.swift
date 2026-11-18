@@ -151,7 +151,7 @@ private func recording(_ outs: Outputs) -> Curator.Handler {
         try Data(#"{"provider":"cursor","consented":["cursor"]}"#.utf8).write(to: d.appendingPathComponent("config.json"))
         let noRunner = Curator(dir: d, runner: FakeCurator(), clock: ManualClock())
         let s = await noRunner.status()
-        #expect(s.provider == "cursor" && s.available == false && s.reason == "cursor não encontrado")
+        #expect(s.provider == "cursor" && s.available == false && s.reason == Curator.notInBuild)
     }
 
     /// Task 7: the billing policy is the Curator's, the same for any provider (no Claude in it): only `included` runs.
@@ -160,7 +160,8 @@ private func recording(_ outs: Outputs) -> Curator.Handler {
             let c = Curator(dir: dir(), runners: [p: fake], clock: ManualClock())
             if p != .claude { await c.consent(p); try await c.setProvider(p, model: nil) }
             let name = p.rawValue.capitalized
-            for (b, ok) in [(CuratorBilling.included("plano"), true), (.metered("API"), false), (.unknown, false)] {
+            // Task 12: metered/unknown need the provider's consent on file (Cursor's sheet already gave it; Claude's not yet)
+            for (b, ok) in [(CuratorBilling.included("plano"), true), (.metered("API"), p != .claude), (.unknown, p != .claude)] {
                 fake.bills = b
                 let s = await c.status()
                 #expect(s.available == ok, "\(p) \(b)")

@@ -122,4 +122,62 @@ import CollieCore
             #expect(try await GitRunner.run(["status", "--porcelain", "--ignored"], in: repo).stdout == before)
         }
     }
+
+    // MARK: the curator's side (the real verify job, run by hand; MemoryVerify untouched)
+
+    private final class Seen: @unchecked Sendable {
+        private let lock = NSLock(); private var _input = ""
+        var input: String { get { lock.withLock { _input } } set { lock.withLock { _input = newValue } } }
+    }
+    /// A drift-contested map and the verify job `enqueueVerify` would queue for it (claim checks pass: no facts).
+    private func driftJob(_ d: Daemon, _ store: RepoMemory, _ repo: URL, _ r: MemoryRecord, t0: Date) async throws -> CuratorJob {
+        await d.router.lifecyclePass(store, now: t0)
+        try await commit("f.txt", lines(60, "novo"), in: repo)
+        await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
+        let e = try #require(await d.router.memory.lifecycle.entry(r.id))
+        #expect(e.contestedNow)
+        #expect(await ClaimChecks.check(r, facts: GitFactsLive(root: repo)).isEmpty)   // so no-model never archives it
+        return CuratorJob(id: UUID(), kind: .verifyContested, store: store.key, payload: MemoryVerify.payload(memory: r, flags: e.flags, facts: []),
+                          dedupe: "", createdAt: Date(), attempts: 0)
+    }
+
+    /// The curator reads the drift (numbers and commit subjects, inside the data marks); "valid" clears the contest and
+    /// the next pass re-anchors at HEAD, so the same drift never contests it again.
+    @Test func curatorSeesDriftValidClearsAndReanchors() async throws {
+        try await run(available: false) { d, store, repo in
+            let r = map(), t0 = Date().addingTimeInterval(-60), seen = Seen()
+            try await put(store, r)
+            let job = try await driftJob(d, store, repo, r, t0: t0)
+            try await d.router.runVerifyJob(job) { c in
+                seen.input = c.input
+                return CuratorOutput(json: .object(["ops": .array([])]), inputTokens: 1, outputTokens: 1, costUSD: 0)
+            }
+            #expect(seen.input.contains("mapDrift f.txt +60 −1 linhas"))
+            #expect(seen.input.contains("commits: "))
+            let lc = d.router.memory.lifecycle
+            #expect(await lc.entry(r.id)?.contestedNow == false)
+            await d.router.lifecyclePass(store, now: Date().addingTimeInterval(2 * 86_400))
+            let e = await lc.entry(r.id), h = try await head(repo)
+            #expect(e?.contestedNow == false && e?.mapAnchor(for: LifecycleRules.textHash(r))?.commit == h)
+        }
+    }
+
+    /// "invalid" is the curator's call: archived through the digest, reversibly.
+    @Test func curatorInvalidArchivesReversibly() async throws {
+        try await run(available: false) { d, store, repo in
+            let r = map(), t0 = Date().addingTimeInterval(-60)
+            try await put(store, r)
+            let job = try await driftJob(d, store, repo, r, t0: t0)
+            try await d.router.runVerifyJob(job) { _ in
+                CuratorOutput(json: .object(["ops": .array([.object(["op": .string("retire"), "id": .string(r.id.uuidString), "reason": .string("arquivo reescrito")])])]),
+                              inputTokens: 1, outputTokens: 1, costUSD: 0)
+            }
+            let gone = try await store.run { $0.store.all().records.first { $0.id == r.id }?.status }
+            #expect(gone == .archived)
+            let row = try #require(await d.router.digest.since(.distantPast).first { $0.action == "aposentado" && $0.before.contains { $0.id == r.id } })
+            _ = try await d.router.undoDigest(row.id)
+            let back = try await store.run { $0.store.all().records.first { $0.id == r.id }?.status }
+            #expect(back == .active)
+        }
+    }
 }

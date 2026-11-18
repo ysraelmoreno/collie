@@ -170,21 +170,48 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         #expect(await mem.lifecycle.entry(r.id)?.evidencedUses == nil)   // endSession forgot the citation
     }
 
-    /// Item 2 phase 1: `memory.get` of a memory injected in the caller's session is a use with evidence `get`, logged as
-    /// its own `used` (`where` get: outside the v1 precision); one not injected here counts nothing.
-    @Test func getOfInjectedCountsUseAndEvidence() async throws {
+    /// Item 2 phase 1: `memory.get` of a memory injected in the caller's session changes nothing now (no use: no rule
+    /// input moves); the next prompt without a correction counts the implicit use as before plus evidence `get`, in its
+    /// own `used`. A correction drops it; a memory not injected here is never marked.
+    @Test func getOfInjectedIsEvidenceAtTheNextPromptOnly() async throws {
         let r = x(), other = MemoryRecord(kind: .decision, subject: "o", title: "Other", body: "zzz"), now = Date()
+        let key = UseKey(day: Self.day(now), session: "s1")
         let (mem, repo) = try await setup([r, other])
         _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
-        await mem.noteGet(t, record: other, now: now)
-        #expect(await mem.lifecycle.entry(other.id) == nil)
-        await mem.noteGet(t, record: r, now: now)
-        let key = UseKey(day: Self.day(now), session: "s1"), e = try #require(await mem.lifecycle.entry(r.id))
-        #expect(e.usefulUses == [key] && e.evidencedUses == [key])
+        let before = await mem.lifecycle.all()
+        await mem.noteGet(t, record: r); await mem.noteGet(t, record: other)
+        let after = await mem.lifecycle.all()
+        #expect(after == before && after[r.id] == nil)   // (a) no use, no entry: tier, promotion and unused plan can't move
+        await mem.resolvePending(for: t, correction: false, now: now)
+        let e = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e.usefulUses == [key] && e.evidencedUses == [key])   // (b) the implicit use as today, plus evidence
+        #expect(await mem.lifecycle.entry(other.id) == nil)          // (d) never injected: nothing
         mem.events.flush()
         let used = mem.events.read(since: now.addingTimeInterval(-60)).filter { $0.type == .used }
-        #expect(used.count == 1 && used[0].where == "get" && used[0].evidenced == [r.id] && used[0].evidence == ["get"], "\(used)")
-        #expect(MemoryObservability.precision(used).used == 0)   // the v1 precision counts prompts only
+        #expect(used.count == 1 && used[0].where == nil && used[0].ids == [r.id] && used[0].evidenced == [r.id] && used[0].evidence == ["get"], "\(used)")
+        #expect(MemoryObservability.precision(used).used == 1)   // the v1 count, as without the get
+        // (c) a correction: nothing, the get went with it
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.noteGet(t, record: r)
+        await mem.resolvePending(for: t, correction: true, now: now.addingTimeInterval(86_400))
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.resolvePending(for: t, correction: false, now: now.addingTimeInterval(86_400))
+        let k2 = UseKey(day: Self.day(now.addingTimeInterval(86_400)), session: "s1")
+        let e2 = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e2.usefulUses == [key, k2] && e2.evidencedUses == [key])
+    }
+
+    @Test func citedAndGotBothKindsOneId() async throws {
+        let r = x()
+        let (mem, repo) = try await setup([r])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteGet(t, record: r)
+        await mem.noteTurnCitations(t, message: "[\(id8(r))]")
+        await mem.resolvePending(for: t, correction: false, now: Date())
+        mem.events.flush()
+        let u = mem.events.read(since: Date().addingTimeInterval(-60)).filter { $0.type == .used }
+        #expect(u.count == 1 && u[0].evidenced == [r.id, r.id] && u[0].evidence == ["cite", "get"], "\(u)")
+        #expect(MemoryObservability.evidence(u).evidenced == 1 && MemoryObservability.evidence(u).byKind == ["cite": 1, "get": 1])
     }
 
     @Test func reviewedAndPinnedHaveNoTagsAndNoEntries() async throws {

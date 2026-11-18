@@ -403,14 +403,14 @@ extension JSONDecoder {
         #expect(compute(base()).usage.precision.rate == nil)   // no candidate: no rate, never 0/0
     }
 
-    /// Item 2 phase 1: the evidence block beside the v1 precision (def 1 both, v1 unchanged); `get`/`flag` count by kind
-    /// only, outside the rate; per agent and per week.
+    /// Item 2 phase 1: the evidence block beside the v1 precision (def 1 both, v1 unchanged); `flag` counts by kind only,
+    /// outside the rate; per agent and per week.
     @Test func evidenceBesideV1Precision() {
         let a = UUID(), b = UUID()
         let es = base() + [
             ev(.injected, ago(1.9)) { $0.agent = "claude"; $0.terminal = cla; $0.where = "prompt"; $0.ids = [a, b]; $0.eligible = 2 },
-            ev(.used, ago(1.8)) { $0.agent = "claude"; $0.terminal = cla; $0.ids = [a, b]; $0.hits = 2; $0.evidenced = [a]; $0.evidence = ["cite"] },
-            ev(.used, ago(1.7)) { $0.agent = "claude"; $0.terminal = cla; $0.ids = [b]; $0.where = "get"; $0.evidenced = [b]; $0.evidence = ["get"] },
+            // `a` both cited and read: one evidenced id, two kinds
+            ev(.used, ago(1.8)) { $0.agent = "claude"; $0.terminal = cla; $0.ids = [a, b]; $0.hits = 2; $0.evidenced = [a, a]; $0.evidence = ["cite", "get"] },
             ev(.used, ago(1.6)) { $0.agent = "cursor"; $0.where = "flag"; $0.ids = [a]; $0.evidenced = [a]; $0.evidence = ["flag"] },
             ev(.used, ago(9)) { $0.ids = [a]; $0.hits = 1; $0.evidenced = [a]; $0.evidence = ["cite"] }]   // the previous week
         let r = compute(es)

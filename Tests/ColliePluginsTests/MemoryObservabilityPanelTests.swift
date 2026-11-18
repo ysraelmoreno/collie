@@ -98,8 +98,7 @@ private final class Calls: @unchecked Sendable {   // `lock` guards `args`
     @Test func evidenceLineOldAndNewDaemon() async throws {
         let a = UUID()
         let json = try reportJSON([ev(.injected, ago(1)) { $0.where = "prompt"; $0.ids = [a, UUID()]; $0.eligible = 2 },
-                                   ev(.used, ago(0.9)) { $0.ids = [a]; $0.hits = 2; $0.evidenced = [a]; $0.evidence = ["cite"] },
-                                   ev(.used, ago(0.8)) { $0.where = "get"; $0.ids = [a]; $0.evidenced = [a]; $0.evidence = ["get"] }])
+                                   ev(.used, ago(0.9)) { $0.ids = [a]; $0.hits = 2; $0.evidenced = [a, a]; $0.evidence = ["cite", "get"] }])
         let (m, _) = model(json)
         await m.loadStats()
         let e = try #require(m.stats?.usage.evidence)

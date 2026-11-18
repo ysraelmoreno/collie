@@ -192,8 +192,9 @@ actor MemoryService {
     /// Each terminal's Claude session (its transcript's name), from its hooks: the injection events carry it.
     private var sessions: [UUID: String] = [:]
     /// Item 2 phase 1, per terminal: its last prompt injection's eligible records (titles to match), and the pending ids its
-    /// turns named (`noteTurnCitations`). Actor memory only, ids and memory titles, never the turn's text: a restart drops them.
-    private var pendingRecords: [UUID: [MemoryRecord]] = [:], cited: [UUID: Set<UUID>] = [:]
+    /// turns named (`noteTurnCitations`) or `memory.get` read (`noteGet`), with the kinds (cite|get). Actor memory only, ids
+    /// and memory titles, never the turn's text: a restart drops them.
+    private var pendingRecords: [UUID: [MemoryRecord]] = [:], cited: [UUID: [UUID: Set<String>]] = [:]
     /// When each terminal's session last started (`context(for:)`): `newRules` brings the user's rules changed after it.
     private var sessionStarted: [UUID: Date] = [:]
     func noteSession(_ terminal: UUID, transcript: String) {
@@ -745,13 +746,13 @@ actor MemoryService {
         guard let s = sessions[terminal] else { return }
         let pend = Set(await lifecycle.pending(session: s))
         let named = UseEvidence.cited(message: message, records: (pendingRecords[terminal] ?? []).filter { pend.contains($0.id) })
-        if !named.isEmpty { cited[terminal, default: []].formUnion(named) }
+        for id in named { cited[terminal, default: [:]][id, default: []].insert("cite") }
     }
 
     /// At `terminal`'s next prompt: the memories its last prompt-relevance injection brought count one useful use per
     /// (UTC day, session), unless `correction` (dropped) or this session flagged them wrong/outdated. No session: nothing.
     func resolvePending(for terminal: UUID, correction: Bool, now: Date = Date()) async {
-        let named = cited.removeValue(forKey: terminal) ?? []
+        let named = cited.removeValue(forKey: terminal) ?? [:]
         guard let s = sessions[terminal] else { return }
         let ids = await lifecycle.takePending(session: s)
         guard !ids.isEmpty else { return }
@@ -760,19 +761,22 @@ actor MemoryService {
             let key = UseKey(day: Self.dayFormatter.string(from: now), session: s)
             let taken = await lifecycle.addUse(ids, key: key, now: now)
             e.ids = taken
-            let ev = await lifecycle.addEvidence(taken.filter(named.contains), key: key, now: now)   // shadow: no rule reads it
-            if !ev.isEmpty { e.evidenced = ev; e.evidence = ev.map { _ in "cite" } }
+            let ev = await lifecycle.addEvidence(taken.filter { named[$0] != nil }, key: key, now: now)   // shadow: no rule reads it
+            // one pair per id and kind (cite before get): an id both cited and read appears twice
+            let pairs = ev.flatMap { id in ["cite", "get"].filter { named[id]?.contains($0) == true }.map { (id, $0) } }
+            if !pairs.isEmpty { e.evidenced = pairs.map { $0.0 }; e.evidence = pairs.map { $0.1 } }
         }
         events.emit(e)
     }
-    /// Item 2 phase 1: `memory.get` of a memory injected in `terminal`'s session (and able to earn a use) counts a use with
-    /// evidence `get` now; any other record counts nothing.
-    func noteGet(_ terminal: UUID, record: MemoryRecord, now: Date = Date()) async {
+    /// Item 2 phase 1: `memory.get` of a memory injected in `terminal`'s session (and able to earn a use) is marked like a
+    /// citation (kind `get`): nothing is written now, no use is counted. The next prompt adds the evidence only beside the
+    /// implicit use it counts anyway (pending, no correction); any other record is never marked.
+    func noteGet(_ terminal: UUID, record: MemoryRecord) async {
         guard let s = sessions[terminal], LifecycleRules.eligible(record), await lifecycle.injected(session: s).contains(record.id) else { return }
-        await useWithEvidence("get", [record.id], session: s, terminal: terminal, now: now)
+        cited[terminal, default: [:]][record.id, default: []].insert("get")
     }
 
-    /// A use and its evidence `kind` (get|flag) now, logged as its own `used` with `where` = `kind` (not a prompt's: the v1
+    /// A use and its evidence `kind` (flag) now, logged as its own `used` with `where` = `kind` (not a prompt's: the v1
     /// precision leaves it out). An id this session flagged wrong/outdated takes neither.
     private func useWithEvidence(_ kind: String, _ ids: [UUID], session s: String, terminal: UUID?, now: Date) async {
         let key = UseKey(day: Self.dayFormatter.string(from: now), session: s)

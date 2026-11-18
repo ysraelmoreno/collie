@@ -46,10 +46,10 @@ enum MemoryObservability {
         var rate: Double?
     }
     /// Use with evidence (spec 2026-11-17 memory useful evidence, phase 1: measured, no rule reads it), `def` 1.
-    /// `candidates`: the v1 precision's. `evidenced`: of the ids a next prompt counted (v1 `used`), those its turn cited
-    /// (`evidenced` of a prompt's `used`), so `evidenced ≤ used`; `rate` = evidenced ÷ candidates, nil without a candidate.
-    /// `byKind`: every evidence of the period by kind (cite|get|flag); `get` and `flag` name any injected memory, not a
-    /// prompt's, so like the v1 `flags` they stay outside the rate.
+    /// `candidates`: the v1 precision's. `evidenced`: of the ids a next prompt counted (v1 `used`), those its turn cited or
+    /// `memory.get` read (`evidenced` of a prompt's `used`, each id once), so `evidenced ≤ used`; `rate` = evidenced ÷
+    /// candidates, nil without a candidate. `byKind`: every evidence of the period by kind (cite|get|flag); `flag` names
+    /// any injected memory, not a prompt's, so like the v1 `flags` it stays outside the rate.
     struct Evidence: Codable, Sendable, Equatable {
         var def = 1, candidates = 0, evidenced = 0
         var rate: Double?
@@ -282,7 +282,7 @@ enum MemoryObservability {
         var e = Evidence(candidates: precision(es).candidates)
         for x in es where x.type == .used {
             for k in x.evidence ?? [] { e.byKind[k, default: 0] += 1 }
-            if x.where == nil, x.reason == nil { e.evidenced += x.evidenced?.count ?? 0 }
+            if x.where == nil, x.reason == nil { e.evidenced += Set(x.evidenced ?? []).count }   // an id cited and read: once
         }
         e.rate = e.candidates == 0 ? nil : Double(e.evidenced) / Double(e.candidates)
         return e

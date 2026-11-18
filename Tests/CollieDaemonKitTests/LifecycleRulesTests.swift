@@ -138,6 +138,14 @@ import CollieCore
                 await shadow.addEvidence(taken, key: key, now: ago(Double(60 - n * 4)))
             }
         }
+        // and a `get` of each, through the service: it marks, writes nothing (no next prompt here)
+        let mem = MemoryService(globalDir: tmpDir().appendingPathComponent("memory")), term = UUID()
+        await mem.noteSession(term, transcript: "/x/g.jsonl")
+        await mem.lifecycle.noteInjected(session: "g", ids: recs.map(\.id), now: ago(1))
+        for r in recs { await mem.lifecycle.update(r.id, now: ago(70)) { _ in } }
+        let beforeGet = await mem.lifecycle.all()
+        for r in recs { await mem.noteGet(term, record: r) }
+        #expect(await mem.lifecycle.all() == beforeGet)
         let a = await plain.all(), b = await shadow.all()
         #expect(b.values.contains { ($0.evidencedUses?.count ?? 0) > 0 } && b.values.allSatisfy { ($0.evidencedUses ?? []).isSubset(of: $0.usefulUses) })
         for at in [ago(30), ago(0), now.addingTimeInterval(90 * 86_400)] {

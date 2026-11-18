@@ -307,4 +307,21 @@ import CollieProtocol
             #expect(!t.contains("collie work run"), "\(t)")
         }
     }
+
+    /// `/collie:loop` (slice 2): Claude and Cursor carry the command (spike REPORT §9: outcome B), so their line names it;
+    /// an agent without it (Codex) keeps the plain line.
+    @Test func theLoopLineNamesTheCommandForClaude() {
+        let named = "- Loop (owner: /collie:loop <request>): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks."
+        let plain = "- Loop: work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks."
+        for agent in ["claude", "cursor"] {
+            let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: agent)
+            #expect(t.count <= 1500 && t.split(separator: "\n").contains(Substring(named)), "\(agent) \(t.count)\n\(t)")
+        }
+        // where the named line would push the text into a shorter form, today's line stays (the command is still in the / menu)
+        let both = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "F1", peers: [], panels: [("Home", "design")],
+                                          paddockPanels: [("Draft", "design")])
+        #expect(both.contains("use design panel \"Home\" first") && both.split(separator: "\n").contains(Substring(plain)), "\(both.count)\n\(both)")
+        let codex = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: "codex")
+        #expect(codex.split(separator: "\n").contains(Substring(plain)) && !codex.contains("/collie:loop"), "\(codex)")
+    }
 }

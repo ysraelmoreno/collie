@@ -799,6 +799,14 @@ Um trabalho sem branch nunca fecha sozinho. Os commits novos entram no trabalho 
 novo (`loop-<tarefa>-<n>`) no cercado, e quem decide se a tarefa passou é o check, nunca o agente. Só começa depois que o
 dono aprovou a lista de tarefas e os checks.
 
+- Como o dono começa: digita `/collie:loop <pedido>` num terminal Pastor dentro de um cercado. O comando só ensina o
+  procedimento ao agente: quebrar o pedido em tarefas, escrever um spec e propor um check para cada uma, mostrar tudo
+  (com os limites) no chat e esperar a resposta; só então `work task add` e `work run`. Fora de um Pastor num cercado o
+  agente diz isso e para; `work run` recusa de qualquer jeito, e o cartão do app continua sendo o que vale.
+  Chega aos terminais **Claude** (um plugin `collie` por terminal, passado com `--plugin-dir`; um `claude` sem essa
+  opção abre como antes, sem o comando) e **Cursor** (o arquivo `commands/collie:loop.md` no plugin que o Cursor já
+  recebe). **Codex** não tem o comando: peça o laço em palavras. Nada é escrito em `~/.claude`, `~/.cursor` nem no repo.
+
 - Tarefas: `collie work task add <título> --spec <arquivo.md> --check "<comando>"`. O spec (o que fazer e os critérios de
   aceite) precisa ser um arquivo do projeto; o check é um comando de shell rodado na worktree do cercado, e exit 0 = passou.
   Os dois ficam no registro, não no repo: o agente não edita o check que o julga.
@@ -832,6 +840,13 @@ Plug-in **Trabalho** (dock direito; abrir de novo só seleciona a aba existente)
 título, terminal · branch, tags de contagem por estado, tarefas e jobs ao clicar, e um ícone de alerta quando há job
 `gone`/`unknown` ou aprovação pendente. Abaixo, o chat; os cartões de aprovação ficam acima da lista. O menu "…" de cada
 trabalho tem **Recolocar no trilho** e **Fechar…** (fechados ficam recolhidos, com "Reabrir").
+
+**Laço no painel:** um trabalho em laço mostra uma tag sob o terminal: `em laço: <tarefa> (tentativa 2/3) · 4/10 no total`
+enquanto roda (o "no total" só com `--max`), e `laço parado (n tentativas)` ou `laço terminou (n tentativas)` depois.
+Enquanto roda, o menu "…" tem **Parar laço** (`work stop`: para depois do veredito da tentativa atual); uma recusa (o
+laço acabou de terminar, o terminal sumiu) aparece em português. Ao abrir o trabalho, cada tarefa que o laço rodou mostra
+as tentativas e a última falha, e o seu check. A tentativa em curso aparece em Jobs. Um laço ainda esperando o cartão
+do dono não aparece na linha do trabalho: o cartão é o que o dono vê.
 
 **Perguntas de status** (botões "Onde estamos", "O que travou", "O que está rodando"): o daemon responde com o registro,
 **sem gastar tokens** e sem tocar no agente (mensagem `collie` em cinza). Só contam frases exatas, sem acento nem maiúsculas

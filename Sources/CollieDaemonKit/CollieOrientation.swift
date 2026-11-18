@@ -32,9 +32,14 @@ enum CollieOrientation {
         // (only reached with a lot line on a Shepherd: short lot line, the two panel lines in one, no --help footer)
         // the export + claude.ai import hints go first, before any name
         // a compact UI-work line goes before the names do (a Shepherd in a shared folder keeps them)
+        // `/collie:loop` named on the Loop line only where it fits: each form tries it, then the same form with today's line
+        // (so the command never costs another line its place). Claude and Cursor carry it (LoopCommand; spike REPORT §9).
+        let loopCommands = agent == "claude" || agent == "cursor" ? [true, false] : [false]
         for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
-            let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask)
-            if t.count <= limit { return t }
+            for lc in loopCommands {
+                let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc)
+                if t.count <= limit { return t }
+            }
         }
         return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note, memoryTask: memoryTask)
     }
@@ -43,7 +48,8 @@ enum CollieOrientation {
                               panels: [(name: String, pluginId: String)],
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
-                              _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false, memoryTask: Bool = false) -> String {
+                              _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false, memoryTask: Bool = false,
+                              loopCommand: Bool = false) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -117,7 +123,7 @@ enum CollieOrientation {
             // collie work run needs a paddock it has to itself: not in a shared folder (its rule needs the room). One line,
             // gone only in the tightest form (a paddock Shepherd is already compact). The detail: work run --help, docs/referencia.md
             if paddock != nil && sharedFolder.isEmpty && !tight {
-                lines.append("- Loop: work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks.")
+                lines.append("- Loop\(loopCommand ? " (owner: /collie:loop <request>)" : ""): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks.")
             }
             if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
         } else {

@@ -68,7 +68,9 @@ private func relaunch(_ d: Daemon, _ id: String, fake: URL, resume: Bool) async 
         #expect(LoopCommand.markdown(arguments: false).contains("The owner's request follows this command."))
         #expect(!md.contains("`"))                                              // no inline shell (`!`cmd``) can hide in it
         for must in ["Only a Shepherd inside a paddock", "Wait for the answer", "collie work run --max", "Permitir", "Never land or push",
-                     "Answer in the owner's language.", "a paddock that is a shared folder does not qualify"] {
+                     "Answer in the owner's language.", "a paddock that is a shared folder does not qualify",
+                     "goes once in the loop's gate, --gate '<command>'", "collie work run --max <n> [--gate '<command>']",
+                     "the gate word for word"] {
             #expect(md.contains(must))
         }
     }
@@ -91,7 +93,9 @@ private func relaunch(_ d: Daemon, _ id: String, fake: URL, resume: Bool) async 
             let (id, a) = try await spawnAgent(d, p, "A", cwd: repo, fake: fake)
             let uuid = try #require(UUID(uuidString: id))
             #expect(pluginDirs(a) == [ProcedureSkills.dir(uuid, root: p.root).path, LoopCommand.dir(uuid, root: p.root).path], "\(a)")
-            #expect(FileManager.default.fileExists(atPath: LoopCommand.dir(uuid, root: p.root).appendingPathComponent("commands/loop.md").path))
+            let md = try String(contentsOf: LoopCommand.dir(uuid, root: p.root).appendingPathComponent("commands/loop.md"), encoding: .utf8)
+            #expect(md == LoopCommand.markdown(arguments: true))
+            #expect(md.contains("--gate") && !md.contains("`") && !md.contains(id) && !md.contains(p.root.path))   // teaches the gate, still static
         }
     }
 

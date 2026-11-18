@@ -33,6 +33,10 @@ work panel shows the loop's state, "Parar laço", and each task's attempts, last
 the loop line. "Left to the builder" turned into: the command's route (above); the prompt text (slice 1); patches under
 `<root>/work-loops/<work>/` (slice 1); the check under the loop's own paddock profile (slice 1); test doubles are
 shell commands that commit or not (slice 1) and a stub `claude` that records its argv (`LoopCommandTests`).
+Update 2026-11-18, loop gate (PRD `docs/superpowers/roadmap/2026-11-18-confianca/prd-b2-portao.md`): `work run --gate
+"<cmd>"` runs one command after every task's check that passed, in the check's conditions; pass = check and gate both
+exit 0 (plus the commit and the clean tree). The card shows it once, after the limits. `/collie:loop` teaches it: what
+is common to every task (build, lint, architecture) goes in `--gate`, the task's check measures only the task.
 
 ## Why
 

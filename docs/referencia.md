@@ -801,7 +801,7 @@ dono aprovou a lista de tarefas e os checks.
 
 - Como o dono começa: digita `/collie:loop <pedido>` num terminal Pastor dentro de um cercado. O comando só ensina o
   procedimento ao agente: quebrar o pedido em tarefas, escrever um spec e propor um check para cada uma, mostrar tudo
-  (com os limites) no chat e esperar a resposta; só então `work task add` e `work run`. Fora de um Pastor num cercado o
+  (com os limites e o portão) no chat e esperar a resposta; só então `work task add` e `work run`. Fora de um Pastor num cercado o
   agente diz isso e para; `work run` recusa de qualquer jeito, e o cartão do app continua sendo o que vale.
   Chega aos terminais **Claude** (um plugin `collie` por terminal, passado com `--plugin-dir`; um `claude` sem essa
   opção abre como antes, sem o comando) e **Cursor** (o arquivo `commands/collie:loop.md` no plugin que o Cursor já
@@ -810,14 +810,17 @@ dono aprovou a lista de tarefas e os checks.
 - Tarefas: `collie work task add <título> --spec <arquivo.md> --check "<comando>"`. O spec (o que fazer e os critérios de
   aceite) precisa ser um arquivo do projeto; o check é um comando de shell rodado na worktree do cercado, e exit 0 = passou.
   Os dois ficam no registro, não no repo: o agente não edita o check que o julga.
-- `collie work run --max <n> [--tries 3] [--timeout 3600] [--budget 14400] [--preset …] [--model …] [--command …]`: só um
+- `collie work run --max <n> [--gate "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--preset …] [--model …] [--command …]`: só um
   Pastor com sandbox (ou o app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma
   tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo
   rastreado modificado. Volta na hora com `awaiting approval`: um cartão no app mostra ao dono o cercado, os limites e cada
   tarefa com o seu check. Só **Permitir** inicia o laço; Negar ou nenhuma resposta em 10 min avisa o Pastor que nada rodou.
   Ao fim, o Pastor recebe `[collie] Laço de "…" terminou: …`. As tarefas do laço são as abertas na hora do `run`: uma
   tarefa nova espera o próximo.
-- Passa = check com exit 0 **e** commit novo na mesma branch **e** nenhum arquivo rastreado sujo. Se falha, o motivo e o
+- Portão (`--gate`): um comando comum a todas as tarefas (build, lint, arquitetura), para o check de cada uma medir só a
+  tarefa. Roda depois de cada check que passou, nas mesmas condições (worktree, sandbox, timeout, orçamento); o veredito
+  só passa com os dois em exit 0 (`gate failed (exit n)`, `gate timed out`), e o cartão o mostra uma vez, depois dos limites.
+- Passa = check com exit 0 **e** portão (se houver) com exit 0 **e** commit novo na mesma branch **e** nenhum arquivo rastreado sujo. Se falha, o motivo e o
   fim da saída do check viram nota do trabalho (o próximo agente lê), o que a tentativa fez vira patch em
   `<raiz>/work-loops/<trabalho>/<tarefa>-<n>.patch` e a worktree volta ao commit inicial. Segredos conhecidos (tokens,
   `Bearer`, chaves `sk-`) são escondidos na nota. Depois de `--tries` falhas a tarefa é adiada. O agente de cada

@@ -285,4 +285,20 @@ import CollieProtocol
             #expect(e?.mapAnchors?.contains { $0.store == nil } == false)
         }
     }
+
+    /// Review finding 3: a file first committed after the anchor shows as "+N −0" (every line new) and would always
+    /// contest; it wasn't there to drift from, so the map is re-anchored instead.
+    @Test func fileCommittedAfterTheAnchorReanchors() async throws {
+        try await run { d, store, repo in
+            try lines(50, "n").write(to: repo.appendingPathComponent("novo.txt"), atomically: true, encoding: .utf8)   // on disk, not committed
+            let r = map("novo.txt", body: "novo.txt guarda as novidades"), lc = d.router.memory.lifecycle, t0 = Date()
+            try await put(store, r)
+            await d.router.lifecyclePass(store, now: t0)
+            try await commit("novo.txt", lines(50, "n"), in: repo)
+            await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
+            let e = await lc.entry(r.id)
+            #expect(e?.contestedNow == false)
+            #expect(e?.mapAnchor(for: LifecycleRules.textHash(r), store: store.key)?.commit == (try await head(repo)))
+        }
+    }
 }

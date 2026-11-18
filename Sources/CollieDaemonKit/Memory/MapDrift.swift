@@ -68,6 +68,7 @@ extension GitFacts {
     func changes(from anchor: String, to head: String, paths: [String]) async -> MapDriftFacts { .unknown }
     func extent(_ rel: String) async -> PathExtent? { nil }
     func subjects(from anchor: String, to head: String, path: String) async -> [String] { [] }
+    func existed(at commit: String, _ path: String) async -> Bool? { nil }
 }
 
 extension CommandRouter {
@@ -105,6 +106,12 @@ extension CommandRouter {
                 for g in group {
                     checked.append(g.r.id)
                     guard contests < room, let c = changes[g.path], let x = await facts.extent(g.path), MapDrift.exceeds(c, x) else { continue }
+                    // not in the anchor's tree (committed after it): nothing it could have drifted from, so it anchors here
+                    switch await facts.existed(at: commit, g.path) {
+                    case false?: anchor[g.r.id] = g.a.textHash; continue
+                    case nil: continue
+                    case true?: break
+                    }
                     let subjects = await facts.subjects(from: commit, to: head, path: g.path)
                     let reason = "mapDrift " + MapDrift.detail(g.path, c, x, anchor: commit)
                         + (subjects.isEmpty ? "" : "; commits: " + subjects.joined(separator: " | "))

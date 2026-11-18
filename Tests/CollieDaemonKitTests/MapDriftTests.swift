@@ -170,4 +170,19 @@ import Foundation
         try Data(repeating: 0x0A, count: MapDrift.maxReadBytes + 1).write(to: d.appendingPathComponent("big.txt"))
         #expect(await GitFactsLive(root: d).extent("big.txt") == PathExtent(isDir: false, lines: nil, files: nil))
     }
+
+    @Test func existedAtACommit() async throws {
+        let d = try await repo()
+        defer { try? FileManager.default.removeItem(at: d) }
+        try write("Dir/a.swift", lines: 0..<3, in: d)
+        let one = try await commitAll("one", d)
+        try write("b.swift", lines: 0..<3, in: d)
+        let two = try await commitAll("two", d)
+        let live = GitFactsLive(root: d)
+        #expect(await live.existed(at: one, "Dir/a.swift") == true)
+        #expect(await live.existed(at: one, "Dir") == true)
+        #expect(await live.existed(at: one, "b.swift") == false)
+        #expect(await live.existed(at: two, "b.swift") == true)
+        #expect(await live.existed(at: "--output=x", "b.swift") == nil)
+    }
 }

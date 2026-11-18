@@ -12,6 +12,8 @@ protocol GitFacts: Sendable {
     func changes(from anchor: String, to head: String, paths: [String]) async -> MapDriftFacts
     func extent(_ rel: String) async -> PathExtent?
     func subjects(from anchor: String, to head: String, path: String) async -> [String]
+    /// `path` (a file or a directory) is in `commit`'s tree; nil = unknown.
+    func existed(at commit: String, _ path: String) async -> Bool?
 }
 
 /// Git and disk facts for a repo root. A git error, timeout or non-repo root is "unknown", never a failure.
@@ -148,6 +150,11 @@ extension GitFactsLive {
             return PathExtent(isDir: false, lines: lines + (total > 0 && last != 0x0A ? 1 : 0), files: nil)
         default: return nil
         }
+    }
+
+    func existed(at commit: String, _ path: String) async -> Bool? {
+        guard MapDrift.isCommit(commit), let p = MapDrift.norm(path) else { return nil }
+        switch await checked(["rev-parse", "--verify", "--quiet", "\(commit):\(p)"]) { case 0: return true; case 1: return false; default: return nil }
     }
 
     func subjects(from anchor: String, to head: String, path: String) async -> [String] {

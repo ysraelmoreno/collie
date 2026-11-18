@@ -255,6 +255,25 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         #expect(text.filter { $0 == "«" }.count == 4 && text.filter { $0 == "»" }.count == 4, "\(text)")
     }
 
+    /// Re-review C: work.stop also withdraws a card still waiting for the owner, and frees the paddock.
+    @Test func stopWithdrawsAPendingCard() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            #expect(try await run(d, p, x.s, approve: false).ok)
+            #expect(await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } })
+            let s = try await work(d, p, x.s, "work.stop")
+            guard case .object(let o)? = s.result else { Issue.record("\(s)"); return }
+            #expect(o["state"] == .string("cancelled"))
+            #expect(await waitFor(20) { await d.router.appCards.isEmpty })
+            #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("cancelado antes da aprovação") })
+            #expect(try await work(d, p, x.s, "work.stop").error?.code == .invalidArgs)
+            #expect(try await run(d, p, x.s, approve: false).ok)   // the paddock is free again
+            #expect(try await answerCard(d, p, allow: false) != nil)
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+        }
+    }
+
     /// Finding 3: two concurrent runs never both pass the guard (the actor's awaits come after the reservation).
     @Test func concurrentRunsStartOneLoop() async throws {
         try await withDaemon { d, p in

@@ -77,10 +77,13 @@ extension CommandRouter {
                            base: nil, call: text, command: "run", by: t.id)
         let id = w.id, starter = t.id, title = w.title
         started = true   // the reservation now belongs to the approval
+        loopCards[id] = card.id
         Task { [weak self] in
             guard let self else { return }
-            guard await self.confirmCard(card, wait: self.config.loopCardWait) else {
-                await self.loopDenied(paddock: pid, starter: starter, title: title)
+            let allowed = await self.confirmCard(card, wait: self.config.loopCardWait)
+            let withdrawn = await self.takeLoopCard(id)
+            guard allowed, !withdrawn else {
+                await self.loopDenied(paddock: pid, starter: starter, title: title, withdrawn: withdrawn)
                 return
             }
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
@@ -88,9 +91,15 @@ extension CommandRouter {
         return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")])
     }
 
-    private func loopDenied(paddock: UUID, starter: UUID, title: String) async {
+    /// The card was answered or expired: forget it. True when `work.stop` had withdrawn it first.
+    private func takeLoopCard(_ work: UUID) -> Bool { loopCards.removeValue(forKey: work) == nil }
+
+    private func loopDenied(paddock: UUID, starter: UUID, title: String, withdrawn: Bool) async {
         loopPaddocks.remove(paddock)
-        try? await asks.inject(to: starter, prompt: "[collie] O dono não aprovou o laço de \"\(RerailText.clean(title))\"; nada rodou.", afterQuiet: true)
+        let t = RerailText.clean(title)
+        let line = withdrawn ? "[collie] O laço de \"\(t)\" foi cancelado antes da aprovação; nada rodou."
+            : "[collie] O dono não aprovou o laço de \"\(t)\"; nada rodou."
+        try? await asks.inject(to: starter, prompt: line, afterQuiet: true)
     }
 
     /// After the owner's Permitir: the loop's sandbox, its state, the engine.
@@ -129,8 +138,13 @@ extension CommandRouter {
         return s.count <= Self.loopCardMax ? s : nil
     }
 
-    /// Ends the loop after the current attempt's verdict.
+    /// Ends the loop after the current attempt's verdict; a loop still waiting for the owner's card: withdraws the card.
     func workStop(_ t: TerminalRecord) async throws -> JSONValue {
+        if let w = try await work.active(terminal: t.id), let card = loopCards.removeValue(forKey: w.id) {
+            appWaiters.removeValue(forKey: card)?.resume(returning: false)   // the approval task frees the paddock and tells the starter
+            await dropAppCard(card)
+            return .object(["state": .string("cancelled")])
+        }
         guard let w = try await work.active(terminal: t.id), let l = workLoops[w.id], !l.stopping else {
             throw ProtocolError(code: .invalidArgs, message: "no loop is running on '\(t.name)'s work")
         }

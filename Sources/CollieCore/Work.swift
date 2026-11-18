@@ -18,7 +18,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
 /// A work run by `collie work run`: `task` is the current task's id, `attempt` (1-based) its attempt; `tries` and
 /// `timeout` (seconds, a turn) are per task; `max` caps and `used` counts attempts across tasks; `budget` caps and
 /// `spent` counts the seconds of all attempts (turns and checks); `tasks`: the ids the owner approved (a task added
-/// later waits for the next run; nil: every open task).
+/// later waits for the next run; nil: every open task); `gate`: a command run after every task's check, in the same
+/// conditions, that must also exit 0 (nil: none).
 public struct WorkLoopState: Codable, Sendable, Equatable {
     public enum State: String, Codable, Sendable { case running, stopped, finished }
     public var state: State
@@ -28,13 +29,15 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public var preset: String?; public var model: String?; public var command: String?
     public var max: Int?; public var used: Int
     public var budget: Int?; public var spent: Int?; public var tasks: [String]?
+    public var gate: String?
     public var startedAt: Date; public var endedAt: Date?
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
-                budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, startedAt: Date = Date(), endedAt: Date? = nil) {
+                budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil,
+                startedAt: Date = Date(), endedAt: Date? = nil) {
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
-        self.budget = budget; self.spent = spent; self.tasks = tasks
+        self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate
         self.startedAt = startedAt; self.endedAt = endedAt
     }
 }

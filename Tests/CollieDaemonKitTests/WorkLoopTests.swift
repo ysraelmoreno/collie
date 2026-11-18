@@ -20,6 +20,8 @@ private actor FakeHost: LoopHost {
     nonisolated let dir: URL, patches: URL
     var scripts: [String: Script] = [:]
     var summoned: [String] = [], dismissed: [String] = [], prompts: [String: String] = [:], checks = 0
+    /// Every command `check` ran (the tasks' checks and the gate), in order.
+    var commands: [String] = []
     /// In order: "dismiss <name>", "check".
     var events: [String] = []
     /// Another terminal of the paddock in a turn (blocks the loop's reset).
@@ -60,7 +62,7 @@ private actor FakeHost: LoopHost {
     func setStarterGone(after n: String) { starterGoneAfter = n }
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await GitRunner.run(args, in: dir) }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
-        checks += 1; events.append("check")
+        checks += 1; events.append("check"); commands.append(command)
         return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/bash"), args: ["-c", command], in: dir,
                                             env: ProcessInfo.processInfo.environment, timeout: timeout)
     }
@@ -78,14 +80,15 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 /// A repo, a store holding a work with `tasks` and a running loop, a fake host and the loop.
 private struct Rig {
     let repo: URL, storeDir: URL, store: WorkStore, host: FakeHost, loop: WorkLoop, work: UUID
-    init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, checkTimeout: Duration = .seconds(30)) async throws {
+    init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil,
+         checkTimeout: Duration = .seconds(30)) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
         store = WorkStore(dir: storeDir)
         let w = try await store.start(title: "W", terminal: UUID(), paddockId: UUID(), branch: "main")
         try await store.update(w.id) {
             $0.tasks = tasks
-            $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id))
+            $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id), gate: gate)
         }
         work = w.id
         host = FakeHost(dir: repo)
@@ -359,7 +362,61 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.host.checks == 0)
     }
 
+    // MARK: the gate (`work run --gate`)
+
+    @Test func gateFailureFailsTheTask() async throws {
+        let r = try await Rig([task("a", "test -f done.txt")], tries: 1, gate: "echo GATE-OUT; exit 3"); defer { r.cleanup() }
+        let start = try await git(r.repo, "rev-parse", "HEAD")
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "gate failed (exit 3)", "\(w.tasks)")
+        #expect(await r.host.commands == ["test -f done.txt", "echo GATE-OUT; exit 3"])
+        let note = try #require(w.notes.first { $0.text.hasPrefix("[loop a] Task a, tentativa 1/1: gate failed (exit 3)") })
+        #expect(note.text.contains("GATE-OUT"))
+        #expect(try await git(r.repo, "rev-parse", "HEAD") == start)   // discarded as any failed attempt
+    }
+
+    @Test func gateDoesNotRunWhenTheCheckFails() async throws {
+        let r = try await Rig([task("a", "false")], tries: 1, gate: "true"); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        #expect(try await r.get().tasks[0].lastFailure == "check failed (exit 1)")
+        #expect(await r.host.commands == ["false"])
+    }
+
+    @Test func gatePassesAndTheTaskIsDone() async throws {
+        let r = try await Rig([task("a", "test -f done.txt"), task("b", "true")], gate: "test -f done.txt"); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("loop-b-1", Script(act: { try await commit("b.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        #expect(try await r.get().tasks.map(\.state) == [.done, .done])
+        // after each task's check
+        #expect(await r.host.commands == ["test -f done.txt", "test -f done.txt", "true", "test -f done.txt"])
+        #expect(await r.host.prompts["loop-a-1"]?.contains("test -f done.txt\ne depois este portão:\ntest -f done.txt\n") == true)
+    }
+
+    @Test func gateTimeoutFails() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1, gate: "sleep 5", checkTimeout: .milliseconds(200)); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        #expect(try await r.get().tasks[0].lastFailure == "gate timed out")
+    }
+
+    @Test func promptWithoutAGateNamesNone() {
+        let p = WorkLoop.prompt(task: task("a", "true"), spec: nil, attempt: 1, tries: 3, dir: URL(fileURLWithPath: "/tmp"), notes: [])
+        #expect(!p.contains("portão"))
+    }
+
+    @Test func oldLoopStateDecodesWithoutAGate() throws {
+        let old = #"{"state":"stopped","attempt":1,"tries":3,"timeout":3600,"used":2,"startedAt":0}"#
+        #expect(try JSONDecoder().decode(WorkLoopState.self, from: Data(old.utf8)).gate == nil)
+    }
+
     @Test func verdictJoinsReasons() {
+        #expect(WorkLoop.verdict(checkStatus: 0, gate: WorkLoop.failure("gate", 2), committed: false, dirty: false) == "gate failed (exit 2); no new commit")
+        #expect(WorkLoop.verdict(checkStatus: 0, gate: WorkLoop.failure("gate", nil), committed: true, dirty: false) == "gate timed out")
+        #expect(WorkLoop.verdict(checkStatus: 0, gate: WorkLoop.failure("gate", 0), committed: true, dirty: false) == nil)
         #expect(WorkLoop.verdict(checkStatus: 0, committed: true, dirty: false) == nil)
         #expect(WorkLoop.verdict(checkStatus: nil, committed: false, dirty: true) == "check timed out; no new commit; tracked files left dirty")
         #expect(WorkLoop.verdict(checkStatus: 2, committed: true, dirty: false) == "check failed (exit 2)")

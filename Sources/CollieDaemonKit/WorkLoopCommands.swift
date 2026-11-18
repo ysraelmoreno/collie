@@ -63,14 +63,19 @@ extension CommandRouter {
         // the summon's own checks run again per attempt; these only save three failed attempts
         if let p = str(r, "preset"), Preset(rawValue: p) == nil { throw invalid("preset must be shell|claude|codex|cursor|custom") }
         if let m = str(r, "model") { try ClaudeModel.validate(m) }
+        // absent: no gate; given: a command (an empty one is a mistake, never "no gate")
+        let gate = str(r, "gate")
+        if let gate, gate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw invalid("--gate is empty: give the command that runs after every task's check, or leave --gate out")
+        }
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"), model: str(r, "model"), command: str(r, "command"),
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
-                                 spent: 0, tasks: open.map(\.id), startedAt: Date())
-        // the owner approves the tasks, their checks and the limits on a card; until then nothing runs
+                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date())
+        // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name) else {
-            throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks and their checks; "
+            throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
         let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
@@ -124,8 +129,8 @@ extension CommandRouter {
         workLoops[id] = (engine, task, false)
     }
 
-    /// The card's one line (the card shows no line breaks): where, the limits, then every task and its check, each in
-    /// «…», which neither may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
+    /// The card's one line (the card shows no line breaks): where, the limits, the gate (once), then every task and its
+    /// check, each in «…», which none may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
     /// and nothing the owner would not see is ever approved.
     static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String) -> String? {
         func quoted(_ x: String) -> String {
@@ -133,6 +138,7 @@ extension CommandRouter {
         }
         var s = "rodar sem supervisão \(quoted(w.title)) no cercado \(quoted(paddock)): até \(l.max ?? 0) tentativas no total "
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
+            + (l.gate.map { "portão depois de cada check: \(quoted($0)). " } ?? "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))" + (i < tasks.count - 1 ? ";" : ".") }
         return s.count <= Self.loopCardMax ? s : nil

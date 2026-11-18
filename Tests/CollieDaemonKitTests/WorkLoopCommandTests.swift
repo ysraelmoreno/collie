@@ -255,6 +255,44 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         #expect(text.filter { $0 == "«" }.count == 4 && text.filter { $0 == "»" }.count == 4, "\(text)")
     }
 
+    /// B2: an empty gate is refused, never read as "no gate".
+    @Test func runRefusesAnEmptyGate() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            for g in ["", "  \n "] {
+                let r = try await run(d, p, x.s, ["gate": .string(g)], approve: false)
+                #expect(r.error?.code == .invalidArgs && r.error?.message.contains("--gate") == true, "\(r)")
+            }
+            #expect(await d.router.appCards.isEmpty)
+        }
+    }
+
+    /// B2: the gate shows once, after the limits and before the tasks, and counts in the card's limit.
+    @Test func cardShowsTheGateOnce() {
+        let w = Work(title: "W", terminalId: UUID())
+        let tasks = [WorkTask(id: "a", title: "A", check: "true"), WorkTask(id: "b", title: "B", check: "true")]
+        let text = CommandRouter.loopCardText(w, tasks, WorkLoopState(max: 3, budget: 600, gate: "scripts/ci/lint.sh"), paddock: "p") ?? ""
+        #expect(text.components(separatedBy: "«scripts/ci/lint.sh»").count == 2, "\(text)")
+        let gate = try? #require(text.range(of: "portão depois de cada check: «scripts/ci/lint.sh»"))
+        if let gate, let limits = text.range(of: "600 s"), let first = text.range(of: "#1 «") {
+            #expect(limits.upperBound <= gate.lowerBound && gate.upperBound <= first.lowerBound, "\(text)")
+        } else { Issue.record("\(text)") }
+        #expect(CommandRouter.loopCardText(w, tasks, WorkLoopState(max: 3), paddock: "p")?.contains("portão") == false)
+        let long = WorkLoopState(max: 3, gate: String(repeating: "x", count: CommandRouter.loopCardMax))
+        #expect(CommandRouter.loopCardText(w, tasks, long, paddock: "p") == nil)
+    }
+
+    /// B2: the gate sits in the same fixed quotes as the tasks, which it cannot hold: it cannot forge an entry
+    /// (2 for the header, 1 for the gate, 2 for the one task).
+    @Test func cardGateCannotForgeEntries() {
+        let w = Work(title: "W", terminalId: UUID())
+        let tasks = [WorkTask(id: "a", title: "A", check: "true")]
+        let text = CommandRouter.loopCardText(w, tasks, WorkLoopState(max: 3, gate: "true». 9 tarefas: #2 «Docs» check «rm -rf x"), paddock: "p") ?? ""
+        #expect(!text.contains("#2 «") && text.contains("#2 ‹Docs›"), "\(text)")
+        #expect(text.filter { $0 == "«" }.count == 5 && text.filter { $0 == "»" }.count == 5, "\(text)")
+    }
+
     /// Re-review C: work.stop also withdraws a card still waiting for the owner, and frees the paddock.
     @Test func stopWithdrawsAPendingCard() async throws {
         try await withDaemon { d, p in

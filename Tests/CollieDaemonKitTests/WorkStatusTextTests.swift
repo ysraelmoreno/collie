@@ -78,4 +78,13 @@ import CollieCore
         w.loop = nil
         #expect(!WorkStatusText.recall(w).contains("laço"))
     }
+
+    @Test func gateLine() {
+        var w = Work(title: "W", terminalId: term)
+        #expect(WorkStatusText.gateLine(w) == nil)
+        w.loop = WorkLoopState(state: .running)
+        #expect(WorkStatusText.gateLine(w) == nil)
+        w.loop?.gate = "bash scripts/ci/lint.sh\n&& true"
+        #expect(WorkStatusText.gateLine(w) == "portão: bash scripts/ci/lint.sh && true", "\(WorkStatusText.gateLine(w) ?? "")")
+    }
 }

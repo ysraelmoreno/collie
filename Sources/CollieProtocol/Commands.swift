@@ -363,6 +363,7 @@ public enum Commands {
                              ParamSpec("tries", .int, help: "Attempts per task (default 3, at most 10)"),
                              ParamSpec("timeout", .int, help: "Seconds an agent's turn may take (default 3600, at most 14400)"),
                              ParamSpec("budget", .int, help: "Seconds all turns and checks may take together (default 14400, at most 43200)"),
+                             ParamSpec("gate", .string, help: "A command run after every task's check, same conditions; it must exit 0 too (what is common to all tasks: lint, build)"),
                              ParamSpec("preset", .string, help: "The attempts' agent preset (default: yours, as summon)"),
                              ParamSpec("model", .string, help: "Claude model for the attempts' agents"),
                              ParamSpec("command", .string, help: "Command line for the attempts' agents (custom preset)"),

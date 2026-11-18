@@ -81,6 +81,11 @@ public enum WorkStatusText {
         }
     }
 
+    /// A loop with a gate (`work run --gate`): "portão: <command>", on one line. nil: no loop, or one without a gate.
+    public static func gateLine(_ w: Work) -> String? {
+        w.loop?.gate.map { "portão: " + RerailText.clean($0, max: CommandRouter.loopCardMax) }
+    }
+
     /// Joins lines up to `limit` characters; the cut ends with "… e mais <n>".
     private static func bounded(_ lines: [String]) -> String {
         var out = ""

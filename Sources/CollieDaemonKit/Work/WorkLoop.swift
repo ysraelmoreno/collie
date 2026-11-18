@@ -25,8 +25,8 @@ protocol LoopHost: Sendable {
 }
 
 /// `collie work run`'s attempt cycle: a fresh agent per attempt, a check that alone decides, a clean tree between
-/// attempts. A task passes only when its check exits 0, there is a new commit on the same branch and no tracked file is
-/// left dirty. The loop never pushes, lands or creates a paddock.
+/// attempts. A task passes only when its check exits 0, the loop's gate (if any) exits 0 too, there is a new commit on
+/// the same branch and no tracked file is left dirty. The loop never pushes, lands or creates a paddock.
 actor WorkLoop {
     static let noteLines = 40, noteChars = 4000
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration
@@ -98,7 +98,7 @@ actor WorkLoop {
         if let agent, failure == nil {
             let spec = if let s = task.spec { await host.readSpec(s) } else { String?.none }
             let notes = w.notes.filter { $0.text.hasPrefix("[loop \(task.id)] ") }   // its own failures, by id
-            let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: loop.tries, dir: dir, notes: notes)
+            let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: loop.tries, dir: dir, notes: notes, gate: loop.gate)
             let turn = Swift.min(loop.timeout, left(loop, since: started))   // the budget bounds the turn too
             do {
                 if try await host.ask(agent, prompt: prompt, timeout: .seconds(turn)) == .idle {
@@ -148,11 +148,22 @@ actor WorkLoop {
             } catch where error.code == .timeout {
                 status = nil
             } catch { broken = "check could not run: \(error.message)" }
-            // the check's own edits never count and never leak into the next attempt
+            // the gate: only after a check that passed, in the check's conditions (timeout, budget); its output is the note's
+            var gate: String?
+            if let g = loop.gate, broken == nil, status == 0 {
+                do {
+                    let budgeted = Duration.seconds(left(loop, since: started))
+                    let r = try await host.check(g, in: dir, timeout: Swift.min(checkTimeout, budgeted))
+                    gate = Self.failure("gate", r.status); output = r.stdout + r.stderr
+                } catch where error.code == .timeout {
+                    gate = Self.failure("gate", nil); output = ""
+                } catch { gate = "gate could not run: \(error.message)"; output = "" }
+            }
+            // the check's (and the gate's) own edits never count and never leak into the next attempt
             if !dirty {
                 if let b = await host.othersWorking() { blocked = b } else { _ = try? await host.git(["reset", "-q", "--hard", "HEAD"], in: dir) }
             }
-            let v = Self.verdict(checkStatus: broken == nil ? status : 0, committed: committed, dirty: dirty)
+            let v = Self.verdict(checkStatus: broken == nil ? status : 0, gate: gate, committed: committed, dirty: dirty)
             let reasons = [broken, v].compactMap { $0 }
             passed = reasons.isEmpty
             reason = reasons.joined(separator: "; ")
@@ -247,17 +258,22 @@ actor WorkLoop {
         w.jobs[j].state = .finished; w.jobs[j].endedAt = at; w.jobs[j].result = String(result.prefix(280))
     }
 
-    /// nil = pass, else the reasons joined by `; `.
-    static func verdict(checkStatus: Int32?, committed: Bool, dirty: Bool) -> String? {
-        var r: [String] = []
-        if let s = checkStatus { if s != 0 { r.append("check failed (exit \(s))") } } else { r.append("check timed out") }
+    /// Why `what` (the check, the gate) did not pass, from its exit status (nil: it timed out); nil = it passed.
+    static func failure(_ what: String, _ status: Int32?) -> String? {
+        guard let status else { return "\(what) timed out" }
+        return status == 0 ? nil : "\(what) failed (exit \(status))"
+    }
+
+    /// nil = pass, else the reasons joined by `; `. `gate`: the gate's `failure` (nil: it passed, did not run or there is none).
+    static func verdict(checkStatus: Int32?, gate: String? = nil, committed: Bool, dirty: Bool) -> String? {
+        var r = [failure("check", checkStatus), gate].compactMap { $0 }
         if !committed { r.append("no new commit") }
         if dirty { r.append("tracked files left dirty") }
         return r.isEmpty ? nil : r.joined(separator: "; ")
     }
 
     /// The attempt's prompt, in the owner's language.
-    static func prompt(task: WorkTask, spec: String?, attempt: Int, tries: Int, dir: URL, notes: [WorkNote]) -> String {
+    static func prompt(task: WorkTask, spec: String?, attempt: Int, tries: Int, dir: URL, notes: [WorkNote], gate: String? = nil) -> String {
         var lines = [
             "Tarefa \"\(task.title)\", tentativa \(attempt) de \(tries), num laço autônomo: ninguém vai responder perguntas, então decida e registre a decisão no commit.",
             "Trabalhe só em \(dir.path). Faça só esta tarefa. Não faça push nem land.",
@@ -265,6 +281,7 @@ actor WorkLoop {
             "Depois do seu turno, o laço roda este comando em \(dir.path) e só ele decide se a tarefa passou:",
             task.check ?? "",
         ]
+        if let gate { lines += ["e depois este portão:", gate] }
         if !notes.isEmpty { lines.append("O que falhou nas tentativas anteriores:"); lines += notes.map(\.text) }
         lines.append("")
         lines.append(spec ?? task.title)

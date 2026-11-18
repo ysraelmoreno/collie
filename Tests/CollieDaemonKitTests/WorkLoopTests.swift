@@ -130,9 +130,9 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(seen.head == start && seen.status.isEmpty, "\(seen.status)")
         let patch = try String(contentsOf: r.host.patchDir(r.work).appendingPathComponent("a-1.patch"), encoding: .utf8)
         #expect(patch.contains("wrong.txt") && patch.contains("dirty"))
-        let note = try #require(w.notes.first { $0.text.hasPrefix("[loop] Task a, tentativa 1/3:") })
+        let note = try #require(w.notes.first { $0.text.hasPrefix("[loop a] Task a, tentativa 1/3:") })
         #expect(note.text.contains("MISSING done.txt") && note.text.contains("check failed (exit 1)") && note.text.contains("tracked files left dirty"))
-        #expect(await r.host.prompts["loop-a-2"]?.contains("O que falhou nas tentativas anteriores:\n[loop] Task a, tentativa 1/3") == true)
+        #expect(await r.host.prompts["loop-a-2"]?.contains("O que falhou nas tentativas anteriores:\n[loop a] Task a, tentativa 1/3") == true)
         #expect(await r.host.prompts["loop-a-1"]?.contains("O que falhou") == false)
         #expect(await r.host.dismissed == ["loop-a-1", "loop-a-2"])
     }
@@ -309,6 +309,54 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let w = try await r.get()
         #expect(w.tasks.map(\.state) == [.done, .open])
         #expect(await r.host.summoned == ["loop-a-1"])
+    }
+
+    /// Finding 8: secrets in the check's output never reach the notes (nor the next prompt).
+    @Test func checkOutputSecretsAreMasked() async throws {
+        let r = try await Rig([task("a", "x=abcdefgh; echo GH_TOKEN=ghp_${x}123456; echo \"Authorization: Bearer abc.def.${x}\"; echo sk-ant-0123456789${x}; false")], tries: 2)
+        defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        let text = try await r.get().notes.map(\.text).joined(separator: "\n")
+        #expect(!text.contains("ghp_abcdefgh123456") && !text.contains("abc.def.abcdefgh") && !text.contains("sk-ant-0123456789abcdefgh"), "\(text)")
+        #expect(text.contains("[hidden]"))
+        #expect(await r.host.prompts["loop-a-2"]?.contains("ghp_abcdefgh123456") == false)
+    }
+
+    /// Finding 8: an attempt reads its own task's failures only (two tasks may share a title).
+    @Test func notesAreTheTasksOwn() async throws {
+        let r = try await Rig([WorkTask(id: "a", title: "Twin", check: "false"), WorkTask(id: "b", title: "Twin", check: "false")], tries: 1)
+        defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        #expect(await r.host.prompts["loop-b-1"]?.contains("O que falhou") == false)
+    }
+
+    /// Finding 9: a task dropped (or done) while its attempt ran keeps that state; the verdict is not written over it.
+    @Test func taskChangedMidAttemptKeepsItsState() async throws {
+        let r = try await Rig([task("a", "true")]); defer { r.cleanup() }
+        let store = r.store, id = r.work
+        await r.host.set("loop-a-1", Script(act: { d in
+            try await store.update(id) { $0.tasks[0].state = .abandoned; $0.tasks[0].reason = "not needed" }
+            try await commit("done.txt", "ok\n", in: d)
+        }))
+        #expect(await r.run() == .finished)
+        let t = try await r.get().tasks[0]
+        #expect(t.state == .abandoned && t.reason == "not needed" && t.tries == nil)
+    }
+
+    /// Finding 10: a cancelled loop (daemon stop) spends no attempt and discards nothing.
+    @Test func cancelSpendsNoAttempt() async throws {
+        let r = try await Rig([task("a", "false")]); defer { r.cleanup() }
+        final class Box: @unchecked Sendable { var task: Task<WorkLoopState.State, Never>? }
+        let box = Box(), loop = r.loop, id = r.work, repo = r.repo
+        await r.host.set("loop-a-1", Script(act: { d in box.task?.cancel(); try await commit("wip.txt", "x\n", in: d) }))
+        box.task = Task { await loop.run(work: id, dir: repo) }
+        #expect(await box.task!.value == .stopped)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .open && w.tasks[0].tries == nil && w.loop?.used == 0, "\(w.tasks) \(String(describing: w.loop))")
+        #expect(!w.notes.contains { $0.text.hasPrefix("[loop a]") })
+        #expect(!FileManager.default.fileExists(atPath: r.host.patchDir(id).appendingPathComponent("a-1.patch").path))
+        #expect(FileManager.default.fileExists(atPath: repo.appendingPathComponent("wip.txt").path))
+        #expect(await r.host.checks == 0)
     }
 
     @Test func verdictJoinsReasons() {

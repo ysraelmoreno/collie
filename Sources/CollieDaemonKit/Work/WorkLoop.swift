@@ -97,7 +97,7 @@ actor WorkLoop {
         do { agent = try await host.summon(name: name, for: w, loop: loop) } catch { failure = error.message }
         if let agent, failure == nil {
             let spec = if let s = task.spec { await host.readSpec(s) } else { String?.none }
-            let notes = w.notes.filter { $0.text.hasPrefix("[loop] \(task.title),") }
+            let notes = w.notes.filter { $0.text.hasPrefix("[loop \(task.id)] ") }   // its own failures, by id
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: loop.tries, dir: dir, notes: notes)
             let turn = Swift.min(loop.timeout, left(loop, since: started))   // the budget bounds the turn too
             do {
@@ -110,6 +110,17 @@ actor WorkLoop {
         }
         // before the check: nothing edits the tree while it is judged (a turn past its timeout may still be working)
         if let agent { await host.dismiss(agent) }
+        // cancelled (the daemon stops): no verdict, no discard, the attempt not counted
+        if Task.isCancelled {
+            let at = host.now()
+            try? await store.update(w.id) { x in
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
+                let used = x.loop?.used ?? 0
+                x.loop?.used = Swift.max(0, used - 1)
+                if let j = x.jobs.firstIndex(where: { $0.id == name && $0.state == .running }) { x.jobs[j].state = .gone; x.jobs[j].endedAt = at }
+            }
+            return false
+        }
 
         let closed = (try? await store.get(w.id)).map { $0?.closedAt != nil } ?? true
         let starterGone = !(await host.starterAlive())
@@ -151,7 +162,8 @@ actor WorkLoop {
         if passed {
             let head = await out(["rev-parse", "--short", "HEAD"], dir) ?? ""
             try? await store.update(w.id) { x in
-                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
+                // a task dropped or done meanwhile keeps that state
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                     x.tasks[i].state = .done; x.tasks[i].tries = n; x.tasks[i].reason = nil; x.tasks[i].lastFailure = nil; x.tasks[i].updatedAt = at
                 }
                 Self.endJob(&x, name, head, at: at)
@@ -164,10 +176,11 @@ actor WorkLoop {
         if blocked == nil { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir) }
         let last = n >= loop.tries && blocked == nil   // a stopped loop defers nothing
         let tail = output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
-        let text = "[loop] \(task.title), tentativa \(n)/\(loop.tries): \(reason)"
-            + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars)))   // ponytail: tail capped at 4000 chars
+        // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
+        let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(loop.tries): \(reason)"
+            + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars))))
         try? await store.update(w.id) { x in
-            if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
+            if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                 x.tasks[i].tries = n; x.tasks[i].lastFailure = reason; x.tasks[i].updatedAt = at
                 if last { x.tasks[i].state = .deferred; x.tasks[i].reason = "loop: \(reason)" } else { x.tasks[i].state = .open }
             }

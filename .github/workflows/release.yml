@@ -156,9 +156,9 @@ jobs:
           BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           D="$RUNNER_TEMP/published"
           mkdir -p "$D"
-          curl -fsSL --retry 5 --retry-all-errors -o "$D/update.json" "$BASE/update.json"
+          curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-all-errors -o "$D/update.json" "$BASE/update.json"
           cmp build/update.json "$D/update.json" || { echo "::error::published update.json != build/update.json"; exit 1; }
-          curl -fsSL --retry 5 --retry-all-errors -o "$D/$DMG" "$BASE/$DMG"
+          curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-all-errors -o "$D/$DMG" "$BASE/$DMG"
           [ "$(jq -r .size "$D/update.json")" = "$(stat -f %z "$D/$DMG")" ] || { echo "::error::update.json size != published $DMG"; exit 1; }
           (cd "$D" && printf '%s  %s\n' "$(jq -r .sha256 update.json)" "$DMG" | shasum -a 256 -c -) \
             || { echo "::error::update.json sha256 != published $DMG"; exit 1; }

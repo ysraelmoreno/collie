@@ -45,6 +45,28 @@ enum MapDrift {
         return "\(path) +\(c.added) −\(c.deleted) linhas \(since)\(pct)"
     }
 
+    enum LineCount: Equatable { case lines(Int), tooBig, failed }
+    static let maxInterrupts = 8
+
+    /// The lines of what `fd` reads, at most `maxReadBytes` (more: `tooBig`, a file that grew after its fstat).
+    /// `read` is injectable so a test can stage an interrupted read.
+    static func countLines(_ fd: Int32, read: (Int32, UnsafeMutableRawPointer?, Int) -> Int = { Darwin.read($0, $1, $2) }) -> LineCount {
+        var lines = 0, total = 0, last: UInt8 = 0x0A, chunk = [UInt8](repeating: 0, count: 64 << 10), interrupted = 0
+        while true {
+            let n = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            // a signal interrupted it: read again, at most `maxInterrupts` in a row (never spin forever)
+            if n < 0, errno == EINTR, interrupted < maxInterrupts { interrupted += 1; continue }
+            guard n >= 0 else { return .failed }
+            interrupted = 0
+            if n == 0 { break }
+            total += n
+            guard total <= maxReadBytes else { return .tooBig }
+            for b in chunk[0..<n] where b == 0x0A { lines += 1 }
+            last = chunk[n - 1]
+        }
+        return .lines(lines + (total > 0 && last != 0x0A ? 1 : 0))
+    }
+
     /// A full SHA-1 or SHA-256 commit name, nothing git could read as an option or a revision expression.
     static func isCommit(_ s: String) -> Bool {
         (s.count == 40 || s.count == 64) && s.allSatisfy { $0.isHexDigit && !$0.isUppercase }

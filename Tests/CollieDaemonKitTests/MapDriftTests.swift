@@ -185,4 +185,21 @@ import Foundation
         #expect(await live.existed(at: two, "b.swift") == true)
         #expect(await live.existed(at: "--output=x", "b.swift") == nil)
     }
+
+    /// Before-release point B: a read interrupted by a signal (EINTR) is retried, a bounded number of times.
+    @Test func interruptedReadIsRetried() {
+        final class Script: @unchecked Sendable { var steps: [Int]; init(_ s: [Int]) { steps = s } }
+        func reader(_ script: Script) -> (Int32, UnsafeMutableRawPointer?, Int) -> Int {
+            { _, buf, _ in
+                let step = script.steps.isEmpty ? 0 : script.steps.removeFirst()
+                if step < 0 { errno = EINTR; return -1 }
+                if step > 0 { let b = buf!.assumingMemoryBound(to: UInt8.self); for i in 0..<step { b[i] = 0x0A } }
+                return step
+            }
+        }
+        #expect(MapDrift.countLines(-1, read: reader(Script([-1, -1, 3, -1, 2, 0]))) == .lines(5))
+        #expect(MapDrift.countLines(-1, read: reader(Script(Array(repeating: -1, count: 100)))) == .failed)   // never forever
+        let other: (Int32, UnsafeMutableRawPointer?, Int) -> Int = { _, _, _ in errno = EIO; return -1 }
+        #expect(MapDrift.countLines(-1, read: other) == .failed)   // any other error: no retry
+    }
 }

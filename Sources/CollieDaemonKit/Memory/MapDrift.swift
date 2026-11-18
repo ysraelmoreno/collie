@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 
 /// What changed under one map path between two commits (text files only: a binary change is ignored).
 struct PathChange: Equatable, Sendable {
@@ -67,4 +68,60 @@ extension GitFacts {
     func changes(from anchor: String, to head: String, paths: [String]) async -> MapDriftFacts { .unknown }
     func extent(_ rel: String) async -> PathExtent? { nil }
     func subjects(from anchor: String, to head: String, path: String) async -> [String] { [] }
+}
+
+extension CommandRouter {
+    /// Step (4b) of `lifecyclePass`: each eligible `map` is anchored at HEAD (per text) and, from its next pass, measured
+    /// against that anchor; past the threshold it is contested like a failed claim check (a flag of session "claim-check",
+    /// re-check queued) but never archived on its own: `enqueueVerify` re-runs `ClaimChecks.check`, which knows no drift,
+    /// so with no curator it waits and goes to "Precisa de você" after 14 days. A re-check (or the user) keeping it after
+    /// its anchor, or an anchor git no longer has, re-anchors at HEAD. `room`: what is left of the pass's contest cap.
+    /// Cost: 1 `rev-parse`, 1 `diff --numstat` per distinct anchor (50 paths a call), 1 `ls-files` per directory measured,
+    /// 1 `log` per contest; at most `MapDrift.maxPerPass` maps measured, least recently checked first.
+    func mapDriftPass(_ store: RepoMemory, eligible: [MemoryRecord], fresh: Set<UUID>, facts: any GitFacts, room: Int,
+                      now: Date, day: String) async {
+        let maps = eligible.filter { $0.kind == .map && $0.path.flatMap(MapDrift.norm) != nil }
+        guard !maps.isEmpty, let head = await facts.head() else { return }
+        let lc = memory.lifecycle, entries = await lc.all()
+        var anchor: [UUID: String] = [:]   // id → text hash to anchor at HEAD now
+        var due: [(r: MemoryRecord, a: MapAnchor, path: String, checked: Date?)] = []
+        for r in maps {
+            guard let e = entries[r.id], !e.contestedNow, let p = r.path.flatMap(MapDrift.norm) else { continue }
+            let h = LifecycleRules.textHash(r)
+            guard let a = e.mapAnchor(for: h), e.recheckedAt.map({ $0 <= a.at }) ?? true else { anchor[r.id] = h; continue }
+            guard !fresh.contains(r.id), a.commit != head, facts.pathExists(p) else { continue }   // a gone path is `pathMissing`'s
+            due.append((r, a, p, e.mapCheckedAt))
+        }
+        due.sort { ($0.checked ?? .distantPast) < ($1.checked ?? .distantPast) }
+        due = Array(due.prefix(MapDrift.maxPerPass))
+
+        var checked: [UUID] = [], contests = 0
+        for (commit, group) in Dictionary(grouping: due, by: { $0.a.commit }) {
+            switch await facts.changes(from: commit, to: head, paths: group.map(\.path)) {
+            case .unknown: continue
+            case .anchorGone: for g in group { anchor[g.r.id] = g.a.textHash }
+            case .changes(let changes):
+                for g in group {
+                    checked.append(g.r.id)
+                    guard contests < room, let c = changes[g.path], let x = await facts.extent(g.path), MapDrift.exceeds(c, x) else { continue }
+                    let subjects = await facts.subjects(from: commit, to: head, path: g.path)
+                    let reason = "mapDrift " + MapDrift.detail(g.path, c, x, anchor: commit)
+                        + (subjects.isEmpty ? "" : "; commits: " + subjects.joined(separator: " | "))
+                    await lc.update(g.r.id, now: now) { e in
+                        e.flags.append(LifecycleFlag(verdict: .outdated, session: "claim-check", day: day, reason: String(reason.prefix(CuratorOps.lineMax))))
+                        e.contestedNow = true; e.lastContestedAt = now
+                    }
+                    contests += 1
+                    if entries[g.r.id]?.tier == .longTerm { memory.noteLifecycle(.demoted, g.r.id, store: store.key) }
+                    _ = await enqueueVerify(g.r.id, kind: .verifyContested)
+                }
+            }
+        }
+        let ids = Array(anchor.keys) + checked
+        guard !ids.isEmpty else { return }
+        await lc.update(ids, now: now) { id, e in
+            if let h = anchor[id] { e.setMapAnchor(MapAnchor(textHash: h, commit: head, at: now)) }
+            if checked.contains(id) { e.mapCheckedAt = now }
+        }
+    }
 }

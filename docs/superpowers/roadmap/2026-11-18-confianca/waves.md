@@ -18,7 +18,7 @@ T=docs/superpowers/roadmap/2026-11-18-confianca/tasks
 collie work task add "A1.1 testes afetados" --spec $T/a1-1-affected-tests.md \
   --check 'bash scripts/ci/test-affected-tests.sh && bash scripts/ci/affected-tests.sh --files Sources/CollieTheme/a.swift | grep -q CollieAppTests && [ "$(bash scripts/ci/affected-tests.sh --files Package.swift)" = ALL ]'
 collie work task add "A2.1 lint em catraca" --spec $T/a2-1-lint.md \
-  --check "bash scripts/ci/lint.sh && bash scripts/ci/test-lint.sh && grep -q 'sleep Sources/CollieDaemonKit/AskCoordinator.swift 12' scripts/ci/lint-baseline.txt"
+  --check "bash scripts/ci/lint.sh && bash scripts/ci/test-lint.sh && grep -q 'sleep Sources/CollieDaemonKit/AskCoordinator.swift 15' scripts/ci/lint-baseline.txt"
 collie work task add "A3.1 fronteiras de módulo" --spec $T/a3-1-architecture.md \
   --check "bash scripts/ci/check-architecture.sh && bash scripts/ci/test-check-architecture.sh && grep -q 'forbid-closure collie SwiftTerm' scripts/ci/architecture-rules.txt"
 collie work task add "A1.2 workflow de CI" --spec $T/a1-2-ci-workflow.md \

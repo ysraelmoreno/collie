@@ -163,9 +163,7 @@ extension CommandRouter {
         workLoops[id] = nil; loopPaddocks.remove(paddock)
         SandboxLaunch.remove(id, root: config.paths.root)
         guard let w = try? await work.get(id) else { return }
-        let done = w.tasks.filter { $0.state == .done }.count, deferred = w.tasks.filter { $0.state == .deferred }.count
-        let line = "[collie] Laço de \"\(RerailText.clean(w.title))\" terminou: \(done) feitas, \(deferred) adiadas. Veja: collie work status"
-        try? await asks.inject(to: starter, prompt: line, afterQuiet: true)
+        try? await asks.inject(to: starter, prompt: WorkStatusText.loopEnded(w), afterQuiet: true)
     }
 
     /// At start: a loop a previous daemon left `running` is `stopped` (its task back to open, its attempt's job gone):

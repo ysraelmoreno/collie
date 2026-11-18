@@ -86,8 +86,25 @@ public enum WorkStatusText {
         w.loop?.gate.map { "portão: " + RerailText.clean($0, max: CommandRouter.loopCardMax) }
     }
 
+    /// A done task the loop approved: "✓ <title> · tentativa n · k commits · <shortstat>". nil: it has no evidence.
+    public static func doneLine(_ t: WorkTask) -> String? {
+        t.evidence.map { "✓ \(RerailText.clean(t.title)) · \($0.summary)" }
+    }
+
+    /// The line the starter gets when its loop ends, then one line per task of the loop: a done one with its evidence,
+    /// a deferred one with the reason. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
+    /// Only counts and git's shortstat go beside the agent's titles: never a commit subject or the check's output.
+    static func loopEnded(_ w: Work) -> String {
+        let ran = w.tasks.filter { t in w.loop?.tasks?.contains(t.id) ?? true }
+        let done = ran.filter { $0.state == .done }, deferred = ran.filter { $0.state == .deferred }
+        var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" terminou: \(done.count) feitas, \(deferred.count) adiadas. Veja: collie work status"]
+        lines += done.map { doneLine($0) ?? "✓ \(RerailText.clean($0.title))" }
+        lines += deferred.map { "– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))" }
+        return bounded(lines, limit: RerailText.limit)
+    }
+
     /// Joins lines up to `limit` characters; the cut ends with "… e mais <n>".
-    private static func bounded(_ lines: [String]) -> String {
+    private static func bounded(_ lines: [String], limit: Int = limit) -> String {
         var out = ""
         for (i, l) in lines.enumerated() {
             let tail = "\n… e mais \(lines.count - i)"

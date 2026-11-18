@@ -333,6 +333,17 @@ private actor Fake {
         #expect(m.error == "Trabalho ou terminal não encontrado.")
     }
 
+    @Test func doneTaskExposesItsEvidence() throws {
+        #expect(WorkPanelModel.evidenceLine(WorkTask(id: "a", title: "t", state: .done)) == nil)
+        let e = TaskEvidence(commits: ["abc1234 feat: x", "abc1235 fix: y"], shortstat: "2 files changed, 5 insertions(+)",
+                             checkTail: "Test run passed", seconds: 12, attempt: 1)
+        // as `work.status` sends it: the panel's task keeps commits, shortstat and the check's tail
+        let sent = try JSONEncoder().encode(WorkTask(id: "a", title: "t", state: .done, evidence: e))
+        let t = try JSONDecoder().decode(WorkTask.self, from: sent)
+        #expect(t.evidence?.commits == e.commits && t.evidence?.shortstat == e.shortstat && t.evidence?.checkTail == "Test run passed")
+        #expect(WorkPanelModel.evidenceLine(t) == "tentativa 1 · 2 commits · 2 files changed, 5 insertions(+)")
+    }
+
     @Test func attemptLineShowsTriesAndTheLastFailure() {
         #expect(WorkPanelModel.attemptLine(WorkTask(id: "a", title: "t")) == nil)
         #expect(WorkPanelModel.attemptLine(WorkTask(id: "a", title: "t", tries: 2, lastFailure: "check failed")) == "2 tentativas · check failed")

@@ -94,6 +94,9 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
         let parts = [tries, t.lastFailure].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+    /// Under a done task the loop approved: "tentativa 2 · 3 commits · <shortstat>" (nil: no evidence). The view lists
+    /// `evidence.commits` below it and keeps `evidence.checkTail` in a closed disclosure.
+    public static func evidenceLine(_ t: WorkTask) -> String? { t.evidence?.summary }
 
     // MARK: events
 
@@ -490,6 +493,7 @@ struct WorkView: View {
                         if w.loop != nil, let c = t.check {
                             Text(c).font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(1).textSelection(.enabled)
                         }
+                        if let e = t.evidence { evidence(e) }
                     }
                 }
             }
@@ -499,6 +503,21 @@ struct WorkView: View {
                     HStack(spacing: 6) { CollieTag(j.state.label, tone: j.state.tone); Text(j.label).font(.collieMono(12)).foregroundStyle(Color.collieText).lineLimit(1) }
                 }
             }
+        }
+    }
+
+    /// A done task's evidence: the summary line, its commits, and the check's tail closed by default.
+    @ViewBuilder private func evidence(_ e: TaskEvidence) -> some View {
+        Text(e.summary).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary)
+        ForEach(e.commits, id: \.self) { c in
+            Text(c).font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(1).textSelection(.enabled)
+        }
+        if !e.checkTail.isEmpty {
+            DisclosureGroup("Saída do check") {
+                Text(e.checkTail).font(.collieMono(11)).foregroundStyle(Color.collieText).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary)
         }
     }
 

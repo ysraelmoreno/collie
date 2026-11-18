@@ -79,6 +79,18 @@ import CollieCore
         #expect(!WorkStatusText.recall(w).contains("laço"))
     }
 
+    @Test func doneLineShowsTheEvidence() {
+        var t = WorkTask(id: "a", title: "Build\nit", state: .done)
+        #expect(WorkStatusText.doneLine(t) == nil)   // no evidence: the status line stays as it was
+        t.evidence = TaskEvidence(commits: ["abc1234 feat: x", "abc1235 fix: y"], shortstat: "3 files changed, 10 insertions(+)",
+                                  checkTail: "ok", seconds: 9, attempt: 2)
+        #expect(WorkStatusText.doneLine(t) == "✓ Build it · tentativa 2 · 2 commits · 3 files changed, 10 insertions(+)")
+        t.evidence = TaskEvidence(commits: ["abc1234 feat: x"], shortstat: "", checkTail: "", seconds: 1, attempt: 1)
+        #expect(WorkStatusText.doneLine(t) == "✓ Build it · tentativa 1 · 1 commit")
+        t.state = .open   // reopened: the evidence goes, and the line with it
+        #expect(WorkStatusText.doneLine(t) == nil)
+    }
+
     @Test func gateLine() {
         var w = Work(title: "W", terminalId: term)
         #expect(WorkStatusText.gateLine(w) == nil)

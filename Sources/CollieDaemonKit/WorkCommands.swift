@@ -348,7 +348,7 @@ extension CommandRouter {
             let ts = w.tasks.filter { $0.state == state }
             guard !ts.isEmpty else { continue }
             lines.append("\(label) (\(ts.count)):")
-            lines += ts.suffix(state == .done ? 5 : 50).map { "  - \($0.title)" + ($0.reason.map { " — \($0)" } ?? "") + " [\($0.id)]" }
+            lines += ts.suffix(state == .done ? 5 : 50).map { "  - " + (WorkStatusText.doneLine($0) ?? $0.title + ($0.reason.map { " — \($0)" } ?? "")) + " [\($0.id)]" }
         }
         let jobs = w.jobs.filter { $0.state == .running || $0.state == .unknown }
         if !jobs.isEmpty { lines.append("Jobs:"); lines += jobs.map { "  - \($0.kind.rawValue) \($0.label) (\($0.state.rawValue))" } }

@@ -185,6 +185,31 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
     }
 
+    @Test func endNoticeHasOneLinePerLoopTask() {
+        let e = TaskEvidence(commits: ["abc1234 feat: x", "abc1235 fix: y"], shortstat: "3 files changed, 10 insertions(+)",
+                             checkTail: "ok", seconds: 9, attempt: 2)
+        var w = Work(title: "Loop work", terminalId: UUID(), tasks: [
+            WorkTask(id: "a", title: "Write done", state: .done, evidence: e),
+            WorkTask(id: "b", title: "Flaky one", state: .deferred, reason: "loop: check failed\n(exit 1)"),
+            WorkTask(id: "old", title: "Done before the loop", state: .done)])
+        w.loop = WorkLoopState(state: .finished, tasks: ["a", "b"])
+        #expect(WorkStatusText.loopEnded(w) == """
+            [collie] Laço de "Loop work" terminou: 1 feitas, 1 adiadas. Veja: collie work status
+            ✓ Write done · tentativa 2 · 2 commits · 3 files changed, 10 insertions(+)
+            – Flaky one · adiada: loop: check failed (exit 1)
+            """)
+    }
+
+    @Test func endNoticeIsBounded() {
+        var w = Work(title: "Big", terminalId: UUID(), tasks: (0..<60).map {
+            WorkTask(id: "\($0)", title: String(repeating: "x", count: 100) + " \($0)", state: .deferred, reason: "loop: no commit")
+        })
+        w.loop = WorkLoopState(state: .finished)
+        let s = WorkStatusText.loopEnded(w), lines = s.split(separator: "\n")
+        #expect(s.count <= RerailText.limit && s.hasPrefix("[collie] Laço de \"Big\" terminou: 0 feitas, 60 adiadas"))
+        #expect(lines.last == "… e mais \(60 - (lines.count - 2))", "\(lines.last ?? "")")
+    }
+
     @Test func secondRunIsRefused() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)

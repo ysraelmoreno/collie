@@ -11,6 +11,12 @@ public struct TaskEvidence: Codable, Sendable, Equatable {
     public init(commits: [String], shortstat: String, checkTail: String, seconds: Int, attempt: Int) {
         self.commits = commits; self.shortstat = shortstat; self.checkTail = checkTail; self.seconds = seconds; self.attempt = attempt
     }
+    /// What the owner reads beside a done task (status, panel, the loop's end notice):
+    /// "tentativa 2 · 3 commits · 4 files changed, 10 insertions(+)"; an empty shortstat is left out.
+    public var summary: String {
+        (["tentativa \(attempt)", "\(commits.count) " + (commits.count == 1 ? "commit" : "commits")] + (shortstat.isEmpty ? [] : [shortstat]))
+            .joined(separator: " · ")
+    }
 }
 
 /// One task of a work: `id` is the agent's own, else generated. `spec` (absolute path of a Markdown file) and `check`

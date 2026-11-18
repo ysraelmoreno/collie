@@ -13,9 +13,13 @@ enum GitRunner {
                     executable: URL = URL(fileURLWithPath: "/usr/bin/git")) async throws(ProtocolError) -> GitResult {
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"; env["GIT_EDITOR"] = "true"; env["GIT_PAGER"] = "cat"
-        // core.fsmonitor and hooks in the (agent-writable) repo would run arbitrary code in the daemon's git (R4).
+        // a planted promisor remote (partial clone) would fetch, and run its transport, on any missing object
+        env["GIT_NO_LAZY_FETCH"] = "1"
+        // core.fsmonitor and hooks in the (agent-writable) repo would run arbitrary code in the daemon's git (R4); so would
+        // an `ext::` remote (a command as transport), never one the daemon needs.
         // ponytail: other planted config (filters, sshCommand, gpg.program) still runs; sandboxed for an open terminal's request
-        let args = executable.lastPathComponent == "git" ? ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"] + args : args
+        let args = executable.lastPathComponent == "git"
+            ? ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"] + args : args
         if let sandbox {
             return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
                                                 args: ["-f", sandbox.path, executable.path] + args, in: dir, env: env, timeout: timeout)

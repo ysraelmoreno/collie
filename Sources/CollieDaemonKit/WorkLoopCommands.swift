@@ -69,8 +69,12 @@ extension CommandRouter {
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
                                  spent: 0, tasks: open.map(\.id), startedAt: Date())
         // the owner approves the tasks, their checks and the limits on a card; until then nothing runs
+        guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name) else {
+            throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks and their checks; "
+                          + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
+        }
         let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
-                           base: nil, call: Self.loopCardText(w, open, loop, paddock: paddock.name), command: "run", by: t.id)
+                           base: nil, call: text, command: "run", by: t.id)
         let id = w.id, starter = t.id, title = w.title
         started = true   // the reservation now belongs to the approval
         Task { [weak self] in
@@ -111,16 +115,18 @@ extension CommandRouter {
         workLoops[id] = (engine, task, false)
     }
 
-    /// The card's one line (the card shows no line breaks): where, the limits, then each task and its check.
-    static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String) -> String {
-        var s = "rodar sem supervisão \"\(w.title)\" no cercado \(paddock): até \(l.max ?? 0) tentativas no total (\(l.tries) por tarefa), "
-            + "turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. Tarefas e checks: "
-        for (i, t) in tasks.enumerated() {
-            let item = "\(i + 1)) \(t.title) — check: \(t.check ?? "")" + (i < tasks.count - 1 ? "; " : "")
-            if s.count + item.count > Self.loopCardMax { s += "… +\(tasks.count - i) tarefas (collie work status)"; break }
-            s += item
+    /// The card's one line (the card shows no line breaks): where, the limits, then every task and its check, each in
+    /// «…», which neither may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
+    /// and nothing the owner would not see is ever approved.
+    static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String) -> String? {
+        func quoted(_ x: String) -> String {
+            "«" + x.replacingOccurrences(of: "«", with: "‹").replacingOccurrences(of: "»", with: "›") + "»"
         }
-        return s
+        var s = "rodar sem supervisão \(quoted(w.title)) no cercado \(quoted(paddock)): até \(l.max ?? 0) tentativas no total "
+            + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
+            + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
+        for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))" + (i < tasks.count - 1 ? ";" : ".") }
+        return s.count <= Self.loopCardMax ? s : nil
     }
 
     /// Ends the loop after the current attempt's verdict.

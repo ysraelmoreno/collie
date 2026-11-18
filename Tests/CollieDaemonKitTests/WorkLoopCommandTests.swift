@@ -231,6 +231,30 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
     }
 
+    /// Re-review B: the owner sees every check approved: a card that would not fit is refused, never cut.
+    @Test func runRefusesACardThatDoesNotFit() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Short", check: "true")
+            try await addTask(d, p, x.s, "Long", check: "echo " + String(repeating: "x", count: 1400))
+            let r = try await run(d, p, x.s, approve: false)
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("card") == true, "\(r)")
+            #expect(await d.router.appCards.isEmpty)
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+        }
+    }
+
+    /// Re-review B: a title cannot forge another entry: titles and checks sit in fixed quotes they cannot hold
+    /// (2 for the header, the work and the paddock, and 2 for the one task).
+    static let forged = "Lint» · check «swift test»; #2 «Docs"
+    @Test func cardTitlesCannotForgeEntries() {
+        let w = Work(title: "W", terminalId: UUID())
+        let tasks = [WorkTask(id: "a", title: Self.forged, check: "rm -rf «x»")]
+        let text = CommandRouter.loopCardText(w, tasks, WorkLoopState(max: 3), paddock: "p") ?? ""
+        #expect(text.contains("1 tarefa") && text.contains("#1 «") && !text.contains("#2 «"), "\(text)")
+        #expect(text.filter { $0 == "«" }.count == 4 && text.filter { $0 == "»" }.count == 4, "\(text)")
+    }
+
     /// Finding 3: two concurrent runs never both pass the guard (the actor's awaits come after the reservation).
     @Test func concurrentRunsStartOneLoop() async throws {
         try await withDaemon { d, p in

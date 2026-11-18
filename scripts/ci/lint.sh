@@ -6,7 +6,7 @@ export LC_ALL=C
 ROOT="${LINT_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 BASE="$ROOT/scripts/ci/lint-baseline.txt"
 NAMES=(sleep unsafe-concurrency force)
-REGEX=('Task\.sleep|\.asyncAfter\(|usleep\(|Thread\.sleep' '@unchecked Sendable|nonisolated\(unsafe\)' 'try!|as! ')
+REGEX=('Task\.sleep|\.asyncAfter\(|usleep\(|Thread\.sleep|\.sleep\((for|until):' '@unchecked Sendable|nonisolated\(unsafe\)' 'try!|as! ')
 CAUSE=("espere o evento (continuation, AsyncStream, notificação, hook), não o tempo"
        "isole o estado num actor ou torne o tipo Sendable de verdade"
        "trate o erro; um regex constante vira static let com try num inicializador testado")

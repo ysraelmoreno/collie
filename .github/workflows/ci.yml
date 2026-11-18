@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # never cancel a run on main: with `github.event.before` as the base, a cancelled run leaves its commits untested
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:
@@ -30,14 +31,8 @@ jobs:
           xcodebuild -version
           swift --version
 
-      # lint.sh and its test come from A2.1; until they land the step warns instead of failing
       - name: Lint
-        run: |
-          if [ -x scripts/ci/lint.sh ]; then
-            scripts/ci/lint.sh
-          else
-            echo "::warning::scripts/ci/lint.sh ainda não existe (A2.1): lint pulado"
-          fi
+        run: scripts/ci/lint.sh
 
       - name: Arquitetura
         run: scripts/ci/check-architecture.sh
@@ -46,19 +41,16 @@ jobs:
         run: |
           scripts/ci/test-affected-tests.sh
           scripts/ci/test-check-architecture.sh
-          if [ -x scripts/ci/test-lint.sh ]; then
-            scripts/ci/test-lint.sh
-          else
-            echo "::warning::scripts/ci/test-lint.sh ainda não existe (A2.1): pulado"
-          fi
+          scripts/ci/test-lint.sh
 
       - name: Build
         run: swift build --build-tests
 
-      # base: the PR's target branch, or the previous commit on a push to main
+      # base: the PR's target branch, or the head of main before this push (covers every pushed commit);
+      # a new branch has an all-zero `before`: fall back to the previous commit
       - name: Testes afetados
         env:
-          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'HEAD~1' }}
         run: |
           FILTER="$(scripts/ci/affected-tests.sh "$BASE")"
           if [ -z "$FILTER" ]; then

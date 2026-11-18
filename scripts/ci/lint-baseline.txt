@@ -26,6 +26,7 @@ sleep Sources/CollieDaemonKit/ArtifactCommands.swift 1
 sleep Sources/CollieDaemonKit/ArtifactImport.swift 1
 sleep Sources/CollieDaemonKit/AskCoordinator.swift 15
 sleep Sources/CollieDaemonKit/CommandRouter.swift 3
+sleep Sources/CollieDaemonKit/Curator/Curator.swift 1
 sleep Sources/CollieDaemonKit/Design/DesignService.swift 5
 sleep Sources/CollieDaemonKit/Design/DesignSystemService.swift 2
 sleep Sources/CollieDaemonKit/Design/FigcraftServer.swift 4
@@ -58,6 +59,7 @@ sleep Sources/CollieDaemonKit/TerminalRegistry.swift 1
 sleep Sources/CollieDaemonKit/UnixSocket.swift 3
 sleep Sources/CollieDaemonKit/Update/UpdateChecker.swift 2
 sleep Sources/CollieDaemonKit/UserEnvironment.swift 1
+sleep Sources/CollieDaemonKit/Work/WorkAssistant.swift 5
 sleep Sources/CollieDaemonKit/Work/WorkLoop.swift 1
 sleep Sources/CollieDaemonKit/WorkCommands.swift 1
 sleep Sources/ColliePlugins/BrowserPanel.swift 1

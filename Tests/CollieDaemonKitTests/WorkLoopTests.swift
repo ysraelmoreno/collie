@@ -403,6 +403,78 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(try await r.get().tasks[0].lastFailure == "gate timed out")
     }
 
+    // MARK: the gate judges the tree the check judged (B2.3)
+
+    /// A check that edits a tracked file and creates another: the gate sees the commit alone.
+    @Test func gateSeesTheCommitNotTheChecksEdits() async throws {
+        let r = try await Rig([task("a", "echo broken > done.txt; echo x > made.txt")], gate: "grep -q ok done.txt && test ! -e made.txt")
+        defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done, "\(w.notes.map(\.text))")
+        #expect(try await git(r.repo, "status", "--porcelain").isEmpty)
+    }
+
+    /// A check that repairs the tree does not make a bad commit pass the gate.
+    @Test func gateFailsACommitTheCheckRepaired() async throws {
+        let r = try await Rig([task("a", "echo ok > done.txt")], tries: 1, gate: "grep -q ok done.txt"); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "bad\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        #expect(try await r.get().tasks[0].lastFailure == "gate failed (exit 1)")
+    }
+
+    @Test func checkThatCommitsFailsTheAttempt() async throws {
+        let sneak = "echo x > sneak.txt && git add sneak.txt && git commit -q -m sneak"
+        let r = try await Rig([task("a", sneak)], tries: 1, gate: "true"); defer { r.cleanup() }
+        let start = try await git(r.repo, "rev-parse", "HEAD")
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "o check moveu o HEAD", "\(w.tasks)")
+        #expect(w.tasks[0].evidence == nil)
+        #expect(await r.host.commands == [sneak])   // the gate did not run
+        // HEAD went back to the agent's commit before the discard: the patch holds its work, not the check's commit
+        let patch = try String(contentsOf: r.host.patchDir(r.work).appendingPathComponent("a-1.patch"), encoding: .utf8)
+        #expect(patch.contains("done.txt") && !patch.contains("sneak.txt"), "\(patch)")
+        #expect(try await git(r.repo, "rev-parse", "HEAD") == start)
+        #expect(try await git(r.repo, "status", "--porcelain").isEmpty)
+    }
+
+    @Test func gateThatCommitsFailsTheAttempt() async throws {
+        let sneak = "echo x > sneak.txt && git add sneak.txt && git commit -q -m sneak"
+        let r = try await Rig([task("a", "true")], tries: 1, gate: sneak); defer { r.cleanup() }
+        let start = try await git(r.repo, "rev-parse", "HEAD")
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "o portão moveu o HEAD", "\(w.tasks)")
+        #expect(w.tasks[0].evidence == nil)
+        let patch = try String(contentsOf: r.host.patchDir(r.work).appendingPathComponent("a-1.patch"), encoding: .utf8)
+        #expect(patch.contains("done.txt") && !patch.contains("sneak.txt"), "\(patch)")
+        #expect(try await git(r.repo, "rev-parse", "HEAD") == start)
+    }
+
+    @Test func gateDoesNotRunWithoutACommit() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1, gate: "echo GATE"); defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        #expect(try await r.get().tasks[0].lastFailure == "no new commit")
+        #expect(await r.host.commands == ["true"])
+    }
+
+    @Test func gateDoesNotRunOnADirtyTree() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1, gate: "echo GATE"); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { d in
+            try await commit("done.txt", "ok\n", in: d)
+            try "dirty\n".write(to: d.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+        }))
+        #expect(await r.run() == .finished)
+        #expect(try await r.get().tasks[0].lastFailure == "tracked files left dirty")
+        #expect(await r.host.commands == ["true"])
+        let patch = try String(contentsOf: r.host.patchDir(r.work).appendingPathComponent("a-1.patch"), encoding: .utf8)
+        #expect(patch.contains("dirty"))   // the agent's uncommitted work is still the patch's
+    }
+
     // MARK: evidence (B1.1)
 
     @Test func passedAttemptRecordsEvidence() async throws {

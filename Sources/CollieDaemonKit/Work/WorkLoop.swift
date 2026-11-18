@@ -26,7 +26,8 @@ protocol LoopHost: Sendable {
 
 /// `collie work run`'s attempt cycle: a fresh agent per attempt, a check that alone decides, a clean tree between
 /// attempts. A task passes only when its check exits 0, the loop's gate (if any) exits 0 too, there is a new commit on
-/// the same branch and no tracked file is left dirty. The loop never pushes, lands or creates a paddock.
+/// the same branch, no tracked file is left dirty and neither the check nor the gate moved HEAD. The gate judges the
+/// tree of the commit the check judged. The loop never pushes, lands or creates a paddock.
 actor WorkLoop {
     static let noteLines = 40, noteChars = 4000
     static let evidenceCommits = 20, evidenceLines = 20, evidenceChars = 2000
@@ -86,7 +87,7 @@ actor WorkLoop {
             return false
         }
         // pre-existing untracked files are never the attempt's: the reset must not delete them
-        let keep = (await out(["ls-files", "-z", "--others", "--exclude-standard"], dir) ?? "").split(separator: "\0").map(String.init)
+        let keep = await untracked(dir)
         try? await store.update(w.id) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started }
             x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1
@@ -138,9 +139,13 @@ actor WorkLoop {
         var checkOutput = ""   // the check's own, kept for the evidence when a gate's output replaces `output`
         var passed = false
         var blocked: String?   // another terminal of the paddock is working: no reset, the loop stops
+        var judged = before   // the commit the agent left: what the check and the gate judge, and where the evidence ends
         if let failure { reason = failure } else {
             let committed = await committed(before: before, branch: branch, dir)
             let dirty = (await out(["status", "--porcelain", "--untracked-files=no"], dir)).map { !$0.isEmpty } ?? true
+            judged = await out(["rev-parse", "HEAD"], dir) ?? before
+            let on = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir) ?? branch
+            let loose = Set(await untracked(dir))   // untracked before the check: the owner's (`keep`) and the agent's
             var status: Int32?   // nil: timed out
             var broken: String?   // the check could not even start
             do {
@@ -150,34 +155,42 @@ actor WorkLoop {
             } catch where error.code == .timeout {
                 status = nil
             } catch { broken = "check could not run: \(error.message)" }
-            // the gate: only after a check that passed, in the check's conditions (timeout, budget); its output is the note's
+            // the check's own edits, files and commits never count, never reach the gate and never leak into the next
+            // attempt: the tree goes back to exactly `judged`. Not when dirty (the agent's uncommitted work is the patch's)
+            // nor while another terminal works (no reset under it).
+            var moves: [String] = []   // the check or the gate moved HEAD: the attempt fails
+            if !dirty { blocked = await host.othersWorking() }
+            if await settle(judged, on: on, loose: loose, reset: !dirty && blocked == nil, dir) { moves.append("o check moveu o HEAD") }
+            // the gate: only when nothing else already fails the attempt (no budget spent on a lost one), on the tree of
+            // `judged`, in the check's conditions (timeout, budget); its output is the note's
             var gate: String?
-            if let g = loop.gate, broken == nil, status == 0 {
-                do {
-                    let budgeted = Duration.seconds(left(loop, since: started))
-                    let r = try await host.check(g, in: dir, timeout: Swift.min(checkTimeout, budgeted))
-                    gate = Self.failure("gate", r.status); output = r.stdout + r.stderr
-                } catch where error.code == .timeout {
-                    gate = Self.failure("gate", nil); output = ""
-                } catch { gate = "gate could not run: \(error.message)"; output = "" }
-            }
-            // the check's (and the gate's) own edits never count and never leak into the next attempt
-            if !dirty {
-                if let b = await host.othersWorking() { blocked = b } else { _ = try? await host.git(["reset", "-q", "--hard", "HEAD"], in: dir) }
+            if let g = loop.gate, broken == nil, status == 0, committed, !dirty, moves.isEmpty {
+                if blocked != nil { gate = "gate did not run (tree not reset)" } else {
+                    do {
+                        let budgeted = Duration.seconds(left(loop, since: started))
+                        let r = try await host.check(g, in: dir, timeout: Swift.min(checkTimeout, budgeted))
+                        gate = Self.failure("gate", r.status); output = r.stdout + r.stderr
+                    } catch where error.code == .timeout {
+                        gate = Self.failure("gate", nil); output = ""
+                    } catch { gate = "gate could not run: \(error.message)"; output = "" }
+                    blocked = await host.othersWorking()
+                    if await settle(judged, on: on, loose: loose, reset: blocked == nil, dir) { moves.append("o portão moveu o HEAD") }
+                }
             }
             let v = Self.verdict(checkStatus: broken == nil ? status : 0, gate: gate, committed: committed, dirty: dirty)
-            let reasons = [broken, v].compactMap { $0 }
+            let reasons = [broken, v].compactMap { $0 } + moves
             passed = reasons.isEmpty
             reason = reasons.joined(separator: "; ")
         }
 
         let at = host.now()
         if passed {
-            let head = await out(["rev-parse", "--short", "HEAD"], dir) ?? ""
-            let log = await out(["log", "--format=%h %s", "-n", "\(Self.evidenceCommits)", "\(before)..HEAD"], dir) ?? ""
+            // of `judged`, never of a HEAD read after the check and the gate ran
+            let head = await out(["rev-parse", "--short", judged], dir) ?? ""
+            let log = await out(["log", "--format=%h %s", "-n", "\(Self.evidenceCommits)", "\(before)..\(judged)"], dir) ?? ""
             let evidence = TaskEvidence(
                 commits: log.split(separator: "\n").map(String.init),
-                shortstat: await out(["diff", "--shortstat", before, "HEAD"], dir) ?? "",
+                shortstat: await out(["diff", "--shortstat", before, judged], dir) ?? "",
                 checkTail: Self.evidenceTail(check: checkOutput, gate: loop.gate == nil ? nil : output),
                 seconds: Swift.max(0, Int(at.timeIntervalSince(started).rounded())), attempt: n)
             try? await store.update(w.id) { x in
@@ -241,6 +254,26 @@ actor WorkLoop {
               await out(["rev-parse", "--abbrev-ref", "HEAD"], dir) == branch,
               (try? await host.git(["merge-base", "--is-ancestor", before, "HEAD"], in: dir))?.status == 0 else { return false }
         return true
+    }
+
+    /// After the check or the gate ran: true when it moved HEAD off `judged` (a commit, a branch switch). With `reset`,
+    /// the tree goes back to exactly `judged` on `on`: tracked files restored, the untracked files it created (those
+    /// not in `loose`) removed. Ignored files (build output) stay.
+    private func settle(_ judged: String, on: String, loose: Set<String>, reset: Bool, _ dir: URL) async -> Bool {
+        let head = await out(["rev-parse", "HEAD"], dir), ref = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir)
+        let moved = head != judged || ref != on
+        guard reset else { return moved }
+        if ref != on { _ = try? await host.git(["checkout", "-q", "-f", on == "HEAD" ? judged : on], in: dir) }
+        _ = try? await host.git(["reset", "-q", "--hard", judged], in: dir)
+        let made = await untracked(dir).filter { !loose.contains($0) }
+        // ponytail: one git call, so a check that leaves tens of thousands of untracked files passes ARG_MAX; chunk then
+        if !made.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "--"] + made, in: dir) }
+        return moved
+    }
+
+    /// Untracked files that are not ignored.
+    private func untracked(_ dir: URL) async -> [String] {
+        (await out(["ls-files", "-z", "--others", "--exclude-standard"], dir) ?? "").split(separator: "\0").map(String.init)
     }
 
     /// A failed attempt's work goes to `patchDir/<task>-<n>.patch`; the tree goes back to `before` on `branch`.

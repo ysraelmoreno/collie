@@ -802,18 +802,28 @@ dono aprovou a lista de tarefas e os checks.
 - Tarefas: `collie work task add <título> --spec <arquivo.md> --check "<comando>"`. O spec (o que fazer e os critérios de
   aceite) precisa ser um arquivo do projeto; o check é um comando de shell rodado na worktree do cercado, e exit 0 = passou.
   Os dois ficam no registro, não no repo: o agente não edita o check que o julga.
-- `collie work run [--tries 3] [--timeout 3600] [--preset …] [--model …] [--command …] [--max <n>]`: só um Pastor (ou o
-  app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma tarefa aberta, quando já
-  há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo rastreado modificado. Volta
-  na hora; ao fim, o Pastor recebe uma linha `[collie] Laço de "…" terminou: …`.
+- `collie work run --max <n> [--tries 3] [--timeout 3600] [--budget 14400] [--preset …] [--model …] [--command …]`: só um
+  Pastor com sandbox (ou o app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma
+  tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo
+  rastreado modificado. Volta na hora com `awaiting approval`: um cartão no app mostra ao dono o cercado, os limites e cada
+  tarefa com o seu check. Só **Permitir** inicia o laço; Negar ou nenhuma resposta em 10 min avisa o Pastor que nada rodou.
+  Ao fim, o Pastor recebe `[collie] Laço de "…" terminou: …`. As tarefas do laço são as abertas na hora do `run`: uma
+  tarefa nova espera o próximo.
 - Passa = check com exit 0 **e** commit novo na mesma branch **e** nenhum arquivo rastreado sujo. Se falha, o motivo e o
   fim da saída do check viram nota do trabalho (o próximo agente lê), o que a tentativa fez vira patch em
-  `<raiz>/work-loops/<trabalho>/<tarefa>-<n>.patch` e a worktree volta ao commit inicial. Depois de `--tries` falhas a
-  tarefa é adiada e o agente da última tentativa fica aberto para você ver.
-- Limites: `--tries` até 10, `--timeout` (o turno) até 86 400 s, o check até 1800 s; `--max` limita as tentativas no
-  total. Não há limite de custo em tokens.
-- O check roda com o perfil de sandbox do terminal da tentativa (nunca com mais acesso que o agente).
-- `collie work stop` encerra depois do veredito da tentativa atual. `collie work status` mostra `em laço: <tarefa>
+  `<raiz>/work-loops/<trabalho>/<tarefa>-<n>.patch` e a worktree volta ao commit inicial. Segredos conhecidos (tokens,
+  `Bearer`, chaves `sk-`) são escondidos na nota. Depois de `--tries` falhas a tarefa é adiada. O agente de cada
+  tentativa é dispensado antes do check.
+- A worktree é só do laço: uma tentativa começa só com ela limpa (arquivos rastreados), e o laço nunca reseta com outro
+  terminal do cercado trabalhando; nos dois casos ele para e deixa tudo como está. O Pastor que iniciou sumiu: o laço para.
+- Limites (tetos duros): `--max` (obrigatório) até 30 tentativas no total, `--tries` até 10, `--timeout` (o turno) até
+  14 400 s, `--budget` (soma de turnos e checks) até 43 200 s, o check até 1800 s. Não há limite de custo em tokens.
+- O check e o git do laço rodam sob o sandbox do próprio laço: o perfil do cercado (estrito), criado no `run` e apagado
+  no fim. Sem esse perfil nada roda (a tentativa falha). O check recebe só as variáveis do toolchain (PATH, HOME, LANG,
+  DEVELOPER_DIR…), nunca tokens nem `SSH_AUTH_SOCK`. O git do laço desliga os filtros e diffs externos que a config do
+  próprio repositório define. Um daemon iniciado sem sandbox de terminais (`--no-terminal-sandbox`) roda o laço sem
+  sandbox também.
+- `collie work stop` encerra depois do veredito da tentativa atual; parar o daemon não gasta a tentativa em curso. `collie work status` mostra `em laço: <tarefa>
   (tentativa 2/3)`. Reiniciar o daemon para o laço; `collie work run` de novo continua da próxima tarefa aberta.
 
 ## Painel Trabalho

@@ -112,4 +112,30 @@ private let day: TimeInterval = 86_400
         #expect(e?.tier == .earned && e?.flags.isEmpty == true && e?.contestedNow == false)
         #expect(e?.tierSince == t0 + day && e?.recheckedAt == t0 + day)
     }
+
+    /// Item 7 (spec 2026-11-17-memory-stage-rules): a map's anchor commit per text, newest first, at most 4.
+    @Test func mapAnchorsPerTextNewestFirstCappedAtFour() {
+        var e = LifecycleEntry(tierSince: t0)
+        #expect(e.mapAnchor(for: "h0") == nil)
+        for i in 0..<5 { e.setMapAnchor(MapAnchor(textHash: "h\(i)", commit: "c\(i)", at: t0 + Double(i) * day)) }
+        #expect(e.mapAnchors?.count == 4)
+        #expect(e.mapAnchor(for: "h0") == nil)   // the oldest went
+        #expect(e.mapAnchor(for: "h4")?.commit == "c4")
+        e.setMapAnchor(MapAnchor(textHash: "h2", commit: "new", at: t0 + 9 * day))   // same text: replaced, moved first
+        #expect(e.mapAnchors?.count == 4 && e.mapAnchors?.first?.commit == "new")
+    }
+
+    /// A lifecycle.json written before item 7 decodes; the new fields round-trip.
+    @Test func entryWithoutMapFieldsDecodesAndNewOnesRoundTrip() async throws {
+        let f = tmpFile(), id = UUID()
+        try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let old = #"{"entries":["\#(id.uuidString)",{"tier":"earned","usefulUses":[],"flags":[],"contestedNow":false,"tierSince":0}],"injectedBySession":{},"lastEvent":{},"pending":{},"missingSince":[]}"#
+        try Data(old.utf8).write(to: f)
+        let s = LifecycleStore(file: f)
+        let e = try #require(await s.entry(id))
+        #expect(e.tier == .earned && e.mapAnchors == nil && e.mapCheckedAt == nil)
+        await s.update(id, now: t0) { $0.setMapAnchor(MapAnchor(textHash: "h", commit: "abc", at: t0)); $0.mapCheckedAt = t0 }
+        let back = await LifecycleStore(file: f).entry(id)
+        #expect(back?.mapAnchor(for: "h")?.commit == "abc" && back?.mapCheckedAt == t0)
+    }
 }

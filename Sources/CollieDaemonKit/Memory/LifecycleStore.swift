@@ -25,6 +25,26 @@ struct LifecycleEntry: Codable, Sendable, Equatable {
     var promotionUndone: Bool? = nil
     /// What open flags took from its score (after the floor clamp); a valid re-check gives back exactly this.
     var flagPenalty: Double? = nil
+    /// A map's anchor commits, one per text (`textHash`: the pasture and a worktree may hold different texts), newest
+    /// first, at most `MapAnchor.max` (spec 2026-11-17-memory-stage-rules, item 7). Daemon-owned: never in the `.md`.
+    var mapAnchors: [MapAnchor]? = nil
+    /// When the map drift check last measured it (the oldest go first).
+    var mapCheckedAt: Date? = nil
+
+    func mapAnchor(for textHash: String) -> MapAnchor? { mapAnchors?.first { $0.textHash == textHash } }
+
+    mutating func setMapAnchor(_ a: MapAnchor) {
+        let rest = (mapAnchors ?? []).filter { $0.textHash != a.textHash }
+        mapAnchors = Array(([a] + rest).prefix(MapAnchor.max))
+    }
+}
+
+/// The commit a map's text was last known to match (`HEAD` of the store's root when anchored).
+struct MapAnchor: Codable, Sendable, Equatable {
+    static let max = 4
+    var textHash: String
+    var commit: String
+    var at: Date
 }
 
 /// Usage-based lifecycle state per memory id (`<root>/learning/lifecycle.json`, 0600), never in the repo's memory files.

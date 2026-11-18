@@ -308,6 +308,7 @@ extension CommandRouter {
                     "terminal": .string(ws.terminals.first { $0.id == w.terminalId }?.name ?? ""),
                     "openTasks": .number(Double(w.tasks.filter { $0.state == .open || $0.state == .inProgress }.count))]
                 if let b = w.branch { o["branch"] = .string(b) }
+                if let l = WorkStatusText.loopLine(w) { o["loop"] = .string(l) }
                 if let c = w.closedAt { o["closedAt"] = .string(iso.string(from: c)); o["closedBy"] = .string(w.closedBy ?? "") }
                 return .object(o)
             })

@@ -38,7 +38,7 @@ actor WorkLoop {
     /// and `.running`. Returns the final state.
     func run(work id: UUID, dir: URL) async -> WorkLoopState.State {
         var end = WorkLoopState.State.stopped
-        while !stopping.contains(id) {
+        while !stopping.contains(id), !Task.isCancelled {
             // closed, missing or stopped from outside (a daemon restart's sweep): stop
             guard let w = try? await store.get(id), w.closedAt == nil, let loop = w.loop, loop.state == .running else { break }
             guard let task = w.tasks.first(where: { $0.state == .open }) else { end = .finished; break }
@@ -148,7 +148,7 @@ actor WorkLoop {
     /// An `.idle` end with no new commit yet: wait until there is one and the agent is out of its turn, or `deadline`.
     private func waitForCommit(_ agent: UUID, before: String, branch: String, dir: URL, until deadline: Date) async {
         if await committed(before: before, branch: branch, dir) { return }
-        while host.now() < deadline {
+        while host.now() < deadline, !Task.isCancelled {
             if !(await host.working(agent)), await committed(before: before, branch: branch, dir) { return }
             try? await Task.sleep(for: poll)
         }

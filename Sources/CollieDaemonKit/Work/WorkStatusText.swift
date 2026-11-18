@@ -43,7 +43,7 @@ public enum WorkStatusText {
         case .whatIsRunning:
             for w in works {
                 for j in w.jobs where j.state == .running {
-                    lines.append("- \(j.kind == .shell ? "shell" : "subagente") \(j.label) — \(name(w.terminalId)), há \(mins(j.startedAt)) min")
+                    lines.append("- \(j.kind == .shell ? "shell" : j.kind == .loop ? "tentativa do laço" : "subagente") \(j.label) — \(name(w.terminalId)), há \(mins(j.startedAt)) min")
                 }
             }
             for id in sorted(.working) { lines.append("- \(name(id)): trabalhando") }
@@ -57,6 +57,7 @@ public enum WorkStatusText {
     public static func recall(_ w: Work) -> String {
         let open = w.tasks.filter { $0.state == .open || $0.state == .inProgress }
         var lines = ["Seu trabalho ativo (Collie): \(RerailText.clean(w.title))"]
+        if let l = loopLine(w) { lines.append("- " + l) }
         lines += open.map { "- \($0.state == .inProgress ? "em andamento" : "aberta"): \(RerailText.clean($0.title))" }
         lines += w.notes.suffix(3).map { "- nota: \(RerailText.clean($0.text))" }
         var out = ""
@@ -66,6 +67,18 @@ public enum WorkStatusText {
             out += add
         }
         return out
+    }
+
+    /// A work run by `collie work run`: "em laço: <task> (tentativa n/N)", or how its loop ended. nil: a sequential work.
+    public static func loopLine(_ w: Work) -> String? {
+        guard let l = w.loop else { return nil }
+        switch l.state {
+        case .running:
+            let title = w.tasks.first { $0.id == l.task }.map { RerailText.clean($0.title) } ?? "?"
+            return "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))"
+        case .stopped: return "laço parado (\(l.used) tentativas)"
+        case .finished: return "laço terminou (\(l.used) tentativas)"
+        }
     }
 
     /// Joins lines up to `limit` characters; the cut ends with "… e mais <n>".

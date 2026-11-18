@@ -63,4 +63,173 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             #expect(try await d.router.work.active(terminal: a.uuid)?.tasks.isEmpty ?? true)
         }
     }
+
+    // MARK: work.run / work.stop
+
+    /// A repo, a paddock "feat" and a Shepherd S standing in it with an active work.
+    private struct Pad { let repo: URL; let dir: URL; let s: Term; let work: UUID }
+    private func pad(_ d: Daemon, _ p: Paths, shepherd: Bool = true) async throws -> Pad {
+        let repo = try await makeRepo()
+        let m = try await spawnIn(d, p, "M", cwd: repo, shepherd: true)
+        let c = try await work(d, p, m, "paddock.create", ["name": .string("feat")])
+        #expect(c.ok, "\(c)")
+        let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: shepherd, paddock: "feat")
+        #expect(try await work(d, p, s, "work.start", ["title": .string("Loop work")]).ok)
+        let w = try #require(try await d.router.work.active(terminal: s.uuid))
+        return Pad(repo: repo, dir: repo.appendingPathComponent(".collie/paddocks/feat"), s: s, work: w.id)
+    }
+    private func addTask(_ d: Daemon, _ p: Paths, _ t: Term, _ title: String, check: String?) async throws {
+        var a: [String: JSONValue] = ["title": .string(title)]
+        if let check { a["check"] = .string(check) }
+        let r = try await work(d, p, t, "work.task.add", a)
+        #expect(r.ok, "\(r)")
+    }
+    private func loopEnded(_ d: Daemon, _ id: UUID) async -> Bool {
+        await waitFor(60) { (try? await d.router.work.get(id))?.loop.map { $0.state != .running } ?? false }
+    }
+
+    @Test func runNeedsAShepherd() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p, shepherd: false)
+            try await addTask(d, p, x.s, "A", check: "true")
+            #expect(try await work(d, p, x.s, "work.run").error?.code == .notShepherd)
+        }
+    }
+
+    @Test func runNeedsAPaddock() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let m = try await spawnIn(d, p, "M", cwd: repo, shepherd: true)
+            #expect(try await work(d, p, m, "work.start", ["title": .string("W")]).ok)
+            try await addTask(d, p, m, "A", check: "true")
+            let r = try await work(d, p, m, "work.run")
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("paddock") == true, "\(r)")
+        }
+    }
+
+    @Test func runNeedsOpenTasks() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            let r = try await work(d, p, x.s, "work.run")
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("no open task") == true, "\(r)")
+        }
+    }
+
+    @Test func runNamesTasksWithoutCheck() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Has one", check: "true")
+            try await addTask(d, p, x.s, "Lacks one", check: nil)
+            let r = try await work(d, p, x.s, "work.run")
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("Lacks one") == true
+                    && r.error?.message.contains("Has one") == false, "\(r)")
+        }
+    }
+
+    @Test func runRefusesDirtyWorktree() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            try "dirty\n".write(to: x.dir.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+            let r = try await work(d, p, x.s, "work.run")
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("f.txt") == true, "\(r)")
+        }
+    }
+
+    @Test func runRefusesWhileAnotherAgentWorks() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            let busy = try await spawnIn(d, p, "busy", cwd: x.repo, paddock: "feat")
+            try await d.process(busy.uuid)!.write(Data("while true; do echo tick; sleep 0.2; done\n".utf8))
+            #expect(await waitFor(20) { await d.badge(busy.uuid) == .working })
+            let r = try await work(d, p, x.s, "work.run")
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("busy") == true, "\(r)")
+        }
+    }
+
+    @Test func runPassesATaskEndToEnd() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Write done", check: "test -f done.txt")
+            let agent = "bash -c 'read l; echo ok > done.txt; git add done.txt; git commit -qm done; cat'"
+            let r = try await work(d, p, x.s, "work.run", ["command": .string(agent), "timeout": .number(60)])
+            guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
+            #expect(o["state"] == .string("running") && o["tasks"] == .number(1))
+            #expect(await loopEnded(d, x.work))
+            let w = try #require(try await d.router.work.get(x.work))
+            #expect(w.tasks.first?.state == .done && w.loop?.state == .finished, "\(w.tasks) \(String(describing: w.loop)) \(w.notes.map(\.text))")
+            #expect(await d.router.ws.terminals.allSatisfy { !$0.name.hasPrefix("loop-") })
+            #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("[collie] Laço de \"Loop work\" terminou: 1 feitas, 0 adiadas") })
+        }
+    }
+
+    @Test func secondRunIsRefused() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "false")
+            #expect(try await work(d, p, x.s, "work.run", ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)]).ok)
+            let r = try await work(d, p, x.s, "work.run", ["command": .string("cat")])
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("already") == true, "\(r)")
+            #expect(await loopEnded(d, x.work))
+        }
+    }
+
+    @Test func stopEndsARunningLoop() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "false")
+            try await addTask(d, p, x.s, "B", check: "false")
+            #expect(try await work(d, p, x.s, "work.run", ["command": .string("cat"), "timeout": .number(3)]).ok)
+            let s = try await work(d, p, x.s, "work.stop")
+            guard case .object(let o)? = s.result else { Issue.record("\(s)"); return }
+            #expect(o["state"] == .string("stopped"))
+            #expect(try await work(d, p, x.s, "work.stop").error?.code == .invalidArgs)
+            #expect(await loopEnded(d, x.work))
+            let w = try #require(try await d.router.work.get(x.work))
+            #expect(w.loop?.state == .stopped && w.tasks.map(\.state) == [.open, .open] && w.loop?.used == 1)
+            #expect(try await work(d, p, x.s, "work.stop").error?.code == .invalidArgs)
+        }
+    }
+
+    @Test func restartLeavesNoRunningLoop() async throws {
+        let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))"))
+        defer { try? FileManager.default.removeItem(at: paths.root) }
+        let dir = paths.root.appendingPathComponent("work")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var w = Work(title: "looping", terminalId: UUID(), paddockId: UUID(),
+                     tasks: [WorkTask(id: "a", title: "A", state: .inProgress, check: "true"), WorkTask(id: "b", title: "B", state: .done)],
+                     jobs: [WorkJob(id: "loop-a-1", kind: .loop, label: "A")])
+        w.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
+        let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
+        try e.encode([w]).write(to: dir.appendingPathComponent("work.json"))
+        let d = try Daemon(config: testConfig(paths))
+        do { try await d.start() } catch { await d.stop(); throw error }
+        let after = try await d.router.work.get(w.id)
+        await d.stop()
+        #expect(after?.loop?.state == .stopped && after?.loop?.endedAt != nil && after?.loop?.task == nil)
+        #expect(after?.tasks.map(\.state) == [.open, .done])
+        #expect(after?.jobs.first?.state == .gone && after?.jobs.first?.endedAt != nil)
+    }
+
+    /// The check runs under the attempt terminal's profile when it has one. ponytail: this tests the wrapping with a
+    /// hand-written profile, not a real terminal's (the test daemons run without a terminal sandbox); skipped where
+    /// sandbox-exec itself is refused (a nested sandbox, as in a sandboxed agent's own shell).
+    @Test func checkRunsUnderTheAgentsSandbox() async throws {
+        let probe = try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
+                                                 args: ["-p", "(version 1)(allow default)", "/usr/bin/true"],
+                                                 in: URL(fileURLWithPath: "/tmp"), env: [:], timeout: .seconds(10))
+        guard probe.status == 0 else { return }
+        let base = URL(fileURLWithPath: SignedAppCheck.realPath(URL(fileURLWithPath: "/tmp/collie-sb-\(UUID().uuidString.prefix(8))")))
+        let inside = base.appendingPathComponent("proj"), outside = base.appendingPathComponent("out")
+        defer { try? FileManager.default.removeItem(at: base) }
+        for u in [inside, outside] { try FileManager.default.createDirectory(at: u, withIntermediateDirectories: true) }
+        let profile = base.appendingPathComponent("t.sb")
+        try "(version 1)(allow default)(deny file-write* (subpath \"\(outside.path)\"))".write(to: profile, atomically: true, encoding: .utf8)
+        let env = ProcessInfo.processInfo.environment
+        let ok = try await RouterLoopHost.runCheck("echo x > in.txt", in: inside, profile: profile, env: env, timeout: .seconds(10))
+        let denied = try await RouterLoopHost.runCheck("echo x > \(outside.path)/x.txt", in: inside, profile: profile, env: env, timeout: .seconds(10))
+        let free = try await RouterLoopHost.runCheck("echo x > \(outside.path)/x.txt", in: inside, profile: nil, env: env, timeout: .seconds(10))
+        #expect(ok.status == 0 && denied.status != 0 && free.status == 0)
+    }
 }

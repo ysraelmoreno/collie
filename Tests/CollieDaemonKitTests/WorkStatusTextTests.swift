@@ -68,4 +68,14 @@ import CollieCore
         #expect(s.count <= 4_000)
         #expect(s.split(separator: "\n").last!.hasPrefix("… e mais"))
     }
+
+    @Test func loopLine() {
+        var w = Work(title: "W", terminalId: term, tasks: [WorkTask(id: "a", title: "Build it", state: .inProgress)])
+        w.loop = WorkLoopState(state: .running, task: "a", attempt: 2, tries: 3)
+        #expect(WorkStatusText.recall(w).contains("em laço: Build it (tentativa 2/3)"), "\(WorkStatusText.recall(w))")
+        w.loop?.state = .finished; w.loop?.task = nil
+        #expect(WorkStatusText.recall(w).contains("laço terminou"))
+        w.loop = nil
+        #expect(!WorkStatusText.recall(w).contains("laço"))
+    }
 }

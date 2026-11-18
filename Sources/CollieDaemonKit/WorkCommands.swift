@@ -321,6 +321,9 @@ extension CommandRouter {
             guard let w = try await work.active(terminal: t.id) else { throw invalid("no active work") }
             return try await rerail(t, w, now: now, wait: t.id != caller?.id)
 
+        case "work.run": return try await workRun(r, caller: caller, starter: try target())
+        case "work.stop": return try await workStop(try target())
+
         case "work.clear-history":   // the one way anything is deleted: the user's alone
             guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'work.clear-history' is admin-only") }
             try await work.clearHistory()
@@ -336,6 +339,7 @@ extension CommandRouter {
         let who = ws.terminals.first { $0.id == w.terminalId }?.name ?? "?"
         var lines = ["\(w.title) — \(who)" + (w.branch.map { ", branch \($0)" } ?? "") + (w.closedBy.map { ", closed by \($0)" } ?? "")
                      + " [\(w.id.uuidString.lowercased())]"]
+        if let l = WorkStatusText.loopLine(w) { lines.append(l) }
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),
                                              (.abandoned, "Dropped"), (.done, "Done")]
         for (state, label) in groups {

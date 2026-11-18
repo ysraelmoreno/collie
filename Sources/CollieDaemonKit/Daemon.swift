@@ -270,6 +270,7 @@ public final class Daemon: Sendable {
         Task { await network.reconcileAtStart() }   // a crashed daemon's capture left on an emulator: undone, off the start path
         await router.userEnv.warm()
         await router.startJobSweep()
+        await router.stopLoopsLeftRunning()   // a loop never survives its daemon: `collie work run` again continues it
         await router.memory.setProposalState { [weak router] in await router?.proposalState() ?? ([], []) }
         await router.memory.setVerifier { [weak router] id, kind in await router?.enqueueVerify(id, kind: kind) ?? false }
         await router.migrateProposals()   // once: the proposals already waiting go through the curator
@@ -288,6 +289,7 @@ public final class Daemon: Sendable {
         await router.remote.stop()
         await router.stopSandboxWatch()
         await router.stopJobSweep()
+        await router.cancelLoops()
         await router.stopConsolidation()
         await router.curator.stop()
         await router.host.stop()

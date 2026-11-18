@@ -93,21 +93,32 @@ import Foundation
         let anchor = try await commitAll("one", d)
         try write("a.swift", lines: 0..<60, tag: "y", in: d)
         let head = try await commitAll("two", d)
+        // control: the planted driver is live (a plain patch diff, without our options, runs it)
+        _ = try? await GitRunner.run(["diff", anchor, head, "--", "a.swift"], in: d)
+        #expect(FileManager.default.fileExists(atPath: marker.path), "fixture: the planted driver must run on a plain diff")
+        try FileManager.default.removeItem(at: marker)
         let live = GitFactsLive(root: d)
         #expect(await live.changes(from: anchor, to: head, paths: ["a.swift"]) == .changes(["a.swift": PathChange(added: 60, deleted: 10, files: 1)]))
         _ = await live.subjects(from: anchor, to: head, path: "a.swift")
+        _ = await live.extent("a.swift")
         #expect(!FileManager.default.fileExists(atPath: marker.path))
+        // ponytail: `--numstat` never runs a driver or textconv in git 2.50 (not even with --textconv), so this can't fail
+        // by dropping --no-ext-diff/--no-textconv alone; those stay as defence if git or our options change
     }
 
-    /// A pathspec magic or glob in a map's path is a literal name, never a pattern.
+    /// A glob or pathspec magic in a map's path is a literal name, never a pattern: a directory literally named `Di*`
+    /// counts its own file, not `Dir`'s too (fails without --literal-pathspecs: 4 files instead of 1).
     @Test func pathIsLiteralNotAPattern() async throws {
         let d = try await repo()
         defer { try? FileManager.default.removeItem(at: d) }
+        try write("Di*/a.swift", lines: 0..<5, in: d)
+        for i in 0..<3 { try write("Dir/f\(i).swift", lines: 0..<5, in: d) }
         try write("a.swift", lines: 0..<5, in: d)
         let anchor = try await commitAll("one", d)
         try write("a.swift", lines: 0..<50, tag: "z", in: d)
         let head = try await commitAll("two", d)
         let live = GitFactsLive(root: d)
+        #expect(await live.extent("Di*") == PathExtent(isDir: true, lines: nil, files: 1))
         #expect(await live.changes(from: anchor, to: head, paths: ["*.swift", ":(glob)**"]) == .changes([:]))
     }
 

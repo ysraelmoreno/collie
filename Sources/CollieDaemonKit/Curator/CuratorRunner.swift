@@ -90,6 +90,8 @@ struct ClaudeCuratorRunner: CuratorRunner {
     let env: @Sendable () async -> [String: String]
     /// How soon an `auth status` that failed (timeout, junk) is tried again; a real answer is kept `availabilityTTL`.
     let retryAfter: Duration
+    /// Where claude is looked for when the env's PATH has none (`BinaryLocator.dirs` of the user's real home).
+    let fallback: [String]
     private let cache = Cache()
 
     static let unreadable = "resposta ilegível do claude"
@@ -99,8 +101,9 @@ struct ClaudeCuratorRunner: CuratorRunner {
     static let strippedKeys: Set = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
                                     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"]
 
-    init(root: URL, home: URL, env: @escaping @Sendable () async -> [String: String], retryAfter: Duration = .seconds(30)) {
-        self.root = root; self.home = home; self.env = env; self.retryAfter = retryAfter
+    init(root: URL, home: URL, env: @escaping @Sendable () async -> [String: String], retryAfter: Duration = .seconds(30),
+         fallback: [String] = BinaryLocator.dirs(home: NSHomeDirectory())) {
+        self.root = root; self.home = home; self.env = env; self.retryAfter = retryAfter; self.fallback = fallback
     }
 
     private actor Cache {
@@ -166,11 +169,6 @@ struct ClaudeCuratorRunner: CuratorRunner {
         return e
     }
 
-    static func locate(_ env: [String: String]) -> URL? {
-        (env["PATH"] ?? "").split(separator: ":").map { URL(fileURLWithPath: String($0)).appendingPathComponent("claude") }
-            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
-    }
-
     /// An empty temp dir for `body`, removed after (`project,local` settings: none to load).
     private func inTempDir<T>(_ body: (URL) async throws(ProtocolError) -> T) async throws(ProtocolError) -> T {
         let cwd = FileManager.default.temporaryDirectory.appendingPathComponent("collie-curator-\(UUID().uuidString)")
@@ -210,7 +208,7 @@ struct ClaudeCuratorRunner: CuratorRunner {
     private func login() async -> Login {
         if let v = await cache.get() { return v }
         let e = await environment()
-        guard let claude = Self.locate(e) else {
+        guard let claude = BinaryLocator.locate("claude", env: e, fallback: fallback) else {
             let v = Login(availability: .unavailable("claude não encontrado"), billing: .unknown)
             await cache.set(v, for: Self.availabilityTTL)
             return v
@@ -230,7 +228,7 @@ struct ClaudeCuratorRunner: CuratorRunner {
 
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput {
         let e = await environment()
-        guard let claude = Self.locate(e) else { throw ProtocolError(code: .unavailable, message: "claude não encontrado") }
+        guard let claude = BinaryLocator.locate("claude", env: e, fallback: fallback) else { throw ProtocolError(code: .unavailable, message: "claude não encontrado") }
         let fm = FileManager.default
         // per call: concurrent calls never share (or delete) each other's profile
         let dir = root.appendingPathComponent("curator"), profile = dir.appendingPathComponent("run-\(UUID().uuidString).sb")

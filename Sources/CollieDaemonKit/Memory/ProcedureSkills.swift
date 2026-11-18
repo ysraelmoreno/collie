@@ -106,7 +106,7 @@ enum ProcedureSkills {
     /// daemon's life. ponytail: a claude upgraded meanwhile shows up at the next daemon start
     static func supported(env: [String: String]) async -> Bool {
         if let v = cache.lock.withLock({ cache.value }) { return v }
-        guard let claude = ClaudeCuratorRunner.locate(env) else { return false }   // not cached: it may be installed later
+        guard let claude = BinaryLocator.locate("claude", env: env, home: NSHomeDirectory()) else { return false }   // not cached: it may be installed later
         let r = try? await BoundedProcess.run(executable: claude, args: ["--help"], in: FileManager.default.temporaryDirectory,
                                               env: env, timeout: .seconds(10), cap: 256 << 10)
         guard let r else { return false }

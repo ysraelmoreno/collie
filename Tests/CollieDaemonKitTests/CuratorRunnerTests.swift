@@ -22,12 +22,13 @@ private struct Fake {
         try ("#!/bin/sh\n" + script).write(to: claude, atomically: false, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
     }
-    func runner(path: String? = nil, retryAfter: Duration = .seconds(30)) -> ClaudeCuratorRunner {
+    /// `fallback` [] by default: the machine's real ~/.local/bin/claude never leaks into a test.
+    func runner(path: String? = nil, retryAfter: Duration = .seconds(30), fallback: [String] = []) -> ClaudeCuratorRunner {
         let env = ["PATH": path ?? (bin.path + ":/usr/bin:/bin"), "HOME": f.home.path,
                    "COLLIE_SOCKET": "/x.sock", "COLLIE_TOKEN": "t", "COLLIE_TERMINAL_ID": "i",
                    "ANTHROPIC_API_KEY": "sk-x", "ANTHROPIC_AUTH_TOKEN": "tok-x", "ANTHROPIC_BASE_URL": "https://x",
                    "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_VERTEX": "1"]
-        return ClaudeCuratorRunner(root: f.collie, home: f.home, env: { env }, retryAfter: retryAfter)
+        return ClaudeCuratorRunner(root: f.collie, home: f.home, env: { env }, retryAfter: retryAfter, fallback: fallback)
     }
 }
 
@@ -198,6 +199,12 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         await #expect(throws: ProtocolError(code: .unavailable, message: "claude não encontrado")) {
             try await r.run(call, model: "haiku", timeout: .seconds(5))
         }
+    }
+
+    /// The daemon's env capture failed (no PATH): claude is still found in a known dir of the user's real home.
+    @Test func missingPathUsesFallback() async throws {
+        let ok = try Fake(#"[ "$1 $2 $3" = "auth status --json" ] && { echo '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}'; exit 0; }; exit 2"# + "\n")
+        #expect(await ok.runner(path: "", fallback: [ok.bin.path]).availability() == .available)
     }
 
     @Test func loggedOutUnavailable() async throws {

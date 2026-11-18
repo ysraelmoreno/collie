@@ -167,6 +167,23 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         #expect(await mem.lifecycle.entry(r.id)?.evidencedUses == nil)   // endSession forgot the citation
     }
 
+    /// Item 2 phase 1: `memory.get` of a memory injected in the caller's session is a use with evidence `get`, logged as
+    /// its own `used` (`where` get: outside the v1 precision); one not injected here counts nothing.
+    @Test func getOfInjectedCountsUseAndEvidence() async throws {
+        let r = x(), other = MemoryRecord(kind: .decision, subject: "o", title: "Other", body: "zzz"), now = Date()
+        let (mem, repo) = try await setup([r, other])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteGet(t, record: other, now: now)
+        #expect(await mem.lifecycle.entry(other.id) == nil)
+        await mem.noteGet(t, record: r, now: now)
+        let key = UseKey(day: Self.day(now), session: "s1"), e = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e.usefulUses == [key] && e.evidencedUses == [key])
+        mem.events.flush()
+        let used = mem.events.read(since: now.addingTimeInterval(-60)).filter { $0.type == .used }
+        #expect(used.count == 1 && used[0].where == "get" && used[0].evidenced == [r.id] && used[0].evidence == ["get"], "\(used)")
+        #expect(MemoryObservability.precision(used).used == 0)   // the v1 precision counts prompts only
+    }
+
     @Test func reviewedAndPinnedHaveNoTagsAndNoEntries() async throws {
         let r = x(reviewed: true), p = MemoryRecord(kind: .decision, subject: "q", title: "Pool size twenty", body: "postgres pool sizing twenty",
                                                   pinned: true)

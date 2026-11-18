@@ -765,6 +765,23 @@ actor MemoryService {
         }
         events.emit(e)
     }
+    /// Item 2 phase 1: `memory.get` of a memory injected in `terminal`'s session (and able to earn a use) counts a use with
+    /// evidence `get` now; any other record counts nothing.
+    func noteGet(_ terminal: UUID, record: MemoryRecord, now: Date = Date()) async {
+        guard let s = sessions[terminal], LifecycleRules.eligible(record), await lifecycle.injected(session: s).contains(record.id) else { return }
+        await useWithEvidence("get", [record.id], session: s, terminal: terminal, now: now)
+    }
+
+    /// A use and its evidence `kind` (get|flag) now, logged as its own `used` with `where` = `kind` (not a prompt's: the v1
+    /// precision leaves it out). An id this session flagged wrong/outdated takes neither.
+    private func useWithEvidence(_ kind: String, _ ids: [UUID], session s: String, terminal: UUID?, now: Date) async {
+        let key = UseKey(day: Self.dayFormatter.string(from: now), session: s)
+        let taken = await lifecycle.addUse(ids, key: key, now: now)
+        let ev = await lifecycle.addEvidence(taken, key: key, now: now)
+        guard !ev.isEmpty else { return }
+        events.emit(MemoryEvent(type: .used, terminal: terminal, session: s, ids: taken, where: kind, evidenced: ev, evidence: ev.map { _ in kind }))
+    }
+
     /// The caller's session and the injected id `prefix` names (full UUID or a case-insensitive prefix of 4+ characters).
     func flagTarget(_ terminal: UUID?, prefix: String) async throws(ProtocolError) -> (session: String, id: UUID) {
         func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }

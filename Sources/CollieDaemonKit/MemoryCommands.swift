@@ -181,7 +181,7 @@ extension CommandRouter {
                 if let d = st?.lastReadAt { extra["lastReadAt"] = .string(isoString(d)) }
                 if let d = st?.missingSince { extra["missingSince"] = .string(isoString(d)) }
                 _ = try? await s.run { m in m.index()?.noteRead([id]) }
-                if let me = caller { searched(me, ids: [rec.id], lot: myLot?.id, project: project.root?.path) }
+                if let me = caller { searched(me, ids: [rec.id], lot: myLot?.id, project: project.root?.path); await memory.noteGet(me.id, record: rec) }
                 return try memJSON(rec, s, extra)
             }
             throw ProtocolError(code: .notFound, message: "memory \(id.uuidString.lowercased()) not found")

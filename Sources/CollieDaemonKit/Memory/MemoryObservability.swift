@@ -247,6 +247,7 @@ enum MemoryObservability {
         for e in es {
             switch e.type {
             case .injected where e.where == "prompt": p.injected += e.ids?.count ?? 0; p.candidates += e.eligible ?? 0
+            case .used where e.where != nil: break   // a `get`/`flag` use (item 2): not a prompt's
             case .used where e.reason == "correction": p.corrected += e.hits ?? 0
             case .used: p.used += e.ids?.count ?? 0
             case .flagged where e.verdict == "useful": p.flags += 1

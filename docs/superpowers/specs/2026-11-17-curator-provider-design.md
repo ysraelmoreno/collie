@@ -290,6 +290,12 @@ env: HOME=<root>/curator/cursor-home  CURSOR_CONFIG_DIR=<root>/curator/cursor-ho
   caracteres) no motivo; “Authentication required” → indisponível sem gastar tentativa.
 - `info = (.cursor, <trust>, "Cursor", structuredOutput: false, reportsUsage: false, 120 s, 12 000)`.
 
+- Medido no R2/R3 (2026-11-18, cursor-agent 2026.11.17), substitui os formatos supostos acima: prompt pelo stdin;
+  resultado com `usage.inputTokens/outputTokens` (o Cursor informa tokens, não custo); sem login = exit 1 e
+  “Authentication required” no stderr; o CLI reescreve o `cli-config.json` mantendo `approvalMode`/`permissions`
+  (conferidos depois de cada chamada); a chamada escreve só dentro da `cursor-home` (`.cursor/**`, `.npm/**`,
+  `Library/Caches/cursor-compile-cache/**`). Detalhes e pendências no plano, Task 11.
+
 ### 4. Perfil Seatbelt dedicado do curador (E5)
 
 `CuratorSandboxProfile` próprio, para Claude e Cursor:

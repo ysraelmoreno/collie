@@ -11,6 +11,8 @@ struct CuratorSettings: Equatable {
         var provider: String, installed: Bool, available: Bool, availability: String, consentNeeded: Bool, destination: String
         var id: String { provider }
         var name: String { provider.capitalized }
+        /// An installed Cursor with no curator login yet: offer "Entrar" (Collie never logs it in by itself).
+        var canLogin: Bool { provider == "cursor" && installed && availability == "cursor sem login para o curador" }
         /// Available now, or only a consent away (the sheet).
         var selectable: Bool { available || consentNeeded }
         var detail: String {
@@ -23,6 +25,8 @@ struct CuratorSettings: Equatable {
             return "\(inst) · indisponível: \(availability)"
         }
     }
+
+    static let loginLabel = "Entrar no Cursor para o curador"
 
     var info: CuratorInfo
     var rows: [Row]
@@ -126,6 +130,9 @@ struct CuratorPreferences: View {
                 .buttonStyle(.plain).disabled(!connected || working || !row.selectable)
                 Text(row.detail).font(.collieMono(12))
                     .foregroundStyle(row.available ? Color.collieMuted : Color.collieAttention).fixedSize(horizontal: false, vertical: true)
+                if row.canLogin {
+                    Button(CuratorSettings.loginLabel) { login() }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || working)
+                }
                 if row.consentNeeded, s.info.provider == row.provider {
                     Button("Confirmar…") { pending = row }.buttonStyle(CollieButtonStyle(.quiet)).disabled(!connected || working)
                 }
@@ -178,6 +185,21 @@ struct CuratorPreferences: View {
             cap = s.map { String($0.info.cap) } ?? cap
             error = nil
         } catch { self.error = (error as? ProtocolError)?.message ?? "\(error)" }
+    }
+
+    /// A new terminal with the curator's own Cursor login (its cursor-home, never the user's `~/.cursor`); unsandboxed
+    /// because it writes Collie's data dir. The rows refresh after (the runner retries a missing login within 30 s).
+    private func login() {
+        working = true; error = nil
+        Task {
+            do {
+                guard case .object(let o) = try await client.adminCall("memory.curator", ["cursorLogin": .bool(true)]),
+                      case .string(let line)? = o["cursorLogin"] else { throw ProtocolError(code: .internal, message: "resposta sem comando de login") }
+                _ = try await client.spawn(name: "cursor-login-" + UUID().uuidString.prefix(4).lowercased(), preset: .custom, command: line,
+                                           cwd: NSHomeDirectory(), shepherd: false, sandbox: .free)
+            } catch { self.error = (error as? ProtocolError)?.message ?? "\(error)" }
+            working = false
+        }
     }
 
     private func testCall() {

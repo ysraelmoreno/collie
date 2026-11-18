@@ -255,7 +255,9 @@ actor CommandRouter {
         self.assistant = WorkAssistant(model: config.localModel)
         let curatorDir = config.paths.root.appendingPathComponent("curator")
         let runners = config.curatorRunners ?? config.curatorRunner.map { [$0.info.provider: $0] }
-            ?? [.claude: ClaudeCuratorRunner(root: config.paths.root, home: home, env: { await userEnv.current() })]
+            ?? [.claude: ClaudeCuratorRunner(root: config.paths.root, home: home, env: { await userEnv.current() }),
+                // Minha chamada 1: limited trust in v1 (no native schema, a model that varies)
+                .cursor: CursorCuratorRunner(root: config.paths.root, path: { await userEnv.current()["PATH"] ?? "" }, trust: .limited)]
         self.curator = Curator(dir: curatorDir, runners: runners, events: memory.events, installed: { p in
             BinaryLocator.locate(p.binary, env: await userEnv.current(), home: NSHomeDirectory()) != nil })
         // L3: one Collie-wide preference; a workspace's value (before) moves there once

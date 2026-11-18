@@ -382,7 +382,33 @@ implementando `billing()` do protocolo.
 - [ ] **Step 2: Run** `--filter CursorCuratorRunnerTests`. Expected: FAIL.
 - [ ] **Step 3: Implement**.
 - [ ] **Step 4: Run** `--filter CursorCuratorRunnerTests`, `--filter CuratorSandboxProfileTests`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(curator): Cursor provider, isolated and tool-less`.
+- [x] **Step 5: Commit** `feat(curator): Cursor provider, isolated and tool-less`.
+
+**Feita em 2026-11-18 com o R2/R3 real do dono (cursor-agent 2026.11.17-f532c45); desvios:**
+- Fixtures reais e saneados (sem dados pessoais) em `Tests/Fixtures/curator/`: `cursor-status-{authenticated,
+  unauthenticated}.json`, `cursor-result.json`, `cursor-auth-required.txt`. Prompt **pelo stdin** (R3 confirmou),
+  nada no argv. Resultado: um objeto `{type:"result", is_error, result:"<JSON do curador em texto>", usage:{inputTokens,
+  outputTokens,…}}` → **o Cursor informa tokens** (`reportsUsage: true`, `inputTokens`/`outputTokens` preenchidos;
+  custo continua nil). Sem login: exit 1, stdout vazio, stderr “Authentication required” (sem caixa) → “cursor sem
+  login para o curador”. `status --format json`: só `status`/`isAuthenticated` são lidos (nunca `userInfo`).
+- A config fechada é escrita antes de cada chamada e **conferida depois**: o CLI reescreve o arquivo com chaves dele
+  (aceito), mas `approvalMode`/`permissions` diferentes dos fechados descartam a resposta (`.internal`, gasta
+  tentativa).
+- Sem `cursor-home`: “cursor sem login para o curador” sem rodar nada (o Collie nunca loga sozinho).
+  `models()` lê `cursor-agent models` (“auto - Auto (default)” → `auto`). `billing()` = `.unknown` (o consentimento da
+  folha do Cursor cobre a cobrança, Task 12). Achar o CLI: `BinaryLocator` (PATH do usuário + `~/.local/bin`).
+- `init` ganhou `fallback:` e `sandboxed:` (só testes: `sandbox-exec` não aninha no sandbox de um agente; o collied
+  sempre roda sob o perfil). `CuratorCache` e `curatorTempDir` saíram do runner do Claude para os dois usarem.
+- Perfil (`CuratorSandboxProfile.cursor`): exec do script, `node`, `cursor-agent-sea`, `cursor-agent-worker-sea` da
+  pasta da versão, `/usr/bin/env`, `/bin/bash`, `realpath`, `dirname`, `basename`; leitura e escrita de toda a
+  `cursor-home` e nada da home do usuário; sem Keychain.
+- Junto (pedaço adiado da Task 13): “Entrar no Cursor para o curador” nas Preferências, só por clique e só quando o
+  Cursor está instalado e sem login. `memory.curator --cursorLogin` cria `cursor-home` e `.cursor` 0700 e devolve a
+  linha `HOME=… CURSOR_CONFIG_DIR=… AGENT_CLI_CREDENTIAL_STORE=file exec <cursor-agent> login`; o app abre com ela um
+  terminal livre (escreve na pasta de dados do Collie).
+- **Pendente de verificação do dono (não medido, nada inventado):** o texto de erro de limite de uso (os testes usam
+  os textos genéricos de `exhausted`); uma chamada sob o `sandbox-exec` real (inclui se o agente precisa executar
+  npm/npx, hoje não liberados no perfil); se hooks do usuário disparam (a HOME isolada não tem hooks).
 
 ### Task 12: Comando, status e consentimento
 

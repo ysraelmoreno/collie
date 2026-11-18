@@ -65,6 +65,17 @@ struct CuratorPreferencesTests {
         #expect(CuratorSettings.from(reply: .null) == nil)
     }
 
+    /// "Entrar no Cursor para o curador" shows only for an installed Cursor that has no curator login yet.
+    @Test func loginOfferedOnlyWhenLoggedOut() {
+        func r(_ installed: Bool, _ why: String, _ p: String = "cursor") -> CuratorSettings.Row {
+            .init(provider: p, installed: installed, available: false, availability: why, consentNeeded: false, destination: "Cursor")
+        }
+        #expect(r(true, "cursor sem login para o curador").canLogin)
+        #expect(!r(false, "cursor não encontrado").canLogin && !r(true, "falta confirmar nas Preferências").canLogin)
+        #expect(!r(true, "cursor sem login para o curador", "claude").canLogin)
+        #expect(CuratorSettings.loginLabel == "Entrar no Cursor para o curador")
+    }
+
     @Test func testCallLine() {
         let r: JSONValue = .object(["testCall": .array([.object(["format": .string("ops"), "result": .string("ok")]),
                                                         .object(["format": .string("items"), "result": .string("junk")])])])

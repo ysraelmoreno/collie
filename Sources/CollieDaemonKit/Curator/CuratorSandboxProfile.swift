@@ -70,6 +70,18 @@ enum CuratorSandboxProfile {
         return nil
     }
 
+    /// Cursor (R3, cursor-agent 2026.11.17): the `cursor-agent` script (`#!/usr/bin/env bash`, `realpath`, `dirname`,
+    /// `basename`) execs the version dir's `node`; the SEA binaries are listed too. Reads and writes all of its own
+    /// `cursor-home` (config, login, state, `.npm`, compile cache) and nothing of the user's home; no Keychain (file login).
+    /// ponytail: npm/npx the agent may call aren't allowed to exec; R2 under the real sandbox says if they're needed
+    static func cursor(script: URL, cwd: URL, cursorHome: URL) -> CuratorSandboxInput {
+        let version = URL(fileURLWithPath: SignedAppCheck.realPath(script)).deletingLastPathComponent()
+        let exes = [script] + ["node", "cursor-agent-sea", "cursor-agent-worker-sea"].map { version.appendingPathComponent($0) }
+            + ["/usr/bin/env", "/bin/bash", "/usr/bin/realpath", "/usr/bin/dirname", "/usr/bin/basename"].map { URL(fileURLWithPath: $0) }
+        let h = SignedAppCheck.realPath(cursorHome)
+        return CuratorSandboxInput(executables: exes, cwd: cwd, home: cursorHome, reads: [h], writes: [h], keychain: false)
+    }
+
     /// Claude: reads its `.claude/` and state, writes its credentials file and state dirs (their children), Keychain login.
     /// `~/.claude.json` stays closed until R2 shows Claude needs it.
     static func claude(executable: URL, cwd: URL, home: URL) -> CuratorSandboxInput {

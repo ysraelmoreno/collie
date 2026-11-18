@@ -11,7 +11,7 @@ struct CuratorCall: Sendable {
 
 struct CuratorOutput: Sendable {
     var json: JSONValue
-    /// nil: the provider reports no usage (Cursor).
+    /// nil: the provider reports no usage (Cursor reports tokens, never a cost).
     var inputTokens: Int?
     var outputTokens: Int?
     var costUSD: Double?
@@ -78,6 +78,25 @@ extension CuratorRunner {
     }
 }
 
+/// A runner's last login answer, kept until its deadline.
+actor CuratorCache<V: Sendable> {
+    private var value: (V, until: ContinuousClock.Instant)?
+    func get() -> V? {
+        guard let (v, until) = value, ContinuousClock.now < until else { return nil }
+        return v
+    }
+    func set(_ v: V, for d: Duration) { value = (v, ContinuousClock.now + d) }
+}
+
+/// An empty 0700 temp dir for `body`, removed after: a curator call's cwd.
+func curatorTempDir<T>(_ body: (URL) async throws(ProtocolError) -> T) async throws(ProtocolError) -> T {
+    let cwd = FileManager.default.temporaryDirectory.appendingPathComponent("collie-curator-\(UUID().uuidString)")
+    do { try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
+    catch { throw ProtocolError(code: .internal, message: "curator: \(error.localizedDescription)") }
+    defer { try? FileManager.default.removeItem(at: cwd) }
+    return try await body(cwd)
+}
+
 /// `claude -p` with no tools, no MCP, no user settings/hooks/plugins, in an empty temp cwd, under its own Seatbelt profile
 /// (writes: its temp dir and Claude's own state). Its sandbox id is in no `sandboxKnown`: its denials raise no card.
 struct ClaudeCuratorRunner: CuratorRunner {
@@ -96,7 +115,7 @@ struct ClaudeCuratorRunner: CuratorRunner {
     let retryAfter: Duration
     /// Where claude is looked for when the env's PATH has none (`BinaryLocator.dirs` of the user's real home).
     let fallback: [String]
-    private let cache = Cache()
+    private let cache = CuratorCache<Login>()
 
     static let unreadable = "resposta ilegível do claude"
     static let noAnswer = "claude não respondeu"
@@ -110,15 +129,6 @@ struct ClaudeCuratorRunner: CuratorRunner {
     init(root: URL, home: URL, env: @escaping @Sendable () async -> [String: String], retryAfter: Duration = .seconds(30),
          fallback: [String] = BinaryLocator.dirs(home: NSHomeDirectory())) {
         self.root = root; self.home = home; self.env = env; self.retryAfter = retryAfter; self.fallback = fallback
-    }
-
-    private actor Cache {
-        var value: (Login, until: ContinuousClock.Instant)?
-        func get() -> Login? {
-            guard let (v, until) = value, ContinuousClock.now < until else { return nil }
-            return v
-        }
-        func set(_ v: Login, for d: Duration) { value = (v, ContinuousClock.now + d) }
     }
 
     /// Pinned from `claude --help` (2.1.310) and the tokenless gate. Never `--bare` (it skips the keychain login).
@@ -179,13 +189,9 @@ struct ClaudeCuratorRunner: CuratorRunner {
     static func captured(_ env: [String: String]) -> Bool { !(env["PATH"] ?? "").isEmpty }
     static func missing(_ env: [String: String]) -> String { captured(env) ? "claude não encontrado" : envNotCaptured }
 
-    /// An empty temp dir for `body`, removed after (`project,local` settings: none to load).
+    /// An empty temp dir for `body` (`project,local` settings: none to load).
     private func inTempDir<T>(_ body: (URL) async throws(ProtocolError) -> T) async throws(ProtocolError) -> T {
-        let cwd = FileManager.default.temporaryDirectory.appendingPathComponent("collie-curator-\(UUID().uuidString)")
-        do { try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) }
-        catch { throw ProtocolError(code: .internal, message: "curator: \(error.localizedDescription)") }
-        defer { try? FileManager.default.removeItem(at: cwd) }
-        return try await body(cwd)
+        try await curatorTempDir(body)
     }
 
     /// What `auth status --json` says: logged in (and claude found), and how that login bills.

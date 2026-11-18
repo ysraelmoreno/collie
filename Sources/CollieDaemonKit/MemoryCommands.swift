@@ -520,6 +520,13 @@ extension CommandRouter {
                 let t = await curator.test()
                 extra["test"] = .object(["availability": .string(t.availability), "models": .array(t.models.map { .string($0) })])
             }
+            if flag(r, "cursorLogin") {   // the Preferences' "Entrar": the app opens a terminal with this line, on a click only
+                guard let exe = BinaryLocator.locate("cursor-agent", env: await userEnv.current(), home: NSHomeDirectory()) else {
+                    throw ProtocolError(code: .unavailable, message: CursorCuratorRunner.missing)
+                }
+                do { extra["cursorLogin"] = .string(try CursorCuratorRunner.prepareLogin(root: config.paths.root, exe: exe)) }
+                catch { throw ProtocolError(code: .internal, message: "curator: \(error.localizedDescription)") }
+            }
             if flag(r, "testCall") {
                 extra["testCall"] = .array(try await curator.testCalls().map {
                     .object(["format": .string($0.format), "result": .string($0.result)])

@@ -97,8 +97,8 @@ extension CommandRouter {
         }
     }
 
-    /// Running, or `unknown` after a silence: a real end signal still finishes it.
-    private static func endable(_ j: WorkJob) -> Bool { j.state == .running || j.state == .unknown }
+    /// Running, or `unknown` after a silence: a real end signal still finishes it. Never a loop's: only the loop ends those.
+    private static func endable(_ j: WorkJob) -> Bool { j.kind != .loop && (j.state == .running || j.state == .unknown) }
 
     /// At start (after the orphan reap): running jobs of terminals without a live process are gone.
     func jobsGoneWithoutProcess() async {
@@ -126,7 +126,7 @@ extension CommandRouter {
     private func sweep(_ which: (Work) -> Bool, _ verdict: @escaping @Sendable (WorkJob) -> JobState?) async {
         func swept(_ w: inout Work) {
             let now = Date()
-            for i in w.jobs.indices where w.jobs[i].state == .running {
+            for i in w.jobs.indices where w.jobs[i].state == .running && w.jobs[i].kind != .loop {   // the loop ends its own
                 guard let s = verdict(w.jobs[i]) else { continue }
                 w.jobs[i].state = s
                 if s == .gone { w.jobs[i].endedAt = now }
@@ -135,7 +135,7 @@ extension CommandRouter {
         do {
             let all = try await work.list(includeClosed: true)
             workStoreBroken = false
-            for w in all where which(w) && w.jobs.contains(where: { $0.state == .running }) {
+            for w in all where which(w) && w.jobs.contains(where: { $0.state == .running && $0.kind != .loop }) {
                 var copy = w; swept(&copy)
                 if copy != w { try await work.update(w.id) { swept(&$0) } }
             }

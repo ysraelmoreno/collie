@@ -301,4 +301,69 @@ import CollieProtocol
             #expect(e?.mapAnchor(for: LifecycleRules.textHash(r), store: store.key)?.commit == (try await head(repo)))
         }
     }
+
+    // MARK: bookkeeping (review findings 6 and 7), with git facts that count their calls
+
+    private final class CountingFacts: GitFacts, @unchecked Sendable {
+        private let lock = NSLock(); private var _diffs = 0
+        var diffs: Int { lock.withLock { _diffs } }
+        let result: MapDriftFacts
+        static let head = String(repeating: "a", count: 40), anchor = String(repeating: "b", count: 40)
+        init(_ result: MapDriftFacts) { self.result = result }
+        func branch(_ name: String) async -> BranchState { .open }
+        func commitExists(_ sha: String) async -> Bool { true }
+        func pathExists(_ rel: String) -> Bool { true }
+        func head() async -> String? { Self.head }
+        func changes(from anchor: String, to head: String, paths: [String]) async -> MapDriftFacts { lock.withLock { _diffs += 1 }; return result }
+        func extent(_ rel: String) async -> PathExtent? { PathExtent(isDir: false, lines: 100, files: nil) }
+        func subjects(from anchor: String, to head: String, path: String) async -> [String] { [] }
+        func existed(at commit: String, _ path: String) async -> Bool? { true }
+    }
+    /// `n` maps, each anchored in `store` at `CountingFacts.anchor` (not HEAD: all due).
+    private func anchored(_ d: Daemon, _ store: RepoMemory, _ n: Int, t0: Date) async -> [MemoryRecord] {
+        let recs = (0..<n).map { map("p\($0).txt") }
+        await d.router.memory.lifecycle.update(recs.map(\.id), now: t0) { id, e in
+            let r = recs.first { $0.id == id }!
+            e.setMapAnchor(MapAnchor(textHash: LifecycleRules.textHash(r), commit: CountingFacts.anchor, at: t0, store: store.key))
+        }
+        return recs
+    }
+    private func drift(_ recs: [MemoryRecord], big: Bool = true) -> MapDriftFacts {
+        .changes(Dictionary(uniqueKeysWithValues: recs.map { ($0.path!, PathChange(added: big ? 90 : 1, deleted: 0, files: 1)) }))
+    }
+
+    /// No contest left this pass: git isn't even run, and nothing is marked checked.
+    @Test func noRoomRunsNoGitAndMarksNothing() async throws {
+        try await run { d, store, _ in
+            let t0 = Date(), recs = await anchored(d, store, 3, t0: t0), facts = CountingFacts(drift(recs))
+            await d.router.mapDriftPass(store, eligible: recs, fresh: [], facts: facts, room: 0, now: t0, day: "2026-11-17")
+            #expect(facts.diffs == 0)
+            let all = await d.router.memory.lifecycle.all()
+            #expect(recs.allSatisfy { all[$0.id]?.mapCheckedAt == nil && all[$0.id]?.contestedNow == false })
+        }
+    }
+
+    /// Room for one contest, two drifted maps: the one not contested isn't marked checked (it goes first next pass).
+    @Test func driftedButNotContestedStaysUnchecked() async throws {
+        try await run { d, store, _ in
+            let t0 = Date(), recs = await anchored(d, store, 2, t0: t0), facts = CountingFacts(drift(recs))
+            await d.router.mapDriftPass(store, eligible: recs, fresh: [], facts: facts, room: 1, now: t0, day: "2026-11-17")
+            let all = await d.router.memory.lifecycle.all()
+            #expect(recs.filter { all[$0.id]?.contestedNow == true }.count == 1)
+            for r in recs { #expect((all[r.id]?.mapCheckedAt != nil) == (all[r.id]?.contestedNow == true)) }
+        }
+    }
+
+    /// git can't tell (`unknown`): those maps are marked checked too, so the 51st onwards get their turn (round robin).
+    @Test func unknownRotatesPastTheFiftyCap() async throws {
+        try await run { d, store, _ in
+            let t0 = Date(), recs = await anchored(d, store, 60, t0: t0), facts = CountingFacts(.unknown)
+            await d.router.mapDriftPass(store, eligible: recs, fresh: [], facts: facts, room: 10, now: t0, day: "2026-11-17")
+            let t1 = t0.addingTimeInterval(86_400)
+            await d.router.mapDriftPass(store, eligible: recs, fresh: [], facts: facts, room: 10, now: t1, day: "2026-11-18")
+            let all = await d.router.memory.lifecycle.all()
+            #expect(recs.allSatisfy { all[$0.id]?.mapCheckedAt != nil })
+            #expect(recs.filter { all[$0.id]?.mapCheckedAt == t1 }.count == MapDrift.maxPerPass)
+        }
+    }
 }

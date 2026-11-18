@@ -95,17 +95,21 @@ extension CommandRouter {
             due.append((r, a, p, e.mapCheckedAt))
         }
         due.sort { ($0.checked ?? .distantPast) < ($1.checked ?? .distantPast) }
-        due = Array(due.prefix(MapDrift.maxPerPass))
+        // no contest left this pass: nothing measured (git not run), nothing marked checked
+        due = room > 0 ? Array(due.prefix(MapDrift.maxPerPass)) : []
 
+        // `checked`: measured this pass (an unknown answer too: round robin past the 50 cap); a drift with no room to
+        // contest stays unchecked, so it is first next pass
         var checked: [UUID] = [], contests = 0
         for (commit, group) in Dictionary(grouping: due, by: { $0.a.commit }) {
             switch await facts.changes(from: commit, to: head, paths: group.map(\.path)) {
-            case .unknown: continue
+            case .unknown: checked += group.map(\.r.id)
             case .anchorGone: for g in group { anchor[g.r.id] = g.a.textHash }
             case .changes(let changes):
                 for g in group {
+                    guard let c = changes[g.path], let x = await facts.extent(g.path), MapDrift.exceeds(c, x) else { checked.append(g.r.id); continue }
+                    guard contests < room else { continue }
                     checked.append(g.r.id)
-                    guard contests < room, let c = changes[g.path], let x = await facts.extent(g.path), MapDrift.exceeds(c, x) else { continue }
                     // not in the anchor's tree (committed after it): nothing it could have drifted from, so it anchors here
                     switch await facts.existed(at: commit, g.path) {
                     case false?: anchor[g.r.id] = g.a.textHash; continue

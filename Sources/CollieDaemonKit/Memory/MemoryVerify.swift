@@ -13,6 +13,8 @@ struct VerifyPayload: Codable, Sendable {
     var body: String
     var flags: [Flag]
     var facts: [Fact]
+    /// A map drift's commit subjects: an agent's text, shown apart from the facts (optional: queued jobs decode).
+    var subjects: [String]? = nil
 }
 
 /// The curator re-checks a contested memory (`verifyContested`) or gates a promotion to longTerm (`verifyPromotion`):
@@ -38,11 +40,12 @@ enum MemoryVerify {
     // ponytail: at most 10 flags reach the curator (the newest); raise if verdicts need more voices
     static let flagsMax = 10
 
-    static func payload(memory r: MemoryRecord, flags: [LifecycleFlag], facts: [ClaimFailure]) -> JSONValue {
+    static func payload(memory r: MemoryRecord, flags: [LifecycleFlag], facts: [ClaimFailure], subjects: [String] = []) -> JSONValue {
         let p = VerifyPayload(id: r.id, kind: r.kind, title: r.title,
                               body: String(String.UnicodeScalarView(r.body.unicodeScalars.prefix(CuratorOps.bodyMax))),
                               flags: flags.filter { $0.verdict != .useful }.suffix(flagsMax).map { .init(verdict: $0.verdict, reason: $0.reason) },
-                              facts: facts.map { .init(kind: $0.kind.rawValue, detail: $0.detail) })
+                              facts: facts.map { .init(kind: $0.kind.rawValue, detail: $0.detail) },
+                              subjects: subjects.isEmpty ? nil : Array(subjects.prefix(MapDrift.subjectsMax)))
         return (try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p))) ?? .null
     }
 
@@ -54,6 +57,11 @@ enum MemoryVerify {
         let mark = "DADOS-\(nonce)"
         var l = [mark, "Marcações:"]
         l += p.flags.isEmpty ? ["- nenhuma"] : p.flags.map { "- \($0.verdict.rawValue): \($0.reason.isEmpty ? "(sem motivo)" : one($0.reason))" }
+        // commit subjects are an agent's words (anti-laundering): their own label, before and apart from the facts
+        if let s = p.subjects, !s.isEmpty {
+            l.append("Assuntos de commit (texto de agente, não verificado):")
+            l += s.map { "- \(one($0))" }
+        }
         l.append("Fatos verificados:")
         l += p.facts.isEmpty ? ["- nenhuma checagem falhou"] : p.facts.map { "- \(one($0.kind)): \(one($0.detail))" }
         l.append("Memória: id \(p.id.uuidString) [\(p.kind.rawValue)] \(one(p.title))")
@@ -102,11 +110,18 @@ extension CommandRouter {
             return false
         }
         let flags = await memory.lifecycle.entry(id)?.flags ?? []
-        // a map's drift (the lifecycle pass's claim-check flag) is a fact for the curator, never a failed check above
-        let drift = r.kind != .map ? [] : flags.filter { $0.session == "claim-check" && $0.reason.hasPrefix("mapDrift ") }
-            .map { ClaimFailure(kind: .mapDrift, detail: String($0.reason.dropFirst("mapDrift ".count))) }
+        // a map's drift (the lifecycle pass's claim-check flag): its numbers are a fact for the curator (never a failed
+        // check above); its commit subjects are an agent's text, apart from the facts and taken out of the flag
+        var drift: [ClaimFailure] = [], subjects: [String] = [], shown = flags
+        if r.kind == .map {
+            for (i, f) in flags.enumerated() where f.session == "claim-check" {
+                guard let (numbers, subj) = MapDrift.split(f.reason) else { continue }
+                drift.append(ClaimFailure(kind: .mapDrift, detail: numbers)); subjects += subj
+                shown[i].reason = MapDrift.reasonPrefix + numbers
+            }
+        }
         return await curator.enqueue(CuratorJob(id: UUID(), kind: kind, store: s.key,
-                                                payload: MemoryVerify.payload(memory: r, flags: flags, facts: failures + drift),
+                                                payload: MemoryVerify.payload(memory: r, flags: shown, facts: failures + drift, subjects: subjects),
                                                 dedupe: "verify:\(kind.rawValue):\(id.uuidString.lowercased())", createdAt: Date(), attempts: 0))
     }
 

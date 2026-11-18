@@ -45,7 +45,8 @@ struct LifecycleEntry: Codable, Sendable, Equatable {
 
 /// The commit a map's text was last known to match in one store (`HEAD` of its root when anchored).
 struct MapAnchor: Codable, Sendable, Equatable {
-    static let max = 8
+    /// ponytail: 32 (pasture + paddocks × texts); `mapDriftPass` prunes stores no longer known, so live ones never evict each other
+    static let max = 32
     var textHash: String
     var commit: String
     var at: Date

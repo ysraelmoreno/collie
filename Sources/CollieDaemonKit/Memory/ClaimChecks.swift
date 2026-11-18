@@ -137,17 +137,11 @@ extension GitFactsLive {
             return PathExtent(isDir: true, lines: nil, files: files)
         case S_IFREG:
             guard st.st_size <= MapDrift.maxReadBytes else { return PathExtent(isDir: false, lines: nil, files: nil) }
-            var lines = 0, total = 0, last: UInt8 = 0x0A, chunk = [UInt8](repeating: 0, count: 64 << 10)
-            while true {   // bounded: a file that grew past the cap after fstat is "unknown size"
-                let n = read(fd, &chunk, chunk.count)
-                guard n >= 0 else { return nil }
-                if n == 0 { break }
-                total += n
-                guard total <= MapDrift.maxReadBytes else { return PathExtent(isDir: false, lines: nil, files: nil) }
-                for b in chunk[0..<n] where b == 0x0A { lines += 1 }
-                last = chunk[n - 1]
+            switch MapDrift.countLines(fd) {
+            case .lines(let n): return PathExtent(isDir: false, lines: n, files: nil)
+            case .tooBig: return PathExtent(isDir: false, lines: nil, files: nil)
+            case .failed: return nil
             }
-            return PathExtent(isDir: false, lines: lines + (total > 0 && last != 0x0A ? 1 : 0), files: nil)
         default: return nil
         }
     }

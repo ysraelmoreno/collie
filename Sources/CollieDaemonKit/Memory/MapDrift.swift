@@ -45,6 +45,40 @@ enum MapDrift {
         return "\(path) +\(c.added) −\(c.deleted) linhas \(since)\(pct)"
     }
 
+    static let reasonPrefix = "mapDrift ", subjectsMark = "; commits: "
+
+    /// A drift flag's reason as written by `mapDriftPass` (`mapDrift <numbers>; commits: a | b`): the numbers (the daemon's,
+    /// a fact) and the commit subjects (an agent's text, never a fact). nil: not a drift reason.
+    static func split(_ reason: String) -> (numbers: String, subjects: [String])? {
+        guard reason.hasPrefix(reasonPrefix) else { return nil }
+        let rest = reason.dropFirst(reasonPrefix.count)
+        guard let r = rest.range(of: subjectsMark) else { return (String(rest), []) }
+        let subjects = rest[r.upperBound...].components(separatedBy: " | ").filter { !$0.isEmpty }
+        return (String(rest[..<r.lowerBound]), subjects)
+    }
+
+    enum LineCount: Equatable { case lines(Int), tooBig, failed }
+    static let maxInterrupts = 8
+
+    /// The lines of what `fd` reads, at most `maxReadBytes` (more: `tooBig`, a file that grew after its fstat).
+    /// `read` is injectable so a test can stage an interrupted read.
+    static func countLines(_ fd: Int32, read: (Int32, UnsafeMutableRawPointer?, Int) -> Int = { Darwin.read($0, $1, $2) }) -> LineCount {
+        var lines = 0, total = 0, last: UInt8 = 0x0A, chunk = [UInt8](repeating: 0, count: 64 << 10), interrupted = 0
+        while true {
+            let n = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            // a signal interrupted it: read again, at most `maxInterrupts` in a row (never spin forever)
+            if n < 0, errno == EINTR, interrupted < maxInterrupts { interrupted += 1; continue }
+            guard n >= 0 else { return .failed }
+            interrupted = 0
+            if n == 0 { break }
+            total += n
+            guard total <= maxReadBytes else { return .tooBig }
+            for b in chunk[0..<n] where b == 0x0A { lines += 1 }
+            last = chunk[n - 1]
+        }
+        return .lines(lines + (total > 0 && last != 0x0A ? 1 : 0))
+    }
+
     /// A full SHA-1 or SHA-256 commit name, nothing git could read as an option or a revision expression.
     static func isCommit(_ s: String) -> Bool {
         (s.count == 40 || s.count == 64) && s.allSatisfy { $0.isHexDigit && !$0.isUppercase }
@@ -79,8 +113,9 @@ extension CommandRouter {
     /// its anchor, or an anchor git no longer has, re-anchors at HEAD. `room`: what is left of the pass's contest cap.
     /// Cost: 1 `rev-parse`, 1 `diff --numstat` per distinct anchor (50 paths a call), 1 `ls-files` per directory measured,
     /// 1 `log` per contest; at most `MapDrift.maxPerPass` maps measured, least recently checked first.
+    /// `live`: the keys of the stores Collie knows (`knownStores`); an entry written here drops other stores' anchors.
     func mapDriftPass(_ store: RepoMemory, eligible: [MemoryRecord], fresh: Set<UUID>, facts: any GitFacts, room: Int,
-                      now: Date, day: String) async {
+                      now: Date, day: String, live: Set<String>? = nil) async {
         let maps = eligible.filter { $0.kind == .map && $0.path.flatMap(MapDrift.norm) != nil }
         guard !maps.isEmpty, let head = await facts.head() else { return }
         let lc = memory.lifecycle, entries = await lc.all(), key = store.key
@@ -117,8 +152,8 @@ extension CommandRouter {
                     case true?: break
                     }
                     let subjects = await facts.subjects(from: commit, to: head, path: g.path)
-                    let reason = "mapDrift " + MapDrift.detail(g.path, c, x, anchor: commit)
-                        + (subjects.isEmpty ? "" : "; commits: " + subjects.joined(separator: " | "))
+                    let reason = MapDrift.reasonPrefix + MapDrift.detail(g.path, c, x, anchor: commit)
+                        + (subjects.isEmpty ? "" : MapDrift.subjectsMark + subjects.joined(separator: " | "))
                     // re-read when written (one actor step): a flag, a verdict or the user's keep that landed while git ran wins
                     var wrote = false
                     let was = entries[g.r.id]
@@ -138,7 +173,10 @@ extension CommandRouter {
         }
         let ids = Array(anchor.keys) + checked
         guard !ids.isEmpty else { return }
+        let keep = live.map { $0.union([key]) }   // nil: prune nothing
         await lc.update(ids, now: now) { id, e in
+            // anchors of stores no longer known (a deleted paddock) and storeless ones go, so live stores never evict each other
+            if let keep { e.mapAnchors?.removeAll { a in a.store.map { !keep.contains($0) } ?? true } }
             // only over the anchor this pass decided from (another writer's newer one stays)
             if let h = anchor[id], e.mapAnchor(for: h, store: key) == entries[id]?.mapAnchor(for: h, store: key) {
                 e.setMapAnchor(MapAnchor(textHash: h, commit: head, at: now, store: key))

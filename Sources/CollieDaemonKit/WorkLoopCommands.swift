@@ -17,10 +17,20 @@ extension CommandRouter {
         guard config.sandboxHome == nil || sandboxed(t) else {
             throw invalid("'\(t.name)' runs without a sandbox: a loop's agents, check and git all run sandboxed; start it from a sandboxed Shepherd")
         }
+        guard let pid = t.paddockId, let paddock = ws.paddocks.first(where: { $0.id == pid }), !paddock.isFolder else {
+            throw invalid("'\(t.name)' is not in a paddock: a loop resets its worktree between attempts; ask the owner for a paddock")
+        }
+        // reserved before the first await: a concurrent work.run (actor reentrancy) finds it taken
+        guard !loopPaddocks.contains(pid) else {
+            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it, collie work stop ends it")
+        }
+        loopPaddocks.insert(pid)
+        var started = false
+        defer { if !started { loopPaddocks.remove(pid) } }
         guard let w = try await work.active(terminal: t.id) else {
             throw invalid("no active work for '\(t.name)'; start one: collie work start <title>")
         }
-        guard let paddock = ws.paddocks.first(where: { $0.id == w.paddockId }), !paddock.isFolder else {
+        guard w.paddockId == pid else {
             throw invalid("work '\(w.title)' is not in a paddock: a loop resets its worktree between attempts; ask the owner for a paddock")
         }
         let open = w.tasks.filter { $0.state == .open }
@@ -64,9 +74,10 @@ extension CommandRouter {
         let id = w.id, starter = t.id
         let task = Task { [weak self] in
             _ = await engine.run(work: id, dir: dir)
-            await self?.loopEnded(id, starter: starter)
+            await self?.loopEnded(id, starter: starter, paddock: pid)
         }
         workLoops[w.id] = (engine, task, false)
+        started = true
         return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")])
     }
 
@@ -80,8 +91,8 @@ extension CommandRouter {
         return .object(["state": .string("stopped")])
     }
 
-    private func loopEnded(_ id: UUID, starter: UUID) async {
-        workLoops[id] = nil
+    private func loopEnded(_ id: UUID, starter: UUID, paddock: UUID) async {
+        workLoops[id] = nil; loopPaddocks.remove(paddock)
         SandboxLaunch.remove(id, root: config.paths.root)
         guard let w = try? await work.get(id) else { return }
         let done = w.tasks.filter { $0.state == .done }.count, deferred = w.tasks.filter { $0.state == .deferred }.count
@@ -107,7 +118,7 @@ extension CommandRouter {
     }
 
     /// Daemon stop: the loops end with it (their state stays `running` until the next start's sweep).
-    func cancelLoops() { for l in workLoops.values { l.task.cancel() }; workLoops = [:] }
+    func cancelLoops() { for l in workLoops.values { l.task.cancel() }; workLoops = [:]; loopPaddocks = [] }
 
     // MARK: what RouterLoopHost needs from the router
 

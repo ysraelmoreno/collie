@@ -175,6 +175,21 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
     }
 
+    /// Finding 3: two concurrent runs never both pass the guard (the actor's awaits come after the reservation).
+    @Test func concurrentRunsStartOneLoop() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "false")
+            async let r1 = work(d, p, x.s, "work.run", ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)])
+            async let r2 = work(d, p, x.s, "work.run", ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)])
+            let rs = try await [r1, r2]
+            #expect(rs.filter(\.ok).count == 1, "\(rs)")
+            #expect(rs.contains { $0.error?.message.contains("already") == true }, "\(rs)")
+            #expect(await loopEnded(d, x.work))
+            #expect(await waitFor(20) { await d.router.ws.terminals.filter { $0.name.hasPrefix("loop-") }.count <= 1 })
+        }
+    }
+
     @Test func stopEndsARunningLoop() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)

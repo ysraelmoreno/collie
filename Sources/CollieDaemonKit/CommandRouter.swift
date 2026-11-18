@@ -75,6 +75,8 @@ actor CommandRouter {
     var jobSweeper: Task<Void, Never>?
     /// `collie work run`: the loops running now, by work id (`stopping`: `work.stop` was asked).
     var workLoops: [UUID: (engine: WorkLoop, task: Task<Void, Never>, stopping: Bool)] = [:]
+    /// Paddocks with a loop, from `work.run`'s first line (before any await) to the loop's end: one loop per paddock.
+    var loopPaddocks: Set<UUID> = []
     var consolidator: Task<Void, Never>?
     /// The work store failed and was logged; reset by the next good read.
     var workStoreBroken = false

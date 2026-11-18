@@ -403,6 +403,49 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(try await r.get().tasks[0].lastFailure == "gate timed out")
     }
 
+    // MARK: evidence (B1.1)
+
+    @Test func passedAttemptRecordsEvidence() async throws {
+        let r = try await Rig([task("a", "echo CHECK-OUT; test -f done.txt")], gate: "echo GATE-OUT"); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { d in
+            try await commit("done.txt", "ok\n", in: d); try await commit("more.txt", "x\n", in: d)
+        }))
+        #expect(await r.run() == .finished)
+        let e = try #require(try await r.get().tasks[0].evidence)
+        let head = try await git(r.repo, "rev-parse", "--short", "HEAD")
+        #expect(e.commits.count == 2 && e.commits[0] == "\(head) edit more.txt" && e.commits[1].hasSuffix(" edit done.txt"), "\(e.commits)")
+        #expect(e.shortstat.contains("2 files changed") && e.shortstat.contains("2 insertions"), "\(e.shortstat)")
+        #expect(e.checkTail == "CHECK-OUT\nGATE-OUT")
+        #expect(e.attempt == 1 && e.seconds >= 0)
+    }
+
+    @Test func failedAttemptRecordsNoEvidence() async throws {
+        let r = try await Rig([task("a", "test -f done.txt"), task("b", "false")], tries: 2); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("loop-a-2", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        // the failed attempt's commit was discarded: only the approved one is evidence
+        #expect(w.tasks[0].evidence?.attempt == 2 && w.tasks[0].evidence?.commits.count == 1, "\(String(describing: w.tasks[0].evidence))")
+        #expect(w.tasks[1].state == .deferred && w.tasks[1].evidence == nil)
+    }
+
+    @Test func evidenceSecretsAreMasked() async throws {
+        let r = try await Rig([task("a", "x=abcdefgh; echo GH_TOKEN=ghp_${x}123456; echo sk-ant-0123456789${x}; echo fine")]); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let tail = try #require(try await r.get().tasks[0].evidence).checkTail
+        #expect(!tail.contains("ghp_abcdefgh123456") && !tail.contains("sk-ant-0123456789abcdefgh"), "\(tail)")
+        #expect(tail.contains("[hidden]") && tail.hasSuffix("fine"))
+    }
+
+    @Test func evidenceTailIsCut() {
+        let long = (1...30).map { "line \($0) " + String(repeating: "x", count: 150) }.joined(separator: "\n") + "\n"
+        let t = WorkLoop.evidenceTail(check: long, gate: nil)
+        #expect(t.count == 2000 && t.hasSuffix("line 30 " + String(repeating: "x", count: 150)))
+        #expect(WorkLoop.evidenceTail(check: (1...30).map { "l\($0)" }.joined(separator: "\n"), gate: nil).hasPrefix("l11\n"))
+    }
+
     @Test func promptWithoutAGateNamesNone() {
         let p = WorkLoop.prompt(task: task("a", "true"), spec: nil, attempt: 1, tries: 3, dir: URL(fileURLWithPath: "/tmp"), notes: [])
         #expect(!p.contains("portão"))

@@ -29,6 +29,7 @@ protocol LoopHost: Sendable {
 /// the same branch and no tracked file is left dirty. The loop never pushes, lands or creates a paddock.
 actor WorkLoop {
     static let noteLines = 40, noteChars = 4000
+    static let evidenceCommits = 20, evidenceLines = 20, evidenceChars = 2000
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration
     private var stopping: Set<UUID> = []
 
@@ -134,6 +135,7 @@ actor WorkLoop {
         }
 
         var reason: String, output = ""
+        var checkOutput = ""   // the check's own, kept for the evidence when a gate's output replaces `output`
         var passed = false
         var blocked: String?   // another terminal of the paddock is working: no reset, the loop stops
         if let failure { reason = failure } else {
@@ -144,7 +146,7 @@ actor WorkLoop {
             do {
                 let budgeted = Duration.seconds(left(loop, since: started))
                 let r = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
-                status = r.status; output = r.stdout + r.stderr
+                status = r.status; output = r.stdout + r.stderr; checkOutput = output
             } catch where error.code == .timeout {
                 status = nil
             } catch { broken = "check could not run: \(error.message)" }
@@ -172,10 +174,17 @@ actor WorkLoop {
         let at = host.now()
         if passed {
             let head = await out(["rev-parse", "--short", "HEAD"], dir) ?? ""
+            let log = await out(["log", "--format=%h %s", "-n", "\(Self.evidenceCommits)", "\(before)..HEAD"], dir) ?? ""
+            let evidence = TaskEvidence(
+                commits: log.split(separator: "\n").map(String.init),
+                shortstat: await out(["diff", "--shortstat", before, "HEAD"], dir) ?? "",
+                checkTail: Self.evidenceTail(check: checkOutput, gate: loop.gate == nil ? nil : output),
+                seconds: Swift.max(0, Int(at.timeIntervalSince(started).rounded())), attempt: n)
             try? await store.update(w.id) { x in
                 // a task dropped or done meanwhile keeps that state
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                     x.tasks[i].state = .done; x.tasks[i].tries = n; x.tasks[i].reason = nil; x.tasks[i].lastFailure = nil; x.tasks[i].updatedAt = at
+                    x.tasks[i].evidence = evidence
                 }
                 Self.endJob(&x, name, head, at: at)
             }
@@ -256,6 +265,15 @@ actor WorkLoop {
     private static func endJob(_ w: inout Work, _ id: String, _ result: String, at: Date) {
         guard let j = w.jobs.firstIndex(where: { $0.id == id && $0.state == .running }) else { return }
         w.jobs[j].state = .finished; w.jobs[j].endedAt = at; w.jobs[j].result = String(result.prefix(280))
+    }
+
+    /// The evidence's `checkTail`: the last `evidenceLines` lines of the check's output, then the gate's (if any),
+    /// secrets hidden (LotBoards.scrub's known shapes), the last `evidenceChars` characters.
+    static func evidenceTail(check: String, gate: String?) -> String {
+        let tails = [check, gate ?? ""].map {
+            $0.trimmingCharacters(in: .newlines).split(separator: "\n", omittingEmptySubsequences: false).suffix(evidenceLines).joined(separator: "\n")
+        }.filter { !$0.isEmpty }
+        return String(LotBoards.scrub(tails.joined(separator: "\n")).suffix(evidenceChars))
     }
 
     /// Why `what` (the check, the gate) did not pass, from its exit status (nil: it timed out); nil = it passed.

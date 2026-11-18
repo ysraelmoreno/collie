@@ -2,16 +2,31 @@ import Foundation
 
 public enum TaskState: String, Codable, Sendable { case open, inProgress, done, deferred, abandoned }
 
+/// What the loop held when it approved a task: `commits` (`<short sha> <subject>`, newest first, at most 20) and
+/// `shortstat` of the attempt, `checkTail` (the last lines of the check's and the gate's output, secrets hidden, at
+/// most 2000 characters), `seconds` the attempt took and `attempt` (1-based) that passed.
+public struct TaskEvidence: Codable, Sendable, Equatable {
+    public var commits: [String]; public var shortstat: String; public var checkTail: String
+    public var seconds: Int; public var attempt: Int
+    public init(commits: [String], shortstat: String, checkTail: String, seconds: Int, attempt: Int) {
+        self.commits = commits; self.shortstat = shortstat; self.checkTail = checkTail; self.seconds = seconds; self.attempt = attempt
+    }
+}
+
 /// One task of a work: `id` is the agent's own, else generated. `spec` (absolute path of a Markdown file) and `check`
 /// (a shell command, exit 0 = passes) matter only to `collie work run`; `tries` is the attempts a loop used and
-/// `lastFailure` one line on why the last one failed.
+/// `lastFailure` one line on why the last one failed. `evidence`: set by the loop when it approves the task; a task
+/// that leaves `done` (reopened, run again) loses it.
 public struct WorkTask: Codable, Sendable, Equatable {
-    public var id: String; public var title: String; public var state: TaskState; public var reason: String?; public var updatedAt: Date
+    public var id: String; public var title: String; public var reason: String?; public var updatedAt: Date
+    public var state: TaskState { didSet { if state != .done { evidence = nil } } }
     public var spec: String?; public var check: String?; public var tries: Int?; public var lastFailure: String?
+    public var evidence: TaskEvidence?
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
-                spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil) {
+                spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
+                evidence: TaskEvidence? = nil) {
         self.id = id; self.title = title; self.state = state; self.reason = reason; self.updatedAt = updatedAt
-        self.spec = spec; self.check = check; self.tries = tries; self.lastFailure = lastFailure
+        self.spec = spec; self.check = check; self.tries = tries; self.lastFailure = lastFailure; self.evidence = evidence
     }
 }
 

@@ -145,6 +145,20 @@ import CollieProtocol
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
         let w = try #require(try d.decode([Work].self, from: Data(json.utf8)).first)
         #expect(w.loop == nil && w.tasks[0].check == nil && w.tasks[0].spec == nil && w.tasks[0].tries == nil && w.tasks[0].lastFailure == nil)
+        #expect(w.tasks[0].evidence == nil)
+    }
+
+    @Test func evidenceRoundTripsAndGoesWhenTheTaskLeavesDone() async throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let s = WorkStore(dir: dir)
+        let w = try await s.start(title: "A", terminal: UUID(), paddockId: nil, branch: nil)
+        let e = TaskEvidence(commits: ["abc1234 feat: x"], shortstat: "1 file changed, 2 insertions(+)", checkTail: "ok", seconds: 7, attempt: 2)
+        try await s.update(w.id) { $0.tasks.append(WorkTask(id: "1", title: "t", state: .done, evidence: e)) }
+        #expect(try #require(try await WorkStore(dir: dir).get(w.id)).tasks[0].evidence == e)
+        try await s.update(w.id) { $0.tasks[0].state = .done }   // still done: kept
+        #expect(try #require(try await s.get(w.id)).tasks[0].evidence == e)
+        try await s.update(w.id) { $0.tasks[0].state = .open }   // reopened: the old evidence is gone
+        #expect(try #require(try await WorkStore(dir: dir).get(w.id)).tasks[0].evidence == nil)
     }
 
     @Test func loopFieldsRoundTrip() async throws {

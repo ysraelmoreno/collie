@@ -213,6 +213,16 @@ import CollieProtocol
 
     // MARK: two stores of one repo (review finding 2): the pasture and a paddock worktree on its own branch
 
+    /// A shell terminal in each dir makes its store a known one (as the pasture and a paddock are in the app).
+    private func know(_ d: Daemon, _ dirs: URL...) async throws {
+        for (i, u) in dirs.enumerated() {
+            let r = try await UnixSocketClient.send(Request(id: "k\(i)", token: d.adminToken, command: "admin.spawn",
+                                                            args: ["name": .string("K\(i)"), "preset": .string("shell"), "cwd": .string(u.path)]),
+                                                    to: d.router.config.paths.socket, timeoutSeconds: 60)
+            #expect(r.ok, "\(r)")
+        }
+    }
+
     private func worktree(_ repo: URL) async throws -> URL {
         let wt = repo.deletingLastPathComponent().appendingPathComponent(repo.lastPathComponent + "-wt")
         _ = try await GitRunner.run(["worktree", "add", "-q", "-b", "side", wt.path], in: repo)
@@ -226,6 +236,7 @@ import CollieProtocol
             let wt = try await worktree(repo)
             defer { try? FileManager.default.removeItem(at: wt) }
             try await commit("f.txt", lines(60, "lado"), in: wt)
+            try await know(d, repo, wt)
             let paddock = await d.router.memory.repo(for: wt.path)
             let r = map(), lc = d.router.memory.lifecycle, t0 = Date()
             try await put(pasture, r); try await put(paddock, r)
@@ -247,6 +258,7 @@ import CollieProtocol
         try await run { d, pasture, repo in
             let wt = try await worktree(repo)
             defer { try? FileManager.default.removeItem(at: wt) }
+            try await know(d, repo, wt)
             let paddock = await d.router.memory.repo(for: wt.path)
             let r = map(), lc = d.router.memory.lifecycle, t0 = Date(), h = LifecycleRules.textHash(r)
             try await put(pasture, r); try await put(paddock, r)
@@ -394,6 +406,44 @@ import CollieProtocol
             let e = await lc.entry(recs[0].id)
             #expect(e?.contestedNow == false && e?.flags.isEmpty == true)
             #expect(e?.mapAnchors == before)   // not re-anchored over it either
+        }
+    }
+
+    // MARK: many stores (before-release point A): no store evicts another's anchor; dead stores' anchors are pruned
+
+    /// The pasture and 8 paddocks, each passing daily: anchored once, then never re-anchored (each one is measured).
+    @Test func nineLiveStoresKeepTheirAnchors() async throws {
+        try await run { d, _, _ in
+            var stores: [RepoMemory] = [], dirs: [URL] = []
+            for _ in 0..<9 { let r = try await makeRepo(); dirs.append(r); stores.append(await d.router.memory.repo(for: r.path)) }
+            defer { for u in dirs { try? FileManager.default.removeItem(at: u) } }
+            let r = map(), lc = d.router.memory.lifecycle, t0 = Date(), live = Set(stores.map(\.key)), h = LifecycleRules.textHash(r)
+            await lc.update(r.id, now: t0) { _ in }
+            for day in 0..<3 {
+                for s in stores {
+                    await d.router.mapDriftPass(s, eligible: [r], fresh: [], facts: CountingFacts(.changes([:])), room: 10,
+                                                now: t0.addingTimeInterval(Double(day) * 86_400), day: "d\(day)", live: live)
+                }
+            }
+            let e = await lc.entry(r.id)
+            for s in stores { #expect(e?.mapAnchor(for: h, store: s.key)?.at == t0, "\(s.key)") }   // anchored on day 0 only
+        }
+    }
+
+    /// Anchors of stores no longer known (deleted paddocks) go when the entry is next written; live ones stay.
+    @Test func deadStoresAnchorsArePruned() async throws {
+        try await run { d, store, _ in
+            let r = map(), lc = d.router.memory.lifecycle, t0 = Date(), h = LifecycleRules.textHash(r)
+            await lc.update(r.id, now: t0) { e in
+                for i in 0..<20 { e.setMapAnchor(MapAnchor(textHash: h, commit: CountingFacts.anchor, at: t0, store: "/dead/\(i)")) }
+                e.setMapAnchor(MapAnchor(textHash: h, commit: CountingFacts.anchor, at: t0, store: "/alive"))
+                e.setMapAnchor(MapAnchor(textHash: "older", commit: CountingFacts.anchor, at: t0))   // storeless: never matched
+            }
+            await d.router.mapDriftPass(store, eligible: [r], fresh: [], facts: CountingFacts(.changes([:])), room: 10,
+                                        now: t0, day: "d", live: [store.key, "/alive"])
+            let keys = Set(await lc.entry(r.id)?.mapAnchors?.compactMap(\.store) ?? [])
+            #expect(keys == [store.key, "/alive"])
+            #expect(await lc.entry(r.id)?.mapAnchors?.contains { $0.store == nil } == false)
         }
     }
 }

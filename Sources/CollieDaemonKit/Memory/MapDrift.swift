@@ -79,8 +79,9 @@ extension CommandRouter {
     /// its anchor, or an anchor git no longer has, re-anchors at HEAD. `room`: what is left of the pass's contest cap.
     /// Cost: 1 `rev-parse`, 1 `diff --numstat` per distinct anchor (50 paths a call), 1 `ls-files` per directory measured,
     /// 1 `log` per contest; at most `MapDrift.maxPerPass` maps measured, least recently checked first.
+    /// `live`: the keys of the stores Collie knows (`knownStores`); an entry written here drops other stores' anchors.
     func mapDriftPass(_ store: RepoMemory, eligible: [MemoryRecord], fresh: Set<UUID>, facts: any GitFacts, room: Int,
-                      now: Date, day: String) async {
+                      now: Date, day: String, live: Set<String>? = nil) async {
         let maps = eligible.filter { $0.kind == .map && $0.path.flatMap(MapDrift.norm) != nil }
         guard !maps.isEmpty, let head = await facts.head() else { return }
         let lc = memory.lifecycle, entries = await lc.all(), key = store.key
@@ -138,7 +139,10 @@ extension CommandRouter {
         }
         let ids = Array(anchor.keys) + checked
         guard !ids.isEmpty else { return }
+        let keep = live.map { $0.union([key]) }   // nil: prune nothing
         await lc.update(ids, now: now) { id, e in
+            // anchors of stores no longer known (a deleted paddock) and storeless ones go, so live stores never evict each other
+            if let keep { e.mapAnchors?.removeAll { a in a.store.map { !keep.contains($0) } ?? true } }
             // only over the anchor this pass decided from (another writer's newer one stays)
             if let h = anchor[id], e.mapAnchor(for: h, store: key) == entries[id]?.mapAnchor(for: h, store: key) {
                 e.setMapAnchor(MapAnchor(textHash: h, commit: head, at: now, store: key))

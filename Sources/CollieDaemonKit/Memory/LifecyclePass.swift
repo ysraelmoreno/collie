@@ -59,7 +59,7 @@ extension CommandRouter {
         }
         // (4b) a map whose file changed past the threshold since its anchor commit: contested, never archived on its own
         await mapDriftPass(store, eligible: eligible, fresh: fresh, facts: facts, room: LifecycleRules.maxClaimContestsPerPass - contests,
-                           now: now, day: day)
+                           now: now, day: day, live: Set(await knownStores().map(\.key)))
         entries = await lc.all()
 
         // (5) provisional and unused past its kind's ttl (21 or 60 days): archived (reversible), each in the digest

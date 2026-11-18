@@ -101,6 +101,13 @@ The owner wants the user out of the loop: the working agent judges whether an in
 - Work-capture proposals (`proposed`, 14-day expiry today) become `provisional` active once the claim checks pass, instead of expiring unseen; their provisional clock starts at that moment, not at proposal creation. (My call; see below.)
 - The label `(não revisada, <origem>)` is replaced by `(provisória)` on provisional memories only. Earned, longTerm, reviewed and pinned memories carry none.
 
+### Session-start budget (leva 2, item 5, 2026-11-17)
+
+- Order inside the 4 096 B: header and pinned memories in full, long-term (≤ 3, ≤ 600 B), the pitfall checklist (≤ 1 200 B), Cursor's focus block (its own budget, total 9 000 B), the index.
+- Pinned cap: header + pinned in full take at most `limit − 2 496` B (`MemoryService.pinnedReserve`; never below the header), 1 600 B of the usual 4 096, so the long-term block (600), the checklist (1 200) and the index (≥ 696) keep their room. Measured that day: the real project had 0 pinned of 251 active (the block was the bare header), so the cap only binds past ~4 pinned lines. A pinned memory past the cap is never dropped: it becomes an index line marked `(fixada)`, first in the index; it is not counted as injected.
+- Index order: by use (number of `usefulUses` in `lifecycle.json`), ties newest first, records without a lifecycle entry last. A title that doesn't fit is skipped and the next ones are still tried (was: the index stopped at the first one).
+- Provenance unchanged: an unverified memory (pinned or not) is only a title marked `(editada fora do Collie)`, never `(fixada)`, never in full.
+
 ### Observability
 
 `memory.stats` gains: counts per tier, promotions, demotions, flags by verdict, contested open, `verify` results (valid/invalid/deferred), provisional archived. The digest lists every promotion and archive with `memory.undo`.

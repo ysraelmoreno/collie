@@ -239,7 +239,10 @@ private func rec(_ title: String, scope: MemoryScope = .project, lot: UUID? = ni
         let text = await mem.context(for: UUID(), cwd: repo.path, lot: lot)
         #expect(text.utf8.count <= 4096 && text.contains(MemoryService.indexTitle), "\(text.utf8.count)")
         let idx = try #require(text.range(of: MemoryService.indexTitle))
-        #expect(text[idx.upperBound...].hasPrefix("\n- Lot memory number 499 "))   // newest first
+        // pinned past the cap first (marked), then the rest newest first (no lifecycle entries here)
+        let lines = text[idx.upperBound...].split(separator: "\n")
+        #expect(lines.first?.hasSuffix(MemoryService.pinnedOverflowMark) == true, "\(text)")
+        #expect(lines.first { !$0.hasSuffix(MemoryService.pinnedOverflowMark) }?.hasPrefix("- Lot memory number 499 ") == true, "\(text)")
     }
 
     /// Review Focus 5: moved to another lot mid-session, the next prompt injects from the new lot, from scratch.

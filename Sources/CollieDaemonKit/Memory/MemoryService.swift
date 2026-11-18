@@ -364,8 +364,9 @@ actor MemoryService {
             pool += ok.filter { !$0.pinned }   // longTerm reaches a lot member too, as pinned does
         }
         let entries = await lifecycle.all()
-        var (text, ids) = Self.renderContext(pinned, limit: limit, entries: entries)
+        var (text, ids) = Self.renderContext(pinned, limit: Self.pinnedLimit(limit), entries: entries)
         guard !text.isEmpty else { return ContextParts() }
+        let overflow = pinned.filter { !ids.contains($0.id) }   // past the cap: a marked index line, never dropped
         let lt = Self.renderLongTerm(pool, entries: entries, limit: limit - text.utf8.count)
         text += lt.text; ids.formUnion(lt.ids)
         var owned = owner.filter { ids.contains($0.key) }
@@ -379,8 +380,8 @@ actor MemoryService {
                                   exclude: Set(owned.keys).union(cl.ids.keys))
             if !fb.text.isEmpty { text += "\n\n" + fb.text; owned.merge(fb.ids) { a, _ in a } }
         }
-        Self.appendIndex(&text, rest.filter { cl.ids[$0.id] == nil && fb.ids[$0.id] == nil && !ids.contains($0.id) },
-                         limit: focusBlock?.total ?? limit, unverified: unverified)
+        Self.appendIndex(&text, overflow + rest.filter { cl.ids[$0.id] == nil && fb.ids[$0.id] == nil && !ids.contains($0.id) },
+                         limit: focusBlock?.total ?? limit, unverified: unverified, entries: entries, pinned: Set(overflow.map(\.id)))
         return ContextParts(text: text, ids: owned, recs: (pinned + pool).filter { ids.contains($0.id) } + cl.recs, checklist: cl.ids,
                             checklistText: cl.text.isEmpty ? "" : "\n\n" + cl.text, focused: fb.recs, focusText: fb.text)
     }
@@ -1001,24 +1002,40 @@ actor MemoryService {
 
     static let indexTitle = "Índice (só títulos; `collie memory search` traz o resto):"
 
-    /// `full` as `renderContext(_:limit:)`, then one line per `index` record (title only, newest first) in what is left.
+    /// `full` as `renderContext(_:limit:)`, then one line per `index` record (title only, `appendIndex`'s order) in what is left.
     /// Only `full` ids count as injected: an index line can still bring its body by prompt relevance.
     static func renderContext(_ full: [MemoryRecord], index: [MemoryRecord], limit: Int, entries: [UUID: LifecycleEntry] = [:]) -> (text: String, ids: Set<UUID>) {
         var (out, ids) = renderContext(full, limit: limit, entries: entries)
         guard !out.isEmpty else { return (out, ids) }
-        appendIndex(&out, index, limit: limit)
+        appendIndex(&out, index, limit: limit, entries: entries)
         return (out, ids)
     }
 
     /// The index's mark for a memory that isn't what the daemon wrote (P1).
     static let unverifiedMark = " (editada fora do Collie)"
 
-    static func appendIndex(_ out: inout String, _ index: [MemoryRecord], limit: Int, unverified: Set<UUID> = []) {
+    /// The index's mark for a pinned memory past `pinnedLimit` (its body is a `collie memory get` away).
+    static let pinnedOverflowMark = " (fixada)"
+
+    /// Bytes of the session start header + pinned memories leave to the long-term block (≤ 600), the checklist (≤ 1 200)
+    /// and the index (≥ 696): of 4 096, pinned get 1 600. Measured 2026-11-17: the real project has 0 pinned (the block is
+    /// the ~250 B header), so this binds only past ~4 pinned lines (≤ ~420 B each: title + first line).
+    static let pinnedReserve = 2_496
+    /// Header + pinned in full within `limit`: `limit - pinnedReserve`, never below the header (an empty start otherwise).
+    static func pinnedLimit(_ limit: Int) -> Int { Swift.min(limit, Swift.max(limit - pinnedReserve, header.utf8.count)) }
+
+    /// One title line per record: `pinned` (pinned past the cap, marked) first, then the most used (`usefulUses` in
+    /// `entries`), ties newest first, records without a lifecycle entry last. A line that doesn't fit is skipped, not the end.
+    static func appendIndex(_ out: inout String, _ index: [MemoryRecord], limit: Int, unverified: Set<UUID> = [],
+                            entries: [UUID: LifecycleEntry] = [:], pinned: Set<UUID> = []) {
+        func key(_ r: MemoryRecord) -> (Int, Int, Int, Date) {
+            (pinned.contains(r.id) ? 1 : 0, entries[r.id] == nil ? 0 : 1, entries[r.id]?.usefulUses.count ?? 0, r.updatedAt)
+        }
         var started = false
-        for r in index.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+        for r in index.sorted(by: { key($0) > key($1) }) {
             let add = (started ? "" : "\n\n\(indexTitle)") + "\n- " + (r.kind == .procedure ? "[procedimento] " : "") + (r.kind == .map ? r.path.map { "\(oneLine($0, max: 200)) — " } ?? "" : "") + oneLine(r.title, max: 200)
-                + (unverified.contains(r.id) ? unverifiedMark : "")
-            guard out.utf8.count + add.utf8.count <= limit else { break }
+                + (unverified.contains(r.id) ? unverifiedMark : pinned.contains(r.id) ? pinnedOverflowMark : "")
+            guard out.utf8.count + add.utf8.count <= limit else { continue }
             out += add; started = true
         }
     }

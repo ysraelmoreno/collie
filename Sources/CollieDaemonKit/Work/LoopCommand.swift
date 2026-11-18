@@ -14,7 +14,7 @@ enum LoopCommand {
     static let body = """
         A loop runs each task with a fresh agent and nobody to answer questions. Only the task's check decides whether it is done. Do this, in order:
 
-        1. Only a Shepherd inside a paddock can start a loop (it resets that worktree between attempts). If you are not one, tell the owner to run this from a Shepherd terminal in a paddock, and stop.
+        1. Only a Shepherd inside a paddock with its own worktree can start a loop (it resets that worktree between attempts; a paddock that is a shared folder does not qualify). If you are not one, tell the owner to run this from a Shepherd terminal in such a paddock, and stop.
         2. Break the request into small tasks, in the order they must run. For each one write a spec file in the project (what to build, the acceptance criteria) and choose a check: a shell command, run in the paddock's worktree, that exits 0 only when the result is really there. A check that only proves the code builds, or that the task's own new tests pass, is weak: say so when you cannot do better.
         3. Show the owner, in chat: every task, its spec file, its check word for word, and the limits you propose (--max attempts in all, required, 1 to 30; --tries per task, default 3; --timeout per turn; --budget for everything). Wait for the answer. Register and run nothing before it.
         4. Once the owner agrees: collie work task add "<title>" --spec <file> --check '<command>' for each task, then collie work run --max <n>. Every open task of the work needs a check: defer or drop the ones that are not part of the loop.

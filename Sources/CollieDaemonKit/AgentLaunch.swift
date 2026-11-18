@@ -99,10 +99,11 @@ public enum AgentLaunch {
     /// `--sandbox danger-full-access`; a custom `cursor-agent` command `--sandbox disabled`). Collie's still applies.
     /// `filesDir`: the sandboxed terminal's handed-over files (`SandboxLaunch.handOver`); Claude gets it as a working
     /// directory (`permissions.additionalDirectories`, in Collie's settings file only), so reading one never prompts.
-    /// `pluginDir`: Claude only, `--plugin-dir` (the terminal's procedures as skills, `ProcedureSkills`).
+    /// `pluginDirs`: Claude only, one `--plugin-dir` each, in order (the terminal's procedures as skills, `ProcedureSkills`;
+    /// `/collie:loop`, `LoopCommand`).
     public static func launchSpec(for rec: TerminalRecord, env: [String: String], hooksDir: URL, collie: URL, shell: String,
                                   codexMCP: Bool = false, innerSandboxOff: Bool = false, resume: Bool = false,
-                                  filesDir: URL? = nil, pluginDir: URL? = nil) throws -> LaunchSpec {
+                                  filesDir: URL? = nil, pluginDirs: [URL] = []) throws -> LaunchSpec {
         func spec(_ args: [String]) -> LaunchSpec { LaunchSpec(executable: shell, arguments: args, environment: env, cwd: rec.cwd) }
         func claude(_ base: String) throws -> LaunchSpec {
             let f = settingsFile(rec.id, in: hooksDir)
@@ -135,7 +136,7 @@ public enum AgentLaunch {
             // the model it ran (summon --model, collie model, its transcript), unless the command picks one itself
             let model = rec.model.flatMap { base.contains("--model") ? nil : " --model " + quote($0) } ?? ""
             return spec(["-lc", base + model + " --settings " + quote(f.path) + " --mcp-config " + quote(m.path)
-                         + (pluginDir.map { " --plugin-dir " + quote($0.path) } ?? "") + (resume ? " --continue" : "")])
+                         + pluginDirs.map { " --plugin-dir " + quote($0.path) }.joined() + (resume ? " --continue" : "")])
         }
         if let c = rec.command {
             // M4: the program past `env VAR=…` and a path (R19/B3's detection): Claude gets Collie's settings file

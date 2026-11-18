@@ -931,11 +931,12 @@ actor CommandRouter {
         // R25: Claude resumes only a conversation it had (else `--continue` exits at once)
         let resume = resume && AgentLaunch.hasClaudeConversation(cwd: rec.cwd, home: sandboxHomeDir, env: user)
         await memory.endSession(rec.id)   // a new process is a new session: memories may be injected again
-        let pluginDir = await skillsDir(rec, user: user)   // after endSession: what it delivers counts for the new session
+        // after endSession: what it delivers counts for the new session
+        let pluginDirs = [await skillsDir(rec, user: user), await loopCommandDir(rec, user: user)].compactMap { $0 }
         let token = await auth.issue(for: rec.id)
         let p: PTYProcess, sb: ScrollbackBuffer?
         do {
-            let spec = try launchSpec(rec, token: token, user: user, resume: resume, pluginDir: pluginDir)
+            let spec = try launchSpec(rec, token: token, user: user, resume: resume, pluginDirs: pluginDirs)
             p = try await registry.spawn(rec, launch: spec, sandbox: sandboxed(rec) ? try prepareSandbox(rec) : nil)
             sb = await registry.scrollback(rec.id)
             if let sb { await asks.attach(rec, process: p, scrollback: sb) }
@@ -1025,7 +1026,7 @@ actor CommandRouter {
     func agentEnv(_ rec: TerminalRecord) async -> [String: String] { rec.preset == .shell ? [:] : await userEnv.current() }
 
     /// `user` (from `agentEnv`) under Collie's keys.
-    func launchSpec(_ rec: TerminalRecord, token: String, user: [String: String], resume: Bool = false, pluginDir: URL? = nil) throws -> LaunchSpec {
+    func launchSpec(_ rec: TerminalRecord, token: String, user: [String: String], resume: Bool = false, pluginDirs: [URL] = []) throws -> LaunchSpec {
         let env = ProcessInfo.processInfo.environment
         var e: [String: String] = [
             "COLLIE_SOCKET": config.paths.socket.path, "COLLIE_TERMINAL_ID": rec.id.uuidString, "COLLIE_TOKEN": token,
@@ -1047,7 +1048,7 @@ actor CommandRouter {
         return try AgentLaunch.launchSpec(for: rec, env: e, hooksDir: hooksDir, collie: config.collieExecutable,
                                           shell: config.shell, codexMCP: env["COLLIE_CODEX_MCP"] == "1", innerSandboxOff: sandboxed(rec),
                                           resume: resume, filesDir: sandboxed(rec) ? SandboxLaunch.filesDir(rec.id, root: config.paths.root) : nil,
-                                          pluginDir: pluginDir)
+                                          pluginDirs: pluginDirs)
     }
 
     /// A file the daemon made for a sandboxed caller (an `outputFile` command's `path`, built-in or external) cloned into the terminal's readable

@@ -1,0 +1,61 @@
+import Foundation
+import CollieCore
+
+/// `/collie:loop`: a static command in a per-terminal plugin named `collie`
+/// (`<root>/sandbox/<terminal>/plugin/collie`, beside `collie-procedures`; removed with the terminal by `SandboxLaunch.remove`).
+/// It only teaches the procedure: `work.run`'s refusals and the owner's card are what enforce it.
+enum LoopCommand {
+    static let plugin = "collie", name = "loop"
+
+    /// The procedure, no frontmatter. A constant: nothing is interpolated (no backtick either, so no inline shell).
+    static let body = """
+        A loop runs each task with a fresh agent and nobody to answer questions. Only the task's check decides whether it is done. Do this, in order:
+
+        1. Only a Shepherd inside a paddock can start a loop (it resets that worktree between attempts). If you are not one, tell the owner to run this from a Shepherd terminal in a paddock, and stop.
+        2. Break the request into small tasks, in the order they must run. For each one write a spec file in the project (what to build, the acceptance criteria) and choose a check: a shell command, run in the paddock's worktree, that exits 0 only when the result is really there. A check that only proves the code builds, or that the task's own new tests pass, is weak: say so when you cannot do better.
+        3. Show the owner, in chat: every task, its spec file, its check word for word, and the limits you propose (--max attempts in all, required, 1 to 30; --tries per task, default 3; --timeout per turn; --budget for everything). Wait for the answer. Register and run nothing before it.
+        4. Once the owner agrees: collie work task add "<title>" --spec <file> --check '<command>' for each task, then collie work run --max <n>. Every open task of the work needs a check: defer or drop the ones that are not part of the loop.
+        5. The owner now gets a card in the Collie app with the same tasks, checks and limits. Only their Permitir starts the loop: tell them to look at it. Do not edit the paddock's worktree while the loop runs.
+        6. A line "[collie] Laço de … terminou" reaches you when it ends. Then run collie work status and report what passed, what was deferred and why. Never land or push.
+
+        To stop a loop: collie work stop. Answer in the owner's language.
+
+        """
+
+    /// `commands/loop.md`. `arguments` true (Claude): the first line carries `$ARGUMENTS`;
+    /// false (an agent that appends what follows the command): "The owner's request follows this command."
+    static func markdown(arguments: Bool) -> String {
+        "---\ndescription: Run a list of tasks unattended in a Collie loop (collie work run)\nargument-hint: <what to build>\n---\n\n"
+            + (arguments ? "The owner asked for an unattended loop: $ARGUMENTS" : "The owner's request follows this command.")
+            + "\n\n" + body
+    }
+
+    static func dir(_ terminal: UUID, root: URL) -> URL {
+        SandboxLaunch.dir(terminal, root: root).appendingPathComponent("plugin").appendingPathComponent(plugin)
+    }
+
+    /// `.claude-plugin/plugin.json` and `commands/loop.md`, built beside `dir` and swapped in. Refuses a symlink at
+    /// `dir`, `plugin/` or the terminal's dir. Dirs 0700, files 0600.
+    static func render(into dir: URL) throws {
+        try ProcedureSkills.swapIn(dir) { tmp in
+            try ProcedureSkills.mkdir(tmp.appendingPathComponent(".claude-plugin"))
+            try ProcedureSkills.mkdir(tmp.appendingPathComponent("commands"))
+            try ProcedureSkills.write(#"{"name":"collie","version":"1.0.0","description":"Collie commands"}"#,
+                                      tmp.appendingPathComponent(".claude-plugin/plugin.json"))
+            try ProcedureSkills.write(markdown(arguments: true), tmp.appendingPathComponent("commands/\(name).md"))
+        }
+    }
+}
+
+extension CommandRouter {
+    /// nil: not Claude, no `--plugin-dir` in the installed claude, or the render failed (logged; it launches as before).
+    func loopCommandDir(_ rec: TerminalRecord, user: [String: String]) async -> URL? {
+        guard AgentLaunch.isClaude(rec), await config.claudePluginDir(ProcessInfo.processInfo.environment.merging(user) { _, b in b }) else { return nil }
+        let dir = LoopCommand.dir(rec.id, root: config.paths.root)
+        do { try LoopCommand.render(into: dir) } catch {
+            FileHandle.standardError.write(Data("collied: loop command \(dir.path): \(error)\n".utf8))
+            return nil
+        }
+        return dir
+    }
+}

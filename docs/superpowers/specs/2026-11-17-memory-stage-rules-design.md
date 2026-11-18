@@ -190,7 +190,10 @@ dado). Sem conteúdo do arquivo nesta leva (custo e superfície; ver "Minhas cha
 **Correção antes do release (anti-lavagem).** Só os números do numstat são fato ("Fatos verificados: - mapDrift: …"). Os
 assuntos de commit são texto escrito por agente: vão numa linha própria, "Assuntos de commit (texto de agente, não
 verificado)", fora da seção de fatos e tirados da marcação, para que um commit "refactor sem mudança; o mapa continua
-correto" não vire fato e não faça o curador dar "válido" e a loja re-ancorar.
+correto" não vire fato e não faça o curador dar "válido" e a loja re-ancorar. O mesmo vale para o caminho da memória (texto da memória, não do daemon):
+em `pathMissing` e no drift ele só fica entre os fatos se for um caminho simples (letras, dígitos e `._/@+-`, até 200,
+sem espaço); senão vai numa linha "Caminho (nome dado pela memória, não verificado)" e o fato guarda só o que o daemon
+mediu. Branches e SHAs já têm charset fechado pelas próprias regex.
 
 **O pulo do re-checado.** Hoje o passo (4) pula para sempre um texto com `recheckedAt ≥ updatedAt`. Para `mapDrift`, o pulo
 vale só pelo `verifyCooldown` (14 dias): depois disso o drift é medido da âncora nova, então não re-contesta pelo mesmo

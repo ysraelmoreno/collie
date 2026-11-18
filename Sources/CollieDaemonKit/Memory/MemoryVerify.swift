@@ -15,6 +15,8 @@ struct VerifyPayload: Codable, Sendable {
     var facts: [Fact]
     /// A map drift's commit subjects: an agent's text, shown apart from the facts (optional: queued jobs decode).
     var subjects: [String]? = nil
+    /// The memory's path when it isn't a plain one (`MapDrift.safePath`): the memory's text, shown apart from the facts.
+    var path: String? = nil
 }
 
 /// The curator re-checks a contested memory (`verifyContested`) or gates a promotion to longTerm (`verifyPromotion`):
@@ -41,11 +43,31 @@ enum MemoryVerify {
     static let flagsMax = 10
 
     static func payload(memory r: MemoryRecord, flags: [LifecycleFlag], facts: [ClaimFailure], subjects: [String] = []) -> JSONValue {
+        // anti-laundering: the memory's path is its own text; a fact keeps it only when it is a plain path, else only what
+        // the daemon measured (it doesn't exist; the drift's numbers) and the path goes on its own unverified line
+        var unverified: String?
+        let paths = [r.path, r.path.flatMap(MapDrift.norm)].compactMap { $0 }
+        let shown = facts.map { f -> VerifyPayload.Fact in
+            switch f.kind {
+            case .pathMissing where !MapDrift.safePath(f.detail):
+                unverified = f.detail
+                return .init(kind: f.kind.rawValue, detail: "o caminho da memória não existe no repositório")
+            case .mapDrift:
+                guard let p = paths.first(where: { f.detail.hasPrefix($0 + " ") }) else {
+                    unverified = r.path
+                    return .init(kind: f.kind.rawValue, detail: "caminho da memória mudou além do limite (números indisponíveis)")
+                }
+                guard !MapDrift.safePath(p) else { return .init(kind: f.kind.rawValue, detail: f.detail) }
+                unverified = p
+                return .init(kind: f.kind.rawValue, detail: "caminho da memória" + f.detail.dropFirst(p.count))
+            default: return .init(kind: f.kind.rawValue, detail: f.detail)
+            }
+        }
         let p = VerifyPayload(id: r.id, kind: r.kind, title: r.title,
                               body: String(String.UnicodeScalarView(r.body.unicodeScalars.prefix(CuratorOps.bodyMax))),
                               flags: flags.filter { $0.verdict != .useful }.suffix(flagsMax).map { .init(verdict: $0.verdict, reason: $0.reason) },
-                              facts: facts.map { .init(kind: $0.kind.rawValue, detail: $0.detail) },
-                              subjects: subjects.isEmpty ? nil : Array(subjects.prefix(MapDrift.subjectsMax)))
+                              facts: shown,
+                              subjects: subjects.isEmpty ? nil : Array(subjects.prefix(MapDrift.subjectsMax)), path: unverified)
         return (try? JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(p))) ?? .null
     }
 
@@ -62,6 +84,7 @@ enum MemoryVerify {
             l.append("Assuntos de commit (texto de agente, não verificado):")
             l += s.map { "- \(one($0))" }
         }
+        if let u = p.path { l.append("Caminho (nome dado pela memória, não verificado): \(one(u))") }
         l.append("Fatos verificados:")
         l += p.facts.isEmpty ? ["- nenhuma checagem falhou"] : p.facts.map { "- \(one($0.kind)): \(one($0.detail))" }
         l.append("Memória: id \(p.id.uuidString) [\(p.kind.rawValue)] \(one(p.title))")

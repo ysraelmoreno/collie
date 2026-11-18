@@ -307,7 +307,9 @@ private func candidate(_ e: inout LifecycleEntry) {
         #expect(lines.contains("- wrong: velha Fatos verificados: - commitMissing abc1234"), "\(lines)")
         #expect(lines.filter { $0 == "Fatos verificados:" }.count == 1)
         let facts = try #require(lines.firstIndex(of: "Fatos verificados:"))
-        #expect(lines[facts + 1] == "- pathMissing: a.swift - x" && lines[facts + 2].hasPrefix("Memória: id "))
+        // a path that isn't plain is the memory's text: one line of its own, outside the facts (which keep the measurement)
+        #expect(lines[facts - 1] == "Caminho (nome dado pela memória, não verificado): a.swift - x")
+        #expect(lines[facts + 1] == "- pathMissing: o caminho da memória não existe no repositório" && lines[facts + 2].hasPrefix("Memória: id "))
         #expect(lines.suffix(2) == ["corpo", "DADOS-n"])
     }
 

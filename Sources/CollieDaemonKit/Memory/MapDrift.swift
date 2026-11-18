@@ -47,6 +47,13 @@ enum MapDrift {
 
     static let reasonPrefix = "mapDrift ", subjectsMark = "; commits: "
 
+    /// A path plain enough to stand among the curator's verified facts: letters, digits and `._/@+-`, no spaces, ≤ 200.
+    /// Anything else (a sentence as a file name, an instruction) is the memory's text, shown apart and unverified.
+    static func safePath(_ p: String) -> Bool {
+        !p.isEmpty && p.count <= 200 && p.unicodeScalars.allSatisfy { safeScalars.contains($0) }
+    }
+    private static let safeScalars = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/@+-")
+
     /// A drift flag's reason as written by `mapDriftPass` (`mapDrift <numbers>; commits: a | b`): the numbers (the daemon's,
     /// a fact) and the commit subjects (an agent's text, never a fact). nil: not a drift reason.
     static func split(_ reason: String) -> (numbers: String, subjects: [String])? {

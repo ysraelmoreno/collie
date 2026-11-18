@@ -56,6 +56,7 @@ collie panel open device --serial <serial>
 collie artifact new prototype minha-tela
 collie memory search "<assunto>"
 collie work status
+collie work run    # laço autônomo: um agente novo por tentativa, o check decide (docs/referencia.md)
 ```
 
 ⌘K abre a paleta de comandos; ⌘, abre as Preferências.

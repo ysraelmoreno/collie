@@ -293,4 +293,18 @@ import CollieProtocol
         let lines = { (x: String) in x.split(separator: "\n").filter { !$0.hasPrefix("- Memory:") } }
         #expect(on.count <= 1500 && lines(on) == lines(off), "\(on.count)\n\(on)\n---\n\(off)")
     }
+
+    /// `collie work run` only for a Shepherd in a paddock (a loop needs one), with the owner's approval first.
+    @Test func workRunLineOnlyForPaddockShepherds() {
+        let approval = "only after the owner approved the task list and the checks"
+        let pad = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [])
+        #expect(pad.count <= 1500 && pad.contains("collie work run") && pad.contains(approval), "\(pad.count)\n\(pad)")
+        #expect(pad.contains("work task add --spec --check") && pad.contains("work stop"))
+        for t in [CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: nil, peers: ["Bob"], panels: []),
+                  CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: "P", peers: ["Bob"], panels: []),
+                  CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: []),
+                  CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], sharedFolder: ["x"])] {
+            #expect(!t.contains("collie work run"), "\(t)")
+        }
+    }
 }

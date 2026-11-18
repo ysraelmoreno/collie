@@ -114,6 +114,11 @@ enum CollieOrientation {
                 }
             }
             lines.append("- Herds: collie herd list|apply <id> --name <n>|save <name> --terminals a,b")
+            // collie work run needs a paddock it has to itself: not in a shared folder (its rule needs the room). One line,
+            // gone only in the tightest form (a paddock Shepherd is already compact). The detail: work run --help, docs/referencia.md
+            if paddock != nil && sharedFolder.isEmpty && !tight {
+                lines.append("- Loop: work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks.")
+            }
             if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")

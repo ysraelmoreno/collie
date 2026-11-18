@@ -2,6 +2,9 @@
 
 Status: draft for the owner's approval (name and the three decisions settled 2026-11-17). Nothing here is built; `scripts/dev/work-loop.sh` is the prototype it replaces.
 
+Update 2026-11-18: slice 1 built (branch `feat/work-run`); the prototype is retired. The Shepherd's orientation teaches
+the loop in one line, only in a paddock (see the plan's Task 5 deviation); the detail is in `docs/referencia.md`.
+
 ## Why
 
 The owner wants to hand a list of tasks to Collie and come back to finished, verified commits ("ships while I sleep",

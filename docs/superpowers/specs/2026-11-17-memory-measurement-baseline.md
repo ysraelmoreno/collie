@@ -57,3 +57,44 @@ O log não registra o uso útil (`addUse`): `resolvePending` grava só em `lifec
 - **Agente**: o uso acontece no próximo prompt **do mesmo terminal**, então o evento `used` leva o terminal e o log carimba o mesmo agente da injeção. Um agente sem hook de prompt (Cursor, Codex) tem `candidates` 0 e `rate` nil; o sinal dele são os `flags`. As marcações agora levam o terminal (antes `byAgent.useful` nunca achava o agente).
 - **Bordas do período**: injeção e uso são contados pelo horário do próprio evento; um par que cruza a borda se separa (no máximo um prompt por borda e terminal).
 - **Compatibilidade**: linhas antigas sem `eligible`/`used` contam como injetadas, nunca como candidatas. Daemon antigo + app novo: o painel mostra "o daemon instalado ainda não mede". Daemon antigo lendo log novo: a linha `used` é ignorada (decodificação falha, linha pulada).
+
+## Fase 1 do item 2: uso com evidência (sombra)
+
+Spec `2026-11-17-memory-useful-evidence-design.md`. Só medição: nenhuma regra de tier, prazo, índice, promoção ou
+arquivamento lê o contador novo.
+
+**Campos novos em `memory stats`** (aditivos; app e daemon de versões diferentes continuam funcionando, o painel mostra
+"o daemon instalado ainda não mede"):
+
+- `usage.precision.def = 1`: a definição acima, sem mudança no número. Qualquer mudança de definição sobe o `def`;
+  janelas de `def` diferente não se comparam.
+- `usage.evidence {def: 1, candidates, evidenced, rate, byKind}`, também em `byAgent.<agente>.evidence` e
+  `trends.{current,previous}.evidence` (só a taxa).
+  - `candidates`: o mesmo da precisão v1.
+  - `evidenced`: dos ids que o próximo prompt contou (`used` v1), os que a resposta do turno anterior **citou** (id
+    curto de 8 hex ou título normalizado com ≥ 3 palavras) ou que um `memory get` da sessão **leu** antes do prompt; cada
+    id uma vez. Por construção `evidenced ≤ used`.
+  - `rate` = evidenced ÷ candidates (nil sem candidata).
+  - `byKind`: toda evidência do período por tipo: `cite` (citação), `get` (`memory get` de memória injetada na
+    sessão), `flag` (`--useful`). `flag` fica **fora** da taxa, como os `flags` da v1: aponta qualquer memória injetada, não
+    só as do prompt.
+- O evento `used` ganha `evidenced`/`evidence` (paralelos). `cite` e `get` vão no `used` do próximo prompt; só `flag`
+  emite um `used` próprio com `where = flag`, que a precisão v1 ignora (só conta o do prompt): o número v1 não muda.
+
+**Nenhuma mudança de regra:** um `memory get` não conta uso; só marca o id, e a evidência é gravada no próximo prompt
+sem correção, junto do uso implícito que já seria contado. `--useful` continua contando uso na hora, como antes deste
+item.
+
+**Como ler nos primeiros 14 dias:**
+
+- Pré-requisito: um daemon com a Leva 1 **e** esta fase instalado; antes disso nada aparece. Anote a data de instalação.
+- Esperado: precisão v1 perto de 90–99% (não discrimina); `usage.evidence.rate` entre ~3% e 15% (chute do spec, a
+  confirmar); `byKind.get` e `byKind.flag` perto de zero.
+- Só o Claude gera `cite` (único com Stop e pendência). Cursor e Codex: `candidates` 0, `rate` nil.
+- Conferências: `evidenced ≤ precision.used` e `candidates` iguais nos dois blocos; em `lifecycle.json`,
+  `evidencedUses ⊆ usefulUses`; nenhum tier mudou por causa disso.
+- Eco do id (o agente repete `[abcd1234]` ao resumir a injeção) infla `cite`; a mitigação fica para a Fase 2, com os
+  dados.
+- Um reinício do daemon perde as citações do turno em curso (vivem só na memória do ator): no máximo um turno por
+  terminal.
+- Decisão da Fase 2 (regras exigirem evidência): só com ≥ 14 dias de sombra e por decisão do dono.

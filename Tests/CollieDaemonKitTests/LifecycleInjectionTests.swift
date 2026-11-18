@@ -114,11 +114,104 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let es = mem.events.read(since: Date().addingTimeInterval(-60))
         let inj = es.filter { $0.type == .injected && $0.where == "prompt" }
         #expect(inj.count == 1 && inj[0].ids?.count == 2 && inj[0].eligible == 1, "\(inj)")
-        let used = es.filter { $0.type == .used }
+        let used = es.filter { $0.type == .used && $0.where == nil }
         #expect(used.count == 2, "\(used)")
+        let flag = es.filter { $0.type == .used && $0.where == "flag" }   // item 2: `--useful` is a use with evidence
+        #expect(flag.count == 1 && flag[0].ids == [r.id] && flag[0].evidenced == [r.id] && flag[0].evidence == ["flag"], "\(flag)")
+        #expect(await mem.lifecycle.entry(r.id)?.evidencedUses?.count == 1)
         #expect(used.first?.ids == [r.id] && used.first?.hits == 1 && used.first?.reason == nil && used.first?.terminal == t && used.first?.session == "s1")
         #expect(used.last?.ids == [] && used.last?.hits == 1 && used.last?.reason == "correction")
         #expect(es.first { $0.type == .flagged }?.terminal == t)   // the log can stamp the flagging agent
+    }
+
+    /// Item 2 phase 1: the turn names a pending memory; the next prompt (no correction) counts the use and its evidence.
+    @Test func citedInTurnCountsEvidenceBesideTheUse() async throws {
+        let r = x(), now = Date(), key = UseKey(day: Self.day(now), session: "s1")
+        let (mem, repo) = try await setup([r])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteTurnCitations(t, message: "Usei a [\(id8(r))] e deu certo.")
+        await mem.resolvePending(for: t, correction: false, now: now)
+        let e = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e.usefulUses == [key] && e.evidencedUses == [key])
+        mem.events.flush()
+        let used = mem.events.read(since: now.addingTimeInterval(-60)).filter { $0.type == .used }
+        #expect(used.count == 1 && used[0].ids == [r.id] && used[0].evidenced == [r.id] && used[0].evidence == ["cite"], "\(used)")
+    }
+
+    @Test func citationWithCorrectionOrWithoutCitationRecordsNoEvidence() async throws {
+        let r = x(), now = Date()
+        let (mem, repo) = try await setup([r])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteTurnCitations(t, message: "Use Postgres pool, como a memória diz")   // the title (3 words)
+        await mem.resolvePending(for: t, correction: true, now: now)
+        #expect(await mem.lifecycle.entry(r.id) == nil)
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.resolvePending(for: t, correction: false, now: now)   // the citation went with the corrected prompt
+        let e = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e.usefulUses.count == 1 && e.evidencedUses == nil)
+        mem.events.flush()
+        #expect(mem.events.read(since: now.addingTimeInterval(-60)).filter { $0.type == .used }.allSatisfy { $0.evidenced == nil })
+    }
+
+    @Test func citationOfNothingPendingOrBeforeSessionEndIsDropped() async throws {
+        let r = x(), other = MemoryRecord(kind: .decision, subject: "o", title: "Other one here", body: "zzz")
+        let (mem, repo) = try await setup([r, other])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteTurnCitations(t, message: "Other one here [\(id8(other))]")   // not pending in this session
+        await mem.resolvePending(for: t, correction: false, now: Date())
+        let ev = await mem.lifecycle.entry(r.id)?.evidencedUses, o = await mem.lifecycle.entry(other.id)
+        #expect(ev == nil && o == nil)
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: "postgres pool sizing again")
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.noteTurnCitations(t, message: "[\(id8(r))]")
+        await mem.endSession(t); await mem.noteSession(t, transcript: "/x/s1.jsonl")
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.resolvePending(for: t, correction: false, now: Date())
+        #expect(await mem.lifecycle.entry(r.id)?.evidencedUses == nil)   // endSession forgot the citation
+    }
+
+    /// Item 2 phase 1: `memory.get` of a memory injected in the caller's session changes nothing now (no use: no rule
+    /// input moves); the next prompt without a correction counts the implicit use as before plus evidence `get`, in its
+    /// own `used`. A correction drops it; a memory not injected here is never marked.
+    @Test func getOfInjectedIsEvidenceAtTheNextPromptOnly() async throws {
+        let r = x(), other = MemoryRecord(kind: .decision, subject: "o", title: "Other", body: "zzz"), now = Date()
+        let key = UseKey(day: Self.day(now), session: "s1")
+        let (mem, repo) = try await setup([r, other])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        let before = await mem.lifecycle.all()
+        await mem.noteGet(t, record: r); await mem.noteGet(t, record: other)
+        let after = await mem.lifecycle.all()
+        #expect(after == before && after[r.id] == nil)   // (a) no use, no entry: tier, promotion and unused plan can't move
+        await mem.resolvePending(for: t, correction: false, now: now)
+        let e = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e.usefulUses == [key] && e.evidencedUses == [key])   // (b) the implicit use as today, plus evidence
+        #expect(await mem.lifecycle.entry(other.id) == nil)          // (d) never injected: nothing
+        mem.events.flush()
+        let used = mem.events.read(since: now.addingTimeInterval(-60)).filter { $0.type == .used }
+        #expect(used.count == 1 && used[0].where == nil && used[0].ids == [r.id] && used[0].evidenced == [r.id] && used[0].evidence == ["get"], "\(used)")
+        #expect(MemoryObservability.precision(used).used == 1)   // the v1 count, as without the get
+        // (c) a correction: nothing, the get went with it
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.noteGet(t, record: r)
+        await mem.resolvePending(for: t, correction: true, now: now.addingTimeInterval(86_400))
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.resolvePending(for: t, correction: false, now: now.addingTimeInterval(86_400))
+        let k2 = UseKey(day: Self.day(now.addingTimeInterval(86_400)), session: "s1")
+        let e2 = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e2.usefulUses == [key, k2] && e2.evidencedUses == [key])
+    }
+
+    @Test func citedAndGotBothKindsOneId() async throws {
+        let r = x()
+        let (mem, repo) = try await setup([r])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteGet(t, record: r)
+        await mem.noteTurnCitations(t, message: "[\(id8(r))]")
+        await mem.resolvePending(for: t, correction: false, now: Date())
+        mem.events.flush()
+        let u = mem.events.read(since: Date().addingTimeInterval(-60)).filter { $0.type == .used }
+        #expect(u.count == 1 && u[0].evidenced == [r.id, r.id] && u[0].evidence == ["cite", "get"], "\(u)")
+        #expect(MemoryObservability.evidence(u).evidenced == 1 && MemoryObservability.evidence(u).byKind == ["cite": 1, "get": 1])
     }
 
     @Test func reviewedAndPinnedHaveNoTagsAndNoEntries() async throws {

@@ -19,10 +19,18 @@ public struct MemoryStatsReport: Decodable, Equatable, Sendable {
         public let top: [Ref], dead: [Ref], deadShare: Double?, searches: Int, searchHits: Int
         /// Leva 1; nil from a daemon older than it.
         public let precision: Precision?
+        /// Item 2 phase 1; nil from a daemon older than it.
+        public let evidence: Evidence?
     }
     /// The daemon's `MemoryObservability.Precision` (its doc says what each count is).
     public struct Precision: Decodable, Equatable, Sendable {
         public let injected: Int, candidates: Int, used: Int, corrected: Int, unresolved: Int, flags: Int, rate: Double?
+        /// The definition's version; nil from a daemon before item 2 (that one is 1).
+        public var def: Int? = nil
+    }
+    /// The daemon's `MemoryObservability.Evidence`.
+    public struct Evidence: Decodable, Equatable, Sendable {
+        public let def: Int, candidates: Int, evidenced: Int, rate: Double?, byKind: [String: Int]
     }
     public struct Maintenance: Decodable, Equatable, Sendable {
         public let createdBySource: [String: Int], undone: Int, undonePct: Double?
@@ -101,6 +109,14 @@ extension MemoryPanelModel {
             + "\(p.corrected) corrigidas, \(p.unresolved) sem desfecho)"
     }
 
+    /// "Uso com evidência: 5% das memórias injetadas por relevância (2 de 40; citação 2 · leitura 1 · marcação 0)".
+    public static func evidenceLine(_ e: MemoryStatsReport.Evidence?) -> String {
+        guard let e else { return "Uso com evidência: o daemon instalado ainda não mede" }
+        let kinds = "citação \(e.byKind["cite"] ?? 0) · leitura \(e.byKind["get"] ?? 0) · marcação \(e.byKind["flag"] ?? 0)"
+        guard let rate = e.rate else { return "Uso com evidência: – (\(kinds))" }
+        return "Uso com evidência: \(percent(rate)) das memórias injetadas por relevância (\(e.evidenced) de \(e.candidates); \(kinds))"
+    }
+
     static let ptBR = Locale(identifier: "pt_BR")
     public static func percent(_ x: Double) -> String { "\(Int((x * 100).rounded()))%" }
     /// 812, "18 mil", "1,2 mi".
@@ -162,6 +178,7 @@ struct MemoryObservabilityView: View {
         card("Uso") {
             line("Cobertura: " + (u.coverage.map(MemoryPanelModel.percent) ?? "–") + " dos prompts com memória (\(u.promptsWithMemory) de \(u.prompts))")
             line(MemoryPanelModel.precisionLine(u.precision))
+            line(MemoryPanelModel.evidenceLine(u.evidence))
             line("Buscas dos agentes: \(u.searches) (\(u.searchHits) resultados)")
             bars("Injeções por dia", u.injectionsPerDay)
             if !u.top.isEmpty { sub("Mais usadas"); ForEach(u.top) { memory($0, "\($0.count)×", archive: false) } }

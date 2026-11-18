@@ -191,6 +191,10 @@ actor MemoryService {
     nonisolated let events: MemoryEventLog
     /// Each terminal's Claude session (its transcript's name), from its hooks: the injection events carry it.
     private var sessions: [UUID: String] = [:]
+    /// Item 2 phase 1, per terminal: its last prompt injection's eligible records (titles to match), and the pending ids its
+    /// turns named (`noteTurnCitations`) or `memory.get` read (`noteGet`), with the kinds (cite|get). Actor memory only, ids
+    /// and memory titles, never the turn's text: a restart drops them.
+    private var pendingRecords: [UUID: [MemoryRecord]] = [:], cited: [UUID: [UUID: Set<String>]] = [:]
     /// When each terminal's session last started (`context(for:)`): `newRules` brings the user's rules changed after it.
     private var sessionStarted: [UUID: Date] = [:]
     func noteSession(_ terminal: UUID, transcript: String) {
@@ -708,6 +712,7 @@ actor MemoryService {
             let recs = chosen.map(\.hit.record)
             await lifecycle.noteInjected(session: s, ids: recs.map(\.id), now: Date())
             let pend = recs.filter(LifecycleRules.eligible).map(\.id)   // the last injection only
+            if !pull { pendingRecords[terminal] = recs.filter(LifecycleRules.eligible) }
             if pull {} else if pend.isEmpty { _ = await lifecycle.takePending(session: s) } else { await lifecycle.setPending(session: s, ids: pend) }
         }
         var stores: [RepoMemory] = []
@@ -731,22 +736,56 @@ actor MemoryService {
     func endSession(_ terminal: UUID) async {
         let s = sessions[terminal]
         injected[terminal] = nil; injectedDocs[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil; skills[terminal] = nil; sessions[terminal] = nil
-        sessionStarted[terminal] = nil
+        sessionStarted[terminal] = nil; pendingRecords[terminal] = nil; cited[terminal] = nil
         if let s { _ = await lifecycle.takePending(session: s) }
+    }
+
+    /// `turn.completed`: which of the session's pending ids the agent's last message names (`UseEvidence`), kept until the
+    /// next prompt resolves them. Only ids are kept.
+    func noteTurnCitations(_ terminal: UUID, message: String) async {
+        guard let s = sessions[terminal] else { return }
+        let pend = Set(await lifecycle.pending(session: s))
+        let named = UseEvidence.cited(message: message, records: (pendingRecords[terminal] ?? []).filter { pend.contains($0.id) })
+        for id in named { cited[terminal, default: [:]][id, default: []].insert("cite") }
     }
 
     /// At `terminal`'s next prompt: the memories its last prompt-relevance injection brought count one useful use per
     /// (UTC day, session), unless `correction` (dropped) or this session flagged them wrong/outdated. No session: nothing.
     func resolvePending(for terminal: UUID, correction: Bool, now: Date = Date()) async {
+        let named = cited.removeValue(forKey: terminal) ?? [:]
         guard let s = sessions[terminal] else { return }
         let ids = await lifecycle.takePending(session: s)
         guard !ids.isEmpty else { return }
         var e = MemoryEvent(type: .used, terminal: terminal, session: s, ids: [], hits: ids.count)
         if correction { e.reason = "correction" } else {
-            e.ids = await lifecycle.addUse(ids, key: UseKey(day: Self.dayFormatter.string(from: now), session: s), now: now)
+            let key = UseKey(day: Self.dayFormatter.string(from: now), session: s)
+            let taken = await lifecycle.addUse(ids, key: key, now: now)
+            e.ids = taken
+            let ev = await lifecycle.addEvidence(taken.filter { named[$0] != nil }, key: key, now: now)   // shadow: no rule reads it
+            // one pair per id and kind (cite before get): an id both cited and read appears twice
+            let pairs = ev.flatMap { id in ["cite", "get"].filter { named[id]?.contains($0) == true }.map { (id, $0) } }
+            if !pairs.isEmpty { e.evidenced = pairs.map { $0.0 }; e.evidence = pairs.map { $0.1 } }
         }
         events.emit(e)
     }
+    /// Item 2 phase 1: `memory.get` of a memory injected in `terminal`'s session (and able to earn a use) is marked like a
+    /// citation (kind `get`): nothing is written now, no use is counted. The next prompt adds the evidence only beside the
+    /// implicit use it counts anyway (pending, no correction); any other record is never marked.
+    func noteGet(_ terminal: UUID, record: MemoryRecord) async {
+        guard let s = sessions[terminal], LifecycleRules.eligible(record), await lifecycle.injected(session: s).contains(record.id) else { return }
+        cited[terminal, default: [:]][record.id, default: []].insert("get")
+    }
+
+    /// A use and its evidence `kind` (flag) now, logged as its own `used` with `where` = `kind` (not a prompt's: the v1
+    /// precision leaves it out). An id this session flagged wrong/outdated takes neither.
+    private func useWithEvidence(_ kind: String, _ ids: [UUID], session s: String, terminal: UUID?, now: Date) async {
+        let key = UseKey(day: Self.dayFormatter.string(from: now), session: s)
+        let taken = await lifecycle.addUse(ids, key: key, now: now)
+        let ev = await lifecycle.addEvidence(taken, key: key, now: now)
+        guard !ev.isEmpty else { return }
+        events.emit(MemoryEvent(type: .used, terminal: terminal, session: s, ids: taken, where: kind, evidenced: ev, evidence: ev.map { _ in kind }))
+    }
+
     /// The caller's session and the injected id `prefix` names (full UUID or a case-insensitive prefix of 4+ characters).
     func flagTarget(_ terminal: UUID?, prefix: String) async throws(ProtocolError) -> (session: String, id: UUID) {
         func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
@@ -766,7 +805,7 @@ actor MemoryService {
         let sticky = record.map { $0.pinned || $0.reviewed } ?? false
         let day = Self.dayFormatter.string(from: now)
         if verdict == .useful {
-            if live { await lifecycle.addUse([id], key: UseKey(day: day, session: session), now: now) }
+            if live { await useWithEvidence("flag", [id], session: session, terminal: terminal, now: now) }
             noteLifecycle(.flagged, id, store: await lifecycle.entry(id)?.store, verdict: verdict.rawValue, terminal: terminal)
             return (false, false)
         }

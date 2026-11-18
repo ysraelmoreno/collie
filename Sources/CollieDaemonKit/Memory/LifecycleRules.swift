@@ -47,7 +47,7 @@ enum LifecycleRules {
     static func effective(_ e: LifecycleEntry, _ r: MemoryRecord) -> LifecycleEntry {
         guard e.tier != .provisional, let h = e.textHash, h != textHash(r) else { return e }
         var x = e
-        x.tier = .provisional; x.usefulUses = []; x.textHash = nil
+        x.tier = .provisional; x.usefulUses = []; x.evidencedUses = nil; x.textHash = nil
         return x
     }
 

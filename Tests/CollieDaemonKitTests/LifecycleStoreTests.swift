@@ -145,4 +145,22 @@ private let day: TimeInterval = 86_400
         let back = await LifecycleStore(file: f).entry(id)
         #expect(back?.mapAnchor(for: "h", store: "/a")?.commit == "abc" && back?.mapCheckedAt == t0)
     }
+
+    /// Item 2 phase 1: evidence only joins a use already held (`evidencedUses ⊆ usefulUses`); an older file decodes.
+    @Test func evidenceOnlyBesideAUseAndOlderFileDecodes() async throws {
+        let f = tmpFile(), a = UUID(), b = UUID(), key = UseKey(day: "2026-11-17", session: "s")
+        try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let old = #"{"entries":["\#(a.uuidString)",{"tier":"earned","usefulUses":[],"flags":[],"contestedNow":false,"tierSince":0}],"injectedBySession":{},"lastEvent":{},"pending":{},"missingSince":[]}"#
+        try Data(old.utf8).write(to: f)
+        let s = LifecycleStore(file: f)
+        let e = try #require(await s.entry(a))
+        #expect(e.evidencedUses == nil && e.earnedBy == nil && e.tier == .earned)
+        #expect(await s.addEvidence([a, b], key: key, now: t0).isEmpty)   // no use held: nothing, and no entry made
+        #expect(await s.entry(b) == nil)
+        await s.addUse([a], key: key, now: t0)
+        #expect(await s.addEvidence([a, b], key: key, now: t0) == [a])
+        let back = try #require(await LifecycleStore(file: f).entry(a))
+        #expect(back.evidencedUses == [key] && back.evidencedUses!.isSubset(of: back.usefulUses))
+        #expect(back.tier == .earned && back.tierSince == e.tierSince)   // evidence changes nothing else
+    }
 }

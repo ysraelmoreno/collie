@@ -29,6 +29,8 @@ enum MemoryObservability {
         var searches = 0, searchHits = 0
         /// Beside `coverage` (prompts with a memory), how often an injected memory was used (Leva 1).
         var precision = Precision()
+        /// Item 2 phase 1, beside `precision`: how many of its candidates also had evidence.
+        var evidence = Evidence()
     }
     /// Leva 1 precision (spec 2026-11-17 memory measurement baseline). Per memory id, not per prompt: `addUse` counts ids.
     /// `injected`: ids injected by prompt relevance (`injected` at `prompt`; pulls, start, rules not). `candidates`: those of
@@ -37,9 +39,21 @@ enum MemoryObservability {
     /// `rate` = used ÷ candidates, nil without a candidate. `flags`: explicit `--useful` flags, outside the rate (they can
     /// name any injected memory, not only a prompt's). Each side is counted by its own event's time: an injection and its
     /// use on two sides of the period's edge fall apart (ponytail: one prompt per edge; pair by session if it matters).
+    /// `def`: the definition's version (1: this one); a trend across two `def`s is not comparable.
     struct Precision: Codable, Sendable, Equatable {
+        var def = 1
         var injected = 0, candidates = 0, used = 0, corrected = 0, unresolved = 0, flags = 0
         var rate: Double?
+    }
+    /// Use with evidence (spec 2026-11-17 memory useful evidence, phase 1: measured, no rule reads it), `def` 1.
+    /// `candidates`: the v1 precision's. `evidenced`: of the ids a next prompt counted (v1 `used`), those its turn cited or
+    /// `memory.get` read (`evidenced` of a prompt's `used`, each id once), so `evidenced ≤ used`; `rate` = evidenced ÷
+    /// candidates, nil without a candidate. `byKind`: every evidence of the period by kind (cite|get|flag); `flag` names
+    /// any injected memory, not a prompt's, so like the v1 `flags` it stays outside the rate.
+    struct Evidence: Codable, Sendable, Equatable {
+        var def = 1, candidates = 0, evidenced = 0
+        var rate: Double?
+        var byKind: [String: Int] = [:]
     }
     struct Maintenance: Codable, Sendable, Equatable {
         var createdBySource: [String: Int] = [:]
@@ -68,6 +82,8 @@ enum MemoryObservability {
         var tokensPerTask: Double?, searchesPerTask: Double?, coverage: Double?
         var repeatCorrections = 0, completedTasks = 0
         var precision: Double?
+        /// `Evidence.rate` of the week.
+        var evidence: Double?
     }
     struct Lifecycle: Codable, Sendable, Equatable {
         /// Effective tiers of the eligible active project records, and how many of them are contested now.
@@ -90,6 +106,7 @@ enum MemoryObservability {
         var useful = 0
         /// Its prompts' precision (a hookless agent has none: `candidates` 0, `rate` nil).
         var precision = Precision()
+        var evidence = Evidence()
     }
     struct Report: Codable, Sendable, Equatable {
         var since: Date, until: Date
@@ -142,6 +159,7 @@ enum MemoryObservability {
         let searched = inPeriod.filter { $0.type == .searched }
         r.usage.searches = searched.count; r.usage.searchHits = searched.reduce(0) { $0 + ($1.hits ?? 0) }
         r.usage.precision = precision(inPeriod)
+        r.usage.evidence = evidence(inPeriod)
 
         // maintenance
         var m = Maintenance()
@@ -237,6 +255,7 @@ enum MemoryObservability {
             }
             u.useful = xs.filter { $0.type == .flagged && $0.verdict == "useful" }.count
             u.precision = precision(xs)
+            u.evidence = evidence(xs)
             out[agent] = u
         }
         return out
@@ -247,6 +266,7 @@ enum MemoryObservability {
         for e in es {
             switch e.type {
             case .injected where e.where == "prompt": p.injected += e.ids?.count ?? 0; p.candidates += e.eligible ?? 0
+            case .used where e.where != nil: break   // a `get`/`flag` use (item 2): not a prompt's
             case .used where e.reason == "correction": p.corrected += e.hits ?? 0
             case .used: p.used += e.ids?.count ?? 0
             case .flagged where e.verdict == "useful": p.flags += 1
@@ -256,6 +276,16 @@ enum MemoryObservability {
         p.unresolved = max(0, p.candidates - p.used - p.corrected)
         p.rate = p.candidates == 0 ? nil : Double(p.used) / Double(p.candidates)
         return p
+    }
+
+    static func evidence(_ es: [MemoryEvent]) -> Evidence {
+        var e = Evidence(candidates: precision(es).candidates)
+        for x in es where x.type == .used {
+            for k in x.evidence ?? [] { e.byKind[k, default: 0] += 1 }
+            if x.where == nil, x.reason == nil { e.evidenced += Set(x.evidenced ?? []).count }   // an id cited and read: once
+        }
+        e.rate = e.candidates == 0 ? nil : Double(e.evidenced) / Double(e.candidates)
+        return e
     }
 
     /// A prompt is a `noHit` or an `injected` at `prompt` (pushed rules are `rule`: not a prompt of their own).
@@ -301,7 +331,7 @@ enum MemoryObservability {
         let searches = w.filter { $0.type == .searched }.count
         return Week(start: from, tokensPerTask: t.perTask, searchesPerTask: t.count == 0 ? nil : Double(searches) / Double(t.count),
                     coverage: prompts(w).coverage, repeatCorrections: repeats(events, from: from, to: to.addingTimeInterval(-0.001)).list.reduce(0) { $0 + $1.repeats },
-                    completedTasks: t.count, precision: precision(w).rate)
+                    completedTasks: t.count, precision: precision(w).rate, evidence: evidence(w).rate)
     }
 
     /// One value per local day from `from` to `to` (days without events: 0).

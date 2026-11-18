@@ -108,9 +108,15 @@ Leitura honesta:
   (`lifecycle.pending`) e guarda num conjunto do ator `cited[terminal]` só os ids citados (sem texto). No próximo prompt,
   `resolvePending` sem correção faz `addUse` como hoje e `addEvidence` para `pendentes ∩ cited`. Correção: nada, como hoje.
   `endSession` limpa `cited`.
-- **(a) e (d)** contam na hora (como `--useful` já faz): `addUse` + `addEvidence` para id em `injectedBySession`.
+- **(a) adiado ao próximo prompt** (decisão do coordenador, 2026-11-18, sobrepõe a versão anterior que contava na hora):
+  `memory.get` de id em `injectedBySession` (e elegível) **não** chama `addUse`; marca o id em `cited[terminal]` com o
+  tipo `get`, como a citação. No próximo prompt, `resolvePending` sem correção grava a evidência junto do uso implícito
+  que já existe hoje (só se o id estiver pendente); correção: nada. Assim um `get` sozinho não move nada que as regras
+  leem e não abre caminho novo de autopromoção.
+- **(d)** conta na hora, como já fazia antes deste item (`--useful` → `addUse`), agora com `addEvidence` junto.
 - **Evento.** `used` ganha `evidenced: [UUID]?` (subconjunto de `ids`) e `evidence: [String]?` paralelo (`cite`|`get`|`flag`).
-  `get` e `flag` emitem um `used` próprio com `where`-equivalente no `evidence`. Linha antiga decodifica (campos opcionais).
+  `cite` e `get` vão no `used` do próximo prompt (um id citado e lido aparece duas vezes, uma por tipo); só `flag` emite um
+  `used` próprio, com `where = flag`, que a precisão v1 ignora. Linha antiga decodifica (campos opcionais).
 
 Que regra usa o quê:
 

@@ -406,6 +406,15 @@ implementando `billing()` do protocolo.
   Cursor está instalado e sem login. `memory.curator --cursorLogin` cria `cursor-home` e `.cursor` 0700 e devolve a
   linha `HOME=… CURSOR_CONFIG_DIR=… AGENT_CLI_CREDENTIAL_STORE=file exec <cursor-agent> login`; o app abre com ela um
   terminal livre (escreve na pasta de dados do Collie).
+- Revisão independente (2026-11-18, A1–A7), em commits sobre `a6be8b8`: perfil com as ferramentas reais do macOS
+  (`/bin/realpath`), `file-map-executable` só da pasta da versão, `PATH=/usr/bin:/bin` na chamada, saída só na porta
+  443, `<versão>/.running` continua negado; nada na `cursor-home` é seguido por link (lstat antes de gravar e de
+  confiar, gravação atômica, `.cursor` 0700 e `auth.json` 0600 a cada chamada); a checagem da config roda também em
+  falha e cobre `sandbox.mode` e `autoAcceptWebSearch`; id de modelo `^[A-Za-z0-9][A-Za-z0-9._:/-]*$`, passado como
+  `--model=<id>`; produção sempre `sandboxed`.
+- **Teste à mão do dono (o único que prova o perfil):** no app real, Preferências › Memória › Curador, com o Cursor
+  logado e escolhido, clicar “Testar com uma chamada…”. Se falhar, ler “curador bloqueado pelo sandbox: <caminho>” e
+  liberar só esse caminho (nunca por palpite; ex.: `<versão>/.running`, npm/npx).
 - **Pendente de verificação do dono (não medido, nada inventado):** o texto de erro de limite de uso (os testes usam
   os textos genéricos de `exhausted`); uma chamada sob o `sandbox-exec` real (inclui se o agente precisa executar
   npm/npx, hoje não liberados no perfil); se hooks do usuário disparam (a HOME isolada não tem hooks).

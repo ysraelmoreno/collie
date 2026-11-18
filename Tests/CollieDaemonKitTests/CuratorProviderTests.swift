@@ -36,6 +36,22 @@ private func recording(_ outs: Outputs) -> Curator.Handler {
         #expect(await c.active.provider == .claude)
     }
 
+    /// Review A6: a model id is `^[A-Za-z0-9][A-Za-z0-9._:/-]*$` ("" = the provider's default); else nothing is stored.
+    @Test func modelIdValidated() async throws {
+        let c = Curator(dir: dir(), runners: [.claude: FakeCurator(), .cursor: cursorFake()], clock: ManualClock())
+        await c.consent(.cursor)
+        for ok in ["auto", "sonnet", "gpt-5.4-nano-low", "vendor/model:3.1_x", ""] {
+            try await c.setProvider(.cursor, model: ok)
+            #expect(await c.status().model == ok, "\(ok)")
+        }
+        for bad in ["--yolo", "-H", "a b", "x;rm", "ok\n--force", "/abs", ".hidden", "é"] {
+            await #expect(throws: ProtocolError(code: .invalidArgs, message: Curator.badModel), "\(bad)") {
+                try await c.setProvider(.cursor, model: bad)
+            }
+        }
+        #expect(await c.status().model == "")
+    }
+
     @Test func switchNeedsConsent() async throws {
         let c = Curator(dir: dir(), runners: [.claude: FakeCurator(), .cursor: cursorFake()], clock: ManualClock())
         await #expect(throws: ProtocolError(code: .unavailable, message: "falta confirmar nas Preferências")) {

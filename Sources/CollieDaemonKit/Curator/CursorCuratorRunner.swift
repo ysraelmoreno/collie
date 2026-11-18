@@ -100,7 +100,7 @@ struct CursorCuratorRunner: CuratorRunner {
     /// `--worktree`, `--resume`, `--continue`; no prompt in argv (stdin).
     static func arguments(model: String, cwd: URL) -> [String] {
         ["-p", "--output-format", "json", "--mode", "ask", "--sandbox", "disabled", "--trust", "--workspace", cwd.path]
-            + (model.isEmpty ? [] : ["--model", model])
+            + (model.isEmpty ? [] : ["--model=" + model])   // one argv item: never read as another flag
     }
 
     /// From nothing: no `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`, `CURSOR_API_ENDPOINT`, `XDG_CONFIG_HOME` or `COLLIE_*` can
@@ -211,6 +211,8 @@ struct CursorCuratorRunner: CuratorRunner {
     }
 
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput {
+        // config.json edited by hand skips `setProvider`'s check
+        guard Curator.validModel(model) else { throw ProtocolError(code: .invalidArgs, message: Curator.badModel) }
         let (found, p) = await locate()
         guard let exe = found else {
             throw ProtocolError(code: .unavailable, message: p.isEmpty ? ClaudeCuratorRunner.envNotCaptured : Self.missing)

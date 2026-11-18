@@ -53,10 +53,24 @@ private struct Fake {
         let cwd = URL(fileURLWithPath: "/tmp/w")
         #expect(CursorCuratorRunner.arguments(model: "auto", cwd: cwd)
                 == ["-p", "--output-format", "json", "--mode", "ask", "--sandbox", "disabled", "--trust", "--workspace", "/tmp/w",
-                    "--model", "auto"])
+                    "--model=auto"])
         let a = CursorCuratorRunner.arguments(model: "x", cwd: cwd)
         for bad in ["--force", "--yolo", "--approve-mcps", "--api-key", "--auth-token", "-H", "-e", "--endpoint", "--plugin-dir",
                     "--worktree", "--resume", "--continue"] { #expect(!a.contains(bad), "\(bad)") }
+    }
+
+    /// A7: production runs it under its profile; only tests turn that off.
+    @Test func sandboxedByDefault() {
+        #expect(CursorCuratorRunner(root: URL(fileURLWithPath: "/x"), path: { "" }, trust: .limited).sandboxed)
+    }
+
+    /// A6: a model id from config.json edited by hand can't become a flag.
+    @Test func badModelRefused() async throws {
+        let f = try Fake()
+        await #expect(throws: ProtocolError(code: .invalidArgs, message: Curator.badModel)) {
+            try await f.runner().run(call, model: "--yolo", timeout: .seconds(5))
+        }
+        #expect(!FileManager.default.fileExists(atPath: f.rec.path))
     }
 
     @Test func noModelFlagWhenEmpty() {
@@ -93,7 +107,7 @@ private struct Fake {
         let o = try await f.runner().run(call, model: "auto", timeout: .seconds(20))
         let parts = try f.recorded()
         #expect(parts[2].trimmingCharacters(in: .whitespacesAndNewlines) == CursorCuratorRunner.closedConfig)
-        #expect(!parts[0].contains(call.input) && parts[0].contains("--model\nauto\n"))
+        #expect(!parts[0].contains(call.input) && parts[0].contains("--model=auto\n"))
         let stdin = try String(contentsOf: URL(fileURLWithPath: f.rec.path + ".in"), encoding: .utf8)
         #expect(stdin == CursorCuratorRunner.prompt(call))
         #expect(stdin.contains(CursorCuratorRunner.schemaLine + "\n" + call.schema) && stdin.hasSuffix(call.input))

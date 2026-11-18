@@ -223,7 +223,12 @@ actor Curator {
 
     /// Claude needs no consent (it is today's curator); any other provider only after `consent`. `model` nil keeps the
     /// stored one. The running job finishes on the old provider; the next ones go to the new one.
+    static let badModel = "modelo inválido: use letras, números e . _ : / - (começando por letra ou número)"
+    /// Review A6: a model id (`""`: the provider's default) can never read as a flag or carry a space or newline.
+    static func validModel(_ m: String) -> Bool { m.isEmpty || m.wholeMatch(of: /[A-Za-z0-9][A-Za-z0-9._:\/-]*/) != nil }
+
     func setProvider(_ p: CuratorProvider, model m: String?) throws(ProtocolError) {
+        if let m, !Self.validModel(m) { throw ProtocolError(code: .invalidArgs, message: Self.badModel) }
         guard p == .claude || config.consented.contains(p.rawValue) else {
             throw ProtocolError(code: .unavailable, message: "falta confirmar nas Preferências")
         }

@@ -304,6 +304,8 @@ env: HOME=<root>/curator/cursor-home  CURSOR_CONFIG_DIR=<root>/curator/cursor-ho
   inválida poderia derrubar a config). Em allowlist sem interface uma busca web pediria aprovação e, com
   `autoAcceptWebSearch: false`, é recusada. O canal de exfiltração que sobra é o próprio modelo (os dados vão ao Cursor
   de qualquer forma); filtrar por domínio só com um proxy local (futuro).
+- O perfil só se prova no app real: o dono clica “Testar com uma chamada…” com o Cursor escolhido e, se falhar, lê
+  “curador bloqueado pelo sandbox: <caminho>” para liberar só aquele caminho.
 
 ### 4. Perfil Seatbelt dedicado do curador (E5)
 

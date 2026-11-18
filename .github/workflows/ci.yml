@@ -1,0 +1,70 @@
+# Lint, module boundaries, build and the tests of the targets a change affects, on every pull request and push to main.
+# No secrets and read-only token: safe to run on pull requests from forks.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    # macos-26 = macOS 26 arm64 with Xcode 26 (swift-tools 6.2), same runner as release.yml
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      # full history: affected-tests.sh needs the merge-base with the base branch
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # lint.sh and its test come from A2.1; until they land the step warns instead of failing
+      - name: Lint
+        run: |
+          if [ -x scripts/ci/lint.sh ]; then
+            scripts/ci/lint.sh
+          else
+            echo "::warning::scripts/ci/lint.sh ainda não existe (A2.1): lint pulado"
+          fi
+
+      - name: Arquitetura
+        run: scripts/ci/check-architecture.sh
+
+      - name: Testes dos scripts de CI
+        run: |
+          scripts/ci/test-affected-tests.sh
+          scripts/ci/test-check-architecture.sh
+          if [ -x scripts/ci/test-lint.sh ]; then
+            scripts/ci/test-lint.sh
+          else
+            echo "::warning::scripts/ci/test-lint.sh ainda não existe (A2.1): pulado"
+          fi
+
+      - name: Build
+        run: swift build --build-tests
+
+      # base: the PR's target branch, or the previous commit on a push to main
+      - name: Testes afetados
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
+        run: |
+          FILTER="$(scripts/ci/affected-tests.sh "$BASE")"
+          if [ -z "$FILTER" ]; then
+            echo "nenhum target de teste afetado: testes pulados"
+          elif [ "$FILTER" = ALL ]; then
+            swift test --disable-sandbox
+          else
+            swift test --disable-sandbox --filter "$FILTER"
+          fi

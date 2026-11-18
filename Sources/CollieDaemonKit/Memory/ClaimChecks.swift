@@ -123,16 +123,29 @@ extension GitFactsLive {
         // never through a symlink, at the end or on the way (it could point anywhere)
         let base = root.resolvingSymlinksInPath().path
         guard u.resolvingSymlinksInPath().path.hasPrefix(base + "/") else { return nil }
+        // one open, never following the last component nor blocking on a FIFO; the type comes from that very fd
+        let fd = open(u.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
         var st = stat()
-        guard lstat(u.path, &st) == 0 else { return nil }
+        guard fstat(fd, &st) == 0 else { return nil }
         switch st.st_mode & S_IFMT {
         case S_IFDIR:
             let files = await output(MapDrift.safe + ["ls-files", "-z", "--", p]).map { $0.stdout.split(separator: "\0").count }
             return PathExtent(isDir: true, lines: nil, files: files)
         case S_IFREG:
-            guard st.st_size <= MapDrift.maxReadBytes, let data = try? Data(contentsOf: u) else { return PathExtent(isDir: false, lines: nil, files: nil) }
-            let n = data.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 } + (data.last.map { $0 == 0x0A ? 0 : 1 } ?? 0)
-            return PathExtent(isDir: false, lines: n, files: nil)
+            guard st.st_size <= MapDrift.maxReadBytes else { return PathExtent(isDir: false, lines: nil, files: nil) }
+            var lines = 0, total = 0, last: UInt8 = 0x0A, chunk = [UInt8](repeating: 0, count: 64 << 10)
+            while true {   // bounded: a file that grew past the cap after fstat is "unknown size"
+                let n = read(fd, &chunk, chunk.count)
+                guard n >= 0 else { return nil }
+                if n == 0 { break }
+                total += n
+                guard total <= MapDrift.maxReadBytes else { return PathExtent(isDir: false, lines: nil, files: nil) }
+                for b in chunk[0..<n] where b == 0x0A { lines += 1 }
+                last = chunk[n - 1]
+            }
+            return PathExtent(isDir: false, lines: lines + (total > 0 && last != 0x0A ? 1 : 0), files: nil)
         default: return nil
         }
     }

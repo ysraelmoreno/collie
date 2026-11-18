@@ -135,4 +135,28 @@ import Foundation
         #expect(await GitFactsLive(root: d).extent("link") == nil)
         #expect(await GitFactsLive(root: d).extent("../escape") == nil)
     }
+
+    /// Review finding 4: special files are never read, nor through a symlink inside the repo (a FIFO would block the pass,
+    /// `/dev/zero` would fill memory). One open (O_NOFOLLOW|O_NONBLOCK), then fstat: no window between check and read.
+    /// ponytail: the check-then-read race itself can't be staged in a test; these cases guard the single-open path.
+    @Test func specialFilesAndSymlinksHaveNoExtent() async throws {
+        let d = try await repo()
+        defer { try? FileManager.default.removeItem(at: d) }
+        #expect(mkfifo(d.appendingPathComponent("fifo").path, 0o600) == 0)
+        try FileManager.default.createSymbolicLink(atPath: d.appendingPathComponent("tofifo").path, withDestinationPath: "fifo")
+        try FileManager.default.createSymbolicLink(atPath: d.appendingPathComponent("zero").path, withDestinationPath: "/dev/zero")
+        try write("real.txt", lines: 0..<3, in: d)
+        try FileManager.default.createSymbolicLink(atPath: d.appendingPathComponent("toreal").path, withDestinationPath: "real.txt")
+        let live = GitFactsLive(root: d)
+        for p in ["fifo", "tofifo", "zero", "toreal"] { #expect(await live.extent(p) == nil, "\(p)") }
+        #expect(await live.extent("real.txt") == PathExtent(isDir: false, lines: 3, files: nil))
+    }
+
+    /// Over the read cap: the size is unknown (only the absolute threshold applies), never read whole.
+    @Test func bigFileHasNoLineCount() async throws {
+        let d = try await repo()
+        defer { try? FileManager.default.removeItem(at: d) }
+        try Data(repeating: 0x0A, count: MapDrift.maxReadBytes + 1).write(to: d.appendingPathComponent("big.txt"))
+        #expect(await GitFactsLive(root: d).extent("big.txt") == PathExtent(isDir: false, lines: nil, files: nil))
+    }
 }

@@ -22,3 +22,6 @@ vendor/
 # Secrets
 .env
 .env.*
+
+# generated and local-only video sources/renders (HyperFrames)
+docs/videos/

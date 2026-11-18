@@ -20,6 +20,13 @@ private actor FakeHost: LoopHost {
     nonisolated let dir: URL, patches: URL
     var scripts: [String: Script] = [:]
     var summoned: [String] = [], dismissed: [String] = [], prompts: [String: String] = [:], checks = 0
+    /// In order: "dismiss <name>", "check".
+    var events: [String] = []
+    /// Another terminal of the paddock in a turn (blocks the loop's reset).
+    var busyOther: String?
+    /// The starter is gone once the attempt with this name asked.
+    var starterGoneAfter: String?
+    private var starterGone = false
     private var names: [UUID: String] = [:], workingCalls: [UUID: Int] = [:]
 
     init(dir: URL) {
@@ -35,6 +42,7 @@ private actor FakeHost: LoopHost {
         let name = names[terminal]!, s = scripts[name] ?? Script()
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
+        if name == starterGoneAfter { starterGone = true }
         if let e = s.askError { throw e }
         return s.source
     }
@@ -45,10 +53,14 @@ private actor FakeHost: LoopHost {
         if n == after { do { try await s.late(dir) } catch { Issue.record("late \(name): \(error)") }; return false }
         return n < after
     }
-    func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?") }
+    func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
+    func othersWorking() async -> String? { busyOther }
+    func starterAlive() async -> Bool { !starterGone }
+    func setBusy(_ n: String?) { busyOther = n }
+    func setStarterGone(after n: String) { starterGoneAfter = n }
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await GitRunner.run(args, in: dir) }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
-        checks += 1
+        checks += 1; events.append("check")
         return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/bash"), args: ["-c", command], in: dir,
                                             env: ProcessInfo.processInfo.environment, timeout: timeout)
     }
@@ -131,7 +143,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(w.tasks[0].lastFailure == "check failed (exit 1)")
         #expect(w.tasks[1].state == .done)
         #expect(await r.host.summoned == ["loop-a-1", "loop-a-2", "loop-b-1"])
-        #expect(await r.host.dismissed == ["loop-a-1", "loop-b-1"])   // the last failed attempt's agent stays for the owner
+        #expect(await r.host.dismissed == ["loop-a-1", "loop-a-2", "loop-b-1"])   // finding 5: every agent goes, the last failed one too
     }
 
     @Test func noCommitFailsEvenWithGreenCheck() async throws {
@@ -229,6 +241,49 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(try await git(r.repo, "status", "--porcelain") == "?? notes.txt")
         let patch = try String(contentsOf: r.host.patchDir(r.work).appendingPathComponent("a-1.patch"), encoding: .utf8)
         #expect(patch.contains("agent.txt") && patch.contains("done.txt") && !patch.contains("notes.txt"))
+    }
+
+    /// Finding 5: the agent is dismissed before its check runs (a turn past its timeout may still be editing).
+    @Test func agentGoesBeforeTheCheck() async throws {
+        let r = try await Rig([task("a", "test -f done.txt")], tries: 1); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) },
+                                            askError: ProtocolError(code: .timeout, message: "turn timed out")))
+        #expect(await r.run() == .finished)
+        #expect(await r.host.events == ["dismiss loop-a-1", "check"])
+    }
+
+    /// Finding 4: tracked changes before an attempt are not the loop's: it stops and leaves them.
+    @Test func dirtyTreeStopsBeforeTheAttempt() async throws {
+        let r = try await Rig([task("a", "true")]); defer { r.cleanup() }
+        try "someone's\n".write(to: r.repo.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+        #expect(await r.run() == .stopped)
+        #expect(await r.host.summoned.isEmpty)
+        #expect(try String(contentsOf: r.repo.appendingPathComponent("f.txt"), encoding: .utf8) == "someone's\n")
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .open && w.notes.last?.text.contains("dirty") == true)
+    }
+
+    /// Finding 4: another terminal of the paddock in a turn: no reset, no checkout; the loop stops.
+    @Test func otherAgentWorkingBlocksTheReset() async throws {
+        let r = try await Rig([task("a", "false"), task("b", "true")]); defer { r.cleanup() }
+        await r.host.setBusy("dev")
+        await r.host.set("loop-a-1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        #expect(await r.run() == .stopped)
+        #expect(FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("wrong.txt").path))   // nothing reset
+        let w = try await r.get()
+        #expect(w.tasks.map(\.state) == [.open, .open] && w.notes.last?.text.contains("dev") == true, "\(w.notes.map(\.text))")
+    }
+
+    /// Review Focus 5: the starter (whose Shepherd the loop summons as) is gone: the loop stops, nothing is deferred.
+    @Test func starterGoneStopsTheLoop() async throws {
+        let r = try await Rig([task("a", "false"), task("b", "true")]); defer { r.cleanup() }
+        await r.host.setStarterGone(after: "loop-a-1")
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(w.tasks.map(\.state) == [.open, .open] && w.tasks[0].tries == nil)
+        #expect(await r.host.summoned == ["loop-a-1"])
+        #expect(await r.host.dismissed == ["loop-a-1"])
+        #expect(await r.host.checks == 0)
     }
 
     @Test func verdictJoinsReasons() {

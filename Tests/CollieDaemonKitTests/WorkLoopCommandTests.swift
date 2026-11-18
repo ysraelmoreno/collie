@@ -207,6 +207,23 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
     }
 
+    /// Finding 5: a loop's agents left by a dead daemon are removed by the start sweep.
+    @Test func restartSweepRemovesLeftAgents() async throws {
+        try await withDaemon { d, p in
+            let left = try await spawnIn(d, p, "loop-a-1", cwd: URL(fileURLWithPath: "/tmp"))
+            let other = try await spawnIn(d, p, "loop-zz-9", cwd: URL(fileURLWithPath: "/tmp"))   // not this work's
+            let w = try await d.router.work.start(title: "looping", terminal: UUID(), paddockId: nil, branch: nil)
+            try await d.router.work.update(w.id) {
+                $0.tasks = [WorkTask(id: "a", title: "A", state: .inProgress, check: "true")]
+                $0.jobs = [WorkJob(id: "loop-a-1", kind: .loop, label: "A")]
+                $0.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
+            }
+            await d.router.stopLoopsLeftRunning()
+            let names = await d.router.ws.terminals.map(\.id)
+            #expect(!names.contains(left.uuid) && names.contains(other.uuid))
+        }
+    }
+
     @Test func restartLeavesNoRunningLoop() async throws {
         let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))"))
         defer { try? FileManager.default.removeItem(at: paths.root) }

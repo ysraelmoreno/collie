@@ -10,6 +10,10 @@ protocol LoopHost: Sendable {
     /// True while the terminal's agent is in a turn (the daemon's own badge/turn state).
     func working(_ terminal: UUID) async -> Bool
     func dismiss(_ terminal: UUID) async
+    /// A terminal of the work's paddock in a turn, other than the starter (the loop's agent is already gone): its name.
+    func othersWorking() async -> String?
+    /// The starter (the Shepherd the loop summons as) still exists.
+    func starterAlive() async -> Bool
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
     /// `command` via `/bin/bash -c` in `dir`, under the loop's own sandbox profile; throws (never runs unsandboxed) when
     /// the daemon sandboxes terminals and that profile is missing.
@@ -41,7 +45,8 @@ actor WorkLoop {
         var end = WorkLoopState.State.stopped
         while !stopping.contains(id), !Task.isCancelled {
             // closed, missing or stopped from outside (a daemon restart's sweep): stop
-            guard let w = try? await store.get(id), w.closedAt == nil, let loop = w.loop, loop.state == .running else { break }
+            guard let w = try? await store.get(id), w.closedAt == nil, let loop = w.loop, loop.state == .running,
+                  await host.starterAlive() else { break }
             guard let task = w.tasks.first(where: { $0.state == .open }) else { end = .finished; break }
             if let max = loop.max, loop.used >= max { break }
             guard await attempt(w, loop, task, dir) else { break }
@@ -55,23 +60,32 @@ actor WorkLoop {
         return end
     }
 
-    /// One attempt of `task`, through its verdict. False: the work was closed or vanished meanwhile (no verdict).
+    /// One attempt of `task`, through its verdict. False: the loop stops (no verdict when the work closed, the starter is
+    /// gone, or the tree holds changes that are not the attempt's; a verdict and no reset when another terminal works).
     private func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> Bool {
         let n = (task.tries ?? 0) + 1, name = "loop-\(task.id)-\(n)", started = host.now()
+        // git failing here (the loop's profile gone, not a repo): stop, nothing to judge
+        guard let before = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
+              let pending = await out(["status", "--porcelain", "--untracked-files=no"], dir) else {
+            await note(w.id, "[loop] git falhou em \(dir.path); laço parado")
+            return false
+        }
+        // tracked changes now are someone else's (each attempt ends on a clean tree): never the loop's to reset
+        guard pending.isEmpty else {
+            await note(w.id, "[loop] arquivos rastreados modificados (dirty) antes da tentativa de \"\(task.title)\", e não são do laço; laço parado, worktree intocada:\n\(pending.prefix(500))")
+            return false
+        }
+        // pre-existing untracked files are never the attempt's: the reset must not delete them
+        let keep = (await out(["ls-files", "-z", "--others", "--exclude-standard"], dir) ?? "").split(separator: "\0").map(String.init)
         try? await store.update(w.id) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started }
             x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
         }
-        let before = await out(["rev-parse", "HEAD"], dir) ?? "", branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir) ?? ""
-        // pre-existing untracked files are never the attempt's: the reset must not delete them
-        let keep = (await out(["ls-files", "-z", "--others", "--exclude-standard"], dir) ?? "").split(separator: "\0").map(String.init)
 
         var failure: String?   // the attempt failed before its check: summon or ask
         var agent: UUID?
-        if before.isEmpty { failure = "no git HEAD in \(dir.path)" } else {
-            do { agent = try await host.summon(name: name, for: w, loop: loop) } catch { failure = error.message }
-        }
+        do { agent = try await host.summon(name: name, for: w, loop: loop) } catch { failure = error.message }
         if let agent, failure == nil {
             let spec = if let s = task.spec { await host.readSpec(s) } else { String?.none }
             let notes = w.notes.filter { $0.text.hasPrefix("[loop] \(task.title),") }
@@ -85,19 +99,23 @@ actor WorkLoop {
                 // a turn past its timeout is not a failure by itself: the check decides
             } catch { failure = error.message }
         }
+        // before the check: nothing edits the tree while it is judged (a turn past its timeout may still be working)
+        if let agent { await host.dismiss(agent) }
 
-        guard let current = try? await store.get(w.id), current.closedAt == nil else {
-            if let agent { await host.dismiss(agent) }
-            let at = host.now()
+        let closed = (try? await store.get(w.id)).map { $0?.closedAt != nil } ?? true
+        let starterGone = !(await host.starterAlive())
+        if closed || starterGone {
+            let at = host.now(), why = closed ? "work closed" : "starter gone"
             try? await store.update(w.id) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
-                Self.endJob(&x, name, "work closed", at: at)
+                Self.endJob(&x, name, why, at: at)
             }
             return false
         }
 
         var reason: String, output = ""
         var passed = false
+        var blocked: String?   // another terminal of the paddock is working: no reset, the loop stops
         if let failure { reason = failure } else {
             let committed = await committed(before: before, branch: branch, dir)
             let dirty = (await out(["status", "--porcelain", "--untracked-files=no"], dir)).map { !$0.isEmpty } ?? true
@@ -110,14 +128,16 @@ actor WorkLoop {
                 status = nil
             } catch { broken = "check could not run: \(error.message)" }
             // the check's own edits never count and never leak into the next attempt
-            if !dirty { _ = try? await host.git(["reset", "-q", "--hard", "HEAD"], in: dir) }
+            if !dirty {
+                if let b = await host.othersWorking() { blocked = b } else { _ = try? await host.git(["reset", "-q", "--hard", "HEAD"], in: dir) }
+            }
             let v = Self.verdict(checkStatus: broken == nil ? status : 0, committed: committed, dirty: dirty)
             let reasons = [broken, v].compactMap { $0 }
             passed = reasons.isEmpty
             reason = reasons.joined(separator: "; ")
         }
 
-        let at = host.now(), last = n >= loop.tries
+        let at = host.now()
         if passed {
             let head = await out(["rev-parse", "--short", "HEAD"], dir) ?? ""
             try? await store.update(w.id) { x in
@@ -126,11 +146,13 @@ actor WorkLoop {
                 }
                 Self.endJob(&x, name, head, at: at)
             }
-            if let agent { await host.dismiss(agent) }
-            return true
+            if let blocked { await note(w.id, Self.blockedNote(blocked)) }
+            return blocked == nil
         }
 
-        if !before.isEmpty { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir) }
+        if blocked == nil { blocked = await host.othersWorking() }
+        if blocked == nil { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir) }
+        let last = n >= loop.tries && blocked == nil   // a stopped loop defers nothing
         let tail = output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
         let text = "[loop] \(task.title), tentativa \(n)/\(loop.tries): \(reason)"
             + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars)))   // ponytail: tail capped at 4000 chars
@@ -142,8 +164,17 @@ actor WorkLoop {
             x.notes.append(WorkNote(at: at, text: text))
             Self.endJob(&x, name, reason, at: at)
         }
-        if let agent, !last { await host.dismiss(agent) }   // the last failed attempt's agent stays for the owner to see
+        if let blocked { await note(w.id, Self.blockedNote(blocked)); return false }
         return true
+    }
+
+    private static func blockedNote(_ who: String) -> String {
+        "[loop] '\(who)' está trabalhando no cercado: o laço não reseta a worktree com outro agente nela; laço parado, worktree intocada"
+    }
+
+    private func note(_ id: UUID, _ text: String) async {
+        let at = host.now()
+        try? await store.update(id) { $0.notes.append(WorkNote(at: at, text: text)) }
     }
 
     /// An `.idle` end with no new commit yet: wait until there is one and the agent is out of its turn, or `deadline`.

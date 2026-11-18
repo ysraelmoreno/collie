@@ -68,7 +68,7 @@ extension CommandRouter {
             }
         }
         try await work.update(w.id) { $0.loop = loop }
-        let host = RouterLoopHost(router: self, starter: t.id, root: config.paths.root, work: w.id,
+        let host = RouterLoopHost(router: self, starter: t.id, root: config.paths.root, work: w.id, paddock: pid,
                                   sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
         let engine = WorkLoop(store: work, host: host)
         let id = w.id, starter = t.id
@@ -107,6 +107,9 @@ extension CommandRouter {
         let now = Date()
         for w in all where w.loop?.state == .running {
             SandboxLaunch.remove(w.id, root: config.paths.root)
+            // its agents' records (the processes died with the daemon): named as its loop jobs, in its paddock
+            let agents = Set(w.jobs.filter { $0.kind == .loop }.map(\.id))
+            for t in ws.terminals where agents.contains(t.name) && t.paddockId == w.paddockId { try? await remove(t) }
             try? await work.update(w.id) { x in
                 for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task { x.tasks[i].state = .open }
                 for j in x.jobs.indices where x.jobs[j].kind == .loop && x.jobs[j].state == .running {
@@ -132,6 +135,16 @@ extension CommandRouter {
         }
         return id
     }
+
+    /// Any terminal of the paddock in a turn but the starter (Shepherds too: the loop's reset would take their edits).
+    func loopOthersWorking(paddock: UUID, starter: UUID) async -> String? {
+        for t in ws.terminals where t.paddockId == paddock && t.id != starter {
+            if await targetBusy(t.id) { return t.name }
+        }
+        return nil
+    }
+
+    func loopTerminalExists(_ id: UUID) -> Bool { ws.terminals.contains { $0.id == id } }
 
     func loopDismiss(_ id: UUID) async {
         if let t = ws.terminals.first(where: { $0.id == id }) { try? await remove(t) }
@@ -175,7 +188,7 @@ extension CommandRouter {
 /// git and the check under the loop's own profile (`<root>/sandbox/<work id>.sb`). `sandbox` nil: the daemon sandboxes no
 /// terminal (`--no-terminal-sandbox`, the test daemons), so neither does the loop; else a missing profile throws.
 struct RouterLoopHost: LoopHost {
-    let router: CommandRouter, starter: UUID, root: URL, work: UUID
+    let router: CommandRouter, starter: UUID, root: URL, work: UUID, paddock: UUID
     let sandbox: (home: URL, shell: String)?
 
     /// The only keys a check gets from the user's env: the toolchain's, never a token or an agent socket (GH_TOKEN,
@@ -203,6 +216,8 @@ struct RouterLoopHost: LoopHost {
     }
 
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
+    func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter) }
+    func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
 
     /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.

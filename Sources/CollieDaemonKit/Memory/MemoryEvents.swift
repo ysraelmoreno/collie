@@ -43,6 +43,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
     var mode: String? = nil, subject: String? = nil, merged: Bool? = nil
     /// `flagged`: useful|wrong|outdated. `verified`: valid|invalid|deferred (a job that can't run now: no model and no failed claim check).
     var verdict: String? = nil
+    /// `used` (item 2 phase 1): the ids of `ids` that also had evidence, and parallel to it the kind (cite|get|flag).
+    var evidenced: [UUID]? = nil, evidence: [String]? = nil
 
     static func estimate(bytes: Int) -> Int { (bytes + 3) / 4 }
 

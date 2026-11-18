@@ -191,6 +191,9 @@ actor MemoryService {
     nonisolated let events: MemoryEventLog
     /// Each terminal's Claude session (its transcript's name), from its hooks: the injection events carry it.
     private var sessions: [UUID: String] = [:]
+    /// Item 2 phase 1, per terminal: its last prompt injection's eligible records (titles to match), and the pending ids its
+    /// turns named (`noteTurnCitations`). Actor memory only, ids and memory titles, never the turn's text: a restart drops them.
+    private var pendingRecords: [UUID: [MemoryRecord]] = [:], cited: [UUID: Set<UUID>] = [:]
     /// When each terminal's session last started (`context(for:)`): `newRules` brings the user's rules changed after it.
     private var sessionStarted: [UUID: Date] = [:]
     func noteSession(_ terminal: UUID, transcript: String) {
@@ -708,6 +711,7 @@ actor MemoryService {
             let recs = chosen.map(\.hit.record)
             await lifecycle.noteInjected(session: s, ids: recs.map(\.id), now: Date())
             let pend = recs.filter(LifecycleRules.eligible).map(\.id)   // the last injection only
+            if !pull { pendingRecords[terminal] = recs.filter(LifecycleRules.eligible) }
             if pull {} else if pend.isEmpty { _ = await lifecycle.takePending(session: s) } else { await lifecycle.setPending(session: s, ids: pend) }
         }
         var stores: [RepoMemory] = []
@@ -731,19 +735,33 @@ actor MemoryService {
     func endSession(_ terminal: UUID) async {
         let s = sessions[terminal]
         injected[terminal] = nil; injectedDocs[terminal] = nil; pending[terminal] = nil; retracted[terminal] = nil; skills[terminal] = nil; sessions[terminal] = nil
-        sessionStarted[terminal] = nil
+        sessionStarted[terminal] = nil; pendingRecords[terminal] = nil; cited[terminal] = nil
         if let s { _ = await lifecycle.takePending(session: s) }
+    }
+
+    /// `turn.completed`: which of the session's pending ids the agent's last message names (`UseEvidence`), kept until the
+    /// next prompt resolves them. Only ids are kept.
+    func noteTurnCitations(_ terminal: UUID, message: String) async {
+        guard let s = sessions[terminal] else { return }
+        let pend = Set(await lifecycle.pending(session: s))
+        let named = UseEvidence.cited(message: message, records: (pendingRecords[terminal] ?? []).filter { pend.contains($0.id) })
+        if !named.isEmpty { cited[terminal, default: []].formUnion(named) }
     }
 
     /// At `terminal`'s next prompt: the memories its last prompt-relevance injection brought count one useful use per
     /// (UTC day, session), unless `correction` (dropped) or this session flagged them wrong/outdated. No session: nothing.
     func resolvePending(for terminal: UUID, correction: Bool, now: Date = Date()) async {
+        let named = cited.removeValue(forKey: terminal) ?? []
         guard let s = sessions[terminal] else { return }
         let ids = await lifecycle.takePending(session: s)
         guard !ids.isEmpty else { return }
         var e = MemoryEvent(type: .used, terminal: terminal, session: s, ids: [], hits: ids.count)
         if correction { e.reason = "correction" } else {
-            e.ids = await lifecycle.addUse(ids, key: UseKey(day: Self.dayFormatter.string(from: now), session: s), now: now)
+            let key = UseKey(day: Self.dayFormatter.string(from: now), session: s)
+            let taken = await lifecycle.addUse(ids, key: key, now: now)
+            e.ids = taken
+            let ev = await lifecycle.addEvidence(taken.filter(named.contains), key: key, now: now)   // shadow: no rule reads it
+            if !ev.isEmpty { e.evidenced = ev; e.evidence = ev.map { _ in "cite" } }
         }
         events.emit(e)
     }

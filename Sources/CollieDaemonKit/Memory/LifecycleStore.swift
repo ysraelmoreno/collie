@@ -175,6 +175,7 @@ actor LifecycleStore {
     func injected(session: String) -> Set<UUID> { load().injectedBySession[session] ?? [] }
 
     func setPending(session: String, ids: [UUID]) { mutate { $0.pending[session] = ids } }
+    func pending(session: String) -> [UUID] { load().pending[session] ?? [] }
 
     func takePending(session: String) -> [UUID] {
         guard let ids = load().pending[session] else { return [] }

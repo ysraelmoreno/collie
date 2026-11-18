@@ -121,6 +121,52 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         #expect(es.first { $0.type == .flagged }?.terminal == t)   // the log can stamp the flagging agent
     }
 
+    /// Item 2 phase 1: the turn names a pending memory; the next prompt (no correction) counts the use and its evidence.
+    @Test func citedInTurnCountsEvidenceBesideTheUse() async throws {
+        let r = x(), now = Date(), key = UseKey(day: Self.day(now), session: "s1")
+        let (mem, repo) = try await setup([r])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteTurnCitations(t, message: "Usei a [\(id8(r))] e deu certo.")
+        await mem.resolvePending(for: t, correction: false, now: now)
+        let e = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e.usefulUses == [key] && e.evidencedUses == [key])
+        mem.events.flush()
+        let used = mem.events.read(since: now.addingTimeInterval(-60)).filter { $0.type == .used }
+        #expect(used.count == 1 && used[0].ids == [r.id] && used[0].evidenced == [r.id] && used[0].evidence == ["cite"], "\(used)")
+    }
+
+    @Test func citationWithCorrectionOrWithoutCitationRecordsNoEvidence() async throws {
+        let r = x(), now = Date()
+        let (mem, repo) = try await setup([r])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteTurnCitations(t, message: "Use Postgres pool, como a memória diz")   // the title (3 words)
+        await mem.resolvePending(for: t, correction: true, now: now)
+        #expect(await mem.lifecycle.entry(r.id) == nil)
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.resolvePending(for: t, correction: false, now: now)   // the citation went with the corrected prompt
+        let e = try #require(await mem.lifecycle.entry(r.id))
+        #expect(e.usefulUses.count == 1 && e.evidencedUses == nil)
+        mem.events.flush()
+        #expect(mem.events.read(since: now.addingTimeInterval(-60)).filter { $0.type == .used }.allSatisfy { $0.evidenced == nil })
+    }
+
+    @Test func citationOfNothingPendingOrBeforeSessionEndIsDropped() async throws {
+        let r = x(), other = MemoryRecord(kind: .decision, subject: "o", title: "Other one here", body: "zzz")
+        let (mem, repo) = try await setup([r, other])
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: prompt)
+        await mem.noteTurnCitations(t, message: "Other one here [\(id8(other))]")   // not pending in this session
+        await mem.resolvePending(for: t, correction: false, now: Date())
+        let ev = await mem.lifecycle.entry(r.id)?.evidencedUses, o = await mem.lifecycle.entry(other.id)
+        #expect(ev == nil && o == nil)
+        _ = await mem.relevant(for: t, cwd: repo.path, prompt: "postgres pool sizing again")
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.noteTurnCitations(t, message: "[\(id8(r))]")
+        await mem.endSession(t); await mem.noteSession(t, transcript: "/x/s1.jsonl")
+        await mem.lifecycle.setPending(session: "s1", ids: [r.id])
+        await mem.resolvePending(for: t, correction: false, now: Date())
+        #expect(await mem.lifecycle.entry(r.id)?.evidencedUses == nil)   // endSession forgot the citation
+    }
+
     @Test func reviewedAndPinnedHaveNoTagsAndNoEntries() async throws {
         let r = x(reviewed: true), p = MemoryRecord(kind: .decision, subject: "q", title: "Pool size twenty", body: "postgres pool sizing twenty",
                                                   pinned: true)

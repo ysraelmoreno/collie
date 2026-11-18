@@ -490,7 +490,7 @@ actor CommandRouter {
                     await asks.turnContinued(terminal: tid)
                     await captureContinued(tid)
                 } else {
-                    if let m = str(req, "message") { lastTurn[tid] = String(m.suffix(500)) }
+                    if let m = str(req, "message") { lastTurn[tid] = String(m.suffix(500)); await memory.noteTurnCitations(tid, message: m) }
                     let asker = await asks.turnCompleted(terminal: tid, message: str(req, "message"))
                     turnEnds[tid, default: 0] += 1
                     noticeTurnEnded(tid, message: str(req, "message"), askedBy: asker)

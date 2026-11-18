@@ -1,0 +1,19 @@
+# Module boundary rules, enforced by scripts/ci/check-architecture.sh (CI and the loop).
+# One rule per line; `#` starts a comment. <target> is a non-test target of Package.swift.
+#
+#   forbid-closure <target> <module>   the dependency closure of <target> must not contain <module>
+#   forbid-import  <target> <pattern>  no file of <target> imports a module matching <pattern> (glob)
+#
+# A new boundary goes here, not in a Package.swift comment.
+
+# SwiftTerm brings AppKit: only collied links the rendered screen, never the `collie` CLI.
+forbid-closure collie SwiftTerm
+forbid-closure collie CollieScreen
+
+# CollieProtocol is the bottom of the graph: no other Collie module, no UI.
+forbid-import CollieProtocol Collie*
+forbid-import CollieProtocol AppKit
+
+# CollieCore stays UI-free (the daemon and the CLI link it).
+forbid-import CollieCore AppKit
+forbid-import CollieCore SwiftUI

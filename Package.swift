@@ -19,6 +19,7 @@ let package = Package(
         .target(name: "CollieNetwork"),
         .target(name: "CollieTerminal"),
         // the rendered screen (`check --screen`): SwiftTerm brings AppKit, so only collied links it, never the `collie` CLI
+        // (enforced: scripts/ci/architecture-rules.txt)
         .target(name: "CollieScreen", dependencies: [.product(name: "SwiftTerm", package: "SwiftTerm")]),
         .target(name: "CollieDaemonKit", dependencies: ["CollieProtocol", "CollieCore", "CollieTerminal", "CollieDevice", "CollieNetwork"]),
         .target(name: "CollieClient", dependencies: ["CollieCore", "CollieProtocol"]),

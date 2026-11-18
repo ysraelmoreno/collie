@@ -801,7 +801,7 @@ actor MemoryService {
         let sticky = record.map { $0.pinned || $0.reviewed } ?? false
         let day = Self.dayFormatter.string(from: now)
         if verdict == .useful {
-            if live { await lifecycle.addUse([id], key: UseKey(day: day, session: session), now: now) }
+            if live { await useWithEvidence("flag", [id], session: session, terminal: terminal, now: now) }
             noteLifecycle(.flagged, id, store: await lifecycle.entry(id)?.store, verdict: verdict.rawValue, terminal: terminal)
             return (false, false)
         }

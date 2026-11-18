@@ -114,8 +114,11 @@ private func id8(_ r: MemoryRecord) -> String { String(r.id.uuidString.lowercase
         let es = mem.events.read(since: Date().addingTimeInterval(-60))
         let inj = es.filter { $0.type == .injected && $0.where == "prompt" }
         #expect(inj.count == 1 && inj[0].ids?.count == 2 && inj[0].eligible == 1, "\(inj)")
-        let used = es.filter { $0.type == .used }
+        let used = es.filter { $0.type == .used && $0.where == nil }
         #expect(used.count == 2, "\(used)")
+        let flag = es.filter { $0.type == .used && $0.where == "flag" }   // item 2: `--useful` is a use with evidence
+        #expect(flag.count == 1 && flag[0].ids == [r.id] && flag[0].evidenced == [r.id] && flag[0].evidence == ["flag"], "\(flag)")
+        #expect(await mem.lifecycle.entry(r.id)?.evidencedUses?.count == 1)
         #expect(used.first?.ids == [r.id] && used.first?.hits == 1 && used.first?.reason == nil && used.first?.terminal == t && used.first?.session == "s1")
         #expect(used.last?.ids == [] && used.last?.hits == 1 && used.last?.reason == "correction")
         #expect(es.first { $0.type == .flagged }?.terminal == t)   // the log can stamp the flagging agent

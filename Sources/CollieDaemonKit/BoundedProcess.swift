@@ -123,9 +123,10 @@ enum BoundedProcess {
             if timedOut {
                 kill(-pid, SIGTERM)
                 drainsDone = group.wait(timeout: .now() + 1) == .success
-                if !leaderDone { _ = exited.wait(timeout: .now() + 0.1) }
+                // the exit is signalled once: a grace wait that takes it must not be followed by another wait for it
+                let reaped = leaderDone || exited.wait(timeout: .now() + 0.1) == .success
                 if kill(-pid, 0) == 0 { kill(-pid, SIGKILL) }   // also reaps any grandchild that survived the leader
-                if !leaderDone { exited.wait() }
+                if !reaped { exited.wait() }
                 if !drainsDone { drainsDone = group.wait(timeout: .now() + 2) == .success }
             }
             // ponytail: a holder that escaped the group (setsid) is out of reach; its drain thread and read fd are leaked

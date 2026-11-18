@@ -122,4 +122,40 @@ import CollieCore
         #expect(s.all().records.first { $0.id == r.id }?.status == .archived)
         #expect(try MemoryCleanup.restore(r.id, store: s).status == .active)
     }
+
+    /// Item 2 phase 1 is a shadow: the same uses, with or without evidence beside them, give the same tiers, promotion
+    /// candidates and archive decisions (stored through `LifecycleStore`, the way the daemon writes them).
+    @Test func evidenceChangesNoTierNorArchive() async {
+        let recs = (0..<6).map { MemoryRecord(kind: $0 % 2 == 0 ? .pitfall : .decision, subject: "s\($0)", title: "t\($0)", body: "b") }
+        let plain = LifecycleStore(file: tmpDir().appendingPathComponent("a.json")), shadow = LifecycleStore(file: tmpDir().appendingPathComponent("b.json"))
+        // record i is used on days 60, 60-7, 60-14 … by sessions alternating, i uses in all (0: none at all)
+        for (i, r) in recs.enumerated() {
+            for st in [plain, shadow] { await st.update(r.id, now: ago(70)) { _ in } }
+            for n in 0..<(i * 2) {
+                let key = UseKey(day: day(60 - n * 4), session: n % 2 == 0 ? "a" : "b")
+                await plain.addUse([r.id], key: key, now: ago(Double(60 - n * 4)))
+                let taken = await shadow.addUse([r.id], key: key, now: ago(Double(60 - n * 4)))
+                await shadow.addEvidence(taken, key: key, now: ago(Double(60 - n * 4)))
+            }
+        }
+        let a = await plain.all(), b = await shadow.all()
+        #expect(b.values.contains { ($0.evidencedUses?.count ?? 0) > 0 } && b.values.allSatisfy { ($0.evidencedUses ?? []).isSubset(of: $0.usefulUses) })
+        for at in [ago(30), ago(0), now.addingTimeInterval(90 * 86_400)] {
+            for r in recs {
+                #expect(LifecycleRules.tier(for: a[r.id]!, now: at) == LifecycleRules.tier(for: b[r.id]!, now: at))
+                #expect(LifecycleRules.promotionCandidate(a[r.id]!, now: at) == LifecycleRules.promotionCandidate(b[r.id]!, now: at))
+            }
+            #expect(LifecycleRules.unusedPlan(records: recs, entries: a, now: at).map(\.id) == LifecycleRules.unusedPlan(records: recs, entries: b, now: at).map(\.id))
+        }
+        #expect(Set(recs.map { LifecycleRules.tier(for: a[$0.id]!, now: now) }).count > 1)   // the sequence does move tiers
+        #expect(!LifecycleRules.unusedPlan(records: recs, entries: a, now: now.addingTimeInterval(90 * 86_400)).isEmpty)
+    }
+
+    /// An edited text starts over without its uses: its evidence goes with them (`evidencedUses ⊆ usefulUses`).
+    @Test func editedTextDropsEvidenceWithTheUses() {
+        let r = MemoryRecord(kind: .decision, subject: "s", title: "t", body: "b")
+        var e = entry(uses([(1, "a"), (2, "b")])); e.tier = .earned; e.textHash = "other"; e.evidencedUses = uses([(1, "a")])
+        let x = LifecycleRules.effective(e, r)
+        #expect(x.usefulUses.isEmpty && x.evidencedUses == nil)
+    }
 }

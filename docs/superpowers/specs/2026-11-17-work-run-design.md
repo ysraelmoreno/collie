@@ -22,6 +22,8 @@ Update 2026-11-18, slice 2 planned (`docs/superpowers/plans/2026-11-18-work-loop
 command in a per-terminal plugin named `collie`, passed with `--plugin-dir` (checked on Claude Code 2.1.327: it runs as
 `/collie:loop`). Whether a Cursor plugin can carry it is the plan's first task. The owner's approval of the list is the
 conversation; the app card from slice 1 is what binds.
+Update 2026-11-18, Task 1 of that plan: a Cursor plugin lists its commands by file name, not namespaced by the plugin
+(outcome B, spike report §9), so Cursor terminals get `commands/collie:loop.md`.
 
 ## Why
 

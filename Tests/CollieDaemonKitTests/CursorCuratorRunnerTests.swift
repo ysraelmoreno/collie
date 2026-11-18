@@ -103,7 +103,7 @@ private struct Fake {
 
     /// R3: the CLI rewrites its config adding keys (kept), but a changed allowlist or deny means the answer isn't trusted.
     @Test func configCheckedAfterCall() async throws {
-        let extra = #"{"version":1,"approvalMode":"allowlist","permissions":{"allow":[],"deny":["Shell(*)","Write(**)","Read(**)","WebFetch(*)","Mcp(*:*)"]},"model":"auto","network":{}}"#
+        let extra = #"{"version":1,"approvalMode":"allowlist","permissions":{"allow":[],"deny":["Shell(*)","Write(**)","Read(**)","WebFetch(*)","Mcp(*:*)"]},"autoAcceptWebSearch":false,"sandbox":{"mode":"disabled","networkAccess":"allowlist"},"model":"auto","network":{}}"#
         let kept = try Fake(body: "printf '%s' '\(extra)' > \"$CURSOR_CONFIG_DIR/cli-config.json\"; cat '\(fixtures.path)/cursor-result.json'")
         #expect(try await kept.runner().run(call, model: "", timeout: .seconds(20)).inputTokens == 10_178)
         let open = #"{"version":1,"approvalMode":"unrestricted","permissions":{"allow":["Shell(*)"],"deny":[]}}"#
@@ -111,6 +111,102 @@ private struct Fake {
         await #expect(throws: ProtocolError(code: .internal, message: CursorCuratorRunner.tampered)) {
             try await opened.runner().run(call, model: "", timeout: .seconds(20))
         }
+    }
+
+    // A4: collied (outside the sandbox) writes in a dir the CLI controls: never through a link it planted.
+    private func victim(_ f: Fake, _ text: String = "export SAFE=1\n") throws -> URL {
+        let v = f.base.appendingPathComponent("zshrc")
+        try text.write(to: v, atomically: false, encoding: .utf8)
+        return v
+    }
+
+    @Test func plantedConfigSymlinkNotFollowed() async throws {
+        let f = try Fake(), fm = FileManager.default
+        let v = try victim(f)
+        try fm.createDirectory(at: f.home.appendingPathComponent(".cursor"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: f.runner().configFile, withDestinationURL: v)
+        _ = try await f.runner().run(call, model: "", timeout: .seconds(20))
+        #expect(try String(contentsOf: v, encoding: .utf8) == "export SAFE=1\n")
+        #expect(CursorCuratorRunner.ownFile(f.runner().configFile))
+        #expect(try f.recorded()[2].trimmingCharacters(in: .whitespacesAndNewlines) == CursorCuratorRunner.closedConfig)
+    }
+
+    @Test func plantedDotCursorSymlinkNotFollowed() async throws {
+        let f = try Fake(), fm = FileManager.default
+        let outside = f.base.appendingPathComponent("outside")
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: f.home.appendingPathComponent(".cursor"), withDestinationURL: outside)
+        _ = try await f.runner().run(call, model: "", timeout: .seconds(20))
+        #expect(try fm.contentsOfDirectory(atPath: outside.path).isEmpty)
+        #expect(CursorCuratorRunner.ownDir(f.home.appendingPathComponent(".cursor")))
+    }
+
+    /// A cursor-home that is a link is never used (nor recreated: only "Entrar" makes it).
+    @Test func cursorHomeSymlinkRefused() async throws {
+        let f = try Fake(home: false), fm = FileManager.default
+        let outside = f.base.appendingPathComponent("outside")
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        try fm.createDirectory(at: f.home.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: f.home, withDestinationURL: outside)
+        await #expect(throws: ProtocolError(code: .unavailable, message: "cursor sem login para o curador")) {
+            try await f.runner().run(call, model: "", timeout: .seconds(5))
+        }
+        #expect(await f.runner().availability() == .unavailable("cursor sem login para o curador"))
+        #expect(try fm.contentsOfDirectory(atPath: outside.path).isEmpty)
+        // "Entrar" replaces the link with a real 0700 dir; nothing lands in the link's target
+        _ = try CursorCuratorRunner.prepareLogin(root: f.root, exe: URL(fileURLWithPath: "/x/cursor-agent"))
+        #expect(CursorCuratorRunner.ownDir(f.home) && !fm.fileExists(atPath: outside.appendingPathComponent(".cursor").path))
+    }
+
+    /// The CLI swapping its config for a link (even to a closed copy) or adding a hard link: the answer isn't trusted.
+    @Test func swappedOrLinkedConfigIsTampered() async throws {
+        let f0 = try Fake()
+        let copy = f0.base.appendingPathComponent("copy.json")
+        try CursorCuratorRunner.closedConfig.write(to: copy, atomically: false, encoding: .utf8)
+        let swaps = ["rm \"$CURSOR_CONFIG_DIR/cli-config.json\"; ln -s '\(copy.path)' \"$CURSOR_CONFIG_DIR/cli-config.json\"",
+                     "ln \"$CURSOR_CONFIG_DIR/cli-config.json\" '\(f0.base.path)/hard-\(UUID().uuidString)'"]
+        for swap in swaps {
+            let f = try Fake(body: swap + "; cat '\(fixtures.path)/cursor-result.json'")
+            await #expect(throws: ProtocolError(code: .internal, message: CursorCuratorRunner.tampered), "\(swap)") {
+                try await f.runner().run(call, model: "", timeout: .seconds(20))
+            }
+        }
+    }
+
+    /// A5: the check runs on a failed or is_error answer too, and covers sandbox.mode and autoAcceptWebSearch.
+    @Test func tamperCheckedOnFailureToo() async throws {
+        let open = #"{"version":1,"approvalMode":"unrestricted","permissions":{"allow":[],"deny":[]}}"#
+        let f = try Fake(body: "printf '%s' '\(open)' > \"$CURSOR_CONFIG_DIR/cli-config.json\"; echo boom >&2; exit 1")
+        await #expect(throws: ProtocolError(code: .internal, message: CursorCuratorRunner.tampered)) {
+            try await f.runner().run(call, model: "", timeout: .seconds(20))
+        }
+        func with(_ edit: (inout [String: Any]) -> Void) throws -> Data {
+            var o = try #require(try JSONSerialization.jsonObject(with: Data(CursorCuratorRunner.closedConfig.utf8)) as? [String: Any])
+            edit(&o)
+            return try JSONSerialization.data(withJSONObject: o)
+        }
+        #expect(CursorCuratorRunner.stillClosed(try with { $0["model"] = "auto"; $0["network"] = [:] }))
+        #expect(!CursorCuratorRunner.stillClosed(try with { $0["sandbox"] = ["mode": "enabled"] }))
+        #expect(!CursorCuratorRunner.stillClosed(try with { $0["sandbox"] = nil }))
+        #expect(!CursorCuratorRunner.stillClosed(try with { $0["autoAcceptWebSearch"] = true }))
+        #expect(!CursorCuratorRunner.stillClosed(try with { $0["autoAcceptWebSearch"] = nil }))
+        #expect(!CursorCuratorRunner.stillClosed(try with { $0["permissions"] = ["allow": [], "deny": ["Shell(*)"]] }))
+    }
+
+    /// Every call: `.cursor` 0700 and `auth.json` 0600 (a linked auth.json is left alone, its target untouched).
+    @Test func permissionsEveryCall() async throws {
+        let f = try Fake(), fm = FileManager.default
+        let dot = f.home.appendingPathComponent(".cursor"), auth = dot.appendingPathComponent("auth.json")
+        try fm.createDirectory(at: dot, withIntermediateDirectories: true)
+        try "{}".write(to: auth, atomically: false, encoding: .utf8)
+        chmod(dot.path, 0o755); chmod(auth.path, 0o644)
+        _ = try await f.runner().run(call, model: "", timeout: .seconds(20))
+        func mode(_ u: URL) throws -> Int? { try fm.attributesOfItem(atPath: u.path)[.posixPermissions] as? Int }
+        #expect(try mode(dot) == 0o700 && mode(auth) == 0o600 && mode(f.runner().configFile) == 0o600)
+        let v = try victim(f); chmod(v.path, 0o644)
+        try fm.removeItem(at: auth); try fm.createSymbolicLink(at: auth, withDestinationURL: v)
+        _ = try await f.runner().run(call, model: "", timeout: .seconds(20))
+        #expect(try mode(v) == 0o644)
     }
 
     @Test func parsesResult() throws {

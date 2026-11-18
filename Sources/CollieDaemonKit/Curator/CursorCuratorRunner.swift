@@ -49,13 +49,51 @@ struct CursorCuratorRunner: CuratorRunner {
     /// `.cursor` made 0700, and the line the user's new terminal runs (R2: the login lands in `.cursor/auth.json` there;
     /// the user's own Cursor login stays as it was).
     static func prepareLogin(root: URL, exe: URL) throws -> String {
-        let h = home(root), fm = FileManager.default
-        for d in [h, h.appendingPathComponent(".cursor")] {
-            try fm.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            chmod(d.path, 0o700)
-        }
+        let h = home(root)
+        try FileManager.default.createDirectory(at: h.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        for d in [h, h.appendingPathComponent(".cursor")] { try makeOwnDir(d) }
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         return "HOME=\(q(h.path)) CURSOR_CONFIG_DIR=\(q(h.path + "/.cursor")) AGENT_CLI_CREDENTIAL_STORE=file exec \(q(exe.path)) login"
+    }
+
+    // A4 (review): collied writes, outside any sandbox, in a dir the CLI controls. Never through a link it planted:
+    // every path is checked with lstat (a regular file with one link, or a dir, the user's) before it is written or trusted.
+    private static func lstatOf(_ u: URL) -> stat? {
+        var st = stat()
+        return lstat(u.path, &st) == 0 ? st : nil
+    }
+    static func ownFile(_ u: URL) -> Bool {
+        guard let st = lstatOf(u) else { return false }
+        return st.st_mode & S_IFMT == S_IFREG && st.st_nlink == 1 && st.st_uid == getuid()
+    }
+    static func ownDir(_ u: URL) -> Bool {
+        guard let st = lstatOf(u) else { return false }
+        return st.st_mode & S_IFMT == S_IFDIR && st.st_uid == getuid()
+    }
+    /// `u` as a real 0700 dir of the user's: a link (removed, never followed) or anything else there goes first.
+    static func makeOwnDir(_ u: URL) throws {
+        if !ownDir(u) {
+            if lstatOf(u) != nil { try FileManager.default.removeItem(at: u) }   // a symlink: the link itself
+            try FileManager.default.createDirectory(at: u, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        chmod(u.path, 0o700)
+    }
+    /// The closed config, written fresh (the atomic rename replaces whatever entry was there, a link included), 0600.
+    private func writeClosedConfig() throws {
+        let dot = configFile.deletingLastPathComponent()
+        try Self.makeOwnDir(dot)
+        if Self.lstatOf(configFile) != nil, !Self.ownFile(configFile) { try FileManager.default.removeItem(at: configFile) }
+        try Data(Self.closedConfig.utf8).write(to: configFile, options: .atomic)
+        guard Self.ownFile(configFile) else { throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: configFile.path]) }
+        chmod(configFile.path, 0o600)
+        let auth = dot.appendingPathComponent("auth.json")
+        if Self.ownFile(auth) { chmod(auth.path, 0o600) }   // a linked one is left alone (its target never touched)
+    }
+    /// After a call: cursor-home, `.cursor` and the config still real and ours, the config still closed.
+    private func closedAfterCall() -> Bool {
+        Self.ownDir(cursorHome) && Self.ownDir(configFile.deletingLastPathComponent()) && Self.ownFile(configFile)
+            && Self.stillClosed(try? Data(contentsOf: configFile))
     }
 
     /// Pinned (R3). Never `--force`, `--yolo`, `--approve-mcps`, `--api-key`, `--auth-token`, `-H`, `-e`, `--plugin-dir`,
@@ -117,14 +155,17 @@ struct CursorCuratorRunner: CuratorRunner {
         }
     }
 
-    /// The config left after the call still has the closed `approvalMode` and `permissions` (the CLI adds keys of its own).
+    /// The config left after the call still has the closed `approvalMode`, `permissions`, `sandbox.mode` and
+    /// `autoAcceptWebSearch` (the CLI adds keys of its own: kept).
     static func stillClosed(_ data: Data?) -> Bool {
         func closed(_ d: Data?) -> [String: JSONValue]? {
             guard let d, case .object(let o)? = try? JSONDecoder().decode(JSONValue.self, from: d) else { return nil }
             return o
         }
         guard let now = closed(data), let want = closed(Data(closedConfig.utf8)) else { return false }
+        func mode(_ o: [String: JSONValue]) -> JSONValue? { if case .object(let s)? = o["sandbox"] { s["mode"] } else { nil } }
         return now["approvalMode"] == want["approvalMode"] && now["permissions"] == want["permissions"]
+            && mode(now) == mode(want) && mode(now) != nil && now["autoAcceptWebSearch"] == .bool(false)
     }
 
     private func locate() async -> (URL?, path: String) {
@@ -143,7 +184,7 @@ struct CursorCuratorRunner: CuratorRunner {
             return v
         }
         // no cursor-home: never logged in for the curator (no `status` run; "Entrar" creates it)
-        guard FileManager.default.fileExists(atPath: cursorHome.path) else {
+        guard Self.ownDir(cursorHome) else {   // a link there is never used either
             await cache.set(.unavailable(Self.noLogin), for: retryAfter)
             return .unavailable(Self.noLogin)
         }
@@ -161,7 +202,7 @@ struct CursorCuratorRunner: CuratorRunner {
 
     func models() async -> [String] {
         let (exe, p) = await locate()
-        guard let exe, FileManager.default.fileExists(atPath: cursorHome.path) else { return [] }
+        guard let exe, Self.ownDir(cursorHome) else { return [] }
         let r = try? await curatorTempDir { cwd throws(ProtocolError) in
             try await BoundedProcess.run(executable: exe, args: ["models"], in: cwd, env: Self.environment(root: root, path: p),
                                          timeout: .seconds(15), cap: 64 << 10)
@@ -174,16 +215,13 @@ struct CursorCuratorRunner: CuratorRunner {
         guard let exe = found else {
             throw ProtocolError(code: .unavailable, message: p.isEmpty ? ClaudeCuratorRunner.envNotCaptured : Self.missing)
         }
-        guard FileManager.default.fileExists(atPath: cursorHome.path) else { throw ProtocolError(code: .unavailable, message: Self.noLogin) }
+        guard Self.ownDir(cursorHome) else { throw ProtocolError(code: .unavailable, message: Self.noLogin) }
         let fm = FileManager.default
         let dir = root.appendingPathComponent("curator"), profile = dir.appendingPathComponent("run-\(UUID().uuidString).sb")
         return try await curatorTempDir { cwd throws(ProtocolError) in
             defer { try? fm.removeItem(at: profile) }
             do {
-                try fm.createDirectory(at: configFile.deletingLastPathComponent(), withIntermediateDirectories: true,
-                                       attributes: [.posixPermissions: 0o700])
-                try Data(Self.closedConfig.utf8).write(to: configFile)   // before every call, whatever was there
-                chmod(configFile.path, 0o600)
+                try writeClosedConfig()   // before every call, whatever was there
                 if sandboxed {
                     let text = CuratorSandboxProfile.render(CuratorSandboxProfile.cursor(script: exe, cwd: cwd, cursorHome: cursorHome))
                     guard fm.createFile(atPath: profile.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
@@ -206,6 +244,9 @@ struct CursorCuratorRunner: CuratorRunner {
             } catch where error.code == .timeout {
                 throw ProtocolError(code: .timeout, message: Self.noAnswer)
             }
+            // R3: the CLI rewrites its config; the allowlist, denies and sandbox must still be ours, else no answer of
+            // this call is trusted (a failed one too)
+            guard closedAfterCall() else { throw ProtocolError(code: .internal, message: Self.tampered) }
             let out: CuratorOutput
             do throws(ProtocolError) { out = try Self.parse(r.stdout, status: r.status, stderr: r.stderr) } catch {
                 if Self.exhausted(error.message) {
@@ -215,8 +256,6 @@ struct CursorCuratorRunner: CuratorRunner {
                 }
                 throw error
             }
-            // R3: the CLI rewrites its config; the allowlist and denies must still be ours, else the answer isn't trusted
-            guard Self.stillClosed(try? Data(contentsOf: configFile)) else { throw ProtocolError(code: .internal, message: Self.tampered) }
             return out
         }
     }

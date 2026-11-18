@@ -18,6 +18,11 @@ Update 2026-11-18, after the independent review (all changed in code; this text 
 - **Starter gone** stops the loop; a daemon stop spends no attempt; a task dropped mid-attempt keeps its state; notes
   carry the task id and hide secrets.
 
+Update 2026-11-18, slice 2 planned (`docs/superpowers/plans/2026-11-18-work-loop-command.md`): `/collie:loop` is a static
+command in a per-terminal plugin named `collie`, passed with `--plugin-dir` (checked on Claude Code 2.1.327: it runs as
+`/collie:loop`). Whether a Cursor plugin can carry it is the plan's first task. The owner's approval of the list is the
+conversation; the app card from slice 1 is what binds.
+
 ## Why
 
 The owner wants to hand a list of tasks to Collie and come back to finished, verified commits ("ships while I sleep",

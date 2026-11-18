@@ -19,6 +19,11 @@ struct CursorCuratorRunner: CuratorRunner {
     private let cache = CuratorCache<CuratorAvailability>()
 
     static let availabilityTTL: Duration = .seconds(600)
+    /// The only outbound port its profile opens (HTTPS). ponytail: the owner's real run confirms the Cursor API needs
+    /// nothing else; filtering by domain would take a local proxy (later).
+    static let port = 443
+    /// The PATH of a sandboxed call: the user's PATH only locates the CLI; the script's `bash`, `realpath`… come from here.
+    static let sandboxPath = "/usr/bin:/bin"
     static let unreadable = "resposta ilegível do cursor"
     static let noAnswer = "cursor não respondeu"
     static let noLogin = "cursor sem login para o curador"
@@ -188,7 +193,7 @@ struct CursorCuratorRunner: CuratorRunner {
             } catch {
                 throw ProtocolError(code: .internal, message: "curator: \(error.localizedDescription)")
             }
-            var e = Self.environment(root: root, path: p)
+            var e = Self.environment(root: root, path: sandboxed ? Self.sandboxPath : p)
             e["TMPDIR"] = cwd.path
             let args = Self.arguments(model: model, cwd: cwd)
             let r: ProcessResult

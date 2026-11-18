@@ -102,7 +102,7 @@ private func writes(_ p: String, _ path: String) -> Bool { allows(p, "file-write
     @Test func noUnixSockets() {
         for p in [claude, cursor] {
             #expect(!p.contains("unix-socket") && !p.contains("AF_UNIX"))
-            #expect(p.contains("(allow network-outbound (remote ip))"))
+            #expect(p.contains("(allow network-outbound (remote ip))"))   // Claude: any port, as before (cursor: 443 only)
         }
     }
 

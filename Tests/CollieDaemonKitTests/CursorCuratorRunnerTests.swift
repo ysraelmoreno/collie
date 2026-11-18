@@ -224,8 +224,27 @@ private struct Fake {
         for x in ["node", "cursor-agent-sea", "cursor-agent-worker-sea"] {
             #expect(p.contains("(allow process-exec (literal \"/Users/u/.local/share/cursor-agent/versions/v/\(x)\"))"), "\(x)")
         }
-        for x in ["/usr/bin/env", "/bin/bash", "/usr/bin/realpath", "/usr/bin/dirname", "/usr/bin/basename"] {
-            #expect(p.contains("(allow process-exec (literal \"\(x)\"))"), "\(x)")
+        // A1: the tools the script runs where this macOS has them (15: /bin/realpath, /usr/bin/dirname…), both dirs if both exist
+        let fm = FileManager.default
+        for x in ["env", "bash", "realpath", "dirname", "basename"] {
+            let real = ["/bin/" + x, "/usr/bin/" + x].filter { fm.isExecutableFile(atPath: $0) }
+            #expect(!real.isEmpty, "\(x)")
+            for r in real { #expect(p.contains("(allow process-exec (literal \"\(r)\"))"), "\(r)") }
+            for gone in ["/bin/" + x, "/usr/bin/" + x] where !real.contains(gone) { #expect(!p.contains("\"\(gone)\""), "\(gone)") }
         }
+        #expect(p.contains("(allow process-exec (literal \"/bin/realpath\"))"))   // macOS 15 has no /usr/bin/realpath
+        // A2: the version dir's native modules (.node) can be mapped executable; nothing else
+        #expect(p.contains("(allow file-map-executable (subpath \"/Users/u/.local/share/cursor-agent/versions/v\"))"))
+        #expect(p.split(separator: "\n").filter { $0.contains("file-map-executable") }.count == 1)
+        // A2 (iii): <version>/.running stays closed to writes
+        #expect(!p.contains("file-write* (subpath \"/Users/u/.local/share"))
+        // A3: outbound only to port 443 (DNS goes through mDNSResponder's mach service)
+        #expect(p.contains("(allow network-outbound (remote ip \"*:443\"))") && !p.contains("(allow network-outbound (remote ip))"))
+        #expect(p.contains("com.apple.mDNSResponder") && CursorCuratorRunner.port == 443)
+    }
+
+    /// A2 (ii): sandboxed, the CLI gets a fixed system PATH (the user's only finds it): no Homebrew bash or coreutils.
+    @Test func sandboxedPathIsSystem() {
+        #expect(CursorCuratorRunner.sandboxPath == "/usr/bin:/bin")
     }
 }

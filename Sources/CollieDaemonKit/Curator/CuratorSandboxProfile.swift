@@ -9,6 +9,10 @@ struct CuratorSandboxInput: Sendable {
     var reads: [String]
     var writes: [String]
     var keychain: Bool
+    /// Absolute dirs whose files may be mapped executable (native `.node` modules); none by default.
+    var mapExecutable: [String] = []
+    /// nil: any outbound IP port (Claude, as before); else only this one (Cursor: 443).
+    var port: Int? = nil
 }
 
 /// The curator's own Seatbelt profile (spec 2026-11-17 §4, E5): `(deny default)`, then only what a headless CLI needs.
@@ -51,11 +55,12 @@ enum CuratorSandboxProfile {
                    "(allow process-fork)", "(allow signal (target same-sandbox))", "(allow sysctl-read)",
                    "(allow ipc-posix-shm-read-data (ipc-posix-name \"apple.shm.notification_center\"))",
                    "(allow system-socket (socket-domain AF_INET))", "(allow system-socket (socket-domain AF_INET6))",
-                   "(allow network-outbound (remote ip))"]
+                   i.port.map { "(allow network-outbound (remote ip \"*:\($0)\"))" } ?? "(allow network-outbound (remote ip))"]
         out += Set(exes).sorted().map { "(allow process-exec (literal \(q($0))))" }
         out += reads.map { "(allow file-read* \($0))" }
         out += ancestors.sorted().map { "(allow file-read-metadata (literal \(q($0))))" }
         out += writes.map { "(allow file-write* \($0))" }
+        out += i.mapExecutable.map { "(allow file-map-executable (subpath \(q(real(URL(fileURLWithPath: $0))))))" }
         out += services.map { "(allow mach-lookup (global-name \(q($0))))" }
         if i.keychain { out.append("(allow mach-lookup (global-name-regex \"^com\\\\.apple\\\\.securityd\"))") }
         return out.joined(separator: "\n") + "\n"
@@ -71,15 +76,20 @@ enum CuratorSandboxProfile {
     }
 
     /// Cursor (R3, cursor-agent 2026.11.17): the `cursor-agent` script (`#!/usr/bin/env bash`, `realpath`, `dirname`,
-    /// `basename`) execs the version dir's `node`; the SEA binaries are listed too. Reads and writes all of its own
-    /// `cursor-home` (config, login, state, `.npm`, compile cache) and nothing of the user's home; no Keychain (file login).
-    /// ponytail: npm/npx the agent may call aren't allowed to exec; R2 under the real sandbox says if they're needed
+    /// `basename`: where this macOS has them, `/bin` and/or `/usr/bin`; 15 has `/bin/realpath` only) execs the version
+    /// dir's `node`, which maps its native `.node` modules; the SEA binaries are listed too. Reads and writes all of its
+    /// own `cursor-home` (config, login, state, `.npm`, compile cache) and nothing of the user's home; no Keychain (file
+    /// login); outbound to `CursorCuratorRunner.port` only. `<version>/.running` stays unwritable.
+    /// ponytail: npm/npx the agent may call aren't allowed to exec; a real run says ("curador bloqueado pelo sandbox: …")
     static func cursor(script: URL, cwd: URL, cursorHome: URL) -> CuratorSandboxInput {
         let version = URL(fileURLWithPath: SignedAppCheck.realPath(script)).deletingLastPathComponent()
+        let tools = ["env", "bash", "realpath", "dirname", "basename"].flatMap { ["/bin/" + $0, "/usr/bin/" + $0] }
+            .filter { FileManager.default.isExecutableFile(atPath: $0) }
         let exes = [script] + ["node", "cursor-agent-sea", "cursor-agent-worker-sea"].map { version.appendingPathComponent($0) }
-            + ["/usr/bin/env", "/bin/bash", "/usr/bin/realpath", "/usr/bin/dirname", "/usr/bin/basename"].map { URL(fileURLWithPath: $0) }
+            + tools.map { URL(fileURLWithPath: $0) }
         let h = SignedAppCheck.realPath(cursorHome)
-        return CuratorSandboxInput(executables: exes, cwd: cwd, home: cursorHome, reads: [h], writes: [h], keychain: false)
+        return CuratorSandboxInput(executables: exes, cwd: cwd, home: cursorHome, reads: [h], writes: [h], keychain: false,
+                                   mapExecutable: [version.path], port: CursorCuratorRunner.port)
     }
 
     /// Claude: reads its `.claude/` and state, writes its credentials file and state dirs (their children), Keychain login.

@@ -296,6 +296,15 @@ env: HOME=<root>/curator/cursor-home  CURSOR_CONFIG_DIR=<root>/curator/cursor-ho
   (conferidos depois de cada chamada); a chamada escreve só dentro da `cursor-home` (`.cursor/**`, `.npm/**`,
   `Library/Caches/cursor-compile-cache/**`). Detalhes e pendências no plano, Task 11.
 
+- Revisão da Task 11 (2026-11-18), perfil do Cursor: executa as ferramentas onde o macOS as tem (`/bin/realpath`,
+  `/usr/bin/dirname`, `/usr/bin/basename`, `/usr/bin/env`, `/bin/bash` no 15), mapeia como executável só a pasta da
+  versão (módulos `.node`), roda com `PATH=/usr/bin:/bin` (o PATH do usuário só localiza o CLI), `<versão>/.running`
+  continua sem escrita, e a saída de rede é **só a porta 443** (`CursorCuratorRunner.port`; DNS pelo serviço
+  mDNSResponder). **Risco residual**: não há `WebSearch(*)` no deny (sem prova de que essa permissão exista; uma chave
+  inválida poderia derrubar a config). Em allowlist sem interface uma busca web pediria aprovação e, com
+  `autoAcceptWebSearch: false`, é recusada. O canal de exfiltração que sobra é o próprio modelo (os dados vão ao Cursor
+  de qualquer forma); filtrar por domínio só com um proxy local (futuro).
+
 ### 4. Perfil Seatbelt dedicado do curador (E5)
 
 `CuratorSandboxProfile` próprio, para Claude e Cursor:

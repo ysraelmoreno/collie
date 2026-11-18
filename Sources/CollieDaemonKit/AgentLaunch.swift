@@ -161,7 +161,8 @@ public enum AgentLaunch {
             return spec(["-lc", "codex" + (innerSandboxOff ? " --sandbox danger-full-access" : "") + o.map { " -c " + quote($0) }.joined()])
         case .cursor:
             // fail fast (nothing created): `env` is the user's interactive env, so its PATH is the login shell's.
-            // No turn hooks: `--plugin-dir` registers only sessionStart in 2026.10.22 (spike REPORT §8), the ask ends on idle.
+            // No turn hooks: `--plugin-dir` registers only sessionStart (2026.10.22, retested 2026.11.17; spike REPORT §8),
+            // the ask ends on idle once the latest frame lost the `ctrl+c to stop` footer (AskCoordinator.pollIdle).
             guard (env["PATH"] ?? "").split(separator: ":").contains(where: { FileManager.default.isExecutableFile(atPath: "\($0)/cursor-agent") }) else {
                 throw ProtocolError(code: .invalidArgs, message: "cursor-agent não encontrado (instale com: curl https://cursor.com/install -fsS | bash)")
             }

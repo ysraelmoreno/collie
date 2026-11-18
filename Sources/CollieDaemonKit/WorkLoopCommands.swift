@@ -288,7 +288,7 @@ struct RouterLoopHost: LoopHost {
     static func loopGit(_ args: [String], in dir: URL, profile: URL?) async throws(ProtocolError) -> ProcessResult {
         do {
             return try await GitRunner.$sandbox.withValue(profile) {
-                var off = ["-c", "diff.external="]
+                var off = [("diff.external", "")]
                 let cfg = try await GitRunner.run(["config", "--show-scope", "-z", "--name-only", "--get-regexp", #"^filter\."#], in: dir, timeout: .seconds(30))
                 let f = cfg.stdout.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
                 var names: Set<String> = []
@@ -298,11 +298,12 @@ struct RouterLoopHost: LoopHost {
                     names.insert(String(key[key.index(key.startIndex, offsetBy: 7)..<dot]))
                 }
                 for n in names.sorted() {
-                    off += ["-c", "filter.\(n).clean=", "-c", "filter.\(n).smudge=", "-c", "filter.\(n).process=", "-c", "filter.\(n).required=false"]
+                    off += [("filter.\(n).clean", ""), ("filter.\(n).smudge", ""), ("filter.\(n).process", ""), ("filter.\(n).required", "false")]
                 }
                 var a = args
                 if a.first == "diff" { a.insert(contentsOf: ["--no-ext-diff", "--no-textconv"], at: 1) }
-                return try await GitRunner.run(off + a, in: dir, timeout: .seconds(120))
+                // by env, not `-c`: a driver name may hold `=`
+                return try await GitRunner.run(a, in: dir, timeout: .seconds(120), config: off)
             }
         } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
     }

@@ -17,29 +17,36 @@ private func sh(_ dir: URL, _ args: String...) async throws {
     #expect(r.status == 0, "git \(args): \(r.stderr)")
 }
 
-/// A repo whose own config plants a clean/smudge filter for every file: it touches `sentinel` when git runs it.
+/// A repo whose own config plants clean/smudge filters: `evil.x` (a dot in its name) for *.txt and `a=b` (a `=`, which a
+/// `-c key=value` would split) for *.md. Each touches `sentinel` when git runs it.
 private func plantedRepo() async throws -> (repo: URL, sentinel: URL) {
     let repo = try await makeRepo(), sentinel = repo.deletingLastPathComponent().appendingPathComponent("sentinel-\(UUID().uuidString.prefix(8))")
-    try await sh(repo, "config", "filter.evil.x.clean", "touch '\(sentinel.path)'; cat")
-    try await sh(repo, "config", "filter.evil.x.smudge", "touch '\(sentinel.path)'; cat")
-    try "* filter=evil.x\n".write(to: repo.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
+    for name in ["evil.x", "a=b"] {
+        try await sh(repo, "config", "filter.\(name).clean", "touch '\(sentinel.path)-\(name)'; cat")
+        try await sh(repo, "config", "filter.\(name).smudge", "touch '\(sentinel.path)-\(name)'; cat")
+    }
+    try "*.txt filter=evil.x\n*.md filter=a=b\n".write(to: repo.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
     try "new\n".write(to: repo.appendingPathComponent("n.txt"), atomically: true, encoding: .utf8)
+    try "new\n".write(to: repo.appendingPathComponent("n.md"), atomically: true, encoding: .utf8)
     return (repo, sentinel)
 }
+private func ran(_ sentinel: URL, _ name: String) -> Bool { FileManager.default.fileExists(atPath: sentinel.path + "-" + name) }
 
 @Suite(.serialized) struct WorkLoopSandboxTests {
-    /// Finding 2: the loop's git never runs a filter the repo's own config defines (an agent can write .git/config).
+    /// Finding 2: the loop's git turns off the filters the repo's own config defines (an agent can write .git/config),
+    /// whatever their names hold. This tests the config override alone (profile nil); in production that git also runs
+    /// under the loop's sandbox profile.
     @Test func loopGitRunsNoPlantedFilter() async throws {
         let control = try await plantedRepo()
         _ = try await GitRunner.run(["add", "-A"], in: control.repo)
-        #expect(FileManager.default.fileExists(atPath: control.sentinel.path), "control: plain git runs the planted filter")
+        #expect(ran(control.sentinel, "evil.x") && ran(control.sentinel, "a=b"), "control: plain git runs both planted filters")
 
         let x = try await plantedRepo()
         for a in [["add", "-A"], ["status", "--porcelain"], ["diff", "--cached", "--binary", "HEAD"], ["checkout", "-q", "-f", "main"], ["reset", "-q", "--hard", "HEAD"]] {
             let r = try await RouterLoopHost.loopGit(a, in: x.repo, profile: nil)
             #expect(r.status == 0, "\(a): \(r.stderr)")
         }
-        #expect(!FileManager.default.fileExists(atPath: x.sentinel.path))
+        #expect(!ran(x.sentinel, "evil.x") && !ran(x.sentinel, "a=b"))
     }
 
     /// Finding 6: a check gets only the toolchain's keys; sandboxed, the loop's shims lead PATH.

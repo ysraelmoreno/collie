@@ -9,9 +9,16 @@ enum GitRunner {
     /// run under it (sandbox-exec), so whatever an agent planted in the repo can't reach Collie's internals.
     @TaskLocal static var sandbox: URL?
 
+    /// `config`: settings for this call, passed as GIT_CONFIG_COUNT/KEY_n/VALUE_n (command scope, like `-c`, but a key may
+    /// hold `=`, which `-c key=value` would split).
     static func run(_ args: [String], in dir: URL, timeout: Duration = .seconds(120),
-                    executable: URL = URL(fileURLWithPath: "/usr/bin/git")) async throws(ProtocolError) -> GitResult {
+                    executable: URL = URL(fileURLWithPath: "/usr/bin/git"), config: [(String, String)] = []) async throws(ProtocolError) -> GitResult {
         var env = ProcessInfo.processInfo.environment
+        if !config.isEmpty {   // replaces any inherited GIT_CONFIG_* list
+            for k in env.keys where k.hasPrefix("GIT_CONFIG_KEY_") || k.hasPrefix("GIT_CONFIG_VALUE_") { env[k] = nil }
+            env["GIT_CONFIG_COUNT"] = String(config.count)
+            for (i, (k, v)) in config.enumerated() { env["GIT_CONFIG_KEY_\(i)"] = k; env["GIT_CONFIG_VALUE_\(i)"] = v }
+        }
         env["GIT_TERMINAL_PROMPT"] = "0"; env["GIT_EDITOR"] = "true"; env["GIT_PAGER"] = "cat"
         // a planted promisor remote (partial clone) would fetch, and run its transport, on any missing object
         env["GIT_NO_LAZY_FETCH"] = "1"

@@ -27,7 +27,7 @@ protocol LoopHost: Sendable {
 /// `collie work run`'s attempt cycle: a fresh agent per attempt, a check that alone decides, a clean tree between
 /// attempts. A task passes only when its check exits 0, the loop's gate (if any) exits 0 too, there is a new commit on
 /// the same branch, no tracked file is left dirty and neither the check nor the gate moved HEAD. The gate judges the
-/// tree of the commit the check judged. The loop never pushes, lands or creates a paddock.
+/// tree of the commit the check judged, and not one whose commit changed a script the gate's text names. The loop never pushes, lands or creates a paddock.
 actor WorkLoop {
     static let noteLines = 40, noteChars = 4000
     static let evidenceCommits = 20, evidenceLines = 20, evidenceChars = 2000
@@ -165,7 +165,9 @@ actor WorkLoop {
             // `judged`, in the check's conditions (timeout, budget); its output is the note's
             var gate: String?
             if let g = loop.gate, broken == nil, status == 0, committed, !dirty, moves.isEmpty {
-                if blocked != nil { gate = "gate did not run (tree not reset)" } else {
+                if blocked != nil { gate = "gate did not run (tree not reset)" }
+                // the agent may not rewrite the script that judges it: the gate does not run on a tree that changed it
+                else if let t = await tampered(g, before: before, judged: judged, dir) { gate = t } else {
                     do {
                         let budgeted = Duration.seconds(left(loop, since: started))
                         let r = try await host.check(g, in: dir, timeout: Swift.min(checkTimeout, budgeted))
@@ -254,6 +256,24 @@ actor WorkLoop {
               await out(["rev-parse", "--abbrev-ref", "HEAD"], dir) == branch,
               (try? await host.git(["merge-base", "--is-ancestor", before, "HEAD"], in: dir))?.status == 0 else { return false }
         return true
+    }
+
+    /// Why the attempt may not go to the gate `gate`: it changed (edited, deleted, renamed) a file whose full path
+    /// appears literally in the gate's text and that already existed in `before`. nil = it did not. Creating the file
+    /// for the first time is allowed (a task whose spec is to write that script), and only the gate is guarded: a
+    /// task's own check often names the very files the task must write.
+    // ponytail: substring match on the command text, no shell parsing; a script the gate reaches indirectly
+    // (sourced by another script, a directory argument) is not seen. Parse the command if that gap is ever used.
+    private func tampered(_ gate: String, before: String, judged: String, _ dir: URL) async -> String? {
+        guard let changed = await out(["-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", before, judged], dir) else {
+            return "gate did not run (could not list what the attempt changed)"
+        }
+        for path in changed.split(separator: "\n").map(String.init) where gate.contains(path) {
+            if (try? await host.git(["cat-file", "-e", "\(before):\(path)"], in: dir))?.status == 0 {
+                return "a tentativa alterou «\(path)», que o portão executa"
+            }
+        }
+        return nil
     }
 
     /// After the check or the gate ran: true when it moved HEAD off `judged` (a commit, a branch switch). With `reset`,

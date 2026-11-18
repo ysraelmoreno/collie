@@ -70,7 +70,8 @@ private func relaunch(_ d: Daemon, _ id: String, fake: URL, resume: Bool) async 
         for must in ["Only a Shepherd inside a paddock", "Wait for the answer", "collie work run --max", "Permitir", "Never land or push",
                      "Answer in the owner's language.", "a paddock that is a shared folder does not qualify",
                      "goes once in the loop's gate, --gate '<command>'", "collie work run --max <n> [--gate '<command>']",
-                     "the gate word for word"] {
+                     "the gate word for word",
+                     "the loop fails the attempt that changes one the gate names"] {
             #expect(md.contains(must))
         }
     }

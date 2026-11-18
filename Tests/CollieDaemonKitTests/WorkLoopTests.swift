@@ -475,6 +475,45 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(patch.contains("dirty"))   // the agent's uncommitted work is still the patch's
     }
 
+    // MARK: the agent does not rewrite the script that judges it (B2.4)
+
+    private static let lint = "scripts/ci/lint.sh"
+    private static func script(_ text: String, in d: URL) async throws {
+        try FileManager.default.createDirectory(at: d.appendingPathComponent("scripts/ci"), withIntermediateDirectories: true)
+        try await commit(lint, text, in: d)
+    }
+
+    @Test func changingAScriptTheGateRunsFailsTheAttempt() async throws {
+        let gate = "bash \(Self.lint) && true"
+        let r = try await Rig([task("a", "true")], tries: 1, gate: gate); defer { r.cleanup() }
+        try await Self.script("exit 1\n", in: r.repo)   // there before the attempt
+        await r.host.set("loop-a-1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred, "\(w.tasks)")
+        #expect(w.tasks[0].lastFailure == "a tentativa alterou «scripts/ci/lint.sh», que o portão executa")
+        #expect(await r.host.commands == ["true"])   // the gate did not run on the rewritten script
+    }
+
+    @Test func creatingTheScriptTheGateRunsPasses() async throws {
+        let gate = "bash \(Self.lint)"
+        let r = try await Rig([task("a", "true")], tries: 1, gate: gate); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done, "\(w.tasks)")
+        #expect(await r.host.commands == ["true", gate])
+    }
+
+    @Test func changingAFileTheGateDoesNotNamePasses() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1, gate: "bash \(Self.lint)"); defer { r.cleanup() }
+        try await Self.script("exit 0\n", in: r.repo)
+        await r.host.set("loop-a-1", Script(act: { try await commit("f.txt", "two\n", in: $0) }))   // f.txt exists since the init
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done, "\(w.tasks)")
+    }
+
     // MARK: evidence (B1.1)
 
     @Test func passedAttemptRecordsEvidence() async throws {

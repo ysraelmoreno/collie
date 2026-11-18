@@ -820,6 +820,9 @@ dono aprovou a lista de tarefas e os checks.
 - Portão (`--gate`): um comando comum a todas as tarefas (build, lint, arquitetura), para o check de cada uma medir só a
   tarefa. Roda depois de cada check que passou, nas mesmas condições (worktree, sandbox, timeout, orçamento); o veredito
   só passa com os dois em exit 0 (`gate failed (exit n)`, `gate timed out`), e o cartão o mostra uma vez, depois dos limites.
+  Um check ou portão que chama um script do repositório só vale se a tarefa não altera esse script; o laço reprova a
+  tentativa que o altera (`a tentativa alterou «<caminho>», que o portão executa`): vale para o portão, para um caminho
+  escrito por inteiro no comando e que já existia antes da tentativa (criar o script pela primeira vez não reprova).
 - Passa = check com exit 0 **e** portão (se houver) com exit 0 **e** commit novo na mesma branch **e** nenhum arquivo rastreado sujo. Se falha, o motivo e o
   fim da saída do check viram nota do trabalho (o próximo agente lê), o que a tentativa fez vira patch em
   `<raiz>/work-loops/<trabalho>/<tarefa>-<n>.patch` e a worktree volta ao commit inicial. Segredos conhecidos (tokens,

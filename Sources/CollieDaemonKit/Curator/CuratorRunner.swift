@@ -96,6 +96,8 @@ struct ClaudeCuratorRunner: CuratorRunner {
 
     static let unreadable = "resposta ilegível do claude"
     static let noAnswer = "claude não respondeu"
+    /// No PATH in the user's env (its capture failed) and no claude in the known dirs: not the same as "not installed".
+    static let envNotCaptured = "ambiente do usuário não capturado (o shell excedeu o prazo; confira o .zshrc)"
     /// R5 (user decision): the plan login, never an API key from the shell (no silent token billing).
     /// Review T2: nor another provider or endpoint (Bedrock, Vertex, a proxy URL).
     static let strippedKeys: Set = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
@@ -169,6 +171,10 @@ struct ClaudeCuratorRunner: CuratorRunner {
         return e
     }
 
+    /// The user's env has a PATH: `UserEnvironment.current()` gives [:] when the login shell failed or timed out.
+    static func captured(_ env: [String: String]) -> Bool { !(env["PATH"] ?? "").isEmpty }
+    static func missing(_ env: [String: String]) -> String { captured(env) ? "claude não encontrado" : envNotCaptured }
+
     /// An empty temp dir for `body`, removed after (`project,local` settings: none to load).
     private func inTempDir<T>(_ body: (URL) async throws(ProtocolError) -> T) async throws(ProtocolError) -> T {
         let cwd = FileManager.default.temporaryDirectory.appendingPathComponent("collie-curator-\(UUID().uuidString)")
@@ -209,8 +215,8 @@ struct ClaudeCuratorRunner: CuratorRunner {
         if let v = await cache.get() { return v }
         let e = await environment()
         guard let claude = BinaryLocator.locate("claude", env: e, fallback: fallback) else {
-            let v = Login(availability: .unavailable("claude não encontrado"), billing: .unknown)
-            await cache.set(v, for: Self.availabilityTTL)
+            let v = Login(availability: .unavailable(Self.missing(e)), billing: .unknown)
+            await cache.set(v, for: Self.captured(e) ? Self.availabilityTTL : retryAfter)   // a failed capture: retried soon
             return v
         }
         let r = try? await inTempDir { cwd throws(ProtocolError) in
@@ -228,7 +234,9 @@ struct ClaudeCuratorRunner: CuratorRunner {
 
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput {
         let e = await environment()
-        guard let claude = BinaryLocator.locate("claude", env: e, fallback: fallback) else { throw ProtocolError(code: .unavailable, message: "claude não encontrado") }
+        guard let claude = BinaryLocator.locate("claude", env: e, fallback: fallback) else {
+            throw ProtocolError(code: .unavailable, message: Self.missing(e))
+        }
         let fm = FileManager.default
         // per call: concurrent calls never share (or delete) each other's profile
         let dir = root.appendingPathComponent("curator"), profile = dir.appendingPathComponent("run-\(UUID().uuidString).sb")

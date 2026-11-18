@@ -207,6 +207,23 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         #expect(await ok.runner(path: "", fallback: [ok.bin.path]).availability() == .available)
     }
 
+    /// Env capture failed and no known dir has claude: say so (not "não encontrado"), and retry soon, not in 10 min.
+    @Test func uncapturedEnvRetriedSoon() async throws {
+        let ok = try Fake(#"[ "$1 $2 $3" = "auth status --json" ] && { echo '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}'; exit 0; }; exit 2"# + "\n")
+        let later = ok.f.base.appendingPathComponent("later")
+        let r = ok.runner(path: "", retryAfter: .zero, fallback: [later.path])
+        #expect(await r.availability() == .unavailable(ClaudeCuratorRunner.envNotCaptured))
+        await #expect(throws: ProtocolError(code: .unavailable, message: ClaudeCuratorRunner.envNotCaptured)) {
+            try await r.run(call, model: "haiku", timeout: .seconds(5))
+        }
+        try FileManager.default.moveItem(at: ok.bin, to: later)
+        #expect(await r.availability() == .available)
+        // a real PATH with no claude is still "não encontrado", kept the long TTL
+        let p = ok.runner(path: "/usr/bin:/bin", retryAfter: .zero)
+        #expect(await p.availability() == .unavailable("claude não encontrado"))
+        #expect(ClaudeCuratorRunner.envNotCaptured == "ambiente do usuário não capturado (o shell excedeu o prazo; confira o .zshrc)")
+    }
+
     @Test func loggedOutUnavailable() async throws {
         let fake = try Fake(#"[ "$1 $2 $3" = "auth status --json" ] && { echo '{"loggedIn": false, "authMethod": "none"}'; exit 1; }; exit 2"# + "\n")
         #expect(await fake.runner().availability() == .unavailable("claude sem login"))

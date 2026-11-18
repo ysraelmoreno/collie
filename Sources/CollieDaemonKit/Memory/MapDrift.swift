@@ -119,11 +119,17 @@ extension CommandRouter {
                     let subjects = await facts.subjects(from: commit, to: head, path: g.path)
                     let reason = "mapDrift " + MapDrift.detail(g.path, c, x, anchor: commit)
                         + (subjects.isEmpty ? "" : "; commits: " + subjects.joined(separator: " | "))
+                    // re-read when written (one actor step): a flag, a verdict or the user's keep that landed while git ran wins
+                    var wrote = false
+                    let was = entries[g.r.id]
                     await lc.update(g.r.id, now: now) { e in
+                        guard !e.contestedNow, e.recheckedAt == was?.recheckedAt, e.mapAnchor(for: g.a.textHash, store: key) == g.a else { return }
                         e.flags.append(LifecycleFlag(verdict: .outdated, session: "claim-check", day: day, reason: String(reason.prefix(CuratorOps.lineMax))))
                         e.contestedNow = true; e.lastContestedAt = now
-                        if var x = e.mapAnchor(for: g.a.textHash, store: key) { x.contestedAt = now; e.setMapAnchor(x) }
+                        var x = g.a; x.contestedAt = now; e.setMapAnchor(x)
+                        wrote = true
                     }
+                    guard wrote else { continue }
                     contests += 1
                     if entries[g.r.id]?.tier == .longTerm { memory.noteLifecycle(.demoted, g.r.id, store: store.key) }
                     _ = await enqueueVerify(g.r.id, kind: .verifyContested)
@@ -133,7 +139,10 @@ extension CommandRouter {
         let ids = Array(anchor.keys) + checked
         guard !ids.isEmpty else { return }
         await lc.update(ids, now: now) { id, e in
-            if let h = anchor[id] { e.setMapAnchor(MapAnchor(textHash: h, commit: head, at: now, store: key)) }
+            // only over the anchor this pass decided from (another writer's newer one stays)
+            if let h = anchor[id], e.mapAnchor(for: h, store: key) == entries[id]?.mapAnchor(for: h, store: key) {
+                e.setMapAnchor(MapAnchor(textHash: h, commit: head, at: now, store: key))
+            }
             if checked.contains(id) { e.mapCheckedAt = now }
         }
     }

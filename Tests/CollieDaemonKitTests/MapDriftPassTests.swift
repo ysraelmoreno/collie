@@ -366,4 +366,34 @@ import CollieProtocol
             #expect(recs.filter { all[$0.id]?.mapCheckedAt == t1 }.count == MapDrift.maxPerPass)
         }
     }
+
+    /// Review finding 8: the user keeps the memory while the pass waits on git; the drift measured before that is not
+    /// written over the user's keep (the entry is re-read when written).
+    @Test func userKeepDuringThePassWins() async throws {
+        final class KeepMidway: GitFacts, @unchecked Sendable {
+            let lc: LifecycleStore, id: UUID, result: MapDriftFacts
+            init(_ lc: LifecycleStore, _ id: UUID, _ result: MapDriftFacts) { self.lc = lc; self.id = id; self.result = result }
+            func branch(_ name: String) async -> BranchState { .open }
+            func commitExists(_ sha: String) async -> Bool { true }
+            func pathExists(_ rel: String) -> Bool { true }
+            func head() async -> String? { CountingFacts.head }
+            func changes(from anchor: String, to head: String, paths: [String]) async -> MapDriftFacts {
+                await lc.update(id, now: Date()) { $0.flags = [LifecycleFlag(verdict: .wrong, session: "s", day: "2026-11-17", reason: "")]; $0.contestedNow = true }
+                await lc.userKept(id, now: Date())   // the user resolves it in the app meanwhile
+                return result
+            }
+            func extent(_ rel: String) async -> PathExtent? { PathExtent(isDir: false, lines: 100, files: nil) }
+            func subjects(from anchor: String, to head: String, path: String) async -> [String] { [] }
+            func existed(at commit: String, _ path: String) async -> Bool? { true }
+        }
+        try await run { d, store, _ in
+            let t0 = Date(), lc = d.router.memory.lifecycle, recs = await anchored(d, store, 1, t0: t0)
+            let before = await lc.entry(recs[0].id)?.mapAnchors
+            await d.router.mapDriftPass(store, eligible: recs, fresh: [], facts: KeepMidway(lc, recs[0].id, drift(recs)), room: 10,
+                                        now: t0, day: "2026-11-17")
+            let e = await lc.entry(recs[0].id)
+            #expect(e?.contestedNow == false && e?.flags.isEmpty == true)
+            #expect(e?.mapAnchors == before)   // not re-anchored over it either
+        }
+    }
 }

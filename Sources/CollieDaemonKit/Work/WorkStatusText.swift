@@ -91,14 +91,15 @@ public enum WorkStatusText {
         t.evidence.map { "✓ \(RerailText.clean(t.title)) · \($0.summary)" }
     }
 
-    /// The line the starter gets when its loop ends, then one line per task of the loop: a done one with its evidence,
-    /// a deferred one with the reason. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
+    /// The line the starter gets when its loop ends, then one line per task of the loop: a done one with its evidence
+    /// (one without it was marked by hand, no check judged it: it counts as done and says so), a deferred one with the
+    /// reason. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
     /// Only counts and git's shortstat go beside the agent's titles: never a commit subject or the check's output.
     static func loopEnded(_ w: Work) -> String {
         let ran = w.tasks.filter { t in w.loop?.tasks?.contains(t.id) ?? true }
         let done = ran.filter { $0.state == .done }, deferred = ran.filter { $0.state == .deferred }
         var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" terminou: \(done.count) feitas, \(deferred.count) adiadas. Veja: collie work status"]
-        lines += done.map { doneLine($0) ?? "✓ \(RerailText.clean($0.title))" }
+        lines += done.map { doneLine($0) ?? "✓ \(RerailText.clean($0.title)) · marcada à mão, sem check" }
         lines += deferred.map { "– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))" }
         return bounded(lines, limit: RerailText.limit)
     }

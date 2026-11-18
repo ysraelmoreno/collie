@@ -182,7 +182,25 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             #expect(w.tasks.first?.state == .done && w.loop?.state == .finished, "\(w.tasks) \(String(describing: w.loop)) \(w.notes.map(\.text))")
             #expect(await d.router.ws.terminals.allSatisfy { !$0.name.hasPrefix("loop-") })
             #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("[collie] Laço de \"Loop work\" terminou: 1 feitas, 0 adiadas") })
+            // a `work.task.done` that lands after the approval does not take the evidence away
+            let done = try await work(d, p, x.s, "work.task.done", ["task": .string("Write done")])
+            #expect(done.ok, "\(done)")
+            let t = try #require(try await d.router.work.get(x.work)?.tasks.first)
+            #expect(t.state == .done && t.tries == 1 && t.evidence?.commits.count == 1, "\(t)")
         }
+    }
+
+    @Test func endNoticeNamesATaskDoneByHand() {
+        let e = TaskEvidence(commits: ["abc1234 feat: x"], shortstat: "1 file changed", checkTail: "ok", seconds: 9, attempt: 1)
+        var w = Work(title: "Loop work", terminalId: UUID(), tasks: [
+            WorkTask(id: "a", title: "By the loop", state: .done, evidence: e),
+            WorkTask(id: "b", title: "By\nhand", state: .done)])
+        w.loop = WorkLoopState(state: .finished, tasks: ["a", "b"])
+        #expect(WorkStatusText.loopEnded(w) == """
+            [collie] Laço de "Loop work" terminou: 2 feitas, 0 adiadas. Veja: collie work status
+            ✓ By the loop · tentativa 1 · 1 commit · 1 file changed
+            ✓ By hand · marcada à mão, sem check
+            """)
     }
 
     @Test func endNoticeHasOneLinePerLoopTask() {

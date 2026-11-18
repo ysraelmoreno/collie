@@ -1,6 +1,7 @@
 import Foundation
 import CollieCore
 import CollieProtocol
+import CollieTerminal
 
 /// Everything the loop needs from the daemon. No preset or LLM appears here.
 protocol LoopHost: Sendable {
@@ -30,7 +31,7 @@ protocol LoopHost: Sendable {
 /// tree of the commit the check judged, and not one whose commit changed a script the gate's text names. The loop never pushes, lands or creates a paddock.
 actor WorkLoop {
     static let noteLines = 40, noteChars = 4000
-    static let evidenceCommits = 20, evidenceLines = 20, evidenceChars = 2000
+    static let evidenceCommits = 20, evidenceSubject = 200, evidenceLines = 20, evidenceChars = 2000
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration
     private var stopping: Set<UUID> = []
 
@@ -191,7 +192,7 @@ actor WorkLoop {
             let head = await out(["rev-parse", "--short", judged], dir) ?? ""
             let log = await out(["log", "--format=%h %s", "-n", "\(Self.evidenceCommits)", "\(before)..\(judged)"], dir) ?? ""
             let evidence = TaskEvidence(
-                commits: log.split(separator: "\n").map(String.init),
+                commits: log.split(separator: "\n").map { Self.evidenceCommit(String($0)) },
                 shortstat: await out(["diff", "--shortstat", before, judged], dir) ?? "",
                 checkTail: Self.evidenceTail(check: checkOutput, gate: loop.gate == nil ? nil : output),
                 seconds: Swift.max(0, Int(at.timeIntervalSince(started).rounded())), attempt: n)
@@ -320,11 +321,22 @@ actor WorkLoop {
         w.jobs[j].state = .finished; w.jobs[j].endedAt = at; w.jobs[j].result = String(result.prefix(280))
     }
 
+    /// One of the evidence's `commits`, from a `git log --format="%h %s"` line: the subject is the agent's text, so it
+    /// loses its ANSI sequences and its control and format characters (`RerailText.plain`) and is cut at
+    /// `evidenceSubject` characters (`Character`s, not bytes).
+    static func evidenceCommit(_ line: String) -> String {
+        let p = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
+        let subject = RerailText.plain(ANSI.strip(p.count > 1 ? String(p[1]) : "")).trimmingCharacters(in: .whitespaces)
+        return subject.isEmpty ? String(p[0]) : "\(p[0]) \(subject.prefix(evidenceSubject))"
+    }
+
     /// The evidence's `checkTail`: the last `evidenceLines` lines of the check's output, then the gate's (if any),
-    /// secrets hidden (LotBoards.scrub's known shapes), the last `evidenceChars` characters.
+    /// without ANSI sequences or control and format characters (`RerailText.plain`, line by line), secrets hidden
+    /// (LotBoards.scrub's known shapes), the last `evidenceChars` characters.
     static func evidenceTail(check: String, gate: String?) -> String {
         let tails = [check, gate ?? ""].map {
-            $0.trimmingCharacters(in: .newlines).split(separator: "\n", omittingEmptySubsequences: false).suffix(evidenceLines).joined(separator: "\n")
+            ANSI.strip($0).trimmingCharacters(in: .newlines).split(separator: "\n", omittingEmptySubsequences: false)
+                .suffix(evidenceLines).map { RerailText.plain(String($0)) }.joined(separator: "\n")
         }.filter { !$0.isEmpty }
         return String(LotBoards.scrub(tails.joined(separator: "\n")).suffix(evidenceChars))
     }

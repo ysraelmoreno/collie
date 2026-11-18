@@ -327,11 +327,15 @@ enum RerailText {
     private static let maxItem = 120
 
     static func clean(_ x: String, max: Int = maxItem) -> String {
-        // format characters (bidi overrides, zero-width) dropped: what the agent reads is what the chat shows
-        let c = String(String.UnicodeScalarView(x.unicodeScalars.filter { $0.properties.generalCategory != .format }.map { sc in
-            CharacterSet.controlCharacters.contains(sc) || CharacterSet.newlines.contains(sc) ? " " : sc }))
-            .trimmingCharacters(in: .whitespaces)
+        let c = plain(x).trimmingCharacters(in: .whitespaces)
         return c.count > max ? String(c.prefix(max)) + "…" : c
+    }
+
+    /// `x` on one line with nothing hidden in it: control and newline characters become spaces, format characters
+    /// (bidi overrides, zero-width) are dropped, so what the agent reads is what the chat shows. Not trimmed, not cut.
+    static func plain(_ x: String) -> String {
+        String(String.UnicodeScalarView(x.unicodeScalars.filter { $0.properties.generalCategory != .format }.map { sc in
+            CharacterSet.controlCharacters.contains(sc) || CharacterSet.newlines.contains(sc) ? " " : sc }))
     }
 
     static func block(_ w: Work, now: Date) -> String {

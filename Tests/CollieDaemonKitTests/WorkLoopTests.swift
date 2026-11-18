@@ -557,6 +557,58 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(WorkLoop.evidenceTail(check: (1...30).map { "l\($0)" }.joined(separator: "\n"), gate: nil).hasPrefix("l11\n"))
     }
 
+    // MARK: clean evidence (B1.4)
+
+    @Test func evidenceIsCutAndClean() async throws {
+        // the check prints red text and a bidi override (U+202E, E2 80 AE)
+        let r = try await Rig([task("a", "printf '\\033[31mRED\\033[0m \\342\\200\\256ok\\n'")]); defer { r.cleanup() }
+        let subject = "feat: \u{1B}[31mred\u{1B}[0m \u{202E}evil\u{7} " + String(repeating: "é", count: 5000)
+        await r.host.set("loop-a-1", Script(act: { d in
+            try "ok\n".write(to: d.appendingPathComponent("done.txt"), atomically: true, encoding: .utf8)
+            _ = try await git(d, "add", "."); _ = try await git(d, "commit", "-m", subject)
+        }))
+        #expect(await r.run() == .finished)
+        let e = try #require(try await r.get().tasks[0].evidence)
+        let line = try #require(e.commits.first), head = try await git(r.repo, "rev-parse", "--short", "HEAD")
+        #expect(e.commits.count == 1 && line.hasPrefix("\(head) feat: red evil  ééé"), "\(line.prefix(60))")
+        #expect(line.count == head.count + 1 + 200, "\(line.count)")   // cut by Character: "é" is two bytes
+        #expect(e.checkTail == "RED ok", "\(e.checkTail.unicodeScalars.map(\.value))")
+        for s in e.commits + [e.checkTail] {
+            #expect(!s.contains("[31m") && !s.unicodeScalars.contains { [.control, .format].contains($0.properties.generalCategory) })
+        }
+    }
+
+    @Test func evidenceCommitAndTailLoseWhatHides() {
+        #expect(WorkLoop.evidenceCommit("abc1234 fix: \u{202E}x\u{200B}y\u{1B}]0;title\u{7}z") == "abc1234 fix: xyz")
+        #expect(WorkLoop.evidenceCommit("abc1234") == "abc1234")
+        #expect(WorkLoop.evidenceCommit("abc1234 " + String(repeating: "x", count: 201)) == "abc1234 " + String(repeating: "x", count: 200))
+        // the tail keeps its lines and their indentation
+        #expect(WorkLoop.evidenceTail(check: "\u{1B}[32m  ok\u{1B}[0m\tdone\u{202E}\r\nnext", gate: "\u{1B}[1mgate\u{1B}[0m") == "  ok done\nnext\ngate")
+    }
+
+    /// `work.task.done` read the task while the loop still ran it and writes after the loop approved it: the write is
+    /// on the task as it is then, so the loop's evidence and tries stay.
+    @Test func taskDoneByHandAfterTheApprovalKeepsTheEvidence() async throws {
+        let r = try await Rig([task("a", "true")]); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let at = Date(timeIntervalSince1970: 2_000_000)
+        let t = try #require(try await r.store.setTask(r.work, task: "a", state: .done, reason: nil, at: at))
+        #expect(t.state == .done && t.tries == 1 && t.evidence?.attempt == 1 && t.evidence?.commits.count == 1 && t.updatedAt == at)
+        #expect(try await r.get().tasks[0] == t)
+        // by hand first (the task still in progress): the loop keeps that state and records no evidence
+        let h = try await Rig([task("a", "true")]); defer { h.cleanup() }
+        let store = h.store, id = h.work
+        await h.host.set("loop-a-1", Script(act: { d in
+            _ = try await store.setTask(id, task: "a", state: .done, reason: nil, at: at)
+            try await commit("done.txt", "ok\n", in: d)
+        }))
+        #expect(await h.run() == .finished)
+        let m = try await h.get().tasks[0]
+        #expect(m.state == .done && m.evidence == nil && m.tries == nil)
+        #expect(try await store.setTask(id, task: "nope", state: .done, reason: nil, at: at) == nil)
+    }
+
     @Test func promptWithoutAGateNamesNone() {
         let p = WorkLoop.prompt(task: task("a", "true"), spec: nil, attempt: 1, tries: 3, dir: URL(fileURLWithPath: "/tmp"), notes: [])
         #expect(!p.contains("portão"))

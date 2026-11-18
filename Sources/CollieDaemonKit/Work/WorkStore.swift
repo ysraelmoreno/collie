@@ -44,6 +44,18 @@ actor WorkStore {
         }
     }
 
+    /// A task's state set by hand (`work.task.done|defer|drop`), on the task as it is at the write, never on a copy read
+    /// earlier: what a running loop recorded on it meanwhile (`evidence`, `tries`) stays. nil: the task is gone.
+    func setTask(_ id: UUID, task: String, state: TaskState, reason: String?, at: Date) async throws -> WorkTask? {
+        var out: WorkTask?
+        try await update(id) { w in
+            guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
+            w.tasks[i].state = state; w.tasks[i].reason = reason; w.tasks[i].updatedAt = at
+            out = w.tasks[i]
+        }
+        return out
+    }
+
     /// Open tasks stay as they are: the summary reads them as not done.
     func close(_ id: UUID, by: String) async throws {
         try await update(id) { $0.closedAt = Date(); $0.closedBy = by }

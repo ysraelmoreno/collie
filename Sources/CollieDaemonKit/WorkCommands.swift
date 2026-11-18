@@ -268,10 +268,9 @@ extension CommandRouter {
             let hits = w.tasks.contains { $0.id == key } ? w.tasks.filter { $0.id == key }
                 : w.tasks.filter { $0.title.caseInsensitiveCompare(key) == .orderedSame }
             guard hits.count <= 1 else { throw ProtocolError(code: .ambiguous, message: "Multiple tasks titled '\(key)'; use its id") }
-            guard var task = hits.first else { throw missing("no task '\(key)' in the active work") }
-            task.state = state; task.reason = reason; task.updatedAt = now
-            let done = task
-            try await work.update(w.id) { x in if let i = x.tasks.firstIndex(where: { $0.id == done.id }) { x.tasks[i] = done } }
+            guard let hit = hits.first, let done = try await work.setTask(w.id, task: hit.id, state: state, reason: reason, at: now) else {
+                throw missing("no task '\(key)' in the active work")
+            }
             return try isoJSON(done)
 
         case "work.note":

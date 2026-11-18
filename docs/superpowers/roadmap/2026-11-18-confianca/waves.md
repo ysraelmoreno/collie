@@ -15,14 +15,12 @@ swift build --build-tests                 # aquece o .build: o 1º check a frio 
 
 ```sh
 T=docs/superpowers/roadmap/2026-11-18-confianca/tasks
-collie work task add "A1.1 testes afetados" --spec $T/a1-1-affected-tests.md \
-  --check 'bash scripts/ci/test-affected-tests.sh && bash scripts/ci/affected-tests.sh --files Sources/CollieTheme/a.swift | grep -q CollieAppTests && [ "$(bash scripts/ci/affected-tests.sh --files Package.swift)" = ALL ]'
 collie work task add "A2.1 lint em catraca" --spec $T/a2-1-lint.md \
   --check "bash scripts/ci/lint.sh && bash scripts/ci/test-lint.sh && grep -q 'sleep Sources/CollieDaemonKit/AskCoordinator.swift 15' scripts/ci/lint-baseline.txt"
 collie work task add "A3.1 fronteiras de módulo" --spec $T/a3-1-architecture.md \
   --check "bash scripts/ci/check-architecture.sh && bash scripts/ci/test-check-architecture.sh && grep -q 'forbid-closure collie SwiftTerm' scripts/ci/architecture-rules.txt"
 collie work task add "A1.2 workflow de CI" --spec $T/a1-2-ci-workflow.md \
-  --check "ruby -ryaml -e 'w=YAML.load_file(%q(.github/workflows/ci.yml)); o=w[%q(on)]||w[true]; exit(o.key?(%q(pull_request)) ? 0 : 1)' && grep -q affected-tests.sh .github/workflows/ci.yml && grep -q check-architecture.sh .github/workflows/ci.yml && ! grep -qF secrets. .github/workflows/ci.yml"
+  --check "ruby -ryaml -e 'w=YAML.load_file(%q(.github/workflows/ci.yml)); o=w[%q(on)]||w[true]; exit(o.key?(%q(pull_request)) ? 0 : 1)' && grep -q check-architecture.sh .github/workflows/ci.yml && ! grep -qF secrets. .github/workflows/ci.yml"
 collie work run --max 12 --tries 3 --timeout 3600 --budget 21600
 ```
 

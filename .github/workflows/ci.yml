@@ -1,4 +1,4 @@
-# Lint, module boundaries, build and the tests of the targets a change affects, on every pull request and push to main.
+# Lint, module boundaries, build and the full test suite, on every pull request and push to main.
 # No secrets and read-only token: safe to run on pull requests from forks.
 name: ci
 
@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # never cancel a run on main: with `github.event.before` as the base, a cancelled run leaves its commits untested
+  # a newer push to the same PR supersedes the old run; main runs are never cancelled
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -21,10 +21,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
     steps:
-      # full history: affected-tests.sh needs the merge-base with the base branch
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       - name: Toolchain
         run: |
@@ -39,24 +36,11 @@ jobs:
 
       - name: Testes dos scripts de CI
         run: |
-          scripts/ci/test-affected-tests.sh
           scripts/ci/test-check-architecture.sh
           scripts/ci/test-lint.sh
 
       - name: Build
         run: swift build --build-tests
 
-      # base: the PR's target branch, or the head of main before this push (covers every pushed commit);
-      # a new branch has an all-zero `before`: fall back to the previous commit
-      - name: Testes afetados
-        env:
-          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before) || 'HEAD~1' }}
-        run: |
-          FILTER="$(scripts/ci/affected-tests.sh "$BASE")"
-          if [ -z "$FILTER" ]; then
-            echo "nenhum target de teste afetado: testes pulados"
-          elif [ "$FILTER" = ALL ]; then
-            swift test --disable-sandbox
-          else
-            swift test --disable-sandbox --filter "$FILTER"
-          fi
+      - name: Testes
+        run: swift test --disable-sandbox

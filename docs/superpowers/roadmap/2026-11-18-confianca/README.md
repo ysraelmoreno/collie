@@ -32,7 +32,7 @@ Cada onda cabe no cartão de aprovação (≤ 1500 caracteres para todas as tare
 
 | Onda | Tarefas (spec em `tasks/`) | Depende de |
 |---|---|---|
-| 1 Fundação | A1.1, A2.1, A3.1, A1.2 | nada |
+| 1 Fundação | A2.1, A3.1, A1.2 (A1.1 cancelada: o CI roda a suíte inteira) | nada |
 | 2 Portão e evidência | B2.1, B1.1, B1.2, B2.2 | onda 1 |
 | 3 Memória que vira regra | B3.1, B3.2, B3.3 | onda 2 (usa `--gate`) |
 | 4 Vocabulário e métrica | B4.1, B4.2, B5.1, B5.2 | onda 2 (B5.2 usa os commits de B1.1) |

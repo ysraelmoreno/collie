@@ -33,7 +33,7 @@ import CollieProtocol
             await d.router.lifecyclePass(store, now: t0)
             let h0 = try await head(repo)
             let e0 = await lc.entry(r.id)
-            #expect(e0?.mapAnchor(for: LifecycleRules.textHash(r))?.commit == h0)
+            #expect(e0?.mapAnchor(for: LifecycleRules.textHash(r), store: store.key)?.commit == h0)
             #expect(e0?.contestedNow == false)
             try await commit("f.txt", lines(60, "novo"), in: repo)
             await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
@@ -87,7 +87,7 @@ import CollieProtocol
             await lc.update(r.id, now: t0) { $0.flags = []; $0.contestedNow = false; $0.recheckedAt = t0.addingTimeInterval(2 * 86_400) }
             await d.router.lifecyclePass(store, now: t0.addingTimeInterval(3 * 86_400))
             let e = await lc.entry(r.id)
-            #expect(e?.mapAnchor(for: LifecycleRules.textHash(r))?.commit == (try await head(repo)))
+            #expect(e?.mapAnchor(for: LifecycleRules.textHash(r), store: store.key)?.commit == (try await head(repo)))
             #expect(e?.contestedNow == false)
         }
     }
@@ -102,13 +102,13 @@ import CollieProtocol
             try await put(store, r)
             await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
             let e = await lc.entry(r.id)
-            #expect(e?.mapAnchors?.count == 2 && e?.mapAnchor(for: old) != nil && e?.mapAnchor(for: LifecycleRules.textHash(r)) != nil)
+            #expect(e?.mapAnchors?.count == 2 && e?.mapAnchor(for: old, store: store.key) != nil && e?.mapAnchor(for: LifecycleRules.textHash(r), store: store.key) != nil)
             let now = LifecycleRules.textHash(r), lost = String(repeating: "ab", count: 20)
-            await lc.update(r.id, now: t0) { $0.setMapAnchor(MapAnchor(textHash: now, commit: lost, at: t0)) }
+            await lc.update(r.id, now: t0) { $0.setMapAnchor(MapAnchor(textHash: now, commit: lost, at: t0, store: store.key)) }
             try await commit("f.txt", lines(90, "w"), in: repo)
             await d.router.lifecyclePass(store, now: t0.addingTimeInterval(2 * 86_400))
             let e2 = await lc.entry(r.id)
-            #expect(e2?.mapAnchor(for: now)?.commit == (try await head(repo)))   // gone anchor: HEAD, nothing judged
+            #expect(e2?.mapAnchor(for: now, store: store.key)?.commit == (try await head(repo)))   // gone anchor: HEAD, nothing judged
             #expect(e2?.contestedNow == false)
         }
     }
@@ -159,7 +159,7 @@ import CollieProtocol
             #expect(await lc.entry(r.id)?.contestedNow == false)
             await d.router.lifecyclePass(store, now: Date().addingTimeInterval(2 * 86_400))
             let e = await lc.entry(r.id), h = try await head(repo)
-            #expect(e?.contestedNow == false && e?.mapAnchor(for: LifecycleRules.textHash(r))?.commit == h)
+            #expect(e?.contestedNow == false && e?.mapAnchor(for: LifecycleRules.textHash(r), store: store.key)?.commit == h)
         }
     }
 
@@ -208,6 +208,81 @@ import CollieProtocol
             let facts = try #require(input?.components(separatedBy: "Fatos verificados:").last)
             #expect(facts.contains("- mapDrift: f.txt +60 −1 linhas"))
             #expect(facts.contains("commits: "))
+        }
+    }
+
+    // MARK: two stores of one repo (review finding 2): the pasture and a paddock worktree on its own branch
+
+    private func worktree(_ repo: URL) async throws -> URL {
+        let wt = repo.deletingLastPathComponent().appendingPathComponent(repo.lastPathComponent + "-wt")
+        _ = try await GitRunner.run(["worktree", "add", "-q", "-b", "side", wt.path], in: repo)
+        return wt.resolvingSymlinksInPath()
+    }
+
+    /// Each store measures against its own anchor: the worktree's branch (already different from main when the map was
+    /// written) never contests it, day after day, and the pasture never re-anchors the worktree's.
+    @Test func pastureAndWorktreeNeverPingPong() async throws {
+        try await run { d, pasture, repo in
+            let wt = try await worktree(repo)
+            defer { try? FileManager.default.removeItem(at: wt) }
+            try await commit("f.txt", lines(60, "lado"), in: wt)
+            let paddock = await d.router.memory.repo(for: wt.path)
+            let r = map(), lc = d.router.memory.lifecycle, t0 = Date()
+            try await put(pasture, r); try await put(paddock, r)
+            for day in 0..<4 {
+                let t = t0.addingTimeInterval(Double(day) * 86_400)
+                await d.router.lifecyclePass(pasture, now: t)
+                await d.router.lifecyclePass(paddock, now: t)
+                #expect(await lc.entry(r.id)?.contestedNow == false, "day \(day)")
+            }
+            let e = await lc.entry(r.id), h = LifecycleRules.textHash(r)
+            #expect(e?.mapAnchor(for: h, store: pasture.key)?.commit == (try await head(repo)))
+            #expect(e?.mapAnchor(for: h, store: paddock.key)?.commit == (try await head(wt)))
+        }
+    }
+
+    /// The pasture's file drifts and a valid re-check clears it: only the pasture re-anchors; the worktree, whose branch
+    /// never had that change, is not contested by it.
+    @Test func validVerdictInOneStoreDoesNotReopenTheOther() async throws {
+        try await run { d, pasture, repo in
+            let wt = try await worktree(repo)
+            defer { try? FileManager.default.removeItem(at: wt) }
+            let paddock = await d.router.memory.repo(for: wt.path)
+            let r = map(), lc = d.router.memory.lifecycle, t0 = Date(), h = LifecycleRules.textHash(r)
+            try await put(pasture, r); try await put(paddock, r)
+            await d.router.lifecyclePass(pasture, now: t0)
+            await d.router.lifecyclePass(paddock, now: t0)
+            let side0 = try await head(wt)
+            try await commit("f.txt", lines(60, "novo"), in: repo)
+            await d.router.lifecyclePass(pasture, now: t0.addingTimeInterval(86_400))
+            #expect(await lc.entry(r.id)?.contestedNow == true)
+            await lc.update(r.id, now: t0) { $0.flags = []; $0.contestedNow = false; $0.recheckedAt = t0.addingTimeInterval(1.5 * 86_400) }
+            for day in 2..<4 {
+                let t = t0.addingTimeInterval(Double(day) * 86_400)
+                await d.router.lifecyclePass(pasture, now: t)
+                await d.router.lifecyclePass(paddock, now: t)
+                #expect(await lc.entry(r.id)?.contestedNow == false, "day \(day)")
+            }
+            let e = await lc.entry(r.id)
+            #expect(e?.mapAnchor(for: h, store: pasture.key)?.commit == (try await head(repo)))
+            #expect(e?.mapAnchor(for: h, store: paddock.key)?.commit == side0)
+        }
+    }
+
+    /// An anchor written before anchors had a store (no `store`): never measured, replaced by this store's HEAD, no contest.
+    @Test func storelessAnchorMigratesWithoutContest() async throws {
+        try await run { d, store, repo in
+            let r = map(), lc = d.router.memory.lifecycle, t0 = Date(), h = LifecycleRules.textHash(r)
+            try await put(store, r)
+            await d.router.lifecyclePass(store, now: t0)
+            let old = try await head(repo)
+            try await commit("f.txt", lines(80, "z"), in: repo)
+            await lc.update(r.id, now: t0) { $0.mapAnchors = [MapAnchor(textHash: h, commit: old, at: t0)] }   // the old shape
+            await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
+            let e = await lc.entry(r.id)
+            #expect(e?.contestedNow == false)
+            #expect(e?.mapAnchor(for: h, store: store.key)?.commit == (try await head(repo)))
+            #expect(e?.mapAnchors?.contains { $0.store == nil } == false)
         }
     }
 }

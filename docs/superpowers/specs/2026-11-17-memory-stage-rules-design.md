@@ -195,6 +195,13 @@ motivo. As outras checagens mantêm o pulo de hoje.
 worktree. Cada loja compara âncora → o seu HEAD; numa worktree a deriva é a do branch dela. Uma contestação vale para o id
 (entrada única), venha de qual loja vier: consistente com o resto do ciclo de vida.
 
+**Correção da revisão (2026-11-17): âncora por loja e texto.** A âncora única por texto fazia pingue-pongue: o pasto
+re-ancorava no `HEAD` dele e a worktree, noutro branch, media a diferença entre os dois branches e contestava todo dia.
+Decisão: cada loja guarda a sua âncora (`store` = `RepoMemory.key`) e mede contra o próprio `HEAD`, porque cada worktree
+injeta o texto do próprio branch e medir só no repoRoot deixaria de ver o drift dela. A re-âncora depois de um veredito
+válido vale só para a loja cuja medição contestou (`contestedAt` na âncora; "a contestação terminou", sem comparar
+relógios). Âncora antiga, sem loja, nunca casa: a loja ancora de novo, sem contestar.
+
 **Custo por passada** (uma vez por dia por loja): 1 `rev-parse HEAD` + 1 `diff --numstat` por âncora distinta (na prática
 1–3) + 1 `ls-files` por mapa-diretório + 1 `git log` só por mapa contestado (≤ 10, o teto de contestações). Teto
 explícito: no máximo 50 mapas checados por passada, os de checagem mais antiga primeiro (`mapCheckedAt` na entrada).

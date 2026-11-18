@@ -113,16 +113,22 @@ private let day: TimeInterval = 86_400
         #expect(e?.tierSince == t0 + day && e?.recheckedAt == t0 + day)
     }
 
-    /// Item 7 (spec 2026-11-17-memory-stage-rules): a map's anchor commit per text, newest first, at most 4.
-    @Test func mapAnchorsPerTextNewestFirstCappedAtFour() {
+    /// Item 7 (spec 2026-11-17-memory-stage-rules): a map's anchor commit per store and text, newest first, at most 8.
+    @Test func mapAnchorsPerStoreAndTextNewestFirstCapped() {
         var e = LifecycleEntry(tierSince: t0)
-        #expect(e.mapAnchor(for: "h0") == nil)
-        for i in 0..<5 { e.setMapAnchor(MapAnchor(textHash: "h\(i)", commit: "c\(i)", at: t0 + Double(i) * day)) }
-        #expect(e.mapAnchors?.count == 4)
-        #expect(e.mapAnchor(for: "h0") == nil)   // the oldest went
-        #expect(e.mapAnchor(for: "h4")?.commit == "c4")
-        e.setMapAnchor(MapAnchor(textHash: "h2", commit: "new", at: t0 + 9 * day))   // same text: replaced, moved first
-        #expect(e.mapAnchors?.count == 4 && e.mapAnchors?.first?.commit == "new")
+        #expect(e.mapAnchor(for: "h0", store: "/a") == nil)
+        for i in 0..<9 { e.setMapAnchor(MapAnchor(textHash: "h\(i)", commit: "c\(i)", at: t0 + Double(i) * day, store: "/a")) }
+        #expect(e.mapAnchors?.count == MapAnchor.max)
+        #expect(e.mapAnchor(for: "h0", store: "/a") == nil)   // the oldest went
+        #expect(e.mapAnchor(for: "h8", store: "/a")?.commit == "c8")
+        e.setMapAnchor(MapAnchor(textHash: "h8", commit: "wt", at: t0, store: "/wt"))   // same text, another store: its own
+        #expect(e.mapAnchor(for: "h8", store: "/a")?.commit == "c8" && e.mapAnchor(for: "h8", store: "/wt")?.commit == "wt")
+        e.setMapAnchor(MapAnchor(textHash: "h4", commit: "new", at: t0 + 20 * day, store: "/a"))   // same key: replaced, first
+        #expect(e.mapAnchors?.first?.commit == "new" && e.mapAnchors?.filter { $0.textHash == "h4" && $0.store == "/a" }.count == 1)
+        e.mapAnchors = [MapAnchor(textHash: "h", commit: "old", at: t0)]   // written before anchors had a store
+        #expect(e.mapAnchor(for: "h", store: "/a") == nil)
+        e.setMapAnchor(MapAnchor(textHash: "h", commit: "c", at: t0, store: "/a"))
+        #expect(e.mapAnchors?.count == 1)   // the storeless one of that text goes
     }
 
     /// A lifecycle.json written before item 7 decodes; the new fields round-trip.
@@ -134,8 +140,8 @@ private let day: TimeInterval = 86_400
         let s = LifecycleStore(file: f)
         let e = try #require(await s.entry(id))
         #expect(e.tier == .earned && e.mapAnchors == nil && e.mapCheckedAt == nil)
-        await s.update(id, now: t0) { $0.setMapAnchor(MapAnchor(textHash: "h", commit: "abc", at: t0)); $0.mapCheckedAt = t0 }
+        await s.update(id, now: t0) { $0.setMapAnchor(MapAnchor(textHash: "h", commit: "abc", at: t0, store: "/a")); $0.mapCheckedAt = t0 }
         let back = await LifecycleStore(file: f).entry(id)
-        #expect(back?.mapAnchor(for: "h")?.commit == "abc" && back?.mapCheckedAt == t0)
+        #expect(back?.mapAnchor(for: "h", store: "/a")?.commit == "abc" && back?.mapCheckedAt == t0)
     }
 }

@@ -25,26 +25,34 @@ struct LifecycleEntry: Codable, Sendable, Equatable {
     var promotionUndone: Bool? = nil
     /// What open flags took from its score (after the floor clamp); a valid re-check gives back exactly this.
     var flagPenalty: Double? = nil
-    /// A map's anchor commits, one per text (`textHash`: the pasture and a worktree may hold different texts), newest
-    /// first, at most `MapAnchor.max` (spec 2026-11-17-memory-stage-rules, item 7). Daemon-owned: never in the `.md`.
+    /// A map's anchor commits, one per store and text (the pasture and each paddock worktree measure against their own
+    /// `HEAD`, on their own branch, and may hold different texts), newest first, at most `MapAnchor.max` (spec
+    /// 2026-11-17-memory-stage-rules, item 7). Daemon-owned: never in the `.md`.
     var mapAnchors: [MapAnchor]? = nil
     /// When the map drift check last measured it (the oldest go first).
     var mapCheckedAt: Date? = nil
 
-    func mapAnchor(for textHash: String) -> MapAnchor? { mapAnchors?.first { $0.textHash == textHash } }
+    /// An anchor written before anchors had a store (`store == nil`) never matches: that store anchors anew, uncontested.
+    func mapAnchor(for textHash: String, store: String) -> MapAnchor? {
+        mapAnchors?.first { $0.textHash == textHash && $0.store == store }
+    }
 
     mutating func setMapAnchor(_ a: MapAnchor) {
-        let rest = (mapAnchors ?? []).filter { $0.textHash != a.textHash }
+        let rest = (mapAnchors ?? []).filter { $0.textHash != a.textHash || ($0.store != a.store && $0.store != nil) }
         mapAnchors = Array(([a] + rest).prefix(MapAnchor.max))
     }
 }
 
-/// The commit a map's text was last known to match (`HEAD` of the store's root when anchored).
+/// The commit a map's text was last known to match in one store (`HEAD` of its root when anchored).
 struct MapAnchor: Codable, Sendable, Equatable {
-    static let max = 4
+    static let max = 8
     var textHash: String
     var commit: String
     var at: Date
+    /// The `RepoMemory.key` that measures against it; nil: written before anchors had a store (never matched).
+    var store: String? = nil
+    /// When this store's drift contested the map: a re-check or the user keeping it after this re-anchors this store only.
+    var contestedAt: Date? = nil
 }
 
 /// Usage-based lifecycle state per memory id (`<root>/learning/lifecycle.json`, 0600), never in the repo's memory files.

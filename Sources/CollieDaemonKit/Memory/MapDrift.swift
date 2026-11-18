@@ -82,13 +82,14 @@ extension CommandRouter {
                       now: Date, day: String) async {
         let maps = eligible.filter { $0.kind == .map && $0.path.flatMap(MapDrift.norm) != nil }
         guard !maps.isEmpty, let head = await facts.head() else { return }
-        let lc = memory.lifecycle, entries = await lc.all()
+        let lc = memory.lifecycle, entries = await lc.all(), key = store.key
         var anchor: [UUID: String] = [:]   // id → text hash to anchor at HEAD now
         var due: [(r: MemoryRecord, a: MapAnchor, path: String, checked: Date?)] = []
         for r in maps {
             guard let e = entries[r.id], !e.contestedNow, let p = r.path.flatMap(MapDrift.norm) else { continue }
             let h = LifecycleRules.textHash(r)
-            guard let a = e.mapAnchor(for: h), e.recheckedAt.map({ $0 <= a.at }) ?? true else { anchor[r.id] = h; continue }
+            // no anchor in this store for this text, or this store's drift contest is over: anchored at HEAD now
+            guard let a = e.mapAnchor(for: h, store: key), !Self.settled(a, e) else { anchor[r.id] = h; continue }
             guard !fresh.contains(r.id), a.commit != head, facts.pathExists(p) else { continue }   // a gone path is `pathMissing`'s
             due.append((r, a, p, e.mapCheckedAt))
         }
@@ -110,6 +111,7 @@ extension CommandRouter {
                     await lc.update(g.r.id, now: now) { e in
                         e.flags.append(LifecycleFlag(verdict: .outdated, session: "claim-check", day: day, reason: String(reason.prefix(CuratorOps.lineMax))))
                         e.contestedNow = true; e.lastContestedAt = now
+                        if var x = e.mapAnchor(for: g.a.textHash, store: key) { x.contestedAt = now; e.setMapAnchor(x) }
                     }
                     contests += 1
                     if entries[g.r.id]?.tier == .longTerm { memory.noteLifecycle(.demoted, g.r.id, store: store.key) }
@@ -120,8 +122,12 @@ extension CommandRouter {
         let ids = Array(anchor.keys) + checked
         guard !ids.isEmpty else { return }
         await lc.update(ids, now: now) { id, e in
-            if let h = anchor[id] { e.setMapAnchor(MapAnchor(textHash: h, commit: head, at: now)) }
+            if let h = anchor[id] { e.setMapAnchor(MapAnchor(textHash: h, commit: head, at: now, store: key)) }
             if checked.contains(id) { e.mapCheckedAt = now }
         }
     }
+
+    /// This store's drift contested the map and that contest is over (a valid re-check, or the user kept it; an invalid
+    /// one archived it). No clock compared: the verdict's time and the pass's are different clocks in tests and replays.
+    static func settled(_ a: MapAnchor, _ e: LifecycleEntry) -> Bool { a.contestedAt != nil && !e.contestedNow }
 }

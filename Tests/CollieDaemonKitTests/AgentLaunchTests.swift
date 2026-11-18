@@ -188,6 +188,17 @@ import CollieProtocol
         AgentLaunch.removeHooks(for: r.id, in: dir)
         #expect(!FileManager.default.fileExists(atPath: plugin.deletingLastPathComponent().path))
     }
+    @Test func cursorPluginCarriesTheLoopCommand() throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        for r in [rec(.cursor), rec(.custom, "cursor-agent")] {
+            _ = try AgentLaunch.launchSpec(for: r, env: ["PATH": try cursorPath()], hooksDir: dir, collie: collie, shell: "/bin/zsh")
+            let plugin = AgentLaunch.cursorPluginDir(r.id, in: dir), cmd = plugin.appendingPathComponent("commands/\(LoopCommand.cursorCommandFile)")
+            #expect(try String(contentsOf: cmd, encoding: .utf8) == LoopCommand.markdown(arguments: false))
+            #expect(try FileManager.default.attributesOfItem(atPath: cmd.path)[.posixPermissions] as? Int == 0o600)
+            let hooks = try JSONSerialization.jsonObject(with: Data(contentsOf: plugin.appendingPathComponent("hooks/hooks.json"))) as! [String: Any]
+            #expect((hooks["hooks"] as! [String: Any]).keys.sorted() == ["sessionStart"])
+        }
+    }
     /// Agents already running call the newer `collie hook <x>` after an app-only update (spec §4): a name is never
     /// removed or renamed without a version in between. Changing this list must mean editing this test, on purpose.
     @Test func hookSubcommandsFrozen() {

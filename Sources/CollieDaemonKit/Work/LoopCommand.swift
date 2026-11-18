@@ -6,6 +6,9 @@ import CollieCore
 /// It only teaches the procedure: `work.run`'s refusals and the owner's card are what enforce it.
 enum LoopCommand {
     static let plugin = "collie", name = "loop"
+    /// Cursor lists a plugin's commands by file name, not namespaced by the plugin (outcome B, spike
+    /// `docs/superpowers/spikes/2026-10-22-cursor/REPORT.md` §9): the file is named as the command.
+    static let cursorCommandFile = "collie:loop.md"
 
     /// The procedure, no frontmatter. A constant: nothing is interpolated (no backtick either, so no inline shell).
     static let body = """

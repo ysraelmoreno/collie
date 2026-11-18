@@ -153,4 +153,19 @@ private func recording(_ outs: Outputs) -> Curator.Handler {
         let s = await noRunner.status()
         #expect(s.provider == "cursor" && s.available == false && s.reason == "cursor não encontrado")
     }
+
+    /// Task 7: the billing policy is the Curator's, the same for any provider (no Claude in it): only `included` runs.
+    @Test func billingPolicyIsGeneric() async throws {
+        for (p, fake) in [(CuratorProvider.claude, FakeCurator()), (.cursor, cursorFake())] {
+            let c = Curator(dir: dir(), runners: [p: fake], clock: ManualClock())
+            if p != .claude { await c.consent(p); try await c.setProvider(p, model: nil) }
+            let name = p.rawValue.capitalized
+            for (b, ok) in [(CuratorBilling.included("plano"), true), (.metered("API"), false), (.unknown, false)] {
+                fake.bills = b
+                let s = await c.status()
+                #expect(s.available == ok, "\(p) \(b)")
+                if !ok { #expect(s.reason == "\(name): login com cobrança por uso ou não reconhecido; consentimento necessário") }
+            }
+        }
+    }
 }

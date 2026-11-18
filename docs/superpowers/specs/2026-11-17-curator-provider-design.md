@@ -307,8 +307,12 @@ env: HOME=<root>/curator/cursor-home  CURSOR_CONFIG_DIR=<root>/curator/cursor-ho
 
 ### 5. Claude endurecido (E3, E4, E6)
 
-- E3: `auth status --json` conferido também pelo método de login (formato do R1); Console/chave → “claude logado por
-  conta de API (cobrança por token)”.
+- E3: cada provedor classifica o próprio login em `CuratorBilling` (`included` / `metered` / `unknown`); a política é
+  uma só, no `Curator`: só `included` cura; `metered` ou `unknown` → “<Provedor>: login com cobrança por uso ou não
+  reconhecido; consentimento necessário” (a Task 12 troca por pedir consentimento). Claude, pelo R1 (só assinatura):
+  `authMethod` "claude.ai" + `apiProvider` "firstParty" = assinatura, qualquer `subscriptionType`; sinal de API,
+  Console ou Bedrock/Vertex = `metered`; o resto = `unknown` (fail-closed). Nenhum campo do status (e-mail, org) é
+  exibido.
 - E4: prompt por stdin (`claude -p` sem prompt no argv; pinar no R1).
 - E6: `.exhausted` para “Credit balance”, “usage limit”, “rate limit”, “quota”: jobs esperam sem gastar tentativa;
   “cota do <provedor> esgotada até HH:MM”.
@@ -408,6 +412,8 @@ stdin e env; fixtures `status` e `json`). Só `--filter`; nada chama `claude`/`c
 - **Apple Intelligence**: 4096 tokens para tudo e macOS 26; só jobs pequenos. Fonte:
   <https://developer.apple.com/documentation/foundationmodels/managing-the-context-window>.
 - **Chave de API**: só opt-in, Keychain, teto em dólar (R5).
+- Qualquer provedor novo (Codex incluso) entra implementando `CuratorRunner`, inclusive `billing()`; a política de
+  cobrança do `Curator` vale para ele sem mudança.
 
 ## Tarefas (lista; o plano detalha)
 

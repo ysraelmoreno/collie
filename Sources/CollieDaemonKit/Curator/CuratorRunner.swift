@@ -27,6 +27,15 @@ enum CuratorAvailability: Equatable, Sendable {
     case exhausted(String, until: Date?)
 }
 
+/// How the provider bills the logged-in account (spec 2026-11-17 E3): in a plan (`included`), per use or API
+/// (`metered`), or not recognized (`unknown`). Each runner only reads its own login format into this (never echoing
+/// email or org); the policy, the same for every provider, is `Curator.admit`.
+enum CuratorBilling: Equatable, Sendable {
+    case included(String)
+    case metered(String)
+    case unknown
+}
+
 /// The curators this build knows (spec 2026-11-17-curator-provider). Raw values are in config.json and events.
 enum CuratorProvider: String, Codable, CaseIterable, Sendable { case claude, cursor }
 
@@ -48,6 +57,8 @@ struct CuratorProviderInfo: Sendable, Equatable {
 protocol CuratorRunner: Sendable {
     var info: CuratorProviderInfo { get }
     func availability() async -> CuratorAvailability
+    /// How its current login bills; read with (and cached like) `availability`. No default: each provider decides.
+    func billing() async -> CuratorBilling
     /// The models it can pick from without generating anything ([]: free text).
     func models() async -> [String]
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput
@@ -93,12 +104,12 @@ struct ClaudeCuratorRunner: CuratorRunner {
     }
 
     private actor Cache {
-        var value: (CuratorAvailability, until: ContinuousClock.Instant)?
-        func get() -> CuratorAvailability? {
+        var value: (Login, until: ContinuousClock.Instant)?
+        func get() -> Login? {
             guard let (v, until) = value, ContinuousClock.now < until else { return nil }
             return v
         }
-        func set(_ v: CuratorAvailability, for d: Duration) { value = (v, ContinuousClock.now + d) }
+        func set(_ v: Login, for d: Duration) { value = (v, ContinuousClock.now + d) }
     }
 
     /// Pinned from `claude --help` (2.1.310) and the tokenless gate. Never `--bare` (it skips the keychain login).
@@ -169,25 +180,50 @@ struct ClaudeCuratorRunner: CuratorRunner {
         return try await body(cwd)
     }
 
+    /// What `auth status --json` says: logged in (and claude found), and how that login bills.
+    struct Login: Equatable, Sendable { var availability: CuratorAvailability; var billing: CuratorBilling }
+
+    /// R1 (the owner's real subscription output, Tests/Fixtures/curator): `authMethod` "claude.ai" with `apiProvider`
+    /// "firstParty" is the subscription, whatever its `subscriptionType` (pro, max, team…: still a plan; not read).
+    /// An API-looking method or another provider (Bedrock, Vertex) is metered; anything else unknown (fail closed: no
+    /// list of forbidden methods). nil: no readable answer. Unknown fields are ignored; none is echoed.
+    static func login(_ stdout: String) -> Login? {
+        guard case .object(let o)? = try? JSONDecoder().decode(JSONValue.self, from: Data(stdout.utf8)),
+              case .bool(let loggedIn)? = o["loggedIn"] else { return nil }
+        guard loggedIn else { return Login(availability: .unavailable("claude sem login"), billing: .unknown) }
+        let method: String? = if case .string(let m)? = o["authMethod"] { m } else { nil }
+        let provider: String? = if case .string(let p)? = o["apiProvider"] { p } else { nil }
+        let billing: CuratorBilling
+        if method == "claude.ai", provider == "firstParty" { billing = .included("assinatura") }
+        else if let m = method?.lowercased(), ["api", "console", "key"].contains(where: m.contains) { billing = .metered(apiBilling) }
+        else if let p = provider, p != "firstParty" { billing = .metered(apiBilling) }
+        else { billing = .unknown }
+        return Login(availability: .available, billing: billing)
+    }
+    static let apiBilling = "conta de API (cobrança por token)"
+
+    func availability() async -> CuratorAvailability { await login().availability }
+    func billing() async -> CuratorBilling { await login().billing }
+
     // ponytail: a real answer (logged in or not, claude missing) is kept 10 min (logging in shows up within that);
     // a failed `auth status` (timeout, junk) only `retryAfter`
-    func availability() async -> CuratorAvailability {
+    private func login() async -> Login {
         if let v = await cache.get() { return v }
         let e = await environment()
         guard let claude = Self.locate(e) else {
-            await cache.set(.unavailable("claude não encontrado"), for: Self.availabilityTTL)
-            return .unavailable("claude não encontrado")
+            let v = Login(availability: .unavailable("claude não encontrado"), billing: .unknown)
+            await cache.set(v, for: Self.availabilityTTL)
+            return v
         }
         let r = try? await inTempDir { cwd throws(ProtocolError) in
             try await BoundedProcess.run(executable: claude, args: ["auth", "status", "--json"], in: cwd, env: e,
                                          timeout: .seconds(10), cap: 64 << 10)
         }
-        let out = r.flatMap { try? JSONDecoder().decode(JSONValue.self, from: Data($0.stdout.utf8)) }
-        guard case .object(let o)? = out, case .bool(let loggedIn)? = o["loggedIn"] else {
-            await cache.set(.unavailable(Self.noAnswer), for: retryAfter)
-            return .unavailable(Self.noAnswer)
+        guard let v = r.flatMap({ Self.login($0.stdout) }) else {
+            let v = Login(availability: .unavailable(Self.noAnswer), billing: .unknown)
+            await cache.set(v, for: retryAfter)
+            return v
         }
-        let v: CuratorAvailability = loggedIn ? .available : .unavailable("claude sem login")
         await cache.set(v, for: Self.availabilityTTL)
         return v
     }
@@ -222,7 +258,8 @@ struct ClaudeCuratorRunner: CuratorRunner {
             }
             do throws(ProtocolError) { return try Self.parse(r.stdout) } catch where Self.exhausted(error.message) || Self.exhausted(r.stderr) {
                 let why = Self.exhausted(error.message) ? error.message : String(r.stderr.prefix(300))
-                await cache.set(.exhausted(why, until: Date().addingTimeInterval(Self.exhaustedFor)), for: .seconds(Int64(Self.exhaustedFor)))
+                await cache.set(Login(availability: .exhausted(why, until: Date().addingTimeInterval(Self.exhaustedFor)),
+                                      billing: await cache.get()?.billing ?? .unknown), for: .seconds(Int64(Self.exhaustedFor)))
                 throw ProtocolError(code: .unavailable, message: why)
             } catch where error.message == Self.unreadable && r.status != 0 {
                 if let p = CuratorSandboxProfile.blocked(r.stderr) {

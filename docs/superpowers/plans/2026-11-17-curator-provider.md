@@ -229,20 +229,37 @@ allowlist vazia.
 - [ ] **Step 4: Run** os dois filtros. Expected: PASS.
 - [ ] **Step 5: Commit** `fix(curator): prompt on stdin, exhausted quota waits`.
 
-### Task 7: Método de login do Claude (E3) — **depende do R1**
+### Task 7: Classificação do login por provedor + política genérica (E3) — **R1 atendido só para assinatura**
+
+Correção de escopo do dono (2026-11-18): a regra de cobrança não é do Claude. Cada runner só classifica o próprio
+login; a política é uma só, no `Curator`, para qualquer provedor. Codex (e qualquer outro) entra depois só
+implementando `billing()` do protocolo.
 
 **Files:**
-- Modify: `Sources/CollieDaemonKit/Curator/CuratorRunner.swift:136-155`
-- Create: `Tests/Fixtures/curator/claude-auth-status-subscription.json`, `claude-auth-status-console.json` (do R1)
-- Test: `Tests/CollieDaemonKitTests/CuratorRunnerTests.swift`
+- Modify: `Sources/CollieDaemonKit/Curator/CuratorRunner.swift` (protocolo, `ClaudeCuratorRunner.login`),
+  `Sources/CollieDaemonKit/Curator/Curator.swift` (`availability`, `Curator.admit`)
+- Create: `Tests/Fixtures/curator/claude-auth-status-subscription.json` (R1, saneado). Sem `…-console.json`: o R1 não
+  teve conta de Console; as variantes de API são sintéticas e ditas como tais nos testes.
+- Test: `Tests/CollieDaemonKitTests/CuratorRunnerTests.swift`, `CuratorProviderTests.swift`, `CuratorQueueTests.swift` (FakeCurator)
 
-- [ ] **Step 1**: sem os arquivos do R1, **pare** e avise o dono. Não invente o formato.
-- [ ] **Step 2: Write the failing tests**: `subscriptionLoginAvailable`, `consoleLoginUnavailable` (“claude logado por
-  conta de API (cobrança por token)”), `unknownMethodUnavailable`.
-- [ ] **Step 3: Run** `--filter CuratorRunnerTests`. Expected: FAIL.
-- [ ] **Step 4: Implement** lendo o campo que o R1 mostrar.
-- [ ] **Step 5: Run** `--filter CuratorRunnerTests`. Expected: PASS.
-- [ ] **Step 6: Commit** `fix(curator): only the Claude subscription login curates`.
+**Interfaces:**
+- Produces: `enum CuratorBilling: Equatable, Sendable { case included(String), metered(String), unknown }`;
+  `func billing() async -> CuratorBilling` no protocolo `CuratorRunner` (sem padrão: cada provedor decide);
+  `static func Curator.admit(_ b: CuratorBilling, provider: CuratorProvider) -> CuratorAvailability`.
+- Claude: `authMethod == "claude.ai"` e `apiProvider == "firstParty"` → `.included("assinatura")`, qualquer
+  `subscriptionType` (pro, max, team…: plano continua plano; o campo não é lido); método com cara de API/Console/chave
+  ou `apiProvider` ≠ firstParty → `.metered("conta de API (cobrança por token)")`; o resto → `.unknown`. JSON
+  ilegível → “claude não respondeu” (tenta de novo logo); `loggedIn: false` → “claude sem login”.
+- Política: `.included` → disponível; `.metered`/`.unknown` → “<Provedor>: login com cobrança por uso ou não
+  reconhecido; consentimento necessário”. A Task 12 troca esse recusar por pedir consentimento dentro de
+  `Curator.admit` (TODO no código), sem mexer nos runners.
+- Cursor (Task 11): `billing()` devolve `.unknown` até o R2 mostrar o formato.
+
+- [x] Testes: `subscriptionLoginAvailable` (fixture real), `consoleLoginUnavailable` e `unknownMethodUnavailable`
+  (sintéticos), `loggedOutOrJunkStatus`, `billingPolicyIsGeneric` (runner falso, Claude e Cursor, os três billing).
+- [x] Commit `fix(curator): only the Claude subscription login curates`.
+- [ ] Dono, à mão (R1, parte restante): conferir que `echo '…' | claude -p --system-prompt x --output-format json`
+  lê o prompt do stdin.
 
 ### Task 8: Provedores no `Curator`
 
@@ -418,7 +435,8 @@ allowlist vazia.
 
 ## Roteiro manual do dono (não é tarefa de executor)
 
-- **R1 (Task 7, Task 6)**: `claude auth status --json` logado na assinatura (e, se der, numa conta de Console);
+- **R1 (Task 7, Task 6)** — assinatura feita em 2026-11-18 (fixture saneado); Console não; stdin ainda a conferir:
+  `claude auth status --json` logado na assinatura (e, se der, numa conta de Console);
   salvar sem e-mail/ids em `Tests/Fixtures/curator/claude-auth-status-{subscription,console}.json`. Conferir que
   `echo '…' | claude -p --system-prompt x --output-format json` lê o prompt do stdin.
 - **R2 (antes das Tasks 5 e 11)**: numa conta macOS de teste:

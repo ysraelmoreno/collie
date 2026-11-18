@@ -31,6 +31,18 @@ private struct Fake {
     }
 }
 
+/// R1: the owner's real `claude auth status --json` on the subscription (Max), sanitized (email, org, paths, date are
+/// example values).
+private let subscriptionStatus = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("Fixtures/curator/claude-auth-status-subscription.json")
+/// A SYNTHETIC status: the real subscription fixture edited by `edit`. Not a real Console/API account's output (R1 has
+/// none): these only pin that anything but the subscription's positive set is unavailable.
+private func syntheticStatus(_ edit: (inout [String: Any]) -> Void) throws -> String {
+    var o = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: subscriptionStatus)) as? [String: Any])
+    edit(&o)
+    return String(decoding: try JSONSerialization.data(withJSONObject: o), as: UTF8.self)
+}
+
 /// sandbox-exec can't nest: inside an agent's sandbox the real-profile tests are skipped (the owner's R2 runs them).
 private let canSandbox: Bool = {
     let p = Process()
@@ -105,7 +117,7 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
     }
 
     @Test(.enabled(if: canSandbox, nested)) func creditErrorRunIsExhausted() async throws {
-        let fake = try Fake(#"[ "$1" = "auth" ] && { echo '{"loggedIn": true}'; exit 0; }; printf '%s' '{"type":"result","is_error":true,"result":"Credit balance is too low"}'"# + "\n")
+        let fake = try Fake(#"[ "$1" = "auth" ] && { echo '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}'; exit 0; }; printf '%s' '{"type":"result","is_error":true,"result":"Credit balance is too low"}'"# + "\n")
         let r = fake.runner()
         await #expect(throws: ProtocolError.self) { try await r.run(call, model: "haiku", timeout: .seconds(20)) }
         guard case .exhausted(_, let until)? = Optional(await r.availability()) else { Issue.record("not exhausted"); return }
@@ -191,7 +203,7 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
     @Test func loggedOutUnavailable() async throws {
         let fake = try Fake(#"[ "$1 $2 $3" = "auth status --json" ] && { echo '{"loggedIn": false, "authMethod": "none"}'; exit 1; }; exit 2"# + "\n")
         #expect(await fake.runner().availability() == .unavailable("claude sem login"))
-        let ok = try Fake(#"[ "$1 $2 $3" = "auth status --json" ] && { echo '{"loggedIn": true}'; exit 0; }; exit 2"# + "\n")
+        let ok = try Fake(#"[ "$1 $2 $3" = "auth status --json" ] && { echo '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}'; exit 0; }; exit 2"# + "\n")
         #expect(await ok.runner().availability() == .available)
     }
 
@@ -230,7 +242,7 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
     @Test func authErrorRetried() async throws {
         let fake = try Fake { rec in """
             pwd >> '\(rec.path)'
-            [ -f '\(rec.path).n' ] && { echo '{"loggedIn": true}'; exit 0; }
+            [ -f '\(rec.path).n' ] && { echo '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}'; exit 0; }
             touch '\(rec.path).n'; echo 'boom'; exit 3
 
             """ }
@@ -241,5 +253,48 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         let cwds = try String(contentsOf: fake.rec, encoding: .utf8).split(separator: "\n").map(String.init)
         #expect(cwds.count == 2)
         for d in cwds { #expect(d != SignedAppCheck.realPath(fake.f.home) && d.contains("collie-curator-") && !FileManager.default.fileExists(atPath: d)) }
+    }
+
+    // Task 7 (E3): Claude's side only reads its login into a `CuratorBilling`; the policy is `Curator.admit`.
+    @Test func subscriptionLoginAvailable() async throws {
+        let fake = try Fake(#"[ "$1 $2 $3" = "auth status --json" ] && { cat '\#(subscriptionStatus.path)'; exit 0; }; exit 2"# + "\n")
+        let r = fake.runner()
+        #expect(await r.availability() == .available)
+        #expect(await r.billing() == .included("assinatura"))
+        // a new subscription tier is still the subscription; a new unknown field is ignored
+        let team = try syntheticStatus { $0["subscriptionType"] = "team"; $0["planTier"] = "x"; $0["newField"] = [1] }
+        #expect(ClaudeCuratorRunner.login(team)?.billing == .included("assinatura"))
+        let bare = try syntheticStatus { $0["subscriptionType"] = nil; $0["storedClaudeAiLogin"] = nil }
+        #expect(ClaudeCuratorRunner.login(bare)?.billing == .included("assinatura"))
+    }
+
+    /// SYNTHETIC Console/API shapes (no real one in R1): an API key method or a non-first-party provider.
+    @Test func consoleLoginUnavailable() throws {
+        for edit: (inout [String: Any]) -> Void in [{ $0["authMethod"] = "api_key" }, { $0["authMethod"] = "console" },
+                                                    { $0["apiProvider"] = "bedrock" }, { $0["apiProvider"] = "vertex" }] {
+            let l = try #require(ClaudeCuratorRunner.login(try syntheticStatus(edit)))
+            #expect(l.availability == .available && l.billing == .metered("conta de API (cobrança por token)"))
+        }
+    }
+
+    /// SYNTHETIC: a method or provider never seen, or one missing, is not the subscription.
+    @Test func unknownMethodUnavailable() throws {
+        for edit: (inout [String: Any]) -> Void in [{ $0["authMethod"] = "oauth" }, { $0["authMethod"] = nil },
+                                                    { $0["apiProvider"] = nil }, { $0["authMethod"] = 1 },
+                                                    { $0["authMethod"] = "Claude.ai " }] {
+            let s = try syntheticStatus(edit)
+            #expect(ClaudeCuratorRunner.login(s)?.billing == .unknown, "\(s)")
+        }
+    }
+
+    @Test func loggedOutOrJunkStatus() throws {
+        let out = try #require(ClaudeCuratorRunner.login(try syntheticStatus { $0["loggedIn"] = false }))
+        #expect(out.availability == .unavailable("claude sem login") && out.billing == .unknown)
+        for junk in ["", "{", "[]", #"{"loggedIn":"yes"}"#, "null"] { #expect(ClaudeCuratorRunner.login(junk) == nil, "\(junk)") }
+        // what is read never echoes the status's fields (email, org)
+        for edit: (inout [String: Any]) -> Void in [{ $0["authMethod"] = "user@example.com" }, { $0["apiProvider"] = "Example Organization" }] {
+            let b = ClaudeCuratorRunner.login(try syntheticStatus(edit))?.billing
+            #expect(!"\(String(describing: b))".lowercased().contains("example"))
+        }
     }
 }

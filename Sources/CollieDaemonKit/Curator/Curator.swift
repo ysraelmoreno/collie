@@ -230,7 +230,16 @@ actor Curator {
         guard let r = runners[p] else { return .unavailable("\(p.rawValue) não encontrado") }
         let w = outcomes[p] ?? [], bad = w.filter { $0 }.count
         if bad >= Self.pauseBad { return .unavailable("saída inválida em \(bad) de \(w.count) (troque de modelo)") }
-        return await r.availability()
+        let a = await r.availability()
+        return a == .available ? Self.admit(await r.billing(), provider: p) : a
+    }
+
+    /// The billing policy (spec 2026-11-17 E3), the same for every provider: a login billed in a plan curates; one
+    /// billed per use, or not recognized, doesn't (no silent token billing).
+    static func admit(_ b: CuratorBilling, provider p: CuratorProvider) -> CuratorAvailability {
+        if case .included = b { return .available }
+        // TODO(Task 12): with consent per provider, metered/unknown ask for it here instead of refusing
+        return .unavailable("\(p.rawValue.capitalized): login com cobrança por uso ou não reconhecido; consentimento necessário")
     }
 
     func setCap(_ n: Int) {

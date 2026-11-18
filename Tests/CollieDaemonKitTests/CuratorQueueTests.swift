@@ -29,6 +29,10 @@ final class FakeCurator: CuratorRunner, @unchecked Sendable {
     var timeouts: [Duration] { lock.withLock { _timeouts } }
     func models() async -> [String] { [] }
     func availability() async -> CuratorAvailability { avail }
+    /// How its login bills (default: in a plan, like the Claude subscription).
+    var bills: CuratorBilling { get { lock.withLock { _bills } } set { lock.withLock { _bills = newValue } } }
+    private var _bills = CuratorBilling.included("teste")
+    func billing() async -> CuratorBilling { bills }
     func run(_ c: CuratorCall, model: String, timeout: Duration) async throws(ProtocolError) -> CuratorOutput {
         lock.withLock { _inputs.append(c.input); _models.append(model); _timeouts.append(timeout) }
         if gated { await withCheckedContinuation { c in lock.withLock { if _gated { waiters.append(c) } else { c.resume() } } } }

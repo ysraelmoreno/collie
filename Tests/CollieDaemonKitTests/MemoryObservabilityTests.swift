@@ -402,4 +402,24 @@ extension JSONDecoder {
         #expect(r.trends.current.precision == 0.25 && r.trends.previous.precision == 0)
         #expect(compute(base()).usage.precision.rate == nil)   // no candidate: no rate, never 0/0
     }
+
+    /// Item 2 phase 1: the evidence block beside the v1 precision (def 1 both, v1 unchanged); `get`/`flag` count by kind
+    /// only, outside the rate; per agent and per week.
+    @Test func evidenceBesideV1Precision() {
+        let a = UUID(), b = UUID()
+        let es = base() + [
+            ev(.injected, ago(1.9)) { $0.agent = "claude"; $0.terminal = cla; $0.where = "prompt"; $0.ids = [a, b]; $0.eligible = 2 },
+            ev(.used, ago(1.8)) { $0.agent = "claude"; $0.terminal = cla; $0.ids = [a, b]; $0.hits = 2; $0.evidenced = [a]; $0.evidence = ["cite"] },
+            ev(.used, ago(1.7)) { $0.agent = "claude"; $0.terminal = cla; $0.ids = [b]; $0.where = "get"; $0.evidenced = [b]; $0.evidence = ["get"] },
+            ev(.used, ago(1.6)) { $0.agent = "cursor"; $0.where = "flag"; $0.ids = [a]; $0.evidenced = [a]; $0.evidence = ["flag"] },
+            ev(.used, ago(9)) { $0.ids = [a]; $0.hits = 1; $0.evidenced = [a]; $0.evidence = ["cite"] }]   // the previous week
+        let r = compute(es)
+        #expect(r.usage.precision.def == 1 && r.usage.precision.used == 2 && r.usage.precision.candidates == 2 && r.usage.precision.rate == 1)
+        let e = r.usage.evidence
+        #expect(e == MemoryObservability.Evidence(def: 1, candidates: 2, evidenced: 1, rate: 0.5, byKind: ["cite": 1, "get": 1, "flag": 1]), "\(e)")
+        #expect(e.evidenced <= r.usage.precision.used)
+        #expect(r.byAgent["claude"]?.evidence.rate == 0.5 && r.byAgent["cursor"]?.evidence.byKind == ["flag": 1] && r.byAgent["cursor"]?.evidence.rate == nil)
+        #expect(r.trends.current.evidence == 0.5 && r.trends.previous.evidence == nil)
+        #expect(compute(base()).usage.evidence == MemoryObservability.Evidence())
+    }
 }

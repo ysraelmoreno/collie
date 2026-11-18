@@ -93,4 +93,23 @@ private final class Calls: @unchecked Sendable {   // `lock` guards `args`
         #expect(MemoryPanelModel.precisionLine(.init(injected: 3, candidates: 0, used: 0, corrected: 0, unresolved: 0, flags: 0, rate: nil))
                 == "Precisão: – (nenhuma memória injetada por relevância pode contar uso no período)")
     }
+
+    /// Item 2 phase 1: the evidence block decodes from a new daemon, is nil from an old one, and reads as one line.
+    @Test func evidenceLineOldAndNewDaemon() async throws {
+        let a = UUID()
+        let json = try reportJSON([ev(.injected, ago(1)) { $0.where = "prompt"; $0.ids = [a, UUID()]; $0.eligible = 2 },
+                                   ev(.used, ago(0.9)) { $0.ids = [a]; $0.hits = 2; $0.evidenced = [a]; $0.evidence = ["cite"] },
+                                   ev(.used, ago(0.8)) { $0.where = "get"; $0.ids = [a]; $0.evidenced = [a]; $0.evidence = ["get"] }])
+        let (m, _) = model(json)
+        await m.loadStats()
+        let e = try #require(m.stats?.usage.evidence)
+        #expect(e.def == 1 && e.candidates == 2 && e.evidenced == 1 && e.rate == 0.5 && m.stats?.usage.precision?.def == 1)
+        #expect(MemoryPanelModel.evidenceLine(e) == "Uso com evidência: 50% das memórias injetadas por relevância (1 de 2; citação 1 · leitura 1 · marcação 0)")
+        guard case .object(var o) = json, case .object(var u) = o["usage"] else { Issue.record("shape"); return }
+        u["evidence"] = nil; o["usage"] = .object(u)
+        let (old, _) = model(.object(o))
+        await old.loadStats()
+        #expect(old.stats != nil && old.stats?.usage.evidence == nil)
+        #expect(MemoryPanelModel.evidenceLine(nil) == "Uso com evidência: o daemon instalado ainda não mede")
+    }
 }

@@ -4,7 +4,10 @@ import CollieProtocol
 
 /// `collie work run` / `collie work stop`: the caller's active work run by a `WorkLoop` in the daemon.
 extension CommandRouter {
-    static let loopTriesMax = 10.0, loopTimeoutMax = 86_400.0
+    /// Hard ceilings (the owner may raise them later): attempts per task, attempts in all (`--max`, required), a turn,
+    /// and the time budget of all turns and checks.
+    static let loopTriesMax = 10.0, loopMaxMax = 30.0, loopTimeoutMax = 14_400.0, loopBudgetMax = 43_200.0
+    static let loopBudgetDefault = 14_400.0, loopCardMax = 1500
 
     /// `starter`: the terminal whose active work runs (the caller, or `--terminal` from the app); it must be a Shepherd,
     /// since the loop summons agents as it. Returns at once; the starter gets one line when the loop ends.
@@ -27,6 +30,9 @@ extension CommandRouter {
         loopPaddocks.insert(pid)
         var started = false
         defer { if !started { loopPaddocks.remove(pid) } }
+        guard let max = try num(r, "max", max: Self.loopMaxMax).map(Int.init) else {
+            throw invalid("--max is required: the attempts the loop may use in all (1-\(Int(Self.loopMaxMax)))")
+        }
         guard let w = try await work.active(terminal: t.id) else {
             throw invalid("no active work for '\(t.name)'; start one: collie work start <title>")
         }
@@ -60,25 +66,61 @@ extension CommandRouter {
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"), model: str(r, "model"), command: str(r, "command"),
-                                 max: try num(r, "max", max: 1000).map(Int.init), used: 0, startedAt: Date())
+                                 max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
+                                 spent: 0, tasks: open.map(\.id), startedAt: Date())
+        // the owner approves the tasks, their checks and the limits on a card; until then nothing runs
+        let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
+                           base: nil, call: Self.loopCardText(w, open, loop, paddock: paddock.name), command: "run", by: t.id)
+        let id = w.id, starter = t.id, title = w.title
+        started = true   // the reservation now belongs to the approval
+        Task { [weak self] in
+            guard let self else { return }
+            guard await self.confirmCard(card, wait: self.config.loopCardWait) else {
+                await self.loopDenied(paddock: pid, starter: starter, title: title)
+                return
+            }
+            await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
+        }
+        return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")])
+    }
+
+    private func loopDenied(paddock: UUID, starter: UUID, title: String) async {
+        loopPaddocks.remove(paddock)
+        try? await asks.inject(to: starter, prompt: "[collie] O dono não aprovou o laço de \"\(RerailText.clean(title))\"; nada rodou.", afterQuiet: true)
+    }
+
+    /// After the owner's Permitir: the loop's sandbox, its state, the engine.
+    private func startLoop(_ id: UUID, _ loop: WorkLoopState, paddock: Paddock, starter: UUID, dir: URL) async {
         // the loop's own profile (the paddock's, strict), made now: it outlives every terminal of the loop
         if config.sandboxHome != nil {
-            do { _ = try prepareLoopSandbox(w.id, paddock: paddock) } catch {
-                throw ProtocolError(code: .internal, message: "the loop's sandbox could not be prepared: \(error)")
+            do { _ = try prepareLoopSandbox(id, paddock: paddock) } catch {
+                loopPaddocks.remove(paddock.id)
+                try? await asks.inject(to: starter, prompt: "[collie] O laço não começou: o sandbox dele não pôde ser preparado.", afterQuiet: true)
+                return
             }
         }
-        try await work.update(w.id) { $0.loop = loop }
-        let host = RouterLoopHost(router: self, starter: t.id, root: config.paths.root, work: w.id, paddock: pid,
+        do { try await work.update(id) { $0.loop = loop } } catch { loopPaddocks.remove(paddock.id); return }
+        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id,
                                   sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
         let engine = WorkLoop(store: work, host: host)
-        let id = w.id, starter = t.id
+        let pid = paddock.id
         let task = Task { [weak self] in
             _ = await engine.run(work: id, dir: dir)
             await self?.loopEnded(id, starter: starter, paddock: pid)
         }
-        workLoops[w.id] = (engine, task, false)
-        started = true
-        return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")])
+        workLoops[id] = (engine, task, false)
+    }
+
+    /// The card's one line (the card shows no line breaks): where, the limits, then each task and its check.
+    static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String) -> String {
+        var s = "rodar sem supervisão \"\(w.title)\" no cercado \(paddock): até \(l.max ?? 0) tentativas no total (\(l.tries) por tarefa), "
+            + "turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. Tarefas e checks: "
+        for (i, t) in tasks.enumerated() {
+            let item = "\(i + 1)) \(t.title) — check: \(t.check ?? "")" + (i < tasks.count - 1 ? "; " : "")
+            if s.count + item.count > Self.loopCardMax { s += "… +\(tasks.count - i) tarefas (collie work status)"; break }
+            s += item
+        }
+        return s
     }
 
     /// Ends the loop after the current attempt's verdict.

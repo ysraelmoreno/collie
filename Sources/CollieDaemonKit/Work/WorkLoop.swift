@@ -47,9 +47,18 @@ actor WorkLoop {
             // closed, missing or stopped from outside (a daemon restart's sweep): stop
             guard let w = try? await store.get(id), w.closedAt == nil, let loop = w.loop, loop.state == .running,
                   await host.starterAlive() else { break }
-            guard let task = w.tasks.first(where: { $0.state == .open }) else { end = .finished; break }
+            // only the tasks the owner approved: one added since waits for the next run
+            guard let task = w.tasks.first(where: { $0.state == .open && (loop.tasks?.contains($0.id) ?? true) }) else { end = .finished; break }
             if let max = loop.max, loop.used >= max { break }
-            guard await attempt(w, loop, task, dir) else { break }
+            if let b = loop.budget, (loop.spent ?? 0) >= b {
+                await note(id, "[loop] orçamento de tempo usado (\(loop.spent ?? 0) de \(b) s); laço parado")
+                break
+            }
+            let t0 = host.now()
+            let go = await attempt(w, loop, task, dir)
+            let secs = Int(host.now().timeIntervalSince(t0).rounded(.up))
+            try? await store.update(id) { x in let was = x.loop?.spent ?? 0; x.loop?.spent = was + secs }
+            guard go else { break }
         }
         stopping.remove(id)
         let now = host.now(), final = end
@@ -90,10 +99,10 @@ actor WorkLoop {
             let spec = if let s = task.spec { await host.readSpec(s) } else { String?.none }
             let notes = w.notes.filter { $0.text.hasPrefix("[loop] \(task.title),") }
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: loop.tries, dir: dir, notes: notes)
-            let turn = Duration.seconds(loop.timeout)
+            let turn = Swift.min(loop.timeout, left(loop, since: started))   // the budget bounds the turn too
             do {
-                if try await host.ask(agent, prompt: prompt, timeout: turn) == .idle {
-                    await waitForCommit(agent, before: before, branch: branch, dir: dir, until: started + Double(loop.timeout))
+                if try await host.ask(agent, prompt: prompt, timeout: .seconds(turn)) == .idle {
+                    await waitForCommit(agent, before: before, branch: branch, dir: dir, until: started + Double(turn))
                 }
             } catch where error.code == .timeout {
                 // a turn past its timeout is not a failure by itself: the check decides
@@ -122,7 +131,8 @@ actor WorkLoop {
             var status: Int32?   // nil: timed out
             var broken: String?   // the check could not even start
             do {
-                let r = try await host.check(task.check ?? "false", in: dir, timeout: checkTimeout)
+                let budgeted = Duration.seconds(left(loop, since: started))
+                let r = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
                 status = r.status; output = r.stdout + r.stderr
             } catch where error.code == .timeout {
                 status = nil
@@ -166,6 +176,12 @@ actor WorkLoop {
         }
         if let blocked { await note(w.id, Self.blockedNote(blocked)); return false }
         return true
+    }
+
+    /// Seconds of the budget left for this attempt (at least 1); no budget: a day.
+    private func left(_ loop: WorkLoopState, since started: Date) -> Int {
+        guard let b = loop.budget else { return 86_400 }
+        return Swift.max(1, b - (loop.spent ?? 0) - Int(host.now().timeIntervalSince(started)))
     }
 
     private static func blockedNote(_ who: String) -> String {

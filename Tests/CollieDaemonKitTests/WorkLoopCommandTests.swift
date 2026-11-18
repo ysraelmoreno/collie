@@ -84,6 +84,27 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         let r = try await work(d, p, t, "work.task.add", a)
         #expect(r.ok, "\(r)")
     }
+    /// `work.run` (with `--max 3` unless given); `approve`: the owner answers its card Permitir once it shows.
+    private func run(_ d: Daemon, _ p: Paths, _ t: Term, _ args: [String: JSONValue] = [:], approve: Bool = true) async throws -> Response {
+        var a = args
+        if a["max"] == nil { a["max"] = .number(3) }
+        let r = try await work(d, p, t, "work.run", a)
+        if r.ok && approve { #expect(try await answerCard(d, p, allow: true) != nil, "no approval card") }
+        return r
+    }
+    private func answerCard(_ d: Daemon, _ p: Paths, allow: Bool) async throws -> AppCard? {
+        let deadline = ContinuousClock.now + .seconds(20)
+        while ContinuousClock.now < deadline {
+            if let c = await d.router.appCards.first(where: { $0.app == "work-loop" }) {
+                let r = try await send(p, Request(id: "a", token: d.adminToken, command: "admin.app.answer",
+                                                  args: ["id": .string(c.id.uuidString), "allow": .bool(allow)]))
+                #expect(r.ok, "\(r)")
+                return c
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return nil
+    }
     private func loopEnded(_ d: Daemon, _ id: UUID) async -> Bool {
         await waitFor(60) { (try? await d.router.work.get(id))?.loop.map { $0.state != .running } ?? false }
     }
@@ -92,7 +113,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         try await withDaemon { d, p in
             let x = try await pad(d, p, shepherd: false)
             try await addTask(d, p, x.s, "A", check: "true")
-            #expect(try await work(d, p, x.s, "work.run").error?.code == .notShepherd)
+            #expect(try await run(d, p, x.s, approve: false).error?.code == .notShepherd)
         }
     }
 
@@ -102,7 +123,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let m = try await spawnIn(d, p, "M", cwd: repo, shepherd: true)
             #expect(try await work(d, p, m, "work.start", ["title": .string("W")]).ok)
             try await addTask(d, p, m, "A", check: "true")
-            let r = try await work(d, p, m, "work.run")
+            let r = try await run(d, p, m, approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("paddock") == true, "\(r)")
         }
     }
@@ -110,7 +131,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     @Test func runNeedsOpenTasks() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            let r = try await work(d, p, x.s, "work.run")
+            let r = try await run(d, p, x.s, approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("no open task") == true, "\(r)")
         }
     }
@@ -120,7 +141,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "Has one", check: "true")
             try await addTask(d, p, x.s, "Lacks one", check: nil)
-            let r = try await work(d, p, x.s, "work.run")
+            let r = try await run(d, p, x.s, approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("Lacks one") == true
                     && r.error?.message.contains("Has one") == false, "\(r)")
         }
@@ -131,7 +152,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "A", check: "true")
             try "dirty\n".write(to: x.dir.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
-            let r = try await work(d, p, x.s, "work.run")
+            let r = try await run(d, p, x.s, approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("f.txt") == true, "\(r)")
         }
     }
@@ -143,7 +164,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let busy = try await spawnIn(d, p, "busy", cwd: x.repo, paddock: "feat")
             try await d.process(busy.uuid)!.write(Data("while true; do echo tick; sleep 0.2; done\n".utf8))
             #expect(await waitFor(20) { await d.badge(busy.uuid) == .working })
-            let r = try await work(d, p, x.s, "work.run")
+            let r = try await run(d, p, x.s, approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("busy") == true, "\(r)")
         }
     }
@@ -153,9 +174,9 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "Write done", check: "test -f done.txt")
             let agent = "bash -c 'read l; echo ok > done.txt; git add done.txt; git commit -qm done; cat'"
-            let r = try await work(d, p, x.s, "work.run", ["command": .string(agent), "timeout": .number(60)])
+            let r = try await run(d, p, x.s, ["command": .string(agent), "timeout": .number(60)])
             guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
-            #expect(o["state"] == .string("running") && o["tasks"] == .number(1))
+            #expect(o["state"] == .string("awaiting approval") && o["tasks"] == .number(1))
             #expect(await loopEnded(d, x.work))
             let w = try #require(try await d.router.work.get(x.work))
             #expect(w.tasks.first?.state == .done && w.loop?.state == .finished, "\(w.tasks) \(String(describing: w.loop)) \(w.notes.map(\.text))")
@@ -168,10 +189,45 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         try await withDaemon { d, p in
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "A", check: "false")
-            #expect(try await work(d, p, x.s, "work.run", ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)]).ok)
-            let r = try await work(d, p, x.s, "work.run", ["command": .string("cat")])
+            #expect(try await run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)]).ok)
+            let r = try await run(d, p, x.s, ["command": .string("cat")], approve: false)
             #expect(r.error?.code == .invalidArgs && r.error?.message.contains("already") == true, "\(r)")
             #expect(await loopEnded(d, x.work))
+        }
+    }
+
+    /// Finding 7: --max is required and every limit has a hard ceiling.
+    @Test func runNeedsMaxAndHardCaps() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            let none = try await work(d, p, x.s, "work.run")
+            #expect(none.error?.code == .invalidArgs && none.error?.message.contains("--max") == true, "\(none)")
+            for (k, v) in [("max", 31.0), ("timeout", 14_401), ("budget", 43_201), ("tries", 11)] {
+                var a: [String: JSONValue] = ["max": .number(3)]; a[k] = .number(v)
+                #expect(try await work(d, p, x.s, "work.run", a).error?.code == .invalidArgs, "\(k)")
+            }
+            #expect(await d.router.appCards.isEmpty)
+        }
+    }
+
+    /// Finding 7: nothing runs until the owner answers Permitir on a card listing the tasks, checks and limits.
+    @Test func runWaitsForTheOwnersCard() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Write done", check: "test -f done.txt")
+            #expect(try await run(d, p, x.s, ["max": .number(4), "budget": .number(600)], approve: false).ok)
+            let card = try #require(try await answerCard(d, p, allow: false))
+            let call = card.call ?? ""
+            #expect(card.kind == .confirm && call.contains("Write done") && call.contains("test -f done.txt"), "\(call)")
+            #expect(call.contains("4 tentativas") && call.contains("600 s"), "\(call)")
+            #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("não aprovou o laço") })
+            let w = try #require(try await d.router.work.get(x.work))
+            #expect(w.loop == nil && w.tasks[0].state == .open)
+            #expect(await d.router.ws.terminals.allSatisfy { !$0.name.hasPrefix("loop-") })
+            // the reservation is released: a new run asks again
+            #expect(try await run(d, p, x.s, [:], approve: false).ok)
+            #expect(try await answerCard(d, p, allow: false) != nil)
         }
     }
 
@@ -180,9 +236,10 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         try await withDaemon { d, p in
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "A", check: "false")
-            async let r1 = work(d, p, x.s, "work.run", ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)])
-            async let r2 = work(d, p, x.s, "work.run", ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)])
+            async let r1 = run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)], approve: false)
+            async let r2 = run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3), "tries": .number(1)], approve: false)
             let rs = try await [r1, r2]
+            #expect(try await answerCard(d, p, allow: true) != nil)
             #expect(rs.filter(\.ok).count == 1, "\(rs)")
             #expect(rs.contains { $0.error?.message.contains("already") == true }, "\(rs)")
             #expect(await loopEnded(d, x.work))
@@ -195,7 +252,8 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "A", check: "false")
             try await addTask(d, p, x.s, "B", check: "false")
-            #expect(try await work(d, p, x.s, "work.run", ["command": .string("cat"), "timeout": .number(3)]).ok)
+            #expect(try await run(d, p, x.s, ["command": .string("cat"), "timeout": .number(3)]).ok)
+            #expect(await waitFor(20) { (try? await d.router.work.get(x.work))?.loop?.state == .running })
             let s = try await work(d, p, x.s, "work.stop")
             guard case .object(let o)? = s.result else { Issue.record("\(s)"); return }
             #expect(o["state"] == .string("stopped"))

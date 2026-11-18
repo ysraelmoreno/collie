@@ -78,12 +78,15 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 /// A repo, a store holding a work with `tasks` and a running loop, a fake host and the loop.
 private struct Rig {
     let repo: URL, storeDir: URL, store: WorkStore, host: FakeHost, loop: WorkLoop, work: UUID
-    init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, checkTimeout: Duration = .seconds(30)) async throws {
+    init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, checkTimeout: Duration = .seconds(30)) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
         store = WorkStore(dir: storeDir)
         let w = try await store.start(title: "W", terminal: UUID(), paddockId: UUID(), branch: "main")
-        try await store.update(w.id) { $0.tasks = tasks; $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max) }
+        try await store.update(w.id) {
+            $0.tasks = tasks
+            $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id))
+        }
         work = w.id
         host = FakeHost(dir: repo)
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout)
@@ -284,6 +287,28 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.host.summoned == ["loop-a-1"])
         #expect(await r.host.dismissed == ["loop-a-1"])
         #expect(await r.host.checks == 0)
+    }
+
+    /// Finding 7: the time budget (turns + checks) stops the loop between attempts.
+    @Test func budgetStopsTheLoop() async throws {
+        let r = try await Rig([task("a", "sleep 1.2; false")], tries: 3, budget: 1); defer { r.cleanup() }
+        #expect(await r.run() == .stopped)
+        let w = try await r.get()
+        #expect(await r.host.summoned == ["loop-a-1"] && (w.loop?.spent ?? 0) >= 1)
+    }
+
+    /// Finding 7: a task added while the loop runs waits for the next run.
+    @Test func tasksAddedDuringTheLoopWait() async throws {
+        let r = try await Rig([task("a", "true")]); defer { r.cleanup() }
+        let store = r.store, id = r.work
+        await r.host.set("loop-a-1", Script(act: { d in
+            try await store.update(id) { $0.tasks.append(WorkTask(id: "late", title: "Late", check: "true")) }
+            try await commit("done.txt", "ok\n", in: d)
+        }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks.map(\.state) == [.done, .open])
+        #expect(await r.host.summoned == ["loop-a-1"])
     }
 
     @Test func verdictJoinsReasons() {

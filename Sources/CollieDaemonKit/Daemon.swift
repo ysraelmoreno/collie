@@ -30,6 +30,8 @@ public struct DaemonConfig: Sendable {
     public var mitmdumpPath: URL?
     /// How long a terminal's map rule waits for the user's card (seconds; tests shorten it).
     public var ruleCardWait: Double = PluginManifest.confirmWait
+    /// How long `collie work run` waits for the owner's approval card (seconds; tests shorten it).
+    public var loopCardWait: Double = 600
     /// How long a launched emulator may take to finish booting (tests shorten it).
     public var emulatorBoot: Duration = .seconds(180)
     /// The launched emulator's environment; nil = the daemon's minus `COLLIE_*` (tests pass their fakes' inputs).

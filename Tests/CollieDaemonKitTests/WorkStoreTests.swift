@@ -139,4 +139,31 @@ import CollieProtocol
         #expect(Set(try #require(try await s.get(w.id)).tasks.map(\.id)) == want)
         #expect(Set(try #require(try await WorkStore(dir: dir).get(w.id)).tasks.map(\.id)) == want)
     }
+
+    @Test func oldWorkFileDecodesWithoutLoopFields() throws {
+        let json = #"[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"A","terminalId":"6F9619FF-8B86-D011-B42D-00C04FC964F0","openedAt":"2026-11-01T10:00:00Z","tasks":[{"id":"1","title":"t","state":"open","updatedAt":"2026-11-01T10:00:00Z"}],"jobs":[],"notes":[],"commits":[]}]"#
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        let w = try #require(try d.decode([Work].self, from: Data(json.utf8)).first)
+        #expect(w.loop == nil && w.tasks[0].check == nil && w.tasks[0].spec == nil && w.tasks[0].tries == nil && w.tasks[0].lastFailure == nil)
+    }
+
+    @Test func loopFieldsRoundTrip() async throws {
+        let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
+        let s = WorkStore(dir: dir)
+        let w = try await s.start(title: "A", terminal: UUID(), paddockId: UUID(), branch: "b")
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let loop = WorkLoopState(state: .running, task: "ab12cd34", attempt: 2, tries: 3, timeout: 3600, startedAt: start)
+        let task = WorkTask(id: "ab12cd34", title: "t", spec: "/tmp/spec.md", check: "swift test", tries: 1, lastFailure: "no new commit")
+        try await s.update(w.id) { $0.loop = loop; $0.tasks.append(task) }
+        let r = try #require(try await WorkStore(dir: dir).get(w.id))
+        #expect(r.loop == loop)
+        #expect(r.tasks.first?.spec == task.spec && r.tasks.first?.check == task.check)
+        #expect(r.tasks.first?.tries == 1 && r.tasks.first?.lastFailure == "no new commit")
+    }
+
+    @Test func malformedLoopIsNoLoop() throws {
+        let json = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"A","terminalId":"6F9619FF-8B86-D011-B42D-00C04FC964F0","openedAt":"2026-11-01T10:00:00Z","tasks":[],"jobs":[],"notes":[],"commits":[],"loop":7}"#
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        #expect(try d.decode(Work.self, from: Data(json.utf8)).loop == nil)
+    }
 }

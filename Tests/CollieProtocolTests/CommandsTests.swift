@@ -123,6 +123,8 @@ import Foundation
         let w = try ArgvParser.parse(["work", "task", "defer", "Write docs", "waits", "for", "API"])
         #expect(w.command == "work.task.defer" && w.args == ["task": .string("Write docs"), "reason": .string("waits for API")])
         #expect(try ArgvParser.parse(["work", "clear-history"]).command == "work.clear-history")
+        #expect(try ArgvParser.parse(["work", "task", "add", "Build", "it", "--check", "swift test", "--spec", "s.md"]).args
+                == ["title": .string("Build it"), "check": .string("swift test"), "spec": .string("s.md")])
         #expect(throws: ProtocolError.self) { try ArgvParser.parse(["design", "system"]) }
     }
 
@@ -162,7 +164,7 @@ import Foundation
         #expect(names(true) == ["list", "ask", "wait", "model", "ask_result", "reply", "check", "summon", "dismiss", "leash", "leash_request", "unleash", "notify",
                                 "paddock_create", "paddock_list", "paddock_status", "paddock_land", "paddock_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                                 "memory_save", "memory_search", "memory_doc-search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede", "memory_flag", "memory_task",
-                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get", "work_rerail",
+                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_note", "work_status", "work_summary", "work_list", "work_get", "work_run", "work_stop", "work_rerail",
                          "herd_list", "herd_get", "herd_save", "herd_apply", "lot_create", "lot_join", "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach", "app_event", "app_context", "app_snapshot", "app_new", "app_adopt", "app_logs",
                          "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
                          "network_attach", "network_detach", "network_status", "network_list", "network_get", "network_curl", "network_clear", "network_rule-add", "network_rule-list", "network_rule-remove", "network_rule-enable", "network_rule-disable", "network_rule-clear",

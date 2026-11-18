@@ -97,8 +97,8 @@ extension CommandRouter {
         }
     }
 
-    /// Running, or `unknown` after a silence: a real end signal still finishes it.
-    private static func endable(_ j: WorkJob) -> Bool { j.state == .running || j.state == .unknown }
+    /// Running, or `unknown` after a silence: a real end signal still finishes it. Never a loop's: only the loop ends those.
+    private static func endable(_ j: WorkJob) -> Bool { j.kind != .loop && (j.state == .running || j.state == .unknown) }
 
     /// At start (after the orphan reap): running jobs of terminals without a live process are gone.
     func jobsGoneWithoutProcess() async {
@@ -126,7 +126,7 @@ extension CommandRouter {
     private func sweep(_ which: (Work) -> Bool, _ verdict: @escaping @Sendable (WorkJob) -> JobState?) async {
         func swept(_ w: inout Work) {
             let now = Date()
-            for i in w.jobs.indices where w.jobs[i].state == .running {
+            for i in w.jobs.indices where w.jobs[i].state == .running && w.jobs[i].kind != .loop {   // the loop ends its own
                 guard let s = verdict(w.jobs[i]) else { continue }
                 w.jobs[i].state = s
                 if s == .gone { w.jobs[i].endedAt = now }
@@ -135,7 +135,7 @@ extension CommandRouter {
         do {
             let all = try await work.list(includeClosed: true)
             workStoreBroken = false
-            for w in all where which(w) && w.jobs.contains(where: { $0.state == .running }) {
+            for w in all where which(w) && w.jobs.contains(where: { $0.state == .running && $0.kind != .loop }) {
                 var copy = w; swept(&copy)
                 if copy != w { try await work.update(w.id) { swept(&$0) } }
             }
@@ -240,8 +240,19 @@ extension CommandRouter {
 
         case "work.task.add":
             let t = try target(), title = try text("title")
+            let check = str(r, "check") == nil ? nil : try text("check")
+            var spec: String?
+            if let given = str(r, "spec") {   // only the path is kept: the loop reads the file when an attempt starts
+                let real = SignedAppCheck.realPath(URL(fileURLWithPath: given, relativeTo: URL(fileURLWithPath: r.cwd ?? t.cwd, isDirectory: true)))
+                guard (try? FileManager.default.attributesOfItem(atPath: real)[.type] as? FileAttributeType) == .typeRegular else {
+                    throw invalid("--spec \(given) is not a file")
+                }
+                let root = try await projectRoot(of: t)
+                guard ProjectRoot.contains(real, root: root) else { throw invalid("--spec \(given) is outside the project \(root.path)") }
+                spec = real
+            }
             let w = try await implicitWork(t, now: now)
-            let task = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(), title: title, updatedAt: now)
+            let task = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(), title: title, updatedAt: now, spec: spec, check: check)
             try await work.update(w.id) { $0.tasks.append(task) }
             return try isoJSON(task)
 
@@ -310,6 +321,9 @@ extension CommandRouter {
             guard let w = try await work.active(terminal: t.id) else { throw invalid("no active work") }
             return try await rerail(t, w, now: now, wait: t.id != caller?.id)
 
+        case "work.run": return try await workRun(r, caller: caller, starter: try target())
+        case "work.stop": return try await workStop(try target())
+
         case "work.clear-history":   // the one way anything is deleted: the user's alone
             guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'work.clear-history' is admin-only") }
             try await work.clearHistory()
@@ -325,6 +339,7 @@ extension CommandRouter {
         let who = ws.terminals.first { $0.id == w.terminalId }?.name ?? "?"
         var lines = ["\(w.title) — \(who)" + (w.branch.map { ", branch \($0)" } ?? "") + (w.closedBy.map { ", closed by \($0)" } ?? "")
                      + " [\(w.id.uuidString.lowercased())]"]
+        if let l = WorkStatusText.loopLine(w) { lines.append(l) }
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),
                                              (.abandoned, "Dropped"), (.done, "Done")]
         for (state, label) in groups {

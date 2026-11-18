@@ -2,6 +2,22 @@
 
 Status: draft for the owner's approval (name and the three decisions settled 2026-11-17). Nothing here is built; `scripts/dev/work-loop.sh` is the prototype it replaces.
 
+Update 2026-11-18: slice 1 built (branch `feat/work-run`); the prototype is retired. The Shepherd's orientation teaches
+the loop in one line, only in a paddock (see the plan's Task 5 deviation); the detail is in `docs/referencia.md`.
+
+Update 2026-11-18, after the independent review (all changed in code; this text below is the original design):
+- **Approval and limits** (coordinator's decision): `work run` needs `--max` (≤ 30 attempts in all), a turn is ≤ 14 400 s
+  (default 3600), `--budget` caps all turns and checks together (default 14 400 s, ≤ 43 200). The owner approves the
+  tasks, their checks and the limits on an app card before anything runs. Tasks added during a loop wait for the next run.
+- **Sandbox**: the check and the loop's git run under the loop's own paddock profile (strict), never the attempt
+  terminal's, and never bare when terminals are sandboxed; a missing profile fails the attempt. A starter or agent
+  without a sandbox is refused. The check's env is an allow-list. The loop's git turns off filter drivers and external
+  diffs defined by the repo's own config.
+- **Agents**: every attempt's agent is dismissed before its check (the "last failed one stays" rule is gone).
+- **Worktree**: an attempt needs a clean tree; another terminal working in the paddock stops the loop instead of a reset.
+- **Starter gone** stops the loop; a daemon stop spends no attempt; a task dropped mid-attempt keeps its state; notes
+  carry the task id and hide secrets.
+
 ## Why
 
 The owner wants to hand a list of tasks to Collie and come back to finished, verified commits ("ships while I sleep",

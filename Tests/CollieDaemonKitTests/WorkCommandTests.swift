@@ -134,6 +134,17 @@ private func hook(_ p: Paths, _ t: Term, _ name: String, _ payload: String) asyn
         #expect(w.jobs.map(\.state) == [.finished, .finished])
     }
 
+    @Test func jobSweepLeavesLoopJobs() async throws {
+        try await withDaemon { d, _ in
+            // a terminal that has no process: the start sweep would mark its jobs gone
+            let w = try await d.router.work.start(title: "loop", terminal: UUID(), paddockId: nil, branch: nil)
+            try await d.router.work.update(w.id) { $0.jobs.append(WorkJob(id: "loop-ab12cd34-1", kind: .loop, label: "t")) }
+            await d.router.sweepJobs(now: Date().addingTimeInterval(31 * 60))
+            await d.router.jobsGoneWithoutProcess()
+            #expect(try await d.router.work.get(w.id)?.jobs.map(\.state) == [.running])
+        }
+    }
+
     @Test func runningJobsGoneAfterRestart() async throws {
         let paths = Paths(root: URL(fileURLWithPath: "/tmp/collie-\(UUID().uuidString.prefix(8))"))
         defer { try? FileManager.default.removeItem(at: paths.root) }

@@ -30,6 +30,8 @@ public struct DaemonConfig: Sendable {
     public var mitmdumpPath: URL?
     /// How long a terminal's map rule waits for the user's card (seconds; tests shorten it).
     public var ruleCardWait: Double = PluginManifest.confirmWait
+    /// How long `collie work run` waits for the owner's approval card (seconds; tests shorten it).
+    public var loopCardWait: Double = 600
     /// How long a launched emulator may take to finish booting (tests shorten it).
     public var emulatorBoot: Duration = .seconds(180)
     /// The launched emulator's environment; nil = the daemon's minus `COLLIE_*` (tests pass their fakes' inputs).
@@ -270,6 +272,7 @@ public final class Daemon: Sendable {
         Task { await network.reconcileAtStart() }   // a crashed daemon's capture left on an emulator: undone, off the start path
         await router.userEnv.warm()
         await router.startJobSweep()
+        await router.stopLoopsLeftRunning()   // a loop never survives its daemon: `collie work run` again continues it
         await router.memory.setProposalState { [weak router] in await router?.proposalState() ?? ([], []) }
         await router.memory.setVerifier { [weak router] id, kind in await router?.enqueueVerify(id, kind: kind) ?? false }
         await router.migrateProposals()   // once: the proposals already waiting go through the curator
@@ -288,6 +291,7 @@ public final class Daemon: Sendable {
         await router.remote.stop()
         await router.stopSandboxWatch()
         await router.stopJobSweep()
+        await router.cancelLoops()
         await router.stopConsolidation()
         await router.curator.stop()
         await router.host.stop()

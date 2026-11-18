@@ -73,6 +73,12 @@ actor CommandRouter {
     /// The on-device model's rewrites of work summaries.
     nonisolated let assistant: WorkAssistant
     var jobSweeper: Task<Void, Never>?
+    /// `collie work run`: the loops running now, by work id (`stopping`: `work.stop` was asked).
+    var workLoops: [UUID: (engine: WorkLoop, task: Task<Void, Never>, stopping: Bool)] = [:]
+    /// Paddocks with a loop, from `work.run`'s first line (before any await) to the loop's end: one loop per paddock.
+    var loopPaddocks: Set<UUID> = []
+    /// Loops waiting for the owner's card: work id → card id (`work.stop` withdraws it).
+    var loopCards: [UUID: UUID] = [:]
     var consolidator: Task<Void, Never>?
     /// The work store failed and was logged; reset by the next good read.
     var workStoreBroken = false
@@ -547,7 +553,7 @@ actor CommandRouter {
     }
 
     /// The target is in a turn (its badge `working`, or an ask, capture or Claude turn holds it): a prompt waits in its queue.
-    private func targetBusy(_ id: UUID) async -> Bool {
+    func targetBusy(_ id: UUID) async -> Bool {
         if await hub.currentBadges[id] == .working { return true }
         return await asks.commandState(id)?.busy ?? false
     }

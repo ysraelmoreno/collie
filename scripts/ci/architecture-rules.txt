@@ -17,3 +17,14 @@ forbid-import CollieProtocol AppKit
 # CollieCore stays UI-free (the daemon and the CLI link it).
 forbid-import CollieCore AppKit
 forbid-import CollieCore SwiftUI
+
+# UI frameworks that re-export or depend on AppKit: base modules must not import them either.
+forbid-import CollieProtocol Cocoa
+forbid-import CollieProtocol Carbon
+forbid-import CollieProtocol Quartz
+forbid-import CollieProtocol PDFKit
+forbid-import CollieProtocol SwiftUI
+forbid-import CollieCore Cocoa
+forbid-import CollieCore Carbon
+forbid-import CollieCore Quartz
+forbid-import CollieCore PDFKit

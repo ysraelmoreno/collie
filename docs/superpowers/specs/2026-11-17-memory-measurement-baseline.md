@@ -72,17 +72,18 @@ arquivamento lê o contador novo.
   `trends.{current,previous}.evidence` (só a taxa).
   - `candidates`: o mesmo da precisão v1.
   - `evidenced`: dos ids que o próximo prompt contou (`used` v1), os que a resposta do turno anterior **citou** (id
-    curto de 8 hex ou título normalizado com ≥ 3 palavras). Por construção `evidenced ≤ used`.
+    curto de 8 hex ou título normalizado com ≥ 3 palavras) ou que um `memory get` da sessão **leu** antes do prompt; cada
+    id uma vez. Por construção `evidenced ≤ used`.
   - `rate` = evidenced ÷ candidates (nil sem candidata).
   - `byKind`: toda evidência do período por tipo: `cite` (citação), `get` (`memory get` de memória injetada na
-    sessão), `flag` (`--useful`). `get` e `flag` ficam **fora** da taxa, como os `flags` da v1: apontam qualquer memória
-    injetada, não só as do prompt.
-- O evento `used` ganha `evidenced`/`evidence` (paralelos). `get` e `flag` emitem um `used` próprio com `where` =
-  `get`|`flag`; a precisão v1 ignora `used` com `where` (só conta o do prompt), então o número v1 não muda.
+    sessão), `flag` (`--useful`). `flag` fica **fora** da taxa, como os `flags` da v1: aponta qualquer memória injetada, não
+    só as do prompt.
+- O evento `used` ganha `evidenced`/`evidence` (paralelos). `cite` e `get` vão no `used` do próximo prompt; só `flag`
+  emite um `used` próprio com `where = flag`, que a precisão v1 ignora (só conta o do prompt): o número v1 não muda.
 
-**Mudança de comportamento a anotar:** `memory get` de uma memória injetada na sessão agora também conta um uso
-implícito (antes não contava; `--useful` já contava). Volume medido de `get`: ~13 buscas/semana, efeito esperado
-desprezível nos tiers.
+**Nenhuma mudança de regra:** um `memory get` não conta uso; só marca o id, e a evidência é gravada no próximo prompt
+sem correção, junto do uso implícito que já seria contado. `--useful` continua contando uso na hora, como antes deste
+item.
 
 **Como ler nos primeiros 14 dias:**
 

@@ -11,8 +11,9 @@ protocol LoopHost: Sendable {
     func working(_ terminal: UUID) async -> Bool
     func dismiss(_ terminal: UUID) async
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
-    /// `command` via `/bin/bash -c` in `dir`, under `terminal`'s sandbox profile when it has one.
-    func check(_ command: String, in dir: URL, terminal: UUID, timeout: Duration) async throws(ProtocolError) -> ProcessResult
+    /// `command` via `/bin/bash -c` in `dir`, under the loop's own sandbox profile; throws (never runs unsandboxed) when
+    /// the daemon sandboxes terminals and that profile is missing.
+    func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult
     func readSpec(_ path: String) async -> String?
     /// Where attempt patches go: `<root>/work-loops/<work id>/`.
     func patchDir(_ work: UUID) -> URL
@@ -103,7 +104,7 @@ actor WorkLoop {
             var status: Int32?   // nil: timed out
             var broken: String?   // the check could not even start
             do {
-                let r = try await host.check(task.check ?? "false", in: dir, terminal: agent!, timeout: checkTimeout)
+                let r = try await host.check(task.check ?? "false", in: dir, timeout: checkTimeout)
                 status = r.status; output = r.stdout + r.stderr
             } catch where error.code == .timeout {
                 status = nil

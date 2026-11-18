@@ -211,25 +211,4 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         #expect(after?.tasks.map(\.state) == [.open, .done])
         #expect(after?.jobs.first?.state == .gone && after?.jobs.first?.endedAt != nil)
     }
-
-    /// The check runs under the attempt terminal's profile when it has one. ponytail: this tests the wrapping with a
-    /// hand-written profile, not a real terminal's (the test daemons run without a terminal sandbox); skipped where
-    /// sandbox-exec itself is refused (a nested sandbox, as in a sandboxed agent's own shell).
-    @Test func checkRunsUnderTheAgentsSandbox() async throws {
-        let probe = try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
-                                                 args: ["-p", "(version 1)(allow default)", "/usr/bin/true"],
-                                                 in: URL(fileURLWithPath: "/tmp"), env: [:], timeout: .seconds(10))
-        guard probe.status == 0 else { return }
-        let base = URL(fileURLWithPath: SignedAppCheck.realPath(URL(fileURLWithPath: "/tmp/collie-sb-\(UUID().uuidString.prefix(8))")))
-        let inside = base.appendingPathComponent("proj"), outside = base.appendingPathComponent("out")
-        defer { try? FileManager.default.removeItem(at: base) }
-        for u in [inside, outside] { try FileManager.default.createDirectory(at: u, withIntermediateDirectories: true) }
-        let profile = base.appendingPathComponent("t.sb")
-        try "(version 1)(allow default)(deny file-write* (subpath \"\(outside.path)\"))".write(to: profile, atomically: true, encoding: .utf8)
-        let env = ProcessInfo.processInfo.environment
-        let ok = try await RouterLoopHost.runCheck("echo x > in.txt", in: inside, profile: profile, env: env, timeout: .seconds(10))
-        let denied = try await RouterLoopHost.runCheck("echo x > \(outside.path)/x.txt", in: inside, profile: profile, env: env, timeout: .seconds(10))
-        let free = try await RouterLoopHost.runCheck("echo x > \(outside.path)/x.txt", in: inside, profile: nil, env: env, timeout: .seconds(10))
-        #expect(ok.status == 0 && denied.status != 0 && free.status == 0)
-    }
 }

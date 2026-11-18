@@ -47,7 +47,7 @@ private actor FakeHost: LoopHost {
     }
     func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?") }
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await GitRunner.run(args, in: dir) }
-    func check(_ command: String, in dir: URL, terminal: UUID, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
+    func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1
         return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/bash"), args: ["-c", command], in: dir,
                                             env: ProcessInfo.processInfo.environment, timeout: timeout)

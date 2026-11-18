@@ -13,6 +13,10 @@ extension CommandRouter {
         guard caller?.isShepherd ?? true, t.isShepherd else {
             throw ProtocolError(code: .notShepherd, message: "'work.run' is for Shepherds (and the app, on a Shepherd's work): a loop summons agents")
         }
+        // a terminal sandbox in force (`sandboxHome`): the loop never acts for a terminal that runs without one
+        guard config.sandboxHome == nil || sandboxed(t) else {
+            throw invalid("'\(t.name)' runs without a sandbox: a loop's agents, check and git all run sandboxed; start it from a sandboxed Shepherd")
+        }
         guard let w = try await work.active(terminal: t.id) else {
             throw invalid("no active work for '\(t.name)'; start one: collie work start <title>")
         }
@@ -47,8 +51,16 @@ extension CommandRouter {
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"), model: str(r, "model"), command: str(r, "command"),
                                  max: try num(r, "max", max: 1000).map(Int.init), used: 0, startedAt: Date())
+        // the loop's own profile (the paddock's, strict), made now: it outlives every terminal of the loop
+        if config.sandboxHome != nil {
+            do { _ = try prepareLoopSandbox(w.id, paddock: paddock) } catch {
+                throw ProtocolError(code: .internal, message: "the loop's sandbox could not be prepared: \(error)")
+            }
+        }
         try await work.update(w.id) { $0.loop = loop }
-        let engine = WorkLoop(store: work, host: RouterLoopHost(router: self, starter: t.id, root: config.paths.root))
+        let host = RouterLoopHost(router: self, starter: t.id, root: config.paths.root, work: w.id,
+                                  sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
+        let engine = WorkLoop(store: work, host: host)
         let id = w.id, starter = t.id
         let task = Task { [weak self] in
             _ = await engine.run(work: id, dir: dir)
@@ -70,6 +82,7 @@ extension CommandRouter {
 
     private func loopEnded(_ id: UUID, starter: UUID) async {
         workLoops[id] = nil
+        SandboxLaunch.remove(id, root: config.paths.root)
         guard let w = try? await work.get(id) else { return }
         let done = w.tasks.filter { $0.state == .done }.count, deferred = w.tasks.filter { $0.state == .deferred }.count
         let line = "[collie] Laço de \"\(RerailText.clean(w.title))\" terminou: \(done) feitas, \(deferred) adiadas. Veja: collie work status"
@@ -82,6 +95,7 @@ extension CommandRouter {
         guard let all = try? await work.list(includeClosed: true) else { return }
         let now = Date()
         for w in all where w.loop?.state == .running {
+            SandboxLaunch.remove(w.id, root: config.paths.root)
             try? await work.update(w.id) { x in
                 for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task { x.tasks[i].state = .open }
                 for j in x.jobs.indices where x.jobs[j].kind == .loop && x.jobs[j].state == .running {
@@ -112,21 +126,30 @@ extension CommandRouter {
         if let t = ws.terminals.first(where: { $0.id == id }) { try? await remove(t) }
     }
 
-    /// The terminal's sandbox profile; nil when it runs without one. A sandboxed terminal whose profile is missing throws:
-    /// its check never runs with more access than it has.
-    func loopProfile(_ id: UUID) throws(ProtocolError) -> URL? {
-        guard let t = ws.terminals.first(where: { $0.id == id }), sandboxed(t) else { return nil }
-        let f = SandboxLaunch.profileFile(id, root: config.paths.root)
-        guard FileManager.default.fileExists(atPath: f.path) else {
-            throw ProtocolError(code: .unavailable, message: "no sandbox profile for '\(t.name)'")
-        }
-        return f
+    /// The loop's sandbox: the paddock's profile, as an app service gets (strict whatever the workspace's mode: never
+    /// wider than a strict terminal of the paddock), under the work's id. Removed when the loop ends.
+    func prepareLoopSandbox(_ work: UUID, paddock: Paddock) throws -> URL {
+        let project = URL(fileURLWithPath: paddock.path)
+        let git = SandboxInput.gitDirs(of: project)
+        let input = SandboxInput(terminal: work, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
+                                 paddockWorktrees: closedPaddocks(project), home: config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()),
+                                 collieRoot: config.paths.root, ownFiles: [],
+                                 terminalDir: SandboxLaunch.dir(work, root: config.paths.root), socket: config.paths.socket,
+                                 agent: .shell, command: nil, grants: [],
+                                 appBundle: SandboxInput.appBundle(of: config.collieExecutable), mode: .strict)
+        return try SandboxLaunch.prepare(input, root: config.paths.root, collie: config.collieExecutable)
     }
 
-    /// The env a check runs with: the user's (PATH for their toolchain), never Collie's keys.
-    func loopEnv() async -> [String: String] {
-        UserEnvironment.filtered(UserEnvironment.merge(user: await userEnv.current(), collie: ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"],
-                                                       collieBin: config.collieExecutable.deletingLastPathComponent().path))
+    /// The user's env (their toolchain's PATH), before the allow-list.
+    func loopUserEnv() async -> [String: String] {
+        UserEnvironment.merge(user: await userEnv.current(), collie: ["PATH": ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"],
+                              collieBin: config.collieExecutable.deletingLastPathComponent().path)
+    }
+
+    /// With a terminal sandbox in force, an attempt's agent must run in one too (a free one is dismissed, the attempt fails).
+    func loopAgentSandboxed(_ id: UUID) -> Bool {
+        guard config.sandboxHome != nil else { return true }
+        return ws.terminals.first { $0.id == id }.map(sandboxed) ?? false
     }
 
     /// The spec, read again at the attempt: a regular file (no symlink, one link) still inside the starter's project.
@@ -137,10 +160,18 @@ extension CommandRouter {
     }
 }
 
-/// `LoopHost` over the daemon: summons as the starter (a Shepherd), asks with the daemon's own end of turn, runs git
-/// and the check under the sandbox profile of the terminal they act for.
+/// `LoopHost` over the daemon: summons as the starter (a Shepherd), asks with the daemon's own end of turn, and runs
+/// git and the check under the loop's own profile (`<root>/sandbox/<work id>.sb`). `sandbox` nil: the daemon sandboxes no
+/// terminal (`--no-terminal-sandbox`, the test daemons), so neither does the loop; else a missing profile throws.
 struct RouterLoopHost: LoopHost {
-    let router: CommandRouter, starter: UUID, root: URL
+    let router: CommandRouter, starter: UUID, root: URL, work: UUID
+    let sandbox: (home: URL, shell: String)?
+
+    /// The only keys a check gets from the user's env: the toolchain's, never a token or an agent socket (GH_TOKEN,
+    /// SSH_AUTH_SOCK, COLLIE_*). ponytail: a fixed list; a toolchain that needs another key fails its check, add it here.
+    static let checkEnvKeys: Set<String> = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR",
+                                            "DEVELOPER_DIR", "SDKROOT", "JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "GOPATH", "GOROOT",
+                                            "CARGO_HOME", "RUSTUP_HOME", "NVM_DIR", "PYENV_ROOT", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
         // no --paddock: the starter stands in the work's paddock (work.start took it from there)
@@ -148,7 +179,12 @@ struct RouterLoopHost: LoopHost {
         if let p = loop.preset { args["preset"] = .string(p) }
         if let m = loop.model { args["model"] = .string(m) }
         if let c = loop.command { args["command"] = .string(c) }
-        return try await router.loopSummon(Request(id: "loop", terminalId: starter.uuidString, command: "summon", args: args), as: starter)
+        let id = try await router.loopSummon(Request(id: "loop", terminalId: starter.uuidString, command: "summon", args: args), as: starter)
+        guard await router.loopAgentSandboxed(id) else {
+            await router.loopDismiss(id)
+            throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
+        }
+        return id
     }
 
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
@@ -158,16 +194,57 @@ struct RouterLoopHost: LoopHost {
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
 
-    /// Under the starter's profile (it stands in the same worktree): the repo is agent-writable.
+    /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.
+    func profile() throws(ProtocolError) -> URL? {
+        guard sandbox != nil else { return nil }
+        let f = SandboxLaunch.profileFile(work, root: root)
+        guard FileManager.default.fileExists(atPath: f.path) else {
+            throw ProtocolError(code: .unavailable, message: "the loop's sandbox profile is gone; nothing of the loop runs unsandboxed")
+        }
+        return f
+    }
+
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
-        let profile = try await router.loopProfile(starter)
+        try await Self.loopGit(args, in: dir, profile: try profile())
+    }
+
+    /// Git for the loop, in an agent-writable repo: under `profile`, hooks and fsmonitor off (GitRunner), and the filter
+    /// drivers the repo's own config defines (local/worktree scope: what an agent can plant), external diffs and textconv off.
+    /// The user's global drivers (git-lfs) stay.
+    static func loopGit(_ args: [String], in dir: URL, profile: URL?) async throws(ProtocolError) -> ProcessResult {
         do {
-            return try await GitRunner.$sandbox.withValue(profile) { try await GitRunner.run(args, in: dir, timeout: .seconds(120)) }
+            return try await GitRunner.$sandbox.withValue(profile) {
+                var off = ["-c", "diff.external="]
+                let cfg = try await GitRunner.run(["config", "--show-scope", "-z", "--name-only", "--get-regexp", #"^filter\."#], in: dir, timeout: .seconds(30))
+                let f = cfg.stdout.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+                var names: Set<String> = []
+                for i in stride(from: 0, to: f.count - 1, by: 2) where !["global", "system"].contains(f[i]) {
+                    let key = f[i + 1]   // filter.<name>.<var>; the name may hold dots and spaces
+                    guard key.hasPrefix("filter."), let dot = key.lastIndex(of: "."), dot > key.index(key.startIndex, offsetBy: 6) else { continue }
+                    names.insert(String(key[key.index(key.startIndex, offsetBy: 7)..<dot]))
+                }
+                for n in names.sorted() {
+                    off += ["-c", "filter.\(n).clean=", "-c", "filter.\(n).smudge=", "-c", "filter.\(n).process=", "-c", "filter.\(n).required=false"]
+                }
+                var a = args
+                if a.first == "diff" { a.insert(contentsOf: ["--no-ext-diff", "--no-textconv"], at: 1) }
+                return try await GitRunner.run(off + a, in: dir, timeout: .seconds(120))
+            }
         } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
     }
 
-    func check(_ command: String, in dir: URL, terminal: UUID, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
-        try await Self.runCheck(command, in: dir, profile: try await router.loopProfile(terminal), env: await router.loopEnv(), timeout: timeout)
+    func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
+        let profile = try profile()
+        let env = Self.checkEnv(await router.loopUserEnv(), sandbox: sandbox.map { (work, root, $0.shell, $0.home) })
+        return try await Self.runCheck(command, in: dir, profile: profile, env: env, timeout: timeout)
+    }
+
+    /// The allow-listed user env; sandboxed, the loop's shims first on PATH (SwiftPM and xcodebuild can't nest a sandbox)
+    /// and HOME the sandbox's. Never a COLLIE_ key.
+    static func checkEnv(_ user: [String: String], sandbox: (id: UUID, root: URL, shell: String, home: URL)?) -> [String: String] {
+        var e = user.filter { checkEnvKeys.contains($0.key) }
+        if let s = sandbox { e = SandboxLaunch.environment(e, id: s.id, root: s.root, shell: s.shell, home: s.home) }
+        return e.filter { !$0.key.hasPrefix("COLLIE_") }
     }
 
     /// `/bin/bash -c command` in `dir`, wrapped in `sandbox-exec -f profile` when there is one.

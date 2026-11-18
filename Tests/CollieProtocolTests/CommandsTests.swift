@@ -123,6 +123,8 @@ import Foundation
         let w = try ArgvParser.parse(["work", "task", "defer", "Write docs", "waits", "for", "API"])
         #expect(w.command == "work.task.defer" && w.args == ["task": .string("Write docs"), "reason": .string("waits for API")])
         #expect(try ArgvParser.parse(["work", "clear-history"]).command == "work.clear-history")
+        #expect(try ArgvParser.parse(["work", "task", "add", "Build", "it", "--check", "swift test", "--spec", "s.md"]).args
+                == ["title": .string("Build it"), "check": .string("swift test"), "spec": .string("s.md")])
         #expect(throws: ProtocolError.self) { try ArgvParser.parse(["design", "system"]) }
     }
 

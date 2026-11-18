@@ -240,8 +240,19 @@ extension CommandRouter {
 
         case "work.task.add":
             let t = try target(), title = try text("title")
+            let check = str(r, "check") == nil ? nil : try text("check")
+            var spec: String?
+            if let given = str(r, "spec") {   // only the path is kept: the loop reads the file when an attempt starts
+                let real = SignedAppCheck.realPath(URL(fileURLWithPath: given, relativeTo: URL(fileURLWithPath: r.cwd ?? t.cwd, isDirectory: true)))
+                guard (try? FileManager.default.attributesOfItem(atPath: real)[.type] as? FileAttributeType) == .typeRegular else {
+                    throw invalid("--spec \(given) is not a file")
+                }
+                let root = try await projectRoot(of: t)
+                guard ProjectRoot.contains(real, root: root) else { throw invalid("--spec \(given) is outside the project \(root.path)") }
+                spec = real
+            }
             let w = try await implicitWork(t, now: now)
-            let task = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(), title: title, updatedAt: now)
+            let task = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(), title: title, updatedAt: now, spec: spec, check: check)
             try await work.update(w.id) { $0.tasks.append(task) }
             return try isoJSON(task)
 

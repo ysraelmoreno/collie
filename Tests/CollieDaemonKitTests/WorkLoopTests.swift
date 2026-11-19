@@ -208,11 +208,12 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     }
 
     @Test func checkTimeoutFails() async throws {
-        let r = try await Rig([task("a", "sleep 5")], tries: 1, checkTimeout: .milliseconds(200)); defer { r.cleanup() }
+        // sleep 60 vs a 20 s bound: the suite runs in parallel, and a 1 s margin failed under load (4.13 s against 4 s)
+        let r = try await Rig([task("a", "sleep 60")], tries: 1, checkTimeout: .milliseconds(200)); defer { r.cleanup() }
         await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let t0 = ContinuousClock.now
         #expect(await r.run() == .finished)
-        #expect(ContinuousClock.now - t0 < .seconds(4))
+        #expect(ContinuousClock.now - t0 < .seconds(20))
         #expect(try await r.get().tasks[0].lastFailure == "check timed out")
     }
 
@@ -652,24 +653,15 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         return await r.host.prompts["loop-a-1"] ?? ""
     }
 
+    // one test, cases in sequence: each case is a whole loop run, and four more in parallel starve the timing tests
     @Test func promptPointsAtTheFeatureMap() async throws {
-        let p = try await promptWith(["docs/feature-map.md"])
-        #expect(p.contains("O mapa de funcionalidades do projeto está em docs/feature-map.md: use os nomes dele."))
-    }
-
-    @Test func promptFallsBackToFEATURES() async throws {
-        let p = try await promptWith(["FEATURES.md"])
-        #expect(p.contains("O mapa de funcionalidades do projeto está em FEATURES.md: use os nomes dele."))
-    }
-
-    @Test func promptPrefersDocsFeatureMap() async throws {
-        let p = try await promptWith(["FEATURES.md", "docs/feature-map.md"])
-        #expect(p.contains("está em docs/feature-map.md:") && !p.contains("FEATURES.md"))
-    }
-
-    @Test func promptWithoutAMapNamesNone() async throws {
-        let p = try await promptWith([])
-        #expect(!p.isEmpty && !p.contains("mapa de funcionalidades"))
+        let line = { "O mapa de funcionalidades do projeto está em \($0): use os nomes dele." }
+        #expect(try await promptWith(["docs/feature-map.md"]).contains(line("docs/feature-map.md")))
+        #expect(try await promptWith(["FEATURES.md"]).contains(line("FEATURES.md")))
+        let both = try await promptWith(["FEATURES.md", "docs/feature-map.md"])   // docs/feature-map.md wins
+        #expect(both.contains(line("docs/feature-map.md")) && !both.contains("FEATURES.md"))
+        let none = try await promptWith([])
+        #expect(!none.isEmpty && !none.contains("mapa de funcionalidades"))
     }
 
     @Test func oldLoopStateDecodesWithoutAGate() throws {

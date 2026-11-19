@@ -196,8 +196,8 @@ extension CommandRouter {
     }
 
     /// PRD B3 requirement 5: an active memory whose `enforcedBy` check is gone goes back to the injection. Gone = git says
-    /// the path is not in HEAD's tree and it is not on disk either (a check written but not committed yet still counts,
-    /// since `memory enforce --by` accepts a worktree path). `enforcedBy` is cleared, an outdated "claim-check" flag
+    /// the path is not in HEAD's tree and it is not on disk either (a check `git rm --cached` but still there counts;
+    /// `memory enforce --by` itself only takes a file tracked in HEAD). `enforcedBy` is cleared, an outdated "claim-check" flag
     /// records why, and an `enforced` event of mode `gone` goes to the log. No contest and no re-check: the memory's text
     /// is not in doubt, only its check. git unavailable (no HEAD, or an unknown answer for the path): nothing changes.
     /// Every active record of the store is looked at, pinned and reviewed too: a dead check must not hide them for good.

@@ -84,6 +84,7 @@ private func additional(_ json: String?, _ event: String) -> String? {
     @Test func enforcedMemoryIsNotInjectedByThePromptHook() async throws {
         let repo = try await makeRepo()
         try Data("#!/bin/sh\n".utf8).write(to: repo.appendingPathComponent("lint.sh"))
+        for args in [["add", "lint.sh"], ["commit", "-q", "-m", "lint"]] { _ = try await GitRunner.run(args, in: repo) }   // B3.4: --by is tracked in HEAD
         try await withDaemon { d, p in
             let t = try await term(d, p, "T", cwd: repo)
             try await save(p, t, "database", "Use Postgres", body: "chosen for jsonb support")

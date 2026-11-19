@@ -440,32 +440,57 @@ extension CommandRouter {
         case "memory.enforce":   // PRD B3: a check now enforces this pitfall/decision, so it leaves the injection (not the search)
             let id = try id(), clear = flag(r, "clear"), by = str(r, "by")
             guard clear != (by != nil) else { throw invalid("diga --by <caminho> ou --clear") }
-            if let by {
-                // the caller's worktree (the app: --repo or its cwd)
-                guard let root = project.root else { throw invalid("--by precisa de um repositório git") }
-                guard !by.isEmpty, isRepoRelative(by) else { throw invalid("--by: caminho relativo à raiz do repo, sem '..'") }
-                guard try await project.run({ _ in repoPathExists(by, root: root) }) else { throw invalid("--by: '\(by)' não existe nesta worktree") }
-            }
             let agent = caller != nil
-            for s in stores {
-                let rec = try await s.run { m -> MemoryRecord? in
+            if let by {
+                // B3.4: the app names the repo (never its cwd's); the item's repo is the caller's worktree
+                guard agent || str(r, "repo") != nil else { throw invalid("--by: o app precisa dizer --repo <repositório git>") }
+                guard let root = project.root else { throw invalid("--by precisa de um repositório git") }
+                // the charset first: a name with a line break or a control character is never echoed
+                guard MapDrift.safePath(by), isRepoRelative(by) else {
+                    throw invalid("--by: caminho relativo à raiz do repo, sem '..', só letras, dígitos e ._/@+-")
+                }
+                let facts = config.gitFacts(root)
+                guard let head = await facts.head(), await facts.existed(at: head, by) == true,
+                      try await project.run({ _ in Self.isRegularFile(root.appendingPathComponent(by).path) }) else {
+                    throw invalid("--by: '\(by)' não é um arquivo rastreado em HEAD deste repositório")
+                }
+            }
+            // B3.4: an agent changes only a project memory of its own store (as `memory.supersede`); a global or a lot one
+            // is shared with others, so only the app marks or unmarks it
+            let reach = agent ? [project] : [repo, project, memory.global].reduce(into: [RepoMemory]()) { a, s in if !a.contains(where: { $0 === s }) { a.append(s) } }
+            for s in reach {
+                let found = try await s.run { m -> (rec: MemoryRecord, changed: Bool)? in
                     guard var rec = m.store.all().records.first(where: { $0.id == id }),
                           !agent || MemoryService.visible(rec, paddock: paddockName, lot: m.lotId) else { return nil }
+                    guard !agent || rec.scope == .project else {
+                        throw ProtocolError(code: .unauthorized, message: "só o dono impõe itens globais ou de lote")
+                    }
                     guard rec.kind == .pitfall || rec.kind == .decision else {
                         throw ProtocolError(code: .invalidArgs, message: "só armadilha (pitfall) ou decisão pode ser imposta por checagem; esta é \(rec.kind.rawValue)")
                     }
+                    guard by != nil || rec.enforcedBy != nil else { return (rec, false) }   // --clear with nothing to clear
                     rec.enforcedBy = by
                     try m.store.write(rec)
-                    return rec
+                    return (rec, true)
                 }
-                guard let rec else { continue }
+                guard let found else { continue }
+                guard found.changed else { return try memJSON(found.rec, s, ["message": .string("não estava imposto")]) }
+                let rec = found.rec
                 var ev = MemoryEvent(type: .enforced, terminal: caller?.id, ids: [id], kinds: [rec.kind.rawValue], scopes: [rec.scope.rawValue],
                                      source: caller == nil ? "user" : "agent", reason: by, mode: clear ? "clear" : "set")
                 ev.place(store: s.key)
                 memory.events.emit(ev)
                 return try memJSON(rec, s)
             }
-            throw ProtocolError(code: .notFound, message: "memory \(id.uuidString.lowercased()) not found")
+            // the agent sees it in a store it may not change (its lot's, the global one)
+            if agent {
+                for s in stores where s !== project {
+                    if try await s.run({ m in m.store.all().records.contains { $0.id == id && MemoryService.visible($0, paddock: paddockName, lot: m.lotId) } }) {
+                        throw ProtocolError(code: .unauthorized, message: "só o dono impõe itens globais ou de lote")
+                    }
+                }
+            }
+            throw ProtocolError(code: .notFound, message: "memória \(id.uuidString.lowercased()) não encontrada")
 
         case "memory.restore":
             let id = try id()
@@ -657,6 +682,12 @@ extension CommandRouter {
     }
 
     /// A record for agents/the app: ISO dates plus where it lives (`file`) and extras.
+    /// `path` itself is a regular file: not a directory, not a symlink (never followed).
+    static func isRegularFile(_ path: String) -> Bool {
+        var st = stat()
+        return lstat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFREG
+    }
+
     private func memJSON(_ rec: MemoryRecord, _ s: RepoMemory, _ extra: [String: JSONValue] = [:]) throws -> JSONValue {
         guard case .object(var o) = try isoJSON(rec) else { return .null }
         o["file"] = .string(s.file(rec))

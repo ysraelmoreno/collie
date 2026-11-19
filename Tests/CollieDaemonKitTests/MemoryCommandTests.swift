@@ -34,6 +34,12 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
     try await GitRunner.run(args, in: dir).stdout
 }
 
+/// Commits everything in `repo` but Collie's own `.collie/`.
+private func commitAll(_ repo: URL) async throws {
+    _ = try await git(["add", "--", ".", ":!.collie"], repo)
+    _ = try await git(["commit", "-q", "-m", "more"], repo)
+}
+
 @Suite(.serialized) struct MemoryCommandTests {
     @Test func terminalSavesAndSearches() async throws {
         let repo = try await makeRepo()
@@ -77,6 +83,7 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
         let repo = try await makeRepo()
         try FileManager.default.createDirectory(at: repo.appendingPathComponent("scripts"), withIntermediateDirectories: true)
         try Data("#!/bin/sh\n".utf8).write(to: repo.appendingPathComponent("scripts/lint.sh"))
+        try await commitAll(repo)   // B3.4: --by is a file tracked in HEAD
         try await withDaemon { d, p in
             let t = try await term(d, p, "T", cwd: repo)
             let since = Date().addingTimeInterval(-1)
@@ -113,12 +120,83 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
         }
     }
 
+    /// B3.4: `--by` is a regular file tracked in HEAD; an agent enforces only a project memory of its own store, the app
+    /// (with a `--repo` that is a git repo) also a global or a lot one; `--clear` on a memory no check enforces writes nothing.
+    @Test func enforceScopeAndPath() async throws {
+        let repo = try await makeRepo(), fm = FileManager.default
+        try fm.createDirectory(at: repo.appendingPathComponent("scripts"), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: repo.appendingPathComponent("scripts/lint.sh"))
+        try fm.createSymbolicLink(atPath: repo.appendingPathComponent("link.sh").path, withDestinationPath: "scripts/lint.sh")
+        try await commitAll(repo)
+        try Data("#!/bin/sh\n".utf8).write(to: repo.appendingPathComponent("untracked.sh"))
+        let outside = fm.temporaryDirectory.appendingPathComponent("collie-nogit-\(UUID().uuidString)")
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: outside) }
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: repo)
+            let since = Date().addingTimeInterval(-1)
+            func events(_ id: String) -> [MemoryEvent] {
+                d.router.memory.events.flush()
+                return d.router.memory.events.read(since: since).filter { $0.type == .enforced && $0.ids == [UUID(uuidString: id)!] }
+            }
+            let pit = s(obj(try await call(p, t, "memory.save", ["kind": "pitfall", "subject": "force unwrap", "title": "Force unwrap derruba o daemon"]))["id"]) ?? ""
+
+            // not a regular file tracked in HEAD: refused, in Portuguese, nothing written
+            for by in [".", ".git", "scripts", "scripts/", "link.sh", "untracked.sh", "scripts/lint.sh\n", "scripts/li\u{7}nt.sh", "scripts/lint.sh x"] {
+                let r = try await call(p, t, "memory.enforce", ["id": pit, "by": by])
+                #expect(r.error?.code == .invalidArgs && r.error?.message.hasPrefix("--by") == true, "\(by.debugDescription): \(r)")
+            }
+            #expect(obj(try await call(p, t, "memory.get", ["id": pit]))["enforcedBy"] == nil && events(pit).isEmpty)
+
+            // --clear with no check on it: says so, no write, no event
+            let file = try #require(s(obj(try await call(p, t, "memory.get", ["id": pit]))["file"]))
+            let before = try fm.attributesOfItem(atPath: file)[.modificationDate] as? Date
+            let c = try await call(p, t, "memory.enforce", ["id": pit, "clear": "true"])
+            #expect(c.ok && s(obj(c)["message"]) == "não estava imposto", "\(c)")
+            #expect(try fm.attributesOfItem(atPath: file)[.modificationDate] as? Date == before && events(pit).isEmpty)
+
+            // a project memory and a tracked file: passes
+            #expect(try await call(p, t, "memory.enforce", ["id": pit, "by": "scripts/lint.sh"]).ok)
+            #expect(events(pit).map(\.mode) == ["set"])
+
+            // an agent: neither a global memory nor its lot's
+            let global = MemoryRecord(kind: .pitfall, scope: .global, subject: "global pit", title: "Armadilha global")
+            try await d.router.memory.global.run { m in try m.store.write(global) }
+            let gid = global.id.uuidString
+            #expect(try await admin(d, p, "lot.create", ["name": "Login", "members": "T"]).ok)
+            let saved = obj(try await call(p, t, "memory.save", ["kind": "pitfall", "subject": "lot pit", "title": "Armadilha do lote"]))
+            let lid = try #require(s(saved["id"]))
+            #expect(s(saved["scope"]) == "lot", "\(saved)")
+            for id in [gid, lid] {
+                for args in [["id": id, "by": "scripts/lint.sh"], ["id": id, "clear": "true"]] {
+                    let r = try await call(p, t, "memory.enforce", args)
+                    #expect(r.error?.code == .unauthorized && r.error?.message == "só o dono impõe itens globais ou de lote", "\(r)")
+                }
+                #expect(events(id).isEmpty)
+            }
+            let unknown = try await call(p, t, "memory.enforce", ["id": UUID().uuidString, "by": "scripts/lint.sh"])
+            #expect(unknown.error?.code == .notFound && unknown.error?.message.contains("não encontrada") == true, "\(unknown)")
+
+            // the app: only with a --repo that is a git repo
+            let by: JSONValue = .string("scripts/lint.sh")
+            #expect(try await admin(d, p, "memory.enforce", ["id": .string(gid), "by": by]).error?.code == .invalidArgs)
+            #expect(try await admin(d, p, "memory.enforce", ["id": .string(gid), "by": by, "repo": .string(outside.path)]).error?.code == .invalidArgs)
+            #expect(events(gid).isEmpty)
+            let g = try await admin(d, p, "memory.enforce", ["id": .string(gid), "by": by, "repo": .string(repo.path)])
+            #expect(g.ok && s(obj(g)["enforcedBy"]) == "scripts/lint.sh", "\(g)")
+            let l = try await admin(d, p, "memory.enforce", ["id": .string(lid), "by": by, "repo": .string(repo.path), "lot": "Login"])
+            #expect(l.ok && s(obj(l)["enforcedBy"]) == "scripts/lint.sh", "\(l)")
+            #expect(events(gid).map(\.source) == ["user"] && events(lid).map(\.mode) == ["set"])
+        }
+    }
+
     /// PRD B3 req. 4: `memory list --candidates`: active pitfalls with 3+ hits and no check, most hits first; a Shepherd's
     /// orientation names them only while there are some.
     @Test func listCandidatesAndShepherdLine() async throws {
         let repo = try await makeRepo()
         try FileManager.default.createDirectory(at: repo.appendingPathComponent("scripts"), withIntermediateDirectories: true)
         try Data("#!/bin/sh\n".utf8).write(to: repo.appendingPathComponent("scripts/lint.sh"))
+        try await commitAll(repo)   // B3.4: --by is a file tracked in HEAD
         try await withDaemon { d, p in
             func pit(_ title: String, _ hits: Int?, status: MemoryStatus = .active) -> MemoryRecord {
                 MemoryRecord(kind: .pitfall, subject: title, title: title, status: status, hits: hits)

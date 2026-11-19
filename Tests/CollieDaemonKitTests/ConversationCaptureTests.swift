@@ -71,6 +71,9 @@ private func withEnv(idle: Duration = .seconds(60), preset: String = "shell", at
     try await withDaemon(configure: { $0.curatorRunner = fake; $0.sandboxHome = home; $0.conversationIdle = idle }) { d, p in
         var args: [String: JSONValue] = ["name": .string("dev"), "preset": .string(preset), "cwd": .string(repo.path)]
         if preset != "shell" { args["command"] = .string("echo T=$COLLIE_TOKEN; exec cat >/dev/null") }
+        // sandbox-exec can't nest: run from inside a sandboxed Collie terminal (a loop's check), the terminal is a free one
+        // (nothing here is about its sandbox; outside one it stays sandboxed, as before)
+        if !canSandbox { args["sandbox"] = .string("free") }
         let r = try await send(p, Request(id: "x", token: d.adminToken, command: "admin.spawn", args: args), timeoutSeconds: 60)
         guard case .object(let o)? = r.result, case .string(let id)? = o["id"], let tid = UUID(uuidString: id) else {
             throw ProtocolError(code: .internal, message: "\(r)")

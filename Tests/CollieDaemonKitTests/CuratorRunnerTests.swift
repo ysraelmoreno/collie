@@ -45,7 +45,7 @@ private func syntheticStatus(_ edit: (inout [String: Any]) -> Void) throws -> St
 }
 
 /// sandbox-exec can't nest: inside an agent's sandbox the real-profile tests are skipped (the owner's R2 runs them).
-private let canSandbox: Bool = {
+let canSandbox: Bool = {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/sandbox-exec")
     p.arguments = ["-p", "(version 1)(allow default)", "/usr/bin/true"]

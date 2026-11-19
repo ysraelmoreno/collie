@@ -655,7 +655,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     // one test, cases in sequence: each case is a whole loop run, and four more in parallel starve the timing tests
     @Test func promptPointsAtTheFeatureMap() async throws {
-        let line = { "O mapa de funcionalidades do projeto está em \($0): use os nomes dele." }
+        func line(_ path: String) -> String { "O mapa de funcionalidades do projeto está em \(path): use os nomes dele." }
         #expect(try await promptWith(["docs/feature-map.md"]).contains(line("docs/feature-map.md")))
         #expect(try await promptWith(["FEATURES.md"]).contains(line("FEATURES.md")))
         let both = try await promptWith(["FEATURES.md", "docs/feature-map.md"])   // docs/feature-map.md wins

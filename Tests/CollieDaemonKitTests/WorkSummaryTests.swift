@@ -200,7 +200,7 @@ extension WorkSummaryTests {
                      evidence: TaskEvidence(commits: c, shortstat: "", checkTail: "", seconds: 40, attempt: 1))
         })
     }
-    let base = "laço: 2/2 feitas · 2 na 1ª · 0 adiadas · média 1,0 tentativas · 1min"
+    var base: String { "laço: 2/2 feitas · 2 na 1ª · 0 adiadas · média 1,0 tentativas · 1min" }
 
     @Test func noneReverted() async throws {
         let w = looped(["aaa1111 add form"], ["bbb2222 add api", "ccc3333 fix api"])

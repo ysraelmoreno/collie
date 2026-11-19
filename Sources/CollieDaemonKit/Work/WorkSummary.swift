@@ -4,10 +4,14 @@ import CollieCore
 /// The loop's numbers for one work, from the tasks a loop ran (`tries != nil`): `ran` of them, `done` and `deferred`
 /// by state, `firstTry` done with `tries == 1`, `meanTries` over the ran tasks (one decimal), `seconds` the sum of
 /// the approved tasks' `evidence.seconds` (a task without evidence adds 0). nil: no loop ran a task of this work.
+/// `reverted` and `unknown` stay 0 until `counted(work:git:)` asks git (only when a summary is asked for).
 public struct LoopStats: Codable, Sendable, Equatable {
     public var ran: Int, done: Int, deferred: Int, firstTry: Int
     public var meanTries: Double
     public var seconds: Int
+    /// Of the evidence's commits: `reverted` have a "This reverts commit <sha>" in the current branch; `unknown` no
+    /// longer resolve (rebased away) or git could not say.
+    public var reverted = 0, unknown = 0
 
     public init?(work w: Work) {
         let tasks = w.tasks.filter { $0.tries != nil }
@@ -28,6 +32,34 @@ public struct LoopStats: Codable, Sendable, Equatable {
         let mean = String(format: "%.1f", meanTries).replacingOccurrences(of: ".", with: ",")
         return "laço: \(done)/\(ran) feitas · \(firstTry) na 1ª · \(deferred) " + (deferred == 1 ? "adiada" : "adiadas")
             + " · média \(mean) tentativas · \(time)"
+            + (reverted > 0 ? " · \(reverted) " + (reverted == 1 ? "revertido" : "revertidos") : "")
+    }
+}
+
+/// Git for the reverts count (a fake in tests): `args`' trimmed stdout on exit 0, nil when git fails.
+protocol RevertGit: Sendable {
+    func out(_ args: [String]) async -> String?
+}
+
+extension LoopStats {
+    /// The numbers with `reverted` and `unknown` counted: each commit of the loop's evidence ("<short sha> <subject>")
+    /// is resolved to its full sha, then searched for in the current branch as "This reverts commit <full sha>".
+    /// ponytail: a rebased commit still in the object store resolves and counts as not reverted; check ancestry
+    /// (`merge-base --is-ancestor`) if that matters. Two git calls a commit: fine for a summary, not for a hot path.
+    static func counted(work w: Work, git: any RevertGit) async -> LoopStats? {
+        guard var s = LoopStats(work: w) else { return nil }
+        var seen: Set<String> = []
+        for c in w.tasks.filter({ $0.tries != nil }).flatMap({ $0.evidence?.commits ?? [] }) {
+            let sha = String(c.prefix { $0 != " " })
+            guard seen.insert(sha).inserted else { continue }
+            // hex only: the registry's text never becomes a git option or a revision expression
+            guard sha.count >= 4, sha.allSatisfy(\.isHexDigit),
+                  let full = await git.out(["rev-parse", "--verify", "--quiet", sha + "^{commit}"]), !full.isEmpty,
+                  let by = await git.out(["log", "--fixed-strings", "--grep", "This reverts commit " + full, "--format=%h", "-n", "1"])
+            else { s.unknown += 1; continue }
+            if !by.isEmpty { s.reverted += 1 }
+        }
+        return s
     }
 }
 

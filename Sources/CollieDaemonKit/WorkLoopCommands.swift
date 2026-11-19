@@ -253,6 +253,16 @@ extension CommandRouter {
 /// `LoopHost` over the daemon: summons as the starter (a Shepherd), asks with the daemon's own end of turn, and runs
 /// git and the check under the loop's own profile (`<root>/sandbox/<work id>.sb`). `sandbox` nil: the daemon sandboxes no
 /// terminal (`--no-terminal-sandbox`, the test daemons), so neither does the loop; else a missing profile throws.
+/// Git for a summary's reverts count, with the loop's care (`loopGit`: the repo's own filters off), under the
+/// request's sandbox when it has one.
+struct LoopRevertGit: RevertGit {
+    let dir: URL
+    func out(_ args: [String]) async -> String? {
+        guard let r = try? await RouterLoopHost.loopGit(args, in: dir, profile: GitRunner.sandbox), r.status == 0, !r.truncated else { return nil }
+        return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 struct RouterLoopHost: LoopHost {
     let router: CommandRouter, starter: UUID, root: URL, work: UUID, paddock: UUID
     let sandbox: (home: URL, shell: String)?

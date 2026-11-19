@@ -287,7 +287,12 @@ extension CommandRouter {
 
         case "work.summary":   // same reach as work.status; `--natural`: the on-device model's rewrite, the markdown always
             let w = if let s = str(r, "id") { try await byId(s) } else { try await active(try target()) }
-            let sum = WorkSummary.make(w, terminalAlive: await registry.process(w.terminalId)?.isRunning == true, now: now)
+            var sum = WorkSummary.make(w, terminalAlive: await registry.process(w.terminalId)?.isRunning == true, now: now)
+            // reverts: only here, where the summary is asked for (git calls); the work's paddock, or its terminal's folder
+            if sum.loop != nil, let dir = ws.paddocks.first(where: { $0.id == w.paddockId })?.path
+                ?? ws.terminals.first(where: { $0.id == w.terminalId })?.cwd {
+                sum.loop = await LoopStats.counted(work: w, git: LoopRevertGit(dir: URL(fileURLWithPath: dir)))
+            }
             var o: [String: JSONValue] = ["summary": try isoJSON(sum), "markdown": .string(sum.markdown()), "natural": .bool(false)]
             if flag(r, "natural") {
                 let (text, reason) = await assistant.rewrite(sum, workId: w.id)

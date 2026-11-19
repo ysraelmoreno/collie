@@ -178,4 +178,58 @@ extension WorkSummaryTests {
         #expect(LoopStats(work: w) == LoopStats(work: Work(title: "X", terminalId: UUID(), tasks: w.tasks)))
         #expect(make(w).loop?.line == "laço: 0/1 feitas · 0 na 1ª · 1 adiada · média 3,0 tentativas · 0s")
     }
+
+    /// Git by a table: `full` is what each short sha resolves to (absent: it no longer resolves), `reverted` the full
+    /// shas some commit of the branch reverts.
+    struct FakeGit: RevertGit {
+        var full: [String: String] = [:]
+        var reverted: Set<String> = []
+        func out(_ args: [String]) async -> String? {
+            switch args.first {
+            case "rev-parse": return full[String((args.last ?? "").prefix { $0 != "^" })]
+            case "log":
+                guard let grep = args.first(where: { $0.hasPrefix("This reverts commit ") }) else { return nil }
+                return reverted.contains(String(grep.dropFirst("This reverts commit ".count))) ? "fee1dead" : ""
+            default: return nil
+            }
+        }
+    }
+    func looped(_ commits: [String]...) -> Work {
+        Work(title: "W", terminalId: UUID(), tasks: commits.enumerated().map { i, c in
+            WorkTask(id: "t\(i)", title: "t\(i)", state: .done, tries: 1,
+                     evidence: TaskEvidence(commits: c, shortstat: "", checkTail: "", seconds: 40, attempt: 1))
+        })
+    }
+    let base = "laço: 2/2 feitas · 2 na 1ª · 0 adiadas · média 1,0 tentativas · 1min"
+
+    @Test func noneReverted() async throws {
+        let w = looped(["aaa1111 add form"], ["bbb2222 add api", "ccc3333 fix api"])
+        let git = FakeGit(full: ["aaa1111": "aaa1111f", "bbb2222": "bbb2222f", "ccc3333": "ccc3333f"])
+        let s = try #require(await LoopStats.counted(work: w, git: git))
+        #expect(s.reverted == 0 && s.unknown == 0)
+        #expect(s.line == base && s == LoopStats(work: w))   // nothing reverted: the line does not change
+        #expect(await LoopStats.counted(work: Work(title: "W", terminalId: UUID()), git: git) == nil)   // no loop, no numbers
+    }
+
+    @Test func oneReverted() async throws {
+        let w = looped(["aaa1111 add form"], ["bbb2222 add api", "ccc3333 fix api"])
+        var git = FakeGit(full: ["aaa1111": "aaa1111f", "bbb2222": "bbb2222f", "ccc3333": "ccc3333f"], reverted: ["bbb2222f"])
+        var s = try #require(await LoopStats.counted(work: w, git: git))
+        #expect(s.reverted == 1 && s.unknown == 0)
+        #expect(s.line == base + " · 1 revertido")
+        var sum = make(w); sum.loop = s
+        #expect(sum.markdown().hasPrefix("## W\n\n" + base + " · 1 revertido\n"))
+        git.reverted.insert("aaa1111f")
+        s = try #require(await LoopStats.counted(work: w, git: git))
+        #expect(s.reverted == 2 && s.line == base + " · 2 revertidos")
+    }
+
+    @Test func unresolvedShaIsUnknown() async throws {
+        // bbb2222 was rebased away (no longer resolves); "-n" is not a sha and never reaches git as one
+        let w = looped(["aaa1111 add form"], ["bbb2222 add api", "-n evil"])
+        let git = FakeGit(full: ["aaa1111": "aaa1111f", "-n": "x"], reverted: ["aaa1111f", "x"])
+        let s = try #require(await LoopStats.counted(work: w, git: git))
+        #expect(s.reverted == 1 && s.unknown == 2)
+        #expect(s.line == base + " · 1 revertido")   // unknown is not shown as reverted
+    }
 }

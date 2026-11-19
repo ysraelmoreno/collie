@@ -29,6 +29,14 @@ if [ "${1:-}" = "--update-baseline" ]; then
 fi
 
 rc=0
+# feature-map: every panel is named in docs/feature-map.md. No baseline: there is no exception.
+for f in Sources/ColliePlugins/*Panel.swift; do
+  [ -f "$f" ] || continue
+  n="$(basename "$f" .swift)"
+  grep -qw -- "$n" docs/feature-map.md 2>/dev/null && continue
+  echo "lint: regra 'feature-map': $f não está em docs/feature-map.md. Acrescente em \"Painéis\" uma seção que cite $n (nome na UI, para que serve, arquivos, como verificar)." >&2
+  rc=1
+done
 if [ -s "$T/over" ]; then
   while read -r rule file n; do
     for i in "${!NAMES[@]}"; do [ "${NAMES[$i]}" = "$rule" ] && break; done

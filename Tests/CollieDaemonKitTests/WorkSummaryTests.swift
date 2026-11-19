@@ -155,7 +155,7 @@ extension WorkSummaryTests {
         }
     }
 
-    @Test func loopStats() {
+    @Test func loopStats() throws {
         func t(_ id: String, _ s: TaskState, tries: Int?, seconds: Int? = nil) -> WorkTask {
             WorkTask(id: id, title: id, state: s, tries: tries,
                      evidence: seconds.map { TaskEvidence(commits: ["abc"], shortstat: "", checkTail: "", seconds: $0, attempt: tries ?? 1) })

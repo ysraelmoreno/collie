@@ -582,7 +582,7 @@ extension CommandRouter {
                 }
                 return p
             }
-            if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }
+            if flag(r, "noCap") { await curator.setCap(nil) } else if let n = try num(r, "cap", max: 10_000) { await curator.setCap(Int(n)) }
             if let p = try provider("consent") { await curator.consent(p) }   // the sheet was accepted: before the switch
             if let p = try provider("provider") { try await curator.setProvider(p, model: str(r, "model")) }
             var extra: [String: JSONValue] = [:]

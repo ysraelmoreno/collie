@@ -25,7 +25,8 @@ struct CuratorStatus: Codable, Sendable {
     var available: Bool
     var reason: String?
     var today: Int
-    var cap: Int
+    /// The daily job cap; nil: none (the default). 0: off.
+    var cap: Int?
     var queued: Int
     /// Jobs parked in `failed/` (3 failed attempts, or an unreadable file).
     var failed: Int
@@ -82,7 +83,8 @@ actor Curator {
     /// daemon's rewrite (only `cap`/`model`) falls back to Claude with nothing consented (the safe side).
     struct Config: Codable {
         static let providers: Set = ["claude", "cursor"]
-        var cap = 40
+        /// Jobs a day; nil (missing, or of a wrong type): no cap, the default. 0: off.
+        var cap: Int?
         var model = "haiku"
         var provider = "claude"
         /// Provider → model (`""` or missing: the provider's default).
@@ -94,7 +96,7 @@ actor Curator {
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             func field<T: Decodable>(_ k: CodingKeys, _ fallback: T) -> T { ((try? c.decodeIfPresent(T.self, forKey: k)) ?? nil) ?? fallback }
-            cap = field(.cap, cap); model = field(.model, model); models = field(.models, models); consented = field(.consented, consented)
+            cap = (try? c.decodeIfPresent(Int.self, forKey: .cap)) ?? nil; model = field(.model, model); models = field(.models, models); consented = field(.consented, consented)
             let p = field(.provider, provider)
             provider = Self.providers.contains(p) ? p : "claude"
         }
@@ -320,8 +322,9 @@ actor Curator {
         return out
     }
 
-    func setCap(_ n: Int) {
-        config.cap = max(0, n)
+    /// nil: no daily cap.
+    func setCap(_ n: Int?) {
+        config.cap = n.map { max(0, $0) }
         write(config, to: dir.appendingPathComponent("config.json"))
         wake()
     }
@@ -396,10 +399,11 @@ actor Curator {
     static func limit(_ cap: Int, for kind: CuratorJobKind) -> Int { kind == .correction ? cap : cap - cap / 4 }
 
     private func capReason(_ kind: CuratorJobKind = .correction) -> String? {
-        if config.cap == 0 { return "desligado" }
-        rollDay()
-        if usage.today >= config.cap { return "limite diário atingido (\(config.cap))" }
-        return usage.today >= Self.limit(config.cap, for: kind) ? "resto do limite diário reservado às correções" : nil
+        rollDay()   // first, cap or not: `call` counts into today right after this
+        guard let cap = config.cap else { return nil }   // no cap: nothing to reach, nothing to hold back
+        if cap == 0 { return "desligado" }
+        if usage.today >= cap { return "limite diário atingido (\(cap))" }
+        return usage.today >= Self.limit(cap, for: kind) ? "resto do limite diário reservado às correções" : nil
     }
 
     /// By kind (`CuratorJobKind.priority`), then oldest; a failed job waits for the next tick.

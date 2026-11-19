@@ -80,7 +80,7 @@ private func withRepo(_ recs: [MemoryRecord], _ body: (Daemon, Paths, RepoMemory
             // the digest command lists it, with the curator line
             let dg = try await admin(d, p, "memory.digest")
             guard case .object(let o)? = dg.result, case .array(let es)? = o["entries"], case .object(let c)? = o["curator"] else { Issue.record("\(dg)"); return }
-            #expect(es.count == 1 && c["cap"] == .number(40))
+            #expect(es.count == 1 && c["cap"] == nil)   // no daily cap by default
         }
     }
 

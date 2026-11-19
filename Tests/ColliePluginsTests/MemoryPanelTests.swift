@@ -216,8 +216,8 @@ private actor FakeDaemon {
                             return try! JSONDecoder().decode(JSONValue.self, from: e.encode(r))
                         }), "undone": .bool(false), "resolved": .bool(resolved)])
     }
-    private func curator(available: Bool = true, reason: String? = nil) -> JSONValue {
-        .object(["available": .bool(available), "reason": reason.map(JSONValue.string) ?? .null, "today": .number(12), "cap": .number(40),
+    private func curator(available: Bool = true, reason: String? = nil, cap: Int? = 40) -> JSONValue {
+        .object(["available": .bool(available), "reason": reason.map(JSONValue.string) ?? .null, "today": .number(12), "cap": cap.map { .number(Double($0)) } ?? .null,
                  "queued": .number(0), "failed": .number(0), "inputTokens": .number(17_000), "outputTokens": .number(1_200), "costUSD": .number(0.0412)])
     }
 
@@ -248,6 +248,9 @@ private actor FakeDaemon {
         await d.setDigest(.object(["entries": .array([]), "curator": curator()]))
         await m.load()
         #expect(m.curatorLine == "Curador: 12/40 hoje · 18 mil tokens · US$ 0,04")
+        await d.setDigest(.object(["entries": .array([]), "curator": curator(cap: nil)]))   // no daily cap (the default)
+        await m.load()
+        #expect(m.curatorLine == "Curador: 12 hoje · 18 mil tokens · US$ 0,04" && m.curator?.cap == nil)
         await d.setDigest(.object(["entries": .array([]), "curator": curator(available: false, reason: "claude sem login")]))
         await m.load()
         #expect(m.curatorLine == "curador indisponível: claude sem login")
@@ -311,6 +314,9 @@ private actor FakeDaemon {
         let (m, d) = make([])
         await m.setCap(25)
         #expect(await d.last("memory.curator")?["cap"] == .number(25))
+        await m.setCap(nil)
+        let sent = await d.last("memory.curator")
+        #expect(sent?["noCap"] == .bool(true) && sent?["cap"] == nil)
     }
 
     @Test func promoteSuggestion() async {

@@ -102,7 +102,7 @@ private let oneCall: Curator.Handler = { j, call in
 
     @Test func wrongTypeKeepsOthers() throws {
         let c = try config(#"{"cap":"x","model":"sonnet","consented":"cursor"}"#)
-        #expect(c.cap == 40 && c.model == "sonnet" && c.consented.isEmpty)
+        #expect(c.cap == nil && c.model == "sonnet" && c.consented.isEmpty)
     }
 
     @Test func configRoundTrip() throws {
@@ -178,6 +178,28 @@ private let oneCall: Curator.Handler = { j, call in
         clock.advance(by: Curator.tick)
         #expect(await waitFor(10) { fake.calls == 3 })
         #expect(await waitFor(10) { let s = await c.status(); return s.today == 1 && s.queued == 0 })
+        await c.stop()
+    }
+
+    /// No cap is the default: nothing stops the queue, no quarter is held back; a cap set and cleared goes back to that.
+    @Test func noCapByDefault() async throws {
+        let fake = FakeCurator(), dir = tempDir()
+        let c = Curator(dir: dir, runner: fake, clock: ManualClock())
+        #expect(Curator.Config().cap == nil)
+        for _ in 0..<45 { _ = await c.enqueue(job()) }   // past the old default of 40
+        await c.start(handler: oneCall)
+        #expect(await waitFor(20) { fake.calls == 45 })
+        var s = await c.status()
+        #expect(s.cap == nil && s.available && s.reason == nil && s.queued == 0)
+        await c.setCap(1)
+        s = await c.status()
+        #expect(s.cap == 1 && s.reason == "limite diário atingido (1)")
+        await c.setCap(nil)
+        s = await c.status()
+        #expect(s.cap == nil && s.available)
+        // cleared on disk too: the file has no cap, so a restart (or an older daemon) reads its own default
+        let file = try String(contentsOf: dir.appendingPathComponent("config.json"), encoding: .utf8)
+        #expect(!file.contains("\"cap\""))
         await c.stop()
     }
 
@@ -285,7 +307,7 @@ private let oneCall: Curator.Handler = { j, call in
         await c.start(handler: oneCall)
         #expect(await waitFor(10) { await c.status().today == 2 })
         let s = await c.status()
-        #expect(s.inputTokens == 1624 && s.outputTokens == 80 && abs(s.costUSD - 0.0022) < 1e-9 && s.cap == 40)
+        #expect(s.inputTokens == 1624 && s.outputTokens == 80 && abs(s.costUSD - 0.0022) < 1e-9 && s.cap == nil)
         await c.stop()
         let again = await Curator(dir: dir, runner: fake, clock: ManualClock()).status()
         #expect(again.today == 2 && again.inputTokens == 1624)
@@ -498,6 +520,9 @@ private let oneCall: Curator.Handler = { j, call in
         let r = try await send(paths, Request(id: "a", token: d.adminToken, command: "memory.curator", args: ["cap": .number(5)]), timeoutSeconds: 30)
         guard case .object(let o)? = r.result else { Issue.record("\(r)"); await d.stop(); return }
         #expect(o["cap"] == .number(5) && o["available"] == .bool(true) && o["today"] == .number(0))
+        let n = try await send(paths, Request(id: "b", token: d.adminToken, command: "memory.curator", args: ["noCap": .bool(true)]), timeoutSeconds: 30)
+        guard case .object(let u)? = n.result else { Issue.record("\(n)"); await d.stop(); return }
+        #expect(u["cap"] == nil && u["available"] == .bool(true))
         await d.stop()
     }
 

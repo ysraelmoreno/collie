@@ -45,7 +45,7 @@ public struct DigestRow: Decodable, Identifiable, Equatable, Sendable {
 }
 /// The curator's availability and today's usage (`memory.digest`'s `curator`).
 public struct CuratorInfo: Decodable, Equatable, Sendable {
-    public let available: Bool, reason: String?, today: Int, cap: Int, inputTokens: Int, outputTokens: Int, costUSD: Double
+    public let available: Bool, reason: String?, today: Int, cap: Int?, inputTokens: Int, outputTokens: Int, costUSD: Double
     /// The chosen provider, its model, where its data goes and its trust; every provider of the build. nil: an older daemon.
     public let provider: String?, model: String?, destination: String?, trust: String?
     public let providers: [CuratorProviderEntry]?
@@ -192,8 +192,9 @@ public enum MemoryDigestNotice {
             let other = c.providers?.first { $0.provider != (c.provider ?? "claude") && $0.installed && ($0.available || $0.consentNeeded) }
             return "curador indisponível: \(why)" + (other.map { " · \($0.provider.capitalized) instalado: escolha em Preferências › Memória" } ?? "")
         }
-        if let p = c.provider, p != "claude" { return "Curador: \(c.today)/\(c.cap) hoje · \(c.destination ?? p.capitalized) (sem custo informado)" }
-        return "Curador: \(c.today)/\(c.cap) hoje · \(Self.tokens(c.inputTokens + c.outputTokens)) tokens · \(Self.usd(c.costUSD))"
+        let today = c.cap.map { "\(c.today)/\($0)" } ?? "\(c.today)"   // no cap: just today's count
+        if let p = c.provider, p != "claude" { return "Curador: \(today) hoje · \(c.destination ?? p.capitalized) (sem custo informado)" }
+        return "Curador: \(today) hoje · \(Self.tokens(c.inputTokens + c.outputTokens)) tokens · \(Self.usd(c.costUSD))"
     }
     /// Corrections that are probably the user's, waiting for Confirmar (the top of Aprendizado), newest first.
     public var toConfirm: [DigestRow] { digest.filter { $0.isConfirm && !$0.resolved && !$0.undone }.sorted { $0.at > $1.at } }
@@ -204,8 +205,8 @@ public enum MemoryDigestNotice {
     public func resolve(_ e: DigestRow, keepNewer: Bool) async {
         await change("memory.resolve", ["entry": .string(e.id.uuidString), "keep": .string(keepNewer ? "newer" : "older")])
     }
-    /// The curator's daily job cap (0 = off).
-    public func setCap(_ n: Int) async { await change("memory.curator", ["cap": .number(Double(max(0, n)))]) }
+    /// The curator's daily job cap (0 = off; nil = none).
+    public func setCap(_ n: Int?) async { await change("memory.curator", n.map { ["cap": .number(Double(max(0, $0)))] } ?? ["noCap": .bool(true)]) }
     /// An ask from a lot's job that suggests the project: its memory and lot, for "Promover ao projeto".
     public func promoteSuggestion(_ e: DigestRow) -> (id: UUID, lot: String)? {
         guard e.isAsk, let lot = lotNames[e.store], e.title.localizedCaseInsensitiveContains("projeto"), let id = e.before.first?.id else { return nil }
@@ -435,8 +436,9 @@ struct MemoryPanelView: View {
             HStack {
                 Text(line).font(.collieMono(12)).foregroundStyle(model.curator?.available == false ? Color.collieAttention : .collieTextSecondary)
                 Spacer()
-                if let c = model.curator {
-                    Stepper("Limite diário: \(c.cap)", value: Binding(get: { c.cap }, set: { n in Task { await model.setCap(n) } }), in: 0...1_000)
+                // no cap (the default): nothing to step; it is set in Preferências › Memória
+                if let c = model.curator, let cap = c.cap {
+                    Stepper("Limite diário: \(cap)", value: Binding(get: { cap }, set: { n in Task { await model.setCap(n) } }), in: 0...1_000)
                         .font(.collieUI(12)).fixedSize()
                 }
             }

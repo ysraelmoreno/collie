@@ -147,8 +147,12 @@ struct CuratorPreferences: View {
         }
         HStack {
             Text("Limite").font(.collieUI(13))
-            TextField("40", text: $cap).frame(width: 56).onSubmit { if let n = Int(cap) { send(["cap": .number(Double(max(0, n)))]) } }
-            Text("jobs por dia").font(.collieUI(13)).foregroundStyle(Color.collieMuted)
+            // empty: no cap (the default)
+            TextField("sem limite", text: $cap).frame(width: 84).onSubmit {
+                let t = cap.trimmingCharacters(in: .whitespaces)
+                if t.isEmpty { send(["noCap": .bool(true)]) } else if let n = Int(t) { send(["cap": .number(Double(max(0, n)))]) }
+            }
+            Text("jobs por dia (vazio: sem limite; 0: desligado)").font(.collieUI(13)).foregroundStyle(Color.collieMuted)
         }
         if let t = s.trustNote { muted(t) }
         HStack {
@@ -182,7 +186,7 @@ struct CuratorPreferences: View {
         do {
             var a = args; a["test"] = .bool(true)
             s = CuratorSettings.from(reply: try await client.adminCall("memory.curator", a))
-            cap = s.map { String($0.info.cap) } ?? cap
+            cap = s.map { $0.info.cap.map(String.init) ?? "" } ?? cap
             error = nil
         } catch { self.error = (error as? ProtocolError)?.message ?? "\(error)" }
     }

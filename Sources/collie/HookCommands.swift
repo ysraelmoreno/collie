@@ -30,7 +30,7 @@ enum HookCommands {
             // Cursor's plugin sessionStart (AgentLaunch.cursorPlugin): the same text as Claude's SessionStart
             let stdin = FileHandle.standardInput.readDataToEndOfFile()
             if let out = await MemoryHookClient.output(event: .sessionStart, prompt: nil, transcript: HookPayload.transcriptPath(stdinJSON: stdin),
-                                                       cursor: true, env: ProcessInfo.processInfo.environment, onError: { log("\(a[0]): \($0)") }) {
+                                                       session: HookPayload.sessionId(stdinJSON: stdin), cursor: true, env: ProcessInfo.processInfo.environment, onError: { log("\(a[0]): \($0)") }) {
                 print(out)
             }
             return

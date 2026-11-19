@@ -217,6 +217,7 @@ extension CommandRouter {
                 let used = head.reduce(0) { $0 + $1.utf8.count + 2 }
                 // only Claude and Cursor run this hook
                 let cursor = Self.agentName(me) == "cursor"
+                if cursor { await cursorSessionStarted(me.id, transcript: str(r, "transcript"), session: str(r, "session")) }
                 let mode: CursorMemoryMode = cursor ? CollieSettings.load(config.paths.root).cursorMemoryMode : .start
                 // PRD B3 req. 4: a Shepherd hears of the recurring pitfalls no check enforces yet
                 var candidates = 0
@@ -566,7 +567,7 @@ extension CommandRouter {
                 t = x
             }
             guard await captureConversationNow(t.id) else {
-                throw ProtocolError(code: .notFound, message: "no Claude conversation seen for '\(t.name)' yet")
+                throw ProtocolError(code: .notFound, message: "no conversation seen for '\(t.name)' yet")
             }
             return .object(["queued": .number(Double(await curator.queued(kind: .conversation).count))])
 

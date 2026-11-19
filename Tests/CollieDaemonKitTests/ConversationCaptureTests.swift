@@ -21,8 +21,19 @@ private func talk(_ n: Int, _ extra: String = "") -> String {
     (0..<n).map { user("mensagem \($0) sobre o banco \(extra)") + agent("ok \($0)") }.joined()
 }
 
+/// cursor-agent's line shape: the role at the top level, no `type`.
+private func cursorTalk(_ n: Int) -> String {
+    (0..<n).map { i in
+        line(["role": "user", "message": ["content": [["type": "text", "text": "<user_query>\nmensagem \(i) sobre o banco\n</user_query>"]]]])
+            + line(["role": "assistant", "message": ["content": [["type": "text", "text": "ok \(i)"]]]])
+    }.joined()
+}
+private let cursorSession = "3f2a9c1e-7b4d-4e58-9a6b-0c1d2e3f4a5b"
+private let cursorFile = ".cursor/projects/any-slug/agent-transcripts/\(cursorSession)/\(cursorSession).jsonl"
+
 /// A daemon with a temp home (never the real ~/.claude), an available fake curator, a shell terminal "dev" in a repo,
-/// and the transcript path the terminal's hook would send.
+/// and the transcript path the terminal's hook would send. `preset` other than shell: an agent terminal (a stand-in
+/// command that prints its token); `at`: the transcript, relative to the home.
 private struct Env {
     var d: Daemon, p: Paths, fake: FakeCurator, tid: UUID, token: String, transcript: URL, store: RepoMemory, root: URL
     var mark: UInt64? { ConversationCapture.marks(root.appendingPathComponent("memory/capture-marks.json"))[real] }
@@ -49,20 +60,22 @@ private struct Env {
         #expect(try await call("work.hook", ["hook": name, "payload": payload]).ok)
     }
 }
-private func withEnv(idle: Duration = .seconds(60), _ body: (Env) async throws -> Void) async throws {
+private func withEnv(idle: Duration = .seconds(60), preset: String = "shell", at file: String = ".claude/projects/-tmp-repo/s.jsonl",
+                     _ body: (Env) async throws -> Void) async throws {
     let home = FileManager.default.temporaryDirectory.appendingPathComponent("cc-home-\(UUID().uuidString.prefix(8))")
-    let dir = home.appendingPathComponent(".claude/projects/-tmp-repo")
+    let transcript = home.appendingPathComponent(file), dir = transcript.deletingLastPathComponent()
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: home) }
     let fake = FakeCurator()
     let repo = try await makeRepo()
     try await withDaemon(configure: { $0.curatorRunner = fake; $0.sandboxHome = home; $0.conversationIdle = idle }) { d, p in
-        let r = try await send(p, Request(id: "x", token: d.adminToken, command: "admin.spawn", args: [
-            "name": .string("dev"), "preset": .string("shell"), "cwd": .string(repo.path)]), timeoutSeconds: 60)
+        var args: [String: JSONValue] = ["name": .string("dev"), "preset": .string(preset), "cwd": .string(repo.path)]
+        if preset != "shell" { args["command"] = .string("echo T=$COLLIE_TOKEN; exec cat >/dev/null") }
+        let r = try await send(p, Request(id: "x", token: d.adminToken, command: "admin.spawn", args: args), timeoutSeconds: 60)
         guard case .object(let o)? = r.result, case .string(let id)? = o["id"], let tid = UUID(uuidString: id) else {
             throw ProtocolError(code: .internal, message: "\(r)")
         }
-        try await body(Env(d: d, p: p, fake: fake, tid: tid, token: try await tokenOf(d, id), transcript: dir.appendingPathComponent("s.jsonl"),
+        try await body(Env(d: d, p: p, fake: fake, tid: tid, token: try await tokenOf(d, id, echo: preset == "shell"), transcript: transcript,
                            store: await d.router.memory.repo(for: repo.path), root: p.root))
     }
 }
@@ -428,6 +441,64 @@ private func withEnv(idle: Duration = .seconds(60), _ body: (Env) async throws -
             try await Task.sleep(for: .milliseconds(200))
             #expect(e.fake.calls == 2)
             #expect(e.fake.inputs.last?.contains("segunda") == true && e.fake.inputs.last?.contains("primeira") == false)
+        }
+    }
+
+    /// C2: a Cursor sessionStart names the transcript: `memory.capture` then learns from it like a Claude one.
+    @Test func cursorSessionStartRegistersTranscript() async throws {
+        try await withEnv(preset: "cursor", at: cursorFile) { e in
+            e.fake.output = out([item()])
+            try Data(cursorTalk(1).utf8).write(to: e.transcript)
+            #expect(try await e.call("memory.capture").error?.message == "no conversation seen for 'dev' yet")
+            #expect(try await e.call("memory.hookContext", ["transcript": e.transcript.path]).ok)
+            #expect(try await e.call("memory.capture").ok)
+            let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+            #expect(e.fake.calls == 1)   // one conversation job
+            #expect(e.fake.inputs.first?.contains("mensagem 0 sobre o banco") == true)
+            #expect(try await e.records().filter { $0.origin == "conversa (dev)" }.count == 1)
+            #expect(await e.d.router.digest.since(.distantPast).filter { $0.action == "aprendido" }.count == 1)
+        }
+    }
+
+    /// A `.jsonl` outside Cursor's `projects` dir (here under Claude's): remembered, refused when vetted, no job.
+    @Test func cursorTranscriptOutsideProjectsIsRefused() async throws {
+        try await withEnv(preset: "cursor") { e in
+            try Data(cursorTalk(5).utf8).write(to: e.transcript)
+            #expect(try await e.call("memory.hookContext", ["transcript": e.transcript.path]).ok)
+            #expect(try await e.call("memory.capture").ok)
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(await e.d.router.curator.queued(kind: .conversation).isEmpty)
+            #expect(e.fake.calls == 0 && e.mark == nil)
+        }
+    }
+
+    /// No `transcript_path`, only the session id: the file under any project slug is found once it exists.
+    @Test func cursorSessionIdFindsTranscript() async throws {
+        try await withEnv(preset: "cursor", at: cursorFile) { e in
+            e.fake.output = out([])
+            #expect(try await e.call("memory.hookContext", ["session": cursorSession]).ok)
+            #expect(try await e.call("memory.capture").error?.code == .notFound)   // no file yet: nothing remembered
+            try Data(cursorTalk(1).utf8).write(to: e.transcript)
+            #expect(try await e.call("memory.hookContext", ["session": "../../\(cursorSession)"]).ok)
+            #expect(try await e.call("memory.capture").error?.code == .notFound)   // not a UUID: never a path piece
+            #expect(try await e.call("memory.hookContext", ["session": cursorSession]).ok)
+            #expect(try await e.call("memory.capture").ok)
+            let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+            #expect(e.fake.calls == 1)
+        }
+    }
+
+    /// Only a Cursor terminal reads under `.cursor`: a Claude one's transcript under `.claude/projects` is still captured.
+    @Test func claudeTerminalStillUsesClaudeProjects() async throws {
+        try await withEnv(preset: "claude") { e in
+            e.fake.output = out([])
+            try Data(talk(1).utf8).write(to: e.transcript)
+            await e.d.router.captureConversation(e.tid, transcript: e.transcript.path, force: true)
+            let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+            #expect(e.fake.calls == 1)
         }
     }
 }

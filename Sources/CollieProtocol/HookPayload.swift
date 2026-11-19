@@ -32,6 +32,13 @@ public enum HookPayload {
         return p
     }
 
+    /// Cursor's sessionStart `session_id`, only when it is a UUID (it names a transcript folder: never a path piece otherwise).
+    public static func sessionId(stdinJSON: Data) -> String? {
+        guard let o = try? JSONSerialization.jsonObject(with: stdinJSON) as? [String: Any], let s = o["session_id"] as? String,
+              UUID(uuidString: s) != nil else { return nil }
+        return s
+    }
+
     /// Claude sets `stop_hook_active` on a Stop that follows a turn a Stop hook made it continue: never block that one.
     /// nil: unreadable stdin (no block, the turn still ends).
     public static func claudeStopHookActive(stdinJSON: Data) -> Bool? {

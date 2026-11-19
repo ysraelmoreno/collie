@@ -144,12 +144,24 @@ extension CommandRouter {
             .map { $0.appendingPathComponent("projects") } ?? sandboxHomeDir.appendingPathComponent(".claude/projects")
     }
 
+    /// Cursor's `<data>/projects` for `me`: `CURSOR_DATA_DIR` from its environment, else `~/.cursor`.
+    func cursorProjectsDir(_ me: TerminalRecord) async -> URL {
+        let env = await agentEnv(me)
+        return env["CURSOR_DATA_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            .map { $0.appendingPathComponent("projects") } ?? sandboxHomeDir.appendingPathComponent(".cursor/projects")
+    }
+
+    /// Where `me`'s agent keeps its transcripts: Cursor's dir for a Cursor terminal, Claude's otherwise.
+    func projectsDir(_ me: TerminalRecord) async -> URL {
+        Self.agentName(me) == "cursor" ? await cursorProjectsDir(me) : await claudeProjectsDir(me)
+    }
+
     /// A trigger: `tid`'s transcript (from its own hook payload) has a new chunk → a `conversation` job (one queued per
     /// transcript and mark: it reads up to the end when it runs). Without `force`, a chunk of < 3 user messages waits for more.
     /// A path outside `<config>/projects`, not a regular `.jsonl` or a symlink: nothing read, one log line. Never fails.
     func captureConversation(_ tid: UUID, transcript: String, force: Bool) async {
         guard let me = ws.terminals.first(where: { $0.id == tid }) else { return }
-        let projects = await claudeProjectsDir(me)
+        let projects = await projectsDir(me)
         guard let url = TranscriptChunk.allowed(transcript, projectsDir: projects) else {
             memoryLog("conversation capture: transcript refused for \(me.name)"); return
         }
@@ -241,10 +253,12 @@ extension CommandRouter {
     }
 }
 
-/// Per terminal: the transcript its last Claude hook named (in memory: the next hook names it again after a restart),
+/// Per terminal: the transcript its last hook named (Claude's Stop, Cursor's sessionStart) (in memory: the next hook names it again after a restart),
 /// and the idle capture waiting on it. ponytail: one path per terminal, never pruned (tiny).
 struct ConversationTriggers {
     var transcripts: [UUID: String] = [:]
+    /// A Cursor terminal's session id while its transcript file is not there yet (looked for again later).
+    var cursorSessions: [UUID: String] = [:]
     var idle: [UUID: Task<Void, Never>] = [:]
     /// Real transcript paths whose job is running, and the trigger that came meanwhile (coalesced: one follow-up).
     var running: Set<String> = []
@@ -267,8 +281,25 @@ extension CommandRouter {
         }
     }
 
+    /// A Cursor sessionStart (its only hook): the transcript remembered, so `memory.capture`, work done and merge capture
+    /// it (vetted then, by `captureConversation`). No `transcript`: the one
+    /// `<projects>/*/agent-transcripts/<session>/<session>.jsonl` that exists; none yet: only the session id is kept.
+    /// No token usage is read (a Cursor transcript has none). Never throws.
+    func cursorSessionStarted(_ tid: UUID, transcript: String?, session: String?) async {
+        guard let me = ws.terminals.first(where: { $0.id == tid }) else { return }
+        let session = session.flatMap { UUID(uuidString: $0) == nil ? nil : $0 }   // a path piece below: a UUID or nothing
+        conversations.cursorSessions[tid] = session
+        if let transcript, !transcript.isEmpty { conversations.transcripts[tid] = transcript; return }
+        guard let session else { return }
+        let projects = await cursorProjectsDir(me)
+        let found = ((try? FileManager.default.contentsOfDirectory(atPath: projects.path)) ?? [])
+            .map { projects.appendingPathComponent("\($0)/agent-transcripts/\(session)/\(session).jsonl").path }
+            .filter { FileManager.default.fileExists(atPath: $0) }
+        if found.count == 1 { conversations.transcripts[tid] = found[0] }
+    }
+
     /// Compaction, session end, work done or merged, `memory.capture`: the chunk now, however short. `transcript`: the
-    /// hook's own (else the last one remembered). false: no Claude transcript seen for `tid` (Codex, a shell).
+    /// hook's own (else the last one remembered). false: no transcript seen for `tid` (Codex, a shell).
     @discardableResult
     func captureConversationNow(_ tid: UUID, transcript: String? = nil) async -> Bool {
         if let transcript { conversations.transcripts[tid] = transcript }

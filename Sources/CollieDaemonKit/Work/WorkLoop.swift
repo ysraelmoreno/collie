@@ -175,7 +175,7 @@ actor WorkLoop {
             if let g = loop.gate, broken == nil, status == 0, committed, !dirty, moves.isEmpty {
                 if blocked != nil { gate = "gate did not run (tree not reset)" }
                 // the agent may not rewrite the script that judges it: the gate does not run on a tree that changed it
-                else if let t = await tampered(g, before: before, judged: judged, dir) { gate = t } else {
+                else if let t = await tampered(g, spec: task.spec, before: before, judged: judged, dir) { gate = t } else {
                     await phase(w.id, .gate)
                     do {
                         let budgeted = Duration.seconds(left(loop, since: started))
@@ -274,14 +274,21 @@ actor WorkLoop {
     /// Why the attempt may not go to the gate `gate`: it changed (edited, deleted, renamed) a file whose full path
     /// appears literally in the gate's text and that already existed in `before`. nil = it did not. Creating the file
     /// for the first time is allowed (a task whose spec is to write that script), and only the gate is guarded: a
-    /// task's own check often names the very files the task must write.
+    /// task's own check often names the very files the task must write. A file the task's spec names is the task's to
+    /// change too (B4.1 adds a rule to the lint script that is the gate): the spec is read from `before`, never from
+    /// the attempt's tree, so an agent cannot authorise itself by editing its spec.
     // ponytail: substring match on the command text, no shell parsing; a script the gate reaches indirectly
     // (sourced by another script, a directory argument) is not seen. Parse the command if that gap is ever used.
-    private func tampered(_ gate: String, before: String, judged: String, _ dir: URL) async -> String? {
+    private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL) async -> String? {
+        var named = ""   // the spec's text at `before`; empty: no spec, outside the repo or not committed there
+        if let spec {
+            let rel = spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
+            if !rel.hasPrefix("/"), !rel.contains(".."), let r = try? await host.git(["show", "\(before):\(rel)"], in: dir), r.status == 0 { named = r.stdout }
+        }
         guard let changed = await out(["-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", before, judged], dir) else {
             return "gate did not run (could not list what the attempt changed)"
         }
-        for path in changed.split(separator: "\n").map(String.init) where gate.contains(path) {
+        for path in changed.split(separator: "\n").map(String.init) where gate.contains(path) && !named.contains(path) {
             if (try? await host.git(["cat-file", "-e", "\(before):\(path)"], in: dir))?.status == 0 {
                 return "a tentativa alterou «\(path)», que o portão executa"
             }

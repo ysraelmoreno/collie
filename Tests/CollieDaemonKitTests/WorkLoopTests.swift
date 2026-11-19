@@ -521,6 +521,35 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.host.commands == ["true"])   // the gate did not run on the rewritten script
     }
 
+    /// B4.1 adds a rule to the lint script that is the gate: its spec says so, and the owner approved that spec.
+    @Test func aScriptTheTasksSpecNamesMayChange() async throws {
+        let gate = "bash \(Self.lint) && true"
+        var t = task("a", "true"); t.spec = "spec.md"
+        let r = try await Rig([t], tries: 1, gate: gate); defer { r.cleanup() }
+        try await Self.script("exit 1\n", in: r.repo)
+        try await commit("spec.md", "Add a rule to \(Self.lint).\n", in: r.repo)
+        await r.host.set("loop-a-1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done, "\(w.tasks)")
+    }
+
+    /// The spec counts as it was before the attempt: an agent that edits it to name the script is still refused.
+    @Test func anAgentCannotAuthoriseItselfBySpecEdit() async throws {
+        let gate = "bash \(Self.lint) && true"
+        var t = task("a", "true"); t.spec = "spec.md"
+        let r = try await Rig([t], tries: 1, gate: gate); defer { r.cleanup() }
+        try await Self.script("exit 1\n", in: r.repo)
+        try await commit("spec.md", "Add a feature.\n", in: r.repo)
+        await r.host.set("loop-a-1", Script(act: { d in
+            try await commit("spec.md", "Rewrite \(Self.lint).\n", in: d)
+            try await Self.script("exit 0\n", in: d)
+        }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "a tentativa alterou «scripts/ci/lint.sh», que o portão executa", "\(w.tasks)")
+    }
+
     @Test func creatingTheScriptTheGateRunsPasses() async throws {
         let gate = "bash \(Self.lint)"
         let r = try await Rig([task("a", "true")], tries: 1, gate: gate); defer { r.cleanup() }

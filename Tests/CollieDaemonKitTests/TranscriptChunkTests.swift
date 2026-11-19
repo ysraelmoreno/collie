@@ -139,4 +139,48 @@ private func write(_ s: String, _ url: URL) throws { try Data(s.utf8).write(to: 
         #expect(r.text == "Usuário: completa")
         #expect(r.end == UInt64(whole.utf8.count))
     }
+
+    private static let cursorUser = line(["role": "user", "message": ["content": [
+        ["type": "text", "text": "<timestamp>Wed Nov 18 2026</timestamp>\n<user_query>\nfaça X\n</user_query>"]]]])
+    private static let cursorAgent = line(["role": "assistant", "message": ["content": [
+        ["type": "text", "text": "feito"], ["type": "tool_use", "name": "Shell", "input": [String: Any]()]]]])
+    private static let turnEnded = line(["type": "turn_ended", "status": "success"])
+
+    @Test func cursorUserAndAssistantText() throws {
+        let (_, _, d) = try projects()
+        let f = d.appendingPathComponent("s.jsonl")
+        try write(Self.cursorUser + Self.cursorAgent + Self.turnEnded, f)
+        let r = try #require(TranscriptChunk.read(f, from: 0, secrets: [], maxScalars: 10_000))
+        #expect(r.text == "Usuário: faça X\n\nAgente: feito")
+        #expect(r.userMessages == 1)
+    }
+
+    @Test func cursorToolUseOnlyLineIsSkipped() throws {
+        let (_, _, d) = try projects()
+        let f = d.appendingPathComponent("s.jsonl")
+        try write(Self.cursorUser + line(["role": "assistant", "message": ["content": [
+            ["type": "tool_use", "name": "Shell", "input": ["command": "TOOL-INPUT"]]]]]), f)
+        let r = try #require(TranscriptChunk.read(f, from: 0, secrets: [], maxScalars: 10_000))
+        #expect(r.text == "Usuário: faça X")
+    }
+
+    @Test func cursorTurnEndedIsSkipped() throws {
+        let (_, _, d) = try projects()
+        let f = d.appendingPathComponent("s.jsonl"), all = Self.cursorUser + Self.turnEnded
+        try write(all, f)
+        let r = try #require(TranscriptChunk.read(f, from: 0, secrets: [], maxScalars: 10_000))
+        #expect(r.text == "Usuário: faça X")
+        #expect(r.userMessages == 1)
+        #expect(r.end == UInt64(all.utf8.count))
+    }
+
+    @Test func claudeLineStillNeedsMatchingRole() throws {
+        let (_, _, d) = try projects()
+        let f = d.appendingPathComponent("s.jsonl")
+        try write(line(["type": "user", "message": ["role": "assistant", "content": "TROCADO"]])
+                  + line(["type": "assistant", "message": ["content": [["type": "text", "text": "SEM-ROLE"]]]])
+                  + user("fica"), f)
+        let r = try #require(TranscriptChunk.read(f, from: 0, secrets: [], maxScalars: 10_000))
+        #expect(r.text == "Usuário: fica")
+    }
 }

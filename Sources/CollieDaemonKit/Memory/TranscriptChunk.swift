@@ -1,6 +1,7 @@
 import Foundation
 
-/// The new part of a Claude conversation transcript, as plain text for the curator. The path is agent-controlled (a hook
+/// The new part of a conversation transcript, as plain text for the curator, in either format: Claude's lines (`type` at
+/// the top, repeated in `message.role`) or cursor-agent's (`role` at the top, no `type`). The path is agent-controlled (a hook
 /// payload), so it is trusted only as a regular `.jsonl` file — not a symlink — whose real path is under `<config>/projects/`;
 /// the content is untrusted data: only user and assistant text is kept (no tool inputs or outputs, no thinking, no system
 /// reminders or meta entries, pasted bodies cut to 500 characters), every block scrubbed of secrets.
@@ -63,8 +64,9 @@ enum TranscriptChunk {
         guard let e = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               e["isMeta"] as? Bool != true, e["isSidechain"] as? Bool != true,
               let msg = e["message"] as? [String: Any] else { return nil }
-        let type = e["type"] as? String
-        guard type == "user" || type == "assistant", msg["role"] as? String == type else { return nil }
+        // Claude: `type` at the top, repeated in `message.role`. Cursor: `role` at the top, no `type`, no `message.role`.
+        let type = e["type"] as? String ?? (msg["role"] == nil ? e["role"] as? String : nil)
+        guard type == "user" || type == "assistant", e["type"] == nil || msg["role"] as? String == type else { return nil }
         let raw: String
         if let s = msg["content"] as? String { raw = s }
         else if let items = msg["content"] as? [[String: Any]] {
@@ -75,7 +77,8 @@ enum TranscriptChunk {
     }
 
     static func clean(_ s: String) -> String {
-        s.replacing(/(?s)<(system-reminder|local-command-stdout|local-command-stderr)>.*?<\/\1>/, with: "")
+        s.replacing(/(?s)<(system-reminder|local-command-stdout|local-command-stderr|timestamp)>.*?<\/\1>/, with: "")
+            .replacing(/(?s)<user_query>(.*?)<\/user_query>/) { $0.output.1 }
             .replacing(/(?s)<pasted_content([^>]*)>(.*?)<\/pasted_content>/) { m in
                 let body = String(m.output.2)
                 return "<pasted_content\(m.output.1)>\(body.count > pastedMax ? String(body.prefix(pastedMax)) + "…" : body)</pasted_content>"

@@ -31,17 +31,22 @@ enum CuratorSandboxProfile {
         }
         let exes = i.executables.flatMap { [$0.path, real($0)] } + ["/bin/sh"]
         let exeDirs = i.executables.map { URL(fileURLWithPath: real($0)).deletingLastPathComponent().path }
+        // a CLI installed as a link (`~/.local/bin/claude` → `…/versions/<n>`) reads the path it was started by: the link
+        // itself, never its folder's other files
+        let launchers = i.executables.map(\.path).filter { $0 != real(URL(fileURLWithPath: $0)) }
+        let launcherReads: [String] = launchers.map { "(literal \(q($0)))" }
         let keychain = i.keychain ? [home + "/Library/Keychains"] : []
         let reads = ["/System", "/usr/lib", "/usr/share", "/usr/bin", "/bin", "/private/var/db/dyld", "/private/etc/ssl",
                      "/private/var/db/timezone", "/dev"].map(filter)
             + ["/private/etc/hosts", "/private/etc/resolv.conf", "/private/etc/localtime"].map { "(literal \(q($0)))" }
+            + launcherReads
             + (exeDirs + [cwd] + keychain).map(filter) + i.reads.map(filter)
         var writes = ([cwd] + keychain).map(filter) + i.writes.map(filter) + ["(literal \"/dev/null\")"]
         // the Security framework's lock (`EssentialPaths.userCacheWrites`' `mds`)
         if i.keychain { writes.append(filter(real(SandboxInput.darwinDir(_CS_DARWIN_USER_CACHE_DIR)) + "/mds")) }
         // path lookup: the ancestors of what is readable can be stat'ed, never listed or read
         var ancestors: Set<String> = []
-        for p in exeDirs + [cwd] + keychain + i.reads.map(path) + i.writes.map(path) {
+        for p in exeDirs + launchers + [cwd] + keychain + i.reads.map(path) + i.writes.map(path) {
             var u = URL(fileURLWithPath: p).deletingLastPathComponent()
             while u.pathComponents.count > 1 { ancestors.insert(u.path); u = u.deletingLastPathComponent() }
         }

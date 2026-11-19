@@ -106,6 +106,24 @@ private func writes(_ p: String, _ path: String) -> Bool { allows(p, "file-write
         }
     }
 
+    /// claude is installed as a link (`~/.local/bin/claude` → `…/versions/<n>`), and the CLI reads the path it was
+    /// started by: the link itself is readable (its folder can be stat'ed, its other files stay closed).
+    @Test func launcherLinkIsReadable() throws {
+        let base = URL(fileURLWithPath: SignedAppCheck.realPath(FileManager.default.temporaryDirectory))
+            .appendingPathComponent("collie-launcher-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let bin = base.appendingPathComponent(".local/bin"), versions = base.appendingPathComponent(".local/share/claude/versions")
+        for d in [bin, versions] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+        let target = versions.appendingPathComponent("2.1.329"), link = bin.appendingPathComponent("claude")
+        try Data().write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let p = CuratorSandboxProfile.render(CuratorSandboxProfile.claude(executable: link, cwd: cwd, home: base))
+        #expect(reads(p, link.path) && reads(p, target.path))
+        #expect(allows(p, "file-read-metadata", bin.path))
+        #expect(!reads(p, bin.appendingPathComponent("other").path))
+        #expect(allows(p, "process-exec", link.path) && allows(p, "process-exec", target.path))
+    }
+
     @Test func blockedNamesThePath() {
         #expect(CuratorSandboxProfile.blocked("EPERM: operation not permitted, open '/Users/u/.claude.json'") == "/Users/u/.claude.json")
         #expect(CuratorSandboxProfile.blocked("x\nsh: /Users/u/outside: Operation not permitted\n") == "/Users/u/outside")

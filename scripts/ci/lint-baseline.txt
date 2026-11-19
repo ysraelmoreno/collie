@@ -1,10 +1,3 @@
-force Sources/CollieClient/DaemonLauncher.swift 1
-force Sources/CollieDaemonKit/Android/AndroidDownload.swift 1
-force Sources/CollieDaemonKit/Memory/ClaimChecks.swift 2
-force Sources/CollieDaemonKit/Network/UpstreamTrust.swift 1
-force Sources/CollieDaemonKit/Remote/RemoteIdentity.swift 1
-force Sources/ColliePlugins/DiagramCommands.swift 1
-force Sources/ColliePlugins/NetworkPanelView.swift 1
 sleep Sources/CollieApp/AndroidPreferences.swift 1
 sleep Sources/CollieApp/CanvasViewport.swift 1
 sleep Sources/CollieApp/CelularPreferences.swift 1

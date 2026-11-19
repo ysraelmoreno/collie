@@ -193,12 +193,13 @@ enum ClaimChecks {
 
     private static func unique(_ a: [String]) -> [String] { var seen = Set<String>(); return a.filter { seen.insert($0).inserted } }
 
-    private static let branchRx = try! NSRegularExpression(pattern: #"(?<![\w=/-])(?:feat|fix|spike|docs|chore)/[A-Za-z0-9._/-]+"#)
-    private static let shaRx = try! NSRegularExpression(pattern: #"\b[0-9a-f]{7,40}\b"#)
+    /// Constant patterns: nil only on a typo here, and `ClaimChecksTests.patternsCompile` fails then.
+    static let branchRx = try? NSRegularExpression(pattern: #"(?<![\w=/-])(?:feat|fix|spike|docs|chore)/[A-Za-z0-9._/-]+"#)
+    static let shaRx = try? NSRegularExpression(pattern: #"\b[0-9a-f]{7,40}\b"#)
 
     static func branches(in s: String) -> [String] {
         let ns = s as NSString
-        return branchRx.matches(in: s, range: NSRange(location: 0, length: ns.length)).map {
+        return (branchRx?.matches(in: s, range: NSRange(location: 0, length: ns.length)) ?? []).map {
             ns.substring(with: $0.range).trimmingCharacters(in: CharacterSet(charactersIn: "./-"))
         }
     }
@@ -206,7 +207,7 @@ enum ClaimChecks {
     /// 7-40 hex with a digit and a letter, not touching `-` (UUID fragments).
     static func shas(in s: String) -> [String] {
         let ns = s as NSString
-        return shaRx.matches(in: s, range: NSRange(location: 0, length: ns.length)).compactMap { m in
+        return (shaRx?.matches(in: s, range: NSRange(location: 0, length: ns.length)) ?? []).compactMap { m in
             let t = ns.substring(with: m.range)
             guard t.contains(where: \.isNumber), t.contains(where: \.isLetter) else { return nil }
             if m.range.location > 0, ns.character(at: m.range.location - 1) == 0x2D { return nil }

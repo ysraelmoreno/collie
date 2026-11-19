@@ -46,7 +46,7 @@ import CollieCore
     }
 
     @Test func plistHasKeepAliveAndRoot() throws {
-        let data = DaemonLauncher.plist(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"))
+        let data = try DaemonLauncher.plist(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"))
         let d = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
         #expect(d["Label"] as? String == "dev.collie.daemon")
         #expect(d["ProgramArguments"] as? [String] == ["/x/collied", "--root", "/r"])
@@ -55,7 +55,8 @@ import CollieCore
         #expect(d["ProcessType"] as? String == "Interactive")
         #expect((d["StandardErrorPath"] as? String)?.hasSuffix("Library/Logs/Collie/collied.log") == true)   // default logDir
         #expect(d["StandardOutPath"] as? String == d["StandardErrorPath"] as? String)
-        #expect(data == DaemonLauncher.plist(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r")))
+        let again = try DaemonLauncher.plist(colliedPath: "/x/collied", root: URL(fileURLWithPath: "/r"))
+        #expect(data == again)
     }
 
     @Test func ensureRunningIsIdempotent() throws {

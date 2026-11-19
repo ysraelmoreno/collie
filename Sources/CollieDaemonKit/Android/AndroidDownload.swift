@@ -174,7 +174,7 @@ enum AndroidDownload {
     /// `base` as is without headers (the Android downloads); with headers no URL cache and no cached answers.
     static func sessionConfiguration(_ base: URLSessionConfiguration, headers: [String: String]) -> URLSessionConfiguration {
         guard !headers.isEmpty else { return base }
-        let c = base.copy() as! URLSessionConfiguration
+        guard let c = base.copy() as? URLSessionConfiguration else { return base }   // copy() of a configuration is a configuration
         c.urlCache = nil
         c.requestCachePolicy = .reloadIgnoringLocalCacheData
         return c

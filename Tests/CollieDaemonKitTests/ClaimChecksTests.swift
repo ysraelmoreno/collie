@@ -94,6 +94,10 @@ import CollieCore
         let f = await ClaimChecks.check(rec("fix/x pendente, commit abc1234"), facts: GitFactsLive(root: d))
         #expect(f.isEmpty)
     }
+    @Test func patternsCompile() {
+        #expect(ClaimChecks.branchRx != nil)
+        #expect(ClaimChecks.shaRx != nil)
+    }
     @Test func optionLikeTokensNeverExtracted() {
         let s = "-x --upload-pack=x --exec=feat/a --fix/x -abcdef1 --abcdef1234"
         #expect(ClaimChecks.shas(in: s).isEmpty)

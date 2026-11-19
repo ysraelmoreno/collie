@@ -26,7 +26,7 @@ public enum DaemonLauncher {
         return (p.terminationStatus, String(decoding: out, as: UTF8.self))
     }
 
-    public static func plist(colliedPath: String, root: URL, label: String = defaultLabel, logDir: URL = defaultLogDir) -> Data {
+    public static func plist(colliedPath: String, root: URL, label: String = defaultLabel, logDir: URL = defaultLogDir) throws -> Data {
         let log = logDir.appendingPathComponent("collied.log").path
         let dict: [String: Any] = [
             "Label": label,
@@ -38,7 +38,7 @@ public enum DaemonLauncher {
             "ProcessType": "Interactive",
         ]
         // XML plist serialization sorts dictionary keys, so equal inputs give equal bytes.
-        return try! PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
+        return try PropertyListSerialization.data(fromPropertyList: dict, format: .xml, options: 0)
     }
 
     static func validate(_ label: String) throws {
@@ -84,7 +84,7 @@ public enum DaemonLauncher {
         try fm.createDirectory(at: agentsDir, withIntermediateDirectories: true)
         if label == defaultLabel { try retireLegacy(agentsDir: agentsDir, launchctl: launchctl, legacyApp: legacyApp) }   // a dev/test label leaves the real Orq agent alone
         let file = agentsDir.appendingPathComponent("\(label).plist")
-        let data = plist(colliedPath: colliedPath, root: root, label: label, logDir: logDir)
+        let data = try plist(colliedPath: colliedPath, root: root, label: label, logDir: logDir)
         let domain = "gui/\(getuid())"
         let target = "\(domain)/\(label)"
         func bootstrap() throws {

@@ -56,7 +56,10 @@ final class RemoteIdentity: @unchecked Sendable {   // immutable after init
             throw ProtocolError(code: .internal, message: "remote identity unreadable (status \(st), items \(all.count), "
                                 + "certs \(certs), p12 \(data.count) bytes, pass \(pw.count) chars)")
         }
-        let identity = any as! SecIdentity   // CF type: the cast can't fail once present
+        guard CFGetTypeID(any as CFTypeRef) == SecIdentityGetTypeID() else {
+            throw ProtocolError(code: .internal, message: "remote identity item is not a SecIdentity")
+        }
+        let identity = unsafeDowncast(any as AnyObject, to: SecIdentity.self)   // type id checked above
         var cert: SecCertificate?
         guard SecIdentityCopyCertificate(identity, &cert) == errSecSuccess, let cert else {
             throw ProtocolError(code: .internal, message: "remote identity has no certificate")

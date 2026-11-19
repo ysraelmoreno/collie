@@ -284,7 +284,7 @@ private struct BodyText: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSTextView.scrollableTextView()
-        let t = scroll.documentView as! NSTextView
+        guard let t = scroll.documentView as? NSTextView else { return scroll }   // scrollableTextView() always holds one
         t.isEditable = false; t.isSelectable = true; t.isRichText = false
         t.font = CollieFont.mono(12); t.textColor = CollieColor.text; t.backgroundColor = CollieColor.sunken
         t.textContainerInset = NSSize(width: 6, height: 8)

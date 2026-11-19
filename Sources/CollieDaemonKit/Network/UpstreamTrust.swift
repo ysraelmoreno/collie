@@ -93,7 +93,7 @@ enum UpstreamTrust {
 
     private static func policyOID(_ p: Any) -> String? {
         guard CFGetTypeID(p as CFTypeRef) == SecPolicyGetTypeID() else { return nil }
-        return (SecPolicyCopyProperties(p as! SecPolicy) as? [String: Any])?[kSecPolicyOid as String] as? String
+        return (SecPolicyCopyProperties(unsafeDowncast(p as AnyObject, to: SecPolicy.self)) as? [String: Any])?[kSecPolicyOid as String] as? String
     }
 }
 

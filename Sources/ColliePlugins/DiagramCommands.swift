@@ -230,7 +230,7 @@ extension DiagramPanel {
         func cell(_ e: XMLElement) -> XMLElement { e.name == "mxCell" ? e : (e.elements(forName: "mxCell").first ?? e) }
         func attr(_ e: XMLElement, _ n: String) -> String? { e.attribute(forName: n)?.stringValue }
         func set(_ e: XMLElement, _ n: String, _ v: String) {
-            if let a = e.attribute(forName: n) { a.stringValue = v } else { e.addAttribute(XMLNode.attribute(withName: n, stringValue: v) as! XMLNode) }
+            if let a = e.attribute(forName: n) { a.stringValue = v } else if let a = XMLNode.attribute(withName: n, stringValue: v) as? XMLNode { e.addAttribute(a) }
         }
         let elements = { (r: XMLElement) in (r.children ?? []).compactMap { $0 as? XMLElement } }
         // root cell (no parent), its layers, the rest

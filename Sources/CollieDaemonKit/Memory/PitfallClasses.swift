@@ -265,3 +265,12 @@ extension CommandRouter {
         return out
     }
 }
+
+extension MemoryRecord {
+    /// PRD B3 req. 4: a pitfall that came back this many times is worth turning into a check (`memory enforce`).
+    static let enforceCandidateHits = 3
+    /// A candidate to become a rule: an active pitfall class no check enforces yet, hit `enforceCandidateHits` times or more.
+    var isEnforceCandidate: Bool {
+        kind == .pitfall && status == .active && enforcedBy == nil && (hits ?? 0) >= Self.enforceCandidateHits
+    }
+}

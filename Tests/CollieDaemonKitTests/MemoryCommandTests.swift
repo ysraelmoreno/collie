@@ -113,6 +113,45 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
         }
     }
 
+    /// PRD B3 req. 4: `memory list --candidates`: active pitfalls with 3+ hits and no check, most hits first; a Shepherd's
+    /// orientation names them only while there are some.
+    @Test func listCandidatesAndShepherdLine() async throws {
+        let repo = try await makeRepo()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("scripts"), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: repo.appendingPathComponent("scripts/lint.sh"))
+        try await withDaemon { d, p in
+            func pit(_ title: String, _ hits: Int?, status: MemoryStatus = .active) -> MemoryRecord {
+                MemoryRecord(kind: .pitfall, subject: title, title: title, status: status, hits: hits)
+            }
+            let three = pit("Três", 3), nine = pit("Nove", 9), five = pit("Cinco", 5)
+            let store = await d.router.memory.repo(for: repo.path)
+            try await store.run { m in
+                for r in [three, nine, five, pit("Duas", 2), pit("Instância", nil), pit("Arquivada", 9, status: .archived),
+                          MemoryRecord(kind: .decision, subject: "dec", title: "Decisão", hits: 9)] { try m.store.write(r) }
+            }
+            let t = try await term(d, p, "T", cwd: repo)
+            let sr = try await admin(d, p, "admin.spawn", ["name": .string("S"), "preset": .string("shell"), "cwd": .string(repo.path), "shepherd": .bool(true)])
+            let sid = try #require(s(obj(sr)["id"]))
+            let shepherd = Term(id: sid, token: try await tokenOf(d, sid))
+            func candidates() async throws -> [String] {
+                rows(obj(try await call(p, t, "memory.list", ["candidates": "true"]))["records"]).compactMap { s($0["title"]) }
+            }
+            func orientation(_ who: Term) async throws -> String { s(obj(try await call(p, who, "memory.hookContext"))["output"]) ?? "" }
+
+            #expect(try await candidates() == ["Nove", "Cinco", "Três"])
+            #expect(rows(obj(try await call(p, t, "memory.list"))["records"]).count == 6)   // without the flag: every active one
+            #expect(try await orientation(shepherd).contains("- 3 armadilhas recorrentes podem virar checagem: collie memory list --candidates"))
+            #expect(try await !orientation(t).contains("--candidates"))   // only the Shepherd
+
+            // one enforced by a check stops being a candidate
+            #expect(try await call(p, t, "memory.enforce", ["id": nine.id.uuidString, "by": "scripts/lint.sh"]).ok)
+            #expect(try await candidates() == ["Cinco", "Três"])
+            for r in [five, three] { #expect(try await call(p, t, "memory.enforce", ["id": r.id.uuidString, "by": "scripts/lint.sh"]).ok) }
+            #expect(try await candidates().isEmpty)
+            #expect(try await !orientation(shepherd).contains("--candidates"))   // none left: the line is gone
+        }
+    }
+
     @Test func saveOutsideRepoGoesGlobal() async throws {
         let dir = URL(fileURLWithPath: FileManager.default.temporaryDirectory.appendingPathComponent("collie-nogit-\(UUID().uuidString)").path)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

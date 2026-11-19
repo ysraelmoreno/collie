@@ -308,6 +308,31 @@ import CollieProtocol
         }
     }
 
+    /// PRD B3 req. 4: a Shepherd hears of recurring pitfalls that could become a check, only when there are some.
+    @Test func candidatesLineOnlyWhenThereAreSome() {
+        let line = "- 4 armadilhas recorrentes podem virar checagem: collie memory list --candidates"
+        func t(_ n: Int, shepherd: Bool = true, paddock: String? = "P") -> String {
+            CollieOrientation.text(terminal: "Ana", isShepherd: shepherd, paddock: paddock, peers: ["Bob"], panels: [], candidates: n)
+        }
+        for paddock in ["P", nil] {
+            let with = t(4, paddock: paddock)
+            #expect(with.count <= 1500 && with.split(separator: "\n").contains(Substring(line)), "\(with.count)\n\(with)")
+        }
+        #expect(t(1).contains("- 1 armadilha recorrente pode virar checagem: collie memory list --candidates"))
+        #expect(!t(0).contains("--candidates") && t(0) == CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: []))
+        #expect(!t(4, shepherd: false).contains("--candidates"))   // the Shepherd's line
+        // the cap wins: the worst case stays under it, with the line or (where no form has room) without
+        let long = (1...20).map { (name: String(repeating: "p", count: 60) + "\($0)", pluginId: "design") }
+        for pref in [DesignFirst.artifact, .figcraft, .ask] {
+            for lot in [nil, (name: String(repeating: "l", count: 80), goal: String(repeating: "g", count: 300))] as [(name: String, goal: String)?] {
+                let w = CollieOrientation.text(terminal: String(repeating: "t", count: 80), isShepherd: true, paddock: String(repeating: "f", count: 80),
+                                               peers: (1...20).map { "peer\($0)" }, panels: long, paddockPanels: long, designFirst: pref, lot: lot,
+                                               morePanels: true, agent: "cursor", sharedFolder: ["x"], memoryTask: true, candidates: 12)
+                #expect(w.count <= 1500, "\(pref) \(w.count)")
+            }
+        }
+    }
+
     /// `/collie:loop` (slice 2): Claude and Cursor carry the command (spike REPORT §9: outcome B), so their line names it;
     /// an agent without it (Codex) keeps the plain line.
     @Test func theLoopLineNamesTheCommandForClaude() {

@@ -52,6 +52,21 @@ private func compute(_ es: [MemoryEvent], since: Date = ago(7), records: [Memory
         #expect(r.logSince == ago(20))
     }
 
+    /// PRD B3 req. 4: recurring pitfalls (3+ hits) no check enforces yet: how many, and the 5 most repeated.
+    @Test func candidatesCountAndTopFive() {
+        #expect(MemoryRecord.enforceCandidateHits == 3)
+        func pit(_ title: String, _ hits: Int?, status: MemoryStatus = .active, by: String? = nil, kind: MemoryKind = .pitfall) -> MemoryRecord {
+            var r = MemoryRecord(kind: kind, subject: title, title: title, status: status, hits: hits); r.enforcedBy = by; return r
+        }
+        let cands = [3, 9, 4, 7, 5, 6].map { pit("c\($0)", $0) }
+        let others = [pit("poucas", 2), pit("instância", nil), pit("imposta", 9, by: "scripts/lint.sh"),
+                      pit("arquivada", 9, status: .archived), pit("decisão", 9, kind: .decision)]
+        let r = compute([], records: cands + others)
+        #expect(r.candidates.count == 6)
+        #expect(r.candidates.top.map(\.count) == [9, 7, 6, 5, 4] && r.candidates.top.first?.title == "c9", "\(r.candidates.top)")
+        #expect(compute([], records: others).candidates == MemoryObservability.Candidates())
+    }
+
     @Test func repeatCorrectionsWithin14Days() {
         let mem = UUID()
         let es = [

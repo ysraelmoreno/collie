@@ -24,7 +24,8 @@ enum CollieOrientation {
                      panels: [(name: String, pluginId: String)],
                      paddockPanels: [(name: String, pluginId: String)] = [], designFirst: DesignFirst = .artifact,
                      lot: (name: String, goal: String)? = nil, morePanels: Bool = false, agent: String = "claude",
-                     sharedFolder: [String] = [], figcraftAvailable: Bool = true, memoryTask: Bool = false) -> String {
+                     sharedFolder: [String] = [], figcraftAvailable: Bool = true, memoryTask: Bool = false,
+                     candidates: Int = 0) -> String {
         // no engine (absent or out of date): the FigCraft and ask preferences fall back to a page, with a note
         let note = !figcraftAvailable && designFirst != .artifact
         let designFirst = figcraftAvailable ? designFirst : .artifact
@@ -35,10 +36,14 @@ enum CollieOrientation {
         // `/collie:loop` named on the Loop line only where it fits: each form tries it, then the same form with today's line
         // (so the command never costs another line its place). Claude and Cursor carry it (LoopCommand; spike REPORT §9).
         let loopCommands = agent == "claude" || agent == "cursor" ? [true, false] : [false]
-        for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
-            for lc in loopCommands {
-                let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc)
-                if t.count <= limit { return t }
+        // the candidates line (PRD B3 req. 4, a Shepherd's) may cost the names their room, never the cap: every form is
+        // tried with it first, then all of them again without it
+        for cands in candidates > 0 && isShepherd ? [candidates, 0] : [0] {
+            for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
+                for lc in loopCommands {
+                    let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc, candidates: cands)
+                    if t.count <= limit { return t }
+                }
             }
         }
         return build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, -1, compact: true, figcraftNote: note, memoryTask: memoryTask)
@@ -49,7 +54,7 @@ enum CollieOrientation {
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
                               _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false, memoryTask: Bool = false,
-                              loopCommand: Bool = false) -> String {
+                              loopCommand: Bool = false, candidates: Int = 0) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }
@@ -126,6 +131,10 @@ enum CollieOrientation {
                 lines.append("- Loop\(loopCommand ? " (owner: /collie:loop <request>)" : ""): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks.")
             }
             if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
+            // the owner's language: the Shepherd relays it (`text` drops it where it can't fit)
+            if candidates > 0 {
+                lines.append("- \(candidates) \(candidates == 1 ? "armadilha recorrente pode" : "armadilhas recorrentes podem") virar checagem: collie memory list --candidates")
+            }
         } else {
             lines.append("- Your own test browsers: collie panel open browser [--url <url>] [--visible] (headless unless --visible; up to 8; closed when you exit).")
         }

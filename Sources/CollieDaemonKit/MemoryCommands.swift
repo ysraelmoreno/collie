@@ -148,8 +148,8 @@ extension CommandRouter {
             guard let status = MemoryStatus(rawValue: str(r, "status") ?? "active") else {
                 throw invalid("status must be active|proposed|superseded|archived|discarded")
             }
-            let unreviewed = flag(r, "unreviewed"), (keep, asked) = await proposalState()
-            var rows: [JSONValue] = [], problems: [JSONValue] = []
+            let unreviewed = flag(r, "unreviewed"), candidates = flag(r, "candidates"), (keep, asked) = await proposalState()
+            var rows: [JSONValue] = [], problems: [JSONValue] = [], rowHits: [Int] = []
             for s in stores {
                 let (recs, probs, missing) = try await s.run { m in
                     let idx = m.index()   // refresh first: resolves two actives a land (or a hand edit) left behind
@@ -157,6 +157,7 @@ extension CommandRouter {
                     let all = m.store.all()
                     let recs = all.records.filter {
                         $0.status == status && (kind == nil || $0.kind == kind) && (!unreviewed || !$0.reviewed)
+                            && (!candidates || $0.isEnforceCandidate)
                     }.sorted { $0.updatedAt > $1.updatedAt }
                     var missing: [UUID: Date] = [:]
                     for r in recs where r.kind == .map { if let d = idx?.stats(r.id)?.missingSince { missing[r.id] = d } }
@@ -164,9 +165,12 @@ extension CommandRouter {
                 }
                 for rec in recs where caller == nil || MemoryService.visible(rec, paddock: paddockName, lot: s.lotId) {
                     rows.append(try memJSON(rec, s, missing[rec.id].map { ["missingSince": .string(isoString($0))] } ?? [:]))
+                    rowHits.append(rec.hits ?? 0)
                 }
                 problems += probs.map { .object(["file": .string(s.store.dir.appendingPathComponent($0.file).path), "error": .string($0.error)]) }
             }
+            // --candidates: the most repeated first, across the stores (each store's rows come newest first)
+            if candidates { rows = zip(rows, rowHits).enumerated().sorted { ($1.element.1, $0.offset) < ($0.element.1, $1.offset) }.map(\.element.0) }
             return .object(["records": .array(rows), "problems": .array(problems)])
 
         case "memory.get":
@@ -213,6 +217,14 @@ extension CommandRouter {
                 // only Claude and Cursor run this hook
                 let cursor = Self.agentName(me) == "cursor"
                 let mode: CursorMemoryMode = cursor ? CollieSettings.load(config.paths.root).cursorMemoryMode : .start
+                // PRD B3 req. 4: a Shepherd hears of the recurring pitfalls no check enforces yet
+                var candidates = 0
+                if me.isShepherd {
+                    for s in stores {
+                        candidates += ((try? await s.run { m in m.store.all().records.filter(\.isEnforceCandidate) }) ?? [])
+                            .filter { MemoryService.visible($0, paddock: paddockName, lot: s.lotId) }.count
+                    }
+                }
                 let orientation = CollieOrientation.text(
                     terminal: me.name, isShepherd: me.isShepherd, paddock: paddockName,
                     peers: ConnectionGraph.reachable(from: me.id, in: ws).map(\.name),
@@ -221,7 +233,7 @@ extension CommandRouter {
                     designFirst: ws.designFirst, lot: myLot.map { ($0.name, $0.goal) }, morePanels: !PluginRegistry.externalSpecs.isEmpty,
                     agent: cursor ? "cursor" : "claude",
                     sharedFolder: await sharedFolder(me),
-                    figcraftAvailable: { if case .installed = engineState() { true } else { false } }(), memoryTask: cursor && mode == .full)
+                    figcraftAvailable: { if case .installed = engineState() { true } else { false } }(), memoryTask: cursor && mode == .full, candidates: candidates)
                 if cursor && mode == .off { text = orientation; return .object(["output": .string(text)]) }   // "Desligada": no memory block
                 // Cursor `full`: the time line (≤ 70 B) and the focus block, all under `cursorCap` with the orientation
                 let stamp = cursor && mode == .full ? "memória de \(Self.hourMinute.string(from: Date())); novidades e memória da tarefa: memory_task" : ""

@@ -7,7 +7,7 @@ import CollieProtocol
 /// Savings are never estimated: with no controlled comparison, only trends are shown, with `caveat` saying so.
 enum MemoryObservability {
     static let caveat = "economia não medida diretamente (sem comparação controlada); tendências apenas"
-    static let deadAfterDays = 30, repeatWithinDays = 14, topMax = 10
+    static let deadAfterDays = 30, repeatWithinDays = 14, topMax = 10, candidatesTop = 5
 
     struct Day: Codable, Sendable, Equatable { var day: String; var value: Double }
     struct MemoryRef: Codable, Sendable, Equatable { var id: UUID; var title: String?; var count: Int }
@@ -95,6 +95,9 @@ enum MemoryObservability {
         struct Verify: Codable, Sendable, Equatable { var valid = 0, invalid = 0, deferred = 0 }
     }
     struct Trends: Codable, Sendable, Equatable { var current: Week; var previous: Week }
+    /// PRD B3 req. 4: recurring pitfalls no check enforces yet (`MemoryRecord.isEnforceCandidate`), as they are now (not
+    /// the period's). `top`: the 5 most repeated, `count` = hits; the whole list: `collie memory list --candidates`.
+    struct Candidates: Codable, Sendable, Equatable { var count = 0; var top: [MemoryRef] = [] }
     /// One agent's memory use (spec 2026-11-17 cursor memory §6). `obedience`: of the Collie asks delivered to it, the
     /// share followed by a `memory_task` before the ask ended (nil without asks); the user's own typing is not seen.
     /// `useful`: its `--useful` flags (a hookless agent has no prompt to count a use by).
@@ -115,6 +118,7 @@ enum MemoryObservability {
         var caveat = MemoryObservability.caveat
         var usage = Usage(), maintenance = Maintenance(), learning = Learning(), cost = Cost(), lifecycle = Lifecycle()
         var trends: Trends
+        var candidates = Candidates()
         /// Keyed by agent; events from before the agent was logged are in none.
         var byAgent: [String: AgentUsage] = [:]
     }
@@ -159,6 +163,8 @@ enum MemoryObservability {
         let searched = inPeriod.filter { $0.type == .searched }
         r.usage.searches = searched.count; r.usage.searchHits = searched.reduce(0) { $0 + ($1.hits ?? 0) }
         r.usage.precision = precision(inPeriod)
+        let cands = records.filter(\.isEnforceCandidate).sorted { ($0.hits ?? 0, $0.updatedAt) > ($1.hits ?? 0, $1.updatedAt) }
+        r.candidates = Candidates(count: cands.count, top: cands.prefix(candidatesTop).map { MemoryRef(id: $0.id, title: $0.title, count: $0.hits ?? 0) })
         r.usage.evidence = evidence(inPeriod)
 
         // maintenance

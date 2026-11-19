@@ -27,6 +27,23 @@ import CollieProtocol
         #expect(try MemoryFile.parse(text) == r)
     }
 
+    /// PRD B3: `enforcedBy` survives the text format and Codable; a record from before it decodes with none.
+    @Test func enforcedByRoundTrips() throws {
+        var r = full(); r.enforcedBy = "scripts/ci/lint.sh"
+        let text = MemoryFile.render(r)
+        #expect(text.contains("\nenforced_by: scripts/ci/lint.sh\n"))
+        #expect(try MemoryFile.parse(text) == r)
+        r.enforcedBy = "Tests/A B: #1.swift"   // quoted like any other string field
+        #expect(try MemoryFile.parse(MemoryFile.render(r)).enforcedBy == "Tests/A B: #1.swift")
+        let back = try JSONDecoder().decode(MemoryRecord.self, from: JSONEncoder().encode(r))
+        #expect(back == r && back.enforcedBy == "Tests/A B: #1.swift")
+        let plain = full()
+        #expect(!MemoryFile.render(plain).contains("enforced_by"))
+        #expect(try MemoryFile.parse(MemoryFile.render(plain)).enforcedBy == nil)
+        let old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any]
+        #expect(old?["enforcedBy"] == nil)   // omitted when nil: old rows and new ones look the same
+    }
+
     @Test func fileWithoutHitsDecodes() throws {
         #expect(try MemoryFile.parse(MemoryFile.render(full())).hits == nil)
         #expect(throws: ProtocolError.self) { try MemoryFile.parse(MemoryFile.render(full()).replacingOccurrences(of: "pinned: true", with: "pinned: true\nhits: x")) }

@@ -72,6 +72,47 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
         }
     }
 
+    /// PRD B3.1: a pitfall or decision marked as enforced by a check; `--clear` unmarks; get and search say it.
+    @Test func enforceMarksAndClears() async throws {
+        let repo = try await makeRepo()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("scripts"), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: repo.appendingPathComponent("scripts/lint.sh"))
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: repo)
+            let since = Date().addingTimeInterval(-1)
+            let pit = s(obj(try await call(p, t, "memory.save", ["kind": "pitfall", "subject": "force unwrap", "title": "Force unwrap derruba o daemon"]))["id"]) ?? ""
+            let dec = s(obj(try await call(p, t, "memory.save", ["kind": "decision", "subject": "sleep", "title": "Nada de sleep em teste"]))["id"]) ?? ""
+            let map = s(obj(try await call(p, t, "memory.save", ["kind": "map", "subject": "lint", "title": "Lint", "path": "scripts/lint.sh"]))["id"]) ?? ""
+
+            let r = try await call(p, t, "memory.enforce", ["id": pit, "by": "scripts/lint.sh"])
+            #expect(r.ok && s(obj(r)["enforcedBy"]) == "scripts/lint.sh" && s(obj(r)["enforced"]) == "imposta por scripts/lint.sh", "\(r)")
+            #expect(try String(contentsOfFile: s(obj(r)["file"]) ?? "", encoding: .utf8).contains("\nenforced_by: scripts/lint.sh\n"))
+            #expect(try await call(p, t, "memory.enforce", ["id": dec, "by": "scripts/lint.sh"]).ok)   // a decision too
+            let got = obj(try await call(p, t, "memory.get", ["id": pit]))
+            #expect(s(got["enforced"]) == "imposta por scripts/lint.sh", "\(got)")
+            let hit = rows(try await call(p, t, "memory.search", ["query": "force unwrap daemon"]).result).first { s($0["id"]) == pit }
+            #expect(s(hit?["enforced"]) == "imposta por scripts/lint.sh", "still searchable, and says so")
+
+            // refusals: wrong kind, missing path, `..`, absolute, neither/both of --by and --clear, unknown id
+            #expect(try await call(p, t, "memory.enforce", ["id": map, "by": "scripts/lint.sh"]).error?.code == .invalidArgs)
+            #expect(try await call(p, t, "memory.enforce", ["id": pit, "by": "scripts/gone.sh"]).error?.code == .invalidArgs)
+            #expect(try await call(p, t, "memory.enforce", ["id": pit, "by": "scripts/../scripts/lint.sh"]).error?.code == .invalidArgs)
+            #expect(try await call(p, t, "memory.enforce", ["id": pit, "by": repo.appendingPathComponent("scripts/lint.sh").path]).error?.code == .invalidArgs)
+            #expect(try await call(p, t, "memory.enforce", ["id": pit]).error?.code == .invalidArgs)
+            #expect(try await call(p, t, "memory.enforce", ["id": pit, "by": "scripts/lint.sh", "clear": "true"]).error?.code == .invalidArgs)
+            #expect(try await call(p, t, "memory.enforce", ["id": UUID().uuidString, "by": "scripts/lint.sh"]).error?.code == .notFound)
+            #expect(s(obj(try await call(p, t, "memory.get", ["id": pit]))["enforcedBy"]) == "scripts/lint.sh")   // a refusal changes nothing
+
+            let c = try await call(p, t, "memory.enforce", ["id": pit, "clear": "true"])
+            #expect(c.ok && obj(c)["enforcedBy"] == nil && obj(c)["enforced"] == nil, "\(c)")
+            #expect(obj(try await call(p, t, "memory.get", ["id": pit]))["enforced"] == nil)
+
+            d.router.memory.events.flush()
+            let evs = d.router.memory.events.read(since: since).filter { $0.type == .enforced && $0.ids == [UUID(uuidString: pit)!] }
+            #expect(evs.map(\.mode) == ["set", "clear"] && evs.first?.reason == "scripts/lint.sh" && evs.first?.source == "agent", "\(evs)")
+        }
+    }
+
     @Test func saveOutsideRepoGoesGlobal() async throws {
         let dir = URL(fileURLWithPath: FileManager.default.temporaryDirectory.appendingPathComponent("collie-nogit-\(UUID().uuidString)").path)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

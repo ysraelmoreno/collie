@@ -185,6 +185,21 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
         }
     }
 
+    /// PRD B3.1: a pitfall enforced by a check is out of the checklist (the check speaks for it).
+    @Test func enforcedPitfallIsOutOfTheChecklist() async throws {
+        let repo = try await makeRepo()
+        var enforced = klass("Force unwrap derruba o daemon", hits: 9); enforced.enforcedBy = "scripts/ci/lint.sh"
+        let prose = klass("Reiniciar o serviço derruba os terminais", hits: 1)
+        try await withDaemon { d, p in
+            try await put(await d.router.memory.repo(for: repo.path), [enforced, prose])
+            let c = await d.router.memory.checklist(cwd: repo.path, lot: nil)
+            #expect(c.ids == [prose.id] && !c.text.contains("Force unwrap"), "\(c.text)")
+            let t = try await term(d, p, "T", cwd: repo)
+            let out = output(try await call(p, t, "memory.hookContext"))   // the session-start checklist too
+            #expect(out.contains("] Reiniciar o serviço derruba os terminais") && !out.contains("] Force unwrap derruba o daemon"), "\(out)")
+        }
+    }
+
     /// R9/M5: the block says it is data; each item ≤ 200 characters.
     @Test func checklistLabelledAndCapped() async throws {
         let repo = try await makeRepo()

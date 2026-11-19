@@ -425,6 +425,36 @@ extension CommandRouter {
                 try m.store.write(rec)
             }
 
+        case "memory.enforce":   // PRD B3: a check now enforces this pitfall/decision, so it leaves the injection (not the search)
+            let id = try id(), clear = flag(r, "clear"), by = str(r, "by")
+            guard clear != (by != nil) else { throw invalid("diga --by <caminho> ou --clear") }
+            if let by {
+                // the caller's worktree (the app: --repo or its cwd)
+                guard let root = project.root else { throw invalid("--by precisa de um repositório git") }
+                guard !by.isEmpty, isRepoRelative(by) else { throw invalid("--by: caminho relativo à raiz do repo, sem '..'") }
+                guard try await project.run({ _ in repoPathExists(by, root: root) }) else { throw invalid("--by: '\(by)' não existe nesta worktree") }
+            }
+            let agent = caller != nil
+            for s in stores {
+                let rec = try await s.run { m -> MemoryRecord? in
+                    guard var rec = m.store.all().records.first(where: { $0.id == id }),
+                          !agent || MemoryService.visible(rec, paddock: paddockName, lot: m.lotId) else { return nil }
+                    guard rec.kind == .pitfall || rec.kind == .decision else {
+                        throw ProtocolError(code: .invalidArgs, message: "só armadilha (pitfall) ou decisão pode ser imposta por checagem; esta é \(rec.kind.rawValue)")
+                    }
+                    rec.enforcedBy = by
+                    try m.store.write(rec)
+                    return rec
+                }
+                guard let rec else { continue }
+                var ev = MemoryEvent(type: .enforced, terminal: caller?.id, ids: [id], kinds: [rec.kind.rawValue], scopes: [rec.scope.rawValue],
+                                     source: caller == nil ? "user" : "agent", reason: by, mode: clear ? "clear" : "set")
+                ev.place(store: s.key)
+                memory.events.emit(ev)
+                return try memJSON(rec, s)
+            }
+            throw ProtocolError(code: .notFound, message: "memory \(id.uuidString.lowercased()) not found")
+
         case "memory.restore":
             let id = try id()
             let rec = try await repo.run { m in try MemoryCleanup.restore(id, store: m.store, index: m.index()) }
@@ -619,6 +649,7 @@ extension CommandRouter {
         guard case .object(var o) = try isoJSON(rec) else { return .null }
         o["file"] = .string(s.file(rec))
         if let id = s.lotId { o["lot"] = .string(ws.lots.first { $0.id == id }?.name ?? id.uuidString.lowercased()) }
+        if let p = rec.enforcedBy { o["enforced"] = .string("imposta por \(p)") }   // what `memory get`/`search` show the reader
         o.merge(extra) { _, b in b }
         return .object(o)
     }

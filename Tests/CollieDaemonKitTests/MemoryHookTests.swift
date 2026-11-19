@@ -80,6 +80,28 @@ private func additional(_ json: String?, _ event: String) -> String? {
         }
     }
 
+    /// PRD B3.1: a memory enforced by a check is not injected by the prompt hook; cleared, it is again.
+    @Test func enforcedMemoryIsNotInjectedByThePromptHook() async throws {
+        let repo = try await makeRepo()
+        try Data("#!/bin/sh\n".utf8).write(to: repo.appendingPathComponent("lint.sh"))
+        try await withDaemon { d, p in
+            let t = try await term(d, p, "T", cwd: repo)
+            try await save(p, t, "database", "Use Postgres", body: "chosen for jsonb support")
+            let id = try #require(try await d.router.memory.repo(for: repo.path).run { $0.store.all().records.first?.id })
+            func enforce(_ args: [String: JSONValue]) async throws -> Response {
+                try await UnixSocketClient.send(Request(id: "e", terminalId: t.id, token: t.token, command: "memory.enforce",
+                                                        args: args.merging(["id": .string(id.uuidString)]) { a, _ in a }), to: p.socket, timeoutSeconds: 60)
+            }
+            let r = try await enforce(["by": .string("lint.sh")])
+            #expect(r.ok, "\(r)")
+            let prompt = "why did we choose postgres for jsonb?"
+            #expect(await MemoryHookClient.output(event: .userPromptSubmit, prompt: prompt, env: t.env(p)) == nil)
+            #expect(try await enforce(["clear": .bool(true)]).ok)
+            let again = await MemoryHookClient.output(event: .userPromptSubmit, prompt: prompt, env: t.env(p))
+            #expect(additional(again, "UserPromptSubmit")?.contains("Use Postgres") == true, "\(again ?? "nil")")
+        }
+    }
+
     @Test func hugePromptIsBounded() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

@@ -406,7 +406,7 @@ actor MemoryService {
         for s in await readable(cwd, lot: lot) {
             let found = (try? await s.run { m in (m.index()?.candidates(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
             for var c in found where c.record.status == .active && !c.record.pinned && !exclude.contains(c.record.id)
-                && Self.visible(c.record, paddock: paddock, lot: s.lotId) && provenance.isVerified(c.record) {
+                && c.record.enforcedBy == nil && Self.visible(c.record, paddock: paddock, lot: s.lotId) && provenance.isVerified(c.record) {
                 c.m *= (s.lotId != nil ? Self.lotBoost : 1) * (factors[c.record.id] ?? 1)
                 cands.append(c); from[c.record.id] = s
             }
@@ -473,7 +473,7 @@ actor MemoryService {
         for (title, s) in sections where ids.count < max {
             let recs = (try? await s.run { m in
                 m.store.all().records.filter { $0.status == .active && $0.kind == .pitfall && $0.hits != nil && !exclude.contains($0.id)
-                    && Self.visible($0, paddock: nil, lot: m.lotId) && prov.isVerified($0) }
+                    && $0.enforcedBy == nil && Self.visible($0, paddock: nil, lot: m.lotId) && prov.isVerified($0) }
             }) ?? []
             var relevance: [UUID: Double] = [:]
             if !focusTerms.isEmpty {
@@ -678,7 +678,8 @@ actor MemoryService {
         var cands: [MemoryIndex.Candidate] = [], from: [UUID: RepoMemory] = [:]
         for s in await readable(cwd, lot: lot) {
             let found = (try? await s.run { m in (m.index()?.candidates(q, vector: vector, limit: 50) ?? []).filter { m.present($0.record) } }) ?? []
-            for var c in found where Self.visible(c.record, paddock: paddock, lot: s.lotId) && provenance.isVerified(c.record) {
+            // enforced by a check (`memory enforce`): the check speaks for it, the prompt hook doesn't
+            for var c in found where c.record.enforcedBy == nil && Self.visible(c.record, paddock: paddock, lot: s.lotId) && provenance.isVerified(c.record) {
                 c.m *= (s.lotId != nil ? Self.lotBoost : 1) * (factors[c.record.id] ?? 1)
                 cands.append(c); from[c.record.id] = s
             }

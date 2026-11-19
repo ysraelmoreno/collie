@@ -104,6 +104,8 @@ public struct DaemonConfig: Sendable {
     public var herdReady: Duration = .seconds(60)
     /// How long a Claude terminal sits idle after a Stop before its conversation is captured (tests shorten it).
     var conversationIdle: Duration = .seconds(600)
+    /// How often a Cursor terminal's transcript is looked at for growth (it has no turn hook; tests shorten it).
+    var cursorTranscriptPoll: Duration = .seconds(30)
     /// The home a sandboxed terminal's profile closes (collied: the user's); nil: terminals start unsandboxed (tests,
     /// which pass a fake home in a temp dir when they test the sandbox, R2).
     public var sandboxHome: URL?

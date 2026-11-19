@@ -260,6 +260,8 @@ struct ConversationTriggers {
     /// A Cursor terminal's session id while its transcript file is not there yet (looked for again later).
     var cursorSessions: [UUID: String] = [:]
     var idle: [UUID: Task<Void, Never>] = [:]
+    /// A Cursor terminal's transcript watcher (it has no turn hook: the file growing is the signal).
+    var watch: [UUID: Task<Void, Never>] = [:]
     /// Real transcript paths whose job is running, and the trigger that came meanwhile (coalesced: one follow-up).
     var running: Set<String> = []
     var followUp: [String: (tid: UUID, force: Bool)] = [:]
@@ -273,6 +275,11 @@ extension CommandRouter {
     func conversationTurnEnded(_ tid: UUID, transcript: String) {
         conversations.transcripts[tid] = transcript
         Task { await self.recordUsage(tid, transcript: transcript) }   // detached: the Stop hook never waits on the read
+        restartIdleCapture(tid, transcript: transcript)
+    }
+
+    /// The idle capture of `tid` restarted: `conversationIdle` from now, then the chunk if it has ≥ 3 user messages.
+    private func restartIdleCapture(_ tid: UUID, transcript: String) {
         conversations.idle[tid]?.cancel()
         let wait = config.conversationIdle
         conversations.idle[tid] = Task {
@@ -284,18 +291,57 @@ extension CommandRouter {
     /// A Cursor sessionStart (its only hook): the transcript remembered, so `memory.capture`, work done and merge capture
     /// it (vetted then, by `captureConversation`). No `transcript`: the one
     /// `<projects>/*/agent-transcripts/<session>/<session>.jsonl` that exists; none yet: only the session id is kept.
-    /// No token usage is read (a Cursor transcript has none). Never throws.
+    /// No token usage is read (a Cursor transcript has none). The terminal's watcher is (re)started. Never throws.
     func cursorSessionStarted(_ tid: UUID, transcript: String?, session: String?) async {
         guard let me = ws.terminals.first(where: { $0.id == tid }) else { return }
         let session = session.flatMap { UUID(uuidString: $0) == nil ? nil : $0 }   // a path piece below: a UUID or nothing
         conversations.cursorSessions[tid] = session
-        if let transcript, !transcript.isEmpty { conversations.transcripts[tid] = transcript; return }
-        guard let session else { return }
-        let projects = await cursorProjectsDir(me)
+        if let transcript, !transcript.isEmpty { conversations.transcripts[tid] = transcript }
+        else if let session { await findCursorTranscript(me, session: session) }
+        conversations.watch[tid]?.cancel()
+        // the size now is the baseline: only what the conversation adds from here on is a signal
+        let seen = conversations.transcripts[tid].flatMap(Self.fileSize)
+        conversations.watch[tid] = Task { await self.watchCursorTranscript(tid, seen: seen) }
+    }
+
+    /// The one `<projects>/*/agent-transcripts/<session>/<session>.jsonl` that exists, remembered as `me`'s transcript.
+    private func findCursorTranscript(_ me: TerminalRecord, session: String) async {
+        let projects = await cursorProjectsDir(me), tid = me.id
         let found = ((try? FileManager.default.contentsOfDirectory(atPath: projects.path)) ?? [])
             .map { projects.appendingPathComponent("\($0)/agent-transcripts/\(session)/\(session).jsonl").path }
             .filter { FileManager.default.fileExists(atPath: $0) }
         if found.count == 1 { conversations.transcripts[tid] = found[0] }
+    }
+
+    private static func fileSize(_ path: String) -> UInt64? {
+        ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.uint64Value
+    }
+
+    /// Cursor has no turn hook: every `cursorTranscriptPoll` the transcript's size is looked at, and a change restarts
+    /// the idle capture (as a Claude Stop does). Ends with the terminal, or cancelled (a new session, the process ending).
+    /// ponytail: a 30 s `stat` per Cursor terminal, no FSEvents; a DispatchSource/FSEvents watch on the file if the
+    /// delay or the polling ever shows.
+    private func watchCursorTranscript(_ tid: UUID, seen: UInt64?) async {
+        var seen = seen
+        while true {
+            do { try await Task.sleep(for: config.cursorTranscriptPoll) } catch { return }
+            guard let me = ws.terminals.first(where: { $0.id == tid }) else { return }
+            if conversations.transcripts[tid] == nil, let session = conversations.cursorSessions[tid] {
+                await findCursorTranscript(me, session: session)
+            }
+            guard !Task.isCancelled, let t = conversations.transcripts[tid] else { continue }
+            let size = Self.fileSize(t)
+            if size != seen { seen = size; restartIdleCapture(tid, transcript: t) }
+        }
+    }
+
+    /// A Cursor terminal's process ended, or the terminal is being removed (call it while the record is still in the
+    /// workspace): what is left of the conversation is captured now, however short, and the watcher is over.
+    /// Not a Cursor terminal (no watcher): nothing.
+    func cursorTerminalEnded(_ tid: UUID) async {
+        guard let w = conversations.watch.removeValue(forKey: tid) else { return }
+        w.cancel()
+        await captureConversationNow(tid)
     }
 
     /// Compaction, session end, work done or merged, `memory.capture`: the chunk now, however short. `transcript`: the

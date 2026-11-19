@@ -60,7 +60,8 @@ private struct Env {
         #expect(try await call("work.hook", ["hook": name, "payload": payload]).ok)
     }
 }
-private func withEnv(idle: Duration = .seconds(60), preset: String = "shell", at file: String = ".claude/projects/-tmp-repo/s.jsonl",
+private func withEnv(idle: Duration = .seconds(60), poll: Duration = .seconds(30), preset: String = "shell",
+                     at file: String = ".claude/projects/-tmp-repo/s.jsonl",
                      _ body: (Env) async throws -> Void) async throws {
     let home = FileManager.default.temporaryDirectory.appendingPathComponent("cc-home-\(UUID().uuidString.prefix(8))")
     let transcript = home.appendingPathComponent(file), dir = transcript.deletingLastPathComponent()
@@ -68,7 +69,8 @@ private func withEnv(idle: Duration = .seconds(60), preset: String = "shell", at
     defer { try? FileManager.default.removeItem(at: home) }
     let fake = FakeCurator()
     let repo = try await makeRepo()
-    try await withDaemon(configure: { $0.curatorRunner = fake; $0.sandboxHome = home; $0.conversationIdle = idle }) { d, p in
+    try await withDaemon(configure: { $0.curatorRunner = fake; $0.sandboxHome = home; $0.conversationIdle = idle
+                                     $0.cursorTranscriptPoll = poll }) { d, p in
         var args: [String: JSONValue] = ["name": .string("dev"), "preset": .string(preset), "cwd": .string(repo.path)]
         if preset != "shell" { args["command"] = .string("echo T=$COLLIE_TOKEN; exec cat >/dev/null") }
         // sandbox-exec can't nest: run from inside a sandboxed Collie terminal (a loop's check), the terminal is a free one
@@ -500,6 +502,55 @@ private func withEnv(idle: Duration = .seconds(60), preset: String = "shell", at
             try Data(talk(1).utf8).write(to: e.transcript)
             await e.d.router.captureConversation(e.tid, transcript: e.transcript.path, force: true)
             let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+            #expect(e.fake.calls == 1)
+        }
+    }
+
+    /// C3: no hook and no `memory.capture`: the registered transcript growing is the trigger, then the idle capture.
+    @Test func cursorTranscriptGrowthCapturesAfterIdle() async throws {
+        try await withEnv(idle: .milliseconds(20), poll: .milliseconds(20), preset: "cursor", at: cursorFile) { e in
+            e.fake.output = out([])
+            try Data(cursorTalk(3).utf8).write(to: e.transcript)
+            #expect(try await e.call("memory.hookContext", ["transcript": e.transcript.path]).ok)
+            try Data((cursorTalk(3) + cursorTalk(1)).utf8).write(to: e.transcript)
+            let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+            #expect(e.fake.calls == 1)   // one conversation job
+        }
+    }
+
+    /// The size at registration is the baseline: a transcript that does not grow queues nothing.
+    @Test func cursorTranscriptUnchangedQueuesNothing() async throws {
+        try await withEnv(idle: .milliseconds(20), poll: .milliseconds(20), preset: "cursor", at: cursorFile) { e in
+            try Data(cursorTalk(3).utf8).write(to: e.transcript)
+            #expect(try await e.call("memory.hookContext", ["transcript": e.transcript.path]).ok)
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(await e.d.router.curator.queued(kind: .conversation).isEmpty)
+            #expect(e.fake.calls == 0 && e.mark == nil)
+        }
+    }
+
+    /// Growth, but fewer than 3 user messages since the mark: the idle capture waits for more (as for Claude).
+    @Test func cursorShortChunkWaits() async throws {
+        try await withEnv(idle: .milliseconds(20), poll: .milliseconds(20), preset: "cursor", at: cursorFile) { e in
+            try Data(cursorTalk(1).utf8).write(to: e.transcript)
+            #expect(try await e.call("memory.hookContext", ["transcript": e.transcript.path]).ok)
+            try Data(cursorTalk(2).utf8).write(to: e.transcript)
+            try await Task.sleep(for: .milliseconds(400))
+            #expect(await e.d.router.curator.queued(kind: .conversation).isEmpty)
+            #expect(e.fake.calls == 0 && e.mark == nil)
+        }
+    }
+
+    /// The terminal ends (no session-end hook on Cursor): what is left is captured at once, however short, no idle wait.
+    @Test func cursorTerminalEndCapturesNow() async throws {
+        try await withEnv(preset: "cursor", at: cursorFile) { e in   // idle 60 s, poll 30 s: only the end can capture
+            e.fake.output = out([])
+            #expect(try await e.call("memory.hookContext", ["transcript": e.transcript.path]).ok)
+            try Data(cursorTalk(1).utf8).write(to: e.transcript)
+            let size = try e.size()
+            #expect(try await e.call("admin.kill", ["target": "dev"], admin: true).ok)
             #expect(await waitFor(10) { e.mark == size })
             #expect(e.fake.calls == 1)
         }

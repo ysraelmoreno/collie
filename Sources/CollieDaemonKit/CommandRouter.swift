@@ -899,6 +899,7 @@ actor CommandRouter {
 
     /// Kills `t` and forgets its record and leashes; emits `.disconnected` per leash, then `.removed`.
     func remove(_ t: TerminalRecord) async throws {
+        await cursorTerminalEnded(t.id)   // before the record goes: the capture needs it
         await discard(t.id)
         await inbox.drop(terminal: t.id)
         SandboxLaunch.remove(t.id, root: config.paths.root)
@@ -965,6 +966,7 @@ actor CommandRouter {
     private func processExited(_ id: UUID, _ process: ObjectIdentifier) async {
         if await registry.process(id).map(ObjectIdentifier.init) == process {
             await memory.endSession(id); await jobsGone(terminal: id); await closeHeadless(of: id)
+            await cursorTerminalEnded(id)   // Cursor has no session-end hook: the rest of its conversation now
             // the session's end for agents without a SessionEnd hook (Codex): its learnings become proposals
             if let w = try? await work.active(terminal: id) { Task { await captureProposals(w.id) } }
         }

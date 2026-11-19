@@ -591,7 +591,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         try await withDaemon { d, p in
             let x = try await pad(d, p)
             try await addTask(d, p, x.s, "Write done", check: "test -f done.txt")
-            let agent = "bash -c 'read l; echo ok > done.txt; git add done.txt; git commit -qm done; cat'"
+            let agent = "bash -c 'read l; echo ok >> done.txt; git add done.txt; git commit -qm done; cat'"   // appends: the second loop commits too
             let args: [String: JSONValue] = ["command": .string(agent), "timeout": .number(60)]
             #expect(try await run(d, p, x.s, args, approve: false).ok)
             #expect(await trusted(d) == nil)

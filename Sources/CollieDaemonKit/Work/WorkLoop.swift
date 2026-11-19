@@ -25,7 +25,11 @@ protocol LoopHost: Sendable {
     /// Where attempt patches go: `<root>/work-loops/<work id>/`.
     func patchDir(_ work: UUID) -> URL
     func now() -> Date
+    /// One line for the Shepherd the moment a task of the loop ends (done, or deferred after its last try).
+    func taskEnded(_ line: String) async
 }
+
+extension LoopHost { func taskEnded(_ line: String) async {} }
 
 /// `collie work run`'s attempt cycle: a fresh agent per attempt, a check that alone decides, a clean tree between
 /// attempts. A task passes only when its check exits 0, the loop's gate (if any) exits 0 too, there is a new commit on
@@ -213,6 +217,7 @@ actor WorkLoop {
                 }
                 Self.endJob(&x, name, head, at: at)
             }
+            await reportEnd(w.id, task.id)
             if let blocked { await note(w.id, Self.blockedNote(blocked)) }
             return blocked == nil
         }
@@ -232,8 +237,15 @@ actor WorkLoop {
             x.notes.append(WorkNote(at: at, text: text))
             Self.endJob(&x, name, reason, at: at)
         }
+        if last { await reportEnd(w.id, task.id) }
         if let blocked { await note(w.id, Self.blockedNote(blocked)); return false }
         return true
+    }
+
+    /// The Shepherd hears of a task the moment it ends, not only when the whole loop does.
+    private func reportEnd(_ work: UUID, _ task: String) async {
+        guard let t = try? await store.get(work)?.tasks.first(where: { $0.id == task }) else { return }
+        await host.taskEnded(WorkStatusText.taskEnded(t))
     }
 
     /// Seconds of the budget left for this attempt (at least 1); no budget: a day.

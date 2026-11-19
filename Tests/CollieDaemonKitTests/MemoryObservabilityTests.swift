@@ -58,7 +58,7 @@ private func compute(_ es: [MemoryEvent], since: Date = ago(7), records: [Memory
         func pit(_ title: String, _ hits: Int?, status: MemoryStatus = .active, by: String? = nil, kind: MemoryKind = .pitfall) -> MemoryRecord {
             var r = MemoryRecord(kind: kind, subject: title, title: title, status: status, hits: hits); r.enforcedBy = by; return r
         }
-        let cands = [3, 9, 4, 7, 5, 6].map { pit("c\($0)", $0) }
+        let cands = [3, 9, 4, 7, 5, 6].map { (n: Int) in pit("c\(n)", n) }
         let others = [pit("poucas", 2), pit("instância", nil), pit("imposta", 9, by: "scripts/lint.sh"),
                       pit("arquivada", 9, status: .archived), pit("decisão", 9, kind: .decision)]
         let r = compute([], records: cands + others)

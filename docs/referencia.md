@@ -823,6 +823,8 @@ dono aprovou a lista de tarefas e os checks.
   Um check ou portão que chama um script do repositório só vale se a tarefa não altera esse script; o laço reprova a
   tentativa que o altera (`a tentativa alterou «<caminho>», que o portão executa`): vale para o portão, para um caminho
   escrito por inteiro no comando e que já existia antes da tentativa (criar o script pela primeira vez não reprova).
+- Mapa de funcionalidades: se a worktree tem `docs/feature-map.md` (senão `FEATURES.md`), o prompt de cada tentativa
+  aponta o arquivo (`O mapa de funcionalidades do projeto está em <caminho>: use os nomes dele.`). Sem arquivo, nada muda.
 - Passa = check com exit 0 **e** portão (se houver) com exit 0 **e** commit novo na mesma branch **e** nenhum arquivo rastreado sujo. Se falha, o motivo e o
   fim da saída do check viram nota do trabalho (o próximo agente lê), o que a tentativa fez vira patch em
   `<raiz>/work-loops/<trabalho>/<tarefa>-<n>.patch` e a worktree volta ao commit inicial. Segredos conhecidos (tokens,

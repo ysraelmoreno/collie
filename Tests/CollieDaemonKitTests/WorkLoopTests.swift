@@ -71,6 +71,7 @@ private actor FakeHost: LoopHost {
                                             env: ProcessInfo.processInfo.environment, timeout: timeout)
     }
     func readSpec(_ path: String) async -> String? { try? String(contentsOfFile: path, encoding: .utf8) }
+    func exists(_ path: String, in dir: URL) async -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(path).path) }
     nonisolated func patchDir(_ work: UUID) -> URL { patches.appendingPathComponent(work.uuidString.lowercased()) }
     nonisolated func now() -> Date { Date() }
 }
@@ -636,6 +637,39 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func promptWithoutAGateNamesNone() {
         let p = WorkLoop.prompt(task: task("a", "true"), spec: nil, attempt: 1, tries: 3, dir: URL(fileURLWithPath: "/tmp"), notes: [])
         #expect(!p.contains("portão"))
+    }
+
+    /// The prompt of the first attempt of a one-task loop whose worktree has `files` (untracked, empty).
+    private func promptWith(_ files: [String]) async throws -> String {
+        let r = try await Rig([task("a", "test -f done.txt")]); defer { r.cleanup() }
+        for f in files {
+            let u = r.repo.appendingPathComponent(f)
+            try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "# mapa\n".write(to: u, atomically: true, encoding: .utf8)
+        }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        return await r.host.prompts["loop-a-1"] ?? ""
+    }
+
+    @Test func promptPointsAtTheFeatureMap() async throws {
+        let p = try await promptWith(["docs/feature-map.md"])
+        #expect(p.contains("O mapa de funcionalidades do projeto está em docs/feature-map.md: use os nomes dele."))
+    }
+
+    @Test func promptFallsBackToFEATURES() async throws {
+        let p = try await promptWith(["FEATURES.md"])
+        #expect(p.contains("O mapa de funcionalidades do projeto está em FEATURES.md: use os nomes dele."))
+    }
+
+    @Test func promptPrefersDocsFeatureMap() async throws {
+        let p = try await promptWith(["FEATURES.md", "docs/feature-map.md"])
+        #expect(p.contains("está em docs/feature-map.md:") && !p.contains("FEATURES.md"))
+    }
+
+    @Test func promptWithoutAMapNamesNone() async throws {
+        let p = try await promptWith([])
+        #expect(!p.isEmpty && !p.contains("mapa de funcionalidades"))
     }
 
     @Test func oldLoopStateDecodesWithoutAGate() throws {

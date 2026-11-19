@@ -351,6 +351,10 @@ struct RouterLoopHost: LoopHost {
     }
 
     func readSpec(_ path: String) async -> String? { await router.loopSpec(path, starter: starter) }
+    func exists(_ path: String, in dir: URL) async -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(path).path, isDirectory: &isDir) && !isDir.boolValue
+    }
     func patchDir(_ work: UUID) -> URL { root.appendingPathComponent("work-loops").appendingPathComponent(work.uuidString.lowercased()) }
     func now() -> Date { Date() }
 }

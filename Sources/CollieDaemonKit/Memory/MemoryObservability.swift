@@ -28,6 +28,9 @@ enum MemoryObservability {
         /// Enforced memories (`enforcedBy`) are not injected by design: out of `dead` and its share, counted in `enforced`.
         var dead: [MemoryRef] = [], deadShare: Double?
         var enforced = 0
+        /// B3.6: the period's memories whose check is gone (`enforcedGonePass`), one line each, newest first: the path
+        /// (`MapDrift.shownPath`: "caminho recusado" when not plain) and the short id. They are injected again.
+        var enforcedGone: [String] = []
         var searches = 0, searchHits = 0
         /// Beside `coverage` (prompts with a memory), how often an injected memory was used (Leva 1).
         var precision = Precision()
@@ -97,7 +100,7 @@ enum MemoryObservability {
         struct Verify: Codable, Sendable, Equatable { var valid = 0, invalid = 0, deferred = 0 }
     }
     struct Trends: Codable, Sendable, Equatable { var current: Week; var previous: Week }
-    /// PRD B3 req. 4: recurring pitfalls no check enforces yet (`MemoryRecord.isEnforceCandidate`), as they are now (not
+    /// PRD B3 req. 4: recurring pitfalls no check enforces yet (`MemoryRecord.isEnforceCandidate`, verified only), as they are now (not
     /// the period's). `top`: the 5 most repeated, `count` = hits; the whole list: `collie memory list --candidates`.
     struct Candidates: Codable, Sendable, Equatable { var count = 0; var top: [MemoryRef] = [] }
     /// One agent's memory use (spec 2026-11-17 cursor memory §6). `obedience`: of the Collie asks delivered to it, the
@@ -134,8 +137,10 @@ enum MemoryObservability {
     }
 
     /// Events from at least 30 days before `now` (dead memories, repeats and the previous week look back further than the
-    /// period); `records`: the active memories in scope; `openDigest`: the digest's open asks/confirmations.
-    static func compute(events: [MemoryEvent], since: Date, now: Date, records: [MemoryRecord], scores: [UUID: Double],
+    /// period); `records`: the active memories in scope; `openDigest`: the digest's open asks/confirmations;
+    /// `verified`: `MemoryProvenance.isVerified` (a candidate must be the daemon's text).
+    static func compute(events: [MemoryEvent], since: Date, now: Date, records: [MemoryRecord], verified: (MemoryRecord) -> Bool,
+                        scores: [UUID: Double],
                         openDigest: [DigestEntry], curator: CuratorStatus?, lifecycle: [UUID: LifecycleEntry] = [:],
                         calendar: Calendar = .current) -> Report {
         let inPeriod = events.filter { $0.at >= since && $0.at <= now }
@@ -166,7 +171,11 @@ enum MemoryObservability {
         let searched = inPeriod.filter { $0.type == .searched }
         r.usage.searches = searched.count; r.usage.searchHits = searched.reduce(0) { $0 + ($1.hits ?? 0) }
         r.usage.precision = precision(inPeriod)
-        let cands = records.filter(\.isEnforceCandidate).sorted { ($0.hits ?? 0, $0.updatedAt) > ($1.hits ?? 0, $1.updatedAt) }
+        // the path again through `shownPath`: an older log line may carry a raw one
+        r.usage.enforcedGone = inPeriod.filter { $0.type == .enforced && $0.mode == "gone" }.sorted { $0.at > $1.at }.map {
+            "checagem sumiu (\(MapDrift.shownPath($0.reason))): \($0.ids?.first.map { String($0.uuidString.prefix(8)).lowercased() } ?? "?") voltou à injeção"
+        }
+        let cands = records.filter { $0.isEnforceCandidate(verified: verified($0)) }.sorted { ($0.hits ?? 0, $0.updatedAt) > ($1.hits ?? 0, $1.updatedAt) }
         r.candidates = Candidates(count: cands.count, top: cands.prefix(candidatesTop).map { MemoryRef(id: $0.id, title: $0.title, count: $0.hits ?? 0) })
         r.usage.evidence = evidence(inPeriod)
 

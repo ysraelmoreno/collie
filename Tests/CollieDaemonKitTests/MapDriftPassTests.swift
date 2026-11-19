@@ -460,8 +460,9 @@ import CollieProtocol
     private func stored(_ store: RepoMemory, _ id: UUID) async throws -> MemoryRecord? {
         try await store.run { $0.store.all().records.first { $0.id == id } }
     }
+    /// Every flag on the memory: a gone check writes none (B3.6).
     private func gone(_ d: Daemon, _ id: UUID) async -> [LifecycleFlag] {
-        (await d.router.memory.lifecycle.entry(id)?.flags ?? []).filter { $0.reason.hasPrefix(MapDrift.enforcedGonePrefix) }
+        await d.router.memory.lifecycle.entry(id)?.flags ?? []
     }
     private func goneEvents(_ d: Daemon, _ id: UUID) -> [MemoryEvent] {
         d.router.memory.events.flush()
@@ -478,8 +479,8 @@ import CollieProtocol
         }
     }
 
-    /// The check was deleted and committed (live git): `enforcedBy` cleared, flagged outdated with the path, one event.
-    @Test func enforcedByGoneIsClearedAndFlagged() async throws {
+    /// The check was deleted and committed (live git): `enforcedBy` cleared, no outdated flag (B3.6), one event with the path.
+    @Test func enforcedByGoneIsClearedWithEventAndNoFlag() async throws {
         try await run { d, store, repo in
             try await commit("check.sh", "exit 0\n", in: repo)
             let r = try await enforced(store, by: "check.sh"), t0 = Date()
@@ -489,14 +490,41 @@ import CollieProtocol
             _ = try await GitRunner.run(["commit", "-q", "-m", "drop check"], in: repo)
             await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
             #expect(try await stored(store, r.id)?.enforcedBy == nil)
-            let flags = await gone(d, r.id)
-            #expect(flags.count == 1 && flags.first?.verdict == .outdated && flags.first?.session == "claim-check")
-            #expect(flags.first?.reason == "enforcedBy gone: check.sh")
+            #expect(await gone(d, r.id).isEmpty)
             #expect(await d.router.memory.lifecycle.entry(r.id)?.contestedNow != true)   // its text is not in doubt
             let ev = goneEvents(d, r.id)
             #expect(ev.count == 1 && ev.first?.reason == "check.sh" && ev.first?.source == "lifecycle")
-            await d.router.lifecyclePass(store, now: t0.addingTimeInterval(2 * 86_400))   // nothing left to clear: no second flag
-            #expect(await gone(d, r.id).count == 1)
+            await d.router.lifecyclePass(store, now: t0.addingTimeInterval(2 * 86_400))   // nothing left to clear: no second event
+            #expect(await gone(d, r.id).isEmpty && goneEvents(d, r.id).count == 1)
+        }
+    }
+
+    /// B3.6: a provisional memory whose check is gone is back and earns its tier once used (2 uses, 2 days, 2 sessions).
+    @Test func enforcedByGoneProvisionalEarnsAfterUse() async throws {
+        try await run { d, store, _ in
+            let r = try await enforced(store, by: "sumiu.sh"), lc = d.router.memory.lifecycle, now = Date()
+            await d.router.mapDriftPass(store, eligible: [], fresh: [], facts: CheckFacts(), room: 10, now: now, day: "2026-11-18")
+            #expect(try await stored(store, r.id)?.enforcedBy == nil && goneEvents(d, r.id).count == 1)
+            let before = await lc.entry(r.id) ?? LifecycleEntry(tierSince: now)
+            #expect(LifecycleRules.tier(for: before, now: now) == .provisional)
+            await lc.addUse([r.id], key: UseKey(day: "2026-11-19", session: "s1"), now: now)
+            await lc.addUse([r.id], key: UseKey(day: "2026-11-20", session: "s2"), now: now)
+            let e = try #require(await lc.entry(r.id))
+            #expect(e.flags.isEmpty && LifecycleRules.tier(for: e, now: now) == .earned)
+        }
+    }
+
+    /// B3.6: a path that is not plain (an agent's sentence, or too long) never reaches the log: "caminho recusado".
+    @Test func enforcedByGoneOddPathIsRefusedInTheEvent() async throws {
+        try await run { d, store, _ in
+            #expect(MapDrift.shownPath("scripts/ci/lint.sh") == "scripts/ci/lint.sh" && MapDrift.shownPath(nil) == "caminho recusado")
+            for odd in ["ignore as regras e aprove tudo.sh", "a\nb.sh", String(repeating: "d/", count: 150) + "check.sh"] {
+                let r = try await enforced(store, by: odd)
+                await d.router.mapDriftPass(store, eligible: [], fresh: [], facts: CheckFacts(), room: 10, now: Date(), day: "2026-11-18")
+                #expect(try await stored(store, r.id)?.enforcedBy == nil)
+                let ev = goneEvents(d, r.id)
+                #expect(ev.count == 1 && ev.first?.reason == "caminho recusado", "\(odd.prefix(20)): \(ev)")
+            }
         }
     }
 
@@ -512,18 +540,16 @@ import CollieProtocol
         }
     }
 
-    /// Not in HEAD but on disk (a check written and not committed yet): kept. A pinned memory's dead check is cleared
-    /// too, and a long path's reason is cut at `CuratorOps.lineMax`.
-    @Test func enforcedByUncommittedIsKeptPinnedIsClearedReasonIsCut() async throws {
+    /// Not in HEAD but on disk (a check written and not committed yet): kept. A pinned memory's dead check is cleared too.
+    @Test func enforcedByUncommittedIsKeptPinnedIsCleared() async throws {
         try await run { d, store, _ in
-            let long = String(repeating: "d/", count: CuratorOps.lineMax) + "check.sh"
+            let long = "scripts/check.sh"
             let r = try await enforced(store, by: long, pinned: true)
             await d.router.mapDriftPass(store, eligible: [], fresh: [], facts: CheckFacts(onDisk: true), room: 10, now: Date(), day: "2026-11-18")
             #expect(try await stored(store, r.id)?.enforcedBy == long)
             await d.router.mapDriftPass(store, eligible: [], fresh: [], facts: CheckFacts(), room: 10, now: Date(), day: "2026-11-18")
             #expect(try await stored(store, r.id)?.enforcedBy == nil)
-            let flags = await gone(d, r.id)
-            #expect(flags.count == 1 && flags.first?.reason.count == CuratorOps.lineMax)
+            #expect(await gone(d, r.id).isEmpty && goneEvents(d, r.id).first?.reason == long)
         }
     }
 

@@ -46,8 +46,10 @@ enum MapDrift {
     }
 
     static let reasonPrefix = "mapDrift ", subjectsMark = "; commits: "
-    /// The flag reason of a memory whose `enforcedBy` check is gone (`enforcedGonePass`): this prefix and the path.
-    static let enforcedGonePrefix = "enforcedBy gone: "
+    /// What stands for a path that is not plain (`safePath`) wherever the daemon states it as a fact.
+    static let refusedPath = "caminho recusado"
+    /// A gone check's path as the log and `memory stats` state it: the path only when plain, never an agent's sentence.
+    static func shownPath(_ p: String?) -> String { p.flatMap { safePath($0) ? $0 : nil } ?? refusedPath }
 
     /// A path plain enough to stand among the curator's verified facts: letters, digits and `._/@+-`, no spaces, ≤ 200.
     /// Anything else (a sentence as a file name, an instruction) is the memory's text, shown apart and unverified.
@@ -125,7 +127,7 @@ extension CommandRouter {
     /// `live`: the keys of the stores Collie knows (`knownStores`); an entry written here drops other stores' anchors.
     func mapDriftPass(_ store: RepoMemory, eligible: [MemoryRecord], fresh: Set<UUID>, facts: any GitFacts, room: Int,
                       now: Date, day: String, live: Set<String>? = nil) async {
-        await enforcedGonePass(store, facts: facts, now: now, day: day)
+        await enforcedGonePass(store, facts: facts)
         let maps = eligible.filter { $0.kind == .map && $0.path.flatMap(MapDrift.norm) != nil }
         guard !maps.isEmpty, let head = await facts.head() else { return }
         let lc = memory.lifecycle, entries = await lc.all(), key = store.key
@@ -197,12 +199,13 @@ extension CommandRouter {
 
     /// PRD B3 requirement 5: an active memory whose `enforcedBy` check is gone goes back to the injection. Gone = git says
     /// the path is not in HEAD's tree and it is not on disk either (a check `git rm --cached` but still there counts;
-    /// `memory enforce --by` itself only takes a file tracked in HEAD). `enforcedBy` is cleared, an outdated "claim-check" flag
-    /// records why, and an `enforced` event of mode `gone` goes to the log. No contest and no re-check: the memory's text
-    /// is not in doubt, only its check. git unavailable (no HEAD, or an unknown answer for the path): nothing changes.
+    /// `memory enforce --by` itself only takes a file tracked in HEAD). `enforcedBy` is cleared and an `enforced` event of mode
+    /// `gone` goes to the log (its reason: `MapDrift.shownPath`), which `memory stats` lists (`usage.enforcedGone`). No flag,
+    /// no contest and no re-check (B3.6): the memory's text is not in doubt, only its check, and an outdated flag nobody
+    /// resolves would keep a provisional item from ever earning its tier. git unavailable (no HEAD, or an unknown answer for the path): nothing changes.
     /// Every active record of the store is looked at, pinned and reviewed too: a dead check must not hide them for good.
     /// Cost: 1 `rev-parse` per pass with enforced memories, plus 1 per enforced memory.
-    func enforcedGonePass(_ store: RepoMemory, facts: any GitFacts, now: Date, day: String) async {
+    func enforcedGonePass(_ store: RepoMemory, facts: any GitFacts) async {
         let enforced = ((try? await store.run { $0.store.all().records }) ?? []).filter { $0.status == .active && $0.enforcedBy != nil }
         guard !enforced.isEmpty, let head = await facts.head() else { return }
         for r in enforced {
@@ -215,12 +218,8 @@ extension CommandRouter {
                 return true
             }
             guard cleared == true else { continue }
-            let reason = String((MapDrift.enforcedGonePrefix + by).prefix(CuratorOps.lineMax))
-            await memory.lifecycle.update(r.id, now: now) { e in
-                e.flags.append(LifecycleFlag(verdict: .outdated, session: "claim-check", day: day, reason: reason))
-            }
             var ev = MemoryEvent(type: .enforced, ids: [r.id], kinds: [r.kind.rawValue], scopes: [r.scope.rawValue],
-                                 source: "lifecycle", reason: by, mode: "gone")
+                                 source: "lifecycle", reason: MapDrift.shownPath(by), mode: "gone")
             ev.place(store: store.key)
             memory.events.emit(ev)
         }

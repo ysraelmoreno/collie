@@ -149,6 +149,7 @@ extension CommandRouter {
                 throw invalid("status must be active|proposed|superseded|archived|discarded")
             }
             let unreviewed = flag(r, "unreviewed"), candidates = flag(r, "candidates"), (keep, asked) = await proposalState()
+            let provenance = memory.provenance
             var rows: [JSONValue] = [], problems: [JSONValue] = [], rowHits: [Int] = []
             for s in stores {
                 let (recs, probs, missing) = try await s.run { m in
@@ -157,7 +158,7 @@ extension CommandRouter {
                     let all = m.store.all()
                     let recs = all.records.filter {
                         $0.status == status && (kind == nil || $0.kind == kind) && (!unreviewed || !$0.reviewed)
-                            && (!candidates || $0.isEnforceCandidate)
+                            && (!candidates || $0.isEnforceCandidate(verified: provenance.isVerified($0)))
                     }.sorted { $0.updatedAt > $1.updatedAt }
                     var missing: [UUID: Date] = [:]
                     for r in recs where r.kind == .map { if let d = idx?.stats(r.id)?.missingSince { missing[r.id] = d } }
@@ -220,8 +221,9 @@ extension CommandRouter {
                 // PRD B3 req. 4: a Shepherd hears of the recurring pitfalls no check enforces yet
                 var candidates = 0
                 if me.isShepherd {
+                    let provenance = memory.provenance
                     for s in stores {
-                        candidates += ((try? await s.run { m in m.store.all().records.filter(\.isEnforceCandidate) }) ?? [])
+                        candidates += ((try? await s.run { m in m.store.all().records.filter { $0.isEnforceCandidate(verified: provenance.isVerified($0)) } }) ?? [])
                             .filter { MemoryService.visible($0, paddock: paddockName, lot: s.lotId) }.count
                     }
                 }
@@ -740,7 +742,9 @@ extension CommandRouter {
             var e = MemoryEvent(type: .asked); e.place(store: $0.store)
             return placed(lot: e.lot, project: e.project)
         }
-        let report = MemoryObservability.compute(events: events, since: since, now: now, records: records, scores: await memory.scores.all(),
+        let provenance = memory.provenance
+        let report = MemoryObservability.compute(events: events, since: since, now: now, records: records, verified: provenance.isVerified,
+                                         scores: await memory.scores.all(),
                                          openDigest: open, curator: await curator.status(), lifecycle: await memory.lifecycle.all())
         return try isoJSON(report)
     }

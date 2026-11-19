@@ -270,7 +270,8 @@ extension MemoryRecord {
     /// PRD B3 req. 4: a pitfall that came back this many times is worth turning into a check (`memory enforce`).
     static let enforceCandidateHits = 3
     /// A candidate to become a rule: an active pitfall class no check enforces yet, hit `enforceCandidateHits` times or more.
-    var isEnforceCandidate: Bool {
-        kind == .pitfall && status == .active && enforcedBy == nil && (hits ?? 0) >= Self.enforceCandidateHits
+    /// `verified`: `MemoryProvenance.isVerified` of this record; `hits` of a file edited by hand counts for nothing (B3.6).
+    func isEnforceCandidate(verified: Bool) -> Bool {
+        verified && kind == .pitfall && status == .active && enforcedBy == nil && (hits ?? 0) >= Self.enforceCandidateHits
     }
 }

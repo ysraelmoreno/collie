@@ -447,4 +447,16 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         #expect(entry(looped.id)?["loop"] == .string("laço parado (2 tentativas)"), "\(a)")
         #expect(entry(plain.id) != nil && entry(plain.id)?["loop"] == nil, "\(a)")
     }
+
+    /// Only a terminal that can edit the loop's worktree blocks its reset.
+    @Test func onlyTerminalsInTheWorktreeBlockTheLoop() {
+        let dir = URL(fileURLWithPath: "/tmp/collie-wt/collie")
+        func t(_ cwd: String) -> TerminalRecord { TerminalRecord(id: UUID(), name: "x", preset: .shell, command: nil, cwd: cwd, isShepherd: false) }
+        #expect(CommandRouter.loopSharesWorktree(t("/tmp/collie-wt/collie"), dir))
+        #expect(CommandRouter.loopSharesWorktree(t("/tmp/collie-wt/collie/Sources"), dir))
+        #expect(CommandRouter.loopSharesWorktree(t("/tmp/collie-wt"), dir))   // above it: can reach it
+        #expect(CommandRouter.loopSharesWorktree(t(""), dir))   // unknown: counted
+        #expect(!CommandRouter.loopSharesWorktree(t("/tmp/slides"), dir))
+        #expect(!CommandRouter.loopSharesWorktree(t("/tmp/collie-wt/collie-other"), dir))   // a prefix of the name is not inside
+    }
 }

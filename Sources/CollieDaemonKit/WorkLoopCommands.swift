@@ -49,7 +49,7 @@ extension CommandRouter {
         if workLoops[w.id] != nil || others.contains(where: { $0.loop?.state == .running }) {
             throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it, collie work stop ends it")
         }
-        for o in ws.terminals where o.paddockId == paddock.id && o.id != t.id && !o.isShepherd {
+        for o in ws.terminals where o.paddockId == paddock.id && o.id != t.id && !o.isShepherd && Self.loopSharesWorktree(o, URL(fileURLWithPath: paddock.path)) {
             if await targetBusy(o.id) {
                 throw invalid("'\(o.name)' is working in paddock '\(paddock.name)': the loop needs the worktree to itself; wait for it, or run the loop in its own paddock")
             }
@@ -118,7 +118,7 @@ extension CommandRouter {
             }
         }
         do { try await work.update(id) { $0.loop = loop } } catch { loopPaddocks.remove(paddock.id); return }
-        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id,
+        let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id, dir: dir,
                                   sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
         let engine = WorkLoop(store: work, host: host)
         let pid = paddock.id
@@ -203,11 +203,20 @@ extension CommandRouter {
     }
 
     /// Any terminal of the paddock in a turn but the starter (Shepherds too: the loop's reset would take their edits).
-    func loopOthersWorking(paddock: UUID, starter: UUID) async -> String? {
-        for t in ws.terminals where t.paddockId == paddock && t.id != starter {
+    func loopOthersWorking(paddock: UUID, starter: UUID, dir: URL) async -> String? {
+        for t in ws.terminals where t.paddockId == paddock && t.id != starter && Self.loopSharesWorktree(t, dir) {
             if await targetBusy(t.id) { return t.name }
         }
         return nil
+    }
+
+    /// A terminal can edit the loop's worktree only when its folder is inside it (or cannot be told): one working
+    /// elsewhere in the paddock never blocks the reset. Wrongly counting one is safe; wrongly ignoring one is not.
+    static func loopSharesWorktree(_ t: TerminalRecord, _ dir: URL) -> Bool {
+        guard !t.cwd.isEmpty else { return true }
+        let root = dir.resolvingSymlinksInPath().standardizedFileURL.path
+        let there = URL(fileURLWithPath: t.cwd).resolvingSymlinksInPath().standardizedFileURL.path
+        return there == root || there.hasPrefix(root + "/") || root.hasPrefix(there + "/")
     }
 
     func loopTerminalExists(_ id: UUID) -> Bool { ws.terminals.contains { $0.id == id } }
@@ -264,7 +273,7 @@ struct LoopRevertGit: RevertGit {
 }
 
 struct RouterLoopHost: LoopHost {
-    let router: CommandRouter, starter: UUID, root: URL, work: UUID, paddock: UUID
+    let router: CommandRouter, starter: UUID, root: URL, work: UUID, paddock: UUID, dir: URL
     let sandbox: (home: URL, shell: String)?
 
     /// The only keys a check gets from the user's env: the toolchain's, never a token or an agent socket (GH_TOKEN,
@@ -292,7 +301,7 @@ struct RouterLoopHost: LoopHost {
     }
 
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
-    func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter) }
+    func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }

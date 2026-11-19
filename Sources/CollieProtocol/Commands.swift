@@ -693,9 +693,10 @@ public enum Commands {
         CommandSpec(name: "admin.app.spec", summary: "The app manifest of a panel's own paddock (ui, pin; app only)",
                     params: [ParamSpec("panel", .string, required: true, help: "Panel id")], timeoutSeconds: 10, exposedToMCP: false),
         CommandSpec(name: "admin.app.cards", summary: "Open app cards: approvals and confirm calls (app only)", timeoutSeconds: 10, exposedToMCP: false),
-        CommandSpec(name: "admin.app.answer", summary: "Answer an app card: --allow approves or permits, else denies; --allow --session permits that command for the caller's session (app only)",
+        CommandSpec(name: "admin.app.answer", summary: "Answer an app card: --allow approves or permits, else denies; --allow --session permits that command for the caller's session; --allow --always (loop card only) also trusts the card's paddock for loops (app only)",
                     params: [ParamSpec("id", .string, required: true, help: "Card id"), ParamSpec("allow", .flag, help: "Approve / permit"),
-                             ParamSpec("session", .flag, help: "Confirm card: also permit this command of this app until the caller's session ends or the app's pin changes")],
+                             ParamSpec("session", .flag, help: "Confirm card: also permit this command of this app until the caller's session ends or the app's pin changes"),
+                             ParamSpec("always", .flag, help: "Loop card only, with --allow: the card's paddock is trusted for loops (as admin.paddock.trust-loops --on); refused on any other card")],
                     timeoutSeconds: 10, exposedToMCP: false),
         // UI streams (admin): the reply line is followed by StreamFrame lines both ways
         CommandSpec(name: "ui.attach", summary: "Stream a terminal (replay, output, input, resize)",

@@ -397,7 +397,10 @@ struct AppCardView: View {
             HStack {
                 Spacer(minLength: 0)
                 Button("Negar") { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-                if card.kind == .confirm, card.app != "network" {
+                if card.app == "work-loop" {   // a loop has no per-session permit: its lasting answer is the paddock's trust
+                    Button("Sempre neste cercado") { answer(true, always: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
+                        .help("Os próximos laços deste cercado começam sem cartão; você recebe o aviso e pode parar com collie work stop. Dá para desligar nas Preferências.")
+                } else if card.kind == .confirm, card.app != "network" {
                     Button("Permitir nesta sessão") { answer(true, session: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
                         .help("Este comando de \(card.name) roda sem cartão até a sessão do terminal acabar ou o app mudar")
                 }
@@ -411,10 +414,10 @@ struct AppCardView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.collieAttention, lineWidth: 1))
     }
 
-    private func answer(_ allow: Bool, session: Bool = false) {
+    private func answer(_ allow: Bool, session: Bool = false, always: Bool = false) {
         busy = true
         Task {
-            do { try await client.answerApp(card, allow: allow, session: session) } catch { self.error = "\(error)"; Log.canvas.error("app card: \(error)") }
+            do { try await client.answerApp(card, allow: allow, session: session, always: always) } catch { self.error = "\(error)"; Log.canvas.error("app card: \(error)") }
             busy = false
         }
     }

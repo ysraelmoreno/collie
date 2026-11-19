@@ -57,6 +57,7 @@ struct PreferencesView: View {
     @State private var androidBadge: String?
     @State private var designBadge: String?
     @State private var updateBadge: String?
+    @State private var loopTrustError: String?
     @AppStorage(PreferencePage.requestKey) private var requestedPage = ""
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
@@ -156,7 +157,7 @@ struct PreferencesView: View {
         case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; structureSection }
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
         case .atualizacoes: UpdatePreferences(client: client)
-        case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
+        case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection; loopTrustSection }
         case .memoria: VStack(alignment: .leading, spacing: 22) { memorySection; CuratorPreferences(client: client); CursorMemoryPreferences(client: client) }
         case .plugins: PluginsPreferences(client: client)
         case .celular: CelularPreferences(client: client)
@@ -232,6 +233,33 @@ struct PreferencesView: View {
             if client.detection == false, client.detectionReason == SandboxDetection.notAdmin {   // neutral, for who wants to know
                 Text(AccessCopy.detection(reason: SandboxDetection.notAdmin).help).font(.collieMono(12)).foregroundStyle(Color.collieMuted)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The paddocks trusted for loops (the loop card's "Sempre neste cercado"), each with **Revogar**; `client.paddocks`
+    /// follows the daemon, so a revoked one leaves the list by itself.
+    private var loopTrustSection: some View {
+        let trusted = client.paddocks.filter { $0.trustLoops == true }
+        return section("Laços sem cartão") {
+            if trusted.isEmpty {
+                Text("Nenhum cercado. Todo laço pede o cartão antes de começar.").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+            }
+            ForEach(trusted) { f in
+                HStack {
+                    Text(verbatim: f.name).font(.collieUI(13)).foregroundStyle(Color.collieText)
+                    Spacer(minLength: 12)
+                    Button("Revogar") {
+                        Task { loopTrustError = await call("admin.paddock.trust-loops", ["paddock": .string(f.id.uuidString)]) }
+                    }
+                    .buttonStyle(CollieButtonStyle(.secondary)).controlSize(.small).disabled(client.state != .connected)
+                }
+                .frame(maxWidth: 420)
+            }
+            if let loopTrustError { Text(loopTrustError).font(.collieMono(12)).foregroundStyle(Color.collieDanger) }
+            if !trusted.isEmpty {
+                Text("Nestes cercados o laço começa sem cartão; você recebe o aviso e pode parar com collie work stop. Revogar traz o cartão de volta.")
+                    .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             }
         }
     }

@@ -587,7 +587,13 @@ extension CommandRouter {
             throw ProtocolError(code: .notFound, message: "No app card '\(str(r, "id") ?? "")'")
         }
         let allow = flag(r, "allow")
+        // "Sempre neste cercado" is the loop card's alone; anywhere else it is refused and the card stays
+        let always = flag(r, "always")
+        if always, card.app != "work-loop" {
+            throw ProtocolError(code: .invalidArgs, message: "--always só vale para o cartão de um laço")
+        }
         if card.kind == .confirm {
+            if allow, always { try await setTrustLoops(card.paddock, true) }   // before the loop starts; a denial trusts nothing
             // "Permitir nesta sessão": the next calls of this command by this caller skip the card while its session lasts
             if allow, flag(r, "session"), let cmd = card.command, let pin = ws.paddocks.first(where: { $0.id == card.paddock })?.apps?[card.app] {
                 var proc: PTYProcess?

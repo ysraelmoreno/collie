@@ -87,6 +87,15 @@ import Foundation
         #expect(m.command == "memory.save" && m.args["body"] == .string("for jsonb") && m.args["title"] == .string("Postgres"))
     }
 
+    /// B6.2: the loop card's "Sempre neste cercado" is a flag of `admin.app.answer`, app only.
+    @Test func appAnswerTakesAlways() throws {
+        let spec = try #require(Commands.spec("admin.app.answer"))
+        #expect(spec.params.map(\.name) == ["id", "allow", "session", "always"])
+        #expect(spec.params.last?.kind == .flag && spec.params.last?.required == false && !spec.exposedToMCP)
+        let r = try ArgvParser.parse(["admin", "app", "answer", "--id", "x", "--allow", "--always"])
+        #expect(r.command == "admin.app.answer" && r.args == ["id": .string("x"), "allow": .bool(true), "always": .bool(true)])
+    }
+
     @Test func parsesPluginAndPanelSubcommands() throws {
         let n = try ArgvParser.parse(["browser", "navigate", "https://x.dev", "--panel", "web"])
         #expect(n.command == "browser.navigate" && n.args == ["url": .string("https://x.dev"), "panel": .string("web")])

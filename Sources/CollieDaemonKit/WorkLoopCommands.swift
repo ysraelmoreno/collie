@@ -149,11 +149,20 @@ extension CommandRouter {
         guard let i = ws.paddocks.firstIndex(where: { $0.id.uuidString.caseInsensitiveCompare(str(r, "paddock") ?? "") == .orderedSame }) else {
             throw ProtocolError(code: .notFound, message: "Paddock '\(str(r, "paddock") ?? "")' not found")
         }
-        ws.paddocks[i].trustLoops = flag(r, "on") ? true : nil
+        let f = try await setTrustLoops(ws.paddocks[i].id, flag(r, "on")) ?? ws.paddocks[i]
+        return .object(["paddock": .string(f.id.uuidString), "name": .string(f.name), "trustLoops": .bool(f.trustLoops == true)])
+    }
+
+    /// Trust (or stop trusting) a paddock for loops, saved and told to the app; nil: no such paddock. Also the loop
+    /// card's "Sempre neste cercado" (`admin.app.answer --allow --always`).
+    @discardableResult
+    func setTrustLoops(_ id: UUID, _ on: Bool) async throws -> Paddock? {
+        guard let i = ws.paddocks.firstIndex(where: { $0.id == id }) else { return nil }
+        ws.paddocks[i].trustLoops = on ? true : nil
         try await persist()
         let f = ws.paddocks[i]
         await hub.emit(.paddock(f))
-        return .object(["paddock": .string(f.id.uuidString), "name": .string(f.name), "trustLoops": .bool(f.trustLoops == true)])
+        return f
     }
 
     /// The card's one line (the card shows no line breaks): where, the limits, the gate (once), then every task, its

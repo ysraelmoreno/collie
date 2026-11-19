@@ -320,10 +320,11 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         if let r = try? await admin("admin.leash.requests", [:]) { leashRequests = decode(r) ?? [] }
         if let r = try? await admin("admin.app.cards", [:]) { appCards = decode(r) ?? [] }
     }
-    /// **Aprovar** / **Permitir** (`allow`), **Permitir nesta sessão** (`allow` + `session`) or **Negar** an app card.
-    public func answerApp(_ c: AppCard, allow: Bool, session: Bool = false) async throws {
+    /// **Aprovar** / **Permitir** (`allow`), **Permitir nesta sessão** (`allow` + `session`), **Sempre neste cercado**
+    /// (`allow` + `always`, the loop card only) or **Negar** an app card.
+    public func answerApp(_ c: AppCard, allow: Bool, session: Bool = false, always: Bool = false) async throws {
         appCards.removeAll { $0.id == c.id }
-        _ = try await admin("admin.app.answer", ["id": .string(c.id.uuidString), "allow": .bool(allow), "session": .bool(session)])
+        _ = try await admin("admin.app.answer", ["id": .string(c.id.uuidString), "allow": .bool(allow), "session": .bool(session), "always": .bool(always)])
     }
     /// **Conectar** (`allow`) / **Recusar** a Shepherd's leash request.
     public func answerLeash(_ r: LeashRequest, allow: Bool) async throws {

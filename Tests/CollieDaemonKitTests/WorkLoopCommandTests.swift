@@ -121,12 +121,12 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         if r.ok && approve { #expect(try await answerCard(d, p, allow: true) != nil, "no approval card") }
         return r
     }
-    private func answerCard(_ d: Daemon, _ p: Paths, allow: Bool) async throws -> AppCard? {
+    private func answerCard(_ d: Daemon, _ p: Paths, allow: Bool, always: Bool = false) async throws -> AppCard? {
         let deadline = ContinuousClock.now + .seconds(20)
         while ContinuousClock.now < deadline {
             if let c = await d.router.appCards.first(where: { $0.app == "work-loop" }) {
                 let r = try await send(p, Request(id: "a", token: d.adminToken, command: "admin.app.answer",
-                                                  args: ["id": .string(c.id.uuidString), "allow": .bool(allow)]))
+                                                  args: ["id": .string(c.id.uuidString), "allow": .bool(allow), "always": .bool(always)]))
                 #expect(r.ok, "\(r)")
                 return c
             }
@@ -581,6 +581,65 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             #expect(await trusted(d) == nil)
             guard case .object(let off)? = try await work(d, p, x.s, "paddock.status", ["name": .string("feat")]).result else { Issue.record("no paddock"); return }
             #expect(off["loops"] == nil)
+        }
+    }
+
+    // MARK: B6.2 the card's "Sempre neste cercado"
+
+    /// Permitir + always on the loop card: this loop runs and the paddock is trusted, so the next one shows no card.
+    @Test func alwaysOnTheLoopCardTrustsThePaddock() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Write done", check: "test -f done.txt")
+            let agent = "bash -c 'read l; echo ok > done.txt; git add done.txt; git commit -qm done; cat'"
+            let args: [String: JSONValue] = ["command": .string(agent), "timeout": .number(60)]
+            #expect(try await run(d, p, x.s, args, approve: false).ok)
+            #expect(await trusted(d) == nil)
+            #expect(try await answerCard(d, p, allow: true, always: true) != nil)
+            #expect(await trusted(d) == true)
+            #expect(await loopEnded(d, x.work))
+            let w = try #require(try await d.router.work.get(x.work))
+            #expect(w.tasks.first?.state == .done && w.loop?.state == .finished, "\(w.tasks) \(String(describing: w.loop))")
+
+            try await addTask(d, p, x.s, "Again", check: "true")
+            let r = try await run(d, p, x.s, args, approve: false)
+            guard case .object(let ran)? = r.result else { Issue.record("\(r)"); return }
+            #expect(ran["state"] == .string("running"), "\(ran)")
+            #expect(await d.router.appCards.isEmpty)
+            #expect(await loopEnded(d, x.work))
+        }
+    }
+
+    /// Negar with always trusts nothing and nothing runs.
+    @Test func alwaysWithoutAllowTrustsNothing() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            #expect(try await run(d, p, x.s, approve: false).ok)
+            #expect(try await answerCard(d, p, allow: false, always: true) != nil)
+            #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("não aprovou o laço") })
+            #expect(await trusted(d) == nil)
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+        }
+    }
+
+    /// always belongs to the loop card: on an app's card it is refused, the card stays and no paddock is trusted.
+    @Test func alwaysOnAnAppCardIsRefused() async throws {
+        try await withDaemon { d, p in
+            _ = try await pad(d, p)
+            let pid = try #require(await d.router.ws.paddocks.first { $0.name == "feat" }?.id)
+            let card = AppCard(kind: .confirm, paddock: pid, paddockName: "feat", app: "notes", name: "Notas", base: nil, call: "notes.wipe", command: "wipe", by: nil)
+            let answer = Task { await d.router.confirmCard(card, wait: 60) }
+            #expect(await waitFor(20) { await d.router.appCards.contains { $0.id == card.id } })
+            let id: JSONValue = .string(card.id.uuidString)
+            let r = try await work(d, p, nil, "admin.app.answer", ["id": id, "allow": .bool(true), "always": .bool(true)])
+            #expect(r.error?.code == .invalidArgs, "\(r)")
+            #expect(await d.router.appCards.contains { $0.id == card.id })
+            #expect(await trusted(d) == nil)
+            #expect(try await work(d, p, nil, "admin.app.answer", ["id": id, "always": .bool(true)]).error?.code == .invalidArgs)
+            #expect(try await work(d, p, nil, "admin.app.answer", ["id": id, "allow": .bool(true)]).ok)
+            #expect(await answer.value)
+            #expect(await trusted(d) == nil)
         }
     }
 

@@ -241,6 +241,8 @@ extension CommandRouter {
         case "work.task.add":
             let t = try target(), title = try text("title")
             let check = str(r, "check") == nil ? nil : try text("check")
+            let evidence = str(r, "evidence")
+            if let evidence, let why = EvidenceFiles.refusal(evidence) { throw invalid("--evidence \(why)") }
             var spec: String?
             if let given = str(r, "spec") {   // only the path is kept: the loop reads the file when an attempt starts
                 let real = SignedAppCheck.realPath(URL(fileURLWithPath: given, relativeTo: URL(fileURLWithPath: r.cwd ?? t.cwd, isDirectory: true)))
@@ -252,7 +254,8 @@ extension CommandRouter {
                 spec = real
             }
             let w = try await implicitWork(t, now: now)
-            let task = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(), title: title, updatedAt: now, spec: spec, check: check)
+            let task = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(), title: title, updatedAt: now, spec: spec, check: check,
+                                evidenceGlob: evidence)
             try await work.update(w.id) { $0.tasks.append(task) }
             return try isoJSON(task)
 

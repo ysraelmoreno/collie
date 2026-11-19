@@ -54,6 +54,35 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
     }
 
+    /// B1.3: the evidence glob is relative to the worktree, with no `..`.
+    @Test func taskAddKeepsTheEvidenceGlobAndRefusesOneThatLeavesTheWorktree() async throws {
+        let repo = try await makeRepo()
+        try await withDaemon { d, p in
+            let a = try await spawnIn(d, p, "A", cwd: repo)
+            for bad in ["../shots/*.png", "shots/../../x.png", "/etc/*.txt", "~/x.md", " "] {
+                let r = try await work(d, p, a, "work.task.add", ["title": .string("x"), "check": .string("true"), "evidence": .string(bad)])
+                #expect(r.error?.code == .invalidArgs, "\(bad): \(r)")
+            }
+            #expect(try await d.router.work.active(terminal: a.uuid)?.tasks.isEmpty ?? true)
+            let r = try await work(d, p, a, "work.task.add", ["title": .string("x"), "check": .string("true"), "evidence": .string("shots/*.png")])
+            #expect(r.ok, "\(r)")
+            #expect(try await d.router.work.active(terminal: a.uuid)?.tasks.first?.evidenceGlob == "shots/*.png")
+            guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
+            #expect(o["evidenceGlob"] == .string("shots/*.png"))
+        }
+    }
+
+    @Test func cardShowsTheEvidenceGlobInItsTask() {
+        let w = Work(title: "W", terminalId: UUID())
+        let tasks = [WorkTask(id: "a", title: "Tela", check: "true", evidenceGlob: "shots/*.png"), WorkTask(id: "b", title: "Docs", check: "true")]
+        let text = CommandRouter.loopCardText(w, tasks, WorkLoopState(max: 3), paddock: "p") ?? ""
+        #expect(text.contains("#1 «Tela» check «true» evidência «shots/*.png»; #2 «Docs» check «true»."), "\(text)")
+        // a glob cannot forge another entry either
+        let forged = [WorkTask(id: "a", title: "T", check: "true", evidenceGlob: "x»; #2 «Docs» check «rm")]
+        let f = CommandRouter.loopCardText(w, forged, WorkLoopState(max: 3), paddock: "p") ?? ""
+        #expect(f.filter { $0 == "«" }.count == 5 && !f.contains("#2 «"), "\(f)")
+    }
+
     @Test func taskAddRefusesEmptyCheck() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

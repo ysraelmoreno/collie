@@ -344,6 +344,22 @@ private actor Fake {
         #expect(WorkPanelModel.evidenceLine(t) == "tentativa 1 · 2 commits · 2 files changed, 5 insertions(+)")
     }
 
+    /// B1.3: a done task lists the files the loop kept, each with the path "Abrir" opens.
+    @Test func doneTaskListsItsEvidenceFiles() throws {
+        var e = TaskEvidence(commits: ["abc1234 feat: x"], shortstat: "", checkTail: "", seconds: 1, attempt: 1)
+        #expect(WorkPanelModel.evidenceFiles(nil).isEmpty && WorkPanelModel.evidenceFiles(e).isEmpty)
+        e.files = ["a.png", "notes.md", "../x.txt", ""]; e.filesDir = "/tmp/collie/work-loops/w/evidence/a"
+        let sent = try JSONEncoder().encode(WorkTask(id: "a", title: "t", state: .done, evidence: e, evidenceGlob: "shots/*"))
+        let t = try JSONDecoder().decode(WorkTask.self, from: sent)
+        #expect(t.evidenceGlob == "shots/*")
+        let files = WorkPanelModel.evidenceFiles(t.evidence)
+        #expect(files.map(\.name) == ["a.png", "notes.md"])
+        #expect(files.map(\.url.path) == ["/tmp/collie/work-loops/w/evidence/a/a.png", "/tmp/collie/work-loops/w/evidence/a/notes.md"])
+        // a task written before B1.3 still decodes
+        let old = try JSONDecoder().decode(WorkTask.self, from: Data(#"{"id":"a","title":"t","state":"done","updatedAt":0,"evidence":{"commits":[],"shortstat":"","checkTail":"","seconds":1,"attempt":1}}"#.utf8))
+        #expect(old.evidence?.files == nil && old.evidenceGlob == nil)
+    }
+
     @Test func attemptLineShowsTriesAndTheLastFailure() {
         #expect(WorkPanelModel.attemptLine(WorkTask(id: "a", title: "t")) == nil)
         #expect(WorkPanelModel.attemptLine(WorkTask(id: "a", title: "t", tries: 2, lastFailure: "check failed")) == "2 tentativas · check failed")

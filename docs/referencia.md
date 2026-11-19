@@ -810,6 +810,13 @@ dono aprovou a lista de tarefas e os checks.
 - Tarefas: `collie work task add <título> --spec <arquivo.md> --check "<comando>"`. O spec (o que fazer e os critérios de
   aceite) precisa ser um arquivo do projeto; o check é um comando de shell rodado na worktree do cercado, e exit 0 = passou.
   Os dois ficam no registro, não no repo: o agente não edita o check que o julga.
+- Arquivos de evidência (`--evidence "<glob>"` no `work task add`): um glob relativo à worktree (sem `..`, sem caminho
+  absoluto), mostrado no cartão junto da tarefa. Quando a tarefa passa, o laço copia o que casa para
+  `<raiz>/work-loops/<trabalho>/evidence/<tarefa>/` (pasta 0700, arquivos 0600): só arquivos comuns dentro da worktree
+  (link simbólico para fora é ignorado), com extensão `png|gif|jpg|mp4|txt|md`, até 20 MB no total (passou: a cópia para
+  e uma nota do trabalho avisa). O painel Trabalho lista os arquivos da tarefa feita com a ação "Abrir". Vale o que está
+  na worktree depois do veredito: o commit julgado, arquivos não rastreados que o agente deixou e arquivos ignorados; um
+  arquivo não rastreado criado pelo check ou pelo portão já foi removido.
 - `collie work run --max <n> [--gate "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--preset …] [--model …] [--command …]`: só um
   Pastor com sandbox (ou o app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma
   tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo

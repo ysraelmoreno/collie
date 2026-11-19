@@ -331,6 +331,7 @@ public enum Commands {
                     params: [ParamSpec("title", .rest, positional: true, required: true, help: "Task title"),
                              ParamSpec("spec", .string, help: "Markdown file with what to build and its acceptance criteria (for collie work run)"),
                              ParamSpec("check", .string, help: "Shell command run in the paddock's worktree; exit 0 = the task passes (for collie work run)"),
+                             ParamSpec("evidence", .string, help: "Glob relative to the paddock's worktree (no '..'): the png|gif|jpg|mp4|txt|md files the loop keeps as evidence when the task passes, 20 MB in all"),
                              ParamSpec("terminal", .string, help: "Terminal leashed to you (Shepherd)")],
                     timeoutSeconds: 30),
         CommandSpec(name: "work.task.done", summary: "Mark a task done",

@@ -4,12 +4,17 @@ public enum TaskState: String, Codable, Sendable { case open, inProgress, done, 
 
 /// What the loop held when it approved a task: `commits` (`<short sha> <subject>`, newest first, at most 20) and
 /// `shortstat` of the attempt, `checkTail` (the last lines of the check's and the gate's output, secrets hidden, at
-/// most 2000 characters), `seconds` the attempt took and `attempt` (1-based) that passed.
+/// most 2000 characters), `seconds` the attempt took and `attempt` (1-based) that passed. `files`: the names of the
+/// files the task's `evidenceGlob` matched, copied into `filesDir` (absolute, on the daemon's machine); nil: the task
+/// declared none.
 public struct TaskEvidence: Codable, Sendable, Equatable {
     public var commits: [String]; public var shortstat: String; public var checkTail: String
     public var seconds: Int; public var attempt: Int
-    public init(commits: [String], shortstat: String, checkTail: String, seconds: Int, attempt: Int) {
+    public var files: [String]?; public var filesDir: String?
+    public init(commits: [String], shortstat: String, checkTail: String, seconds: Int, attempt: Int,
+                files: [String]? = nil, filesDir: String? = nil) {
         self.commits = commits; self.shortstat = shortstat; self.checkTail = checkTail; self.seconds = seconds; self.attempt = attempt
+        self.files = files; self.filesDir = filesDir
     }
     /// What the owner reads beside a done task (status, panel, the loop's end notice):
     /// "tentativa 2 · 3 commits · 4 files changed, 10 insertions(+)"; an empty shortstat is left out.
@@ -22,17 +27,20 @@ public struct TaskEvidence: Codable, Sendable, Equatable {
 /// One task of a work: `id` is the agent's own, else generated. `spec` (absolute path of a Markdown file) and `check`
 /// (a shell command, exit 0 = passes) matter only to `collie work run`; `tries` is the attempts a loop used and
 /// `lastFailure` one line on why the last one failed. `evidence`: set by the loop when it approves the task; a task
-/// that leaves `done` (reopened, run again) loses it.
+/// that leaves `done` (reopened, run again) loses it. `evidenceGlob`: relative to the worktree, the files the loop
+/// copies as evidence when it approves the task.
 public struct WorkTask: Codable, Sendable, Equatable {
     public var id: String; public var title: String; public var reason: String?; public var updatedAt: Date
     public var state: TaskState { didSet { if state != .done { evidence = nil } } }
     public var spec: String?; public var check: String?; public var tries: Int?; public var lastFailure: String?
     public var evidence: TaskEvidence?
+    public var evidenceGlob: String?
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
                 spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
-                evidence: TaskEvidence? = nil) {
+                evidence: TaskEvidence? = nil, evidenceGlob: String? = nil) {
         self.id = id; self.title = title; self.state = state; self.reason = reason; self.updatedAt = updatedAt
         self.spec = spec; self.check = check; self.tries = tries; self.lastFailure = lastFailure; self.evidence = evidence
+        self.evidenceGlob = evidenceGlob
     }
 }
 

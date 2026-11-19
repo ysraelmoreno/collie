@@ -97,6 +97,17 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
     /// Under a done task the loop approved: "tentativa 2 · 3 commits · <shortstat>" (nil: no evidence). The view lists
     /// `evidence.commits` below it and keeps `evidence.checkTail` in a closed disclosure.
     public static func evidenceLine(_ t: WorkTask) -> String? { t.evidence?.summary }
+    public struct EvidenceFile: Equatable, Sendable, Identifiable {
+        public let name: String, url: URL
+        public var id: String { name }
+    }
+    /// The files the loop kept as a done task's evidence, each with where "Abrir" finds it. A name that is not a
+    /// plain file name is left out (it would point outside the evidence folder).
+    public static func evidenceFiles(_ e: TaskEvidence?) -> [EvidenceFile] {
+        guard let e, let dir = e.filesDir else { return [] }
+        return (e.files ?? []).filter { !$0.isEmpty && !$0.contains("/") && $0 != "." && $0 != ".." }
+            .map { EvidenceFile(name: $0, url: URL(fileURLWithPath: dir).appendingPathComponent($0)) }
+    }
 
     // MARK: events
 
@@ -506,11 +517,18 @@ struct WorkView: View {
         }
     }
 
-    /// A done task's evidence: the summary line, its commits, and the check's tail closed by default.
+    /// A done task's evidence: the summary line, its commits, its files and the check's tail closed by default.
     @ViewBuilder private func evidence(_ e: TaskEvidence) -> some View {
         Text(e.summary).font(.collieUI(11)).foregroundStyle(Color.collieTextSecondary)
         ForEach(e.commits, id: \.self) { c in
             Text(c).font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary).lineLimit(1).textSelection(.enabled)
+        }
+        ForEach(WorkPanelModel.evidenceFiles(e)) { f in
+            HStack(spacing: 6) {
+                Text(f.name).font(.collieMono(11)).foregroundStyle(Color.collieText).lineLimit(1)
+                Button("Abrir") { NSWorkspace.shared.open(f.url) }.buttonStyle(.link).font(.collieUI(11))
+                    .accessibilityLabel("Abrir \(f.name)")
+            }
         }
         if !e.checkTail.isEmpty {
             DisclosureGroup("Saída do check") {

@@ -27,9 +27,17 @@ protocol LoopHost: Sendable {
     func now() -> Date
     /// One line for the Shepherd the moment a task of the loop ends (done, or deferred after its last try).
     func taskEnded(_ line: String) async
+    /// An approved task's declared evidence: what `glob` matches in the worktree `dir`, copied under `patchDir`
+    /// (`EvidenceFiles`). It reads only inside the worktree: never more than the check could.
+    func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied
 }
 
-extension LoopHost { func taskEnded(_ line: String) async {} }
+extension LoopHost {
+    func taskEnded(_ line: String) async {}
+    func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
+        EvidenceFiles.copy(glob, from: dir, to: EvidenceFiles.dir(patchDir(work), task: task))
+    }
+}
 
 /// `collie work run`'s attempt cycle: a fresh agent per attempt, a check that alone decides, a clean tree between
 /// attempts. A task passes only when its check exits 0, the loop's gate (if any) exits 0 too, there is a new commit on
@@ -205,11 +213,18 @@ actor WorkLoop {
             // of `judged`, never of a HEAD read after the check and the gate ran
             let head = await out(["rev-parse", "--short", judged], dir) ?? ""
             let log = await out(["log", "--format=%h %s", "-n", "\(Self.evidenceCommits)", "\(before)..\(judged)"], dir) ?? ""
-            let evidence = TaskEvidence(
+            var evidence = TaskEvidence(
                 commits: log.split(separator: "\n").map { Self.evidenceCommit(String($0)) },
                 shortstat: await out(["diff", "--shortstat", before, judged], dir) ?? "",
                 checkTail: Self.evidenceTail(check: checkOutput, gate: loop.gate == nil ? nil : output),
                 seconds: Swift.max(0, Int(at.timeIntervalSince(started).rounded())), attempt: n)
+            // the declared files, from the tree as the verdict left it: `judged`, what the agent left untracked and
+            // what is ignored (an untracked file the check or the gate made is already gone)
+            if let g = task.evidenceGlob {
+                let c = await host.copyEvidence(g, from: dir, work: w.id, task: task.id)
+                evidence.files = c.files; evidence.filesDir = c.dir
+                if let n = c.note { await note(w.id, "[loop] evidência de \"\(task.title)\": \(n)") }
+            }
             try? await store.update(w.id) { x in
                 // a task dropped or done meanwhile keeps that state
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {

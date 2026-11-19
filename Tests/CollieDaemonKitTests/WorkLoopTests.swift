@@ -716,6 +716,55 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(try await store.setTask(id, task: "nope", state: .done, reason: nil, at: at) == nil)
     }
 
+    /// B1.3: the approved task's declared files leave the worktree for the loop's folder; a symlink out, another
+    /// extension and a file under `.git` never do.
+    @Test func approvalCopiesTheDeclaredEvidence() async throws {
+        let outside = URL(fileURLWithPath: "/tmp/collie-evidence-out-\(UUID().uuidString.prefix(8)).png")
+        try "secret".write(to: outside, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        var t = task("a/../x", "true"); t.evidenceGlob = "shots/*"
+        let r = try await Rig([t, task("b", "true")]); defer { r.cleanup() }
+        await r.host.set("loop-a/../x-1", Script(act: { d in
+            let shots = d.appendingPathComponent("shots")
+            try FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
+            try "png".write(to: shots.appendingPathComponent("a.png"), atomically: true, encoding: .utf8)   // untracked: the agent's
+            try "x".write(to: shots.appendingPathComponent("run.sh"), atomically: true, encoding: .utf8)
+            try FileManager.default.createSymbolicLink(at: shots.appendingPathComponent("out.png"), withDestinationURL: outside)
+            try FileManager.default.createSymbolicLink(at: shots.appendingPathComponent("in.md"), withDestinationURL: d.appendingPathComponent("notes.md"))
+            try await commit("notes.md", "# notes\n", in: d)
+        }))
+        await r.host.set("loop-b-1", Script(act: { try await commit("b.txt", "x\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let w = try await r.get(), e = try #require(w.tasks[0].evidence)
+        #expect(e.files == ["a.png", "notes.md"], "\(e.files ?? [])")
+        let dir = r.host.patchDir(r.work).appendingPathComponent("evidence/a____x")
+        #expect(e.filesDir == dir.path)
+        let fm = FileManager.default
+        #expect(try String(contentsOf: dir.appendingPathComponent("a.png"), encoding: .utf8) == "png")
+        #expect(try fm.contentsOfDirectory(atPath: dir.path).sorted() == ["a.png", "notes.md"])
+        #expect(try fm.attributesOfItem(atPath: dir.path)[.posixPermissions] as? Int == 0o700)
+        #expect(try fm.attributesOfItem(atPath: dir.appendingPathComponent("a.png").path)[.posixPermissions] as? Int == 0o600)
+        // a task that declared none has no files
+        #expect(w.tasks[1].evidence != nil && w.tasks[1].evidence?.files == nil && w.tasks[1].evidence?.filesDir == nil)
+    }
+
+    @Test func evidenceCopyStopsAtTheCeiling() async throws {
+        let repo = try await makeRepo(), dest = URL(fileURLWithPath: "/tmp/collie-evidence-\(UUID().uuidString.prefix(8))")
+        defer { for u in [repo, dest] { try? FileManager.default.removeItem(at: u) } }
+        for (n, size) in [("a.txt", 6), ("b.txt", 6), ("c.txt", 1)] {
+            try String(repeating: "x", count: size).write(to: repo.appendingPathComponent(n), atomically: true, encoding: .utf8)
+        }
+        let c = EvidenceFiles.copy("*.txt", from: repo, to: dest, maxBytes: 10)
+        #expect(c.files == ["a.txt"] && c.dir == dest.path)   // b would pass the ceiling: the copy stops there, c is not tried
+        #expect(c.note?.contains("«b.txt»") == true && c.note?.contains("1 copiados") == true, "\(c.note ?? "")")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dest.path) == ["a.txt"])
+        // a new approval replaces what was there; a glob out of the worktree copies nothing
+        let again = EvidenceFiles.copy("{b,c}.txt", from: repo, to: dest, maxBytes: 10)
+        #expect(again.files == ["b.txt", "c.txt"] && again.note == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dest.path).sorted() == ["b.txt", "c.txt"])
+        #expect(EvidenceFiles.copy("../*.txt", from: repo, to: dest).files.isEmpty)
+    }
+
     @Test func promptWithoutAGateNamesNone() {
         let p = WorkLoop.prompt(task: task("a", "true"), spec: nil, attempt: 1, tries: 3, dir: URL(fileURLWithPath: "/tmp"), notes: [])
         #expect(!p.contains("portão"))

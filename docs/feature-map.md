@@ -115,7 +115,8 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 ### Trabalho (`WorkPanel`)
 
 - **Nome na UI:** "Trabalho" (subtítulo "N ativos"). Selo "em laço: <tarefa> (tentativa n/m)"; seção "Fechados (N)".
-- **Para que serve:** o registro do que cada terminal está fazendo, com tarefas e o andamento do laço.
+- **Para que serve:** o registro do que cada terminal está fazendo, com tarefas e o andamento do laço. A tarefa feita pelo
+  laço mostra a evidência: commits, saída do check e os arquivos de evidência declarados (`--evidence`), com "Abrir".
 - **Arquivos:** `Sources/ColliePlugins/WorkPanel.swift`.
 - **Como verificar:** `collie work status`, `collie work list`; o painel, à mão.
 

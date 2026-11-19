@@ -129,8 +129,8 @@ extension CommandRouter {
         workLoops[id] = (engine, task, false)
     }
 
-    /// The card's one line (the card shows no line breaks): where, the limits, the gate (once), then every task and its
-    /// check, each in «…», which none may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
+    /// The card's one line (the card shows no line breaks): where, the limits, the gate (once), then every task, its
+    /// check and its evidence glob (if any), each in «…», which none may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
     /// and nothing the owner would not see is ever approved.
     static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String) -> String? {
         func quoted(_ x: String) -> String {
@@ -140,7 +140,9 @@ extension CommandRouter {
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
             + (l.gate.map { "portão depois de cada check: \(quoted($0)). " } ?? "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
-        for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))" + (i < tasks.count - 1 ? ";" : ".") }
+        for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))"
+                + (t.evidenceGlob.map { " evidência \(quoted($0))" } ?? "") + (i < tasks.count - 1 ? ";" : ".")
+        }
         return s.count <= Self.loopCardMax ? s : nil
     }
 

@@ -103,4 +103,22 @@ import CollieCore
         w.loop?.gate = "bash scripts/ci/lint.sh\n&& true"
         #expect(WorkStatusText.gateLine(w) == "portão: bash scripts/ci/lint.sh && true", "\(WorkStatusText.gateLine(w) ?? "")")
     }
+
+    @Test func statsLine() {
+        func t(_ id: String, _ s: TaskState, tries: Int?, seconds: Int? = nil) -> WorkTask {
+            WorkTask(id: id, title: id, state: s, tries: tries,
+                     evidence: seconds.map { TaskEvidence(commits: ["abc"], shortstat: "", checkTail: "", seconds: $0, attempt: tries ?? 1) })
+        }
+        var w = Work(title: "W", terminalId: term, tasks: [t("hand", .done, tries: nil), t("open", .open, tries: nil)])
+        #expect(WorkStatusText.statsLine(w) == nil)   // no loop ran a task: nothing changes
+        w.tasks += [t("a", .done, tries: 1, seconds: 3_600), t("b", .done, tries: 1, seconds: 3_600), t("c", .done, tries: 1, seconds: 500),
+                    t("d", .done, tries: 1, seconds: 100), t("e", .done, tries: 2), t("f", .deferred, tries: 3)]
+        #expect(WorkStatusText.statsLine(w) == "laço: 5/6 feitas · 4 na 1ª · 1 adiada · média 1,5 tentativas · 2h10", "\(WorkStatusText.statsLine(w) ?? "")")
+        w.tasks = [t("a", .done, tries: 1, seconds: 725), t("b", .deferred, tries: 3), t("c", .deferred, tries: 3)]
+        #expect(WorkStatusText.statsLine(w) == "laço: 1/3 feitas · 1 na 1ª · 2 adiadas · média 2,3 tentativas · 12min")
+        w.tasks = [t("a", .done, tries: 1, seconds: 40)]
+        #expect(WorkStatusText.statsLine(w) == "laço: 1/1 feitas · 1 na 1ª · 0 adiadas · média 1,0 tentativas · 40s")
+        w.tasks = [t("a", .done, tries: 1, seconds: 3_900)]
+        #expect(WorkStatusText.statsLine(w)?.hasSuffix("· 1h05") == true)
+    }
 }

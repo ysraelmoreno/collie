@@ -154,4 +154,28 @@ extension WorkSummaryTests {
             #expect(try await ask(nil) == "Escolha um trabalho para ver o resumo.")
         }
     }
+
+    @Test func loopStats() {
+        func t(_ id: String, _ s: TaskState, tries: Int?, seconds: Int? = nil) -> WorkTask {
+            WorkTask(id: id, title: id, state: s, tries: tries,
+                     evidence: seconds.map { TaskEvidence(commits: ["abc"], shortstat: "", checkTail: "", seconds: $0, attempt: tries ?? 1) })
+        }
+        // no loop: nothing changes (no numbers, no line, no JSON key)
+        var w = Work(title: "W", terminalId: UUID(), tasks: [t("hand", .done, tries: nil), t("open", .open, tries: nil)])
+        #expect(LoopStats(work: w) == nil && make(w).loop == nil)
+        #expect(!make(w).markdown().contains("laço"))
+        #expect(try !String(decoding: JSONEncoder().encode(make(w)), as: UTF8.self).contains("loop"))
+        // done (two with evidence, one without), deferred, and a task marked by hand that stays out
+        w.tasks += [t("a", .done, tries: 1, seconds: 60), t("b", .done, tries: 2, seconds: 30), t("c", .done, tries: 1),
+                    t("d", .deferred, tries: 3)]
+        let s = try #require(LoopStats(work: w))
+        #expect(s.ran == 4 && s.done == 3 && s.deferred == 1 && s.firstTry == 2 && s.seconds == 90)
+        #expect(s.meanTries == 1.8)   // 7 / 4 = 1.75, one decimal
+        #expect(make(w).loop == s)
+        #expect(make(w).markdown().hasPrefix("## W\n\nlaço: 3/4 feitas · 2 na 1ª · 1 adiada · média 1,8 tentativas · 1min\n"), "\(make(w).markdown())")
+        // only deferred: no time, nothing on the first try
+        w.tasks = [t("d", .deferred, tries: 3)]
+        #expect(LoopStats(work: w) == LoopStats(work: Work(title: "X", terminalId: UUID(), tasks: w.tasks)))
+        #expect(make(w).loop?.line == "laço: 0/1 feitas · 0 na 1ª · 1 adiada · média 3,0 tentativas · 0s")
+    }
 }

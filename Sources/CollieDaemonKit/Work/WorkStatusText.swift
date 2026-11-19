@@ -86,6 +86,9 @@ public enum WorkStatusText {
         w.loop?.gate.map { "portão: " + RerailText.clean($0, max: CommandRouter.loopCardMax) }
     }
 
+    /// The numbers of the tasks a loop ran (`LoopStats.line`). nil: no loop ran a task of this work.
+    public static func statsLine(_ w: Work) -> String? { LoopStats(work: w)?.line }
+
     /// A done task the loop approved: "✓ <title> · tentativa n · k commits · <shortstat>". nil: it has no evidence.
     public static func doneLine(_ t: WorkTask) -> String? {
         t.evidence.map { "✓ \(RerailText.clean(t.title)) · \($0.summary)" }

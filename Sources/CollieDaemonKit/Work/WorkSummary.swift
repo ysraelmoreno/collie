@@ -1,6 +1,36 @@
 import Foundation
 import CollieCore
 
+/// The loop's numbers for one work, from the tasks a loop ran (`tries != nil`): `ran` of them, `done` and `deferred`
+/// by state, `firstTry` done with `tries == 1`, `meanTries` over the ran tasks (one decimal), `seconds` the sum of
+/// the approved tasks' `evidence.seconds` (a task without evidence adds 0). nil: no loop ran a task of this work.
+public struct LoopStats: Codable, Sendable, Equatable {
+    public var ran: Int, done: Int, deferred: Int, firstTry: Int
+    public var meanTries: Double
+    public var seconds: Int
+
+    public init?(work w: Work) {
+        let tasks = w.tasks.filter { $0.tries != nil }
+        guard !tasks.isEmpty else { return nil }
+        let finished = tasks.filter { $0.state == .done }
+        ran = tasks.count; done = finished.count
+        deferred = tasks.filter { $0.state == .deferred }.count
+        firstTry = finished.filter { $0.tries == 1 }.count
+        meanTries = (Double(tasks.reduce(0) { $0 + ($1.tries ?? 0) }) / Double(tasks.count) * 10).rounded() / 10
+        seconds = tasks.reduce(0) { $0 + ($1.evidence?.seconds ?? 0) }
+    }
+
+    /// "laço: 5/6 feitas · 4 na 1ª · 1 adiada · média 1,4 tentativas · 2h10": decimal comma, short duration
+    /// ("2h10", "12min", "40s").
+    public var line: String {
+        let h = seconds / 3600, m = seconds % 3600 / 60
+        let time = h > 0 ? "\(h)h" + String(format: "%02d", m) : m > 0 ? "\(m)min" : "\(seconds)s"
+        let mean = String(format: "%.1f", meanTries).replacingOccurrences(of: ".", with: ",")
+        return "laço: \(done)/\(ran) feitas · \(firstTry) na 1ª · \(deferred) " + (deferred == 1 ? "adiada" : "adiadas")
+            + " · média \(mean) tentativas · \(time)"
+    }
+}
+
 /// What a work did, deferred and left undone, built only from the registry (no model, no tokens). Every title, note and
 /// commit subject is agent text: `RerailText.clean` makes it one line without control or format characters.
 public struct WorkSummary: Codable, Sendable, Equatable {
@@ -14,6 +44,8 @@ public struct WorkSummary: Codable, Sendable, Equatable {
     public var later: [String]
     public var notDone: [String]
     public var stoppedAt: String?
+    /// The loop's numbers; nil (and absent from the JSON and the markdown) for a work no loop ran.
+    public var loop: LoopStats?
 
     // ponytail: `terminalAlive` is accepted for the interface but unused: job liveness is already in the job states
     // (`gone`/`unknown`, set by the sweeps); use it if a live terminal should downgrade `running` jobs.
@@ -34,7 +66,7 @@ public struct WorkSummary: Codable, Sendable, Equatable {
         let stopped = w.tasks.filter { $0.state == .inProgress }.max { $0.updatedAt < $1.updatedAt }.map { c($0.title) }
             ?? w.notes.last.map { c($0.text) }
         return WorkSummary(title: c(w.title), active: w.closedAt == nil, closedBy: w.closedBy, done: done, later: later,
-                           notDone: notDone, stoppedAt: stopped)
+                           notDone: notDone, stoppedAt: stopped, loop: LoopStats(work: w))
     }
 
     /// Inline markdown characters backslash-escaped: the panel and the chat render markdown, and a task title must not
@@ -58,7 +90,7 @@ public struct WorkSummary: Codable, Sendable, Equatable {
                         ("Onde parou", stoppedAt.map { [$0] } ?? [])]
         // ponytail: k items a section; over the limit, retry with fewer (k = 0 keeps only the counts)
         for k in [Self.maxItems, 20, 10, 5, 2, 1, 0] {
-            var lines = [boldTitle ? "**\(title)**" : "## " + title]
+            var lines = [boldTitle ? "**\(title)**" : "## " + title] + (loop.map { ["", $0.line] } ?? [])
             for (head, items) in sections where !items.isEmpty {
                 lines += ["", "**\(head)**"] + items.prefix(k).map { "- " + $0 }
                 if items.count > k { lines.append("- … e mais \(items.count - k)") }

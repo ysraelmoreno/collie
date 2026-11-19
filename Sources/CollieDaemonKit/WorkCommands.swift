@@ -341,6 +341,7 @@ extension CommandRouter {
                      + " [\(w.id.uuidString.lowercased())]"]
         if let l = WorkStatusText.loopLine(w) { lines.append(l) }
         if let g = WorkStatusText.gateLine(w) { lines.append(g) }
+        if let n = WorkStatusText.statsLine(w) { lines.append(n) }
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),
                                              (.abandoned, "Dropped"), (.done, "Done")]
         for (state, label) in groups {

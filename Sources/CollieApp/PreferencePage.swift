@@ -3,7 +3,7 @@ import Foundation
 /// Preferências option B: the sidebar's pages, in group order, with the search keywords of
 /// `docs/pages/preferencias-b/index.html` (`NAV`/`PG`).
 enum PreferencePage: String, CaseIterable {
-    case aparencia, terminal, atualizacoes, desenho, memoria, plugins, celular, android
+    case aparencia, terminal, atualizacoes, desenho, lacos, memoria, plugins, celular, android
 
     var title: String {
         switch self {
@@ -11,6 +11,7 @@ enum PreferencePage: String, CaseIterable {
         case .terminal: "Terminal e fontes"
         case .atualizacoes: "Atualizações"
         case .desenho: "Desenho e sandbox"
+        case .lacos: "Laços"
         case .memoria: "Memória"
         case .plugins: "Plug-ins"
         case .celular: "Celular"
@@ -21,7 +22,7 @@ enum PreferencePage: String, CaseIterable {
     var group: String {
         switch self {
         case .aparencia, .terminal, .atualizacoes: "Interface"
-        case .desenho, .memoria, .plugins: "Agentes"
+        case .desenho, .lacos, .memoria, .plugins: "Agentes"
         case .celular, .android: "Dispositivos"
         }
     }
@@ -32,6 +33,7 @@ enum PreferencePage: String, CaseIterable {
         case .terminal: "›_"
         case .atualizacoes: "↻"
         case .desenho: "✎"
+        case .lacos: "⟳"
         case .memoria: "◈"
         case .plugins: "⚙"
         case .celular: "▯"
@@ -44,7 +46,8 @@ enum PreferencePage: String, CaseIterable {
         case .aparencia: "tema paleta escuro claro sistema estrutura moldura completa compacta barra"
         case .terminal: "terminal fonte tamanho google fonts baixar família"
         case .atualizacoes: "atualização atualizar versão nova instalar pular github release dmg voltar anterior"
-        case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor motor baixar instalar remover atualizar reinstalar laço laços cartão confiar revogar cercado"
+        case .desenho: "onde desenhar prévia figcraft perguntar sandbox aberto estrito pastor motor baixar instalar remover atualizar reinstalar"
+        case .lacos: "laço laços loop cartão aprovar aprovação confiar cercado revogar autônomo work run"
         case .memoria: "memória aprendizado aviso notificação correção cursor consulta início confiar editada fora curador provedor claude modelo limite consentimento testar"
         case .plugins: "plug-ins extensões"
         case .celular: "celular iphone acesso remoto qr pareamento aparelhos leitura completo"

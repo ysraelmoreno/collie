@@ -399,7 +399,7 @@ struct AppCardView: View {
                 Button("Negar") { answer(false) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
                 if card.app == "work-loop" {   // a loop has no per-session permit: its lasting answer is the paddock's trust
                     Button("Sempre neste cercado") { answer(true, always: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
-                        .help("Os próximos laços deste cercado começam sem cartão; você recebe o aviso e pode parar com collie work stop. Dá para desligar nas Preferências.")
+                        .help("Os próximos laços deste cercado começam sem cartão; você recebe o aviso e pode parar com collie work stop. Dá para desligar em Preferências, Laços.")
                 } else if card.kind == .confirm, card.app != "network" {
                     Button("Permitir nesta sessão") { answer(true, session: true) }.buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small).disabled(busy)
                         .help("Este comando de \(card.name) roda sem cartão até a sessão do terminal acabar ou o app mudar")

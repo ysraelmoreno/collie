@@ -5,7 +5,7 @@ import CollieClient
 import CollieProtocol
 import ColliePlugins
 
-/// Seven pages in a sidebar with search (`PreferencePage`): Interface, Agentes and Dispositivos (Celular, Android).
+/// Nine pages in a sidebar with search (`PreferencePage`): Interface, Agentes and Dispositivos (Celular, Android).
 extension DesignFirst {
     var label: String { switch self { case .artifact: "Página (Prévia)"; case .figcraft: "FigCraft"; case .ask: "Perguntar" } }
     /// The `design.prefer` reply (`{designFirst}`); nil when it is anything else.
@@ -157,7 +157,8 @@ struct PreferencesView: View {
         case .aparencia: VStack(alignment: .leading, spacing: 22) { themeSection; structureSection }
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
         case .atualizacoes: UpdatePreferences(client: client)
-        case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection; loopTrustSection }
+        case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
+        case .lacos: loopTrustSection
         case .memoria: VStack(alignment: .leading, spacing: 22) { memorySection; CuratorPreferences(client: client); CursorMemoryPreferences(client: client) }
         case .plugins: PluginsPreferences(client: client)
         case .celular: CelularPreferences(client: client)
@@ -242,6 +243,8 @@ struct PreferencesView: View {
     private var loopTrustSection: some View {
         let trusted = client.paddocks.filter { $0.trustLoops == true }
         return section("Laços sem cartão") {
+            Text("Quando você escolhe \"Sempre neste cercado\" no cartão de um laço, os próximos laços desse cercado começam sem cartão. Você recebe o aviso e pode parar com collie work stop.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             if trusted.isEmpty {
                 Text("Nenhum cercado. Todo laço pede o cartão antes de começar.").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
             }
@@ -258,7 +261,7 @@ struct PreferencesView: View {
             }
             if let loopTrustError { Text(loopTrustError).font(.collieMono(12)).foregroundStyle(Color.collieDanger) }
             if !trusted.isEmpty {
-                Text("Nestes cercados o laço começa sem cartão; você recebe o aviso e pode parar com collie work stop. Revogar traz o cartão de volta.")
+                Text("Revogar traz o cartão de volta.")
                     .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             }
         }

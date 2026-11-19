@@ -4,8 +4,8 @@ import CollieProtocol
 
 /// Preferências option B: the sidebar's pages, groups and search.
 @Test func emptyQueryListsAllPagesInSidebarOrder() {
-    #expect(PreferencePage.matching("") == [.aparencia, .terminal, .atualizacoes, .desenho, .memoria, .plugins, .celular, .android])
-    #expect(PreferencePage.matching("").map(\.group) == ["Interface", "Interface", "Interface", "Agentes", "Agentes", "Agentes", "Dispositivos", "Dispositivos"])
+    #expect(PreferencePage.matching("") == [.aparencia, .terminal, .atualizacoes, .desenho, .lacos, .memoria, .plugins, .celular, .android])
+    #expect(PreferencePage.matching("").map(\.group) == ["Interface", "Interface", "Interface", "Agentes", "Agentes", "Agentes", "Agentes", "Dispositivos", "Dispositivos"])
 }
 
 /// Spec 2026-11-17 §3: Atualizações in the Interface group, found by its words.
@@ -76,6 +76,7 @@ import CollieProtocol
 @Test func openRequestNamesPage() {
     #expect(PreferencePage.requested("desenho") == .desenho)
     #expect(PreferencePage.requested("android") == .android)
+    #expect(PreferencePage.requested("lacos") == .lacos)
     #expect(PreferencePage.requested("nada") == nil)
     #expect(PreferencePage.requested(nil) == nil)
     #expect(PreferencePage.requested(3) == nil)
@@ -83,4 +84,22 @@ import CollieProtocol
 
 @Test func preferencePageListsCurator() {
     for q in ["curador", "provedor", "consentimento", "Cursor"] { #expect(PreferencePage.matching(q).contains(.memoria), "\(q)") }
+}
+
+/// B6.3: "Laços sem cartão" left Desenho e sandbox for its own page, Laços, in the Agentes group.
+@Test func lacosPageOwnsLoopTrustWords() {
+    #expect(PreferencePage(rawValue: "lacos") == .lacos)
+    #expect(PreferencePage.lacos.title == "Laços" && PreferencePage.lacos.group == "Agentes")
+    for q in ["laço", "lacos", "revogar", "cartão", "loop", "work run"] {
+        #expect(PreferencePage.matching(q).contains(.lacos), "\(q)")
+        #expect(!PreferencePage.matching(q).contains(.desenho), "\(q)")
+    }
+    #expect(PreferencePage.matching("sandbox") == [.desenho])
+}
+
+@Test func everyPageHasTitleGroupIconAndKeywords() {
+    for p in PreferencePage.allCases {
+        #expect(!p.title.isEmpty && !p.group.isEmpty && !p.icon.isEmpty && !p.keywords.isEmpty, "\(p)")
+    }
+    #expect(Set(PreferencePage.allCases.map(\.icon)).count == PreferencePage.allCases.count)
 }

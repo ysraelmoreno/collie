@@ -68,7 +68,7 @@ private func ran(_ sentinel: URL, _ name: String) -> Bool { FileManager.default.
         var c = testConfig(Paths(root: f.collie)); c.sandboxHome = f.home
         let d = try Daemon(config: c)
         let repo = try await makeRepo()
-        let host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: UUID(), paddock: UUID(), sandbox: (f.home, "/bin/zsh"))
+        let host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: UUID(), paddock: UUID(), dir: repo, sandbox: (f.home, "/bin/zsh"))
         await #expect(throws: ProtocolError.self) { try await host.check("true", in: repo, timeout: .seconds(5)) }
         await #expect(throws: ProtocolError.self) { try await host.git(["status"], in: repo) }
     }
@@ -82,7 +82,7 @@ private func ran(_ sentinel: URL, _ name: String) -> Bool { FileManager.default.
         let work = UUID()
         let paddock = Paddock(id: UUID(), name: "p", repoRoot: f.repo.path, path: f.paddock.path, branch: "collie/p", baseBranch: "main")
         _ = try await d.router.prepareLoopSandbox(work, paddock: paddock)
-        let host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: work, paddock: paddock.id, sandbox: (f.home, "/bin/zsh"))
+        let host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: work, paddock: paddock.id, dir: f.paddock, sandbox: (f.home, "/bin/zsh"))
         let inside = try await host.check("echo x > in.txt", in: f.paddock, timeout: .seconds(20))
         let home = try await host.check("echo x > '\(f.home.path)/Documents/loop.txt'", in: f.paddock, timeout: .seconds(20))
         let key = try await host.check("cat '\(f.home.path)/.ssh/id_ed25519'", in: f.paddock, timeout: .seconds(20))

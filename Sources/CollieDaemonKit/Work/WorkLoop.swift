@@ -40,11 +40,12 @@ actor WorkLoop {
     /// Where a project keeps its feature map, in order of preference.
     static let featureMaps = ["docs/feature-map.md", "FEATURES.md"]
     static let evidenceCommits = 20, evidenceSubject = 200, evidenceLines = 20, evidenceChars = 2000
-    let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration
+    let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration, othersWait: Duration
     private var stopping: Set<UUID> = []
 
-    init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800)) {
-        self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout
+    init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
+         othersWait: Duration = .seconds(300)) {
+        self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
     }
 
     /// Ends the loop after the current attempt's verdict.
@@ -171,7 +172,7 @@ actor WorkLoop {
             // attempt: the tree goes back to exactly `judged`. Not when dirty (the agent's uncommitted work is the patch's)
             // nor while another terminal works (no reset under it).
             var moves: [String] = []   // the check or the gate moved HEAD: the attempt fails
-            if !dirty { blocked = await host.othersWorking() }
+            if !dirty { blocked = await othersWorkingWaiting() }
             if await settle(judged, on: on, loose: loose, reset: !dirty && blocked == nil, dir) { moves.append("o check moveu o HEAD") }
             // the gate: only when nothing else already fails the attempt (no budget spent on a lost one), on the tree of
             // `judged`, in the check's conditions (timeout, budget); its output is the note's
@@ -188,7 +189,7 @@ actor WorkLoop {
                     } catch where error.code == .timeout {
                         gate = Self.failure("gate", nil); output = ""
                     } catch { gate = "gate could not run: \(error.message)"; output = "" }
-                    blocked = await host.othersWorking()
+                    blocked = await othersWorkingWaiting()
                     if await settle(judged, on: on, loose: loose, reset: blocked == nil, dir) { moves.append("o portão moveu o HEAD") }
                 }
             }
@@ -222,7 +223,7 @@ actor WorkLoop {
             return blocked == nil
         }
 
-        if blocked == nil { blocked = await host.othersWorking() }
+        if blocked == nil { blocked = await othersWorkingWaiting() }
         if blocked == nil { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir) }
         let last = n >= loop.tries && blocked == nil   // a stopped loop defers nothing
         let tail = output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
@@ -240,6 +241,18 @@ actor WorkLoop {
         if last { await reportEnd(w.id, task.id) }
         if let blocked { await note(w.id, Self.blockedNote(blocked)); return false }
         return true
+    }
+
+    /// Another terminal that can edit the worktree is in a turn: no reset under it. It gets `othersWait` to finish (a short
+    /// chat is no reason to end the loop); the name of the one still working after that, nil when none is.
+    private func othersWorkingWaiting() async -> String? {
+        var who = await host.othersWorking()
+        let end = ContinuousClock.now + othersWait
+        while who != nil, ContinuousClock.now < end, !Task.isCancelled {
+            try? await Task.sleep(for: Swift.min(poll, .seconds(5)))
+            who = await host.othersWorking()
+        }
+        return who
     }
 
     /// The Shepherd hears of a task the moment it ends, not only when the whole loop does.

@@ -95,7 +95,7 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 private struct Rig {
     let repo: URL, storeDir: URL, store: WorkStore, host: FakeHost, loop: WorkLoop, work: UUID
     init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil,
-         checkTimeout: Duration = .seconds(30)) async throws {
+         checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50)) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
         store = WorkStore(dir: storeDir)
@@ -106,7 +106,7 @@ private struct Rig {
         }
         work = w.id
         host = FakeHost(dir: repo)
-        loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout)
+        loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait)
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }
@@ -293,6 +293,20 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("wrong.txt").path))   // nothing reset
         let w = try await r.get()
         #expect(w.tasks.map(\.state) == [.open, .open] && w.notes.last?.text.contains("dev") == true, "\(w.notes.map(\.text))")
+    }
+
+    /// A short chat in another terminal is no reason to end the loop: it gets `othersWait` to finish.
+    @Test func otherAgentThatFinishesInTimeDoesNotStopTheLoop() async throws {
+        let r = try await Rig([task("a", "false")], tries: 1, othersWait: .seconds(5)); defer { r.cleanup() }
+        await r.host.setBusy("dev")
+        let host = r.host
+        let freeing = Task { try? await Task.sleep(for: .milliseconds(150)); await host.setBusy(nil) }
+        await r.host.set("loop-a-1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        #expect(await r.run() == .finished)   // waited, then reset and deferred as usual
+        await freeing.value
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .deferred, "\(w.tasks)")
+        #expect(!FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("wrong.txt").path))   // reset ran
     }
 
     /// Review Focus 5: the starter (whose Shepherd the loop summons as) is gone: the loop stops, nothing is deferred.

@@ -29,8 +29,8 @@ Resumo:
 
 | Regra | Linhas do baseline | Ocorrências | Legítimo | Remendo |
 |---|---|---|---|---|
-| `sleep` | 72 | 137 | 98 | 39 |
-| `unsafe-concurrency` | 47 | 73 | 60 | 13 |
+| `sleep` | 72 | 134 | 94 | 40 |
+| `unsafe-concurrency` | 38 | 59 | 46 | 13 |
 
 ## Trocas propostas (referidas nas tabelas)
 

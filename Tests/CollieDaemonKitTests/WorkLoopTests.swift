@@ -24,7 +24,13 @@ private actor FakeHost: LoopHost {
     var commands: [String] = []
     /// Each line the Shepherd got when a task ended.
     var ended: [String] = []
-    func taskEnded(_ line: String) async { ended.append(line) }
+    /// A Shepherd that is never idle: its notices are never delivered.
+    var noticeNeverDelivered = false
+    func taskEnded(_ line: String) async {
+        if noticeNeverDelivered { try? await Task.sleep(for: .seconds(3600)); return }
+        ended.append(line)
+    }
+    func neverDeliverNotices() { noticeNeverDelivered = true }
     /// Called with each command before `check` runs it (a test reads the loop's phase from the store here).
     var probe: (@Sendable (String) async -> Void)?
     func setProbe(_ p: @escaping @Sendable (String) async -> Void) { probe = p }
@@ -478,6 +484,19 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(ended.count == 2, "\(ended)")
         #expect(ended[0].hasPrefix("[collie] Laço, tarefa terminada: ✓ Task a · tentativa 1"), "\(ended)")
         #expect(ended[1].hasPrefix("[collie] Laço, tarefa terminada: – Task b · adiada: loop:"), "\(ended)")
+    }
+
+    /// The loop does not wait for the Shepherd to be idle to hear of a task: the next task starts at once.
+    @Test func aBusyShepherdDoesNotHoldTheLoop() async throws {
+        let r = try await Rig([task("a", "test -f done.txt"), task("b", "test -f more.txt")]); defer { r.cleanup() }
+        await r.host.neverDeliverNotices()
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("loop-b-1", Script(act: { try await commit("more.txt", "ok\n", in: $0) }))
+        let t0 = ContinuousClock.now
+        #expect(await r.run() == .finished)
+        #expect(ContinuousClock.now - t0 < .seconds(60), "the loop waited for the notice")
+        let w = try await r.get()
+        #expect(w.tasks.map(\.state) == [.done, .done], "\(w.tasks)")
     }
 
     @Test func aTaskWithTriesLeftIsNotReportedYet() async throws {

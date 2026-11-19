@@ -295,6 +295,7 @@ struct RouterLoopHost: LoopHost {
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter) }
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
+    func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
 
     /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.
     func profile() throws(ProtocolError) -> URL? {

@@ -22,6 +22,9 @@ private actor FakeHost: LoopHost {
     var summoned: [String] = [], dismissed: [String] = [], prompts: [String: String] = [:], checks = 0
     /// Every command `check` ran (the tasks' checks and the gate), in order.
     var commands: [String] = []
+    /// Each line the Shepherd got when a task ended.
+    var ended: [String] = []
+    func taskEnded(_ line: String) async { ended.append(line) }
     /// Called with each command before `check` runs it (a test reads the loop's phase from the store here).
     var probe: (@Sendable (String) async -> Void)?
     func setProbe(_ p: @escaping @Sendable (String) async -> Void) { probe = p }
@@ -451,6 +454,22 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(patch.contains("done.txt") && !patch.contains("sneak.txt"), "\(patch)")
         #expect(try await git(r.repo, "rev-parse", "HEAD") == start)
         #expect(try await git(r.repo, "status", "--porcelain").isEmpty)
+    }
+
+    @Test func theShepherdHearsOfEachTaskAsItEnds() async throws {
+        let r = try await Rig([task("a", "test -f done.txt"), task("b", "false")], tries: 1); defer { r.cleanup() }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        let ended = await r.host.ended
+        #expect(ended.count == 2, "\(ended)")
+        #expect(ended[0].hasPrefix("[collie] Laço, tarefa terminada: ✓ Task a · tentativa 1"), "\(ended)")
+        #expect(ended[1].hasPrefix("[collie] Laço, tarefa terminada: – Task b · adiada: loop:"), "\(ended)")
+    }
+
+    @Test func aTaskWithTriesLeftIsNotReportedYet() async throws {
+        let r = try await Rig([task("a", "false")], tries: 2); defer { r.cleanup() }
+        #expect(await r.run() == .finished)
+        #expect(await r.host.ended.count == 1)   // only after the 2nd and last try
     }
 
     @Test func statusShowsWhatTheLoopIsDoing() async throws {

@@ -94,6 +94,15 @@ public enum WorkStatusText {
         t.evidence.map { "✓ \(RerailText.clean(t.title)) · \($0.summary)" }
     }
 
+    /// The line the starter gets when one task of its loop ends: a done one with its evidence (none: marked by hand), a
+    /// deferred one with the reason. Counts and git's shortstat only, never a commit subject or the check's output.
+    static func taskEnded(_ t: WorkTask) -> String {
+        let line = t.state == .deferred
+            ? "– \(RerailText.clean(t.title)) · adiada: \(RerailText.clean(t.reason ?? t.lastFailure ?? "sem razão registrada", max: 200))"
+            : doneLine(t) ?? "✓ \(RerailText.clean(t.title)) · marcada à mão, sem check"
+        return "[collie] Laço, tarefa terminada: \(line)"
+    }
+
     /// The line the starter gets when its loop ends, then one line per task of the loop: a done one with its evidence
     /// (one without it was marked by hand, no check judged it: it counts as done and says so), a deferred one with the
     /// reason. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").

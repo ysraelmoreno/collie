@@ -15,7 +15,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
         /// The next prompt resolved the last prompt injection's pending ids (Leva 1 precision): `ids` counted as a useful
         /// use (`addUse` took them), `hits` how many were pending, `reason` `correction` when the prompt dropped them all.
         case used
-        /// `memory enforce`: `ids` is the memory, `mode` set|clear, `reason` the check's path (set only).
+        /// `memory enforce`: `ids` is the memory, `mode` set|clear, `reason` the check's path (set only). Mode `gone` (source
+        /// `lifecycle`): the pass cleared it because the check's path is no longer in HEAD; `reason` is that path.
         case enforced
     }
     var at = Date.distantPast   // stamped by the log

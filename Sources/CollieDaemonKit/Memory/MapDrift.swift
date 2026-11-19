@@ -46,6 +46,8 @@ enum MapDrift {
     }
 
     static let reasonPrefix = "mapDrift ", subjectsMark = "; commits: "
+    /// The flag reason of a memory whose `enforcedBy` check is gone (`enforcedGonePass`): this prefix and the path.
+    static let enforcedGonePrefix = "enforcedBy gone: "
 
     /// A path plain enough to stand among the curator's verified facts: letters, digits and `._/@+-`, no spaces, ≤ 200.
     /// Anything else (a sentence as a file name, an instruction) is the memory's text, shown apart and unverified.
@@ -123,6 +125,7 @@ extension CommandRouter {
     /// `live`: the keys of the stores Collie knows (`knownStores`); an entry written here drops other stores' anchors.
     func mapDriftPass(_ store: RepoMemory, eligible: [MemoryRecord], fresh: Set<UUID>, facts: any GitFacts, room: Int,
                       now: Date, day: String, live: Set<String>? = nil) async {
+        await enforcedGonePass(store, facts: facts, now: now, day: day)
         let maps = eligible.filter { $0.kind == .map && $0.path.flatMap(MapDrift.norm) != nil }
         guard !maps.isEmpty, let head = await facts.head() else { return }
         let lc = memory.lifecycle, entries = await lc.all(), key = store.key
@@ -189,6 +192,37 @@ extension CommandRouter {
                 e.setMapAnchor(MapAnchor(textHash: h, commit: head, at: now, store: key))
             }
             if checked.contains(id) { e.mapCheckedAt = now }
+        }
+    }
+
+    /// PRD B3 requirement 5: an active memory whose `enforcedBy` check is gone goes back to the injection. Gone = git says
+    /// the path is not in HEAD's tree and it is not on disk either (a check written but not committed yet still counts,
+    /// since `memory enforce --by` accepts a worktree path). `enforcedBy` is cleared, an outdated "claim-check" flag
+    /// records why, and an `enforced` event of mode `gone` goes to the log. No contest and no re-check: the memory's text
+    /// is not in doubt, only its check. git unavailable (no HEAD, or an unknown answer for the path): nothing changes.
+    /// Every active record of the store is looked at, pinned and reviewed too: a dead check must not hide them for good.
+    /// Cost: 1 `rev-parse` per pass with enforced memories, plus 1 per enforced memory.
+    func enforcedGonePass(_ store: RepoMemory, facts: any GitFacts, now: Date, day: String) async {
+        let enforced = ((try? await store.run { $0.store.all().records }) ?? []).filter { $0.status == .active && $0.enforcedBy != nil }
+        guard !enforced.isEmpty, let head = await facts.head() else { return }
+        for r in enforced {
+            guard let by = r.enforcedBy, await facts.existed(at: head, by) == false, !facts.pathExists(by) else { continue }
+            // re-read when written: a `memory enforce` that landed while git ran wins
+            let cleared = try? await store.run { m -> Bool in
+                guard var rec = m.store.all().records.first(where: { $0.id == r.id }), rec.enforcedBy == by else { return false }
+                rec.enforcedBy = nil
+                try m.store.write(rec)
+                return true
+            }
+            guard cleared == true else { continue }
+            let reason = String((MapDrift.enforcedGonePrefix + by).prefix(CuratorOps.lineMax))
+            await memory.lifecycle.update(r.id, now: now) { e in
+                e.flags.append(LifecycleFlag(verdict: .outdated, session: "claim-check", day: day, reason: reason))
+            }
+            var ev = MemoryEvent(type: .enforced, ids: [r.id], kinds: [r.kind.rawValue], scopes: [r.scope.rawValue],
+                                 source: "lifecycle", reason: by, mode: "gone")
+            ev.place(store: store.key)
+            memory.events.emit(ev)
         }
     }
 

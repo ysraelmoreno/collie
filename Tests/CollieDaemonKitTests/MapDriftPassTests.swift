@@ -440,6 +440,93 @@ import CollieProtocol
         }
     }
 
+    // MARK: PRD B3 requirement 5: the check that enforced a memory is gone, so the memory goes back to the injection
+
+    /// Git as the test stages it: `sha` nil = git unavailable; `inHead`/`onDisk` answer for every path.
+    private struct CheckFacts: GitFacts {
+        var sha: String? = CountingFacts.head, inHead: Bool? = false, onDisk = false
+        func branch(_ name: String) async -> BranchState { .open }
+        func commitExists(_ sha: String) async -> Bool { true }
+        func pathExists(_ rel: String) -> Bool { onDisk }
+        func head() async -> String? { sha }
+        func existed(at commit: String, _ path: String) async -> Bool? { inHead }
+    }
+    private func enforced(_ store: RepoMemory, by: String, pinned: Bool = false) async throws -> MemoryRecord {
+        var r = MemoryRecord(kind: .pitfall, subject: "force unwrap", title: "Force unwrap derruba o daemon", body: "use guard let", createdAt: Date())
+        r.enforcedBy = by; r.pinned = pinned
+        try await put(store, r)
+        return r
+    }
+    private func stored(_ store: RepoMemory, _ id: UUID) async throws -> MemoryRecord? {
+        try await store.run { $0.store.all().records.first { $0.id == id } }
+    }
+    private func gone(_ d: Daemon, _ id: UUID) async -> [LifecycleFlag] {
+        (await d.router.memory.lifecycle.entry(id)?.flags ?? []).filter { $0.reason.hasPrefix(MapDrift.enforcedGonePrefix) }
+    }
+    private func goneEvents(_ d: Daemon, _ id: UUID) -> [MemoryEvent] {
+        d.router.memory.events.flush()
+        return d.router.memory.events.read(since: .distantPast).filter { $0.type == .enforced && $0.mode == "gone" && $0.ids == [id] }
+    }
+
+    /// The check is still in HEAD (live git): nothing changes, pass after pass.
+    @Test func enforcedByStillThereChangesNothing() async throws {
+        try await run { d, store, _ in
+            let r = try await enforced(store, by: "f.txt")
+            await d.router.lifecyclePass(store, now: Date())
+            #expect(try await stored(store, r.id)?.enforcedBy == "f.txt")
+            #expect(await gone(d, r.id).isEmpty && goneEvents(d, r.id).isEmpty)
+        }
+    }
+
+    /// The check was deleted and committed (live git): `enforcedBy` cleared, flagged outdated with the path, one event.
+    @Test func enforcedByGoneIsClearedAndFlagged() async throws {
+        try await run { d, store, repo in
+            try await commit("check.sh", "exit 0\n", in: repo)
+            let r = try await enforced(store, by: "check.sh"), t0 = Date()
+            await d.router.lifecyclePass(store, now: t0)
+            #expect(try await stored(store, r.id)?.enforcedBy == "check.sh")
+            _ = try await GitRunner.run(["rm", "-q", "check.sh"], in: repo)
+            _ = try await GitRunner.run(["commit", "-q", "-m", "drop check"], in: repo)
+            await d.router.lifecyclePass(store, now: t0.addingTimeInterval(86_400))
+            #expect(try await stored(store, r.id)?.enforcedBy == nil)
+            let flags = await gone(d, r.id)
+            #expect(flags.count == 1 && flags.first?.verdict == .outdated && flags.first?.session == "claim-check")
+            #expect(flags.first?.reason == "enforcedBy gone: check.sh")
+            #expect(await d.router.memory.lifecycle.entry(r.id)?.contestedNow != true)   // its text is not in doubt
+            let ev = goneEvents(d, r.id)
+            #expect(ev.count == 1 && ev.first?.reason == "check.sh" && ev.first?.source == "lifecycle")
+            await d.router.lifecyclePass(store, now: t0.addingTimeInterval(2 * 86_400))   // nothing left to clear: no second flag
+            #expect(await gone(d, r.id).count == 1)
+        }
+    }
+
+    /// git can't be asked (no HEAD, or no answer for the path): nothing changes, even with the path off the disk.
+    @Test func enforcedByGitUnavailableChangesNothing() async throws {
+        try await run { d, store, _ in
+            let r = try await enforced(store, by: "sumiu.sh")
+            for facts in [CheckFacts(sha: nil), CheckFacts(inHead: nil)] {
+                await d.router.mapDriftPass(store, eligible: [], fresh: [], facts: facts, room: 10, now: Date(), day: "2026-11-18")
+            }
+            #expect(try await stored(store, r.id)?.enforcedBy == "sumiu.sh")
+            #expect(await gone(d, r.id).isEmpty && goneEvents(d, r.id).isEmpty)
+        }
+    }
+
+    /// Not in HEAD but on disk (a check written and not committed yet): kept. A pinned memory's dead check is cleared
+    /// too, and a long path's reason is cut at `CuratorOps.lineMax`.
+    @Test func enforcedByUncommittedIsKeptPinnedIsClearedReasonIsCut() async throws {
+        try await run { d, store, _ in
+            let long = String(repeating: "d/", count: CuratorOps.lineMax) + "check.sh"
+            let r = try await enforced(store, by: long, pinned: true)
+            await d.router.mapDriftPass(store, eligible: [], fresh: [], facts: CheckFacts(onDisk: true), room: 10, now: Date(), day: "2026-11-18")
+            #expect(try await stored(store, r.id)?.enforcedBy == long)
+            await d.router.mapDriftPass(store, eligible: [], fresh: [], facts: CheckFacts(), room: 10, now: Date(), day: "2026-11-18")
+            #expect(try await stored(store, r.id)?.enforcedBy == nil)
+            let flags = await gone(d, r.id)
+            #expect(flags.count == 1 && flags.first?.reason.count == CuratorOps.lineMax)
+        }
+    }
+
     // MARK: many stores (before-release point A): no store evicts another's anchor; dead stores' anchors are pruned
 
     /// The pasture and 8 paddocks, each passing daily: anchored once, then never re-anchored (each one is measured).

@@ -191,12 +191,23 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
         var enforced = klass("Force unwrap derruba o daemon", hits: 9); enforced.enforcedBy = "scripts/ci/lint.sh"
         let prose = klass("Reiniciar o serviço derruba os terminais", hits: 1)
         try await withDaemon { d, p in
-            try await put(await d.router.memory.repo(for: repo.path), [enforced, prose])
+            // B3.5: pinned and long-term ones too: no title, no body at session start
+            var pin = MemoryRecord(kind: .decision, subject: "fixada", title: "Fixada imposta", body: "corpo da fixada", pinned: true)
+            var lt = MemoryRecord(kind: .decision, subject: "longa", title: "Longo prazo imposta", body: "corpo de longo prazo")
+            pin.enforcedBy = "scripts/ci/lint.sh"; lt.enforcedBy = "scripts/ci/lint.sh"
+            let kept = MemoryRecord(kind: .decision, subject: "livre", title: "Fixada livre", body: "corpo livre", pinned: true)
+            try await put(await d.router.memory.repo(for: repo.path), [enforced, prose, pin, lt, kept])
+            await d.router.memory.lifecycle.update(lt.id, now: Date()) { $0.tier = .longTerm; $0.textHash = LifecycleRules.textHash(lt) }
             let c = await d.router.memory.checklist(cwd: repo.path, lot: nil)
             #expect(c.ids == [prose.id] && !c.text.contains("Force unwrap"), "\(c.text)")
             let t = try await term(d, p, "T", cwd: repo)
             let out = output(try await call(p, t, "memory.hookContext"))   // the session-start checklist too
-            #expect(out.contains("] Reiniciar o serviço derruba os terminais") && !out.contains("] Force unwrap derruba o daemon"), "\(out)")
+            #expect(out.contains("] Reiniciar o serviço derruba os terminais") && out.contains("Fixada livre"), "\(out)")
+            for gone in ["Force unwrap derruba o daemon", "Fixada imposta", "corpo da fixada", "Longo prazo imposta", "corpo de longo prazo"] {
+                #expect(!out.contains(gone), "\(gone): \(out)")
+            }
+            let ctx = await d.router.memory.contextText(cwd: repo.path, paddock: nil)   // `memory.context`'s
+            #expect(!ctx.text.contains("imposta") && !ctx.text.contains("Force unwrap") && ctx.ids.isDisjoint(with: [enforced.id, pin.id, lt.id]), "\(ctx.text)")
         }
     }
 

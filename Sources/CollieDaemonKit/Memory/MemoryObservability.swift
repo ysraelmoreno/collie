@@ -25,7 +25,9 @@ enum MemoryObservability {
         var coverage: Double?
         var top: [MemoryRef] = []
         /// Active memories older than 30 days that were not injected in the last 30 (`deadShare` of those old enough).
+        /// Enforced memories (`enforcedBy`) are not injected by design: out of `dead` and its share, counted in `enforced`.
         var dead: [MemoryRef] = [], deadShare: Double?
+        var enforced = 0
         var searches = 0, searchHits = 0
         /// Beside `coverage` (prompts with a memory), how often an injected memory was used (Leva 1).
         var precision = Precision()
@@ -156,7 +158,8 @@ enum MemoryObservability {
             .map { MemoryRef(id: $0.key, title: titles[$0.key], count: $0.value) }
         let deadCut = now.addingTimeInterval(-Double(deadAfterDays) * 86_400)
         let recent = Set(events.filter { $0.type == .injected && $0.at >= deadCut && $0.where != "retraction" }.flatMap { $0.ids ?? [] })
-        let old = records.filter { $0.createdAt <= deadCut }
+        r.usage.enforced = records.filter { $0.enforcedBy != nil }.count
+        let old = records.filter { $0.createdAt <= deadCut && $0.enforcedBy == nil }
         let dead = old.filter { !recent.contains($0.id) }.sorted { $0.updatedAt < $1.updatedAt }
         r.usage.dead = dead.map { MemoryRef(id: $0.id, title: $0.title, count: 0) }
         r.usage.deadShare = old.isEmpty ? nil : Double(dead.count) / Double(old.count)

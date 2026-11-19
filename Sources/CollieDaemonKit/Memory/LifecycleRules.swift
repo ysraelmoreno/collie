@@ -69,7 +69,8 @@ enum LifecycleRules {
 
     static func unusedPlan(records: [MemoryRecord], entries: [UUID: LifecycleEntry], now: Date) -> [CleanupItem] {
         records.compactMap { r in
-            guard eligible(r), let ttl = ttl(r.kind), let e = entries[r.id], tier(for: e, now: now) == .provisional else { return nil }
+            // B3.5: enforced is never injected, so it can never earn a use: no TTL while a check speaks for it
+            guard r.enforcedBy == nil, eligible(r), let ttl = ttl(r.kind), let e = entries[r.id], tier(for: e, now: now) == .provisional else { return nil }
             let last = max(e.tierSince, e.usefulUses.compactMap { date($0.day) }.max() ?? .distantPast)
             let age = now.timeIntervalSince(last)
             guard age >= ttl else { return nil }

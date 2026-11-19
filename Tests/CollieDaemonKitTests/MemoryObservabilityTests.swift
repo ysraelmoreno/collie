@@ -52,6 +52,19 @@ private func compute(_ es: [MemoryEvent], since: Date = ago(7), records: [Memory
         #expect(r.logSince == ago(20))
     }
 
+    /// B3.5: an enforced memory is not injected by design: not dead (nor in the share), counted apart.
+    @Test func enforcedIsNotDeadAndCountedApart() {
+        var cold = MemoryRecord(kind: .decision, subject: "c", title: "C"), imposed = MemoryRecord(kind: .pitfall, subject: "i", title: "I")
+        var young = MemoryRecord(kind: .pitfall, subject: "y", title: "Y")
+        cold.createdAt = ago(45); imposed.createdAt = ago(45); imposed.enforcedBy = "scripts/ci/lint.sh"; young.enforcedBy = "Tests/X.swift"
+        let r = compute([], records: [cold, imposed, young])
+        #expect(r.usage.dead.map(\.id) == [cold.id] && r.usage.deadShare == 1)
+        #expect(r.usage.enforced == 2)
+        let none = compute([], records: [imposed])
+        #expect(none.usage.dead.isEmpty && none.usage.deadShare == nil && none.usage.enforced == 1)
+        #expect(compute([], records: [cold]).usage.enforced == 0)
+    }
+
     /// PRD B3 req. 4: recurring pitfalls (3+ hits) no check enforces yet: how many, and the 5 most repeated.
     @Test func candidatesCountAndTopFive() {
         #expect(MemoryRecord.enforceCandidateHits == 3)

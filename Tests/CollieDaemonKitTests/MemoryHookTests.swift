@@ -97,7 +97,10 @@ private func additional(_ json: String?, _ event: String) -> String? {
             #expect(r.ok, "\(r)")
             let prompt = "why did we choose postgres for jsonb?"
             #expect(await MemoryHookClient.output(event: .userPromptSubmit, prompt: prompt, env: t.env(p)) == nil)
+            // B3.5: nor at session start, not even as an index title
+            #expect(!(await d.router.memory.contextText(cwd: repo.path, paddock: nil)).text.contains("Use Postgres"))
             #expect(try await enforce(["clear": .bool(true)]).ok)
+            #expect((await d.router.memory.contextText(cwd: repo.path, paddock: nil)).text.contains("Use Postgres"))
             let again = await MemoryHookClient.output(event: .userPromptSubmit, prompt: prompt, env: t.env(p))
             #expect(additional(again, "UserPromptSubmit")?.contains("Use Postgres") == true, "\(again ?? "nil")")
         }

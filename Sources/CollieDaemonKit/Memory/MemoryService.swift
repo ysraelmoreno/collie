@@ -358,7 +358,9 @@ actor MemoryService {
                 _ = m.index()   // refresh first: resolves two actives a land (or a hand edit) left behind
                 try? MemoryCleanup.expireProposals(store: m.store, keep: keep, asked: asked)
                 // a map whose path is gone from disk stays out
-                return m.store.all().records.filter { $0.status == .active && Self.visible($0, paddock: paddock, lot: m.lotId) && m.present($0) }
+                // B3.5: enforced by a check: out of pinned, long-term and the index alike (whoever enforced it decided)
+                return m.store.all().records.filter { $0.status == .active && $0.enforcedBy == nil
+                    && Self.visible($0, paddock: paddock, lot: m.lotId) && m.present($0) }
             }) ?? []
             let odd = Set(recs.filter { !provenance.isVerified($0) }.map(\.id)), ok = recs.filter { !odd.contains($0.id) }
             unverified.formUnion(odd)

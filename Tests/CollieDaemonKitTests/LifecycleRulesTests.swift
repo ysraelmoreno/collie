@@ -74,6 +74,17 @@ import CollieCore
         #expect(LifecycleRules.unusedPlan(records: [r], entries: [:], now: now).isEmpty)   // no entry: not planned
     }
 
+    /// B3.5: enforced by a check, a provisional memory past its TTL is not archived (never injected: it cannot earn a use).
+    @Test func enforcedSkipsTheUnusedTTL() {
+        for kind in [MemoryKind.decision, .pitfall] {
+            var r = MemoryRecord(kind: kind, subject: "a", title: "t", createdAt: ago(400))
+            let es = [r.id: entry([], since: 365)]
+            #expect(LifecycleRules.unusedPlan(records: [r], entries: es, now: now).count == 1)
+            r.enforcedBy = "scripts/ci/lint.sh"
+            #expect(LifecycleRules.unusedPlan(records: [r], entries: es, now: now).isEmpty, "\(kind)")
+        }
+    }
+
     @Test func ttlPerKind() {
         #expect(LifecycleRules.ttl(.decision) == 21 * 86_400 && LifecycleRules.ttl(.map) == 21 * 86_400)
         #expect(LifecycleRules.ttl(.pitfall) == 60 * 86_400 && LifecycleRules.ttl(.procedure) == 60 * 86_400)

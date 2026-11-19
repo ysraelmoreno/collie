@@ -125,10 +125,9 @@ private func git(_ args: [String], _ dir: URL) async throws -> String {
             }
             let three = pit("Três", 3), nine = pit("Nove", 9), five = pit("Cinco", 5)
             let store = await d.router.memory.repo(for: repo.path)
-            try await store.run { m in
-                for r in [three, nine, five, pit("Duas", 2), pit("Instância", nil), pit("Arquivada", 9, status: .archived),
-                          MemoryRecord(kind: .decision, subject: "dec", title: "Decisão", hits: 9)] { try m.store.write(r) }
-            }
+            let all = [three, nine, five, pit("Duas", 2), pit("Instância", nil), pit("Arquivada", 9, status: .archived),
+                       MemoryRecord(kind: .decision, subject: "dec", title: "Decisão", hits: 9)]
+            try await store.run { m in for r in all { try m.store.write(r) } }
             let t = try await term(d, p, "T", cwd: repo)
             let sr = try await admin(d, p, "admin.spawn", ["name": .string("S"), "preset": .string("shell"), "cwd": .string(repo.path), "shepherd": .bool(true)])
             let sid = try #require(s(obj(sr)["id"]))

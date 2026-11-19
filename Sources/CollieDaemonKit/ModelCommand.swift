@@ -117,6 +117,8 @@ extension CommandRouter {
         guard let i = ws.terminals.firstIndex(where: { $0.id == id }), ws.terminals[i].model != model else { return }
         ws.terminals[i].model = model
         try? await persist()
-        await hub.emit(.terminal(ws.terminals[i]))
+        // `persist` suspends: a terminal killed meanwhile (the loop dismisses its attempt's) moved or removed `i`
+        guard let t = ws.terminals.first(where: { $0.id == id }) else { return }
+        await hub.emit(.terminal(t))
     }
 }

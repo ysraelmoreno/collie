@@ -96,6 +96,21 @@ private let busy = "echo T=$COLLIE_TOKEN; while :; do echo .; sleep 0.3; done"
         }
     }
 
+    /// noteModel suspends in `persist`; a terminal killed meanwhile used to crash the daemon (index out of range, 21:20).
+    @Test func noteModelSurvivesTheTerminalBeingKilled() async throws {
+        try await withDaemon { d, p in
+            for n in 0..<25 {
+                let t = try await term(d, p, "R\(n)", idle: false)
+                let id = UUID(uuidString: t.id)!
+                async let note: Void = d.router.noteModel(id, "opus-\(n)")
+                async let kill = send(p, Request(id: "k", token: d.adminToken, command: "admin.kill", args: ["target": .string("R\(n)")]))
+                _ = try await kill; await note
+            }
+            let again = try await term(d, p, "alive")   // the daemon still answers
+            #expect(!again.id.isEmpty)
+        }
+    }
+
     @Test func unknownModelFailsFastWithClaudesReason() async throws {
         try await withDaemon { d, p in
             let a = try await term(d, p, "A")

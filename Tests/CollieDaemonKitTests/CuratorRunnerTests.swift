@@ -207,6 +207,13 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         #expect(await ok.runner(path: "", fallback: [ok.bin.path]).availability() == .available)
     }
 
+    /// The daemon's env capture failed (no USER): claude finds its keychain login by USER, so without it every call is
+    /// "logged out". The curator always gives it one.
+    @Test func userAlwaysInEnvironment() async throws {
+        let ok = try Fake(#"[ -n "$USER" ] && { echo '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}'; exit 0; }; echo '{"loggedIn": false}'"# + "\n")
+        #expect(await ok.runner(path: "", fallback: [ok.bin.path]).availability() == .available)
+    }
+
     /// Env capture failed and no known dir has claude: say so (not "não encontrado"), and retry soon, not in 10 min.
     @Test func uncapturedEnvRetriedSoon() async throws {
         let ok = try Fake(#"[ "$1 $2 $3" = "auth status --json" ] && { echo '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}'; exit 0; }; exit 2"# + "\n")

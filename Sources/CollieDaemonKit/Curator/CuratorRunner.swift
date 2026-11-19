@@ -179,9 +179,11 @@ struct ClaudeCuratorRunner: CuratorRunner {
     }
 
     /// The user's env minus Collie's keys (no socket, token or terminal id reaches the curator), HOME the closed home.
+    /// USER always: claude finds its keychain login by it, and a failed env capture (`[:]`) has none ("logged out").
     private func environment() async -> [String: String] {
         var e = await env().filter { !$0.key.hasPrefix("COLLIE_") && !Self.strippedKeys.contains($0.key) }
         e["HOME"] = home.path
+        if (e["USER"] ?? "").isEmpty { e["USER"] = NSUserName() }
         return e
     }
 

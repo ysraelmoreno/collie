@@ -199,7 +199,7 @@ private func compute(_ es: [MemoryEvent], since: Date = ago(7), records: [Memory
             ev(.promoted, ago(1)), ev(.promoted, ago(3)), ev(.demoted, ago(1)),
             ev(.archivedUnused, ago(2)), ev(.archivedUnused, ago(2)), ev(.archived, ago(2)) { $0.source = "consolidation" },
         ]
-        let r = MemoryObservability.compute(events: es, since: ago(7), now: now, records: recs, scores: [:], openDigest: [], curator: nil,
+        let r = MemoryObservability.compute(events: es, since: ago(7), now: now, records: recs, verified: { _ in true }, scores: [:], openDigest: [], curator: nil,
                                             lifecycle: entries, calendar: utc).lifecycle
         #expect(r.provisional == 2 && r.earned == 2 && r.longTerm == 1 && r.contestedOpen == 1)
         #expect(r.promotions == 2 && r.demotions == 1 && r.provisionalArchived == 2)

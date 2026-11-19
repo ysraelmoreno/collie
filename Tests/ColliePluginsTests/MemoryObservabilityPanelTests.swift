@@ -12,7 +12,7 @@ private func ev(_ t: MemoryEvent.Kind, _ at: Date, _ f: (inout MemoryEvent) -> V
 }
 /// A daemon report (the real aggregator) as `memory.stats` sends it.
 private func reportJSON(_ es: [MemoryEvent], records: [MemoryRecord] = [], queued: Int = 0, failed: Int = 0) throws -> JSONValue {
-    let r = MemoryObservability.compute(events: es, since: ago(7), now: now, records: records, scores: [:], openDigest: [],
+    let r = MemoryObservability.compute(events: es, since: ago(7), now: now, records: records, verified: { _ in true }, scores: [:], openDigest: [],
                                         curator: CuratorStatus(available: true, reason: nil, today: 0, cap: 40, queued: queued, failed: failed,
                                                                inputTokens: 0, outputTokens: 0, costUSD: 0))
     let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601

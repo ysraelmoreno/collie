@@ -124,6 +124,15 @@ private func writes(_ p: String, _ path: String) -> Bool { allows(p, "file-write
         #expect(allows(p, "process-exec", link.path) && allows(p, "process-exec", target.path))
     }
 
+    /// dyld's libignition opens "/" (the system's dyld-support.sb): without it the process aborts before the CLI runs.
+    /// Only the root itself: nothing under it opens with it.
+    @Test func rootItselfIsReadable() {
+        for p in [claude, cursor] {
+            #expect(p.contains("(allow file-read* (literal \"/\"))"))
+            #expect(!reads(p, "/Users/u/.ssh/id_ed25519") && !reads(p, "/private/etc/passwd") && !reads(p, "/Applications"))
+        }
+    }
+
     @Test func blockedNamesThePath() {
         #expect(CuratorSandboxProfile.blocked("EPERM: operation not permitted, open '/Users/u/.claude.json'") == "/Users/u/.claude.json")
         #expect(CuratorSandboxProfile.blocked("x\nsh: /Users/u/outside: Operation not permitted\n") == "/Users/u/outside")

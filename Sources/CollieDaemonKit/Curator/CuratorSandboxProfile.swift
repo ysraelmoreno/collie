@@ -38,7 +38,9 @@ enum CuratorSandboxProfile {
         let keychain = i.keychain ? [home + "/Library/Keychains"] : []
         let reads = ["/System", "/usr/lib", "/usr/share", "/usr/bin", "/bin", "/private/var/db/dyld", "/private/etc/ssl",
                      "/private/var/db/timezone", "/dev"].map(filter)
-            + ["/private/etc/hosts", "/private/etc/resolv.conf", "/private/etc/localtime"].map { "(literal \(q($0)))" }
+            // "/" itself (not what is under it): dyld's libignition opens it as its openat root, and aborts the process
+            // (SIGABRT, exit 134, before any of the CLI's code) when it can't (the system's dyld-support.sb)
+            + ["/", "/private/etc/hosts", "/private/etc/resolv.conf", "/private/etc/localtime"].map { "(literal \(q($0)))" }
             + launcherReads
             + (exeDirs + [cwd] + keychain).map(filter) + i.reads.map(filter)
         var writes = ([cwd] + keychain).map(filter) + i.writes.map(filter) + ["(literal \"/dev/null\")"]

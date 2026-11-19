@@ -266,6 +266,7 @@ struct ClaudeCuratorRunner: CuratorRunner {
             SandboxLaunch.makeHomeDirs(EssentialPaths.agentHome(.claude, command: nil), in: home)   // R19: its state dirs
             var e = e
             e["TMPDIR"] = cwd.path   // the profile writes only the cwd and Claude's state
+            e["CLAUDE_CODE_TMPDIR"] = cwd.path   // else claude makes /tmp/claude-<uid>, outside the profile (EPERM, exit 1)
             let r: ProcessResult
             do throws(ProtocolError) {
                 r = try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),

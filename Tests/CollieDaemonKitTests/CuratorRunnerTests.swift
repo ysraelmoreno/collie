@@ -163,6 +163,7 @@ private let call = CuratorCall(instructions: "be terse", input: "--dangerously-s
         let cwd = parts[2].trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(!cwd.isEmpty && !FileManager.default.fileExists(atPath: cwd))
         #expect(parts[1].contains("TMPDIR=\(cwd)\n"))   // temp files land in the cwd
+        #expect(parts[1].contains("CLAUDE_CODE_TMPDIR="))   // claude's own temp dir too (else /tmp/claude-<uid>: EPERM)
     }
 
     /// Each call writes its own `run-<uuid>.sb` (0600), removed after; the fixed `curator.sb` is gone.

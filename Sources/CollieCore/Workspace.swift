@@ -85,6 +85,9 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
     /// Apps do cercado the user approved here: id → SHA-256 of the manifest (+ its `ui/`) at approval. A changed app
     /// asks again; the paddock's removal takes its approvals with it.
     public var apps: [String: String]?
+    /// "Sempre neste cercado": the owner trusts loops here, so `work.run` starts without its card (every other check of
+    /// the run still holds). Only the app sets it (`admin.paddock.trust-loops`); it goes with the paddock.
+    public var trustLoops: Bool?
     public init(id: UUID, name: String, repoRoot: String, path: String, branch: String, baseBranch: String,
                 status: PaddockStatus = .working, createdBy: UUID? = nil, landedAt: Date? = nil, designSystem: UUID? = nil) {
         self.id = id; self.name = name; self.repoRoot = repoRoot; self.path = path; self.branch = branch
@@ -110,6 +113,7 @@ public struct Paddock: Codable, Sendable, Equatable, Identifiable {
         status = try c.decode(PaddockStatus.self, forKey: .status); createdBy = try c.decodeIfPresent(UUID.self, forKey: .createdBy)
         landedAt = try c.decodeIfPresent(Date.self, forKey: .landedAt); designSystem = try c.decodeIfPresent(UUID.self, forKey: .designSystem)
         apps = try? c.decodeIfPresent([String: String].self, forKey: .apps)   // unreadable: none approved, never the workspace lost
+        trustLoops = try? c.decodeIfPresent(Bool.self, forKey: .trustLoops)   // missing or unreadable: not trusted, the card shows
     }
 }
 

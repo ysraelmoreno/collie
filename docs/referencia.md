@@ -799,6 +799,11 @@ Um trabalho sem branch nunca fecha sozinho. Os commits novos entram no trabalho 
 novo (`loop-<tarefa>-<n>`) no cercado, e quem decide se a tarefa passou é o check, nunca o agente. Só começa depois que o
 dono aprovou a lista de tarefas e os checks.
 
+- Confiar em laços por cercado: com "Sempre neste cercado" ligado (só o app liga e desliga, `admin.paddock.trust-loops`;
+  nenhum comando de agente), o `work run` desse cercado começa sem cartão e o Pastor recebe um aviso com as tarefas e os
+  checks. Todo o resto continua valendo: `--max` e os tetos, o sandbox do laço, o cercado sem outro agente trabalhando, a
+  árvore limpa e o limite de tamanho do cartão. `collie paddock status <cercado>` mostra "laços sem cartão: sim". A
+  confiança some com o cercado.
 - Como o dono começa: digita `/collie:loop <pedido>` num terminal Pastor dentro de um cercado. O comando só ensina o
   procedimento ao agente: quebrar o pedido em tarefas, escrever um spec e propor um check para cada uma, mostrar tudo
   (com os limites e o portão) no chat e esperar a resposta; só então `work task add` e `work run`. Fora de um Pastor num cercado o

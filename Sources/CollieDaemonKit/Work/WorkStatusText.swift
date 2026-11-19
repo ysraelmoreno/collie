@@ -116,6 +116,15 @@ public enum WorkStatusText {
         return bounded(lines, limit: RerailText.limit)
     }
 
+    /// What the starter gets when its loop starts without the owner's card (a paddock trusted for loops): the limits,
+    /// then one line per task with its check. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
+    static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState) -> String {
+        var lines = ["[collie] Laço iniciado sem cartão (cercado «\(RerailText.clean(paddock))» é confiável): "
+            + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), --max \(l.max ?? 0), orçamento \(l.budget ?? 0) s. Parar: collie work stop."]
+        lines += tasks.enumerated().map { "#\($0 + 1) «\(RerailText.clean($1.title))» check «\(RerailText.clean($1.check ?? "", max: 200))»" }
+        return bounded(lines, limit: RerailText.limit)
+    }
+
     /// Joins lines up to `limit` characters; the cut ends with "… e mais <n>".
     private static func bounded(_ lines: [String], limit: Int = limit) -> String {
         var out = ""

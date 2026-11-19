@@ -825,6 +825,7 @@ actor CommandRouter {
             return .object([:])
         case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))
         case "admin.fonts": return try setGoogleFonts(str(r, "download"))
+        case "admin.paddock.trust-loops": return try await trustLoops(r)
         case let c where c == "admin.remote" || c.hasPrefix("admin.remote."): return try await remoteCommand(r)
         case "admin.data.export", "admin.data.import":
             let key = r.command == "admin.data.export" ? "out" : "from"

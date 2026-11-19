@@ -43,15 +43,19 @@ extension CommandRouter {
             return try isoJSON(try await createPaddock(name, repo: repo, createdBy: caller?.id))
         case "paddock.status":
             var f = try findPaddock(try need(r, "name"))
-            guard caller == nil || isCreator(f) || caller?.paddockId == f.id else {
-                throw refuse("only the paddock's creator Shepherd or its terminals can set its status")
+            if let status = str(r, "status") {   // omitted: only shows the paddock
+                guard caller == nil || isCreator(f) || caller?.paddockId == f.id else {
+                    throw refuse("only the paddock's creator Shepherd or its terminals can set its status")
+                }
+                guard let s = PaddockStatus(rawValue: status) else {
+                    throw ProtocolError(code: .invalidArgs, message: "status must be working|blocked|review|idle|done")
+                }
+                f.status = s
+                try await save(f)
             }
-            guard let s = PaddockStatus(rawValue: try need(r, "status")) else {
-                throw ProtocolError(code: .invalidArgs, message: "status must be working|blocked|review|idle|done")
-            }
-            f.status = s
-            try await save(f)
-            return try isoJSON(f)
+            guard case .object(var o) = try isoJSON(f) else { return .null }
+            if f.trustLoops == true { o["loops"] = .string("laços sem cartão: sim") }
+            return .object(o)
         case "paddock.land":
             guard let mode = LandMode(rawValue: str(r, "mode") ?? "merge") else {
                 throw ProtocolError(code: .invalidArgs, message: "mode must be merge|squash|rebase|pr")

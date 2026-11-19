@@ -477,6 +477,138 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         #expect(entry(plain.id) != nil && entry(plain.id)?["loop"] == nil, "\(a)")
     }
 
+    // MARK: B6.1 loops trusted per paddock
+
+    /// The owner's "Sempre neste cercado" (only the app: the admin token outside a terminal).
+    private func trust(_ d: Daemon, _ p: Paths, on: Bool = true) async throws -> Response {
+        let id = try #require(await d.router.ws.paddocks.first { $0.name == "feat" }?.id)
+        return try await work(d, p, nil, "admin.paddock.trust-loops", ["paddock": .string(id.uuidString), "on": .bool(on)])
+    }
+    private func trusted(_ d: Daemon) async -> Bool? { await d.router.ws.paddocks.first { $0.name == "feat" }?.trustLoops }
+
+    /// Not trusted: the card, and nothing runs before Permitir. Trusted: no card, the loop starts, the Shepherd is told.
+    @Test func trustedPaddockRunsWithoutTheCard() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "Write done", check: "test -f done.txt")
+            let agent = "bash -c 'read l; echo ok > done.txt; git add done.txt; git commit -qm done; cat'"
+            let args: [String: JSONValue] = ["command": .string(agent), "timeout": .number(60)]
+            let asked = try await run(d, p, x.s, args, approve: false)
+            guard case .object(let a)? = asked.result else { Issue.record("\(asked)"); return }
+            #expect(a["state"] == .string("awaiting approval"))
+            #expect(await waitFor(20) { await d.router.appCards.contains { $0.app == "work-loop" } })
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+            #expect(try await answerCard(d, p, allow: false) != nil)
+            #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("não aprovou o laço") })
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+
+            let t = try await trust(d, p)
+            guard case .object(let o)? = t.result else { Issue.record("\(t)"); return }
+            #expect(o["trustLoops"] == .bool(true) && o["name"] == .string("feat"), "\(o)")
+            let r = try await run(d, p, x.s, args, approve: false)
+            guard case .object(let ran)? = r.result else { Issue.record("\(r)"); return }
+            #expect(ran["state"] == .string("running") && ran["tasks"] == .number(1))
+            #expect(try await d.router.work.get(x.work)?.loop != nil)   // started before the reply, no card in between
+            #expect(await d.router.appCards.isEmpty)
+            #expect(await loopEnded(d, x.work))
+            #expect(await d.router.appCards.isEmpty)
+            let w = try #require(try await d.router.work.get(x.work))
+            #expect(w.tasks.first?.state == .done && w.loop?.state == .finished, "\(w.tasks) \(String(describing: w.loop))")
+            #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("Laço iniciado sem cartão") })
+        }
+    }
+
+    /// Trust drops only the card: --max, the hard caps, the card's size limit and the clean tree still refuse.
+    @Test func trustedPaddockKeepsTheLimitsAndTheCleanTree() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            #expect(try await trust(d, p).ok)
+            let none = try await work(d, p, x.s, "work.run")
+            #expect(none.error?.code == .invalidArgs && none.error?.message.contains("--max") == true, "\(none)")
+            for (k, v) in [("max", 31.0), ("timeout", 14_401), ("budget", 43_201), ("tries", 11)] {
+                var a: [String: JSONValue] = ["max": .number(3)]; a[k] = .number(v)
+                #expect(try await work(d, p, x.s, "work.run", a).error?.code == .invalidArgs, "\(k)")
+            }
+            try await addTask(d, p, x.s, "Long", check: "echo " + String(repeating: "x", count: 1400))
+            let big = try await run(d, p, x.s, approve: false)
+            #expect(big.error?.code == .invalidArgs && big.error?.message.contains("card") == true, "\(big)")
+            #expect(try await work(d, p, x.s, "work.task.drop", ["task": .string("Long"), "reason": .string("too long")]).ok)
+            try "dirty\n".write(to: x.dir.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+            let dirty = try await run(d, p, x.s, approve: false)
+            #expect(dirty.error?.code == .invalidArgs && dirty.error?.message.contains("f.txt") == true, "\(dirty)")
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+            #expect(await d.router.appCards.isEmpty)
+        }
+    }
+
+    @Test func trustedPaddockStillRefusesWhileAnotherAgentWorks() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            try await addTask(d, p, x.s, "A", check: "true")
+            #expect(try await trust(d, p).ok)
+            let busy = try await spawnIn(d, p, "busy", cwd: x.repo, paddock: "feat")
+            try await d.process(busy.uuid)!.write(Data("while true; do echo tick; sleep 0.2; done\n".utf8))
+            #expect(await waitFor(20) { await d.badge(busy.uuid) == .working })
+            let r = try await run(d, p, x.s, approve: false)
+            #expect(r.error?.code == .invalidArgs && r.error?.message.contains("busy") == true, "\(r)")
+            #expect(try await d.router.work.get(x.work)?.loop == nil)
+        }
+    }
+
+    /// Only the app turns trust on and off: an agent (the Shepherd too) is refused, and no agent command carries it.
+    @Test func onlyTheAppTrustsAPaddock() async throws {
+        try await withDaemon { d, p in
+            let x = try await pad(d, p)
+            let id = try #require(await d.router.ws.paddocks.first { $0.name == "feat" }?.id)
+            let agent = try await work(d, p, x.s, "admin.paddock.trust-loops", ["paddock": .string(id.uuidString), "on": .bool(true)])
+            #expect(agent.error?.code == .unauthorized, "\(agent)")
+            #expect(await trusted(d) == nil)
+            #expect(try await work(d, p, x.s, "paddock.status", ["name": .string("feat"), "status": .string("review"), "trustLoops": .bool(true)]).ok)
+            #expect(await trusted(d) == nil)
+            #expect(try await work(d, p, nil, "admin.paddock.trust-loops", ["paddock": .string(UUID().uuidString), "on": .bool(true)]).error?.code == .notFound)
+
+            #expect(try await trust(d, p).result == .object(["paddock": .string(id.uuidString), "name": .string("feat"), "trustLoops": .bool(true)]))
+            #expect(await trusted(d) == true)
+            // `collie paddock status feat` shows it; setting the status keeps it
+            let shown = try await work(d, p, x.s, "paddock.status", ["name": .string("feat")])
+            guard case .object(let o)? = shown.result else { Issue.record("\(shown)"); return }
+            #expect(o["loops"] == .string("laços sem cartão: sim") && o["status"] == .string("review"), "\(o)")
+            #expect(try await work(d, p, x.s, "paddock.status", ["name": .string("feat"), "status": .string("working")]).ok)
+            #expect(await trusted(d) == true)
+
+            #expect(try await trust(d, p, on: false).result == .object(["paddock": .string(id.uuidString), "name": .string("feat"), "trustLoops": .bool(false)]))
+            #expect(await trusted(d) == nil)
+            guard case .object(let off)? = try await work(d, p, x.s, "paddock.status", ["name": .string("feat")]).result else { Issue.record("no paddock"); return }
+            #expect(off["loops"] == nil)
+        }
+    }
+
+    /// A record from before the field decodes (not trusted); the field survives a save.
+    @Test func paddockWithoutTheTrustFieldDecodes() throws {
+        let old = #"{"id":"6F1265AC-B57A-46EC-B119-51FF67B0D7A9","name":"feat","repoRoot":"/r","path":"/r/.collie/paddocks/feat","branch":"collie/feat","baseBranch":"main","status":"working"}"#
+        var f = try JSONDecoder().decode(Paddock.self, from: Data(old.utf8))
+        #expect(f.trustLoops == nil && f.name == "feat")
+        #expect(!String(decoding: try JSONEncoder().encode(f), as: UTF8.self).contains("trustLoops"))
+        f.trustLoops = true
+        #expect(try JSONDecoder().decode(Paddock.self, from: try JSONEncoder().encode(f)).trustLoops == true)
+        let odd = old.replacingOccurrences(of: #""status""#, with: #""trustLoops":"yes","status""#)
+        #expect(try JSONDecoder().decode(Paddock.self, from: Data(odd.utf8)).trustLoops == nil)   // unreadable: the card shows
+    }
+
+    @Test func trustedNoticeListsTheTasksAndIsBounded() {
+        let tasks = [WorkTask(id: "a", title: "Tela\nnova", check: "true"), WorkTask(id: "b", title: "Docs", check: "swift test")]
+        #expect(WorkStatusText.loopTrusted(paddock: "feat", tasks, WorkLoopState(max: 4, budget: 600)) == """
+            [collie] Laço iniciado sem cartão (cercado «feat» é confiável): 2 tarefas, --max 4, orçamento 600 s. Parar: collie work stop.
+            #1 «Tela nova» check «true»
+            #2 «Docs» check «swift test»
+            """)
+        let many = (0..<60).map { WorkTask(id: "\($0)", title: String(repeating: "x", count: 100) + " \($0)", check: "true") }
+        let s = WorkStatusText.loopTrusted(paddock: "feat", many, WorkLoopState(max: 30, budget: 600)), lines = s.split(separator: "\n")
+        #expect(s.count <= RerailText.limit && s.hasPrefix("[collie] Laço iniciado sem cartão (cercado «feat» é confiável): 60 tarefas"))
+        #expect(lines.last == "… e mais \(60 - (lines.count - 2))", "\(lines.last ?? "")")
+    }
+
     /// Only a terminal that can edit the loop's worktree blocks its reset.
     @Test func onlyTerminalsInTheWorktreeBlockTheLoop() {
         let dir = URL(fileURLWithPath: "/tmp/collie-wt/collie")

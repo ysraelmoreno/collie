@@ -78,9 +78,20 @@ extension CommandRouter {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
+        let id = w.id, starter = t.id, title = w.title
+        // a paddock the owner trusts for loops (read now, after the awaits): no card. Everything above held all the same
+        // (the limits, the sandbox, the idle paddock, the clean tree, the text that fits a card); the Shepherd gets a notice.
+        if ws.paddocks.first(where: { $0.id == pid })?.trustLoops == true {
+            guard await startLoop(id, loop, paddock: paddock, starter: starter, dir: dir) else {
+                throw ProtocolError(code: .unavailable, message: "the loop did not start")
+            }
+            started = true   // the reservation now belongs to the loop
+            let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop)
+            Task { [weak self] in try? await self?.asks.inject(to: starter, prompt: notice, afterQuiet: true) }
+            return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")])
+        }
         let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
                            base: nil, call: text, command: "run", by: t.id)
-        let id = w.id, starter = t.id, title = w.title
         started = true   // the reservation now belongs to the approval
         loopCards[id] = card.id
         Task { [weak self] in
@@ -107,17 +118,19 @@ extension CommandRouter {
         try? await asks.inject(to: starter, prompt: line, afterQuiet: true)
     }
 
-    /// After the owner's Permitir: the loop's sandbox, its state, the engine.
-    private func startLoop(_ id: UUID, _ loop: WorkLoopState, paddock: Paddock, starter: UUID, dir: URL) async {
+    /// After the owner's Permitir (or at once, in a paddock trusted for loops): the loop's sandbox, its state, the engine.
+    /// False: it did not start, and the paddock is free again.
+    @discardableResult
+    private func startLoop(_ id: UUID, _ loop: WorkLoopState, paddock: Paddock, starter: UUID, dir: URL) async -> Bool {
         // the loop's own profile (the paddock's, strict), made now: it outlives every terminal of the loop
         if config.sandboxHome != nil {
             do { _ = try prepareLoopSandbox(id, paddock: paddock) } catch {
                 loopPaddocks.remove(paddock.id)
                 try? await asks.inject(to: starter, prompt: "[collie] O laço não começou: o sandbox dele não pôde ser preparado.", afterQuiet: true)
-                return
+                return false
             }
         }
-        do { try await work.update(id) { $0.loop = loop } } catch { loopPaddocks.remove(paddock.id); return }
+        do { try await work.update(id) { $0.loop = loop } } catch { loopPaddocks.remove(paddock.id); return false }
         let host = RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: id, paddock: paddock.id, dir: dir,
                                   sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
         let engine = WorkLoop(store: work, host: host)
@@ -127,6 +140,20 @@ extension CommandRouter {
             await self?.loopEnded(id, starter: starter, paddock: pid)
         }
         workLoops[id] = (engine, task, false)
+        return true
+    }
+
+    /// `admin.paddock.trust-loops` (app only: no agent command sets it): `--on` trusts the paddock for loops, without it
+    /// the card is back. Replies with the state.
+    func trustLoops(_ r: Request) async throws -> JSONValue {
+        guard let i = ws.paddocks.firstIndex(where: { $0.id.uuidString.caseInsensitiveCompare(str(r, "paddock") ?? "") == .orderedSame }) else {
+            throw ProtocolError(code: .notFound, message: "Paddock '\(str(r, "paddock") ?? "")' not found")
+        }
+        ws.paddocks[i].trustLoops = flag(r, "on") ? true : nil
+        try await persist()
+        let f = ws.paddocks[i]
+        await hub.emit(.paddock(f))
+        return .object(["paddock": .string(f.id.uuidString), "name": .string(f.name), "trustLoops": .bool(f.trustLoops == true)])
     }
 
     /// The card's one line (the card shows no line breaks): where, the limits, the gate (once), then every task, its

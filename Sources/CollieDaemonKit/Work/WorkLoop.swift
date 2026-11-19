@@ -256,9 +256,12 @@ actor WorkLoop {
     }
 
     /// The Shepherd hears of a task the moment it ends, not only when the whole loop does.
+    /// Never awaited: the line is typed into the Shepherd only once it is idle, and a loop that waited for that stood
+    /// still while the Shepherd was in a turn (up to the inject's hold), with the next task's terminal never opening.
     private func reportEnd(_ work: UUID, _ task: String) async {
         guard let t = try? await store.get(work)?.tasks.first(where: { $0.id == task }) else { return }
-        await host.taskEnded(WorkStatusText.taskEnded(t))
+        let line = WorkStatusText.taskEnded(t), host = host
+        Task { await host.taskEnded(line) }
     }
 
     /// Seconds of the budget left for this attempt (at least 1); no budget: a day.

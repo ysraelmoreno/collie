@@ -73,6 +73,10 @@ import CollieCore
         var w = Work(title: "W", terminalId: term, tasks: [WorkTask(id: "a", title: "Build it", state: .inProgress)])
         w.loop = WorkLoopState(state: .running, task: "a", attempt: 2, tries: 3)
         #expect(WorkStatusText.recall(w).contains("em laço: Build it (tentativa 2/3)"), "\(WorkStatusText.recall(w))")
+        w.loop?.phase = .check
+        #expect(WorkStatusText.recall(w).contains("em laço: Build it (tentativa 2/3) · rodando o check"), "\(WorkStatusText.recall(w))")
+        w.loop?.phase = .gate
+        #expect(WorkStatusText.recall(w).contains("· rodando o portão"))
         w.loop?.state = .finished; w.loop?.task = nil
         #expect(WorkStatusText.recall(w).contains("laço terminou"))
         w.loop = nil

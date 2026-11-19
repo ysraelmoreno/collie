@@ -51,14 +51,21 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public var max: Int?; public var used: Int
     public var budget: Int?; public var spent: Int?; public var tasks: [String]?
     public var gate: String?
+    /// What a running loop is doing right now: its terminal is only open during `agent`, so without this a loop in its
+    /// check or gate looks idle (no terminal, no signal).
+    public enum Phase: String, Codable, Sendable {
+        case agent, check, gate
+        public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão" } }
+    }
+    public var phase: Phase?
     public var startedAt: Date; public var endedAt: Date?
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
-                budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil,
+                budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil, phase: Phase? = nil,
                 startedAt: Date = Date(), endedAt: Date? = nil) {
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
-        self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate
+        self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate; self.phase = phase
         self.startedAt = startedAt; self.endedAt = endedAt
     }
 }

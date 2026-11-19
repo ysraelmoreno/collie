@@ -75,7 +75,7 @@ public enum WorkStatusText {
         switch l.state {
         case .running:
             let title = w.tasks.first { $0.id == l.task }.map { RerailText.clean($0.title) } ?? "?"
-            return "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))"
+            return "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.phase.map { " · \($0.label)" } ?? "")
         case .stopped: return "laço parado (\(l.used) tentativas)"
         case .finished: return "laço terminou (\(l.used) tentativas)"
         }

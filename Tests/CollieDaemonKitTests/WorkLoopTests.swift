@@ -22,6 +22,9 @@ private actor FakeHost: LoopHost {
     var summoned: [String] = [], dismissed: [String] = [], prompts: [String: String] = [:], checks = 0
     /// Every command `check` ran (the tasks' checks and the gate), in order.
     var commands: [String] = []
+    /// Called with each command before `check` runs it (a test reads the loop's phase from the store here).
+    var probe: (@Sendable (String) async -> Void)?
+    func setProbe(_ p: @escaping @Sendable (String) async -> Void) { probe = p }
     /// In order: "dismiss <name>", "check".
     var events: [String] = []
     /// Another terminal of the paddock in a turn (blocks the loop's reset).
@@ -63,12 +66,19 @@ private actor FakeHost: LoopHost {
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await GitRunner.run(args, in: dir) }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1; events.append("check"); commands.append(command)
+        await probe?(command)
         return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/bash"), args: ["-c", command], in: dir,
                                             env: ProcessInfo.processInfo.environment, timeout: timeout)
     }
     func readSpec(_ path: String) async -> String? { try? String(contentsOfFile: path, encoding: .utf8) }
     nonisolated func patchDir(_ work: UUID) -> URL { patches.appendingPathComponent(work.uuidString.lowercased()) }
     nonisolated func now() -> Date { Date() }
+}
+
+private actor PhaseLog {
+    struct Item: Equatable { let command: String; let phase: WorkLoopState.Phase? }
+    var items: [Item] = []
+    func add(_ c: String, _ p: WorkLoopState.Phase?) { items.append(Item(command: c, phase: p)) }
 }
 
 private func git(_ dir: URL, _ args: String...) async throws -> String {
@@ -439,6 +449,20 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(patch.contains("done.txt") && !patch.contains("sneak.txt"), "\(patch)")
         #expect(try await git(r.repo, "rev-parse", "HEAD") == start)
         #expect(try await git(r.repo, "status", "--porcelain").isEmpty)
+    }
+
+    @Test func statusShowsWhatTheLoopIsDoing() async throws {
+        let r = try await Rig([task("a", "true")], tries: 1, gate: "echo gate"); defer { r.cleanup() }
+        let seen = PhaseLog()
+        let store = r.store, work = r.work
+        await r.host.setProbe { cmd in
+            let p = try? await store.get(work)?.loop?.phase
+            await seen.add(cmd, p)
+        }
+        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        #expect(await r.run() == .finished)
+        #expect(await seen.items == [PhaseLog.Item(command: "true", phase: .check), PhaseLog.Item(command: "echo gate", phase: .gate)])
+        #expect(try await r.get().loop?.phase == nil)   // between attempts and at the end: none
     }
 
     @Test func gateThatCommitsFailsTheAttempt() async throws {

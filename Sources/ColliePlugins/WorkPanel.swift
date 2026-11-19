@@ -82,7 +82,7 @@ public struct WorkListing: Decodable, Identifiable, Equatable, Sendable {
         switch l.state {
         case .running:
             let title = w.tasks.first { $0.id == l.task }?.title ?? "?"
-            return LoopBadge(text: "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.max.map { " · \(l.used)/\($0) no total" } ?? ""),
+            return LoopBadge(text: "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.max.map { " · \(l.used)/\($0) no total" } ?? "") + (l.phase.map { " · \($0.label)" } ?? ""),
                              running: true)
         case .stopped: return LoopBadge(text: "laço parado (\(l.used) tentativas)", running: false)
         case .finished: return LoopBadge(text: "laço terminou (\(l.used) tentativas)", running: false)

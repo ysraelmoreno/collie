@@ -91,7 +91,7 @@ actor WorkLoop {
         let keep = await untracked(dir)
         try? await store.update(w.id) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started }
-            x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1
+            x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.phase = .agent
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
         }
 
@@ -149,6 +149,7 @@ actor WorkLoop {
             let loose = Set(await untracked(dir))   // untracked before the check: the owner's (`keep`) and the agent's
             var status: Int32?   // nil: timed out
             var broken: String?   // the check could not even start
+            await phase(w.id, .check)
             do {
                 let budgeted = Duration.seconds(left(loop, since: started))
                 let r = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
@@ -169,6 +170,7 @@ actor WorkLoop {
                 if blocked != nil { gate = "gate did not run (tree not reset)" }
                 // the agent may not rewrite the script that judges it: the gate does not run on a tree that changed it
                 else if let t = await tampered(g, before: before, judged: judged, dir) { gate = t } else {
+                    await phase(w.id, .gate)
                     do {
                         let budgeted = Duration.seconds(left(loop, since: started))
                         let r = try await host.check(g, in: dir, timeout: Swift.min(checkTimeout, budgeted))
@@ -186,6 +188,7 @@ actor WorkLoop {
             reason = reasons.joined(separator: "; ")
         }
 
+        await phase(w.id, nil)
         let at = host.now()
         if passed {
             // of `judged`, never of a HEAD read after the check and the gate ran
@@ -236,6 +239,9 @@ actor WorkLoop {
     private static func blockedNote(_ who: String) -> String {
         "[loop] '\(who)' está trabalhando no cercado: o laço não reseta a worktree com outro agente nela; laço parado, worktree intocada"
     }
+
+    /// What the running loop is doing, for `work status` and the panel (nil: between attempts).
+    private func phase(_ id: UUID, _ p: WorkLoopState.Phase?) async { try? await store.update(id) { x in x.loop?.phase = p } }
 
     private func note(_ id: UUID, _ text: String) async {
         let at = host.now()

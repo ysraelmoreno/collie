@@ -44,7 +44,8 @@ actor LaneIntegrator {
         f.othersWorking = await host.othersWorking()
         // dirt is what the engine calls dirt: a modified tracked file. A status git cannot give counts as dirty.
         let before = await out(["rev-parse", "HEAD"])
-        f.treeClean = before != nil && (await out(["status", "--porcelain", "--untracked-files=no"])) == ""
+        let dirt = await out(["status", "--porcelain", "--untracked-files=no"])
+        f.treeClean = before != nil && dirt == ""
         guard f.othersWorking == nil, f.treeClean, let before else { return await done(f) }
         if (try? await host.git(["merge-base", "--is-ancestor", lane.branch, "HEAD"], in: dir))?.status == 0 { return await done(f) }
 

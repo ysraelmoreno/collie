@@ -14,7 +14,8 @@ private let sandboxApplies: Bool = {
 
 /// A profile's file rules read as Seatbelt reads them: every rule in order, the last one that matches decides
 /// (`(allow default)` first). Enough of SBPL for what `SandboxProfile.render` writes: `subpath`, `literal`, `regex`.
-private struct ProfileRules {
+/// Shared with `LaneProfileIntentTests` (M3b.1).
+struct ProfileRules {
     struct Rule { let allow: Bool, ops: [String], filters: [(kind: String, arg: String)], other: Bool }
     let rules: [Rule]
 

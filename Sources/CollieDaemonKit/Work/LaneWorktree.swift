@@ -7,8 +7,12 @@ import CollieProtocol
 // - how it is born: refuse an existing path, refuse an existing branch (`show-ref --verify --quiet`), then
 //   `git worktree add -b <branch> <path> <base>`;
 // - how it dies: `git worktree remove --force`, `git worktree prune`, `git branch -D`.
-// What differs: git runs through `LoopHost.git` (`loopGit`: the repo's own filters off, sandboxed when the daemon
-// sandboxes), never a loose `Process`; and a lane is not a paddock (no record, no app, no status).
+// What differs: git runs through `LoopHost.laneGit` (`loopGit`: the repo's own filters off), never a loose `Process`;
+// and a lane is not a paddock (no record, no app, no status).
+// M3b.1: like the paddocks' worktrees, a lane is made and removed by the daemon's own git, outside the loop's profile
+// (the paddock's strict profile writes neither `<paddocks>/lane-*` nor `<common>/worktrees/lane-*`). So every path
+// handed to git here is one this file built (`validate`d task, under the repository's paddocks folder) or checked
+// (`ownsPath`); none comes from an agent or a task unchecked.
 
 /// A lane: a temporary worktree of the loop, one per task running in parallel. `base` is the sha it was cut from
 /// ("" for a lane found by `orphans`: git does not keep it, and an orphan is only ever removed).
@@ -46,10 +50,17 @@ enum LaneWorktree {
         repoRoot.appendingPathComponent("\(LegacyOrq.repoDirName(repoRoot: repoRoot))/paddocks")
     }
 
-    /// Git through the host, throwing with stderr on a non-zero exit.
+    /// `path` is a `lane-*` folder directly in the repository's own paddocks folder (symlinks resolved).
+    static func ownsPath(_ path: URL, repoRoot: URL) -> Bool {
+        let real = URL(fileURLWithPath: SignedAppCheck.realPath(path))
+        return real.lastPathComponent.hasPrefix(dirPrefix)
+            && real.deletingLastPathComponent().path == SignedAppCheck.realPath(paddocksDir(repoRoot))
+    }
+
+    /// The daemon's git through the host (`laneGit`), throwing with stderr on a non-zero exit.
     @discardableResult
     private static func git(_ args: [String], in dir: URL, _ host: some LoopHost) async throws(ProtocolError) -> String {
-        let r = try await host.git(args, in: dir)
+        let r = try await host.laneGit(args, in: dir)
         guard r.status == 0, !r.truncated else {
             let msg = (r.stderr.isEmpty ? r.stdout : r.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
             throw fail("git \(args.prefix(2).joined(separator: " ")) failed: \(msg)")
@@ -58,7 +69,7 @@ enum LaneWorktree {
     }
 
     private static func hasBranch(_ branch: String, in repoRoot: URL, _ host: some LoopHost) async throws(ProtocolError) -> Bool {
-        try await host.git(["show-ref", "--verify", "--quiet", "refs/heads/\(branch)"], in: repoRoot).status == 0
+        try await host.laneGit(["show-ref", "--verify", "--quiet", "refs/heads/\(branch)"], in: repoRoot).status == 0
     }
 
     /// The repository's worktrees that sit on a branch: (path as git prints it, short branch name).
@@ -96,6 +107,9 @@ enum LaneWorktree {
         let root = lane.repoRoot
         // by branch, not by path: a worktree on any other branch is never this lane's
         if let wt = try await worktrees(root, host).first(where: { $0.branch == lane.branch }) {
+            // M3b.1: this git runs outside any profile, with --force: never on a path that is not a lane's
+            // (a lane's worktree moved elsewhere, or a gitdir pointer rewritten from inside the lane)
+            guard ownsPath(URL(fileURLWithPath: wt.path), repoRoot: root) else { throw fail("lane worktree \(wt.path) is not in the paddocks folder") }
             try await git(["worktree", "remove", "--force", wt.path], in: root, host)
         }
         // what is left on disk: only a `lane-…` folder of the paddocks folder that no worktree owns

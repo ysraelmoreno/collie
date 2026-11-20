@@ -227,12 +227,12 @@ extension CommandRouter {
     /// M3.6: what is left on disk of the lanes of `w`'s loop goes: worktree, branch (`LaneWorktree.sweep`: only what is
     /// a lane, and never a lane of another work on record) and the lane's sandbox files. Idempotent. A loop that never
     /// had a lane (no `--parallel` over 1, none on record) costs no git: it ends exactly as before lanes.
-    /// `prepare` (the start sweep): the loop's profile is made again first, since git here runs only under it.
+    /// M3b.1: the same git as the lanes' birth (`laneGit`: the daemon's, outside the loop's profile), at the loop's end
+    /// and in the start sweep alike: no profile is needed, or made, to remove a lane.
     /// ponytail: a lane of a work no longer on record goes too, but its sandbox files stay (its work's id is unknown).
-    func removeLanes(of w: Work, prepare: Bool = false) async {
+    func removeLanes(of w: Work) async {
         guard (w.loop?.parallel ?? 1) > 1 || w.loop?.lanes?.isEmpty == false,
               let p = ws.paddocks.first(where: { $0.id == w.paddockId }), !p.isFolder else { return }
-        if prepare, config.sandboxHome != nil { _ = try? prepareLoopSandbox(w.id, paddock: p) }
         let host = RouterLoopHost(router: self, starter: w.terminalId, root: config.paths.root, work: w.id, paddock: p.id,
                                   dir: URL(fileURLWithPath: p.path), sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
         let others = Set(((try? await work.list(includeClosed: true)) ?? []).map(\.id)).subtracting([w.id])
@@ -248,7 +248,7 @@ extension CommandRouter {
         guard let all = try? await work.list(includeClosed: true) else { return }
         let now = Date()
         for w in all where w.loop?.state == .running {
-            await removeLanes(of: w, prepare: true)
+            await removeLanes(of: w)
             SandboxLaunch.remove(w.id, root: config.paths.root)
             // its agents' records (the processes died with the daemon)
             for t in Self.loopAgents(of: w, in: ws.terminals) { try? await remove(t) }
@@ -443,6 +443,9 @@ struct LoopRevertGit: RevertGit {
     }
 }
 
+/// M3b.1: git for the lanes' birth and removal: (args, dir, sandbox profile or nil).
+typealias LaneGit = @Sendable (_ args: [String], _ dir: URL, _ profile: URL?) async throws(ProtocolError) -> ProcessResult
+
 struct RouterLoopHost: LoopHost {
     let router: CommandRouter, starter: UUID, root: URL, work: UUID, paddock: UUID, dir: URL
     let sandbox: (home: URL, shell: String)?
@@ -450,6 +453,9 @@ struct RouterLoopHost: LoopHost {
     /// the lane, git and the check run under the lane's own profile, its agent is born in the lane, and it refuses to
     /// run anything when the daemon sandboxes no terminal.
     var lane: Lane? = nil
+    /// M3b.1: what runs the lanes' own git (`laneGit`), with the profile it is given: always none. A test's fake
+    /// records that profile.
+    var laneRunner: LaneGit = RouterLoopHost.loopGit
 
     /// This host for one lane of the loop: cheap, one per lane.
     func forLane(_ lane: Lane) -> RouterLoopHost {
@@ -516,6 +522,12 @@ struct RouterLoopHost: LoopHost {
 
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
         try await Self.loopGit(args, in: dir, profile: try profile())
+    }
+
+    /// M3b.1: the daemon's own git, as `PaddockManager` runs for a paddock's worktree: no profile (the loop's cannot
+    /// write a lane), with `loopGit`'s care (hooks, fsmonitor and the repo's own filters off: `worktree add` checks out).
+    func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        try await laneRunner(args, dir, nil)
     }
 
     /// Git for the loop, in an agent-writable repo: under `profile`, hooks and fsmonitor off (GitRunner), and the filter

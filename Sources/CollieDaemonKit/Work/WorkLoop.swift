@@ -18,6 +18,10 @@ protocol LoopHost: Sendable {
     /// The starter (the Shepherd the loop summons as) still exists.
     func starterAlive() async -> Bool
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
+    /// M3b.1: the git that makes, removes and prunes lanes (`LaneWorktree`, nothing else): the daemon's own, outside
+    /// the loop's profile, which cannot write a sibling `lane-*` worktree nor `<common>/worktrees/lane-*`. Only on
+    /// paths the daemon builds and validates itself. What runs inside a lane (agent, check, gate) stays in `git`.
+    func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
     /// `command` via `/bin/bash -c` in `dir`, under the loop's own sandbox profile; throws (never runs unsandboxed) when
     /// the daemon sandboxes terminals and that profile is missing.
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult
@@ -48,6 +52,8 @@ extension LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
     }
     func laneGone(_ lane: Lane) async {}
+    /// A host with one git (the tests' fakes, which have no profile).
+    func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await git(args, in: dir) }
     func namesTaken() async -> Set<String> { [] }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
         EvidenceFiles.copy(glob, from: dir, to: EvidenceFiles.dir(patchDir(work), task: task))

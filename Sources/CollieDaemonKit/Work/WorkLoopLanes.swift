@@ -148,7 +148,8 @@ extension WorkLoop {
     }
 
     /// A lane cut from the paddock's HEAD of now, and its host; a lane that got no host is removed.
-    private func cut(_ id: UUID, _ task: String, dir: URL, root: URL) async throws(ProtocolError) -> (Lane, any LoopHost) {
+    /// M3b.1: HEAD is read under the loop's profile (`host.git`); the worktree is made by the daemon's git (`laneGit`).
+    func cut(_ id: UUID, _ task: String, dir: URL, root: URL) async throws(ProtocolError) -> (Lane, any LoopHost) {
         guard let head = await out(["rev-parse", "HEAD"], dir) else { throw ProtocolError(code: .internal, message: "git rev-parse HEAD failed") }
         let lane = try await LaneWorktree.create(repoRoot: root, base: head, work: id, task: task, host: host)
         do { return (lane, try await host.laneHost(lane)) } catch {
@@ -173,7 +174,7 @@ extension WorkLoop {
 
     /// The lane's worktree, its branch and what its host made for it go. In a task of its own: a lane is removed even
     /// when the loop was cancelled (git under a cancelled task may not run), so none outlives the run.
-    private func dropLane(_ lane: Lane) async {
+    func dropLane(_ lane: Lane) async {
         let host = host
         await Task {
             try? await LaneWorktree.remove(lane, host: host)

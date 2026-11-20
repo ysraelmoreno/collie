@@ -87,6 +87,8 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         self.panel = panel; self.host = host
         super.init()
         box.owner = self
+        // a theme swap may keep the appearance (dark → custom dark): the pages still need the new tokens
+        NotificationCenter.default.addObserver(self, selector: #selector(themeSwapped), name: .collieThemeChanged, object: nil)
         observer = NotificationCenter.default.addObserver(forName: PluginRegistry.externalChanged, object: nil, queue: nil) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -209,6 +211,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     public func close() {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
+        NotificationCenter.default.removeObserver(self, name: .collieThemeChanged, object: nil)
         teardown("painel fechado")
     }
 
@@ -500,12 +503,14 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     /// `{scheme, tokens: {"--collie-<token>": "#rrggbb"}}` for the panel's appearance.
     func themeJSON() -> String {
         let dark = box.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let p = dark ? Palette.dark : Palette.light
+        let p = dark ? ActivePalette.dark : ActivePalette.light
         var t: [String: JSONValue] = [:]
         for (n, k) in Self.tokens { let c = p[keyPath: k]; t["--collie-\(n)"] = .string(String(format: "#%02x%02x%02x", c.r, c.g, c.b)) }
         let v: JSONValue = .object(["scheme": .string(dark ? "dark" : "light"), "tokens": .object(t)])
         return (try? JSONEncoder().encode(v)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
+
+    @objc private func themeSwapped() { appearanceChanged() }
 
     fileprivate func appearanceChanged() {
         guard let web = webView else { return }

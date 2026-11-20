@@ -6,6 +6,7 @@ import WebKit
 import Network
 import CollieCore
 import CollieProtocol
+import CollieTheme
 @testable import CollieDaemonKit
 @testable import ColliePlugins
 
@@ -559,5 +560,24 @@ private func appFolder(_ dir: URL, greeting: String) throws -> PluginManifest {
         #expect(get("collie-plugin://painel/index.html") == 200)
         #expect(get("collie-plugin://painel/../collie-plugin.json") == 404 && get("collie-plugin://painel/%2e%2e/collie-plugin.json") == 404)
         #expect(get("collie-plugin://other/index.html") == 404)
+    }
+}
+
+/// T2: the tokens handed to plug-in pages come from the active palette, not from the built-in one.
+@MainActor @Suite(.serialized) struct WebPluginThemeTests {
+    @Test func themeJSONCarriesTheActivePalette() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent("appui-\(UUID().uuidString)").resolvingSymlinksInPath()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let m = try appFolder(dir, greeting: "oi")
+            let x = openApp(m, root: dir)
+            defer { x.0.close(); x.1.close(); ActivePalette.reset() }
+            // both sides changed, so the answer does not depend on the window's appearance
+            ActivePalette.set(dark: Palette.dark.replacing(["accent": RGB(hex: 0x010203)]),
+                              light: Palette.light.replacing(["accent": RGB(hex: 0x010203)]))
+            #expect(x.0.themeJSON().contains(##""--collie-accent":"#010203""##))
+            ActivePalette.reset()
+            #expect(!x.0.themeJSON().contains(##""--collie-accent":"#010203""##))
+        }
     }
 }

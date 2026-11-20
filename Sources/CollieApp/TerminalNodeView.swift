@@ -70,6 +70,7 @@ import CollieTheme
         node.onStreamChange = { [weak self] s in self?.attach(s) }
         attach(node.stream)
         // Preferences write the font to the standard defaults; any other write is ignored (no reflow).
+        NotificationCenter.default.addObserver(self, selector: #selector(themeSwapped), name: .collieThemeChanged, object: nil)
         defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
                                                                   queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.reapplyFont() }
@@ -118,6 +119,12 @@ import CollieTheme
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        themeSwapped()
+    }
+
+    /// Also from `collieThemeChanged`: the palette changed with the appearance unchanged. Only colors are set; the
+    /// terminal, its process and scrollback are untouched.
+    @objc private func themeSwapped() {
         applyChrome()
         if let term { applyColors(term) }
     }
@@ -213,6 +220,7 @@ import CollieTheme
         node.onStreamChange = nil
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
+        NotificationCenter.default.removeObserver(self, name: .collieThemeChanged, object: nil)
     }
 
     /// `screen` is the node's screen frame, `canvasSize` its canvas size. Setting the frame resets the bounds

@@ -64,7 +64,67 @@ swift test --disable-sandbox --filter 'ActivePaletteTests|AppearanceTests|Palett
 
 ## Resultado da prova
 
-(a preencher por quem implementar: o caminho escolhido e o que foi descartado, com o motivo)
+**Não provado.** Quem implementou não podia abrir o app, então nada abaixo foi visto na tela: é o caminho
+implementado, não um caminho comprovado. O dono confere pelo passo a passo no fim desta seção.
+
+### O que foi implementado (caminho 2 combinado com o 1; SwiftUI por valor de ambiente)
+
+- `ActivePalette` (`Sources/CollieTheme/ActivePalette.swift`): guarda a paleta escura e a clara em uso, atrás de um
+  `OSAllocatedUnfairLock`; `set(dark:light:)` e `reset()`. `CollieColor` lê daqui a cada resolução de cor.
+- `Notification.Name.collieThemeChanged`, postada por `CollieApp.applyTheme(selection:theme:)` depois da troca.
+  Observam (por seletor, que sai sozinho ao desalocar): `TerminalNodeView` (refaz `applyChrome` e `applyColors`
+  de cada terminal aberto, sem recriar nada), `PanelNodeView` (`applyChrome`) e `WebPluginPanel` (reemite o
+  `collie-theme` com `themeJSON`, que agora lê `ActivePalette`).
+- Caminho 1 junto: depois de postar, `applyTheme` percorre `NSApp.windows` e, em cada view da árvore, chama
+  `viewDidChangeEffectiveAppearance()` à mão e marca `needsDisplay`. Cobre as views com cor de `CALayer` em arquivos
+  que o PRD não lista (`DevicePanel`, `DiagramPanel`, `DesignPanel`, `PreviewPanel`). Efeito colateral aceito: nós
+  de terminal e páginas de plug-in refazem as cores duas vezes (notificação e chamada à mão); é idempotente.
+- SwiftUI: `EnvironmentValues.collieThemeRevision` (um inteiro). `CollieApp` guarda `@State themeRevision`, soma 1 a
+  cada `collieThemeChanged` e injeta o valor na janela principal e em Ajustes. O `id` da raiz não muda.
+- `ThemeSelection` (`dark`, `light`, `system`, `custom(id)`) substitui `ThemeChoice` em `AppearanceSettings.theme`;
+  `custom:<id>` inválido lê como `dark`, e `normalize` preserva um válido. `ThemeChoice` continua, pois
+  `PreferencesView` ainda o usa (T5 troca).
+- Descartado: trocar a aparência da janela e voltar (pedido do dono: pisca).
+
+### O que NÃO foi provado no app
+
+1. Que a notificação e a chamada manual bastam para refazer as cores dos nós, das barras e dos terminais sem
+   piscar. Nada foi aberto nem compilado por quem escreveu (o Pastor compila e roda os testes depois).
+2. **Principal risco:** que as views SwiftUI mudem de cor. `Color(nsColor:)` de uma cor dinâmica só é resolvida de
+   novo se o `body` da view rodar de novo, e o `body` só roda de novo se ler algo que mudou. O valor de ambiente só
+   invalida as views que o leem (`@Environment(\.collieThemeRevision)`), e nenhuma o lê ainda. Se, na conferência,
+   a barra lateral ou Preferências não mudarem, o conserto é pequeno e conhecido: ler o valor nas views raiz de
+   cada área (por exemplo `let _ = themeRevision` no início do `body`), ainda sem mexer no `id`. Isso muda
+   arquivos fora da lista deste PRD, por isso não foi feito.
+3. Que `viewDidChangeEffectiveAppearance()` chamado à mão em toda a árvore, inclusive dentro de `NSHostingView`,
+   não tenha efeito estranho (a suspeita é que não tem: é um gancho vazio no `NSView`).
+4. Que a página de plug-in receba os tokens novos uma só vez e sem piscar (ela os recebe duas vezes: notificação
+   e chamada à mão).
+5. Que o terminal em execução mantenha processo e scrollback (a troca só atribui cores, nunca recria o
+   `NodeTerminal`; conferir mesmo assim).
+6. `PreferencesView` ainda lê `appearance.theme` como `ThemeChoice`: com `custom:<id>` gravado, o seletor de hoje
+   fica sem opção marcada até T5.
+7. `applyTheme()` sem argumentos (o que `onAppear`, `onChange` e Preferências chamam) passa `theme: nil`: um
+   `custom:<id>` aplica `dark` até T3 carregar o tema do disco e chamar `applyTheme(selection:theme:)`.
+
+### Passo a passo para o dono conferir
+
+Pré-requisito: build deste ramo instalado. Como T3 ainda não liga o arquivo ao app, a troca é feita por código de
+teste: em `CollieApp.init` (temporário, não commitar), logo depois de `Self.applyTheme()`, e depois também a partir
+de um botão ou atalho temporário para trocar com o app já aberto, chamar
+`Self.applyTheme(selection: .custom("teste"), theme: ThemeFile(name: "Teste", extends: .dark, colors: ["accent": RGB(hex: 0xFF00AA), "sunken": RGB(hex: 0x002200), "text": RGB(hex: 0xFFFF00), "surface": RGB(hex: 0x220000)]))`.
+
+1. Abrir o app com dois terminais; em um, rodar `while true; do date; sleep 1; done`; no outro, escrever algo.
+2. Disparar a troca com o app aberto. Observar: o fundo do terminal fica verde-escuro, o texto amarelo, o cursor e a
+   seleção rosa; a borda do nó selecionado fica rosa; o fundo dos nós (surface) fica vinho.
+3. Confirmar que o `date` segue imprimindo, que o scrollback do outro terminal continua e que nada piscou (a tela
+   não passou por claro nem por branco).
+4. Ver a barra lateral, a barra de cima, o canvas e Preferências (⌘,): todos devem refletir `surface`/`accent`
+   novos. **Se algum ficar na cor antiga, é o risco 2 acima**: anotar qual e avisar.
+5. Abrir uma página de plug-in e uma Prévia: devem mudar de cor (tokens `--collie-accent` etc.).
+6. Disparar de volta `applyTheme(selection: .dark, theme: nil)`: tudo volta ao embutido, também sem piscar.
+7. Repetir com `extends: .light` e `.custom` claro: a aparência do app vira clara; ao voltar para `.dark`, escura.
+8. Registrar aqui o que mudou ou não, e remover o código temporário.
 
 ---
 Regras do repo: testes só com `swift test --disable-sandbox --filter <Suite>`, nunca a suíte inteira. Sem dependência

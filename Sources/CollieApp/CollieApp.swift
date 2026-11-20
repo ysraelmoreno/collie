@@ -48,6 +48,9 @@ enum Config {
     /// `ContentView`: ⌘, with the main window closed sets it and the window reopens already on the tab.
     @State private var mainView = MainViewState()
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
+    /// Bumped on every theme swap and set on the roots as an environment value: SwiftUI views that read it are
+    /// evaluated again and resolve their dynamic colors anew. The roots' `id` stays (a new one would recreate the terminals).
+    @State private var themeRevision = 0
 
     init() { Self.migrateDefaults(from: Self.legacyDefaultsDomain, into: .standard); Self.renameDefaults(in: .standard)
              _consented = State(initialValue: UserDefaults.standard.bool(forKey: Config.consentKey))   // after the migration
@@ -98,6 +101,8 @@ enum Config {
                 .task(id: consented) { if consented { startService() } }
                 .onAppear(perform: Self.applyTheme)
                 .onChange(of: theme) { Self.applyTheme() }
+                .environment(\.collieThemeRevision, themeRevision)
+                .onReceive(NotificationCenter.default.publisher(for: .collieThemeChanged)) { _ in themeRevision += 1 }
         }
         .windowStyle(.hiddenTitleBar)   // no title bar band; the traffic lights stay, over the content (the sidebar/bar are inset)
         .commands {
@@ -121,11 +126,45 @@ enum Config {
             }
         }
         // the window's size lives here, not in the view: the same view also fills Completa's main area (`Shell`)
-        Settings { PreferencesView(client: client).frame(minWidth: 640, idealWidth: 820, minHeight: 480, idealHeight: 600) }
+        Settings {
+            PreferencesView(client: client).frame(minWidth: 640, idealWidth: 820, minHeight: 480, idealHeight: 600)
+                .environment(\.collieThemeRevision, themeRevision)
+                .onReceive(NotificationCenter.default.publisher(for: .collieThemeChanged)) { _ in themeRevision += 1 }
+        }
     }
 
     /// Also from the Preferences window (the main one may be closed). `NSApp` is nil until the app object exists.
-    static func applyTheme() { NSApp?.appearance = AppearanceSettings(defaults: .standard).theme.appearance }
+    static func applyTheme() { applyTheme(selection: AppearanceSettings(defaults: .standard).theme, theme: nil) }
+
+    /// Built-in choice: the built-in palettes and today's appearance. Custom: the palette of `theme.extends` becomes
+    /// `theme.palette` (the other side stays built-in) and the app appearance becomes that side. A custom choice
+    /// without a loaded theme applies dark. Then everything on screen is told to resolve its colors again.
+    static func applyTheme(selection: ThemeSelection, theme: ThemeFile?) {
+        switch (selection, theme) {
+        case (.custom, let t?):
+            if t.extends == .dark { ActivePalette.set(dark: t.palette, light: Palette.light) }
+            else { ActivePalette.set(dark: Palette.dark, light: t.palette) }
+            NSApp?.appearance = NSAppearance(named: t.extends == .dark ? .darkAqua : .aqua)
+        default:
+            ActivePalette.reset()
+            NSApp?.appearance = selection.appearance
+        }
+        redrawAllWindows()
+    }
+
+    /// No appearance round trip (it flashes). The notification reaches the views that keep fixed colors (terminals,
+    /// node chrome, plug-in pages) and the SwiftUI roots; the walk marks every view for display and runs
+    /// `viewDidChangeEffectiveAppearance` by hand, where views set `CALayer` colors from it.
+    private static func redrawAllWindows() {
+        NotificationCenter.default.post(name: .collieThemeChanged, object: nil)
+        for w in NSApp?.windows ?? [] { if let v = w.contentView { redraw(v) } }
+    }
+
+    private static func redraw(_ v: NSView) {
+        v.viewDidChangeEffectiveAppearance()
+        v.needsDisplay = true
+        for sub in v.subviews { redraw(sub) }
+    }
 
     private var consentSheet: some View {
         VStack(spacing: 16) {

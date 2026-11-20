@@ -34,3 +34,24 @@ import CollieTheme
     #expect(d.string(forKey: AppearanceKeys.theme) == "dark" && d.string(forKey: AppearanceKeys.structure) == "compact")
     #expect(d.string(forKey: AppearanceKeys.terminalFamily) == "DM Mono" && d.double(forKey: AppearanceKeys.terminalSize) == 14)
 }
+@Test func customThemeIsReadAndKept() {
+    let d = UserDefaults(suiteName: "collie.test.\(UUID())")!
+    d.set("custom:tinta", forKey: AppearanceKeys.theme)
+    #expect(AppearanceSettings(defaults: d).theme == .custom("tinta"))
+    AppearanceSettings.normalize(d)
+    #expect(d.string(forKey: AppearanceKeys.theme) == "custom:tinta")
+    #expect(ThemeSelection.custom("tinta").rawValue == "custom:tinta")
+}
+@Test(arguments: ["custom:../x", "custom:", "custom:Tinta", "custom:a b", "customtinta"])
+func invalidCustomIdReadsDark(_ raw: String) {
+    let d = UserDefaults(suiteName: "collie.test.\(UUID())")!
+    d.set(raw, forKey: AppearanceKeys.theme)
+    #expect(AppearanceSettings(defaults: d).theme == .dark)
+    AppearanceSettings.normalize(d)
+    #expect(d.string(forKey: AppearanceKeys.theme) == "dark")
+}
+@Test func builtInSelectionsRoundTrip() {
+    for s in [ThemeSelection.dark, .light, .system] { #expect(ThemeSelection(rawValue: s.rawValue) == s) }
+    #expect(ThemeSelection.system.appearance == nil)
+    #expect(ThemeSelection.light.appearance?.name == .aqua)
+}

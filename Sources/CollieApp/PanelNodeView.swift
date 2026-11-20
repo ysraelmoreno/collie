@@ -59,6 +59,7 @@ final class PanelBody: NSView, PanelContentSizing {
         addSubview(title)
         addSubview(leash)
         addSubview(corner)
+        NotificationCenter.default.addObserver(self, selector: #selector(themeSwapped), name: .collieThemeChanged, object: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -72,6 +73,8 @@ final class PanelBody: NSView, PanelContentSizing {
         }
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); applyChrome() }
+    /// `collieThemeChanged`: the palette changed with the appearance unchanged. Selector observers leave on dealloc.
+    @objc private func themeSwapped() { applyChrome() }
 
     /// Re-runs `applyChrome` whenever the selection changes.
     private func observeChrome() {

@@ -171,7 +171,7 @@ public extension Palette {
     }
 }
 
-/// Dynamic NSColors that pick the dark or light palette from the appearance.
+/// Dynamic NSColors that pick the active dark or light palette (`ActivePalette`) from the appearance.
 public enum CollieColor {
     public static let background: NSColor = dynamic("background", \.background)
     public static let surface: NSColor = dynamic("surface", \.surface)
@@ -194,7 +194,7 @@ public enum CollieColor {
 
     private static func dynamic(_ token: String, _ key: KeyPath<Palette, RGB>) -> NSColor {
         NSColor(name: "collie.\(token)") { appearance in
-            let palette = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? Palette.dark : Palette.light
+            let palette = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? ActivePalette.dark : ActivePalette.light
             return palette[keyPath: key].nsColor
         }
     }

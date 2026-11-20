@@ -12,6 +12,44 @@ public enum ThemeChoice: String, CaseIterable, Sendable {
     }
 }
 
+/// What `appearance.theme` holds: a built-in choice or `custom:<id>` (a valid id, see `ThemeFile.validId`).
+public enum ThemeSelection: Equatable, Sendable {
+    case dark, light, system, custom(String)
+
+    /// `nil` for anything else, including `custom:` with an empty or invalid id.
+    public init?(rawValue: String) {
+        switch rawValue {
+        case "dark": self = .dark
+        case "light": self = .light
+        case "system": self = .system
+        default:
+            let prefix = "custom:"
+            guard rawValue.hasPrefix(prefix) else { return nil }
+            let id = String(rawValue.dropFirst(prefix.count))
+            guard ThemeFile.validId(id) else { return nil }
+            self = .custom(id)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .dark: "dark"
+        case .light: "light"
+        case .system: "system"
+        case .custom(let id): "custom:\(id)"
+        }
+    }
+
+    /// Of the built-in choices; `nil` follows the system. A custom theme's appearance is its `extends` side (the app decides).
+    public var appearance: NSAppearance? {
+        switch self {
+        case .dark, .custom: NSAppearance(named: .darkAqua)
+        case .light: NSAppearance(named: .aqua)
+        case .system: nil
+        }
+    }
+}
+
 public enum WindowStructure: String, CaseIterable, Sendable { case compact, full }
 
 public struct TerminalFontChoice: Sendable, Equatable {
@@ -32,17 +70,17 @@ public enum AppearanceKeys {
 }
 
 public struct AppearanceSettings: Equatable {
-    public var theme: ThemeChoice
+    public var theme: ThemeSelection
     public var structure: WindowStructure
     public var terminalFont: TerminalFontChoice
 
-    public init(theme: ThemeChoice, structure: WindowStructure, terminalFont: TerminalFontChoice) {
+    public init(theme: ThemeSelection, structure: WindowStructure, terminalFont: TerminalFontChoice) {
         self.theme = theme; self.structure = structure; self.terminalFont = terminalFont
     }
 
     /// Tolerant read: unknown values fall back to Escuro, Compacta, DM Mono 13.
     public init(defaults: UserDefaults) {
-        theme = defaults.string(forKey: AppearanceKeys.theme).flatMap(ThemeChoice.init) ?? .dark
+        theme = defaults.string(forKey: AppearanceKeys.theme).flatMap(ThemeSelection.init(rawValue:)) ?? .dark
         structure = defaults.string(forKey: AppearanceKeys.structure).flatMap(WindowStructure.init) ?? .compact
         let family = defaults.string(forKey: AppearanceKeys.terminalFamily).flatMap { TerminalFontChoice.families.contains($0) ? $0 : nil } ?? "DM Mono"
         let raw = defaults.double(forKey: AppearanceKeys.terminalSize)

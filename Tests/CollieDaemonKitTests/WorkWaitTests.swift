@@ -85,7 +85,8 @@ private func until(_ done: () async -> Bool) async -> Bool {
         try await s.update(other.id) { $0.notes.append(WorkNote(text: "not this work")) }
         try await s.update(w.id) { _ in }   // no change: nobody wakes
         for _ in 0..<50 { await Task.yield() }
-        #expect(await back.up == 0 && s.changeWaiterCount == 1, "still waiting")
+        let returned = await back.up, parked = await s.changeWaiterCount
+        #expect(returned == 0 && parked == 1, "still waiting")
         try await s.update(w.id) { $0.notes.append(WorkNote(text: "woke")) }
         #expect(try await wait.value == 2)
         #expect(await s.changeWaiterCount == 0)
@@ -156,7 +157,8 @@ private func until(_ done: () async -> Bool) async -> Bool {
             let w = try #require(try await d.router.work.active(terminal: a.uuid))
             let r = try await call(p, a, "work.wait")
             let o = obj(r)
-            #expect(r.ok && o["version"] == .number(Double(try #require(w.version))) && o["timedOut"] == .bool(false) && o["ended"] == .bool(false))
+            let v = try #require(w.version)
+            #expect(r.ok && o["version"] == .number(Double(v)) && o["timedOut"] == .bool(false) && o["ended"] == .bool(false))
             // the same JSON as work status
             let st = obj(try await call(p, a, "work.status"))
             #expect(o["works"] == st["works"] && o["works"] != nil)

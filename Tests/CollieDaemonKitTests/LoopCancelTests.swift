@@ -66,10 +66,12 @@ private actor Hold {
         #expect(!w.notes.contains { $0.text.hasPrefix("[loop a]") }, "\(w.notes.map(\.text))", sourceLocation: at)
         #expect(!FileManager.default.fileExists(atPath: r.host.patchDir(r.work).appendingPathComponent("a-1.patch").path), sourceLocation: at)
         #expect(!ev.contains { $0.kind == .discarded }, "\(ev.map(\.kind.rawValue))", sourceLocation: at)
-        #expect(try await git(r.repo, "rev-parse", "HEAD~1") == from, sourceLocation: at)
+        let parent = try await git(r.repo, "rev-parse", "HEAD~1")
+        #expect(parent == from, sourceLocation: at)
         #expect(ev.last?.kind == .stopped, sourceLocation: at)
         // M2.2a: the next run judges the commit that is already there
-        #expect(t.resumeFrom == from && t.resumeBranch == (try await git(r.repo, "rev-parse", "--abbrev-ref", "HEAD")), sourceLocation: at)
+        let branch = try await git(r.repo, "rev-parse", "--abbrev-ref", "HEAD")
+        #expect(t.resumeFrom == from && t.resumeBranch == branch, sourceLocation: at)
     }
 
     @Test func duringTheCheckOfTheLastAttempt() async throws {

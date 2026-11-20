@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editor de temas: lista, JSON e prévia</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--color-bg); color: var(--color-fg); font-family: "Space Grotesk", system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.55; }
+main { max-width: 960px; margin: 0 auto; padding: var(--space-48) var(--space-16) var(--space-96); }
+.eyebrow { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-text); margin: 0 0 var(--space-12); }
+h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.08; letter-spacing: -.02em; margin: 0 0 var(--space-16); text-wrap: balance; }
+h2 { font-size: 24px; line-height: 1.2; margin: 0 0 var(--space-12); }
+p { margin: 0 0 var(--space-16); max-width: 66ch; } .muted { color: var(--color-text-secondary); }
+.scroll { overflow-x: auto; margin: var(--space-24) 0; padding-bottom: 4px; }
+.notes { margin-top: var(--space-48); padding-top: var(--space-24); border-top: 1px solid var(--color-border); }
+.notes ul { padding-left: 20px; margin: 0 0 var(--space-24); max-width: 66ch; } .notes li { margin-bottom: 6px; }
+
+.app { --t-bg:#0E1326; --t-sf:#161C36; --t-side:#121831; --t-sunk:#0B1020; --t-bd:#262E52; --t-tx:#E8ECF8; --t-tx2:#B6BEDB; --t-mu:#8C95B8; --t-ac:#6EE7B7; --t-on:#0E1326; --t-at:#FFB86B; --t-dg:#FF8A8A; --t-se:#93A4FF;
+  --c-bg:#0E1326; --c-sf:#161C36; --c-side:#121831; --c-sunk:#0B1020; --c-bd:#262E52; --c-tx:#E8ECF8; --c-tx2:#B6BEDB; --c-mu:#8C95B8; --c-ac:#6EE7B7; --c-at:#FFB86B;
+  width: 920px; border-radius: 12px; overflow: hidden; border: 1px solid var(--c-bd); background: var(--c-bg); color: var(--c-tx); font: 13px/1.45 -apple-system, system-ui, sans-serif; box-shadow: 0 18px 40px -18px rgba(0,0,0,.5); }
+.app button, .app textarea { font: inherit; color: inherit; }
+.app button:focus-visible, .app input:focus-visible, .app textarea:focus-visible { outline: 2px solid var(--c-ac); outline-offset: 2px; }
+.bar { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; background: var(--c-side); border-bottom: 1px solid var(--c-bd); position: relative; }
+.bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--c-bd); } .bar span { position: absolute; left: 0; right: 0; text-align: center; font-weight: 600; color: var(--c-tx2); }
+.cols { display: grid; grid-template-columns: 156px 1fr; }
+.side { background: var(--c-side); border-right: 1px solid var(--c-bd); padding: 12px 8px; }
+.side p { font-size: 11px; color: var(--c-mu); margin: 10px 8px 4px; } .side p:first-child { margin-top: 0; }
+.side a { display: block; padding: 5px 8px; border-radius: 6px; color: var(--c-tx2); } .side a.on { background: var(--c-sf); color: var(--c-tx); }
+.content { padding: 16px 18px; min-width: 0; }
+.head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; } .head h3 { margin: 0; font-size: 15px; }
+.acts { display: flex; gap: 6px; } .btn { border: 1px solid var(--c-bd); background: var(--c-sf); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.gal { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.card { background: none; border: 1px solid var(--c-bd); border-radius: 8px; padding: 6px; text-align: left; cursor: pointer; display: grid; gap: 1px; min-width: 0; } .card.on { border-color: var(--c-ac); box-shadow: 0 0 0 1px var(--c-ac); }
+.card strong { font-weight: 600; font-size: 12px; } .card small { font-size: 10px; color: var(--c-mu); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th { display: block; height: 38px; border-radius: 5px; background: var(--bg); position: relative; margin-bottom: 3px; box-shadow: inset 0 0 0 1px rgba(128,128,128,.25); }
+.th i { position: absolute; left: 7px; height: 4px; border-radius: 2px; background: var(--tx); opacity: .85; top: 9px; width: 46%; } .th i + i { top: 17px; width: 30%; opacity: .5; } .th b { position: absolute; right: 7px; bottom: 6px; width: 22px; height: 9px; border-radius: 3px; background: var(--ac); }
+.th.plus { display: grid; place-items: center; background: var(--c-sunk); color: var(--c-mu); font-size: 18px; }
+.ed { margin-top: 14px; border: 1px solid var(--c-bd); border-radius: 10px; overflow: hidden; }
+.edbar { display: flex; align-items: center; gap: 10px; padding: 7px 10px; background: var(--c-side); border-bottom: 1px solid var(--c-bd); }
+.edbar strong { font-size: 13px; } .edbar .path { font: 10.5px "DM Mono", ui-monospace, monospace; color: var(--c-mu); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--c-sunk); border: 1px solid var(--c-bd); border-radius: 8px; flex: none; }
+.seg button { border: 0; background: none; padding: 3px 12px; border-radius: 6px; color: var(--c-tx2); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--c-sf); color: var(--c-tx); box-shadow: 0 0 0 1px var(--c-bd); }
+.split { display: grid; grid-template-columns: 1fr 268px; min-height: 388px; }
+.pane { min-width: 0; border-right: 1px solid var(--c-bd); }
+.tok { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tok td { padding: 3px 10px; border-top: 1px solid var(--c-bd); white-space: nowrap; } .tok tr:first-child td { border-top: 0; }
+.tok .grp td { background: var(--c-sunk); color: var(--c-mu); font-size: 11px; }
+.tok input[type=color] { width: 22px; height: 18px; padding: 0; border: 1px solid var(--c-bd); border-radius: 4px; background: none; vertical-align: -4px; margin-right: 6px; cursor: pointer; }
+.tok code { font: 11px "DM Mono", ui-monospace, monospace; color: var(--c-tx2); }
+.tok .st { color: var(--c-mu); font-size: 11px; } .tok .st.ch { color: var(--c-ac); }
+.tok .rs { border: 0; background: none; color: var(--c-mu); cursor: pointer; padding: 0 4px; font-size: 13px; } .tok .rs[hidden] { display: none; }
+.rd { font: 11px "DM Mono", ui-monospace, monospace; } .rd.ok { color: var(--c-ac); } .rd.bad { color: var(--c-at); }
+#json { display: block; width: 100%; height: 100%; min-height: 388px; border: 0; resize: none; background: var(--c-sunk); color: var(--c-tx); font: 12px/1.6 "DM Mono", ui-monospace, monospace; padding: 12px 14px; tab-size: 2; }
+.err { padding: 5px 12px; font: 11px "DM Mono", ui-monospace, monospace; color: var(--c-at); background: var(--c-sunk); border-top: 1px solid var(--c-bd); }
+.err[hidden] { display: none; }
+.jwrap { display: grid; grid-template-rows: 1fr auto; height: 100%; } .jwrap[hidden], .tok[hidden] { display: none; }
+.mock { padding: 10px; background: var(--c-sunk); display: grid; grid-template-rows: auto 1fr; gap: 6px; }
+.mock > small { color: var(--c-mu); font-size: 11px; }
+.pv { display: grid; grid-template-columns: 30px 1fr; border: 1px solid var(--t-bd); border-radius: 8px; overflow: hidden; background: var(--t-bg); color: var(--t-tx); }
+.pv-rail { background: var(--t-side); border-right: 1px solid var(--t-bd); display: flex; flex-direction: column; align-items: center; gap: 7px; padding-top: 9px; }
+.pv-rail b, .pv-rail i { width: 15px; height: 15px; border-radius: 5px; background: var(--t-bd); } .pv-rail b { border-radius: 50%; background: var(--t-ac); } .pv-rail i.on { box-shadow: 0 0 0 1.5px var(--t-ac); }
+.pv-canvas { background-image: radial-gradient(var(--t-bd) 1px, transparent 1.2px); background-size: 14px 14px; padding: 9px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+.pv-node { background: var(--t-sf); border: 1px solid var(--t-bd); border-radius: 8px; overflow: hidden; min-width: 0; }
+.pv-bar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--t-bd); font-size: 10.5px; color: var(--t-tx2); }
+.pv-bar em { width: 7px; height: 7px; border-radius: 50%; background: var(--t-ac); } .pv-bar u { margin-left: auto; text-decoration: none; background: var(--t-at); color: var(--t-on); border-radius: 8px; padding: 0 6px; font-weight: 600; }
+.pv pre { margin: 0; padding: 6px 8px 3px; font: 10px/1.5 "DM Mono", ui-monospace, monospace; color: var(--t-tx); white-space: pre; overflow: hidden; }
+.pv .m { color: var(--t-mu); } .pv .a { color: var(--t-ac); } .pv .w { color: var(--t-at); } .pv .d { color: var(--t-dg); } .pv .s { color: var(--t-se); }
+.pv-act { display: flex; gap: 6px; padding: 4px 8px 7px; } .pv-act span { font-size: 10.5px; padding: 2px 9px; border-radius: 6px; border: 1px solid var(--t-bd); color: var(--t-tx); }
+.pv-act .pri { background: var(--t-ac); color: var(--t-on); border-color: var(--t-ac); font-weight: 600; }
+.pv-mem { padding: 6px 8px; font-size: 10.5px; color: var(--t-tx2); } .pv-mem b { color: var(--t-tx); font-weight: 600; display: block; }
+</style>
+</head>
+<body>
+<main id="root">
+  <p class="eyebrow">Collie · Preferências › Aparência</p>
+  <h1>Editor de temas: lista, JSON e prévia</h1>
+  <p>A junção das opções B e C. A galeria escolhe o tema; o editor mostra as cores dele como <strong>lista</strong> ou como <strong>JSON</strong>, que são duas vistas do mesmo arquivo; a prévia ao lado responde às duas.</p>
+  <p class="muted">Este protótipo funciona: troque uma cor na lista, mude para JSON e ela está lá. Edite o JSON e a lista acompanha.</p>
+
+  <div class="scroll"><div class="app" id="app">
+    <div class="bar"><i></i><i></i><i></i><span>Preferências</span></div>
+    <div class="cols">
+      <nav class="side" aria-hidden="true"><p>Interface</p><a class="on">Aparência</a><a>Terminal e fontes</a><a>Atualizações</a><p>Agentes</p><a>Memória</a><a>Laços</a><a>Plug-ins</a></nav>
+      <div class="content">
+        <div class="head"><h3>Temas</h3><div class="acts"><button class="btn" type="button">Importar…</button><button class="btn" type="button">Mostrar no Finder</button></div></div>
+        <div class="gal"><button class="card " type="button"><span class="th" style="--bg:#0E1326;--sf:#161C36;--ac:#6EE7B7;--tx:#E8ECF8"><i></i><i></i><b></b></span><strong>Escuro</strong><small>do Collie</small></button><button class="card " type="button"><span class="th" style="--bg:#F3F4F1;--sf:#FFFFFF;--ac:#2448C9;--tx:#15171C"><i></i><i></i><b></b></span><strong>Claro</strong><small>do Collie</small></button><button class="card on" type="button"><span class="th" style="--bg:#15171C;--sf:#1F232B;--ac:#6E9BFF;--tx:#F4F2ED"><i></i><i></i><b></b></span><strong>Tinta</strong><small>tinta.json</small></button><button class="card " type="button"><span class="th" style="--bg:#282828;--sf:#3C3836;--ac:#FABD2F;--tx:#EBDBB2"><i></i><i></i><b></b></span><strong>Gruvbox</strong><small>importado</small></button><button class="card add" type="button"><span class="th plus">+</span><strong>Novo a partir de…</strong><small>duplica um tema</small></button></div>
+
+        <div class="ed">
+          <div class="edbar"><strong>Tinta</strong><span class="path">estende Escuro · themes/tinta.json</span>
+            <div class="seg" id="view" role="group" aria-label="Vista"><button type="button" aria-pressed="true" data-v="list">Lista</button><button type="button" aria-pressed="false" data-v="json">JSON</button></div></div>
+          <div class="split">
+            <div class="pane">
+              <table class="tok" id="list"><tbody></tbody></table>
+              <div class="jwrap" id="jwrap" hidden><textarea id="json" spellcheck="false" aria-label="Arquivo do tema"></textarea><div class="err" id="err" hidden></div></div>
+            </div>
+            <div class="mock"><small>Prévia</small>
+              <div class="pv" aria-hidden="true">
+                <div class="pv-rail"><b></b><i class="on"></i><i></i><i></i></div>
+                <div class="pv-canvas">
+                  <div class="pv-node"><div class="pv-bar"><em></em><span>dev · claude</span><u>1</u></div>
+<pre><span class="m">$</span> collie summon dev
+<span class="a">●</span> lendo CollieTheme
+<span class="m">  3 arquivos, 412 linhas</span>
+<span class="s">→ guia: design-1</span>
+<span class="d">✗ teste falhou (2)</span>
+<span class="w">! aguardando aprovação</span></pre>
+                    <div class="pv-act"><span class="pri">Permitir</span><span>Negar</span></div></div>
+                  <div class="pv-node"><div class="pv-bar"><span>Memória</span></div><div class="pv-mem"><b>Tema é um arquivo</b>decisão · há 2 dias</div></div>
+                </div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+
+  <section class="notes">
+    <h2>Como funciona</h2>
+    <ul>
+      <li><strong>Um arquivo, duas vistas.</strong> Lista e JSON editam o mesmo tema. O arquivo guarda só as cores alteradas; o resto vem do tema que ele estende.</li>
+      <li><strong>Lista.</strong> Cada papel com seletor de cor, se foi alterado ou herdado, e o contraste medido contra o fundo em que aparece. O valor é calculado de verdade (WCAG); abaixo de 4,5 fica em âmbar.</li>
+      <li><strong>JSON.</strong> O texto do arquivo, editável. JSON inválido ou cor malformada mostra o erro embaixo e não altera o tema.</li>
+      <li><strong>Prévia.</strong> Fica sempre à direita e mostra os papéis em uso: terminal, cartão de aprovação, guia, erro, memória.</li>
+    </ul>
+    <h2>Decisões minhas, para você confirmar</h2>
+    <ul>
+      <li><strong>Um tema tem uma paleta só</strong>, clara ou escura, conforme o que estende. A opção B tinha duas colunas (Escuro e Claro) por tema; aqui, quem quer os dois modos cria dois temas, como nos temas de terminal.</li>
+      <li><strong>O protótipo mostra 12 dos 18 papéis.</strong> Na tela real entram todos, nos mesmos grupos.</li>
+      <li><strong>Cores do terminal (16 ANSI)</strong> continuam em aberto: dentro do tema ou em "Terminal e fontes".</li>
+    </ul>
+  </section>
+</main>
+<script>
+(function () {
+  var base = { background:'#0E1326', surface:'#161C36', sidebar:'#121831', border:'#262E52', text:'#E8ECF8', textSecondary:'#B6BEDB', muted:'#8C95B8', accent:'#6EE7B7', onAccent:'#0E1326', secondary:'#93A4FF', attention:'#FFB86B', danger:'#FF8A8A' };
+  var theme = { name: 'Tinta', extends: 'dark', colors: { background:'#15171C', surface:'#1F232B', sidebar:'#191C22', border:'#2E323B', accent:'#6E9BFF', onAccent:'#15171C' } };
+  var rows = [['Fundos'], ['background','Fundo',null,'bg'], ['surface','Superfície',null,'sf'], ['sidebar','Barra lateral',null,'side'], ['border','Borda',null,'bd'],
+              ['Texto'], ['text','Texto','surface','tx'], ['textSecondary','Secundário','surface','tx2'], ['muted','Apagado','surface','mu'],
+              ['Destaques'], ['accent','Destaque','surface','ac'], ['onAccent','Sobre o destaque','accent','on'], ['secondary','Secundário','surface','se'], ['attention','Atenção','surface','at'], ['danger','Perigo','surface','dg']];
+  var app = document.getElementById('app'), tbody = document.querySelector('#list tbody'), ta = document.getElementById('json'), err = document.getElementById('err');
+  function val(k) { return theme.colors[k] || base[k]; }
+  function lum(h) { var c = [1,3,5].map(function (i) { var s = parseInt(h.substr(i,2),16)/255; return s <= .03928 ? s/12.92 : Math.pow((s+.055)/1.055, 2.4); }); return .2126*c[0] + .7152*c[1] + .0722*c[2]; }
+  function ratio(a, b) { var x = lum(a), y = lum(b); return (Math.max(x,y)+.05)/(Math.min(x,y)+.05); }
+  function paint() {
+    rows.forEach(function (r) { if (r.length > 1) app.style.setProperty('--t-' + r[3], val(r[0])); });
+    app.style.setProperty('--t-sunk', val('background'));
+  }
+  function build() {
+    tbody.innerHTML = '';
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      if (r.length === 1) { tr.className = 'grp'; tr.innerHTML = '<td colspan="4">' + r[0] + '</td>'; tbody.appendChild(tr); return; }
+      var k = r[0], changed = k in theme.colors, v = val(k), rd = '';
+      if (r[2]) { var x = ratio(v, val(r[2])); rd = '<span class="rd ' + (x >= 4.5 ? 'ok' : 'bad') + '">' + x.toFixed(1).replace('.', ',') + (x >= 4.5 ? '' : ' baixo') + '</span>'; }
+      tr.innerHTML = '<td>' + r[1] + '</td><td><input type="color" value="' + v + '" aria-label="' + r[1] + '"><code>' + v.toUpperCase() + '</code></td><td>' + rd + '</td>' +
+        '<td><span class="st' + (changed ? ' ch' : '') + '">' + (changed ? 'alterado' : 'herdado') + '</span><button class="rs" type="button" title="Voltar ao herdado" aria-label="Voltar ' + r[1] + ' ao herdado"' + (changed ? '' : ' hidden') + '>↺</button></td>';
+      tr.querySelector('input').addEventListener('input', function (e) { theme.colors[k] = e.target.value.toUpperCase(); sync('list', k, e.target); });
+      tr.querySelector('.rs').addEventListener('click', function () { delete theme.colors[k]; sync(); });
+      tbody.appendChild(tr);
+    });
+  }
+  function text() { return JSON.stringify(theme, null, 2); }
+  function sync(from) {
+    paint();
+    if (from !== 'json') ta.value = text();
+    if (from === 'list') { refreshReadings(); } else build();
+  }
+  // while dragging the colour picker the row stays (rebuilding it would close the picker): only texts change
+  function refreshReadings() {
+    var trs = tbody.querySelectorAll('tr'), i = 0;
+    rows.forEach(function (r) {
+      var tr = trs[i++]; if (r.length === 1) return;
+      var k = r[0], v = val(k), changed = k in theme.colors;
+      tr.querySelector('code').textContent = v.toUpperCase();
+      var st = tr.querySelector('.st'); st.textContent = changed ? 'alterado' : 'herdado'; st.className = 'st' + (changed ? ' ch' : '');
+      tr.querySelector('.rs').hidden = !changed;
+      var rd = tr.querySelector('.rd'); if (rd && r[2]) { var x = ratio(v, val(r[2])); rd.textContent = x.toFixed(1).replace('.', ',') + (x >= 4.5 ? '' : ' baixo'); rd.className = 'rd ' + (x >= 4.5 ? 'ok' : 'bad'); }
+    });
+  }
+  ta.addEventListener('input', function () {
+    try {
+      var t = JSON.parse(ta.value);
+      if (!t || typeof t.colors !== 'object' || t.colors === null) throw new Error('falta "colors"');
+      Object.keys(t.colors).forEach(function (k) {
+        if (!(k in base)) throw new Error('papel desconhecido: "' + k + '"');
+        if (!/^#[0-9a-fA-F]{6}$/.test(t.colors[k])) throw new Error('"' + k + '": use #RRGGBB');
+      });
+      theme = { name: t.name || theme.name, extends: 'dark', colors: t.colors };
+      err.hidden = true; sync('json');
+    } catch (e) { err.textContent = 'não aplicado: ' + e.message; err.hidden = false; }
+  });
+  document.querySelectorAll('#view button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('#view button').forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+      var j = b.dataset.v === 'json';
+      document.getElementById('list').hidden = j; document.getElementById('jwrap').hidden = !j;
+      if (j) { ta.value = text(); err.hidden = true; }
+    });
+  });
+  sync();
+})();
+</script>
+</body>
+</html>

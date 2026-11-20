@@ -90,7 +90,9 @@ actor LoopFakeHost: LoopHost {
     func starterAlive() async -> Bool { !starterGone }
     func setBusy(_ n: String?) { busyOther = n }
     func setStarterGone(after n: String) { starterGoneAfter = n }
-    func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await GitRunner.run(args, in: dir) }
+    /// Every git command the loop ran, in order (M2.2a: what never becomes an argument).
+    var gits: [[String]] = []
+    func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { gits.append(args); return try await GitRunner.run(args, in: dir) }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1; events.append("check"); commands.append(command)
         await probe?(command)

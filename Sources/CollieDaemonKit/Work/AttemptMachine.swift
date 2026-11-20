@@ -17,6 +17,8 @@ enum AttemptMachine {
 
     enum Event: Sendable, Equatable {
         case started
+        /// M2.2a: the attempt starts on a commit that is already there (a fallen daemon's agent made it): no agent.
+        case adopted
         case summoned(UUID), summonFailed(String)
         case turnEnded(source: AskResult.Source), turnTimedOut, turnFailed(String)
         /// A new commit is there (its short hash, for the journal) / there is none.
@@ -106,6 +108,10 @@ enum AttemptMachine {
 
         case (.summoning, .started):
             return (s, [.journal(.attemptStarted, nil), .summon])
+        // M2.2a: no agent to summon, ask or dismiss: the commit is judged as if its agent had just been dismissed
+        case (.summoning, .adopted) where s.agent == nil && s.facts.failure == nil:
+            s.phase = .waitingCommit
+            return (s, [.journal(.attemptStarted, nil), .journal(.adopted, String(s.before.prefix(7))), .measureFacts])
         case (.summoning, .summoned(let id)):
             s.agent = id; s.phase = .turn
             return (s, [.journal(.agentSummoned, s.name), .ask])

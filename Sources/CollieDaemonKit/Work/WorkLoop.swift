@@ -120,30 +120,40 @@ actor WorkLoop {
     private func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
         let n = (task.tries ?? 0) + 1, name = "loop-\(task.id)-\(n)", started = host.now()
         // git failing here (the loop's profile gone, not a repo): stop, nothing to judge
-        guard let before = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
+        guard let head = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
               let pending = await out(["status", "--porcelain", "--untracked-files=no"], dir) else {
             await note(w.id, "[loop] git falhou em \(dir.path); laço parado")
             return .stop(.init(.gitFailed))
         }
         // tracked changes now are someone else's (each attempt ends on a clean tree): never the loop's to reset
         guard pending.isEmpty else {
-            await note(w.id, "[loop] arquivos rastreados modificados (dirty) antes da tentativa de \"\(task.title)\", e não são do laço; laço parado, worktree intocada:\n\(pending.prefix(500))")
+            let at = host.now(), text = "[loop] arquivos rastreados modificados (dirty) antes da tentativa de \"\(task.title)\", e não são do laço; laço parado, worktree intocada:\n\(pending.prefix(500))"
+            // M2.2a: nothing is adopted over a dirty tree, and what the task resumed from is forgotten
+            try? await store.update(w.id) { Self.forget(&$0, task.id); $0.notes.append(WorkNote(at: at, text: text)) }
             return .stop(.init(.dirtyTree))
         }
         // pre-existing untracked files are never the attempt's: the reset must not delete them
         let keep = await untracked(dir)
         // the attempt's first write carries its first event too (the machine's `attemptStarted` is not written again)
         let first = LoopEvent(at: started, kind: .attemptStarted, task: task.id, attempt: n)
+        // M2.2a: a fallen daemon's attempt left its commit: this attempt judges it from where that one started, with
+        // no agent. Anything else the task carried is ignored (and overwritten by this attempt's own, right below)
+        let adopt = await adoptable(task, branch: branch, dir)
+        let before = adopt ? task.resumeFrom ?? head : head
         try? await store.update(w.id) { x in
-            if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started }
-            x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(.agent, at: started)
+            if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
+                x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
+                // where a fall resumes from; `forget` clears it when the attempt ends
+                x.tasks[i].resumeFrom = before; x.tasks[i].resumeBranch = branch
+            }
+            x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(adopt ? nil : .agent, at: started)
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
             x.loop?.record(first)
         }
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
-        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before), .started)
+        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before), adopt ? .adopted : .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
             // the journal and the phase wait for the attempt's next write, but never through a long wait: `work status`
@@ -167,6 +177,7 @@ actor WorkLoop {
         await record(w.id, &run) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
             Self.endJob(&x, name, "loop: estado inesperado do motor", at: at)
+            Self.forget(&x, task.id)
             x.loop?.show(nil)
             x.notes.append(WorkNote(at: at, text: "[loop] estado inesperado do motor\(what) em \"\(task.title)\": é um bug do laço; tarefa reaberta, tentativa não contada, worktree intocada; laço parado"))
         }
@@ -345,12 +356,14 @@ actor WorkLoop {
                 let used = x.loop?.used ?? 0
                 x.loop?.used = Swift.max(0, used - 1)
                 if let j = x.jobs.firstIndex(where: { $0.id == name && $0.state == .running }) { x.jobs[j].state = .gone; x.jobs[j].endedAt = at }
+                Self.forget(&x, task.id)
             }
         case .reopen(let why):
             let at = host.now()
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
                 Self.endJob(&x, name, why, at: at)
+                Self.forget(&x, task.id)
             }
         case .markDone:
             let at = r.at, judged = state.judged
@@ -377,6 +390,7 @@ actor WorkLoop {
                     x.tasks[i].evidence = found
                 }
                 Self.endJob(&x, name, head, at: at)
+                Self.forget(&x, task.id)
             }
             await reportEnd(id, task.id)
         case .markOpenOrDeferred(let reason, let last):
@@ -392,6 +406,7 @@ actor WorkLoop {
                 }
                 x.notes.append(WorkNote(at: at, text: text))
                 Self.endJob(&x, name, reason, at: at)
+                Self.forget(&x, task.id)
             }
             if last { await reportEnd(id, task.id) }
         }
@@ -460,6 +475,27 @@ actor WorkLoop {
             if !(await host.working(agent)), await committed(before: before, branch: branch, dir) { return }
             try? await Task.sleep(for: poll)
         }
+    }
+
+    /// M2.2a: a 40-character lowercase hex sha, as `git rev-parse HEAD` prints one. `resumeFrom` comes from the work's
+    /// file: it is a git argument only after this.
+    static func isSha(_ s: String) -> Bool {
+        s.utf8.count == 40 && s.utf8.allSatisfy { (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains($0) }
+    }
+
+    /// M2.2a: `task` was left mid-attempt by a daemon that fell and its commit is here to be judged: `resumeFrom` is a
+    /// sha of this repository, the worktree is on the same branch and HEAD is ahead of it (`committed`). The caller
+    /// already saw the tracked tree clean.
+    private func adoptable(_ task: WorkTask, branch: String, _ dir: URL) async -> Bool {
+        guard let from = task.resumeFrom, Self.isSha(from), task.resumeBranch == branch,
+              (try? await host.git(["cat-file", "-e", "\(from)^{commit}"], in: dir))?.status == 0 else { return false }
+        return await committed(before: from, branch: branch, dir)
+    }
+
+    /// The attempt of `task` ended (a verdict, or none: cancelled, reopened): there is nothing to resume.
+    private static func forget(_ w: inout Work, _ task: String) {
+        guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
+        w.tasks[i].resumeFrom = nil; w.tasks[i].resumeBranch = nil
     }
 
     /// A new commit: HEAD moved, `before` is its ancestor (no rewritten history) and the branch is still `branch`.

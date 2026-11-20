@@ -35,6 +35,10 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var spec: String?; public var check: String?; public var tries: Int?; public var lastFailure: String?
     public var evidence: TaskEvidence?
     public var evidenceGlob: String?
+    /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
+    /// the attempt ends; a daemon that fell mid-attempt leaves them, and the next run may adopt the commit already made.
+    /// Read back from the work's file: never trusted as a git argument before `WorkLoop.isSha`.
+    public var resumeFrom: String?; public var resumeBranch: String?
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
                 spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
                 evidence: TaskEvidence? = nil, evidenceGlob: String? = nil) {
@@ -55,6 +59,8 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         case resubmitted
         /// M2.1: the turn ended with no new commit and the agent was told once to commit and end (detail: how the turn ended).
         case nudged
+        /// M2.2a: the attempt judged a commit a fallen daemon's agent left, with no agent of its own (detail: the sha it resumed from).
+        case adopted
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200

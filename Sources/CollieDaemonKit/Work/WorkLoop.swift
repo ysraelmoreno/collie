@@ -141,6 +141,7 @@ actor WorkLoop {
     /// After its first reads it only interprets `AttemptMachine`: the order of the effects and their conditions are there.
     func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
         let n = (task.tries ?? 0) + 1, name = "loop-\(task.id)-\(n)", started = host.now()
+        let lane = lane   // M3.5: the engine's own, read once for the writes below
         // git failing here (the loop's profile gone, not a repo): stop, nothing to judge
         guard let head = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
               let pending = await out(["status", "--porcelain", "--untracked-files=no"], dir) else {

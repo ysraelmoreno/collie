@@ -107,19 +107,13 @@ extension WorkLoop {
     private func runLane(_ id: UUID, _ task: WorkTask, dir: URL, root: URL, integrator: LaneIntegrator) async {
         guard !Task.isCancelled else { await noLane(id, task, nil); return }
         let lane: Lane, laneHost: any LoopHost
-        do {
-            guard let head = await out(["rev-parse", "HEAD"], dir) else { throw ProtocolError(code: .internal, message: "git rev-parse HEAD failed") }
-            lane = try await LaneWorktree.create(repoRoot: root, base: head, work: id, task: task.id, host: host)
-        } catch {
-            await noLane(id, task, error.message); return
-        }
-        do { laneHost = try await host.laneHost(lane) } catch {
-            await dropLane(lane)
+        do { (lane, laneHost) = try await cut(id, task.id, dir: dir, root: root) } catch {
             await noLane(id, task, error.message); return
         }
         let name = lane.path.lastPathComponent, n = (task.tries ?? 0) + 1, t0 = host.now()
         try? await store.update(id) { x in
-            x.loop?.lanes = (x.loop?.lanes ?? []) + [.init(lane: name, task: task.id, attempt: n, since: t0)]
+            let others = x.loop?.lanes ?? []
+            x.loop?.lanes = others + [WorkLoopState.LaneState(lane: name, task: task.id, attempt: n, since: t0)]
             x.loop?.mirror()
         }
         var stop: WorkLoopState.Stop?
@@ -148,6 +142,16 @@ extension WorkLoop {
         await dropLane(lane)
         // a lane cancelled by the loop's stop says nothing new
         if let stop, stop.code != .cancelled, lanes[id]?.stop == nil { lanes[id]?.stop = stop }
+    }
+
+    /// A lane cut from the paddock's HEAD of now, and its host; a lane that got no host is removed.
+    private func cut(_ id: UUID, _ task: String, dir: URL, root: URL) async throws(ProtocolError) -> (Lane, any LoopHost) {
+        guard let head = await out(["rev-parse", "HEAD"], dir) else { throw ProtocolError(code: .internal, message: "git rev-parse HEAD failed") }
+        let lane = try await LaneWorktree.create(repoRoot: root, base: head, work: id, task: task, host: host)
+        do { return (lane, try await host.laneHost(lane)) } catch {
+            await dropLane(lane)
+            throw error
+        }
     }
 
     /// The task got no lane (`why`; nil: the loop was stopping before it had one): no attempt ran, none is counted.
@@ -224,7 +228,7 @@ extension WorkLoop {
             let who = await host.othersWorking()
             await note(id, who.map(Self.blockedNote)
                 ?? "[loop] a worktree do cercado tem arquivos rastreados modificados, e não são do laço: nada foi integrado; laço parado, worktree intocada")
-            return who.map { .init(.othersWorking, detail: $0) } ?? .init(.dirtyTree)
+            return who.map { WorkLoopState.Stop(.othersWorking, detail: $0) } ?? WorkLoopState.Stop(.dirtyTree)
         }
     }
 

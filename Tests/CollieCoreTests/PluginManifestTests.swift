@@ -39,9 +39,7 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
         #expect(refusal { $0["id"] = "kanban"; $0["events"] = ["kanban.changed"] } == nil)
     }
 
-    @Test func refusesHelperInPhase1() {
-        let e = refusal { $0["helper"] = "bin/x" }
-        #expect(e?.code == .invalidArgs && e?.message.contains("precisa de um Collie mais novo") == true, "\(String(describing: e))")
+    @Test func refusesHelperCommandsAndNewerApi() {
         let r = refusal { var c = command("go"); c["runs"] = "helper"; $0["commands"] = [c] }
         #expect(r?.message.contains("precisa de um Collie mais novo") == true)
         #expect(refusal { $0["apiVersion"] = 3 }?.message.contains("precisa de um Collie mais novo") == true)
@@ -49,11 +47,28 @@ private func command(_ name: String, timeout: Double? = nil) -> [String: Any] {
     }
 
     @Test func refusesPermissionsInPhase1() {
-        for p: Any in [["network": ["api.x.com"]], ["project": "read"], ["camera": true]] {
+        for p: Any in [["network": ["api.x.com"]], ["project": "write"], ["camera": true]] {
             #expect(refusal { $0["permissions"] = p }?.message.contains("precisa de um Collie mais novo") == true, "\(p)")
         }
-        for p: Any in [[String: Any](), ["network": [String](), "project": "none"]] {
+        for p: Any in [[String: Any](), ["network": [String](), "project": "none"], ["project": "read"]] {
             #expect(refusal { $0["permissions"] = p } == nil, "\(p)")
+        }
+    }
+
+    @Test func acceptsHelperWithHooksAndProjectRead() throws {
+        let m = try manifest { $0["helper"] = "bin/vizinho"; $0["hooks"] = ["edit", "stop"]; $0["permissions"] = ["project": "read"] }
+        #expect(m.helper == "bin/vizinho" && m.hookEvents == ["edit", "stop"])
+        #expect(try PluginManifest.load(folder: notas).hookEvents == [])
+    }
+
+    @Test func refusesBadHooksAndHelper() {
+        #expect(refusal { $0["hooks"] = ["edit"] }?.message.contains("helper") == true)   // hooks without helper
+        #expect(refusal { $0["helper"] = "bin/x" }?.message.contains("hooks") == true)    // helper without hooks
+        #expect(refusal { $0["helper"] = "bin/x"; $0["hooks"] = [String]() }?.message.contains("hooks") == true)
+        #expect(refusal { $0["helper"] = "bin/x"; $0["hooks"] = ["save"] }?.message.contains("save") == true)
+        #expect(refusal { $0["helper"] = "bin/x"; $0["hooks"] = ["edit", "edit"] }?.code == .invalidArgs)
+        for h in ["../x", "ui/x", "bin/../x", "bin/.x", "x", "bin/a/b", "/bin/x", "bin/"] {
+            #expect(refusal { $0["helper"] = h; $0["hooks"] = ["edit"] }?.code == .invalidArgs, "\(h)")
         }
     }
 

@@ -85,7 +85,9 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     public var placements: [PanelPlacement]
     public var defaultPlacement: PanelPlacement
     public var ui: String
-    public var helper: String?             // phase 2; refused now
+    public var helper: String?             // `bin/<name>`; needs `hooks`
+    /// Agent events the helper takes (`edit`, `stop`); see `hookEvents`.
+    public var hooks: [String]?
     public var commands: [Command]
     public var events: [String]
     public var stateKeys: [String]
@@ -113,6 +115,7 @@ public struct PluginManifest: Codable, Sendable, Equatable {
         defaultPlacement = try c.decodeIfPresent(PanelPlacement.self, forKey: .defaultPlacement) ?? placements.first ?? .canvas
         ui = try c.decode(String.self, forKey: .ui)
         helper = try c.decodeIfPresent(String.self, forKey: .helper)
+        hooks = try c.decodeIfPresent([String].self, forKey: .hooks)
         commands = try c.decodeIfPresent([Command].self, forKey: .commands) ?? []
         events = try c.decodeIfPresent([String].self, forKey: .events) ?? []
         stateKeys = try c.decodeIfPresent([String].self, forKey: .stateKeys) ?? []
@@ -126,6 +129,8 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     }
 
     public var notifies: Bool { notify ?? true }
+    /// The agent events this plug-in's helper takes (empty: none declared).
+    public var hookEvents: [String] { hooks ?? [] }
 
     /// Consult params the daemon applies to a GET http command's reply (`PaddockApps.query`), never sent to the app:
     /// `last`, `since`, `match`, each unless the command declares it (then it is the app's).
@@ -249,10 +254,18 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     }
 
     public func validate() throws(ProtocolError) {
-        if helper != nil || commands.contains(where: { $0.runs == "helper" }) { throw Self.bad(Self.newer) }
-        for (k, v) in permissions ?? [:] {   // empty network list and project "none" mean nothing asked
+        if commands.contains(where: { $0.runs == "helper" }) { throw Self.bad(Self.newer) }
+        for h in hooks ?? [] where !["edit", "stop"].contains(h) { throw Self.bad("hook '\(h)' desconhecido: edit ou stop") }
+        guard hookEvents.count <= 2, Set(hookEvents).count == hookEvents.count else { throw Self.bad("hooks: edit e/ou stop, sem repetição") }
+        if let h = helper {
+            guard !hookEvents.isEmpty else { throw Self.bad("helper pede hooks (edit e/ou stop)") }
+            guard Self.safeHelperPath(h) else { throw Self.bad("helper '\(h)' inválido: bin/<nome>, sem '..'") }
+        } else if !hookEvents.isEmpty {
+            throw Self.bad("hooks pedem um helper (bin/<nome>)")
+        }
+        for (k, v) in permissions ?? [:] {   // empty network list and project none/read are accepted
             switch (k, v) {
-            case ("network", .array([])), ("project", .string("none")): continue
+            case ("network", .array([])), ("project", .string("none")), ("project", .string("read")): continue
             default: throw Self.bad(Self.newer)
             }
         }
@@ -343,6 +356,12 @@ public struct PluginManifest: Codable, Sendable, Equatable {
     static func safeUIPath(_ p: String) -> Bool {
         let parts = p.split(separator: "/", omittingEmptySubsequences: false)
         return p.utf8.count <= 512 && parts.count >= 2 && parts[0] == "ui" && p.hasSuffix(".html")
+            && parts.allSatisfy { match(String($0), "[A-Za-z0-9_][A-Za-z0-9._-]{0,127}") }
+    }
+    /// `bin/<name>`: a plain name (same component rule as `ui`), ≤ 512 bytes.
+    static func safeHelperPath(_ p: String) -> Bool {
+        let parts = p.split(separator: "/", omittingEmptySubsequences: false)
+        return p.utf8.count <= 512 && parts.count == 2 && parts[0] == "bin"
             && parts.allSatisfy { match(String($0), "[A-Za-z0-9_][A-Za-z0-9._-]{0,127}") }
     }
     /// `tools/x`: relative, no empty, `.` or `..` component, no control character, ≤ 256 characters.

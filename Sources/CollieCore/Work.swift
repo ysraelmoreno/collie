@@ -88,7 +88,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public struct Stop: Codable, Sendable, Equatable {
         /// `unknown` is a reserve (a code written by a newer daemon decodes as it): no path of this daemon produces it.
         public enum Code: String, Codable, Sendable, CaseIterable {
-            case requested, workGone, starterGone, maxReached, budgetSpent, gitFailed, dirtyTree, othersWorking, cancelled, daemonRestart, unknown
+            case requested, workGone, starterGone, maxReached, budgetSpent, gitFailed, dirtyTree, othersWorking, cancelled, daemonRestart, `internal`, unknown
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -106,6 +106,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .othersWorking: "'\(detail ?? "outro terminal")' trabalhando no cercado"
             case .cancelled: "o daemon parou"
             case .daemonRestart: "o daemon reiniciou durante o laço"
+            case .internal: "estado inesperado do motor (bug); a tarefa foi reaberta"
             case .unknown: "motivo desconhecido"
             }
         }
@@ -129,6 +130,29 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
         self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate; self.phase = phase
         self.startedAt = startedAt; self.endedAt = endedAt
+    }
+    /// The older fields decode as always (a required one missing, or one of the wrong shape, is no loop). The newer
+    /// ones (`phase`, `stopReason`, `events`) only record: a malformed one is nil, a malformed event is dropped, and
+    /// the loop survives. What is written (the synthesized `encode`) does not change.
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        state = try c.decode(State.self, forKey: .state); task = try c.decodeIfPresent(String.self, forKey: .task)
+        attempt = try c.decode(Int.self, forKey: .attempt)
+        tries = try c.decode(Int.self, forKey: .tries); timeout = try c.decode(Int.self, forKey: .timeout)
+        preset = try c.decodeIfPresent(String.self, forKey: .preset); model = try c.decodeIfPresent(String.self, forKey: .model)
+        command = try c.decodeIfPresent(String.self, forKey: .command)
+        max = try c.decodeIfPresent(Int.self, forKey: .max); used = try c.decode(Int.self, forKey: .used)
+        budget = try c.decodeIfPresent(Int.self, forKey: .budget); spent = try c.decodeIfPresent(Int.self, forKey: .spent)
+        tasks = try c.decodeIfPresent([String].self, forKey: .tasks); gate = try c.decodeIfPresent(String.self, forKey: .gate)
+        startedAt = try c.decode(Date.self, forKey: .startedAt); endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
+        phase = (try? c.decodeIfPresent(Phase.self, forKey: .phase)) ?? nil
+        stopReason = (try? c.decodeIfPresent(Stop.self, forKey: .stopReason)) ?? nil
+        events = ((try? c.decodeIfPresent([Lossy].self, forKey: .events)) ?? nil)?.compactMap(\.event)
+    }
+    /// One element of `events`: nil when malformed, so the list still decodes.
+    private struct Lossy: Decodable {
+        let event: LoopEvent?
+        init(from d: Decoder) { event = try? LoopEvent(from: d) }
     }
 }
 

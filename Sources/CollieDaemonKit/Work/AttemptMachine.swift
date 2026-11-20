@@ -60,12 +60,15 @@ enum AttemptMachine {
         case note(String)
         case journal(LoopEvent.Kind, String?)
         case stopLoop(WorkLoopState.Stop)
+        /// An event that can never arrive in this phase did (a bug of the interpreter or of this table): which pair.
+        /// The state stays; `WorkLoop.attempt()`'s safety net reopens the task and stops the loop.
+        case fault(String)
 
         /// Carrying it out answers with an event.
         var answers: Bool {
             switch self {
             case .summon, .ask, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .decide: true
-            case .dismiss, .show, .discard, .markDone, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop: false
+            case .dismiss, .show, .discard, .markDone, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
             }
         }
     }
@@ -126,7 +129,7 @@ enum AttemptMachine {
 
         case (.summoning, .measured(let m)), (.waitingCommit, .measured(let m)):
             if s.facts.failure != nil { return verdict(&s) }   // failed before its check: straight to the verdict
-            guard s.phase == .waitingCommit, s.agent == nil, let m else { return (s, []) }
+            guard s.phase == .waitingCommit, s.agent == nil, let m else { return stray(s, e) }
             s.facts.committed = m.committed; s.facts.dirty = m.dirty; s.judged = m.judged; s.phase = .checking
             return (s, [.show(.check), .journal(.checkStarted, nil), .runCheck])
 
@@ -183,8 +186,14 @@ enum AttemptMachine {
             }
 
         default:
-            return (s, [])   // not this phase's event: nothing changes
+            return stray(s, e)   // not this phase's event: it never should have come
         }
+    }
+
+    /// Nothing changes and the interpreter is told (`fault`): the pair, without the event's payload (it may be the
+    /// agent's text).
+    private static func stray(_ s: State, _ e: Event) -> (State, [Effect]) {
+        (s, [.fault("\(s.phase) × \(String(describing: e).prefix { $0 != "(" })")])
     }
 
     /// Out with no verdict; a terminal still open is dismissed first.

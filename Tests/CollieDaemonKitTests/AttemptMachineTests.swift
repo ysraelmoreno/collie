@@ -242,13 +242,15 @@ private func alongTheHappyPath() -> [M.State] {
         }
     }
 
+    /// M1b.1: the state stays, and the interpreter is told (`fault`) instead of nothing.
     @Test func anEventOfAnotherPhaseChangesNothing() {
         let states = alongTheHappyPath()
         let strays: [M.Event] = [.started, .gateDone(status: 0, broken: nil), .decided(.pass), .turnTimedOut]
         for s in states where s.phase == .checking {
             for e in strays {
                 let (next, fx) = M.reduce(s, e)
-                #expect(next == s && fx.isEmpty, "\(e)")
+                #expect(next == s && fx.count == 1, "\(e)")
+                if case .fault = fx.first {} else { Issue.record("\(e): \(fx)") }
             }
         }
     }

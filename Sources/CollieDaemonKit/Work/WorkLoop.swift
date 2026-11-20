@@ -49,11 +49,14 @@ actor WorkLoop {
     static let featureMaps = ["docs/feature-map.md", "FEATURES.md"]
     static let evidenceCommits = 20, evidenceSubject = 200, evidenceLines = 20, evidenceChars = 2000
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration, othersWait: Duration
+    /// A test's seam: the event an effect answers with, instead of carrying it out (nil: carried out as always).
+    let events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)?
     private var stopping: Set<UUID> = []
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
-         othersWait: Duration = .seconds(300)) {
+         othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
+        self.events = events
     }
 
     /// Ends the loop after the current attempt's verdict.
@@ -134,11 +137,26 @@ actor WorkLoop {
                       branch: branch, keep: keep, on: branch, at: started)
         var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before), .started)
         while !todo.isEmpty {
-            guard let happened = await perform(todo.removeFirst(), state, &run) else { continue }
+            let effect = todo.removeFirst()
+            var happened = events?(effect)
+            if happened == nil { happened = await perform(effect, state, &run) }
+            guard let happened else { continue }
             let (next, more) = AttemptMachine.reduce(state, happened)
             state = next; todo += more
         }
-        return run.end
+        guard state.phase != .finished else { return run.end }
+        // the safety net: the machine ran out of effects before its end (an event out of its phase, `fault`). A bug:
+        // the task must not stay `inProgress` with its job running. Like `.reopen`: the task is open again, the attempt
+        // is not counted on it, the tree is left as it is, and the loop stops here (no next task on a broken engine).
+        let at = host.now(), what = run.fault.map { " (\($0))" } ?? ""
+        if let agent = state.agent { await host.dismiss(agent) }
+        try? await store.update(w.id) { x in
+            if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
+            Self.endJob(&x, name, "loop: estado inesperado do motor", at: at)
+            x.loop?.phase = nil
+            x.notes.append(WorkNote(at: at, text: "[loop] estado inesperado do motor\(what) em \"\(task.title)\": é um bug do laço; tarefa reaberta, tentativa não contada, worktree intocada; laço parado"))
+        }
+        return .stop(.init(.internal))
     }
 
     /// What an attempt's effects read and leave behind: the interpreter's own, `AttemptMachine` never sees it.
@@ -157,6 +175,8 @@ actor WorkLoop {
         /// When the verdict was reached.
         var at: Date
         var end = AttemptEnd.go
+        /// The machine's `fault`, for the safety net's note.
+        var fault: String?
     }
 
     /// Carries one effect of `AttemptMachine` out, with the host, store and git calls the attempt always made, and
@@ -171,6 +191,7 @@ actor WorkLoop {
         case .note(let text): await note(id, text)
         case .show(let p): await phase(id, p)
         case .stopLoop(let stop): r.end = .stop(stop)
+        case .fault(let what): r.fault = what
         case .summon:
             do {
                 let agent = try await host.summon(name: name, for: r.work, loop: r.loop)

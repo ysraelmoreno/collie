@@ -55,12 +55,12 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(n == 5, "\(n)")   // start, before the ask, before the check, deferred (with verdict and discard), spent
     }
 
-    @Test func noCommitWritesFiveTimes() async throws {
+    @Test func noCommitWritesSixTimes() async throws {
         let r = try await LoopRig([task("a", "true")], tries: 1); defer { r.cleanup() }
         let n = await writes(r)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit")
-        #expect(n == 5, "\(n)")
+        #expect(n == 6, "\(n)")   // M2.1: a hook end with no commit is nudged, one write before the nudge's ask
     }
 
     @Test func theOrderOfTheEventsIsTheSame() async throws {

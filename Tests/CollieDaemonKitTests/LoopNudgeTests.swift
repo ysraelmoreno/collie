@@ -109,7 +109,8 @@ private let paths: [Path] = [
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1, "\(w.notes.map(\.text))")
         // the same attempt: one terminal, one of `--max`, one try
         #expect(w.loop?.used == 1 && w.jobs.map(\.id) == ["loop-a-1"])
-        #expect(await r.host.summoned == ["loop-a-1"] && r.host.dismissed == ["loop-a-1"])
+        #expect(await r.host.summoned == ["loop-a-1"])
+        #expect(await r.host.dismissed == ["loop-a-1"])
         let kinds = ev.map(\.kind)
         let i = try #require(kinds.firstIndex(of: .nudged))
         #expect(ev[i].detail == "hook" && ev[i].task == "a" && ev[i].attempt == 1)
@@ -136,7 +137,8 @@ private let paths: [Path] = [
         // once per attempt, never twice in one
         #expect(await r.host.nudges.map(\.name) == ["loop-a-1", "loop-a-2"])
         #expect(ev.filter { $0.kind == .nudged }.map(\.attempt) == [1, 2])
-        #expect(w.loop?.used == 2 && r.host.checks == 2)
+        #expect(w.loop?.used == 2)
+        #expect(await r.host.checks == 2)
     }
 
     @Test func aTurnThatEndedWithACommitIsNotNudged() async throws {
@@ -181,6 +183,7 @@ private let paths: [Path] = [
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit")
-        #expect(await r.host.nudges.count == 1 && r.host.checks == 1)
+        #expect(await r.host.nudges.count == 1)
+        #expect(await r.host.checks == 1)
     }
 }

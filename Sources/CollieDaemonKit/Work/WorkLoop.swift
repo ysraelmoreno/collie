@@ -201,7 +201,7 @@ actor WorkLoop {
     /// Effects that may take long: what is pending is written before them.
     private static func waits(_ e: AttemptMachine.Effect) -> Bool {
         switch e {
-        case .ask, .nudge, .waitForCommit, .runCheck, .runGate: true
+        case .ask, .waitForCommit, .runCheck, .runGate: true   // `nudge` writes by itself, once, when it goes
         default: false
         }
     }
@@ -268,7 +268,7 @@ actor WorkLoop {
             guard let agent = r.agent, let deadline = r.deadline, !Task.isCancelled, !stopping.contains(id) else { return .waitExpired }
             let rest = Int(deadline.timeIntervalSince(host.now()))
             guard rest >= 1 else { return .waitExpired }
-            // part of the same attempt (no `used`, no try); written now: the nudge's turn may be long
+            // part of the same attempt (no `used`, no try); written now, with the turn's end: the nudge's turn may be long
             r.pending.append(entry(.nudged, task: task.id, attempt: n, detail: AskResult.Source.hook.rawValue))
             await record(id, &r)
             do { return .turnEnded(source: try await host.ask(agent, prompt: Self.nudgePrompt, timeout: .seconds(rest))) }

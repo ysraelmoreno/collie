@@ -286,6 +286,9 @@ public actor AskCoordinator {
         var turnEnds = 0            // Stop hooks seen (not continued)
         /// The in-flight prompt written to this Claude whose UserPromptSubmit hasn't come: a Stop now ends an earlier turn.
         var awaitingSubmit: UUID?
+        /// M2.0: a prompt written to it had its Enter sent again (`confirmSubmit`). Never reset: the loop reads it
+        /// after its ask, and a loop's agent lives for one attempt.
+        var submitRetried = false
     }
     private struct Waiter {
         var from: UUID, to: UUID, prompt: String, raw: Bool
@@ -924,6 +927,9 @@ public actor AskCoordinator {
         delivered(id)
     }
 
+    /// M2.0: a prompt written to `terminal` had its Enter sent again (the loop's journal).
+    func submitRetried(_ terminal: UUID) -> Bool { targets[terminal]?.submitRetried ?? false }
+
     /// Hook: this Claude's SessionStart reached the daemon.
     func sessionHooked(_ terminal: UUID) { targets[terminal]?.sessionHooked = true }
     /// Hook: this Claude submitted a prompt.
@@ -934,8 +940,10 @@ public actor AskCoordinator {
     /// the slot up to the hold. Without proof either way (hooks not seen, a dialog open, always printing): as written.
     /// `busy`: written mid-turn (DX backlog 16): Claude queues it until that turn ends (`ends` still the Stop count), so the
     /// wait for its submit starts only then.
+    /// M2.0: before failing, the Enter is sent again, once per prompt (a TUI under load takes the text after the
+    /// first Enter came: the prompt sits typed and nothing submits it), and the hook gets `submitConfirm` more.
     private func confirmSubmit(_ id: UUID, _ to: UUID, after submits: Int, busy: Bool = false, ends: Int = 0) async {
-        var start = ContinuousClock.now
+        var start = ContinuousClock.now, resent = false
         while true {
             try? await Task.sleep(for: .milliseconds(100))
             guard let t = targets[to], t.inflight?.id == id else { return }   // its turn ended, or it failed
@@ -946,6 +954,22 @@ public actor AskCoordinator {
             let printing = t.process.lastOutputAt.map { now - $0 < StreamHub.workingWindow } ?? false
             if printing && now - start < Self.submitConfirmMax { continue }
             if printing || !t.sessionHooked || t.approval.pending != nil { submitted(id, to); return }
+            if !resent {
+                // counted as input in one step with the check, as the prompt's own write: an Enter into a dialog
+                // would answer it. Output not scanned yet may hold one: looked at again on the next poll.
+                switch t.approval.inputIfClear(echo: "") {
+                case .pending: submitted(id, to); return
+                case .window: continue
+                case .written: break
+                }
+                resent = true; start = now
+                targets[to]?.submitRetried = true
+                askEvents.emit(MemoryEvent(type: .submitRetried, terminal: to, ask: id))
+                let process = t.process, user = waiters[id]?.user == true
+                // PTYProcess.write may spin 2 s: off the actor. A failed write ends as before: "did not submit".
+                DispatchQueue.global().async { try? process.write(PromptInjector.submit, origin: user ? .user : .collie) }
+                continue
+            }
             finish(id, .failure(ProtocolError(code: .unavailable, message:
                 "'\(t.name)' did not submit the prompt; it may still be in its input. Check it with `collie check`")))
             return

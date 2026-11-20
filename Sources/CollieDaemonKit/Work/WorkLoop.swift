@@ -8,6 +8,8 @@ protocol LoopHost: Sendable {
     /// A fresh agent terminal in `work`'s paddock, as the loop's settings ask. Returns its id.
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source
+    /// M2.0: a prompt written to `terminal` was not submitted and had its Enter sent again (the journal's `resubmitted`).
+    func resubmitted(_ terminal: UUID) async -> Bool
     /// True while the terminal's agent is in a turn (the daemon's own badge/turn state).
     func working(_ terminal: UUID) async -> Bool
     func dismiss(_ terminal: UUID) async
@@ -33,6 +35,7 @@ protocol LoopHost: Sendable {
 }
 
 extension LoopHost {
+    func resubmitted(_ terminal: UUID) async -> Bool { false }
     func taskEnded(_ line: String) async {}
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
         EvidenceFiles.copy(glob, from: dir, to: EvidenceFiles.dir(patchDir(work), task: task))
@@ -251,9 +254,13 @@ actor WorkLoop {
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: r.loop.tries, dir: dir, notes: notes, gate: r.loop.gate, map: map)
             let turn = Swift.min(r.loop.timeout, left(r.loop, since: r.started))   // the budget bounds the turn too
             r.deadline = r.started + Double(turn)
-            do { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: .seconds(turn))) }
-            catch where error.code == .timeout { return .turnTimedOut }
-            catch { return .turnFailed(error.message) }
+            let ended: AttemptMachine.Event
+            do { ended = .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: .seconds(turn))) }
+            catch where error.code == .timeout { ended = .turnTimedOut }
+            catch { ended = .turnFailed(error.message) }
+            // M2.0: it only records (the turn's end, good or bad, is journaled right after)
+            if await host.resubmitted(agent) { r.pending.append(entry(.resubmitted, task: task.id, attempt: n, detail: name)) }
+            return ended
         case .waitForCommit, .lookForCommit:
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
                 await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline)

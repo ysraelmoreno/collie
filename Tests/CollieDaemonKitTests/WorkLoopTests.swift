@@ -61,6 +61,10 @@ actor LoopFakeHost: LoopHost {
         if let e = s.askError { throw e }
         return s.source
     }
+    /// M2.0: the agents (by name) whose prompt had its Enter sent again.
+    var resubmits: Set<String> = []
+    func setResubmitted(_ n: String) { resubmits.insert(n) }
+    func resubmitted(_ terminal: UUID) async -> Bool { resubmits.contains(names[terminal] ?? "") }
     func working(_ terminal: UUID) async -> Bool {
         let name = names[terminal]!, s = scripts[name] ?? LoopScript()
         guard let after = s.lateAfter else { return false }

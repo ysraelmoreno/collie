@@ -51,6 +51,8 @@ public struct LoopEvent: Codable, Sendable, Equatable {
     public enum Kind: String, Codable, Sendable, CaseIterable {
         case attemptStarted, agentSummoned, turnEnded, commitSeen, agentDismissed, checkStarted, checkFinished
         case gateStarted, gateFinished, treeReset, othersWaiting, verdict, discarded, stopRequested, stopped, unknown
+        /// M2.0: the attempt's prompt was not submitted and its Enter was sent again (detail: the terminal's name).
+        case resubmitted
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200

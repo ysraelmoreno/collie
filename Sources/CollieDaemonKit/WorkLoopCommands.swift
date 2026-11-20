@@ -360,6 +360,7 @@ struct RouterLoopHost: LoopHost {
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).source
     }
+    func resubmitted(_ terminal: UUID) async -> Bool { await router.asks.submitRetried(terminal) }
 
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }

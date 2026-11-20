@@ -12,6 +12,9 @@ struct MemoryEvent: Codable, Sendable, Equatable {
         /// An ask written to a terminal, and its end (reply, idle, timeout, failure): `ask` is its id (spec 2026-11-17
         /// cursor memory §6: did the Cursor pull its memory between the two?).
         case askDelivered, askDone
+        /// M2.0: a written prompt was not submitted and its Enter was sent again, once (`AskCoordinator.confirmSubmit`):
+        /// `terminal` and `ask`, as `askDelivered`.
+        case submitRetried
         /// The next prompt resolved the last prompt injection's pending ids (Leva 1 precision): `ids` counted as a useful
         /// use (`addUse` took them), `hits` how many were pending, `reason` `correction` when the prompt dropped them all.
         case used

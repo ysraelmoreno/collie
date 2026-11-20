@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Funcionalidades: modal com carrossel</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--color-bg); color: var(--color-fg); font-family: "Space Grotesk", system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.55; }
+main { max-width: 960px; margin: 0 auto; padding: var(--space-48) var(--space-16) var(--space-96); }
+.eyebrow { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-text); margin: 0 0 var(--space-12); }
+h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.08; letter-spacing: -.02em; margin: 0 0 var(--space-16); text-wrap: balance; }
+h2 { font-size: 24px; line-height: 1.2; margin: 0 0 var(--space-12); }
+p { margin: 0 0 var(--space-16); max-width: 66ch; } .muted { color: var(--color-text-secondary); }
+.scroll { overflow-x: auto; margin: var(--space-24) 0; padding-bottom: 4px; }
+.notes { margin-top: var(--space-48); padding-top: var(--space-24); border-top: 1px solid var(--color-border); }
+.notes ul { padding-left: 20px; margin: 0 0 var(--space-24); max-width: 66ch; } .notes li { margin-bottom: 6px; }
+table.list { border-collapse: collapse; font-size: 14px; width: 100%; max-width: 760px; margin-bottom: var(--space-24); }
+table.list th, table.list td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--color-border); vertical-align: top; }
+table.list th { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; font-weight: 400; color: var(--color-text-secondary); }
+.tw { overflow-x: auto; }
+
+.app { --bg:#0E1326; --sf:#161C36; --side:#121831; --sunk:#0B1020; --raised:#1B2340; --bd:#262E52; --tx:#E8ECF8; --tx2:#B6BEDB; --mu:#8C95B8; --ac:#6EE7B7; --on:#0E1326; --at:#FFB86B; --se:#93A4FF;
+  width: 920px; height: 560px; border-radius: 12px; overflow: hidden; border: 1px solid var(--bd); background: var(--bg); color: var(--tx); font: 13px/1.45 -apple-system, system-ui, sans-serif; position: relative; display: grid; grid-template-rows: 30px 1fr; box-shadow: 0 18px 40px -18px rgba(0,0,0,.5); }
+.app button { font: inherit; color: inherit; cursor: pointer; }
+.app button:focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+.bar { display: flex; align-items: center; gap: 7px; padding: 0 12px; background: var(--side); border-bottom: 1px solid var(--bd); position: relative; }
+.bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--bd); } .bar span { position: absolute; left: 0; right: 0; text-align: center; font-weight: 600; color: var(--tx2); }
+.shell { display: grid; grid-template-columns: 52px 1fr; min-height: 0; }
+.rail { background: var(--side); border-right: 1px solid var(--bd); display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; }
+.rail .chip { width: 30px; height: 30px; border-radius: 9px; background: var(--raised); display: grid; place-items: center; font-weight: 600; font-size: 12px; color: var(--tx2); } .rail .chip.on { box-shadow: 0 0 0 1.5px var(--ac); color: var(--tx); }
+.rail .plus { border: 1px dashed var(--bd); background: none; color: var(--mu); }
+.rail .foot { margin-top: auto; display: grid; gap: 8px; justify-items: center; }
+.rail .ib { width: 30px; height: 30px; border-radius: 9px; border: 0; background: none; color: var(--tx2); display: grid; place-items: center; position: relative; }
+.rail .ib:hover { background: var(--raised); color: var(--tx); }
+.rail .ib.new::after { content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--ac); box-shadow: 0 0 0 2px var(--side); }
+.rail .use { font: 10px "DM Mono", ui-monospace, monospace; color: var(--tx2); display: grid; gap: 3px; justify-items: center; }
+.rail .use b { width: 26px; height: 4px; border-radius: 2px; background: var(--bd); position: relative; overflow: hidden; } .rail .use b::after { content: ""; position: absolute; inset: 0 59% 0 0; background: var(--ac); }
+.canvas { position: relative; background-image: radial-gradient(var(--bd) 1px, transparent 1.2px); background-size: 16px 16px; }
+.node { position: absolute; background: var(--sf); border: 1px solid var(--bd); border-radius: 9px; width: 250px; }
+.node h4 { margin: 0; padding: 5px 9px; font-size: 11px; font-weight: 500; color: var(--tx2); border-bottom: 1px solid var(--bd); }
+.node pre { margin: 0; padding: 8px 9px; font: 10.5px/1.5 "DM Mono", ui-monospace, monospace; color: var(--mu); }
+.callout { position: absolute; left: 62px; bottom: 74px; font: 11px "DM Mono", ui-monospace, monospace; color: var(--ac); display: flex; align-items: center; gap: 6px; pointer-events: none; }
+.callout::before { content: "←"; }
+
+.scrim { position: absolute; inset: 30px 0 0 0; background: rgba(7,10,22,.62); display: grid; place-items: center; }
+.scrim[hidden] { display: none; }
+.modal { width: 700px; background: var(--sf); border: 1px solid var(--bd); border-radius: 14px; box-shadow: 0 24px 60px -20px rgba(0,0,0,.7); display: grid; grid-template-rows: auto 1fr auto; overflow: hidden; }
+.mhead { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--bd); }
+.mhead strong { font-size: 14px; }
+.tabs { display: flex; gap: 2px; margin-left: 8px; flex: 1; min-width: 0; }
+.tabs button { border: 0; background: none; padding: 4px 9px; border-radius: 6px; color: var(--mu); font-size: 12px; white-space: nowrap; }
+.tabs button[aria-pressed="true"] { background: var(--raised); color: var(--tx); }
+.x { border: 0; background: none; width: 26px; height: 26px; border-radius: 6px; color: var(--mu); font-size: 16px; line-height: 1; } .x:hover { background: var(--raised); color: var(--tx); }
+.slide { display: grid; grid-template-columns: 250px 1fr; min-height: 268px; }
+.art { background: var(--sunk); border-right: 1px solid var(--bd); display: grid; place-items: center; background-image: radial-gradient(var(--bd) 1px, transparent 1.2px); background-size: 14px 14px; }
+.art svg { width: 190px; height: 150px; display: block; }
+.copy { padding: 22px 24px 16px; display: grid; align-content: start; gap: 10px; min-width: 0; }
+.copy .cat { font: 11px "DM Mono", ui-monospace, monospace; letter-spacing: .06em; text-transform: uppercase; color: var(--ac); }
+.copy h3 { margin: 0; font-size: 21px; line-height: 1.2; letter-spacing: -.01em; }
+.copy p { margin: 0; color: var(--tx2); font-size: 13.5px; line-height: 1.55; max-width: none; }
+.how { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--mu); margin-top: 2px; }
+.how code { font: 11.5px "DM Mono", ui-monospace, monospace; color: var(--tx); background: var(--sunk); border: 1px solid var(--bd); border-radius: 5px; padding: 1px 6px; }
+.go { justify-self: start; margin-top: 4px; border: 1px solid var(--bd); background: var(--raised); border-radius: 7px; padding: 5px 12px; font-size: 12.5px; }
+.mfoot { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--bd); }
+.nav { border: 1px solid var(--bd); background: var(--raised); border-radius: 7px; width: 30px; height: 26px; line-height: 1; } .nav:disabled { opacity: .35; cursor: default; }
+.dots { display: flex; align-items: center; gap: 5px; flex: 1; justify-content: center; flex-wrap: wrap; }
+.dots button { width: 7px; height: 7px; padding: 0; border-radius: 50%; border: 0; background: var(--bd); } .dots button[aria-current="true"] { background: var(--ac); width: 18px; border-radius: 4px; }
+.dots i { width: 1px; height: 10px; background: var(--bd); margin: 0 3px; }
+.count { font: 11px "DM Mono", ui-monospace, monospace; color: var(--mu); min-width: 52px; text-align: right; }
+</style>
+</head>
+<body>
+<main id="root">
+  <p class="eyebrow">Collie · descoberta</p>
+  <h1>"O que o Collie faz": modal com carrossel</h1>
+  <p>Um ícone de informação entra no pé do trilho, acima do indicador de uso dos agentes. Ele abre um modal com um carrossel: uma funcionalidade por cartão, o que ela é, como chamar, e um botão que leva até ela.</p>
+  <p class="muted">O protótipo funciona: setas do teclado ou os botões trocam de cartão, as abas pulam para um grupo, Esc fecha, e o ícone no trilho reabre.</p>
+
+  <div class="scroll"><div class="app" id="app">
+    <div class="bar"><i></i><i></i><i></i><span>Collie</span></div>
+    <div class="shell">
+      <div class="rail">
+        <div class="chip on">C</div><div class="chip">A</div><div class="chip">W</div><div class="chip plus">+</div>
+        <div class="foot">
+          <button class="ib new" id="open" type="button" aria-label="O que o Collie faz" title="O que o Collie faz">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true"><circle cx="9" cy="9" r="7.2" stroke="currentColor" stroke-width="1.5"/><path d="M9 8v4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="9" cy="5.4" r="1" fill="currentColor"/></svg></button>
+          <div class="use" aria-hidden="true"><b></b>41%</div>
+          <div class="ib" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="2.6" stroke="currentColor" stroke-width="1.5"/><path d="M9 1.8v2.2M9 14v2.2M1.8 9H4M14 9h2.2M3.9 3.9l1.6 1.6M12.5 12.5l1.6 1.6M3.9 14.1l1.6-1.6M12.5 5.5l1.6-1.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
+        </div>
+      </div>
+      <div class="canvas" aria-hidden="true">
+        <div class="node" style="left:40px;top:34px"><h4>pastor · claude</h4><pre>$ collie summon dev
+● dev pronto</pre></div>
+        <div class="node" style="left:340px;top:150px"><h4>dev · claude</h4><pre>● lendo Sources/…</pre></div>
+        <div class="callout">novo: o ícone de informação, acima do uso</div>
+      </div>
+    </div>
+    <div class="scrim" id="scrim">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mt">
+        <div class="mhead"><strong id="mt">O que o Collie faz</strong><div class="tabs" id="tabs" role="group" aria-label="Grupos"></div><button class="x" id="close" type="button" aria-label="Fechar">×</button></div>
+        <div class="slide" id="slide" aria-live="polite"><div class="art" id="art"></div>
+          <div class="copy"><span class="cat" id="cat"></span><h3 id="title"></h3><p id="text"></p><div class="how"><span>Como chamar</span><code id="how"></code></div><button class="go" id="go" type="button"></button></div></div>
+        <div class="mfoot"><button class="nav" id="prev" type="button" aria-label="Anterior">‹</button><div class="dots" id="dots"></div><span class="count" id="count"></span><button class="nav" id="next" type="button" aria-label="Próxima">›</button></div>
+      </div>
+    </div>
+  </div></div>
+
+  <section class="notes">
+    <h2>As 17 funcionalidades do carrossel</h2>
+    <div class="tw"><table class="list" id="tbl"><thead><tr><th>Grupo</th><th>Cartão</th><th>Como chamar</th><th>Botão</th></tr></thead><tbody></tbody></table></div>
+
+    <h2>Como funciona</h2>
+    <ul>
+      <li><strong>Entrada.</strong> No Trilho, o ícone fica no pé, acima do uso e da engrenagem. Na estrutura Compacta não existe "acima": ele fica à esquerda do uso, na barra flutuante.</li>
+      <li><strong>Ponto verde.</strong> Aparece no ícone quando uma versão nova trouxe cartões que o usuário ainda não viu, e o modal abre no primeiro deles. Some depois de visto.</li>
+      <li><strong>Cartão.</strong> Ilustração, grupo, nome, duas frases, como chamar (atalho, menu ou comando) e um botão que executa: abre o painel, a página de Preferências ou a paleta.</li>
+      <li><strong>Navegação.</strong> Setas na tela e no teclado, pontos agrupados, abas que pulam para o primeiro cartão de um grupo, contador. Esc fecha.</li>
+    </ul>
+    <h2>Decisões minhas, para você confirmar</h2>
+    <ul>
+      <li><strong>Quatro grupos</strong> (Trabalhar, Painéis, Controle, Personalizar) em vez de uma fila única de 17: sem eles, achar um item no meio do carrossel é só tentativa.</li>
+      <li><strong>Só o que o usuário usa.</strong> Fora: barra de menus, folha do terminal, atualização e serviço, CLI. Estão em `docs/feature-map.md`, mas não são "funcionalidades" para quem chega.</li>
+      <li><strong>Uma fonte só.</strong> Os cartões saem de uma tabela no código, e o lint que hoje exige cada painel em `docs/feature-map.md` passa a exigir também um cartão. Assim a lista não envelhece.</li>
+      <li><strong>Ilustrações esquemáticas</strong>, desenhadas com as cores do tema, sem captura de tela: capturas envelhecem a cada mudança de interface e não acompanham tema personalizado.</li>
+      <li><strong>Sem abrir sozinho.</strong> Nem na primeira execução: o ponto verde chama, o usuário decide.</li>
+    </ul>
+  </section>
+</main>
+<script>
+(function () {
+  var S = 'stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+  function svg(inner) { return '<svg viewBox="0 0 190 150" style="color:var(--tx2)">' + inner + '</svg>'; }
+  function box(x, y, w, h, extra) { return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="7" fill="var(--sf)" stroke="var(--bd)" stroke-width="1.5" ' + (extra || '') + '/>'; }
+  function bar(x, y, w, c) { return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="4" rx="2" fill="' + (c || 'var(--bd)') + '"/>'; }
+  var A = 'var(--ac)', W = 'var(--at)', V = 'var(--se)';
+  var art = {
+    canvas: svg(box(14,18,70,46) + box(104,84,70,46) + bar(22,28,30,A) + bar(22,38,46) + bar(112,94,30,A) + bar(112,104,46) + '<path d="M84 41C120 41 70 107 104 107" stroke="' + A + '" stroke-width="2" fill="none"/><circle cx="84" cy="41" r="4" fill="' + A + '"/><circle cx="104" cy="107" r="4" fill="' + A + '"/>'),
+    paddock: svg('<rect x="14" y="16" width="76" height="118" rx="10" fill="none" stroke="' + A + '" stroke-width="1.5" stroke-dasharray="5 4"/><rect x="100" y="16" width="76" height="118" rx="10" fill="none" stroke="var(--bd)" stroke-width="1.5" stroke-dasharray="5 4"/>' + box(24,30,56,34) + box(24,74,56,34) + box(110,30,56,34) + '<text x="24" y="126" font-size="9" fill="' + A + '" font-family="DM Mono, monospace">feat/a</text><text x="110" y="126" font-size="9" fill="var(--mu)" font-family="DM Mono, monospace">fix/b</text>'),
+    shepherd: svg(box(60,12,70,38) + box(8,100,52,34) + box(69,100,52,34) + box(130,100,52,34) + bar(70,24,34,A) + '<path d="M95 50V76M34 100V76H156V100M95 76V100" stroke="' + A + '" stroke-width="2" fill="none"/>'),
+    loop: svg('<path d="M95 26a49 49 0 1 1-46 32" ' + S + ' style="color:' + A + '"/><path d="M38 44l11 14 15-9" ' + S + ' style="color:' + A + '"/><path d="M76 77l13 13 26-28" stroke="' + A + '" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'),
+    work: svg(box(26,16,138,118) + '<circle cx="44" cy="40" r="6" fill="' + A + '"/>' + bar(58,38,84) + '<circle cx="44" cy="66" r="6" fill="' + A + '"/>' + bar(58,64,64) + '<circle cx="44" cy="92" r="6" fill="none" stroke="' + W + '" stroke-width="2"/>' + bar(58,90,90,W) + '<circle cx="44" cy="116" r="6" fill="none" stroke="var(--bd)" stroke-width="2"/>' + bar(58,114,50)),
+    palette: svg(box(18,34,154,34) + '<path d="M34 51h0" stroke="' + A + '" stroke-width="2"/><text x="32" y="56" font-size="13" fill="var(--tx)" font-family="DM Mono, monospace">@dev revise isto</text>' + box(18,76,154,52) + bar(30,88,90,A) + bar(30,100,120) + bar(30,112,70)),
+    browser: svg(box(16,16,158,118) + '<circle cx="30" cy="30" r="3" fill="var(--bd)"/><circle cx="41" cy="30" r="3" fill="var(--bd)"/><rect x="54" y="24" width="108" height="12" rx="6" fill="var(--sunk)" stroke="var(--bd)"/><line x1="16" y1="44" x2="174" y2="44" stroke="var(--bd)" stroke-width="1.5"/>' + bar(30,58,70) + bar(30,70,110) + '<rect x="30" y="86" width="50" height="18" rx="5" fill="' + A + '"/><path d="M88 96l22 8-9 4-4 9z" fill="var(--tx)" stroke="var(--bg)" stroke-width="1.5"/>'),
+    device: svg('<rect x="62" y="10" width="66" height="130" rx="12" fill="var(--sf)" stroke="var(--bd)" stroke-width="1.5"/><rect x="70" y="22" width="50" height="94" rx="4" fill="var(--sunk)"/>' + bar(76,32,30,A) + bar(76,44,38) + '<rect x="76" y="58" width="38" height="24" rx="4" fill="var(--raised)"/><circle cx="95" cy="128" r="4" fill="var(--bd)"/><circle cx="104" cy="98" r="9" fill="none" stroke="' + A + '" stroke-width="2"/>'),
+    network: svg(box(10,54,48,42) + box(132,54,48,42) + '<path d="M58 66h74M132 84H58" stroke="var(--bd)" stroke-width="2"/><path d="M118 60l12 6-12 6M72 78l-12 6 12 6" ' + S + ' style="color:var(--mu)"/><circle cx="95" cy="75" r="17" fill="var(--sf)" stroke="' + W + '" stroke-width="2"/><path d="M88 75h14M95 68v14" stroke="' + W + '" stroke-width="2" stroke-linecap="round"/>'),
+    design: svg(box(14,16,162,118) + '<rect x="28" y="30" width="60" height="44" rx="5" fill="var(--raised)"/><circle cx="130" cy="52" r="20" fill="' + V + '" opacity=".8"/><rect x="28" y="86" width="100" height="10" rx="5" fill="' + A + '"/><rect x="28" y="104" width="66" height="10" rx="5" fill="var(--bd)"/><rect x="84" y="70" width="8" height="8" fill="var(--sf)" stroke="' + A + '" stroke-width="1.5"/>'),
+    preview: svg(box(14,16,116,118) + bar(26,30,50,A) + bar(26,44,90) + bar(26,56,74) + '<rect x="26" y="70" width="92" height="50" rx="5" fill="var(--raised)"/><path d="M120 60h54v40h-26l-12 12v-12h-16z" fill="var(--sf)" stroke="' + W + '" stroke-width="1.5"/>' + bar(128,72,36,W) + bar(128,84,24)),
+    diagram: svg(box(64,10,62,30) + box(10,104,62,30) + box(118,104,62,30) + '<path d="M95 40v24M41 104V64h108v40" stroke="' + A + '" stroke-width="2" fill="none"/><path d="M95 64l-6-8h12z" fill="' + A + '"/>'),
+    memory: svg(box(20,14,150,32) + box(20,58,150,32) + box(20,102,150,32) + bar(32,24,60,A) + bar(32,34,110) + bar(32,68,48,V) + bar(32,78,96) + bar(32,112,70,W) + bar(32,122,84) + '<path d="M150 26l5 5 9-10" ' + S + ' style="color:' + A + '"/>'),
+    sandbox: svg('<path d="M95 12l56 20v36c0 34-24 58-56 70-32-12-56-36-56-70V32z" fill="var(--sf)" stroke="var(--bd)" stroke-width="1.5"/><rect x="62" y="58" width="66" height="40" rx="6" fill="var(--raised)" stroke="' + W + '" stroke-width="1.5"/>' + bar(70,68,38,W) + '<rect x="70" y="80" width="26" height="10" rx="4" fill="' + A + '"/><rect x="100" y="80" width="20" height="10" rx="4" fill="var(--bd)"/>'),
+    herds: svg(box(12,20,48,34) + box(71,20,48,34) + box(130,20,48,34) + '<path d="M36 54v22h118V54M95 54v22" stroke="var(--bd)" stroke-width="2" fill="none"/><rect x="40" y="84" width="110" height="46" rx="9" fill="var(--sf)" stroke="' + A + '" stroke-width="1.5"/>' + bar(54,98,54,A) + bar(54,110,80)),
+    plugins: svg(box(14,34,96,84) + bar(26,48,40,A) + bar(26,60,70) + bar(26,72,56) + '<path d="M128 52h20a8 8 0 0 1 8 8v6a8 8 0 0 0 0 20v6a8 8 0 0 1-8 8h-20z" fill="var(--raised)" stroke="' + V + '" stroke-width="1.5"/><path d="M110 76h18" stroke="' + V + '" stroke-width="2"/>'),
+    themes: svg('<rect x="14" y="20" width="50" height="44" rx="7" fill="#0E1326" stroke="var(--bd)" stroke-width="1.5"/><rect x="42" y="50" width="14" height="6" rx="3" fill="#6EE7B7"/><rect x="70" y="20" width="50" height="44" rx="7" fill="#F3F4F1" stroke="var(--bd)" stroke-width="1.5"/><rect x="98" y="50" width="14" height="6" rx="3" fill="#2448C9"/><rect x="126" y="20" width="50" height="44" rx="7" fill="#15171C" stroke="' + A + '" stroke-width="2"/><rect x="154" y="50" width="14" height="6" rx="3" fill="#6E9BFF"/>' + box(14,78,162,54) + '<rect x="26" y="90" width="12" height="12" rx="3" fill="#6E9BFF"/>' + bar(46,94,60) + '<rect x="26" y="110" width="12" height="12" rx="3" fill="' + W + '"/>' + bar(46,114,84))
+  };
+  var slides = [
+    ['Trabalhar','Canvas e terminais','Cada agente roda num terminal no canvas, lado a lado. Guias ligam um terminal aos outros terminais e painéis que ele pode usar.','clique direito no canvas','Novo terminal','canvas'],
+    ['Trabalhar','Cercados','Cada cercado é uma cópia isolada do repositório, com o próprio ramo. Dois agentes trabalham em paralelo sem pisar um no outro.','+ no trilho','Novo cercado','paddock'],
+    ['Trabalhar','Pastor e delegação','Um terminal Pastor chama outros agentes, entrega a tarefa e recebe a resposta. Você fala com um; ele coordena os demais.','collie summon <nome>','Ver na referência','shepherd'],
+    ['Trabalhar','Laços','Uma lista de tarefas roda sem supervisão: um agente novo por tentativa, e só o check de cada tarefa decide se ela passou.','/collie:loop','Abrir Trabalho','loop'],
+    ['Trabalhar','Trabalho','O registro do que cada terminal está fazendo: tarefas, andamento do laço, evidências e um resumo ao final.','painel Trabalho','Abrir Trabalho','work'],
+    ['Trabalhar','Paleta de comandos','Chame um agente, abra um painel ou vá a um cercado sem tirar a mão do teclado.','⌘K','Abrir a paleta','palette'],
+    ['Painéis','Navegador','Um navegador que o agente dirige: navega, clica, digita e lê a página. Você vê tudo acontecer.','collie panel open browser','Abrir Navegador','browser'],
+    ['Painéis','Dispositivo','A tela de um emulador Android, de um simulador iOS ou de um aparelho, com toque e teclado, para o agente testar o app.','collie panel open device','Abrir Dispositivo','device'],
+    ['Painéis','Rede','Inspeciona as requisições do emulador e responde no lugar do servidor por regra, para testar sem depender do backend.','collie panel open network','Abrir Rede','network'],
+    ['Painéis','Design e Design Systems','O agente desenha telas num motor de design e segue o design system escolhido para o projeto, com histórico de versões.','collie panel open design','Abrir Design','design'],
+    ['Painéis','Prévia e Artifacts','Páginas que o agente escreve (protótipo, deck, dashboard, documento) abrem ao lado, aceitam comentários e ficam guardadas.','collie artifact new prototype','Abrir Artifacts','preview'],
+    ['Painéis','Diagrama','O agente desenha um diagrama e você edita junto, no mesmo arquivo.','collie panel open diagram','Abrir Diagrama','diagram'],
+    ['Controle','Memória','Os agentes guardam decisões e armadilhas do projeto e as recebem de volta nas próximas sessões. Você revisa, edita e descarta.','painel Memória','Abrir Memória','memory'],
+    ['Controle','Sandbox e cartões','Todo terminal roda isolado. O que um agente pede fora do sandbox vira um cartão, e só você aprova.','Preferências › Desenho e sandbox','Abrir Preferências','sandbox'],
+    ['Controle','Rebanhos e Lotes','Rebanhos são times prontos de terminais e painéis, aplicados de uma vez. Lotes agrupam terminais de um mesmo esforço.','menu Rebanhos','Ver rebanhos','herds'],
+    ['Personalizar','Plug-ins','Painéis e comandos de terceiros entram sem recompilar o Collie. Um plug-in também pode orientar ou barrar o agente a cada edição.','Preferências › Plug-ins','Abrir Plug-ins','plugins'],
+    ['Personalizar','Temas','Crie o seu tema: edite as cores numa lista ou em JSON, com a prévia ao lado. O tema é um arquivo que dá para compartilhar.','Preferências › Aparência','Abrir Aparência','themes']
+  ];
+  var groups = []; slides.forEach(function (s) { if (groups.indexOf(s[0]) < 0) groups.push(s[0]); });
+  var i = 0, $ = function (id) { return document.getElementById(id); };
+  var tabs = $('tabs'), dots = $('dots'), scrim = $('scrim');
+  groups.forEach(function (g) { var b = document.createElement('button'); b.type = 'button'; b.textContent = g; b.addEventListener('click', function () { show(slides.findIndex(function (s) { return s[0] === g; })); }); tabs.appendChild(b); });
+  slides.forEach(function (s, n) {
+    if (n && slides[n - 1][0] !== s[0]) dots.appendChild(document.createElement('i'));
+    var d = document.createElement('button'); d.type = 'button'; d.setAttribute('aria-label', s[1]); d.addEventListener('click', function () { show(n); }); dots.appendChild(d);
+    var tr = document.createElement('tr'); [s[0], s[1], s[3], s[4]].forEach(function (t) { var td = document.createElement('td'); td.textContent = t; tr.appendChild(td); }); document.querySelector('#tbl tbody').appendChild(tr);
+  });
+  function show(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n)); var s = slides[i];
+    $('art').innerHTML = art[s[5]]; $('cat').textContent = s[0]; $('title').textContent = s[1]; $('text').textContent = s[2]; $('how').textContent = s[3]; $('go').textContent = s[4] + ' →';
+    $('count').textContent = (i + 1) + ' de ' + slides.length; $('prev').disabled = i === 0; $('next').disabled = i === slides.length - 1;
+    Array.prototype.forEach.call(tabs.children, function (b) { b.setAttribute('aria-pressed', String(b.textContent === s[0])); });
+    var k = 0; Array.prototype.forEach.call(dots.children, function (d) { if (d.tagName === 'BUTTON') { d.setAttribute('aria-current', String(k === i)); k++; } });
+  }
+  $('prev').addEventListener('click', function () { show(i - 1); }); $('next').addEventListener('click', function () { show(i + 1); });
+  $('close').addEventListener('click', function () { scrim.hidden = true; $('open').focus(); });
+  $('open').addEventListener('click', function () { scrim.hidden = false; $('open').classList.remove('new'); $('next').focus(); });
+  document.addEventListener('keydown', function (e) {
+    if (scrim.hidden) return;
+    if (e.key === 'ArrowRight') show(i + 1); else if (e.key === 'ArrowLeft') show(i - 1); else if (e.key === 'Escape') { scrim.hidden = true; $('open').focus(); }
+  });
+  show(0);
+})();
+</script>
+</body>
+</html>

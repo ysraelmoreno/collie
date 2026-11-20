@@ -75,7 +75,9 @@ private let touchMarker = #"cat >/dev/null; : > "$COLLIE_PLUGIN_DATA/marker"; ec
         try await w.install("lento", "cat >/dev/null; sleep 10; echo '{\"guide\":\"tarde\"}'")
         let t0 = Date()
         let v = await w.run()
-        #expect(v == PluginHooks.Verdict() && Date().timeIntervalSince(t0) < 4)
+        #expect(v == PluginHooks.Verdict())
+        // 3 s of deadline, then up to 1.1 s for SIGTERM to take: under the hook client's 5 s
+        #expect(Date().timeIntervalSince(t0) < 5)
         let left = Process(); left.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep"); left.arguments = ["-f", w.root.path]
         let out = Pipe(); left.standardOutput = out
         try left.run(); left.waitUntilExit()
@@ -97,7 +99,8 @@ private let touchMarker = #"cat >/dev/null; : > "$COLLIE_PLUGIN_DATA/marker"; ec
         try await w.store.setEnabled("desligado", false)
         #expect(await w.run(.edit) == PluginHooks.Verdict())
         #expect(!w.marker("desligado") && !w.marker("so-stop"))
-        #expect(await w.run(.stop).guide == "[plug-in so-stop] rodou")   // the declared event does run
+        _ = await w.run(.stop)   // a stop verdict carries no guide: the marker is the proof it ran
+        #expect(w.marker("so-stop") && !w.marker("desligado"))
     }
 
     @Test(.enabled(if: canSandbox, nested)) func noFilesNoProcess() async throws {

@@ -7,7 +7,7 @@ import CollieProtocol
 public enum PluginHookClient {
     /// `collie hook claude-tool` and its siblings: always sends `work.hook`; for `claude-tool` then asks `plugin.hook` (`edit`)
     /// and returns the PostToolUse reply (guide or block), or nil.
-    public static func toolOutput(hook: String, payload: Data, env: [String: String], timeout: Double = 4,
+    public static func toolOutput(hook: String, payload: Data, env: [String: String], timeout: Double = 5,
                                   onError: (String) -> Void = { _ in }) async -> String? {
         guard let creds = Creds(env) else { onError("COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN missing"); return nil }
         let body = JSONValue.string(String(decoding: payload, as: UTF8.self))
@@ -21,7 +21,7 @@ public enum PluginHookClient {
 
     /// `collie hook claude-stop`: the memory flow first (`turn.completed` always goes out), then `plugin.hook` (`stop`).
     /// One block with the plug-in's reason first and the memory ask after it; a continued Stop never blocks.
-    public static func stopOutput(stdin: Data, env: [String: String], timeout: Double = 4,
+    public static func stopOutput(stdin: Data, env: [String: String], timeout: Double = 5,
                                   onError: (String) -> Void = { _ in }) async -> String? {
         let ask = await MemoryHookClient.stopAsk(stdin: stdin, env: env, onError: onError)
         var reasons: [String] = []

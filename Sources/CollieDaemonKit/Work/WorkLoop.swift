@@ -181,12 +181,13 @@ actor WorkLoop {
             return .stop(.init(closed ? .workGone : .starterGone))
         }
 
-        var reason: String, output = ""
+        var output = ""
         var checkOutput = ""   // the check's own, kept for the evidence when a gate's output replaces `output`
-        var passed = false
-        var blocked: String?   // another terminal of the paddock is working: no reset, the loop stops
+        // what the attempt measured: `AttemptDecision` decides from it
+        var facts = AttemptDecision.Facts(failure: failure, attempt: n, tries: loop.tries, hasGate: loop.gate != nil)
         var judged = before   // the commit the agent left: what the check and the gate judge, and where the evidence ends
-        if let failure { reason = failure } else {
+        if failure == nil {
+            var blocked: String?   // another terminal of the paddock is working: no reset, the loop stops
             let committed = await committed(before: before, branch: branch, dir)
             let dirty = (await out(["status", "--porcelain", "--untracked-files=no"], dir)).map { !$0.isEmpty } ?? true
             judged = await out(["rev-parse", "HEAD"], dir) ?? before
@@ -236,16 +237,20 @@ actor WorkLoop {
                     if afterGate.reset { await log(.treeReset, afterGate.moved ? "moveu o HEAD" : nil) }
                 }
             }
-            let v = Self.verdict(checkStatus: broken == nil ? status : 0, gate: gate, committed: committed, dirty: dirty)
-            let reasons = [broken, v].compactMap { $0 } + moves
-            passed = reasons.isEmpty
-            reason = reasons.joined(separator: "; ")
+            facts.broken = broken; facts.checkStatus = status; facts.gate = gate; facts.committed = committed; facts.dirty = dirty
+            facts.moves = moves; facts.blockedBy = blocked
         }
 
         await phase(w.id, nil)
-        await log(.verdict, passed ? "passou" : reason)
+        let failed = AttemptDecision.reason(facts)
+        await log(.verdict, failed ?? "passou")
         let at = host.now()
-        if passed {
+        // a failed attempt that did not ask yet (it failed before its check, or its tree was dirty) asks now: the
+        // discard is a reset too
+        if failed != nil, facts.blockedBy == nil { facts.blockedBy = await othersWorkingWaiting(log) }
+        let reason: String, last: Bool, stop: WorkLoopState.Stop?
+        switch AttemptDecision.decide(facts) {
+        case .pass:
             // of `judged`, never of a HEAD read after the check and the gate ran
             let head = await out(["rev-parse", "--short", judged], dir) ?? ""
             let log = await out(["log", "--format=%h %s", "-n", "\(Self.evidenceCommits)", "\(before)..\(judged)"], dir) ?? ""
@@ -270,14 +275,19 @@ actor WorkLoop {
                 Self.endJob(&x, name, head, at: at)
             }
             await reportEnd(w.id, task.id)
-            guard let blocked else { return .go }
+            // the task passed and another terminal works: nothing to discard, the loop stops after it (see `Outcome.pass`)
+            guard let blocked = facts.blockedBy else { return .go }
             await note(w.id, Self.blockedNote(blocked))
             return .stop(.init(.othersWorking, detail: blocked))
+        case .retry(let r, let discards):
+            reason = r; last = false; stop = nil
+            if discards { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir); await log(.discarded, "\(task.id)-\(n).patch") }
+        case .defer(let r, let discards):
+            reason = r; last = true; stop = nil
+            if discards { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir); await log(.discarded, "\(task.id)-\(n).patch") }
+        case .stopLoop(let s, let r):
+            reason = r; last = false; stop = s
         }
-
-        if blocked == nil { blocked = await othersWorkingWaiting(log) }
-        if blocked == nil { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir); await log(.discarded, "\(task.id)-\(n).patch") }
-        let last = n >= loop.tries && blocked == nil   // a stopped loop defers nothing
         let tail = output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
         // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
         let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(loop.tries): \(reason)"
@@ -291,7 +301,7 @@ actor WorkLoop {
             Self.endJob(&x, name, reason, at: at)
         }
         if last { await reportEnd(w.id, task.id) }
-        if let blocked { await note(w.id, Self.blockedNote(blocked)); return .stop(.init(.othersWorking, detail: blocked)) }
+        if let stop { await note(w.id, Self.blockedNote(facts.blockedBy ?? "")); return .stop(stop) }
         return .go
     }
 

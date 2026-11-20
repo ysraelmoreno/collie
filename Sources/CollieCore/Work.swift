@@ -28,7 +28,9 @@ public struct TaskEvidence: Codable, Sendable, Equatable {
 /// (a shell command, exit 0 = passes) matter only to `collie work run`; `tries` is the attempts a loop used and
 /// `lastFailure` one line on why the last one failed. `evidence`: set by the loop when it approves the task; a task
 /// that leaves `done` (reopened, run again) loses it. `evidenceGlob`: relative to the worktree, the files the loop
-/// copies as evidence when it approves the task.
+/// copies as evidence when it approves the task. `needs` (M3.1): ids of tasks of the same work that must be `done`
+/// (and integrated) before this one starts. `scope` (M3.1): globs relative to the worktree's root, the paths the task
+/// may touch; nil: it may touch anything, so it runs alone (`TaskScheduler`).
 public struct WorkTask: Codable, Sendable, Equatable {
     public var id: String; public var title: String; public var reason: String?; public var updatedAt: Date
     public var state: TaskState {
@@ -41,6 +43,7 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var spec: String?; public var check: String?; public var tries: Int?; public var lastFailure: String?
     public var evidence: TaskEvidence?
     public var evidenceGlob: String?
+    public var needs: [String]?; public var scope: [String]?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
     /// the attempt ends; a daemon that fell mid-attempt leaves them, and the next run may adopt the commit already made.
     /// Read back from the work's file: never trusted as a git argument before `WorkLoop.isSha`.
@@ -52,13 +55,14 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public mutating func forgetResume() { resumeFrom = nil; resumeBranch = nil; resumeAt = nil }
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
                 spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
-                evidence: TaskEvidence? = nil, evidenceGlob: String? = nil) {
+                evidence: TaskEvidence? = nil, evidenceGlob: String? = nil, needs: [String]? = nil, scope: [String]? = nil) {
         self.id = id; self.title = title; self.state = state; self.reason = reason; self.updatedAt = updatedAt
         self.spec = spec; self.check = check; self.tries = tries; self.lastFailure = lastFailure; self.evidence = evidence
-        self.evidenceGlob = evidenceGlob
+        self.evidenceGlob = evidenceGlob; self.needs = needs; self.scope = scope
     }
     /// As the synthesized one, but `resumeFrom`, `resumeBranch` and `resumeAt` (M2b.1) only say where a fallen attempt
     /// may resume: one of the wrong type is nil (nothing is adopted) and the task survives. What is written does not change.
+    /// M3.1: `needs` and `scope` of the wrong type are nil too (no `scope` is the safe side: the task runs alone).
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id); title = try c.decode(String.self, forKey: .title)
@@ -71,6 +75,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
         resumeFrom = (try? c.decodeIfPresent(String.self, forKey: .resumeFrom)) ?? nil
         resumeBranch = (try? c.decodeIfPresent(String.self, forKey: .resumeBranch)) ?? nil
         resumeAt = (try? c.decodeIfPresent(Date.self, forKey: .resumeAt)) ?? nil
+        needs = (try? c.decodeIfPresent([String].self, forKey: .needs)) ?? nil
+        scope = (try? c.decodeIfPresent([String].self, forKey: .scope)) ?? nil
     }
 }
 

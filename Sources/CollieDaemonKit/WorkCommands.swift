@@ -253,9 +253,15 @@ extension CommandRouter {
                 guard ProjectRoot.contains(real, root: root) else { throw invalid("--spec \(given) is outside the project \(root.path)") }
                 spec = real
             }
+            // M3.1: the graph is checked on the way in (before a work is opened for a task that is refused)
+            let id = String(UUID().uuidString.prefix(8)).lowercased()
+            let needs = str(r, "needs").map(TaskScheduler.list), scope = str(r, "scope").map(TaskScheduler.list)
+            if let scope, let why = TaskScheduler.scopeRefusal(scope) { throw invalid("--scope: \(why)") }
+            if let needs, let why = TaskScheduler.needsRefusal(id: id, needs: needs, tasks: try await work.active(terminal: t.id)?.tasks ?? []) {
+                throw invalid("--needs: \(why)")
+            }
             let w = try await implicitWork(t, now: now)
-            let task = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(), title: title, updatedAt: now, spec: spec, check: check,
-                                evidenceGlob: evidence)
+            let task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope)
             try await work.update(w.id) { $0.tasks.append(task) }
             return try isoJSON(task)
 

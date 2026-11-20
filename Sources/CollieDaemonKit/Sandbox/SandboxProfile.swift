@@ -166,7 +166,24 @@ enum SandboxProfile {
             rule("deny", "file-write*", tagged: true, [sub(home)] + [common].compactMap { $0.map(sub) })
             var writes = [sub(project)] + EssentialPaths.homeWrites.map { entry(home, $0) }
             if let common {
-                if let worktree {   // a worktree commits through the common dir; its own git dir is its index/HEAD
+                if let worktree, i.lanePaddock != nil {
+                    // M3b.3: a lane moves its own branch and nothing else of the repository's refs (not its paddock's
+                    // branch, not `main`, no reflog but its own, no `packed-refs`): the integrator is the only way in.
+                    // The branch is named from the lane's folder (`lane-<name>` → `collie/lane/<name>`, as
+                    // `LaneWorktree.create` makes them), never from a file the lane writes (its HEAD). Literals: no
+                    // name becomes a pattern. HEAD's reflog and the index are in its own git dir; `<common>/logs/HEAD`
+                    // is the main checkout's, and stays closed.
+                    // ponytail: the folders `refs/heads/collie/lane` and its `logs` twin are not opened (a literal
+                    // on a folder would let it be renamed away, the other lanes' branches with it). If a gc of the
+                    // owner packs every lane's ref and prunes the folder mid-lane, the lane's commit fails and the
+                    // attempt is retried in a new lane; open `file-write-create` on them if that is ever seen.
+                    writes += [sub(common + "/objects"), sub(worktree)]
+                    let folder = URL(fileURLWithPath: project).lastPathComponent
+                    if folder.hasPrefix(LaneWorktree.dirPrefix), folder.count > LaneWorktree.dirPrefix.count {
+                        let ref = "/refs/heads/" + LaneWorktree.branchPrefix + folder.dropFirst(LaneWorktree.dirPrefix.count)
+                        writes += [lit(common + ref), lit(common + ref + ".lock"), lit(common + "/logs" + ref)]
+                    }
+                } else if let worktree {   // a worktree commits through the common dir; its own git dir is its index/HEAD
                     writes += ["objects", "refs", "logs"].map { sub(common + "/" + $0) }
                         + [lit(common + "/packed-refs"), lit(common + "/packed-refs.lock"), sub(worktree)]
                 } else {

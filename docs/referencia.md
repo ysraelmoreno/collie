@@ -858,7 +858,12 @@ dono aprovou a lista de tarefas e os checks.
   faixa nenhuma) e o máximo 4. Acima de 1, cada tarefa pronta roda numa **faixa**: um worktree temporário do laço
   (`<repo>/.collie/paddocks/lane-…`, branch `collie/lane/…`), cortado do HEAD do cercado naquela hora. Não é um cercado:
   não aparece no app e o próprio laço a cria e apaga. O agente, o check e o portão rodam na faixa, sob o sandbox estrito
-  do cercado com a faixa como projeto (por isso `--parallel` acima de 1 exige o sandbox de terminais). Passou na faixa:
+  do cercado com a faixa como projeto (por isso `--parallel` acima de 1 exige o sandbox de terminais). Do git do
+  repositório, a faixa só grava objetos e o **próprio branch** (`collie/lane/<faixa>` e o reflog dele): não move o branch
+  do cercado, `main` nem o de outra faixa, não grava `packed-refs`, `refs/stash`, tags nem outro reflog (`git stash`,
+  `git tag` e `git branch` falham na faixa); o único caminho para o branch do cercado é o integrador. A faixa **lê** os
+  commits de todas as branches (o object store é comum ao repositório); só os arquivos não commitados do dono (a
+  worktree do cercado e as outras faixas) ficam fechados. Passou na faixa:
   um integrador, um de cada vez, faz o merge (sem fast-forward, `merge: <tarefa>`) no branch do cercado e **roda o portão
   de novo na árvore integrada**; só então a tarefa fica feita. Conflito ou portão quebrado depois do merge: o merge é
   desfeito, o que a tentativa fez vira patch, e a tarefa refaz a tentativa numa faixa nova, a partir do HEAD novo (gasta

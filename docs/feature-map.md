@@ -138,16 +138,26 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   `Sources/ColliePlugins/WebLockdown.swift`, `Sources/CollieCore/PluginManifest.swift`.
 - **Como verificar:** `collie plugin --help`, `collie app list`; instalar é à mão (Preferências → "Plug-ins").
 
-### Vizinho (plug-in de exemplo com gancho `edit`)
+### Vizinho e Cercas (plug-in de exemplo com ganchos `edit` e `stop`)
 
-- **Para que serve:** depois que um terminal Claude escreve um arquivo, o helper olha os irmãos (mesma pasta, extensão e
-  sufixo de tipo, ex.: `*Panel.swift`) e devolve ao agente a forma que quase todos seguem, com um arquivo modelo
-  ("5 de 5 importam A; este não importa"). Só lê o projeto; sem configuração.
-- **Nome na UI:** "Vizinho" (painel mínimo explicando isso); a orientação chega ao agente com o prefixo "[plug-in vizinho]".
-- **Arquivos:** `Sources/VizinhoKit/Vizinho.swift`, `Sources/collie-vizinho/main.swift`, `Examples/plugins/vizinho/`,
-  `scripts/build-vizinho-plugin.sh`, `Tests/CollieIntegrationTests/VizinhoPluginTests.swift`.
-- **Como verificar:** `scripts/build-vizinho-plugin.sh && swift test --disable-sandbox --filter VizinhoPluginTests`;
-  na mão: instalar `.build/plugins/vizinho` em Preferências → "Plug-ins" e pedir a um terminal Claude um `*Panel.swift` novo.
+- **Para que serve:** (1) `edit`: depois que um terminal Claude escreve um arquivo, o helper olha os irmãos (mesma pasta,
+  extensão e sufixo de tipo, ex.: `*Panel.swift`) e devolve ao agente a forma que quase todos seguem (95% ou mais), com um
+  arquivo modelo ("19 de 20 importam A; este não importa"). (2) `stop`: Cercas. O helper minera convenções quase
+  unânimes (grupos de 10+ arquivos: `require-import`, `require-test`, `forbid-import`) e grava as propostas em
+  `propostas.json`; o dono aprova copiando a cerca para `cercas.json`, e a partir daí o fim do turno é bloqueado
+  enquanto um arquivo do turno a quebra. Arquivos que já quebravam ficam no `baseline` e saem dele sozinhos quando corrigidos
+  (a catraca; o `baseline` nunca cresce). Sem configuração além disso.
+- **Onde ficam os arquivos:** `$COLLIE_PLUGIN_DATA/<chave>/` (pasta de dados do plug-in, fora do projeto), `<chave>` = 16 hex do
+  SHA-256 da raiz do repositório (worktrees dividem a do repositório principal). `propostas.json` é do plug-in (regravado
+  a cada 24 h); `cercas.json` é do dono (o plug-in só reduz o `baseline`).
+- **Nome na UI:** "Vizinho" (painel mínimo explicando isso); a orientação e o bloqueio chegam ao agente com o prefixo "[plug-in vizinho]".
+- **Arquivos:** `Sources/VizinhoKit/Vizinho.swift`, `Sources/VizinhoKit/Fences.swift`, `Sources/VizinhoKit/Mining.swift`,
+  `Sources/collie-vizinho/main.swift`, `Examples/plugins/vizinho/`, `scripts/build-vizinho-plugin.sh`,
+  `Tests/VizinhoKitTests/`, `Tests/CollieIntegrationTests/VizinhoPluginTests.swift`.
+- **Como verificar:** `swift test --disable-sandbox --filter VizinhoKitTests`;
+  `scripts/build-vizinho-plugin.sh && swift test --disable-sandbox --filter VizinhoPluginTests`;
+  na mão: instalar `.build/plugins/vizinho` em Preferências → "Plug-ins", pedir a um terminal Claude um `*Panel.swift` novo
+  e, depois de um turno, ler `propostas.json` na pasta de dados.
 
 ## Menus e cartões do app
 

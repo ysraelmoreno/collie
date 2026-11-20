@@ -9,7 +9,7 @@
   "defaultPlacement": "dock.right",
   "ui": "ui/index.html",
   "helper": "bin/vizinho",
-  "hooks": ["edit"],
+  "hooks": ["edit", "stop"],
   "permissions": { "project": "read" },
   "commands": [],
   "events": [],

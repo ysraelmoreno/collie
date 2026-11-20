@@ -65,17 +65,29 @@ private func panels(_ n: Int, dir: String = "Sources/P", imports: String = "impo
     }
 
     @Test func modelIsMedianOfMajorityNotClosestName() {
+        // 19 of 20 siblings (95%) have A and B and grow by one line each: F01 is the smallest, F19 the biggest
         var f: [String: String] = [:]
-        f["s/AaaPanel.swift"] = "import A\nimport B\n" + String(repeating: "//x\n", count: 50)   // has all, biggest
-        f["s/BbbPanel.swift"] = "import A\nimport B\n" + String(repeating: "//x\n", count: 10)
-        f["s/CccPanel.swift"] = "import A\nimport B\n"                                             // smallest
-        f["s/EeePanel.swift"] = "import A\nimport B\n" + String(repeating: "//x\n", count: 30)
-        f["s/FffPanel.swift"] = "import A\nimport B\n" + String(repeating: "//x\n", count: 5)   // 5 of 6 have B (83%); Bbb is the median size
-        f["s/DddPanel.swift"] = "import Weed\n"                                                  // lacks majority imports
-        f["s/AaabPanel.swift"] = "import A\n"                                                    // new file, name-closest to Aaa
-        let g = Vizinho.guide(project: project(f), file: "s/AaabPanel.swift")
-        #expect(g?.contains("Modelo: s/BbbPanel.swift") == true)
-        #expect(g?.contains("importam B; este não importa") == true)
+        for i in 1...19 {
+            f[String(format: "s/F%02dPanel.swift", i)] = "import A\nimport B\n" + String(repeating: "//x\n", count: i)
+        }
+        f["s/DddPanel.swift"] = "import Weed\n" + String(repeating: "//x\n", count: 100)   // lacks the majority imports, biggest of all
+        f["s/F01xPanel.swift"] = "import A\n"                                               // new file, name-closest to F01
+        let g = Vizinho.guide(project: project(f), file: "s/F01xPanel.swift")
+        // median of the 19 files with A and B is the 10th smallest (F10); counting Ddd it would be F11
+        #expect(g?.contains("Modelo: s/F10Panel.swift") == true)
+        #expect(g?.contains("- 19 de 20 importam B; este não importa") == true)
+    }
+
+    @Test func importFactNeedsNinetyFivePercent() {
+        func siblings(importing n: Int) -> [String: String] {
+            var f: [String: String] = ["Sources/P/FooPanel.swift": "struct FooPanel {}\n"]
+            for i in 0..<20 { f["Sources/P/Item\(i)Panel.swift"] = (i < n ? "import CollieCore\n" : "") + "struct Item\(i)Panel {}\n" }
+            return f
+        }
+        // 19 of 20 = 95%: said; 18 of 20 = 90%: silent
+        let said = Vizinho.guide(project: project(siblings(importing: 19)), file: "Sources/P/FooPanel.swift")
+        #expect(said?.contains("- 19 de 20 importam CollieCore; este não importa") == true)
+        #expect(Vizinho.guide(project: project(siblings(importing: 18)), file: "Sources/P/FooPanel.swift") == nil)
     }
 
     @Test func noFactsIsNil() {
@@ -115,7 +127,7 @@ private func panels(_ n: Int, dir: String = "Sources/P", imports: String = "impo
         let root = project(f)
         func call(_ ev: String) throws -> [String: Any] {
             let body = #"{"apiVersion":1,"event":"\#(ev)","project":"\#(root.path)","files":["Sources/P/FooPanel.swift","nope.swift"]}"#
-            return try JSONSerialization.jsonObject(with: Vizinho.respond(eventJSON: Data(body.utf8))) as! [String: Any]
+            return try #require(try JSONSerialization.jsonObject(with: Vizinho.respond(eventJSON: Data(body.utf8), dataDir: nil)) as? [String: Any])
         }
         #expect((try call("edit")["guide"] as? String)?.contains("importam CollieCore") == true)
         #expect(try call("stop").isEmpty)

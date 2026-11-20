@@ -11,18 +11,16 @@ public enum Vizinho {
     static let maxRespondChars = 2000
     static let ignoredDirs: Set<String> = [".git", ".build", "node_modules", "build", "dist", "DerivedData"]
     static let maxWalk = 50_000
+    /// Share of siblings (percent) that must import X before "este não importa" is said.
+    static let importPct = 95
+    static let importExts: Set<String> = ["swift", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "kt", "java"]
 
     // MARK: API
 
     public static func guide(project: URL, file: String) -> String? {
-        let parts = file.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        guard !file.hasPrefix("/"), !parts.isEmpty, !parts.contains(".."), !parts.contains("."),
-              !parts.dropLast().contains(where: ignoredDirs.contains) else { return nil }
-        let name = parts[parts.count - 1]
-        let dirRel = parts.dropLast().joined(separator: "/")
+        guard let f = parse(file) else { return nil }
+        let (dirRel, name, ext, stem) = (f.dir, f.name, f.ext, f.stem)
         let dir = dirRel.isEmpty ? project : project.appendingPathComponent(dirRel, isDirectory: true)
-        let ext = (name as NSString).pathExtension
-        let stem = ext.isEmpty ? name : String(name.dropLast(ext.count + 1))
         let suffix = typeSuffix(stem)
         guard let mine = read(project.appendingPathComponent(file)) else { return nil }
 
@@ -50,7 +48,7 @@ public enum Vizinho {
             var counts: [String: Int] = [:]
             for s in sets { for i in s { counts[i, default: 0] += 1 } }
             let ranked = counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
-            for (i, c) in ranked where c * 5 >= m * 4 && !mineSet.contains(i) {
+            for (i, c) in ranked where c * 100 >= m * importPct && !mineSet.contains(i) {
                 lines.append("- \(c) de \(m) importam \(i); este não importa")
             }
             if m >= 5 {
@@ -62,10 +60,7 @@ public enum Vizinho {
 
         // paired test file, anywhere in the project
         let stems = projectFiles(project)
-        func pair(_ s: String) -> String? {
-            for c in [s + "Tests", s + "Test", s + ".test", s + "_test"] { if let p = stems[c] { return p } }
-            return nil
-        }
+        func pair(_ s: String) -> String? { pairedTest(s, stems) }
         let paired = siblings.compactMap { pair($0.stem) }
         if paired.count * 5 >= m * 4, pair(stem) == nil, let ex = paired.first {
             lines.append("- \(paired.count) de \(m) têm teste (ex.: \(ex)); este não tem")
@@ -79,19 +74,51 @@ public enum Vizinho {
         return String(out.prefix(maxGuideChars))
     }
 
-    /// `{event, project, files}` in, `{"guide": …}` or `{}` out. Never throws: bad input is `{}`.
-    public static func respond(eventJSON: Data) -> Data {
+    /// `{event, project, files}` in, `{"guide": …}`, `{"block": …}` or `{}` out. Never throws: bad input is `{}`.
+    /// `dataDir` is the plug-in data folder (`COLLIE_PLUGIN_DATA`); without it there are no fences and no proposals.
+    public static func respond(eventJSON: Data, dataDir: URL? = ProcessInfo.processInfo.environment["COLLIE_PLUGIN_DATA"]
+        .map { URL(fileURLWithPath: $0, isDirectory: true) }) -> Data {
+        let started = Date()
         let empty = Data("{}".utf8)
         guard let o = try? JSONSerialization.jsonObject(with: eventJSON) as? [String: Any],
-              o["event"] as? String == "edit", let project = o["project"] as? String,
+              let event = o["event"] as? String, let project = o["project"] as? String,
               let files = o["files"] as? [String] else { return empty }
         let root = URL(fileURLWithPath: project, isDirectory: true)
-        let text = files.prefix(maxRespondFiles).compactMap { guide(project: root, file: $0) }
-            .joined(separator: "\n\n")
-        guard !text.isEmpty,
-              let data = try? JSONSerialization.data(withJSONObject: ["guide": String(text.prefix(maxRespondChars))])
-        else { return empty }
-        return data
+        func json(_ key: String, _ text: String, limit: Int) -> Data {
+            guard !text.isEmpty,
+                  let data = try? JSONSerialization.data(withJSONObject: [key: String(text.prefix(limit))]) else { return empty }
+            return data
+        }
+        switch event {
+        case "edit":
+            let text = files.prefix(maxRespondFiles).compactMap { guide(project: root, file: $0) }.joined(separator: "\n\n")
+            return json("guide", text, limit: maxRespondChars)
+        case "stop":
+            guard let dataDir else { return empty }
+            let dir = dataDir.appendingPathComponent(Fences.key(project: root), isDirectory: true)
+            let approved = dir.appendingPathComponent("cercas.json")
+            let fences = Fences.load(approved)
+            // ponytail: only the first 200 files of the turn are checked
+            let broken = fences.isEmpty ? [] : Fences.check(project: root, files: Array(files.prefix(200)),
+                                                           fences: fences, fencesFile: approved)
+            refreshProposals(project: root, dir: dir, approved: fences, started: started)
+            return broken.isEmpty ? empty : json("block", Fences.blockText(broken, project: root), limit: 1800)
+        default:
+            return empty
+        }
+    }
+
+    /// Rewrites `propostas.json` when it is missing or older than 24 h. Failure to write is ignored.
+    static func refreshProposals(project: URL, dir: URL, approved: [Fence], started: Date) {
+        let file = dir.appendingPathComponent("propostas.json")
+        let age = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            .map { Date().timeIntervalSince($0) }
+        if let age, age < 24 * 3600 { return }
+        // the helper has 3 s in all: mining gets what is left of 2 s, so the verdict is never lost to a slow scan
+        let budget = 2 - Date().timeIntervalSince(started)
+        guard budget > 0.2 else { return }
+        let have = Set(approved.map(\.id))
+        try? Fences.write(Mining.propose(project: project, budget: budget).filter { !have.contains($0.id) }, to: file)
     }
 
     // MARK: pieces
@@ -116,26 +143,49 @@ public enum Vizinho {
         return String(decoding: d, as: UTF8.self)
     }
 
-    /// One pass over the project: file stem → relative path of the first (sorted) file with it.
-    static func projectFiles(_ project: URL) -> [String: String] {
-        var out: [String: String] = [:]
+    /// Relative path split into folder, name, extension and stem; nil for absolute, `..`/`.` or ignored-folder paths.
+    static func parse(_ file: String) -> (dir: String, name: String, ext: String, stem: String)? {
+        let parts = file.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard !file.hasPrefix("/"), let name = parts.last, !parts.contains(".."), !parts.contains("."),
+              !parts.dropLast().contains(where: ignoredDirs.contains) else { return nil }
+        let ext = (name as NSString).pathExtension
+        let stem = ext.isEmpty ? name : String(name.dropLast(ext.count + 1))
+        return (parts.dropLast().joined(separator: "/"), name, ext, stem)
+    }
+
+    /// Sorted relative paths of the files under `project` (hidden and ignored folders skipped); stops at `limit` files or `deadline`.
+    static func walk(_ project: URL, limit: Int, deadline: Date? = nil) -> [String] {
         guard let en = FileManager.default.enumerator(at: project, includingPropertiesForKeys: [.isDirectoryKey],
-                                                      options: [.skipsHiddenFiles]) else { return out }
+                                                      options: [.skipsHiddenFiles]) else { return [] }
         let base = project.standardizedFileURL.path + "/"
-        var seen = 0
-        var found: [(String, String)] = []
+        var out: [String] = []
         for case let url as URL in en {
-            seen += 1
-            if seen > maxWalk { break }
             if ignoredDirs.contains(url.lastPathComponent) { en.skipDescendants(); continue }
             if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { continue }
+            if out.count >= limit || (deadline.map { Date() > $0 } ?? false) { break }
             let p = url.standardizedFileURL.path
             guard p.hasPrefix(base) else { continue }
-            let n = url.deletingPathExtension().lastPathComponent
-            found.append((n, String(p.dropFirst(base.count))))
+            out.append(String(p.dropFirst(base.count)))
         }
-        for (n, p) in found.sorted(by: { $0.1 < $1.1 }) where out[n] == nil { out[n] = p }
+        return out.sorted()
+    }
+
+    /// File stem → relative path of the first (sorted) file with it.
+    static func stems(of paths: [String]) -> [String: String] {
+        var out: [String: String] = [:]
+        for p in paths {
+            let n = URL(fileURLWithPath: p).deletingPathExtension().lastPathComponent
+            if out[n] == nil { out[n] = p }
+        }
         return out
+    }
+
+    static func projectFiles(_ project: URL) -> [String: String] { stems(of: walk(project, limit: maxWalk)) }
+
+    /// Path of the test file paired with a stem (`FooTests`, `FooTest`, `foo.test`, `foo_test`), if any.
+    static func pairedTest(_ stem: String, _ stems: [String: String]) -> String? {
+        for c in [stem + "Tests", stem + "Test", stem + ".test", stem + "_test"] { if let p = stems[c] { return p } }
+        return nil
     }
 
     /// The sibling with every import the majority (>50%) has; ties go to the median size. Never "closest by name".

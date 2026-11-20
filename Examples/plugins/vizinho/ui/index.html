@@ -13,6 +13,8 @@
 <body>
 <p>Quando o agente escreve um arquivo, o Vizinho olha os arquivos irmãos (mesma pasta, extensão e sufixo de tipo).</p>
 <p>Se quase todos seguem uma forma que o novo arquivo não segue, o agente recebe essa orientação, com um arquivo modelo.</p>
-<p>Só lê o projeto; não escreve, não usa rede e não precisa de configuração.</p>
+<p>As Cercas: ao fim do turno, o Vizinho propõe convenções quase unânimes em <code>propostas.json</code> (na pasta de dados do plug-in, em <code>&lt;chave&gt;/</code>, fora do projeto). Para aprovar, copie a cerca para <code>cercas.json</code> na mesma pasta; só as cercas dali bloqueiam.</p>
+<p>A cerca aprovada impede o fim do turno enquanto um arquivo a quebra; arquivos que já a quebravam ficam tolerados (<code>baseline</code>) e saem de lá sozinhos quando são corrigidos.</p>
+<p>Só lê o projeto; só escreve na própria pasta de dados, não usa rede e não precisa de configuração.</p>
 </body>
 </html>

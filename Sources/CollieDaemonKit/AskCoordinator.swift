@@ -962,12 +962,19 @@ public actor AskCoordinator {
                 case .window: continue
                 case .written: break
                 }
-                resent = true; start = now
+                resent = true
                 targets[to]?.submitRetried = true
                 askEvents.emit(MemoryEvent(type: .submitRetried, terminal: to, ask: id))
                 let process = t.process, user = waiters[id]?.user == true
-                // PTYProcess.write may spin 2 s: off the actor. A failed write ends as before: "did not submit".
-                DispatchQueue.global().async { try? process.write(PromptInjector.submit, origin: user ? .user : .collie) }
+                // PTYProcess.write may spin 2 s: off the actor and the cooperative pool. The hook's new wait starts
+                // once the Enter is written (a busy machine may run this late). A failed write ends as before.
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    DispatchQueue.global().async {
+                        try? process.write(PromptInjector.submit, origin: user ? .user : .collie)
+                        c.resume()
+                    }
+                }
+                start = .now
                 continue
             }
             finish(id, .failure(ProtocolError(code: .unavailable, message:

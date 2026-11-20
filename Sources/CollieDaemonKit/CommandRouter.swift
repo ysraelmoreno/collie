@@ -921,7 +921,8 @@ actor CommandRouter {
     func launch(_ rec: TerminalRecord, resume: Bool = false) async throws -> [String: JSONValue] {
         var rec = rec
         if rec.projectRoot == nil { rec.projectRoot = ProjectRoot.resolve(cwd: rec.cwd, paddock: ws.paddocks.first { $0.id == rec.paddockId }, home: sandboxHomeDir).path }
-        rec.startMode = rec.sandbox == .sandboxed ? sandboxMode : nil   // L2: on the record (survives a daemon restart)
+        // L2: on the record (survives a daemon restart). M3.3: a lane's agent is strict whatever the workspace's mode
+        rec.startMode = rec.sandbox == .sandboxed ? (lanePaddock(of: rec) != nil ? .strict : sandboxMode) : nil
         // the capture can take seconds: a relaunched record killed meanwhile stays gone
         let existed = ws.terminals.contains { $0.id == rec.id }
         let user = await agentEnv(rec)
@@ -1078,6 +1079,34 @@ actor CommandRouter {
         URL(fileURLWithPath: rec.projectRoot ?? ProjectRoot.resolve(cwd: rec.cwd, paddock: nil, home: sandboxHomeDir).path)
     }
 
+    /// M3.3: `lane` (resolved) has a lane's shape and neither lies inside `paddock`'s worktree nor holds it (the profile
+    /// closes one and opens the other). By path only, no file read: the same answer after the lane is removed.
+    static func laneShaped(_ lane: String, paddock: Paddock) -> Bool {
+        let wt = URL(fileURLWithPath: SignedAppCheck.realPath(URL(fileURLWithPath: paddock.path)))
+        let l = URL(fileURLWithPath: lane).pathComponents, w = wt.pathComponents
+        return !paddock.isFolder && LaneWorktree.isLane(URL(fileURLWithPath: lane)) && !l.starts(with: w) && !w.starts(with: l)
+    }
+
+    /// M3.3: `lane` as a lane of `paddock`, resolved: lane-shaped, a git worktree of its own, of the paddock's
+    /// repository. Anything else is refused, never guessed: nothing of a lane runs under a profile that is not its own.
+    static func vetLane(_ lane: URL, paddock: Paddock) throws(ProtocolError) -> URL {
+        let real = URL(fileURLWithPath: SignedAppCheck.realPath(lane))
+        let git = SandboxInput.gitDirs(of: real)
+        guard laneShaped(real.path, paddock: paddock), git.worktree != nil, let common = git.common,
+              common == SandboxInput.gitDirs(of: URL(fileURLWithPath: paddock.path)).common else {
+            throw ProtocolError(code: .unavailable, message: "'\(lane.path)' is not a lane of paddock '\(paddock.name)': nothing of a lane runs outside its own sandbox")
+        }
+        return real
+    }
+
+    /// M3.3: the worktree a lane's agent is closed to: `rec` stands in a paddock with a lane as its project (only
+    /// `loopSummon` makes one). nil: no lane agent. From the record alone, so a relaunch renders the same profile.
+    func lanePaddock(of rec: TerminalRecord) -> URL? {
+        guard let root = rec.projectRoot, let p = ws.paddocks.first(where: { $0.id == rec.paddockId }),
+              Self.laneShaped(root, paddock: p) else { return nil }
+        return URL(fileURLWithPath: p.path)
+    }
+
     /// A pasture never writes its paddocks: the ones there are, and the folder new ones go into. A folder paddock is no
     /// copy of the pasture: its folder stays the pasture's.
     func closedPaddocks(_ project: URL) -> [URL] {
@@ -1090,7 +1119,7 @@ actor CommandRouter {
     func prepareSandbox(_ rec: TerminalRecord) throws -> URL {
         let project = sandboxProject(rec)
         let git = SandboxInput.gitDirs(of: project)
-        let input = SandboxInput(terminal: rec.id, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
+        var input = SandboxInput(terminal: rec.id, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
                                  paddockWorktrees: closedPaddocks(project), home: config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()),
                                  collieRoot: config.paths.root,
                                  ownFiles: AgentLaunch.ownFiles(rec.id, in: hooksDir),
@@ -1098,6 +1127,7 @@ actor CommandRouter {
                                  agent: rec.preset, command: rec.command,
                                  grants: SandboxGrantStore.applicable(sandboxGrants, terminal: rec.id, project: project.path, lot: ws.lot(of: rec.id)?.id),
                                  appBundle: SandboxInput.appBundle(of: config.collieExecutable), mode: rec.startMode ?? .strict)
+        input.lanePaddock = lanePaddock(of: rec)   // M3.3: a lane's agent never reads nor writes its paddock's worktree or another lane
         // R29: an id reused on another project (same-name respawn elsewhere) loses its terminal grants
         let stale = sandboxGrants.filter { $0.scope == .terminal && $0.owner == rec.id && $0.project != nil && $0.project != project.path }
         if !stale.isEmpty { sandboxGrants.removeAll { g in stale.contains { $0.id == g.id } }; try? saveGrants() }

@@ -26,6 +26,12 @@ enum LaneWorktree {
     /// ponytail: a paddock may legally be named `lane-…`; then `create` refuses the taken path, it never overwrites.
     static let dirPrefix = "lane-"
 
+    /// M3.3: `path` has a lane's shape: a `lane-*` folder of a `paddocks` folder. By name only (no file is read): the
+    /// same answer for a lane already removed.
+    static func isLane(_ path: URL) -> Bool {
+        path.lastPathComponent.hasPrefix(dirPrefix) && path.deletingLastPathComponent().lastPathComponent == "paddocks"
+    }
+
     private static func fail(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
 
     static func validate(task: String) throws(ProtocolError) {

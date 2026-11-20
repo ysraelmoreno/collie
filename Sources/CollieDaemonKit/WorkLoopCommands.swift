@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import CollieCore
 import CollieProtocol
 
@@ -259,9 +260,17 @@ extension CommandRouter {
 
     // MARK: what RouterLoopHost needs from the router
 
-    func loopSummon(_ r: Request, as starter: UUID) async throws(ProtocolError) -> UUID {
+    /// `lane` (M3.3): the agent is born in the work's paddock (no `--paddock`) with the lane as its folder and project.
+    func loopSummon(_ r: Request, as starter: UUID, lane: URL? = nil) async throws(ProtocolError) -> UUID {
         let v: JSONValue
-        do { v = try await shepherd(r, from: starter) } catch {
+        do {
+            if let lane {
+                guard let me = ws.terminals.first(where: { $0.id == starter }), me.isShepherd else {
+                    throw ProtocolError(code: .notShepherd, message: "a lane's agent is summoned as the loop's Shepherd")
+                }
+                v = try await summon(r, by: me, lane: lane)
+            } else { v = try await shepherd(r, from: starter) }
+        } catch {
             throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)")
         }
         guard case .object(let o) = v, case .string(let s)? = o["id"], let id = UUID(uuidString: s) else {
@@ -271,11 +280,18 @@ extension CommandRouter {
     }
 
     /// Any terminal of the paddock in a turn but the starter (Shepherds too: the loop's reset would take their edits).
+    /// M3.3: `dir` is the host's own tree: a lane's host counts only what reaches its lane.
     func loopOthersWorking(paddock: UUID, starter: UUID, dir: URL) async -> String? {
-        for t in ws.terminals where t.paddockId == paddock && t.id != starter && Self.loopSharesWorktree(t, dir) {
+        for t in Self.loopReaching(ws.terminals, paddock: paddock, starter: starter, dir: dir) {
             if await targetBusy(t.id) { return t.name }
         }
         return nil
+    }
+
+    /// The paddock's terminals, but the starter, that can edit the tree `dir` (the paddock's worktree, or one lane).
+    /// For a lane: not the other lanes' agents, nor a terminal in the paddock's worktree (that tree is the integrator's, M3.4).
+    static func loopReaching(_ terminals: [TerminalRecord], paddock: UUID, starter: UUID, dir: URL) -> [TerminalRecord] {
+        terminals.filter { $0.paddockId == paddock && $0.id != starter && loopSharesWorktree($0, dir) }
     }
 
     /// A terminal can edit the loop's worktree only when its folder is inside it (or cannot be told): one working
@@ -295,16 +311,30 @@ extension CommandRouter {
 
     /// The loop's sandbox: the paddock's profile, as an app service gets (strict whatever the workspace's mode: never
     /// wider than a strict terminal of the paddock), under the work's id. Removed when the loop ends.
-    func prepareLoopSandbox(_ work: UUID, paddock: Paddock) throws -> URL {
-        let project = URL(fileURLWithPath: paddock.path)
+    /// `lane` (M3.3): that lane's own profile, under `laneSandboxId`: the same strict profile with the lane as the
+    /// project, closed (read and write) to the paddock's worktree and to every other lane. A lane that is not a
+    /// worktree of the paddock's repository throws: no profile is guessed.
+    func prepareLoopSandbox(_ work: UUID, paddock: Paddock, lane: Lane? = nil) throws -> URL {
+        let project = try lane.map { try Self.vetLane($0.path, paddock: paddock) } ?? URL(fileURLWithPath: paddock.path)
         let git = SandboxInput.gitDirs(of: project)
-        let input = SandboxInput(terminal: work, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
+        var input = SandboxInput(terminal: lane.map { Self.laneSandboxId(work, $0) } ?? work, project: project, mainGitDir: git.common, worktreeGitDir: git.worktree,
                                  paddockWorktrees: closedPaddocks(project), home: config.sandboxHome ?? URL(fileURLWithPath: NSHomeDirectory()),
                                  collieRoot: config.paths.root, ownFiles: [],
                                  terminalDir: SandboxLaunch.dir(work, root: config.paths.root), socket: config.paths.socket,
                                  agent: .shell, command: nil, grants: [],
                                  appBundle: SandboxInput.appBundle(of: config.collieExecutable), mode: .strict)
+        if lane != nil {
+            input.terminalDir = SandboxLaunch.dir(input.terminal, root: config.paths.root)
+            input.lanePaddock = URL(fileURLWithPath: paddock.path)
+        }
         return try SandboxLaunch.prepare(input, root: config.paths.root, collie: config.collieExecutable)
+    }
+
+    /// The id a lane's profile and files live under (`<root>/sandbox/<id>`): from the work and the lane's branch, so
+    /// whoever knows the lane (the loop's end, the start sweep: M3.6) finds them again with nothing stored.
+    static func laneSandboxId(_ work: UUID, _ lane: Lane) -> UUID {
+        let h = Array(SHA256.hash(data: Data("\(work.uuidString.lowercased())/\(lane.branch)".utf8)).prefix(16))
+        return NSUUID(uuidBytes: h) as UUID
     }
 
     /// The user's env (their toolchain's PATH), before the allow-list.
@@ -314,9 +344,15 @@ extension CommandRouter {
     }
 
     /// With a terminal sandbox in force, an attempt's agent must run in one too (a free one is dismissed, the attempt fails).
-    func loopAgentSandboxed(_ id: UUID) -> Bool {
+    /// A lane's agent (M3.3) also when no terminal is sandboxed (then never): sandboxed, strict, the lane its project.
+    func loopAgentSandboxed(_ id: UUID, lane: URL? = nil) -> Bool {
+        let t = ws.terminals.first { $0.id == id }
+        if let lane {
+            guard let t, sandboxed(t), t.startMode == .strict, lanePaddock(of: t) != nil else { return false }
+            return t.projectRoot == SignedAppCheck.realPath(lane)
+        }
         guard config.sandboxHome != nil else { return true }
-        return ws.terminals.first { $0.id == id }.map(sandboxed) ?? false
+        return t.map(sandboxed) ?? false
     }
 
     /// The spec, read again at the attempt: a regular file (no symlink, one link) still inside the starter's project.
@@ -343,6 +379,18 @@ struct LoopRevertGit: RevertGit {
 struct RouterLoopHost: LoopHost {
     let router: CommandRouter, starter: UUID, root: URL, work: UUID, paddock: UUID, dir: URL
     let sandbox: (home: URL, shell: String)?
+    /// M3.3. nil: the paddock's host (`dir` its worktree), exactly as before lanes. A lane's host (`forLane`): `dir` is
+    /// the lane, git and the check run under the lane's own profile, its agent is born in the lane, and it refuses to
+    /// run anything when the daemon sandboxes no terminal.
+    var lane: Lane? = nil
+
+    /// This host for one lane of the loop: cheap, one per lane.
+    func forLane(_ lane: Lane) -> RouterLoopHost {
+        RouterLoopHost(router: router, starter: starter, root: root, work: work, paddock: paddock, dir: lane.path, sandbox: sandbox, lane: lane)
+    }
+
+    /// What the profile and its shims live under: the work, or the lane's own id.
+    var sandboxId: UUID { lane.map { CommandRouter.laneSandboxId(work, $0) } ?? work }
 
     /// The only keys a check gets from the user's env: the toolchain's, never a token or an agent socket (GH_TOKEN,
     /// SSH_AUTH_SOCK, COLLIE_*). ponytail: a fixed list; a toolchain that needs another key fails its check, add it here.
@@ -356,8 +404,9 @@ struct RouterLoopHost: LoopHost {
         if let p = loop.preset { args["preset"] = .string(p) }
         if let m = loop.model { args["model"] = .string(m) }
         if let c = loop.command { args["command"] = .string(c) }
-        let id = try await router.loopSummon(Request(id: "loop", terminalId: starter.uuidString, command: "summon", args: args), as: starter)
-        guard await router.loopAgentSandboxed(id) else {
+        let id = try await router.loopSummon(Request(id: "loop", terminalId: starter.uuidString, command: "summon", args: args), as: starter,
+                                             lane: lane?.path)
+        guard await router.loopAgentSandboxed(id, lane: lane?.path) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
         }
@@ -377,8 +426,12 @@ struct RouterLoopHost: LoopHost {
 
     /// The loop's profile; nil only when no terminal is sandboxed. Never nil because it went missing.
     func profile() throws(ProtocolError) -> URL? {
-        guard sandbox != nil else { return nil }
-        let f = SandboxLaunch.profileFile(work, root: root)
+        guard sandbox != nil else {
+            // the paddock's host follows the daemon (no terminal sandbox, none here); a lane never runs without its profile
+            if lane != nil { throw ProtocolError(code: .unavailable, message: "a lane runs only sandboxed, and this daemon sandboxes no terminal") }
+            return nil
+        }
+        let f = SandboxLaunch.profileFile(sandboxId, root: root)
         guard FileManager.default.fileExists(atPath: f.path) else {
             throw ProtocolError(code: .unavailable, message: "the loop's sandbox profile is gone; nothing of the loop runs unsandboxed")
         }
@@ -417,7 +470,7 @@ struct RouterLoopHost: LoopHost {
 
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         let profile = try profile()
-        let env = Self.checkEnv(await router.loopUserEnv(), sandbox: sandbox.map { (work, root, $0.shell, $0.home) })
+        let env = Self.checkEnv(await router.loopUserEnv(), sandbox: sandbox.map { (sandboxId, root, $0.shell, $0.home) })
         return try await Self.runCheck(command, in: dir, profile: profile, env: env, timeout: timeout)
     }
 
@@ -444,6 +497,10 @@ struct RouterLoopHost: LoopHost {
         var isDir: ObjCBool = false
         return FileManager.default.fileExists(atPath: dir.appendingPathComponent(path).path, isDirectory: &isDir) && !isDir.boolValue
     }
-    func patchDir(_ work: UUID) -> URL { root.appendingPathComponent("work-loops").appendingPathComponent(work.uuidString.lowercased()) }
+    /// A lane's patches (and evidence) in its own subfolder, `lanes/<the lane's folder name>`: never mixed with another lane's.
+    func patchDir(_ work: UUID) -> URL {
+        let d = root.appendingPathComponent("work-loops").appendingPathComponent(work.uuidString.lowercased())
+        return lane.map { d.appendingPathComponent("lanes").appendingPathComponent($0.path.lastPathComponent) } ?? d
+    }
     func now() -> Date { Date() }
 }

@@ -211,6 +211,7 @@ private func expectLaneProfile(_ text: String, _ r: Rig, at: SourceLocation = #_
     @Test func othersWorkingCountsOnlyWhatReachesTheLane() async throws {
         let r = try await Rig()
         let a = r.host.forLane(r.a)
+        try FileManager.default.createDirectory(at: r.a.path.appendingPathComponent("Sources"), withIntermediateDirectories: true)
         let starter = TerminalRecord(id: r.starter, name: "S", preset: .shell, command: nil, cwd: r.a.path.path, isShepherd: true, paddockId: r.paddock.id)
         let all = [starter, r.term("inB", r.b.path), r.term("inPaddock", r.f.paddock), r.term("inA", r.a.path.appendingPathComponent("Sources")),
                    r.term("stranger", r.a.path, paddock: UUID())]

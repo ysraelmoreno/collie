@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Collie · A · Trilho</title>
+<style>
+:root{--bg:#0E1326;--surface:#161C36;--side:#121831;--sunk:#0B1020;--raised:#1B2340;--border:#262E52;--text:#E8ECF8;--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--onacc:#0E1326;--warn:#FFB86B;--sec:#93A4FF;--danger:#FF8A8A}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 ui-sans-serif,-apple-system,"SF Pro Text",system-ui,sans-serif}
+.m{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+button{font:inherit;color:inherit;cursor:pointer}
+.app{height:100%;display:flex;flex-direction:column;min-width:1000px}
+.body{flex:1;display:flex;min-height:0}
+.rail{width:64px;background:var(--sunk);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 0 12px}
+.pd{width:40px;height:40px;border-radius:12px;background:var(--raised);border:0;font-weight:600;color:var(--text2);position:relative}
+.pd.on{background:var(--accent);color:var(--onacc)}
+.pd i{position:absolute;right:-3px;bottom:-3px;width:11px;height:11px;border-radius:50%;border:2px solid var(--sunk)}
+.ib{width:40px;height:40px;border-radius:12px;border:0;background:none;color:var(--text2)}
+.ib:hover,.ib.on{background:var(--raised);color:var(--text)}
+.ctx{width:248px;background:var(--side);border-right:1px solid var(--border);padding:14px;display:flex;flex-direction:column;gap:12px;overflow:auto}
+.sec{font:11px ui-monospace,monospace;letter-spacing:1.2px;color:var(--muted);margin:4px 0 0}
+.row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;color:var(--text2)}
+.row.on{background:var(--raised);color:var(--text)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+.chip{font:10px ui-monospace,monospace;padding:2px 7px;border-radius:99px;border:1px solid var(--border);color:var(--muted)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.tabs{height:38px;display:flex;background:var(--side);border-bottom:1px solid var(--border);align-items:stretch}
+.tab{white-space:nowrap;padding:0 16px;display:flex;align-items:center;gap:8px;color:var(--muted);border:0;border-right:1px solid var(--border);background:none}
+.tab:hover{color:var(--text)}
+.tab.on{background:var(--bg);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.cmd{width:260px;height:26px;border:1px solid var(--border);border-radius:8px;background:var(--sunk);color:var(--muted);display:flex;align-items:center;padding:0 10px;margin:auto 12px auto auto}
+.view{flex:1;min-height:0;display:none}
+.view.on{display:block}
+.canvas{position:relative;overflow:hidden;background:var(--bg) radial-gradient(#1E2647 1px,transparent 1px) 0 0/22px 22px}
+.term{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+.th{height:34px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border);background:var(--raised);font-weight:600}
+.th .chip{margin-left:auto}
+.tb{padding:12px;font:12px/1.6 ui-monospace,monospace;color:var(--text2);white-space:pre;overflow:hidden}
+.status{height:26px;background:var(--side);border-top:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 12px;font:11px ui-monospace,monospace;color:var(--muted)}
+/* árvore de agentes */
+.sechead{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
+.mini{width:22px;height:22px;border:0;border-radius:6px;background:none;color:var(--muted)}.mini:hover{background:var(--raised);color:var(--text)}
+.tree .row{cursor:pointer;min-height:32px}
+.tree .row:hover{background:#171E3B}.tree .row.on{background:var(--raised);color:var(--text)}
+.tree .nm{flex:1;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree .root .nm{font-weight:600;color:var(--text)}
+.car{width:16px;height:16px;border:0;background:none;color:var(--muted);padding:0;font-size:11px;transition:transform .15s}
+.car.c{transform:rotate(-90deg)}
+.kids{margin-left:15px;border-left:1px solid var(--border);padding-left:6px}
+.kids.h{display:none}
+.bd{font:10px ui-monospace,monospace;min-width:18px;text-align:center;padding:2px 5px;border-radius:99px;background:#2A2418;color:var(--warn);border:1px solid #5a4624}
+.cnt{font:11px ui-monospace,monospace;color:var(--muted);margin-left:auto}
+.pulse{animation:pl 1.6s infinite}@keyframes pl{50%{opacity:.35}}
+.term.sel{outline:2px solid var(--accent);outline-offset:3px}
+.leash{position:absolute;inset:0;pointer-events:none}
+.acard{position:absolute;background:#2A2418;border:1px solid var(--warn);border-radius:12px;padding:12px 14px;width:540px}
+.acard .btn{height:28px}
+.lt{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--border)}
+.lt:first-child{border-top:0}
+.ck{width:18px;text-align:center;font-family:ui-monospace,monospace}
+/* prefs */
+.prefs{display:flex;height:100%}
+.pn{width:220px;border-right:1px solid var(--border);background:var(--side);padding:16px 12px;overflow:auto}
+.pn input{width:100%;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--sunk);color:var(--text);padding:0 10px;margin-bottom:10px}
+.pn button{display:flex;gap:10px;width:100%;text-align:left;padding:7px 10px;border:0;border-radius:8px;background:none;color:var(--text2)}
+.pn button.on{background:var(--raised);color:var(--text)}
+.pn .g{font:11px ui-monospace,monospace;letter-spacing:1.2px;color:var(--muted);margin:14px 10px 4px}
+.pc{flex:1;overflow:auto;padding:28px 40px}
+.pc h1{font-size:22px;margin:0 0 4px}
+.pc .sub{color:var(--muted);margin:0 0 22px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px;max-width:680px}
+.card h3{margin:0 0 4px;font-size:14px}
+.card p{margin:0;color:var(--muted)}
+.crow{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--border)}
+.crow:first-of-type{border-top:0}
+.btn{height:28px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text2)}
+.btn.p{background:var(--accent);border-color:var(--accent);color:var(--onacc);font-weight:600}
+.btn.d{color:var(--danger)}
+.tog{width:34px;height:20px;border-radius:99px;background:var(--accent);position:relative;margin-left:auto}
+.tog::after{content:"";position:absolute;right:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--onacc)}
+.pg{display:none}.pg.on{display:block}
+a.note{position:absolute;right:16px;bottom:16px;max-width:300px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;color:var(--text2);text-decoration:none;font-size:12px}
+</style>
+</head>
+<body>
+<div class="app">
+<div class="body">
+
+<nav class="rail" aria-label="Cercados">
+  <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><circle cx="13" cy="13" r="12" fill="#6EE7B7"/><path d="M7 11l3-4 3 3 3-3 3 4v5a6 6 0 0 1-12 0z" fill="#0E1326"/></svg>
+  <div style="height:4px"></div>
+  <button class="pd on" title="collie">C<i style="background:var(--warn)"></i></button>
+  <button class="pd" title="collie-web">W<i style="background:var(--accent)"></i></button>
+  <button class="pd" title="apresentação">A<i style="background:var(--muted)"></i></button>
+  <button class="pd" aria-label="Novo cercado" style="background:none;border:1px dashed #3A4472;font-size:20px;color:var(--muted)">+</button>
+  <div style="flex:1"></div>
+  <div class="m" style="font-size:10px;color:var(--muted);text-align:center">41%<div style="width:34px;height:3px;background:var(--border);border-radius:2px;margin-top:3px"><div style="width:41%;height:3px;background:var(--accent);border-radius:2px"></div></div></div>
+  <button class="ib" id="gear" aria-label="Preferências (⌘,)" title="Preferências (⌘,)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+</nav>
+
+<aside class="ctx">
+  <div><div style="font-size:20px;font-weight:600">collie</div><div class="m" style="font-size:12px;color:var(--muted);margin-top:2px">feat/trust-roadmap ← main</div></div>
+  <div style="display:flex;gap:6px"><button class="btn p" style="flex:1;height:30px">Novo terminal</button><button class="btn" style="height:30px" aria-label="Abrir painel">▭</button></div>
+  <div class="sechead"><p class="sec" style="margin:0">AGENTES · 4</p><button class="mini" aria-label="Novo terminal" title="Novo terminal">+</button></div>
+  <div class="tree" id="tree" style="margin-top:-6px">
+    <div class="row root on" data-t="pastor"><button class="car" aria-label="Recolher" aria-expanded="true">▾</button><span class="dot pulse" style="background:var(--warn)"></span><span class="nm">Pastor</span><span class="bd" title="1 cartão pendente">1</span><span class="chip">claude</span></div>
+    <div class="kids" id="kids">
+      <div class="row" data-t="laco"><span class="dot" style="background:var(--accent)"></span><span class="nm">laço · A2.3</span><span class="chip">laço</span></div>
+      <div class="row" data-t="rev"><span class="dot" style="background:var(--accent)"></span><span class="nm">rev-onda-3</span><span class="chip">review</span></div>
+    </div>
+    <div class="row" data-t="apr"><span style="width:16px"></span><span class="dot" style="background:var(--muted)"></span><span class="nm">apresentação</span><span class="chip">cursor</span></div>
+  </div>
+  <p class="sec">PAINÉIS · 2</p>
+  <div class="tree" style="margin-top:-6px">
+    <div class="row" data-open="prev"><span class="dot" style="background:var(--sec)"></span><span class="nm">Prévia · app-tarefas</span><span class="chip">aba</span></div>
+    <div class="row"><span class="dot" style="background:var(--sec)"></span><span class="nm">Navegador</span><span class="chip">dock</span></div>
+  </div>
+  <p class="sec">LAÇOS</p>
+  <button class="card" data-open="lacos" style="padding:10px;margin:0;text-align:left;width:100%;display:block">
+    <div style="display:flex;justify-content:space-between"><span style="font-weight:500">Roadmap · onda 6</span><span class="m" style="color:var(--accent);font-size:11px">3/5</span></div>
+    <div style="height:4px;background:var(--border);border-radius:2px;margin:8px 0"><div style="width:60%;height:4px;background:var(--accent);border-radius:2px"></div></div>
+    <div class="m" style="font-size:11px;color:var(--muted)">tentativa 2 · check rodando</div>
+  </button>
+  <p class="sec">LOTES</p>
+  <div class="tree" style="margin-top:-6px"><div class="row"><span class="nm">Revisão independente</span><span class="cnt">2</span></div></div>
+</aside>
+
+<main class="main">
+  <div class="tabs" role="tablist">
+    <button class="tab on" data-v="canvas" role="tab">Canvas</button>
+    <button class="tab" data-v="prev" role="tab">Prévia</button>
+    <button class="tab" data-v="lacos" role="tab">Laços <span class="chip">3/5</span></button>
+    <button class="tab" data-v="prefs" id="ptab" role="tab"><span aria-hidden="true">⚙</span> Preferências <span class="m" style="font-size:11px;opacity:.7">⌘,</span></button>
+    <div class="cmd" style="margin-left:auto">Buscar ou rodar comando<span class="m" style="margin-left:auto;font-size:11px">⌘K</span></div>
+  </div>
+
+  <section class="view canvas on" id="v-canvas">
+    <svg class="leash" aria-hidden="true"><path d="M576 160 C 596 160 592 150 612 150" stroke="#6EE7B7" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/><path d="M300 376 L 300 410" stroke="#6EE7B7" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/></svg>
+    <div class="term" id="t-pastor" style="left:36px;top:36px;width:540px;height:340px;border-color:var(--warn)"><div class="th"><span class="dot" style="background:var(--warn)"></span>Pastor<span class="chip">claude · opus</span></div>
+<div class="tb">$ collie work status
+laço roadmap-confiança · onda 6
+ B6.1  ✔ feito
+ B6.2  ✔ feito
+ B6.3  ● tentativa 2 — check rodando
+ A2.3  ◌ na fila
+
+<span style="color:var(--warn)">⚑ aguardando cartão: gravar fora do projeto</span>
+<span style="color:var(--accent)">&gt;</span> _</div></div>
+    <div class="term" id="t-laco" style="left:612px;top:36px;width:400px;height:240px"><div class="th"><span class="dot" style="background:var(--accent)"></span>laço · A2.3<span class="chip">sandbox</span></div>
+<div class="tb">swift test --filter Lint
+Test run with 12 tests passed
+lint: sleep 15 → 11 (baseline)
+<span style="color:var(--accent)">✔ check ok</span></div></div>
+    <div class="term" id="t-rev" style="left:36px;top:410px;width:540px;height:200px"><div class="th"><span class="dot" style="background:var(--accent)"></span>rev-onda-3<span class="chip">leitura</span></div>
+<div class="tb">achado 1  guard aceita --by .
+achado 2  nota sem motivo de parada
+<span style="color:var(--muted)">revisando… 6 de 9 arquivos</span></div></div>
+    <div class="term" style="left:612px;top:310px;width:400px;height:300px;background:#fff"><div class="th"><span class="dot" style="background:var(--sec)"></span>Prévia · app-tarefas<span class="chip">painel</span></div><div style="flex:1;display:grid;place-items:center;color:#5C6270">conteúdo da prévia</div></div>
+    <div class="acard" style="left:36px;top:636px"><div style="display:flex;gap:8px;align-items:center"><span class="dot" style="background:var(--warn)"></span><b>Pastor pede para gravar fora do projeto</b><span class="m" style="margin-left:auto;font-size:11px;color:var(--warn)">~/.config/collie/hooks.json</span></div>
+      <div style="display:flex;gap:8px;margin-top:10px"><button class="btn p">Permitir</button><button class="btn">Nesta sessão</button><button class="btn">Sempre neste cercado</button><button class="btn d" style="margin-left:auto">Negar</button></div></div>
+    <div style="position:absolute;right:16px;bottom:16px;width:128px;height:84px;border:1px solid var(--border);border-radius:8px;background:var(--sunk)" aria-label="Minimapa"><div style="position:absolute;left:10px;top:10px;width:60px;height:40px;border:1px solid var(--accent);border-radius:3px"></div></div>
+  </section>
+
+  <section class="view" id="v-lacos"><div class="pc" style="max-width:760px">
+    <h1>Roadmap · onda 6</h1><p class="sub">Laço rodando no cercado collie · confiado · 3 de 5 tarefas</p>
+    <div class="card" style="max-width:none">
+      <div class="lt"><span class="ck" style="color:var(--accent)">✔</span><div style="flex:1"><div style="font-weight:500">B6.1 Marca de confiança por cercado</div><div class="m" style="font-size:11px;color:var(--muted)">1ª tentativa · 2 min</div></div></div>
+      <div class="lt"><span class="ck" style="color:var(--accent)">✔</span><div style="flex:1"><div style="font-weight:500">B6.2 Laço sem cartão</div><div class="m" style="font-size:11px;color:var(--muted)">1ª tentativa · 4 min</div></div></div>
+      <div class="lt"><span class="ck pulse" style="color:var(--warn)">●</span><div style="flex:1"><div style="font-weight:500">B6.3 Página Laços nas Preferências</div><div class="m" style="font-size:11px;color:var(--muted)">tentativa 2 · check rodando</div></div><button class="btn">Ver terminal</button></div>
+      <div class="lt"><span class="ck" style="color:var(--muted)">◌</span><div style="flex:1"><div style="font-weight:500">A2.3 Auditoria de sleep</div><div class="m" style="font-size:11px;color:var(--muted)">na fila</div></div></div>
+      <div class="lt"><span class="ck" style="color:var(--muted)">◌</span><div style="flex:1"><div style="font-weight:500">A2.4 Relatório</div><div class="m" style="font-size:11px;color:var(--muted)">na fila</div></div></div>
+    </div>
+    <div style="display:flex;gap:8px"><button class="btn">Parar laço</button><button class="btn">Adiar tarefa</button></div>
+  </div></section>
+  <section class="view" id="v-prev"><div style="height:100%;display:grid;place-items:center;color:var(--muted)">Prévia em aba cheia (mesmo mecanismo de abas do canvas)</div></section>
+
+  <section class="view" id="v-prefs">
+    <div class="prefs">
+      <nav class="pn" aria-label="Preferências">
+        <input placeholder="Buscar preferência" aria-label="Buscar preferência">
+        <div class="g">INTERFACE</div>
+        <button data-p="ap"><span>◐</span>Aparência</button><button data-p="te"><span>›_</span>Terminal e fontes</button><button data-p="at"><span>↻</span>Atualizações</button>
+        <div class="g">AGENTES</div>
+        <button data-p="de"><span>✎</span>Desenho e sandbox</button><button class="on" data-p="la"><span>⟳</span>Laços</button><button data-p="me"><span>◈</span>Memória</button><button data-p="pl"><span>⚙</span>Plug-ins</button>
+        <div class="g">DISPOSITIVOS</div>
+        <button data-p="ce"><span>▯</span>Celular</button><button data-p="an"><span>▮</span>Android</button>
+      </nav>
+      <div class="pc">
+        <div class="pg on" id="p-la">
+          <h1>Laços</h1><p class="sub">Cercados em que laços rodam sem pedir cartão a cada tarefa.</p>
+          <div class="card"><h3>Cercados confiados</h3><p>O laço continua sujeito a limite de tentativas, orçamento, sandbox estrito e árvore limpa.</p>
+            <div class="crow"><span class="dot" style="background:var(--accent)"></span><div><div style="font-weight:500">collie</div><div class="m" style="font-size:11px;color:var(--muted)">confiado desde 18 nov</div></div><button class="btn d" style="margin-left:auto">Revogar</button></div>
+            <div class="crow"><span class="dot" style="background:var(--muted)"></span><div><div style="font-weight:500">collie-web</div><div class="m" style="font-size:11px;color:var(--muted)">pede cartão</div></div><button class="btn" style="margin-left:auto">Confiar</button></div>
+          </div>
+          <div class="card"><div style="display:flex;align-items:center"><div><h3>Avisar o Pastor a cada tarefa</h3><p>Injeta um aviso curto no terminal do Pastor.</p></div><span class="tog"></span></div></div>
+        </div>
+        <div class="pg" id="p-x"><h1 id="xt">Página</h1><p class="sub">Mesmo conteúdo de hoje; só muda o contêiner (aba no lugar do canvas).</p></div>
+      </div>
+    </div>
+  </section>
+  <a class="note" id="note" href="#" style="display:none">Preferências abrem como aba no lugar do canvas. Esc ou clicar em Canvas volta, sem perder zoom nem posição dos terminais.</a>
+</main>
+</div>
+<footer class="status"><span><span class="dot" style="background:var(--accent);margin-right:6px"></span>conectado</span><span>4 terminais</span><span>1 laço</span><span style="margin-left:auto">v0.1.6</span></footer>
+</div>
+<script>
+const $=s=>document.querySelectorAll(s);
+function show(v){$('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));$('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===v));$('#gear')[0].classList.toggle('on',v==='prefs');document.getElementById('note').style.display=v==='prefs'?'block':'none'}
+$('.tab').forEach(t=>t.onclick=()=>show(t.dataset.v));
+$('#gear')[0].onclick=()=>show('prefs');
+$('[data-open]').forEach(e=>e.onclick=()=>show(e.dataset.open));
+function pick(id){show('canvas');$('.tree .row[data-t]').forEach(r=>r.classList.toggle('on',r.dataset.t===id));$('.term').forEach(t=>t.classList.toggle('sel',t.id==='t-'+id))}
+$('.tree .row[data-t]').forEach(r=>r.onclick=e=>{if(e.target.classList.contains('car')){const k=document.getElementById('kids');k.classList.toggle('h');e.target.classList.toggle('c');e.target.setAttribute('aria-expanded',!k.classList.contains('h'));return}pick(r.dataset.t)});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')show('canvas');if(e.metaKey&&e.key===',')show('prefs')});
+$('.pn button').forEach(b=>b.onclick=()=>{$('.pn button').forEach(x=>x.classList.remove('on'));b.classList.add('on');const la=b.dataset.p==='la';document.getElementById('p-la').classList.toggle('on',la);document.getElementById('p-x').classList.toggle('on',!la);document.getElementById('xt').textContent=b.textContent.replace(/^\S+/,'').trim()||b.textContent});
+</script>
+</body>
+</html>

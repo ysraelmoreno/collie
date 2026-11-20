@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Collie · B · Comando</title>
+<style>
+:root{--bg:#0E1326;--surface:#161C36;--side:#121831;--sunk:#0B1020;--raised:#1B2340;--border:#262E52;--text:#E8ECF8;--text2:#B6BEDB;--muted:#8C95B8;--accent:#6EE7B7;--onacc:#0E1326;--warn:#FFB86B;--sec:#93A4FF;--danger:#FF8A8A}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 ui-sans-serif,-apple-system,system-ui,sans-serif}
+.m{font-family:ui-monospace,Menlo,monospace}
+button{font:inherit;color:inherit;cursor:pointer}
+.app{height:100%;display:flex;flex-direction:column;min-width:1000px}
+.top{height:44px;display:flex;align-items:center;gap:12px;padding:0 12px 0 84px;background:var(--side);border-bottom:1px solid var(--border)}
+.pt{display:flex;gap:2px}
+.pt button{height:30px;padding:0 12px;border:0;border-radius:8px;background:none;color:var(--muted);display:flex;align-items:center;gap:7px}
+.pt button.on{background:var(--raised);color:var(--text)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.cmd{flex:1;max-width:460px;margin:0 auto;height:30px;border:1px solid var(--border);border-radius:10px;background:var(--sunk);color:var(--muted);display:flex;align-items:center;padding:0 12px;gap:8px}
+.ic{width:30px;height:30px;border:0;border-radius:8px;background:none;color:var(--text2)}
+.ic:hover,.ic.on{background:var(--raised);color:var(--text)}
+.body{flex:1;display:flex;min-height:0}
+.left{width:232px;background:var(--side);border-right:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:10px;overflow:auto}
+.sec{font:11px ui-monospace,monospace;letter-spacing:1.2px;color:var(--muted);margin:6px 0 0}
+.row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;color:var(--text2)}
+.row.on{background:var(--raised);color:var(--text)}
+.chip{font:10px ui-monospace,monospace;padding:2px 7px;border-radius:99px;border:1px solid var(--border);color:var(--muted)}
+.center{flex:1;min-width:0;display:flex;flex-direction:column}
+.bar2{height:36px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border)}
+.seg{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.seg button{height:24px;padding:0 10px;border:0;background:none;color:var(--muted)}
+.seg button.on{background:var(--raised);color:var(--text)}
+.view{flex:1;min-height:0;display:none}.view.on{display:block}
+.canvas{position:relative;overflow:hidden;background:var(--bg) radial-gradient(#1E2647 1px,transparent 1px) 0 0/22px 22px}
+.term{position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+.th{height:32px;display:flex;align-items:center;gap:8px;padding:0 12px;background:var(--raised);border-bottom:1px solid var(--border);font-weight:600}.th .chip{margin-left:auto}
+.tb{padding:12px;font:12px/1.6 ui-monospace,monospace;color:var(--text2);white-space:pre}
+.right{width:300px;background:var(--side);border-left:1px solid var(--border);display:flex;flex-direction:column}
+.right h4{margin:0;padding:12px 14px;font:11px ui-monospace,monospace;letter-spacing:1.2px;color:var(--muted);border-bottom:1px solid var(--border)}
+.feed{padding:12px 14px;display:flex;flex-direction:column;gap:12px;overflow:auto}
+.ev{border-left:2px solid var(--border);padding-left:10px;color:var(--text2)}
+.ev b{color:var(--text);font-weight:600}.ev small{display:block;color:var(--muted);font:11px ui-monospace,monospace}
+.status{height:26px;background:var(--side);border-top:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 12px;font:11px ui-monospace,monospace;color:var(--muted)}
+/* prefs */
+.ph{padding:22px 40px 0}
+.ph h1{margin:0;font-size:24px}.ph p{margin:4px 0 14px;color:var(--muted)}
+.ptabs{display:flex;gap:4px;border-bottom:1px solid var(--border);padding:0 40px;overflow:auto}
+.ptabs button{height:36px;padding:0 14px;border:0;background:none;color:var(--muted);box-shadow:inset 0 -2px 0 transparent;white-space:nowrap}
+.ptabs button.on{color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.ptabs .g{align-self:center;font:10px ui-monospace,monospace;letter-spacing:1.2px;color:var(--muted);padding:0 8px 0 14px}
+.pbody{padding:24px 40px;overflow:auto;height:calc(100% - 140px);display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;align-content:start}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.card h3{margin:0 0 4px;font-size:14px}.card p{margin:0;color:var(--muted)}
+.crow{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--border)}
+.btn{height:28px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--text2)}.btn.d{color:var(--danger)}
+.tog{width:34px;height:20px;border-radius:99px;background:var(--accent);position:relative;margin-left:auto;flex:none}
+.tog::after{content:"";position:absolute;right:3px;top:3px;width:14px;height:14px;border-radius:50%;background:var(--onacc)}
+.hint{position:absolute;right:16px;bottom:16px;max-width:300px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;color:var(--text2);font-size:12px;display:none}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="top">
+  <div class="pt" role="tablist" aria-label="Cercados">
+    <button class="on"><span class="dot" style="background:var(--warn)"></span>collie</button>
+    <button><span class="dot" style="background:var(--accent)"></span>collie-web</button>
+    <button><span class="dot" style="background:var(--muted)"></span>apresentação</button>
+    <button aria-label="Novo cercado">+</button>
+  </div>
+  <div class="cmd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Rodar comando, abrir terminal, ir para…<span class="m" style="margin-left:auto;font-size:11px">⌘K</span></div>
+  <span class="m" style="font-size:11px;color:var(--muted)">claude 41% · cursor 12%</span>
+  <button class="ic" id="gear" aria-label="Preferências (⌘,)" title="Preferências (⌘,)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+</header>
+<div class="body">
+  <aside class="left">
+    <div style="display:flex;gap:6px"><button class="btn" style="flex:1;background:var(--accent);color:var(--onacc);border-color:var(--accent);font-weight:600">Novo terminal</button><button class="btn" aria-label="Abrir painel">▭</button></div>
+    <p class="sec">AGENTES</p>
+    <div style="margin-top:-6px">
+      <div class="row on"><span class="dot" style="background:var(--warn)"></span><span style="flex:1;font-weight:500">Pastor</span><span class="chip">claude</span></div>
+      <div class="row" style="padding-left:22px"><span class="dot" style="background:var(--accent)"></span><span style="flex:1">laço · A2.3</span><span class="chip">laço</span></div>
+      <div class="row" style="padding-left:22px"><span class="dot" style="background:var(--accent)"></span><span style="flex:1">rev-onda-3</span><span class="chip">review</span></div>
+      <div class="row"><span class="dot" style="background:var(--muted)"></span><span style="flex:1">apresentação</span><span class="chip">cursor</span></div>
+    </div>
+    <p class="sec">PAINÉIS</p>
+    <div style="margin-top:-6px"><div class="row">Prévia · app-tarefas</div><div class="row">Navegador</div></div>
+    <p class="sec">LOTES</p>
+    <div style="margin-top:-6px"><div class="row">Revisão independente<span class="m" style="margin-left:auto;font-size:11px;color:var(--muted)">2</span></div></div>
+  </aside>
+
+  <main class="center">
+    <div class="bar2">
+      <div style="font-size:15px;font-weight:600">collie</div><span class="m" style="font-size:12px;color:var(--muted)">feat/trust-roadmap ← main</span>
+      <div class="seg" style="margin-left:auto" id="seg"><button class="on" data-v="canvas">Canvas</button><button data-v="lista">Lista</button><button data-v="prefs" id="segp">Preferências</button></div>
+      <span class="m" style="color:var(--muted)">100%</span>
+    </div>
+
+    <section class="view canvas on" id="v-canvas">
+      <div class="term" style="left:32px;top:32px;width:520px;height:320px;border-color:var(--warn)"><div class="th"><span class="dot" style="background:var(--warn)"></span>Pastor<span class="chip">claude · opus</span></div><div class="tb">$ collie work status
+roadmap-confiança · onda 6
+ B6.3  ● tentativa 2 — check rodando
+ A2.3  ◌ na fila
+<span style="color:var(--warn)">⚑ cartão: gravar fora do projeto</span>
+<span style="color:var(--accent)">&gt;</span> _</div></div>
+      <div class="term" style="left:584px;top:32px;width:360px;height:230px"><div class="th"><span class="dot" style="background:var(--accent)"></span>laço · A2.3<span class="chip">sandbox</span></div><div class="tb">swift test --filter Lint
+<span style="color:var(--accent)">✔ check ok</span></div></div>
+      <div class="term" style="left:32px;top:384px;width:520px;height:190px"><div class="th"><span class="dot" style="background:var(--accent)"></span>rev-onda-3<span class="chip">leitura</span></div><div class="tb">achado 1  guard aceita --by .
+<span style="color:var(--muted)">revisando… 6 de 9</span></div></div>
+    </section>
+    <section class="view" id="v-lista"><div style="height:100%;display:grid;place-items:center;color:var(--muted)">Lista: terminais em tabela (nome, agente, estado, último evento)</div></section>
+
+    <section class="view" id="v-prefs">
+      <div class="ph"><h1>Preferências</h1><p>Abre no lugar do canvas; o canvas continua vivo atrás, com os terminais rodando.</p></div>
+      <div class="ptabs" id="pt">
+        <span class="g">INTERFACE</span><button>Aparência</button><button>Terminal</button><button>Atualizações</button>
+        <span class="g">AGENTES</span><button>Desenho e sandbox</button><button class="on">Laços</button><button>Memória</button><button>Plug-ins</button>
+        <span class="g">DISPOSITIVOS</span><button>Celular</button><button>Android</button>
+      </div>
+      <div class="pbody">
+        <div class="card"><h3>Cercados confiados</h3><p>Laços rodam sem cartão por tarefa.</p>
+          <div class="crow" style="margin-top:10px"><span class="dot" style="background:var(--accent)"></span><div><div style="font-weight:500">collie</div><div class="m" style="font-size:11px;color:var(--muted)">desde 18 nov</div></div><button class="btn d" style="margin-left:auto">Revogar</button></div>
+          <div class="crow"><span class="dot" style="background:var(--muted)"></span><div><div style="font-weight:500">collie-web</div><div class="m" style="font-size:11px;color:var(--muted)">pede cartão</div></div><button class="btn" style="margin-left:auto">Confiar</button></div>
+        </div>
+        <div class="card"><div style="display:flex;align-items:center;gap:12px"><div><h3>Avisar o Pastor a cada tarefa</h3><p>Aviso curto no terminal do Pastor.</p></div><span class="tog"></span></div></div>
+        <div class="card"><h3>Limites do laço</h3><p>Tentativas por tarefa, orçamento e espera por outros terminais.</p><div class="crow" style="margin-top:10px"><span>Tentativas</span><span class="m" style="margin-left:auto">3</span></div><div class="crow"><span>Espera por outros</span><span class="m" style="margin-left:auto">300 s</span></div></div>
+      </div>
+    </section>
+    <div class="hint" id="hint">Cada grupo vira uma linha de abas no topo da página, em vez de uma sidebar: mais largura para os cartões. Esc volta ao canvas.</div>
+  </main>
+
+  <aside class="right">
+    <h4>ATIVIDADE</h4>
+    <div class="feed">
+      <div class="ev"><b>laço · A2.3</b> check ok<small>14:03</small></div>
+      <div class="ev"><b>Pastor</b> cartão pendente: gravar fora do projeto<small>14:02</small></div>
+      <div class="ev"><b>rev-onda-3</b> achado 2 registrado<small>13:58</small></div>
+      <div class="ev"><b>memória</b> decisão salva: laço sem cartão<small>13:41</small></div>
+    </div>
+  </aside>
+</div>
+<footer class="status"><span><span class="dot" style="background:var(--accent);margin-right:6px"></span>conectado</span><span>4 terminais</span><span style="margin-left:auto">v0.1.6</span></footer>
+</div>
+<script>
+const $=s=>[...document.querySelectorAll(s)];
+function show(v){$('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));$('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));document.getElementById('gear').classList.toggle('on',v==='prefs');document.getElementById('hint').style.display=v==='prefs'?'block':'none'}
+$('#seg button').forEach(b=>b.onclick=()=>show(b.dataset.v));
+document.getElementById('gear').onclick=()=>show('prefs');
+addEventListener('keydown',e=>{if(e.key==='Escape')show('canvas');if(e.metaKey&&e.key===',')show('prefs')});
+$('#pt button').forEach(b=>b.onclick=()=>{$('#pt button').forEach(x=>x.classList.remove('on'));b.classList.add('on')});
+</script>
+</body>
+</html>

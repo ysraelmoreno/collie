@@ -173,8 +173,9 @@ extension CommandRouter {
         return f
     }
 
-    /// The card's one line (the card shows no line breaks): where, the limits, the gate (once), then every task, its
-    /// check and its evidence glob (if any), each in «…», which none may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
+    /// The card's one line (the card shows no line breaks): where, the limits, `--parallel` (over 1 only), the gate (once),
+    /// then every task, its check, its evidence glob, its `scope` and its `needs` (those it has), each in «…», which none
+    /// may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
     /// and nothing the owner would not see is ever approved.
     static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String) -> String? {
         func quoted(_ x: String) -> String {
@@ -182,10 +183,16 @@ extension CommandRouter {
         }
         var s = "rodar sem supervisão \(quoted(w.title)) no cercado \(quoted(paddock)): até \(l.max ?? 0) tentativas no total "
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
+            + (l.parallel.flatMap { $0 > 1 ? "até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). " : nil } ?? "")
             + (l.gate.map { "portão depois de cada check: \(quoted($0)). " } ?? "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
+        // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
+        func list(_ label: String, _ xs: [String]?) -> String {
+            xs.flatMap { $0.isEmpty ? nil : " \(label) " + $0.map(quoted).joined(separator: " ") } ?? ""
+        }
         for (i, t) in tasks.enumerated() { s += " #\(i + 1) \(quoted(t.title)) check \(quoted(t.check ?? ""))"
-                + (t.evidenceGlob.map { " evidência \(quoted($0))" } ?? "") + (i < tasks.count - 1 ? ";" : ".")
+                + (t.evidenceGlob.map { " evidência \(quoted($0))" } ?? "") + list("escopo", t.scope) + list("depende de", t.needs)
+                + (i < tasks.count - 1 ? ";" : ".")
         }
         return s.count <= Self.loopCardMax ? s : nil
     }
@@ -205,19 +212,43 @@ extension CommandRouter {
         return .object(["state": .string("stopped")])
     }
 
-    private func loopEnded(_ id: UUID, starter: UUID, paddock: UUID) async {
+    /// M3.6: the lanes the engine left (it removes its own: none, but for a fall in between) go before the loop's profile does.
+    func loopEnded(_ id: UUID, starter: UUID, paddock: UUID) async {
         workLoops[id] = nil; loopPaddocks.remove(paddock)
+        if let w = try? await work.get(id) {
+            await removeLanes(of: w)
+            if w.loop?.lanes != nil { try? await work.update(id) { $0.loop?.lanes = nil } }
+        }
         SandboxLaunch.remove(id, root: config.paths.root)
         guard let w = try? await work.get(id) else { return }
         try? await asks.inject(to: starter, prompt: WorkStatusText.loopEnded(w), afterQuiet: true)
     }
 
+    /// M3.6: what is left on disk of the lanes of `w`'s loop goes: worktree, branch (`LaneWorktree.sweep`: only what is
+    /// a lane, and never a lane of another work on record) and the lane's sandbox files. Idempotent. A loop that never
+    /// had a lane (no `--parallel` over 1, none on record) costs no git: it ends exactly as before lanes.
+    /// `prepare` (the start sweep): the loop's profile is made again first, since git here runs only under it.
+    /// ponytail: a lane of a work no longer on record goes too, but its sandbox files stay (its work's id is unknown).
+    func removeLanes(of w: Work, prepare: Bool = false) async {
+        guard (w.loop?.parallel ?? 1) > 1 || w.loop?.lanes?.isEmpty == false,
+              let p = ws.paddocks.first(where: { $0.id == w.paddockId }), !p.isFolder else { return }
+        if prepare, config.sandboxHome != nil { _ = try? prepareLoopSandbox(w.id, paddock: p) }
+        let host = RouterLoopHost(router: self, starter: w.terminalId, root: config.paths.root, work: w.id, paddock: p.id,
+                                  dir: URL(fileURLWithPath: p.path), sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
+        let others = Set(((try? await work.list(includeClosed: true)) ?? []).map(\.id)).subtracting([w.id])
+        for lane in await LaneWorktree.sweep(repoRoot: URL(fileURLWithPath: p.repoRoot), active: others, host: host) {
+            await host.laneGone(lane)
+        }
+    }
+
     /// At start: a loop a previous daemon left `running` is `stopped` (its task back to open, its attempt's job gone):
-    /// `collie work run` again continues from the next open task.
+    /// `collie work run` again continues from the next open task. M3.6: its lanes go first (no orphan lane is left
+    /// behind), the tasks that ran in them are open again and `lanes` is empty.
     func stopLoopsLeftRunning() async {
         guard let all = try? await work.list(includeClosed: true) else { return }
         let now = Date()
         for w in all where w.loop?.state == .running {
+            await removeLanes(of: w, prepare: true)
             SandboxLaunch.remove(w.id, root: config.paths.root)
             // its agents' records (the processes died with the daemon): named as its loop jobs, in its paddock
             let agents = Set(w.jobs.filter { $0.kind == .loop }.map(\.id))
@@ -227,10 +258,14 @@ extension CommandRouter {
     }
 
     /// What the start sweep writes on a work whose loop a previous daemon left `running`: stopped by `daemonRestart`,
-    /// with its note.
+    /// with its note. M3.6: the tasks that ran in lanes are open again too, and no lane stays on record.
     static func sweepLeftRunning(_ x: inout Work, now: Date) {
-        for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task {
+        let inLanes = Set(x.loop?.lanes?.map(\.task) ?? [])
+        for i in x.tasks.indices where x.tasks[i].state == .inProgress && (x.tasks[i].id == x.loop?.task || inLanes.contains(x.tasks[i].id)) {
             x.tasks[i].state = .open
+            // a lane's commits went with the lane: nothing of it is ever adopted (in the paddock's worktree, what
+            // came after `resumeFrom` is other lanes' merges)
+            if inLanes.contains(x.tasks[i].id) { x.tasks[i].forgetResume(); continue }
             // M2b.1: the latest the fallen attempt can have committed: a commit made after this is never adopted.
             // ponytail: the sweep's time, not the fall's (nobody saw it): what the owner commits between a crash and
             // this start can still be adopted, and a failed adoption deletes nothing. A heartbeat if that gap matters.
@@ -241,7 +276,7 @@ extension CommandRouter {
             x.jobs[j].state = .gone; x.jobs[j].endedAt = now
         }
         let why = WorkLoopState.Stop(.daemonRestart)
-        x.loop?.state = .stopped; x.loop?.endedAt = now; x.loop?.task = nil; x.loop?.stopReason = why
+        x.loop?.state = .stopped; x.loop?.endedAt = now; x.loop?.task = nil; x.loop?.stopReason = why; x.loop?.lanes = nil
         x.loop?.record(LoopEvent(at: now, kind: .stopped, detail: why.label))
         x.notes.append(WorkNote(at: now, text: why.note))
     }
@@ -252,8 +287,9 @@ extension CommandRouter {
     /// Daemon stop: the loops end with it, and it waits (`wait` in all) for each engine to write `cancelled`.
     /// One still busy after that (a check that ignores the cancel) stays `running` until the next start's sweep
     /// (`daemonRestart`). `wait` is a parameter for the tests (M2b.2); the daemon always passes the default.
+    /// M3.6: then the lanes still on disk go (a loop that ended in time already removed its own: nothing to do).
     func cancelLoops(wait: Duration = CommandRouter.loopCancelWait) async {
-        let tasks = workLoops.values.map(\.task)
+        let tasks = workLoops.values.map(\.task), ids = Array(workLoops.keys)
         workLoops = [:]; loopPaddocks = []
         guard !tasks.isEmpty else { return }
         for t in tasks { t.cancel() }
@@ -263,6 +299,7 @@ extension CommandRouter {
         let limit = Task { try? await Task.sleep(for: wait); signal.finish() }
         for await _ in ended {}
         limit.cancel()
+        for id in ids { if let w = try? await work.get(id) { await removeLanes(of: w) } }
     }
 
     // MARK: what RouterLoopHost needs from the router

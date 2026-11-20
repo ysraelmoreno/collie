@@ -9,6 +9,11 @@ import CollieClient
 private let htmlImport = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Fixtures/html-import")
 
+/// The landing fixture's <title>: artifact add titles a page by it (c97f3de), and the design file gets that title made
+/// a file name.
+private let landingTitle = "Ateliê de telas"
+private let landingFile = CommandRouter.importName(landingTitle, taken: [])
+
 /// The fake engine (as ArtifactTests' `Fake`).
 private struct Fig {
     let dir = URL(fileURLWithPath: "/tmp/collie-imp-\(UUID().uuidString.prefix(8))")
@@ -111,7 +116,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
             let m = try await term(d, p, "M")
             let id = try await addLanding(p, m)
             let r = try await until(p, m, id, "current")
-            #expect(r["kind"] == .string("export") && r["file"] == .string("index.html") && r["version"] == .number(1), "\(r)")
+            #expect(r["kind"] == .string("export") && r["file"] == .string(landingFile) && r["version"] == .number(1), "\(r)")
             #expect(r["source"] == .string("collie-artifact://app/\(id)/source/index.html"), "\(r)")
             let dir = p.root.appendingPathComponent("artifacts/\(id)")
             // the kept copy is the page made offline (its Google Fonts link to collie-lib://), the original untouched
@@ -125,7 +130,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
             let asked = app.calls.withLock { $0 }
             #expect(asked.count == 1 && asked.first?["url"] == .string("collie-artifact://app/\(id)/source/index.html") && asked.first?["id"] == .string(id), "\(asked)")
             let batches = fig.calls.filter { $0.hasPrefix("tools/call batch") }
-            #expect(batches == ["tools/call batch Importar index.html"], "\(fig.calls)")
+            #expect(batches == ["tools/call batch Importar \(landingTitle)"], "\(fig.calls)")
             // import warnings kept with the export's; blocked links lose their query
             guard case .array(let w)? = r["warnings"] else { Issue.record("\(r)"); return }
             #expect(w.contains(.string("blocked network resource: https://example.com/remote.png")), "\(w)")
@@ -182,7 +187,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
             let app = FakeApp(), h = try await app.start(d, p); defer { h.stop() }
             let ok = try await call(p, m, "artifact.import", ["id": id, "width": "1280"])
             guard case .object(let o)? = ok.result else { Issue.record("\(ok)"); return }
-            #expect(o["artifact"] == .string(id) && o["file"] == .string("index.html") && o["version"] == .number(1), "\(ok)")
+            #expect(o["artifact"] == .string(id) && o["file"] == .string(landingFile) && o["version"] == .number(1), "\(ok)")
             #expect(o["node"] != nil && o["warnings"] != nil, "\(ok)")
             #expect(app.calls.withLock { $0.first?["width"] } == .number(1280))
             let after = try #require(try await row(p, m, id))
@@ -287,7 +292,7 @@ extension DesignCommandTests { @Suite(.serialized) struct ArtifactImportTests {
             let id = try await addLanding(p, w)
             _ = try await until(p, w, id, "current")
             let paddock = await d.router.ws.paddocks.first { $0.name == "f1" }?.id
-            let f = try await d.router.design.list().first { $0.name == "index.html" }
+            let f = try await d.router.design.list().first { $0.name == landingFile }
             #expect(paddock != nil && f?.paddockId == paddock, "\(String(describing: f))")
         }
     }

@@ -8,6 +8,7 @@ let package = Package(
         .executable(name: "collied", targets: ["collied"]),
         .executable(name: "collie", targets: ["collie"]),
         .executable(name: "CollieApp", targets: ["CollieApp"]),
+        .executable(name: "collie-vizinho", targets: ["collie-vizinho"]),
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.99.0"),
@@ -30,6 +31,7 @@ let package = Package(
         .executableTarget(name: "collied", dependencies: ["CollieCore", "CollieDaemonKit", "CollieScreen"]),
         .executableTarget(name: "collie", dependencies: ["CollieCore", "CollieProtocol", "CollieDaemonKit"]),
         .executableTarget(name: "collie-ctty"),
+        .executableTarget(name: "collie-vizinho", dependencies: ["VizinhoKit"]),
         .executableTarget(name: "CollieApp", dependencies: ["CollieClient", "CollieCanvas", "CollieCore", "ColliePlugins", "CollieProtocol", "CollieTheme", .product(name: "SwiftTerm", package: "SwiftTerm")]),
         .testTarget(name: "CollieThemeTests", dependencies: ["CollieTheme"]),
         .testTarget(name: "VizinhoKitTests", dependencies: ["VizinhoKit"]),

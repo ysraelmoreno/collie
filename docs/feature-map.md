@@ -138,6 +138,17 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   `Sources/ColliePlugins/WebLockdown.swift`, `Sources/CollieCore/PluginManifest.swift`.
 - **Como verificar:** `collie plugin --help`, `collie app list`; instalar é à mão (Preferências → "Plug-ins").
 
+### Vizinho (plug-in de exemplo com gancho `edit`)
+
+- **Para que serve:** depois que um terminal Claude escreve um arquivo, o helper olha os irmãos (mesma pasta, extensão e
+  sufixo de tipo, ex.: `*Panel.swift`) e devolve ao agente a forma que quase todos seguem, com um arquivo modelo
+  ("5 de 5 importam A; este não importa"). Só lê o projeto; sem configuração.
+- **Nome na UI:** "Vizinho" (painel mínimo explicando isso); a orientação chega ao agente com o prefixo "[plug-in vizinho]".
+- **Arquivos:** `Sources/VizinhoKit/Vizinho.swift`, `Sources/collie-vizinho/main.swift`, `Examples/plugins/vizinho/`,
+  `scripts/build-vizinho-plugin.sh`, `Tests/CollieIntegrationTests/VizinhoPluginTests.swift`.
+- **Como verificar:** `scripts/build-vizinho-plugin.sh && swift test --disable-sandbox --filter VizinhoPluginTests`;
+  na mão: instalar `.build/plugins/vizinho` em Preferências → "Plug-ins" e pedir a um terminal Claude um `*Panel.swift` novo.
+
 ## Menus e cartões do app
 
 ### Barra de menus

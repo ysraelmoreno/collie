@@ -1,0 +1,17 @@
+{
+  "apiVersion": 1,
+  "id": "vizinho",
+  "name": "Vizinho",
+  "version": "0.1.0",
+  "author": "Collie",
+  "license": "MIT",
+  "placements": ["dock.right", "dock.left", "dock.bottom", "canvas"],
+  "defaultPlacement": "dock.right",
+  "ui": "ui/index.html",
+  "helper": "bin/vizinho",
+  "hooks": ["edit"],
+  "permissions": { "project": "read" },
+  "commands": [],
+  "events": [],
+  "stateKeys": []
+}

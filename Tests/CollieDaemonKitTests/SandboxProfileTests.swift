@@ -815,12 +815,16 @@ final class OSAllocatedUnfairLockBox: @unchecked Sendable {
         #expect(codex.arguments[1].hasPrefix("codex --sandbox danger-full-access -c "))
         let plain = try AgentLaunch.launchSpec(for: rec(.codex), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh")
         #expect(!plain.arguments[1].contains("--sandbox"))
-        let cursor = try AgentLaunch.launchSpec(for: rec(.custom, "cursor-agent --model x"), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
-        #expect(cursor.arguments == ["-lc", "cursor-agent --sandbox disabled --model x"])
+        // a custom cursor-agent command also gets its per-terminal plugin (253b859), right after the program
+        func plugin(_ r: TerminalRecord) -> String { " --plugin-dir " + AgentLaunch.quote(AgentLaunch.cursorPluginDir(r.id, in: dir).path) }
+        let cr = rec(.custom, "cursor-agent --model x")
+        let cursor = try AgentLaunch.launchSpec(for: cr, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+        #expect(cursor.arguments == ["-lc", "cursor-agent --sandbox disabled" + plugin(cr) + " --model x"])
         let cx = try AgentLaunch.launchSpec(for: rec(.custom, "codex exec hi"), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
         #expect(cx.arguments == ["-lc", #"codex -c 'sandbox_mode="danger-full-access"' exec hi"#])
-        let own = try AgentLaunch.launchSpec(for: rec(.custom, "cursor-agent --sandbox enabled"), env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
-        #expect(own.arguments == ["-lc", "cursor-agent --sandbox enabled"])   // the user's own choice
+        let or = rec(.custom, "cursor-agent --sandbox enabled")
+        let own = try AgentLaunch.launchSpec(for: or, env: [:], hooksDir: dir, collie: collie, shell: "/bin/zsh", innerSandboxOff: true)
+        #expect(own.arguments == ["-lc", "cursor-agent" + plugin(or) + " --sandbox enabled"])   // the user's own choice
     }
 }
 

@@ -5,10 +5,8 @@ import CollieTheme
 
 /// Trilho's left column (64 pt): the mark, Pasto and one square button per paddock (its initial, the status dot in the
 /// corner), the dashed "+" (Novo cercado), and at the foot the usage summary and the Preferências gear.
-/// Not placed in `Shell` yet (T3 does it); `openPreferences` is wired by T5.
 struct PaddockRail: View {
     let ctx: ShellContext
-    var openPreferences: () -> Void = {}
     static var width: CGFloat { 64 }
     private static var side: CGFloat { 40 }
 
@@ -40,7 +38,7 @@ struct PaddockRail: View {
             }
             Spacer(minLength: 0)
             usage
-            Button(action: openPreferences) {
+            Button(action: ctx.openPreferences) {
                 Image(systemName: "gearshape").font(.system(size: 15)).foregroundStyle(Color.collieMuted)
                     .frame(width: Self.side, height: 28).contentShape(.rect)
             }

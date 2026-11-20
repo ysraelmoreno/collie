@@ -11,7 +11,6 @@ import CollieTheme
     let canvas: CanvasState
     let paddocks: PaddockActions
     let usage: UsageFeed
-    var workspaceName: String?
     var usageOpen: Binding<Bool>
     var newTerminal: () -> Void
     var openPanel: () -> Void
@@ -20,11 +19,17 @@ import CollieTheme
     let herds: HerdsModel
     /// The Herds sheet, with that herd selected (nil: the first).
     var openHerds: (String?) -> Void
+    /// Selects a terminal or panel and centers it on the canvas (the path of a notification click or `mac.reveal`).
+    var focus: (UUID) -> Void = { _ in }
+    /// The edit sheet of a terminal.
+    var edit: (UUID) -> Void = { _ in }
+    /// The rail's gear. The Ajustes window for now; T5 points it at the embedded Preferências.
+    var openPreferences: () -> Void = {}
 }
 
 /// The window frame around `content` (docks + canvas). Compacta adds nothing here (its bar floats over the canvas,
-/// see `CanvasChrome`); Completa adds the sidebar, the paddock header and the status bar in optional slots around
-/// `content`, which keeps one position in the hierarchy: switching structure never remakes the canvas or the panels.
+/// see `CanvasChrome`); Completa (Trilho) adds the paddock rail, the context panel and the status bar in optional slots
+/// around `content`, which keeps one position in the hierarchy: switching structure never remakes the canvas or the panels.
 struct Shell<Content: View>: View {
     let structure: WindowStructure
     let ctx: ShellContext
@@ -35,9 +40,8 @@ struct Shell<Content: View>: View {
     var body: some View {
         let full = structure == .full
         HStack(spacing: 0) {
-            if full { WorkspaceSidebar(ctx: ctx) }
+            if full { PaddockRail(ctx: ctx); ContextPanel(ctx: ctx) }
             VStack(spacing: 0) {
-                if full { PaddockHeader(ctx: ctx) }
                 content
                 if full { StatusBar(ctx: ctx) }
             }
@@ -213,7 +217,7 @@ private struct UsageButton: View {
     }
 }
 
-private struct ZoomControls: View {
+struct ZoomControls: View {
     let ctx: ShellContext
 
     var body: some View {
@@ -242,103 +246,8 @@ struct HostNotice: View {
 
 // MARK: - Completa
 
-private struct WorkspaceSidebar: View {
-    let ctx: ShellContext
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        let client = ctx.client
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HStack(spacing: 6) { CollieMark(size: 18); Text("collie").font(.collieUI(15, .bold)).foregroundStyle(Color.collieText) }
-                if let n = ctx.workspaceName { Text(n).font(.collieMono(12)).foregroundStyle(Color.collieMuted).lineLimit(1) }
-            }
-            CommandField(ctx: ctx)
-            section("CERCADOS")
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    row(nil, selected: client.currentPaddock == nil)
-                    ForEach(client.paddocks) { f in
-                        row(f, selected: client.currentPaddock == f.id).contextMenu { PaddockMenu(paddock: f, actions: ctx.paddocks) }
-                    }
-                    HStack {
-                        NewPaddockButton(actions: ctx.paddocks).buttonStyle(CollieButtonStyle(.quiet)).controlSize(.small)
-                        if ctx.paddocks.busy { ProgressView().controlSize(.small) }
-                    }
-                }
-            }
-            HerdsSection(ctx: ctx)
-            LotsSection(client: client)
-            section("USO")
-            usage
-            Button { openSettings() } label: {
-                Image(systemName: "gearshape").font(.system(size: 14)).foregroundStyle(Color.collieMuted).frame(width: 24, height: 24).contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .help("Preferências (⌘,)").accessibilityLabel("Preferências")
-        }
-        .padding(14)
-        .padding(.top, CanvasChrome<EmptyView>.lightsInset)   // "collie" sits below the traffic lights (hidden title bar)
-        .frame(width: 240, alignment: .leading).frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.collieSidebar)
-        .overlay(alignment: .trailing) { Rectangle().fill(Color.collieBorder).frame(width: 1) }
-    }
-
-    private func section(_ title: String) -> some View {
-        Text(title).font(.collieMono(11)).kerning(1.2).foregroundStyle(Color.collieMuted).accessibilityAddTraits(.isHeader)
-    }
-
-    private func row(_ f: Paddock?, selected: Bool) -> some View {
-        Button { ctx.paddocks.select(f?.id) } label: {
-            HStack(spacing: 8) {
-                PaddockStatusDot(status: f?.status)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(f?.name ?? "Pasto").font(.collieUI(13, .medium)).foregroundStyle(Color.collieText).lineLimit(1)
-                    if let f { Text(f.gitBranch ?? f.path).font(.collieMono(11)).foregroundStyle(Color.collieMuted).lineLimit(1).truncationMode(.middle) }
-                }
-                Spacer(minLength: 0)
-                if let f { Text(f.status.label).font(.collieMono(10)).foregroundStyle(Color.collieMuted).lineLimit(1).fixedSize() }
-            }
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(selected ? Color.collieRaised : .clear, in: .rect(cornerRadius: 8))
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .help(f.map { "\($0.name) · \($0.status.label)" } ?? "Pasto")
-        .accessibilityValue(f?.status.label ?? "")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    /// One line per provider: its highest window ("claude · 5h", 41%) over a thin bar; a click opens the details.
-    private var usage: some View {
-        let feed = ctx.usage
-        return Button { ctx.usageOpen.wrappedValue.toggle() } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                if !feed.loaded { Text("carregando…") }
-                else if let e = feed.failure { Text(e).foregroundStyle(Color.collieDanger).lineLimit(2) }
-                else if feed.reports.isEmpty { Text("nenhum provedor") }
-                ForEach(feed.reports, id: \.providerId) { r in
-                    let w = r.windows.max { ($0.usedPercent ?? -1) < ($1.usedPercent ?? -1) }
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text(w.map { "\(r.label) · \($0.label)" } ?? r.label).lineLimit(1)
-                            Spacer()
-                            Text(w?.usedPercent.map { "\(Int($0.rounded()))%" } ?? "—").monospacedDigit()
-                        }
-                        ProgressView(value: min(max((w?.usedPercent ?? 0) / 100, 0), 1)).tint(Color.collieAccent).controlSize(.mini)
-                    }
-                }
-            }
-            .font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary).contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .help("Uso dos agentes")
-        .popover(isPresented: ctx.usageOpen) { UsagePopover(client: ctx.client, feed: feed) }
-    }
-}
-
 /// HERDS: the list (a click opens the sheet with that one) and "Aplicar…".
-private struct HerdsSection: View {
+struct HerdsSection: View {
     let ctx: ShellContext
     @ObservedObject var model: HerdsModel
     init(ctx: ShellContext) { self.ctx = ctx; model = ctx.herds }
@@ -364,7 +273,7 @@ private struct HerdsSection: View {
 }
 
 /// LOTES: terminals grouped by effort (name, goal, members). Only a lot without terminals can be deleted (its memories stay).
-private struct LotsSection: View {
+struct LotsSection: View {
     let client: DaemonClient
     @State private var deleting: Lot?
     @State private var opened: Lot?
@@ -417,7 +326,7 @@ private struct LotsSection: View {
     }
 }
 
-/// A lot opened from the sidebar. Quadro: its board, newest first — agents' text, shown as plain text (never a link or
+/// A lot opened from the context panel. Quadro: its board, newest first — agents' text, shown as plain text (never a link or
 /// markdown), read again on open and on Atualizar.
 private struct LotView: View {
     let client: DaemonClient
@@ -467,7 +376,7 @@ private struct LotView: View {
     }
 }
 
-/// The sidebar's copy for a lot (tested without the app).
+/// The context panel's copy for a lot (tested without the app).
 enum LotSummary {
     /// Member names in lot order; ids that are no longer terminals are skipped.
     static func memberNames(_ l: Lot, terminals: [TerminalRecord]) -> [String] {
@@ -482,34 +391,6 @@ enum LotSummary {
     static func help(_ l: Lot, names: [String]) -> String {
         [l.name, l.goal.isEmpty ? nil : l.goal, names.isEmpty ? "sem terminais" : "\(names.count) terminal\(names.count == 1 ? "" : "is")"]
             .compactMap { $0 }.joined(separator: " · ")
-    }
-}
-
-private struct PaddockHeader: View {
-    let ctx: ShellContext
-
-    var body: some View {
-        let paddock = ctx.client.paddocks.first { $0.id == ctx.client.currentPaddock }
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(paddock?.name ?? "Pasto").font(.collieUI(22, .semibold)).foregroundStyle(Color.collieText)
-                if let paddock { Text(paddock.isFolder ? paddock.path : "\(paddock.branch) ← \(paddock.baseBranch)").font(.collieMono(12)).foregroundStyle(Color.collieMuted) }
-            }
-            Spacer()
-            if let paddock {
-                if ctx.paddocks.busy { ProgressView().controlSize(.small) }
-                Menu { PaddockMenu(paddock: paddock, actions: ctx.paddocks) } label: { Image(systemName: "ellipsis.circle") }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Menu do cercado").accessibilityLabel("Menu do cercado")
-            }
-            Button("Novo terminal", action: ctx.newTerminal).buttonStyle(CollieButtonStyle(.secondary))
-            Button(action: ctx.openPanel) { Image(systemName: "plus.rectangle") }
-                .buttonStyle(CollieButtonStyle(.secondary)).help("Abrir painel…").accessibilityLabel("Abrir painel…")
-            ZoomControls(ctx: ctx)
-        }
-        .padding(.horizontal, 20).padding(.vertical, 12)
-        .background(Color.collieBackground)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.collieBorder).frame(height: 1) }
     }
 }
 

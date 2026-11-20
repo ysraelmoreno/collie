@@ -145,7 +145,8 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   "Novo terminal", "Abrir painel…", "Comando", "Uso dos agentes", "Zoom", "Preferências".
 - **Para que serve:** trocar de cercado, criar cercado e terminal, ver o uso dos agentes.
 - **Arquivos:** `Sources/CollieApp/Shell.swift`, `Sources/CollieApp/PaddockBar.swift`,
-  `Sources/CollieApp/UsagePopover.swift`.
+  `Sources/CollieApp/PaddockRail.swift`, `Sources/CollieApp/ContextPanel.swift` (estrutura Completa: o trilho de
+  cercados e o painel de contexto, com "AGENTES" em árvore e "PAINÉIS"), `Sources/CollieApp/UsagePopover.swift`.
 - **Como verificar:** `collie paddock list`; os menus, à mão.
 
 ### Paleta de comandos
@@ -180,7 +181,7 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 
 ### Lotes
 
-- **Nome na UI:** "LOTES" na barra lateral: "Novo lote…", "Abrir quadro", "Apagar lote…"; abas "Quadro" e "Liberados".
+- **Nome na UI:** "LOTES" no painel de contexto: "Novo lote…", "Abrir quadro", "Apagar lote…"; abas "Quadro" e "Liberados".
 - **Para que serve:** agrupa terminais de um mesmo esforço, com um quadro de recados.
 - **Arquivos:** `Sources/CollieApp/Shell.swift`.
 - **Como verificar:** `collie lot list`, `collie lot board`.

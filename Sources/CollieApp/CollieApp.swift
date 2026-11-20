@@ -170,7 +170,6 @@ struct ContentView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var paddocks: PaddockActions
     @State private var usage = UsageFeed()
-    @State private var workspaceName: String?
     @State private var paletteRun: PaletteCommand?   // run once the palette sheet is gone
     @State private var viewport = CGSize(width: 800, height: 600)
     /// `nil` position = from the window chrome or the palette (placed automatically); otherwise a canvas point from a right-click.
@@ -253,10 +252,11 @@ struct ContentView: View {
     }
 
     private var shell: ShellContext {
-        ShellContext(client: client, canvas: canvas, paddocks: paddocks, usage: usage, workspaceName: workspaceName,
+        ShellContext(client: client, canvas: canvas, paddocks: paddocks, usage: usage,
                      usageOpen: $usageOpen, newTerminal: { sheet = .newTerminal(nil) }, openPanel: { sheet = .openPanel(nil) },
                      fit: { canvas.fitAll(viewport: viewport) }, openPalette: { paletteOpen = true },
-                     herds: herds, openHerds: { sheet = .herds(nil, $0) })
+                     herds: herds, openHerds: { sheet = .herds(nil, $0) },
+                     focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: { openSettings() })
     }
 
     /// Each command runs the same closure as its button.
@@ -301,10 +301,6 @@ struct ContentView: View {
             CommandPalette(commands: paletteCommands) { paletteRun = $0; paletteOpen = false }
         }
         .task(id: client.state == .connected) { if client.state == .connected { await usage.poll(client) } }
-        .task(id: client.workspaceId) {
-            guard let id = client.workspaceId else { return }
-            workspaceName = try? await WorkspaceStore(paths: Paths(root: Config.root)).load(id).name
-        }
         .task { bundledBuild = await Task.detached { BuildID.of(URL(fileURLWithPath: Config.collied)) }.value }
         .task(id: client.state == .connected) { if client.state == .connected { await dailyDigestLoop() } }
         .onChange(of: client.paddocks) { _, fs in   // the current paddock was deleted (here or by a Shepherd)

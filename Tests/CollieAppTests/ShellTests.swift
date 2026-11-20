@@ -32,13 +32,28 @@ private struct Host: View {
     }
 }
 
+/// A context over a `DaemonClient` that never connected: no paddocks, terminals or panels.
+@MainActor private func emptyContext() -> ShellContext {
+    let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-shell-\(UUID())")))
+    return ShellContext(client: client, canvas: CanvasState(), paddocks: PaddockActions(client: client), usage: UsageFeed(),
+                        usageOpen: .constant(false), newTerminal: {}, openPanel: {}, fit: {}, openPalette: {},
+                        herds: HerdsModel(call: { _, _ in .null }, nodeName: { _ in nil }), openHerds: { _ in },
+                        focus: { _ in }, edit: { _ in }, openPreferences: {})
+}
+
+/// Completa (Trilho: rail, context panel, status bar) mounts over an empty client and leaves room for the content.
+@MainActor @Test func fullShellMountsWithEmptyClient() {
+    let counter = Counter()
+    let host = NSHostingView(rootView: Shell(structure: .full, ctx: emptyContext()) { Probe(counter: counter) })
+    host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
+    RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded()
+    #expect(counter.made == 1)
+    #expect(host.fittingSize.width >= PaddockRail.width + ContextPanel.width)
+}
+
 /// Switching Compacta ↔ Completa must not remake the canvas (nor the docked panels around it).
 @MainActor @Test func structureSwitchKeepsContent() {
-    let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-shell-\(UUID())")))
-    let ctx = ShellContext(client: client, canvas: CanvasState(), paddocks: PaddockActions(client: client), usage: UsageFeed(),
-                           usageOpen: .constant(false), newTerminal: {}, openPanel: {}, fit: {}, openPalette: {},
-                           herds: HerdsModel(call: { _, _ in .null }, nodeName: { _ in nil }), openHerds: { _ in })
-    let box = Box(), counter = Counter()
+    let ctx = emptyContext(), box = Box(), counter = Counter()
     let host = NSHostingView(rootView: Host(box: box, ctx: ctx, counter: counter))
     host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
     func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded() }

@@ -160,7 +160,12 @@ actor WorkLoop {
             // shows what the loop is doing while the agent, the check or the gate runs
             if Self.waits(effect), run.unwritten { await record(w.id, &run) }
             var happened = events?(effect)
-            if happened == nil { happened = await perform(effect, state, &run) }
+            if happened == nil {
+                happened = await perform(effect, state, &run)
+                // M2.2b: the daemon stopped while the check, the gate or the wait for another terminal ran: what they
+                // answered (often the error of a killed check) is no verdict. The machine leaves with `cancelled`
+                if Task.isCancelled, let h = happened, Self.judges(h) { happened = .cancelled }
+            }
             guard let happened else { continue }
             let (next, more) = AttemptMachine.reduce(state, happened)
             state = next; todo += more
@@ -213,6 +218,14 @@ actor WorkLoop {
     private static func waits(_ e: AttemptMachine.Effect) -> Bool {
         switch e {
         case .ask, .waitForCommit, .runCheck, .runGate: true   // `nudge` writes by itself, once, when it goes
+        default: false
+        }
+    }
+
+    /// M2.2b: the events that carry a verdict's facts out of a long wait: a cancel during it replaces them.
+    private static func judges(_ e: AttemptMachine.Event) -> Bool {
+        switch e {
+        case .checkDone, .gateDone, .blocked: true
         default: false
         }
     }
@@ -356,7 +369,7 @@ actor WorkLoop {
                 let used = x.loop?.used ?? 0
                 x.loop?.used = Swift.max(0, used - 1)
                 if let j = x.jobs.firstIndex(where: { $0.id == name && $0.state == .running }) { x.jobs[j].state = .gone; x.jobs[j].endedAt = at }
-                Self.forget(&x, task.id)
+                // M2.2b: `resumeFrom` stays, as after a fall (M2.2a): a commit already there is judged by the next run
             }
         case .reopen(let why):
             let at = host.now()
@@ -492,7 +505,7 @@ actor WorkLoop {
         return await committed(before: from, branch: branch, dir)
     }
 
-    /// The attempt of `task` ended (a verdict, or none: cancelled, reopened): there is nothing to resume.
+    /// The attempt of `task` ended (a verdict, or none: reopened): there is nothing to resume. Not when cancelled.
     private static func forget(_ w: inout Work, _ task: String) {
         guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
         w.tasks[i].resumeFrom = nil; w.tasks[i].resumeBranch = nil

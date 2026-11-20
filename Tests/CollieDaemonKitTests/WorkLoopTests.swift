@@ -86,7 +86,10 @@ actor LoopFakeHost: LoopHost {
         return n < after
     }
     func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
-    func othersWorking() async -> String? { busyOther }
+    /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).
+    var othersProbe: (@Sendable () async -> Void)?
+    func setOthersProbe(_ p: @escaping @Sendable () async -> Void) { othersProbe = p }
+    func othersWorking() async -> String? { await othersProbe?(); return busyOther }
     func starterAlive() async -> Bool { !starterGone }
     func setBusy(_ n: String?) { busyOther = n }
     func setStarterGone(after n: String) { starterGoneAfter = n }

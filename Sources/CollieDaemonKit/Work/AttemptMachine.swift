@@ -59,7 +59,7 @@ enum AttemptMachine {
         case decide
         case discard, markDone
         case markOpenOrDeferred(reason: String, last: Bool)
-        /// No verdict. `uncount`: the task reopens and the attempt is not counted (cancelled). `reopen`: the task
+        /// No verdict. `uncount`: the task reopens, the attempt is not counted and `resumeFrom` stays (cancelled). `reopen`: the task
         /// reopens and its job ends with this result.
         case uncount, reopen(job: String)
         case note(String)

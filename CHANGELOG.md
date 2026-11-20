@@ -4,12 +4,15 @@ Todas as mudanças notáveis do Collie, por versão. O formato segue o [Keep a C
 
 ## [Não lançado]
 
+## [0.1.7] — 2026-11-19
+
 ### Adicionado
 - **Layout "Trilho"** na estrutura Completa: coluna de cercados à esquerda, painel de contexto com a **árvore de agentes** (o Pastor e os terminais ligados a ele por guia, com selo de cartões pendentes) e faixa de abas Canvas / Preferências. Na Completa, as Preferências passam a abrir **no lugar do canvas** (`⌘,`, paleta, engrenagem e o pedido de página de outros painéis), sem refazer os terminais. A estrutura Compacta não muda e continua abrindo a janela de Ajustes.
 - **Memória de conversa do Cursor:** o início de sessão de um terminal Cursor é registrado, a transcrição é lida em blocos e o crescimento dela dispara a captura por ociosidade.
 - **Curador:** sem limite diário por padrão (o limite passa a ser uma escolha do usuário).
 
 ### Alterado
+- No Trilho, o **Pasto** (terminais e painéis sem cercado) não é mais um cercado fixo: só aparece enquanto tiver algo, quando é a seleção ou quando não há cercado; vazio e selecionado, o app passa para o primeiro cercado. A Compacta mantém o chip "Pasto".
 - O baseline do lint para `sleep` em `ConversationCapture.swift` subiu de 1 para 2: é o poll do crescimento da transcrição do Cursor, que não tem evento para esperar.
 
 ### Corrigido

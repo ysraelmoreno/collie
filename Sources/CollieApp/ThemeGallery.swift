@@ -91,6 +91,21 @@ struct ThemeCard: Identifiable, Equatable {
         }
     }
 
+    /// The selected theme when it is a valid file of the user's: what the editor shows. Nil otherwise.
+    var editable: (id: String, theme: ThemeFile)? {
+        guard case .custom(let id) = selection, let theme = entries.first(where: { $0.id == id })?.theme else { return nil }
+        return (id, theme)
+    }
+
+    /// Editing state for one theme; its writes go to the library, and are skipped once the file left the list
+    /// (deleted while a write was pending), so a deleted theme does not come back.
+    func editorSession(id: String, theme: ThemeFile) -> ThemeEditorSession {
+        ThemeEditorSession(id: id, theme: theme, scheduler: TimerScheduler()) { [weak self] t in
+            guard let self, entries.contains(where: { $0.id == id }) else { return }
+            try library.save(t, id: id)
+        }
+    }
+
     // MARK: Loading and applying
 
     /// App start: reads the folder and applies the saved choice. A `custom:<id>` that is missing or broken applies
@@ -205,7 +220,8 @@ struct ThemeCard: Identifiable, Equatable {
     }
 }
 
-/// The gallery: one card per theme, then "Novo a partir de…"; "Importar…" and "Mostrar no Finder" above.
+/// The gallery: one card per theme, then "Novo a partir de…"; "Importar…" and "Mostrar no Finder" above; the editor
+/// of the selected theme below it when that theme is the user's.
 struct ThemeGallery: View {
     @State private var model = ThemeGalleryModel.shared
     @State private var toDelete: ThemeCard?
@@ -222,6 +238,9 @@ struct ThemeGallery: View {
             LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
                 ForEach(model.cards) { card in cardView(card) }
                 newCard
+            }
+            if let e = model.editable {
+                ThemeEditorView(id: e.id, theme: e.theme, gallery: model).id(e.id)
             }
         }
         .alert("Tema", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {

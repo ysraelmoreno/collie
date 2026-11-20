@@ -245,13 +245,25 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   volta para Escuro. Arquivo do selecionado que muda no disco é reaplicado; que some ou quebra volta para Escuro.
   Na partida o tema salvo (`custom:<id>`) é aplicado antes da primeira janela; ausente ou quebrado aplica Escuro e
   mantém a preferência.
+  Abaixo da galeria, com um tema do usuário selecionado e válido, aparece o editor: nome editável, "estende
+  Escuro/Claro", nome do arquivo e o seletor **Lista | JSON** (duas vistas do mesmo arquivo), com a prévia à direita
+  (embaixo se couber menos de 720 pt). Lista: os 18 papéis em Fundos, Texto, Destaques e Outros, cada um com seletor
+  de cor, hex (com ou sem `#`; inválido volta ao anterior), "alterado" com voltar ao herdado ou "herdado" e a leitura
+  de contraste ("5,8"; "3,7 baixo" em cor de atenção). JSON: texto sem correção automática; inválido mostra "não
+  aplicado: …" e nada muda. O arquivo é gravado 300 ms depois da última mudança válida (e ao sair da página ou fechar
+  a janela); erro de gravação mostra uma linha e mantém o texto. Arquivo alterado por fora recarrega o editor, se não
+  houver edição pendente; com pendência a edição vence. A prévia usa só a paleta em edição.
 - **Arquivos:** `Sources/CollieApp/PreferencesView.swift`, `Sources/CollieApp/PreferencePage.swift`,
   `Sources/CollieApp/UpdatePreferences.swift`, `Sources/CollieApp/CuratorPreferences.swift`,
   `Sources/CollieApp/CursorMemoryPreferences.swift`, `Sources/CollieApp/PluginsPreferences.swift`,
   `Sources/CollieApp/CelularPreferences.swift`, `Sources/CollieApp/AndroidPreferences.swift`,
   `Sources/CollieApp/DesignEnginePreferences.swift`, `Sources/CollieApp/ThemeGallery.swift`,
-  `Sources/CollieApp/ThemeLibrary.swift`.
-- **Como verificar:** à mão.
+  `Sources/CollieApp/ThemeLibrary.swift`, `Sources/CollieApp/ThemeEditorView.swift`,
+  `Sources/CollieApp/ThemePreview.swift`.
+- **Como verificar:** `swift test --disable-sandbox --filter 'ThemeEditorTests|ThemeEditorModelTests'` (coordenador
+  com relógio injetado) e, à mão no app: trocar três cores na Lista e vê-las no JSON; editar o JSON e ver a Lista
+  mudar; deixar o JSON inválido (o app não muda); salvar o arquivo num editor externo (o editor recarrega); com um
+  terminal rodando um comando, nada é recriado; conferir "baixo" numa leitura com pouco contraste.
 
 ### Atualização e serviço
 

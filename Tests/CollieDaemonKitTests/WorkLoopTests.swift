@@ -14,6 +14,11 @@ struct LoopScript: Sendable {
     /// `.idle` ends: `working` stays true and nothing is committed until its `n`-th call, which runs `late`.
     var lateAfter: Int?
     var late: @Sendable (URL) async throws -> Void = { _ in }
+    /// M2.1: runs when the agent is nudged, in the worktree (`act` runs only for the attempt's prompt).
+    var nudged: @Sendable (URL) async throws -> Void = { _ in }
+    /// How the nudge's turn ends (nil: like `source`); `nudgeError`: its ask throws.
+    var nudgedSource: AskResult.Source?
+    var nudgeError: ProtocolError?
 }
 
 /// A host without PTYs: scripted agents, real git and a real (unsandboxed) check in a temp repo.
@@ -55,12 +60,20 @@ actor LoopFakeHost: LoopHost {
     }
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         let name = names[terminal]!, s = scripts[name] ?? LoopScript()
+        // M2.1: a nudge is not the attempt's prompt: `prompts` keeps that one, `nudges` every nudge (name, text, timeout)
+        if prompt == WorkLoop.nudgePrompt {
+            nudges.append((name, prompt, timeout))
+            do { try await s.nudged(dir) } catch { Issue.record("nudged \(name): \(error)") }
+            if let e = s.nudgeError { throw e }
+            return s.nudgedSource ?? s.source
+        }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if name == starterGoneAfter { starterGone = true }
         if let e = s.askError { throw e }
         return s.source
     }
+    var nudges: [(name: String, prompt: String, timeout: Duration)] = []
     /// M2.0: the agents (by name) whose prompt had its Enter sent again.
     var resubmits: Set<String> = []
     func setResubmitted(_ n: String) { resubmits.insert(n) }

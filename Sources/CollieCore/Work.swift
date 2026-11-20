@@ -53,6 +53,8 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         case gateStarted, gateFinished, treeReset, othersWaiting, verdict, discarded, stopRequested, stopped, unknown
         /// M2.0: the attempt's prompt was not submitted and its Enter was sent again (detail: the terminal's name).
         case resubmitted
+        /// M2.1: the turn ended with no new commit and the agent was told once to commit and end (detail: how the turn ended).
+        case nudged
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200

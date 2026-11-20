@@ -50,6 +50,8 @@ actor WorkLoop {
     static let noteLines = 40, noteChars = 4000
     /// Where a project keeps its feature map, in order of preference.
     static let featureMaps = ["docs/feature-map.md", "FEATURES.md"]
+    /// M2.1: what an agent that ended its turn by hook with no new commit is told, once per attempt.
+    static let nudgePrompt = "Você encerrou o turno sem fazer commit. Ninguém vai responder perguntas neste laço: decida sozinho. Faça commit do que escreveu (ou diga em uma linha o que impede) e encerre."
     static let evidenceCommits = 20, evidenceSubject = 200, evidenceLines = 20, evidenceChars = 2000
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration, othersWait: Duration
     /// A test's seam: the event an effect answers with, instead of carrying it out (nil: carried out as always).
@@ -199,7 +201,7 @@ actor WorkLoop {
     /// Effects that may take long: what is pending is written before them.
     private static func waits(_ e: AttemptMachine.Effect) -> Bool {
         switch e {
-        case .ask, .waitForCommit, .runCheck, .runGate: true
+        case .ask, .nudge, .waitForCommit, .runCheck, .runGate: true
         default: false
         }
     }
@@ -261,6 +263,17 @@ actor WorkLoop {
             // M2.0: it only records (the turn's end, good or bad, is journaled right after)
             if await host.resubmitted(agent) { r.pending.append(entry(.resubmitted, task: task.id, attempt: n, detail: name)) }
             return ended
+        case .nudge:
+            // not when the turn's time is over, the loop is stopping or the daemon is: straight to the check, as before
+            guard let agent = r.agent, let deadline = r.deadline, !Task.isCancelled, !stopping.contains(id) else { return .waitExpired }
+            let rest = Int(deadline.timeIntervalSince(host.now()))
+            guard rest >= 1 else { return .waitExpired }
+            // part of the same attempt (no `used`, no try); written now: the nudge's turn may be long
+            r.pending.append(entry(.nudged, task: task.id, attempt: n, detail: AskResult.Source.hook.rawValue))
+            await record(id, &r)
+            do { return .turnEnded(source: try await host.ask(agent, prompt: Self.nudgePrompt, timeout: .seconds(rest))) }
+            catch where error.code == .timeout { return .turnTimedOut }
+            catch { return .turnFailed(error.message) }
         case .waitForCommit, .lookForCommit:
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
                 await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline)

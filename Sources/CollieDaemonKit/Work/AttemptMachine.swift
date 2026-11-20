@@ -39,6 +39,9 @@ enum AttemptMachine {
 
     enum Effect: Sendable, Equatable {
         case summon, ask
+        /// M2.1: the turn ended by hook with no new commit: the agent is told once to commit and end, in what is left
+        /// of the turn. Answers like `ask`, or `waitExpired` when it does not go (no time left, the loop stopping).
+        case nudge
         /// `waitForCommit` waits for a commit first (an `.idle` end); both then look once: `commitSeen` or `waitExpired`.
         case waitForCommit, lookForCommit
         case dismiss
@@ -67,7 +70,7 @@ enum AttemptMachine {
         /// Carrying it out answers with an event.
         var answers: Bool {
             switch self {
-            case .summon, .ask, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .decide: true
+            case .summon, .ask, .nudge, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .decide: true
             case .dismiss, .show, .discard, .markDone, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
             }
         }
@@ -82,6 +85,8 @@ enum AttemptMachine {
         /// The attempt's terminal while it is open.
         var agent: UUID?
         var facts: AttemptDecision.Facts
+        /// M2.1: the last turn ended by hook and no nudge went yet / one went (at most one per attempt).
+        var nudgeable = false, nudged = false
         var name: String { "loop-\(task)-\(n)" }
 
         init(task: String, n: Int, tries: Int, hasGate: Bool, before: String) {
@@ -109,22 +114,31 @@ enum AttemptMachine {
             return (s, [.measureFacts])
 
         case (.turn, .turnEnded(let source)):
-            s.phase = .waitingCommit
+            s.phase = .waitingCommit; s.nudgeable = source == .hook && !s.nudged
             return (s, [.journal(.turnEnded, source.rawValue), source == .idle ? .waitForCommit : .lookForCommit])
         case (.turn, .turnTimedOut):
             // a turn past its timeout is not a failure by itself: the check decides
             s.phase = .waitingCommit
             return (s, [.journal(.turnEnded, "timeout"), .lookForCommit])
         case (.turn, .turnFailed(let message)):
-            s.facts.failure = message; s.phase = .waitingCommit
+            // a nudge that could not be asked fails nothing: the attempt is judged as if it had not gone
+            if !s.nudged { s.facts.failure = message }
+            s.phase = .waitingCommit
             return (s, [.journal(.turnEnded, "erro: \(message)"), .lookForCommit])
 
         // before the check: nothing edits the tree while it is judged (a turn past its timeout may still be working)
         case (.waitingCommit, .commitSeen(let short)) where s.agent != nil:
             s.agent = nil
             return (s, [.journal(.commitSeen, short), .dismiss, .journal(.agentDismissed, nil), .measureFacts])
-        case (.waitingCommit, .waitExpired) where s.agent != nil:
-            s.agent = nil
+        // M2.1: a hook is a frail sign that the work is over (a question, a permission dialog, a compaction): with no
+        // commit the agent is nudged once, in the same attempt; `.idle` already waits for the commit, a timeout has no
+        // time left and a failed ask has no one to tell
+        case (.waitingCommit, .waitExpired) where s.agent != nil && s.nudgeable:
+            s.nudgeable = false; s.nudged = true; s.phase = .turn
+            return (s, [.nudge])
+        // `.turn`: the nudge did not go
+        case (.waitingCommit, .waitExpired) where s.agent != nil, (.turn, .waitExpired) where s.agent != nil && s.nudged:
+            s.agent = nil; s.phase = .waitingCommit
             return (s, [.dismiss, .journal(.agentDismissed, nil), .measureFacts])
 
         case (.summoning, .measured(let m)), (.waitingCommit, .measured(let m)):

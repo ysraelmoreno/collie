@@ -531,9 +531,13 @@ public struct PluginRow: Decodable, Sendable, Equatable, Identifiable {
     public var error: String?
     public var commands: [String]?
     public var installedAt: Date?
+    /// Agent events the plug-in's helper takes, and what that lets it do (`PluginManifest.permissionLines`).
+    public var hooks: [String]?
+    public var permissions: [String]?
     public init(id: String, name: String, version: String, author: String? = nil, license: String? = nil, enabled: Bool = true,
-                error: String? = nil, commands: [String]? = nil, installedAt: Date? = nil) {
+                error: String? = nil, commands: [String]? = nil, installedAt: Date? = nil, hooks: [String]? = nil, permissions: [String]? = nil) {
         self.id = id; self.name = name; self.version = version; self.author = author; self.license = license
         self.enabled = enabled; self.error = error; self.commands = commands; self.installedAt = installedAt
+        self.hooks = hooks; self.permissions = permissions
     }
 }

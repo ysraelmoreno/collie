@@ -66,6 +66,8 @@ extension CommandRouter {
         if let m = await plugins.manifest(e.id) {
             o["name"] = .string(m.name); o["author"] = .string(m.author); o["license"] = .string(m.license)
             o["commands"] = .array(m.commands.map { .string($0.name) })
+            o["hooks"] = .array(m.hookEvents.map { .string($0) })
+            o["permissions"] = .array(m.permissionLines.map { .string($0) })
         }
         return .object(o)
     }

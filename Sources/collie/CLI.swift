@@ -176,6 +176,10 @@ enum CLI {
         case (_, .object(let o)) where o["output"] != nil:
             let s = str(o["output"]); return s.hasSuffix("\n") ? s : s + "\n"
         case ("admin.spawn", .object(let o)): return str(o["id"]) + "\n"
+        case ("plugin.install", .object(let o)):
+            var s = "Instalado \(str(o["name"])) \(str(o["version"]))\n"
+            if case .array(let lines)? = o["permissions"] { for l in lines { s += "  - \(str(l))\n" } }
+            return s
         case (_, .null): return ""
         default: return jsonString(result) + "\n"
         }

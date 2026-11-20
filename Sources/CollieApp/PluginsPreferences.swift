@@ -29,6 +29,13 @@ struct PluginInstallPrompt: Identifiable {
         ["Autor: \(Self.author(manifest.author)) · Licença: \(manifest.license.isEmpty ? "não informada" : manifest.license)",
          manifest.commands.count == 1 ? "1 comando" : "\(manifest.commands.count) comandos"]
     }
+    /// What it may do beyond its page (`PluginManifest.permissionLines`); empty: nothing.
+    var permissions: [String] { manifest.permissionLines }
+    /// The lines the installed version didn't have: a replacement that asks for more says so on the confirmation.
+    var newPermissions: [String] {
+        guard let old = replacing else { return [] }
+        return permissions.filter { !(old.permissions ?? []).contains($0) }
+    }
     var commands: [String] { manifest.commands.map { "collie \(manifest.id) \($0.name) — \($0.summary)" } }
     private static func author(_ a: String?) -> String { (a ?? "").isEmpty ? "autor desconhecido" : a! }
 }
@@ -80,6 +87,7 @@ struct PluginsPreferences: View {
                 Text([r.author.map { "de \($0)" }, r.license, r.commands.map { $0.count == 1 ? "1 comando" : "\($0.count) comandos" }]
                         .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+                ForEach(r.permissions ?? [], id: \.self) { Text($0).font(.collieMono(12)).foregroundStyle(Color.collieAttention) }
                 if let e = r.error {
                     Text(e).font(.collieMono(12)).foregroundStyle(Color.collieDanger).textSelection(.enabled)
                 } else {
@@ -105,8 +113,16 @@ struct PluginsPreferences: View {
                     ForEach(p.commands, id: \.self) { Text($0).font(.collieMono(12)).foregroundStyle(Color.collieText).textSelection(.enabled) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxHeight: 200)
-            Text("Sem rede, sem acesso ao projeto: a página vê só os argumentos de cada comando.")
-                .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+            if p.permissions.isEmpty {
+                Text("Sem rede, sem acesso ao projeto: a página vê só os argumentos de cada comando.")
+                    .font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+            } else {
+                Text(p.replacing == nil ? "Este plug-in pode:" : "Esta versão pode:").font(.collieUI(13, .semibold)).foregroundStyle(Color.collieAttention)
+                ForEach(p.permissions, id: \.self) {
+                    Text("• \($0)" + (p.newPermissions.contains($0) ? " (novo)" : "")).font(.collieMono(12)).foregroundStyle(Color.collieAttention)
+                }
+                Text("Sem rede. O programa roda isolado e vê só caminhos, nunca a conversa.").font(.collieMono(12)).foregroundStyle(Color.collieMuted)
+            }
             HStack {
                 Spacer()
                 Button("Cancelar", role: .cancel) { prompt = nil }.keyboardShortcut(.cancelAction)

@@ -2,9 +2,9 @@
 
 A plug-in adds a panel and agent commands to Collie without rebuilding it. Phase 1 plug-ins are **web UI only**:
 
-- no helper process
+- no helper process (except the agent-hook helper, see [Ganchos de agente](#ganchos-de-agente))
 - no network
-- no access to the project
+- no access to the project (except `permissions.project: read` with hooks)
 
 The page runs in a locked web view and talks to Collie only through `window.collie`.
 
@@ -74,7 +74,8 @@ Preferências installs exactly the id and version it showed: if the folder chang
 | `outputFile` | The result's `path` is a file that Collie hands to the caller. `--out` is added when not declared; a declared `out` must be a non-positional string. |
 | `events` | At most 64, each `<id>.<name>`. |
 | `stateKeys` | Panel state keys a herd may save. |
-| `helper`, `permissions` | Phase 2 and 3. Any value is refused with "precisa de um Collie mais novo (helpers/permissões chegam na fase 2/3)". The exceptions are an empty `network` list and `"project": "none"`. |
+| `helper`, `hooks` | `helper` is `bin/<name>` and needs `hooks` (`"edit"` and/or `"stop"`), and the other way around. See [Ganchos de agente](#ganchos-de-agente). |
+| `permissions` | `{"project": "read"}` (or `"none"`) and an empty `network` list. Any other value is refused with "precisa de um Collie mais novo (helpers/permissões chegam na fase 2/3)". |
 
 Unknown keys are ignored, so a newer manifest still loads.
 
@@ -112,6 +113,62 @@ The page sees only the arguments of each command. It never sees the agent's requ
 - **Updating:** installing a new version reloads open panels with it.
 - **Removing or disabling:** a command in flight fails with `unavailable` ("plug-in removido"). Open panels show "Plug-in <id> não está instalado" and keep their state.
 - **Crash:** if the page's process dies, it reloads, up to 3 times.
+
+## Ganchos de agente
+
+Um plug-in com `helper` e `hooks` recebe os eventos dos agentes Claude (arquivo editado, fim de turno) e responde com
+orientação ou bloqueio. Roda um programa a cada evento e lê o projeto; por isso a instalação mostra, antes de confirmar,
+o que ele pode fazer (as mesmas linhas aparecem em Preferências → Plug-ins, em `collie plugin list` (campos `hooks` e
+`permissions`) e depois de `collie plugin install`). Uma versão nova que pede mais do que a instalada
+exige nova confirmação, com as linhas novas marcadas.
+
+```json
+{ "helper": "bin/vizinho",
+  "hooks": ["edit", "stop"],
+  "permissions": { "project": "read" } }
+```
+
+**Evento**, no stdin do helper (um JSON, depois EOF):
+
+```json
+{ "apiVersion": 1, "event": "edit", "project": "/abs/worktree", "files": ["Sources/X/FooPanel.swift"],
+  "agent": "claude", "paddock": "nome" }
+```
+
+- `edit`: depois de uma ferramenta de escrita do agente; `files` são os arquivos escritos, relativos a `project`.
+- `stop`: fim de turno; `files` são os arquivos escritos no turno (sem repetição).
+- O plug-in recebe só caminhos: nunca o pedido do usuário nem a conversa.
+
+**Resposta**, no stdout (um JSON; vazio ou `{}` = nada):
+
+```json
+{ "guide": "texto para o agente" }
+{ "block": "motivo e a causa raiz a atacar" }
+```
+
+- `edit`: `guide` chega ao agente como contexto; `block` chega como bloqueio da ferramenta.
+- `stop`: `block` impede o fim do turno uma vez (um Stop continuado nunca é bloqueado de novo); `guide` é ignorado.
+- Texto: no máximo 2000 caracteres por plug-in, 4000 somados; o excesso é cortado.
+
+**Sandbox.** `(deny default)`: o helper lê o projeto e a própria pasta, escreve só em `<raiz>/plugins-data/<id>/`, sem
+rede e sem ler o home. A pasta do plug-in é fixada por SHA-256 e somente leitura; o helper não precisa de assinatura de
+código nesta fase.
+
+**Prazos e fail open.** Um processo por evento; 3 s por evento, todos os plug-ins juntos. Estouro, saída ≠ 0 ou JSON
+inválido: ignorado, com uma linha no log. O agente nunca vê erro do helper. Só terminais Claude recebem ganchos.
+
+**Exemplo** (`bin/vizinho`, `sh`: orienta quando o arquivo editado é um `*Panel.swift`):
+
+```sh
+#!/bin/sh
+# lê o evento; sem jq, procura o arquivo na linha
+event=$(cat)
+case "$event" in
+  *'"event":"edit"'*Panel.swift*)
+    printf '{"guide":"Arquivos *Panel.swift seguem o modelo de FooPanel.swift: leia-o antes de seguir."}\n' ;;
+  *) echo '{}' ;;
+esac
+```
 
 ## Later phases
 

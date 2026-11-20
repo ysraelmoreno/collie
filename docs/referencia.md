@@ -287,6 +287,8 @@ em `<raiz>/plugins/<id>/<versão>/` e é conferida por hash a cada início do se
 `collie panel open <id>`, rebanhos) sem rede nem acesso ao projeto, e os comandos `collie <id> <cmd>` chegam aos agentes
 ligados a um painel dele pela guia. Exemplo: `Examples/plugins/notas`. Referência: [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
 
+Um plug-in também pode ter `helper` e `hooks` (`edit`, `stop`) para receber os eventos dos agentes Claude e orientar ou bloquear; a instalação mostra antes o que ele pode fazer. Ver "Ganchos de agente" em [docs/plugins/api-v1.md](docs/plugins/api-v1.md).
+
 ## Design systems
 
 Um **design system** é um arquivo de design (figcraft) com variáveis (tokens, com modos), estilos e componentes, publicado em

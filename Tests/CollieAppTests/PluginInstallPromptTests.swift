@@ -24,3 +24,19 @@ private let notas = URL(fileURLWithPath: #filePath).deletingLastPathComponent().
     // a folder that isn't a plug-in: the manifest's own error, verbatim
     #expect(throws: ProtocolError.self) { try PluginInstallPrompt.make(folder: notas.appendingPathComponent("ui"), installed: []) }
 }
+
+/// G6: the confirmation lists what a hooks plug-in may do, and marks what a replacement adds to the installed one.
+@Test func pluginInstallPromptShowsPermissions() throws {
+    let fresh = try PluginInstallPrompt.make(folder: notas, installed: [])
+    #expect(fresh.permissions.isEmpty && fresh.newPermissions.isEmpty)
+    let edit = "Roda um programa a cada arquivo que um agente edita", read = "Pode ler os arquivos do projeto"
+    let hooked = PluginInstallPrompt(folder: notas, manifest: try hookManifest(), replacing: PluginRow(id: "vizinho", name: "Vizinho", version: "0.1.0", permissions: [edit]))
+    #expect(hooked.permissions == [edit, read] && hooked.newPermissions == [read])
+    let first = PluginInstallPrompt(folder: notas, manifest: try hookManifest(), replacing: nil)
+    #expect(first.newPermissions.isEmpty && first.permissions == [edit, read])
+}
+private func hookManifest() throws -> PluginManifest {
+    let m: [String: Any] = ["apiVersion": 1, "id": "vizinho", "name": "Vizinho", "version": "0.2.0", "ui": "ui/index.html",
+                            "hooks": ["edit"], "helper": "bin/vizinho", "permissions": ["project": "read"]]
+    return try PluginManifest.decode(JSONSerialization.data(withJSONObject: m))
+}

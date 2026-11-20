@@ -294,6 +294,32 @@ private func code(_ body: () async throws -> Void) async -> ErrorCode? {
         }
     }
 
+    /// G6: `plugin.list` says what a hooks plug-in may do (`hooks`, `permissions`); one without hooks lists none.
+    @Test(.timeLimit(.minutes(2))) func listShowsHookPermissions() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+        try await withDaemon { d, p in
+            let src = try source(p.root, "src") { $0["hooks"] = ["edit", "stop"]; $0["helper"] = "bin/vizinho"; $0["permissions"] = ["project": "read"] }
+            try fm.createDirectory(at: src.appendingPathComponent("bin"), withIntermediateDirectories: true)
+            try Data("#!/bin/sh\n".utf8).write(to: src.appendingPathComponent("bin/vizinho"))
+            let ok = try await send(p, Request(id: "i", token: d.adminToken, command: "plugin.install", args: ["path": .string(src.path)]), timeoutSeconds: 60)
+            #expect(ok.ok, "\(ok)")
+            let l = try await send(p, Request(id: "l", token: d.adminToken, command: "plugin.list"))
+            guard case .array(let rows)? = l.result, case .object(let o)? = rows.first else { Issue.record("\(l)"); return }
+            #expect(o["hooks"] == .array([.string("edit"), .string("stop")]))
+            #expect(o["permissions"] == .array([
+                .string("Roda um programa a cada arquivo que um agente edita"),
+                .string("Roda um programa ao fim de cada turno e pode pedir que o agente continue"),
+                .string("Pode ler os arquivos do projeto")]))
+            #expect(try await send(p, Request(id: "u", token: d.adminToken, command: "plugin.uninstall", args: ["id": .string("notas")])).ok)
+            let plain = try source(p.root, "plain")
+            #expect(try await send(p, Request(id: "i2", token: d.adminToken, command: "plugin.install", args: ["path": .string(plain.path)]), timeoutSeconds: 60).ok)
+            let l2 = try await send(p, Request(id: "l2", token: d.adminToken, command: "plugin.list"))
+            guard case .array(let rows2)? = l2.result, case .object(let o2)? = rows2.first else { Issue.record("\(l2)"); return }
+            #expect(o2["hooks"] == .array([]) && o2["permissions"] == .array([]))
+        }
+        }
+    }
+
     @Test(.timeLimit(.minutes(2))) func specsReadableByTerminal() async throws {
         try await PluginRegistry.exclusively { () async throws in
         try await withDaemon { d, p in

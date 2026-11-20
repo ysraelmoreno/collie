@@ -275,10 +275,13 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             try await addTask(d, p, x.s, "A", check: "true")
             let none = try await work(d, p, x.s, "work.run")
             #expect(none.error?.code == .invalidArgs && none.error?.message.contains("--max") == true, "\(none)")
-            for (k, v) in [("max", 31.0), ("timeout", 14_401), ("budget", 43_201), ("tries", 11)] {
+            for (k, v) in [("max", 31.0), ("timeout", 14_401), ("budget", 43_201), ("tries", 11), ("parallel", 5), ("parallel", 0)] {
                 var a: [String: JSONValue] = ["max": .number(3)]; a[k] = .number(v)
                 #expect(try await work(d, p, x.s, "work.run", a).error?.code == .invalidArgs, "\(k)")
             }
+            // M3.5: lanes run only sandboxed, and this daemon sandboxes no terminal
+            let lanes = try await work(d, p, x.s, "work.run", ["max": .number(3), "parallel": .number(2)])
+            #expect(lanes.error?.code == .invalidArgs && lanes.error?.message.contains("--parallel") == true, "\(lanes)")
             #expect(await d.router.appCards.isEmpty)
         }
     }

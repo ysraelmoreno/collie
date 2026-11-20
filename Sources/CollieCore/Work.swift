@@ -31,7 +31,13 @@ public struct TaskEvidence: Codable, Sendable, Equatable {
 /// copies as evidence when it approves the task.
 public struct WorkTask: Codable, Sendable, Equatable {
     public var id: String; public var title: String; public var reason: String?; public var updatedAt: Date
-    public var state: TaskState { didSet { if state != .done { evidence = nil } } }
+    public var state: TaskState {
+        didSet {
+            if state != .done { evidence = nil }
+            // M2b.1: only a task of the loop (open, in an attempt) has something to resume
+            if state != .open && state != .inProgress { forgetResume() }
+        }
+    }
     public var spec: String?; public var check: String?; public var tries: Int?; public var lastFailure: String?
     public var evidence: TaskEvidence?
     public var evidenceGlob: String?
@@ -39,12 +45,32 @@ public struct WorkTask: Codable, Sendable, Equatable {
     /// the attempt ends; a daemon that fell mid-attempt leaves them, and the next run may adopt the commit already made.
     /// Read back from the work's file: never trusted as a git argument before `WorkLoop.isSha`.
     public var resumeFrom: String?; public var resumeBranch: String?
+    /// M2b.1: when the attempt was left (the daemon's stop, or the start sweep that found it): only commits made up to
+    /// then can be the fallen attempt's. nil while the attempt runs; without it nothing is adopted.
+    public var resumeAt: Date?
+    /// M2b.1: nothing to resume: the three go together.
+    public mutating func forgetResume() { resumeFrom = nil; resumeBranch = nil; resumeAt = nil }
     public init(id: String, title: String, state: TaskState = .open, reason: String? = nil, updatedAt: Date = Date(),
                 spec: String? = nil, check: String? = nil, tries: Int? = nil, lastFailure: String? = nil,
                 evidence: TaskEvidence? = nil, evidenceGlob: String? = nil) {
         self.id = id; self.title = title; self.state = state; self.reason = reason; self.updatedAt = updatedAt
         self.spec = spec; self.check = check; self.tries = tries; self.lastFailure = lastFailure; self.evidence = evidence
         self.evidenceGlob = evidenceGlob
+    }
+    /// As the synthesized one, but `resumeFrom`, `resumeBranch` and `resumeAt` (M2b.1) only say where a fallen attempt
+    /// may resume: one of the wrong type is nil (nothing is adopted) and the task survives. What is written does not change.
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id); title = try c.decode(String.self, forKey: .title)
+        reason = try c.decodeIfPresent(String.self, forKey: .reason); updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        state = try c.decode(TaskState.self, forKey: .state)
+        spec = try c.decodeIfPresent(String.self, forKey: .spec); check = try c.decodeIfPresent(String.self, forKey: .check)
+        tries = try c.decodeIfPresent(Int.self, forKey: .tries); lastFailure = try c.decodeIfPresent(String.self, forKey: .lastFailure)
+        evidence = try c.decodeIfPresent(TaskEvidence.self, forKey: .evidence)
+        evidenceGlob = try c.decodeIfPresent(String.self, forKey: .evidenceGlob)
+        resumeFrom = (try? c.decodeIfPresent(String.self, forKey: .resumeFrom)) ?? nil
+        resumeBranch = (try? c.decodeIfPresent(String.self, forKey: .resumeBranch)) ?? nil
+        resumeAt = (try? c.decodeIfPresent(Date.self, forKey: .resumeAt)) ?? nil
     }
 }
 
@@ -106,6 +132,8 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         /// `unknown` is a reserve (a code written by a newer daemon decodes as it): no path of this daemon produces it.
         public enum Code: String, Codable, Sendable, CaseIterable {
             case requested, workGone, starterGone, maxReached, budgetSpent, gitFailed, dirtyTree, othersWorking, cancelled, daemonRestart, `internal`, unknown
+                /// M2b.1: an adopted commit did not pass its check or the gate: nothing was reset, the owner decides.
+                case adoptionFailed
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -124,6 +152,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .cancelled: "o daemon parou"
             case .daemonRestart: "o daemon reiniciou durante o laço"
             case .internal: "estado inesperado do motor (bug); a tarefa foi reaberta"
+            case .adoptionFailed: "a adoção do commit interrompido falhou; a árvore ficou intocada para você decidir"
             case .unknown: "motivo desconhecido"
             }
         }

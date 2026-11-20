@@ -58,6 +58,9 @@ enum AttemptMachine {
         /// `AttemptDecision.decide` on the state's facts: `decided`.
         case decide
         case discard, markDone
+        /// M2b.1: an adopted commit failed its check or the gate: the task reopens with nothing to resume, a note says
+        /// so and nothing is discarded or reset (`reason`: the verdict's).
+        case adoptionFailed(reason: String)
         case markOpenOrDeferred(reason: String, last: Bool)
         /// No verdict. `uncount`: the task reopens, the attempt is not counted and `resumeFrom` stays (cancelled). `reopen`: the task
         /// reopens and its job ends with this result.
@@ -73,7 +76,7 @@ enum AttemptMachine {
         var answers: Bool {
             switch self {
             case .summon, .ask, .nudge, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .decide: true
-            case .dismiss, .show, .discard, .markDone, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
+            case .dismiss, .show, .discard, .markDone, .adoptionFailed, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
             }
         }
     }
@@ -89,6 +92,8 @@ enum AttemptMachine {
         var facts: AttemptDecision.Facts
         /// M2.1: the last turn ended by hook and no nudge went yet / one went (at most one per attempt).
         var nudgeable = false, nudged = false
+        /// M2b.1: the attempt judges a commit it did not see being made: when it fails, nothing is discarded.
+        var adopted = false
         var name: String { "loop-\(task)-\(n)" }
 
         init(task: String, n: Int, tries: Int, hasGate: Bool, before: String) {
@@ -110,7 +115,7 @@ enum AttemptMachine {
             return (s, [.journal(.attemptStarted, nil), .summon])
         // M2.2a: no agent to summon, ask or dismiss: the commit is judged as if its agent had just been dismissed
         case (.summoning, .adopted) where s.agent == nil && s.facts.failure == nil:
-            s.phase = .waitingCommit
+            s.phase = .waitingCommit; s.adopted = true
             return (s, [.journal(.attemptStarted, nil), .journal(.adopted, String(s.before.prefix(7))), .measureFacts])
         case (.summoning, .summoned(let id)):
             s.agent = id; s.phase = .turn
@@ -193,6 +198,11 @@ enum AttemptMachine {
             s.phase = .finished
             // the interpreter journals the patch's name only when `discard` wrote one (else `WorkLoop.noPatch`)
             let patch: [Effect] = [.discard, .journal(.discarded, "\(s.task)-\(s.n).patch")]
+            // M2b.1: an adoption that fails never goes back to `before`: between it and HEAD there may be commits the
+            // loop did not see being made. The tree stays, the loop stops and the owner decides
+            if s.adopted, outcome != .pass {
+                return (s, [.adoptionFailed(reason: AttemptDecision.reason(s.facts) ?? ""), .stopLoop(.init(.adoptionFailed))])
+            }
             switch outcome {
             case .pass:
                 // the task passed and another terminal works: nothing to discard, the loop stops after it
@@ -225,11 +235,11 @@ enum AttemptMachine {
     }
 
     /// Into `deciding`, after `fx`. A failed attempt that did not ask yet (it failed before its check, or its tree was
-    /// dirty) asks about other terminals now: the discard is a reset too.
+    /// dirty) asks about other terminals now: the discard is a reset too. Not a failed adoption: it discards nothing.
     private static func verdict(_ s: inout State, _ fx: [Effect] = []) -> (State, [Effect]) {
         s.phase = .deciding
         let failed = AttemptDecision.reason(s.facts)
-        return (s, fx + [.show(nil), .journal(.verdict, failed ?? "passou"), failed != nil && s.facts.blockedBy == nil ? .awaitOthers : .decide])
+        return (s, fx + [.show(nil), .journal(.verdict, failed ?? "passou"), failed != nil && s.facts.blockedBy == nil && !s.adopted ? .awaitOthers : .decide])
     }
 
     /// The journal's word for how the check or the gate ran.

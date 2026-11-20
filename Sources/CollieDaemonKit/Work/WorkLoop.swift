@@ -144,8 +144,11 @@ actor WorkLoop {
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                 x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
                 // where a fall resumes from; `forget` clears it when the attempt ends
-                x.tasks[i].resumeFrom = before; x.tasks[i].resumeBranch = branch
+                x.tasks[i].resumeFrom = before; x.tasks[i].resumeBranch = branch; x.tasks[i].resumeAt = nil
             }
+            // M2b.1: one attempt, one live `resumeFrom`: from here on the commits are this task's, so what another
+            // task was left with can no longer tell its own commits from these
+            for j in x.tasks.indices where x.tasks[j].id != task.id { x.tasks[j].forgetResume() }
             x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(adopt ? nil : .agent, at: started)
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
             x.loop?.record(first)
@@ -362,6 +365,17 @@ actor WorkLoop {
             return .decided(AttemptDecision.decide(state.facts))
         case .discard:
             r.patched = await discard(id, task.id, n, before: before, branch: branch, keep: r.keep, dir)
+        case .adoptionFailed(let reason):
+            let at = r.at, text = LotBoards.scrub("[loop] adoção de \"\(task.title)\" falhou: \(reason); nada foi apagado")
+            // the attempt is not counted on the task (no agent of its own ran); the next run starts from the HEAD of then
+            await record(id, &r) { x in
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
+                    x.tasks[i].state = .open; x.tasks[i].lastFailure = reason; x.tasks[i].updatedAt = at
+                }
+                x.notes.append(WorkNote(at: at, text: text))
+                Self.endJob(&x, name, reason, at: at)
+                Self.forget(&x, task.id)
+            }
         case .uncount:
             let at = host.now()
             await record(id, &r) { x in
@@ -370,6 +384,8 @@ actor WorkLoop {
                 x.loop?.used = Swift.max(0, used - 1)
                 if let j = x.jobs.firstIndex(where: { $0.id == name && $0.state == .running }) { x.jobs[j].state = .gone; x.jobs[j].endedAt = at }
                 // M2.2b: `resumeFrom` stays, as after a fall (M2.2a): a commit already there is judged by the next run
+                // M2b.1: left now: only what was committed up to here is the attempt's
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].resumeFrom != nil { x.tasks[i].resumeAt = at }
             }
         case .reopen(let why):
             let at = host.now()
@@ -498,17 +514,23 @@ actor WorkLoop {
 
     /// M2.2a: `task` was left mid-attempt by a daemon that fell and its commit is here to be judged: `resumeFrom` is a
     /// sha of this repository, the worktree is on the same branch and HEAD is ahead of it (`committed`). The caller
-    /// already saw the tracked tree clean.
+    /// already saw the tracked tree clean. M2b.1: and every commit between them was made up to `resumeAt`, when the
+    /// attempt was left: one made after it (the owner's) is not the attempt's. No `resumeAt`, or a date that cannot be
+    /// read: not adopted.
+    // ponytail: the committer date is the commit's own word (GIT_COMMITTER_DATE, a clock set back): it keeps out what
+    // came after the fall, not a forged commit. A failed adoption deletes nothing either way.
     private func adoptable(_ task: WorkTask, branch: String, _ dir: URL) async -> Bool {
-        guard let from = task.resumeFrom, Self.isSha(from), task.resumeBranch == branch,
-              (try? await host.git(["cat-file", "-e", "\(from)^{commit}"], in: dir))?.status == 0 else { return false }
-        return await committed(before: from, branch: branch, dir)
+        guard let from = task.resumeFrom, Self.isSha(from), task.resumeBranch == branch, let left = task.resumeAt,
+              (try? await host.git(["cat-file", "-e", "\(from)^{commit}"], in: dir))?.status == 0,
+              await committed(before: from, branch: branch, dir),
+              let dates = await out(["log", "--format=%ct", "\(from)..HEAD"], dir), !dates.isEmpty else { return false }
+        return dates.split(separator: "\n").allSatisfy { Int($0).map { Double($0) <= left.timeIntervalSince1970 } ?? false }
     }
 
     /// The attempt of `task` ended (a verdict, or none: reopened): there is nothing to resume. Not when cancelled.
     private static func forget(_ w: inout Work, _ task: String) {
         guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
-        w.tasks[i].resumeFrom = nil; w.tasks[i].resumeBranch = nil
+        w.tasks[i].forgetResume()
     }
 
     /// A new commit: HEAD moved, `before` is its ancestor (no rewritten history) and the branch is still `branch`.
@@ -554,7 +576,8 @@ actor WorkLoop {
         guard reset else { return (moved, false) }
         let edited = (await out(["status", "--porcelain", "--untracked-files=no"], dir)).map { !$0.isEmpty } ?? false
         if ref != on { _ = try? await host.git(["checkout", "-q", "-f", on == "HEAD" ? judged : on], in: dir) }
-        _ = try? await host.git(["reset", "-q", "--hard", judged], in: dir)
+        // only when there is something to put back (M2b.1: a check that touched nothing costs no `reset --hard`)
+        if moved || edited { _ = try? await host.git(["reset", "-q", "--hard", judged], in: dir) }
         let made = await untracked(dir).filter { !loose.contains($0) }
         // ponytail: one git call, so a check that leaves tens of thousands of untracked files passes ARG_MAX; chunk then
         if !made.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "--"] + made, in: dir) }

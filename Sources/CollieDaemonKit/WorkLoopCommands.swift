@@ -221,7 +221,13 @@ extension CommandRouter {
     /// What the start sweep writes on a work whose loop a previous daemon left `running`: stopped by `daemonRestart`,
     /// with its note.
     static func sweepLeftRunning(_ x: inout Work, now: Date) {
-        for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task { x.tasks[i].state = .open }
+        for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task {
+            x.tasks[i].state = .open
+            // M2b.1: the latest the fallen attempt can have committed: a commit made after this is never adopted.
+            // ponytail: the sweep's time, not the fall's (nobody saw it): what the owner commits between a crash and
+            // this start can still be adopted, and a failed adoption deletes nothing. A heartbeat if that gap matters.
+            if x.tasks[i].resumeFrom != nil, x.tasks[i].resumeAt == nil { x.tasks[i].resumeAt = now }
+        }
         for j in x.jobs.indices where x.jobs[j].kind == .loop && x.jobs[j].state == .running {
             x.jobs[j].state = .gone; x.jobs[j].endedAt = now
         }

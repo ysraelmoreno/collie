@@ -85,6 +85,7 @@ actor WorkStore {
         try await update(id) { w in
             guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
             w.tasks[i].state = state; w.tasks[i].reason = reason; w.tasks[i].updatedAt = at
+            w.tasks[i].forgetResume()   // M2b.1: a state set by hand is no interrupted attempt
             out = w.tasks[i]
         }
         return out
@@ -102,6 +103,7 @@ actor WorkStore {
             if from == .deferred || from == .abandoned {
                 w.tasks[i].state = .open; w.tasks[i].reason = nil; w.tasks[i].lastFailure = nil; w.tasks[i].updatedAt = at
                 if !keepTries { w.tasks[i].tries = nil }
+                w.tasks[i].forgetResume()   // M2b.1: it starts over, with a fresh agent
                 w.notes.append(WorkNote(at: at, text: "[reopen] \(w.tasks[i].title): \(from == .deferred ? "adiada" : "abandonada")"))
             }
             out = (w.tasks[i], from, w.loop.map { $0.state == .running && ($0.tasks?.contains(task) ?? true) } ?? false)

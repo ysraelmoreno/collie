@@ -21,7 +21,9 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     private func fall(_ r: LoopRig, from: String? = nil, branch: String? = nil, tries: Int? = nil, commit file: String? = "done.txt") async throws -> String {
         let head = try await git(r.repo, "rev-parse", "HEAD"), on = try await git(r.repo, "rev-parse", "--abbrev-ref", "HEAD")
         if let file { try await commit(file, "ok\n", in: r.repo) }
-        try await r.store.update(r.work) { $0.tasks[0].resumeFrom = from ?? head; $0.tasks[0].resumeBranch = branch ?? on; $0.tasks[0].tries = tries }
+        try await r.store.update(r.work) { $0.tasks[0].resumeFrom = from ?? head; $0.tasks[0].resumeBranch = branch ?? on; $0.tasks[0].tries = tries
+            $0.tasks[0].resumeAt = Date()   // M2b.1: left after the dead agent's commit
+        }
         return from ?? head
     }
 
@@ -56,24 +58,20 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.host.summoned.isEmpty)
     }
 
-    @Test func anAdoptionWhoseCheckFailsIsDiscardedAndTheNextAttemptHasAnAgent() async throws {
+    /// M2b.1 changed this on purpose: a failed adoption used to be discarded (`reset --hard` to the sha it resumed
+    /// from) and tried again with an agent; it now deletes nothing and stops the loop (`LoopResumeSafetyTests`).
+    @Test func anAdoptionWhoseCheckFailsStopsTheLoopAndDiscardsNothing() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
-        let from = try await fall(r, commit: "wrong.txt")
-        final class Seen: @unchecked Sendable { var head = "", status = "x" }
-        let seen = Seen()
-        await r.host.set("loop-a-2", LoopScript(act: { d in
-            seen.head = try await git(d, "rev-parse", "HEAD"); seen.status = try await git(d, "status", "--porcelain")
-            try await commit("done.txt", "ok\n", in: d)
-        }))
-        #expect(await r.run() == .finished)
+        try await fall(r, commit: "wrong.txt")
+        let head = try await git(r.repo, "rev-parse", "HEAD")
+        #expect(await r.run() == .stopped)
         let w = try await r.get()
-        #expect(await r.host.summoned == ["loop-a-2"])
-        #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2, "\(w.notes.map(\.text))")
-        // the tree went back to the sha it resumed from, the adopted commit is in the patch
-        #expect(seen.head == from && seen.status.isEmpty, "\(seen.status)")
-        let patch = try String(contentsOf: r.host.patchDir(r.work).appendingPathComponent("a-1.patch"), encoding: .utf8)
-        #expect(patch.contains("wrong.txt"))
-        #expect(await r.host.prompts["loop-a-2"]?.contains("check failed (exit 1)") == true)
+        #expect(await r.host.summoned.isEmpty)
+        #expect(w.loop?.stopReason?.code == .adoptionFailed)
+        #expect(w.tasks[0].state == .open && w.tasks[0].lastFailure == "check failed (exit 1)", "\(w.notes.map(\.text))")
+        // the adopted commit is still there, and no patch was written
+        #expect(try await git(r.repo, "rev-parse", "HEAD") == head)
+        #expect(!FileManager.default.fileExists(atPath: r.host.patchDir(r.work).appendingPathComponent("a-1.patch").path))
         #expect((w.loop?.events ?? []).filter { $0.kind == .adopted }.map(\.attempt) == [1])
         #expect(w.tasks[0].resumeFrom == nil && w.tasks[0].resumeBranch == nil)
     }

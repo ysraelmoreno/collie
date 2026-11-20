@@ -16,6 +16,22 @@ struct PaddockRail: View {
         name.first { $0.isLetter || $0.isNumber }.map { $0.uppercased() } ?? "?"
     }
 
+    /// Whether the Pasto (terminals and canvas panels outside any paddock) has anything in it. Docked panels belong to every paddock.
+    static func pastoHasContent(terminals: [TerminalRecord], panels: [Panel]) -> Bool {
+        terminals.contains { $0.paddockId == nil } || panels.contains { $0.placement == .canvas && $0.paddockId == nil }
+    }
+
+    /// The Pasto is not a paddock: Trilho lists it only while it holds something, while it is the selection, or when there is
+    /// no paddock to show instead.
+    static func showsPasto(hasContent: Bool, hasPaddocks: Bool, current: UUID?) -> Bool {
+        hasContent || !hasPaddocks || current == nil
+    }
+
+    /// The paddock to move to when the Pasto is selected, empty, and a real paddock exists; nil: stay.
+    static func fallbackPaddock(paddocks: [Paddock], current: UUID?, pastoHasContent: Bool) -> UUID? {
+        current == nil && !pastoHasContent ? paddocks.first?.id : nil
+    }
+
     /// The highest used percent among every provider's windows; nil when none reports a number.
     static func topUsage(_ reports: [UsageReport]) -> Double? {
         reports.flatMap { $0.windows.compactMap(\.usedPercent) }.max()
@@ -27,7 +43,10 @@ struct PaddockRail: View {
             CollieMark(size: 22).padding(.bottom, 4)
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 8) {
-                    item(nil, selected: client.currentPaddock == nil)
+                    if Self.showsPasto(hasContent: Self.pastoHasContent(terminals: client.terminals, panels: client.panels),
+                                       hasPaddocks: !client.paddocks.isEmpty, current: client.currentPaddock) {
+                        item(nil, selected: client.currentPaddock == nil)
+                    }
                     ForEach(client.paddocks) { f in
                         item(f, selected: client.currentPaddock == f.id).contextMenu { PaddockMenu(paddock: f, actions: ctx.paddocks) }
                     }

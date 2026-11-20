@@ -177,6 +177,19 @@ private struct PreferencesMenuItem: View {
     }
 }
 
+/// Runs `settle` when what decides the Pasto's visibility changes (own modifier: `ContentView.body` is at the type-checker's limit).
+private struct PastoWatch: ViewModifier {
+    let client: DaemonClient
+    let settle: () -> Void
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: client.terminals) { settle() }
+            .onChange(of: client.panels) { settle() }
+            .onChange(of: client.paddocks) { settle() }
+            .onChange(of: client.state) { settle() }
+    }
+}
+
 struct ContentView: View {
     let client: DaemonClient
     let canvas: CanvasState
@@ -247,6 +260,14 @@ struct ContentView: View {
             .buttonStyle(CollieButtonStyle(.attention))
             Button("Depois") { staleDismissed = true }.buttonStyle(CollieButtonStyle(.quiet))
         }.banner(Color.collieAttention, fill: Color.collieAttentionTint)
+    }
+
+    /// Trilho hides the Pasto while it is empty (it is not a paddock): leave it for the first paddock. Only once connected,
+    /// when the snapshot (terminals, panels) is already mirrored; Compacta keeps its Pasto chip.
+    private func settlePasto() {
+        guard structure == .full, client.state == .connected else { return }
+        let has = PaddockRail.pastoHasContent(terminals: client.terminals, panels: client.panels)
+        if let id = PaddockRail.fallbackPaddock(paddocks: client.paddocks, current: client.currentPaddock, pastoHasContent: has) { paddocks.select(id) }
     }
 
     private var structure: WindowStructure { WindowStructure(rawValue: structureRaw) ?? .compact }
@@ -345,6 +366,7 @@ struct ContentView: View {
                 UserDefaults.standard.set("", forKey: PaddockActions.currentKey)
             }
         }
+        .modifier(PastoWatch(client: client, settle: settlePasto))
         .onChange(of: client.state) { _, s in
             if s == .connected { error = nil; store.sessionStarted(client.panels) }   // snapshot is mirrored before `.connected`
         }   // stale install error

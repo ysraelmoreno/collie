@@ -251,7 +251,7 @@ private func runLoop(gate: String, starterBusy: String? = nil, disturb: @escapin
         #expect(w.loop?.stopReason?.code == .dirtyTree)
         #expect(w.loop?.used == 0)
         #expect(w.tasks.first?.state == .open)
-        let note = w.notes.last?.text ?? ""
+        let note = w.notes.map(\.text).joined(separator: "\n")   // the loop's own stop note comes last
         #expect(note.contains("f.txt") && note.contains("notas.md"), "\(note)")
         #expect(note.contains("nada foi resetado nem apagado"), "\(note)")
         #expect(note.contains(String(base.prefix(7))), "how to undo the merge by hand: \(note)")
@@ -268,7 +268,7 @@ private func runLoop(gate: String, starterBusy: String? = nil, disturb: @escapin
         #expect(w.loop?.stopReason?.detail == "Shepherd")
         #expect(w.loop?.used == 0)
         #expect(w.tasks.first?.state == .open)
-        let note = w.notes.last?.text ?? ""
+        let note = w.notes.map(\.text).joined(separator: "\n")   // the loop's own stop note comes last
         #expect(note.contains("'Shepherd'") && note.contains("nada foi resetado nem apagado"), "\(note)")
         #expect(read("a.txt", in: repo) == "a\n", "the merge was not undone")
     }
@@ -279,7 +279,7 @@ private func runLoop(gate: String, starterBusy: String? = nil, disturb: @escapin
         defer { try? FileManager.default.removeItem(at: repo) }
         #expect(w.tasks.first?.state == .done)
         #expect(w.loop?.stopReason?.code == .dirtyTree)
-        let note = w.notes.last?.text ?? ""
+        let note = w.notes.map(\.text).joined(separator: "\n")   // the loop's own stop note comes last
         #expect(note.contains("f.txt") && note.contains("nada foi resetado nem apagado"), "\(note)")
         #expect(read("f.txt", in: repo) == "the owner's\n")
     }

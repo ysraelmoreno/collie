@@ -349,6 +349,12 @@ extension CommandRouter {
     @discardableResult
     func captureConversationNow(_ tid: UUID, transcript: String? = nil) async -> Bool {
         if let transcript { conversations.transcripts[tid] = transcript }
+        // a Cursor's file appears with its first turn, after its only hook: one more look by the session id (the
+        // watcher's next one may be 30 s away, and the terminal may be closing now)
+        if conversations.transcripts[tid] == nil, let session = conversations.cursorSessions[tid],
+           let me = ws.terminals.first(where: { $0.id == tid }) {
+            await findCursorTranscript(me, session: session)
+        }
         guard let t = conversations.transcripts[tid] else { return false }
         conversations.idle[tid]?.cancel(); conversations.idle[tid] = nil
         await captureConversation(tid, transcript: t, force: true)

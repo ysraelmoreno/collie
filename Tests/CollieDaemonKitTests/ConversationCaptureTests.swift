@@ -495,6 +495,20 @@ private func withEnv(idle: Duration = .seconds(60), poll: Duration = .seconds(30
         }
     }
 
+    /// A real Cursor: one sessionStart, and the transcript file appears with the first turn. A capture before the
+    /// watcher's next look (`memory.capture`, the terminal closing right after the answer) finds it by the session id.
+    @Test func cursorTranscriptAppearingLaterIsFoundAtCapture() async throws {
+        try await withEnv(preset: "cursor", at: cursorFile) { e in
+            e.fake.output = out([])
+            #expect(try await e.call("memory.hookContext", ["session": cursorSession]).ok)
+            try Data(cursorTalk(1).utf8).write(to: e.transcript)   // after the only hook; the 30 s poll has not run
+            #expect(try await e.call("memory.capture").ok)
+            let size = try e.size()
+            #expect(await waitFor(10) { e.mark == size })
+            #expect(e.fake.calls == 1)
+        }
+    }
+
     /// Only a Cursor terminal reads under `.cursor`: a Claude one's transcript under `.claude/projects` is still captured.
     @Test func claudeTerminalStillUsesClaudeProjects() async throws {
         try await withEnv(preset: "claude") { e in

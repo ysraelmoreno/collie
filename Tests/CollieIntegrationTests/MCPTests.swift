@@ -18,7 +18,11 @@ private final class FakeDaemon: @unchecked Sendable {
     private var server: UnixSocketServer?
     init(_ plugins: [String], specs: [JSONValue]? = nil) throws {
         _plugins = plugins; _specs = specs
-        let s = UnixSocketServer(path: socket) { [unowned self] r in
+        // weak, not unowned: `stop()` only ends accepting; a connection already accepted (a `collie mcp` child still
+        // asking after its test gave up under load) is answered after deinit, and reading a dead unowned self is a
+        // Fatal error that killed the whole test process (CI run 44521855224)
+        let s = UnixSocketServer(path: socket) { [weak self] r in
+            guard let self else { return Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "fake daemon gone")) }
             self.lock.withLock { self._calls.append(r) }
             if r.command == "memory.mcp-profile" {
                 guard let p = self.profile else {

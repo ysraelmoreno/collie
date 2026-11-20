@@ -25,6 +25,9 @@ import CollieTheme
     var edit: (UUID) -> Void = { _ in }
     /// The rail's gear. The Ajustes window for now; T5 points it at the embedded Preferências.
     var openPreferences: () -> Void = {}
+    /// The cards of "O que o Collie faz" the user has seen (the info icon's dot) and the modal that shows them.
+    var tour = FeatureTourSeen()
+    var openTour: () -> Void = {}
 }
 
 /// The window frame around `content` (docks + canvas). Compacta adds nothing here (its bar floats over the canvas,
@@ -164,6 +167,7 @@ private struct CompactBar: View {
             HStack(spacing: 6) { CollieMark(size: 18); Text("collie").font(.collieUI(15, .bold)).foregroundStyle(Color.collieText) }
             PaddockChips(ctx: ctx)
             CommandField(ctx: ctx).frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
+            TourButton(ctx: ctx, ring: .collieSurface, size: CGSize(width: 28, height: 28), tint: .collieTextSecondary)
             UsageButton(ctx: ctx)
         }
         .padding(.horizontal, 12).frame(height: 44).floating()

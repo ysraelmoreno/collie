@@ -37,6 +37,14 @@ for f in Sources/ColliePlugins/*Panel.swift; do
   echo "lint: regra 'feature-map': $f não está em docs/feature-map.md. Acrescente em \"Painéis\" uma seção que cite $n (nome na UI, para que serve, arquivos, como verificar)." >&2
   rc=1
 done
+# feature-tour: every panel type is named in the tour table (the card that covers it). No baseline either.
+for f in Sources/ColliePlugins/*Panel.swift; do
+  [ -f "$f" ] || continue
+  n="$(basename "$f" .swift)"
+  grep -qw -- "$n" Sources/CollieApp/FeatureTour.swift 2>/dev/null && continue
+  echo "lint: regra 'feature-tour': $f não está em Sources/CollieApp/FeatureTour.swift. Acrescente \"$n\" em panels do cartão que o cobre, ou crie um cartão em FeatureTour.cards." >&2
+  rc=1
+done
 if [ -s "$T/over" ]; then
   while read -r rule file n; do
     for i in "${!NAMES[@]}"; do [ "${NAMES[$i]}" = "$rule" ] && break; done

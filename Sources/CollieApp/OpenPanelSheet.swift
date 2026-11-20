@@ -28,6 +28,14 @@ struct OpenPanelSheet: View {
     @State private var file = ""
     @State private var newFile = ""
 
+    /// `initial`: the plug-in selected on open (the tour's Dispositivo and Design buttons); unknown or nil: the first.
+    init(client: DaemonClient, canvas: CanvasState, at: CGPoint? = nil, initial: String? = nil) {
+        self.client = client; self.canvas = canvas; self.at = at
+        let first = initial.flatMap { PluginRegistry.spec($0) } ?? PluginRegistry.all.first
+        _plugin = State(initialValue: first?.id ?? "")
+        _placement = State(initialValue: first?.defaultPlacement ?? .canvas)
+    }
+
     private var spec: PluginSpec? { PluginRegistry.spec(plugin) }
 
     var body: some View {

@@ -4,7 +4,8 @@ import CollieProtocol
 import CollieTheme
 
 /// Trilho's left column (64 pt): the mark, Pasto and one square button per paddock (its initial, the status dot in the
-/// corner), the dashed "+" (Novo cercado), and at the foot the usage summary and the Preferências gear.
+/// corner), the dashed "+" (Novo cercado), and at the foot the info icon ("O que o Collie faz"), the usage summary and the
+/// Preferências gear.
 struct PaddockRail: View {
     let ctx: ShellContext
     static var width: CGFloat { 64 }
@@ -56,6 +57,7 @@ struct PaddockRail: View {
                 .padding(.vertical, 2)   // room for the status dot that overhangs the square
             }
             Spacer(minLength: 0)
+            TourButton(ctx: ctx, ring: .collieSidebar)
             usage
             Button(action: ctx.openPreferences) {
                 Image(systemName: "gearshape").font(.system(size: 15)).foregroundStyle(Color.collieMuted)

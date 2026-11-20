@@ -246,8 +246,12 @@ struct ContentView: View {
         case newTerminal(CGPoint?), edit(UUID), openPanel(CGPoint?)
         /// Apply: the canvas point (nil: the visible area's corner) and the herd selected first.
         case herds(CGPoint?, String?), saveHerd
+        /// "O que o Collie faz", and the panel sheet with that plug-in selected (a tour button).
+        case tour, openPanelFor(String)
         var id: String {
             switch self {
+            case .tour: "tour"
+            case .openPanelFor(let p): "panel for \(p)"
             case .herds(let p, let s): "herds \(String(describing: p)) \(s ?? "")"
             case .saveHerd: "save herd"
             case .newTerminal(let p): "new \(String(describing: p))"
@@ -260,6 +264,9 @@ struct ContentView: View {
     @State private var store: PanelViewStore
     @StateObject private var herds: HerdsModel
     @State private var usageOpen = false
+    @State private var tour = FeatureTourSeen()
+    /// The tour's button, kept until its sheet is gone (`runTourAction`).
+    @State private var tourAction: FeatureTour.Action?
     @State private var bundledBuild: String?
     @State private var staleDismissed = false
     private var staleDaemon: Bool {
@@ -335,7 +342,40 @@ struct ContentView: View {
                      usageOpen: $usageOpen, newTerminal: { sheet = .newTerminal(nil) }, openPanel: { sheet = .openPanel(nil) },
                      fit: { canvas.fitAll(viewport: viewport) }, openPalette: { paletteOpen = true },
                      herds: herds, openHerds: { sheet = .herds(nil, $0) },
-                     focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: openPreferences)
+                     focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: openPreferences,
+                     tour: tour, openTour: { sheet = .tour })
+    }
+
+    /// The tour's button, once the tour sheet has closed: the same entries as the rail, the palette and the menus.
+    private func runTourAction() {
+        guard let action = tourAction else { return }
+        tourAction = nil
+        switch action {
+        case .newTerminal: sheet = .newTerminal(nil)
+        case .newPaddock: paddocks.newPaddock()
+        case .openPalette: paletteOpen = true
+        case .openHerds: sheet = .herds(nil, nil)
+        case .preferences(let page):
+            UserDefaults.standard.set(page.rawValue, forKey: PreferencePage.requestKey)
+            openPreferences()
+        case .panel(let id): showPanel(id)
+        }
+    }
+
+    /// An open panel of that plug-in is brought forward; else the plug-in opens in its default place. Dispositivo and Design
+    /// need a choice (the device, the file), so they open the panel sheet with that plug-in selected.
+    private func showPanel(_ id: String) {
+        if let p = client.panels.first(where: { $0.pluginId == id }) {
+            NotificationCenter.default.post(name: .collieFocusPanel, object: p.id)   // its dock tab
+            notifier.onFocus?(p.id)   // a canvas panel: centered
+            return
+        }
+        guard let spec = PluginRegistry.spec(id) else { return }
+        if id == "device" || id == "design" { sheet = .openPanelFor(id); return }
+        Task {
+            do { _ = try await client.openPanel(plugin: id, name: nil, placement: spec.defaultPlacement, url: nil, storage: .isolated) }
+            catch { self.error = "\(error)" }
+        }
     }
 
     /// Every way into Preferências (⌘, the palette, the rail's gear, `collieOpenPreferences`) comes through here.
@@ -409,13 +449,15 @@ struct ContentView: View {
         .onChange(of: client.state) { _, s in
             if s == .connected { error = nil; store.sessionStarted(client.panels) }   // snapshot is mirrored before `.connected`
         }   // stale install error
-        .sheet(item: $sheet) { k in
+        .sheet(item: $sheet, onDismiss: runTourAction) { k in
             switch k {
             case .newTerminal(let p): TerminalSheet(client: client, canvas: canvas, mode: .create(at: p))
             case .edit(let id):
                 if let t = client.terminals.first(where: { $0.id == id }) { TerminalSheet(client: client, canvas: canvas, mode: .edit(t)) }
                 else { Color.clear.onAppear { sheet = nil } }   // the terminal is gone: nothing to edit
             case .openPanel(let p): OpenPanelSheet(client: client, canvas: canvas, at: p)
+            case .openPanelFor(let id): OpenPanelSheet(client: client, canvas: canvas, initial: id)
+            case .tour: FeatureTourView(store: tour) { tourAction = $0 }
             case .herds(let p, let s):
                 HerdsSheet(model: herds, client: client, canvas: canvas, anchor: p ?? canvas.toCanvas(CGPoint(x: 40, y: 40)), initial: s)
             case .saveHerd: SaveHerdSheet(model: herds, client: client, canvas: canvas)

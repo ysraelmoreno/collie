@@ -191,6 +191,22 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Arquivos:** `Sources/CollieApp/CommandPalette.swift`.
 - **Como verificar:** à mão.
 
+### O que o Collie faz
+
+- **Nome na UI:** ícone de informação ("O que o Collie faz") no pé do trilho, acima do uso, e na barra Compacta, à
+  esquerda do uso; abre a folha "O que o Collie faz" (abas Trabalhar, Painéis, Controle, Personalizar; "Anterior",
+  "Próxima", "N de 17"). Um ponto na cor de destaque no ícone enquanto houver cartão não visto.
+- **Para que serve:** um carrossel com um cartão por funcionalidade (o que é, "Como chamar" e um botão que leva até
+  ela). Não abre sozinho. ← e → trocam de cartão, Esc fecha. Os cartões vistos ficam em `tour.seen` (UserDefaults).
+  A tabela dos cartões é a fonte: o lint (regra `feature-tour`) exige que todo `*Panel.swift` de `ColliePlugins` esteja
+  citado em `panels` de algum cartão.
+- **Arquivos:** `Sources/CollieApp/FeatureTour.swift` (a tabela, o modelo e os vistos),
+  `Sources/CollieApp/FeatureTourView.swift` (o ícone, a folha e as 17 ilustrações), `Sources/CollieApp/PaddockRail.swift`
+  e `Sources/CollieApp/Shell.swift` (o ícone), `Sources/CollieApp/CollieApp.swift` (abre a folha e executa o botão),
+  `docs/pages/funcionalidades/index.html` (o protótipo aprovado).
+- **Como verificar:** `swift test --disable-sandbox --filter FeatureTourTests` e `scripts/ci/test-lint.sh`; a folha, o
+  ponto, as ilustrações nos temas e cada botão, à mão.
+
 ### Folha do terminal
 
 - **Nome na UI:** "Criar terminal" / "Salvar e reiniciar"; opções "Pastor", "Terminal livre (sem sandbox)", "Lote".

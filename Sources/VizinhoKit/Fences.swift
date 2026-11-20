@@ -181,18 +181,18 @@ public enum Fences {
     /// `gitdir: …/.git/worktrees/<n>`) maps to the main repository, so every checkout shares the fences. No `.git`: the project.
     public static func key(project: URL) -> String {
         let real = project.resolvingSymlinksInPath().standardizedFileURL
+        // the project or the nearest parent with a `.git` (a terminal may sit in a subfolder); bounded by the path's depth
         var root = real
-        var dir = real
-        while true {
+        var parts = real.pathComponents
+        while parts.count > 1 {
+            let dir = URL(fileURLWithPath: NSString.path(withComponents: parts), isDirectory: true)
             let git = dir.appendingPathComponent(".git")
             var isDir: ObjCBool = false
             if FileManager.default.fileExists(atPath: git.path, isDirectory: &isDir) {
                 root = isDir.boolValue ? dir : (mainRoot(gitFile: git, dir: dir) ?? dir)
                 break
             }
-            let up = dir.deletingLastPathComponent()
-            if up.path == dir.path { break }
-            dir = up
+            parts.removeLast()
         }
         let digest = SHA256.hash(data: Data(root.resolvingSymlinksInPath().path.utf8))
         return digest.prefix(8).map { String(format: "%02x", $0) }.joined()

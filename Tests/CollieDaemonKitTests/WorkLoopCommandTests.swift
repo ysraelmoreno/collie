@@ -226,7 +226,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             WorkTask(id: "b", title: "By\nhand", state: .done)])
         w.loop = WorkLoopState(state: .finished, tasks: ["a", "b"])
         #expect(WorkStatusText.loopEnded(w) == """
-            [collie] Laço de "Loop work" terminou: 2 feitas, 0 adiadas. Veja: collie work status
+            [collie] Laço de "Loop work" terminou: 2 feitas, 0 adiadas. · estado: collie work status
             ✓ By the loop · tentativa 1 · 1 commit · 1 file changed
             ✓ By hand · marcada à mão, sem check
             """)
@@ -241,7 +241,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             WorkTask(id: "old", title: "Done before the loop", state: .done)])
         w.loop = WorkLoopState(state: .finished, tasks: ["a", "b"])
         #expect(WorkStatusText.loopEnded(w) == """
-            [collie] Laço de "Loop work" terminou: 1 feitas, 1 adiadas. Veja: collie work status
+            [collie] Laço de "Loop work" terminou: 1 feitas, 1 adiadas. · estado: collie work status
             ✓ Write done · tentativa 2 · 2 commits · 3 files changed, 10 insertions(+)
             – Flaky one · adiada: loop: check failed (exit 1)
             """)

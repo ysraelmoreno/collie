@@ -827,7 +827,8 @@ dono aprovou a lista de tarefas e os checks.
   tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo
   rastreado modificado. Volta na hora com `awaiting approval`: um cartão no app mostra ao dono o cercado, os limites e cada
   tarefa com o seu check. Só **Permitir** inicia o laço; Negar ou nenhuma resposta em 10 min avisa o Pastor que nada rodou.
-  Ao fim, o Pastor recebe `[collie] Laço de "…" terminou: …`. As tarefas do laço são as abertas na hora do `run`: uma
+  Ao fim, o Pastor recebe `[collie] Laço de "…" terminou: … · estado: collie work status`: o aviso digitado no terminal é
+  só uma dica e pode não chegar; quem espera um laço usa `collie work wait` e lê o `collie work status`. As tarefas do laço são as abertas na hora do `run`: uma
   tarefa nova espera o próximo.
 - Portão (`--gate`): um comando comum a todas as tarefas (build, lint, arquitetura), para o check de cada uma medir só a
   tarefa. Roda depois de cada check que passou, nas mesmas condições (worktree, sandbox, timeout, orçamento); o veredito

@@ -336,8 +336,8 @@ import CollieProtocol
     /// `/collie:loop` (slice 2): Claude and Cursor carry the command (spike REPORT §9: outcome B), so their line names it;
     /// an agent without it (Codex) keeps the plain line.
     @Test func theLoopLineNamesTheCommandForClaude() {
-        let named = "- Loop (owner: /collie:loop <request>): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks."
-        let plain = "- Loop: work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks."
+        let named = "- Loop (owner: /collie:loop <request>): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks. To wait for a loop: collie work wait, not a terminal notice."
+        let plain = "- Loop: work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks. To wait for a loop: collie work wait, not a terminal notice."
         for agent in ["claude", "cursor"] {
             let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: agent)
             #expect(t.count <= 1500 && t.split(separator: "\n").contains(Substring(named)), "\(agent) \(t.count)\n\(t)")

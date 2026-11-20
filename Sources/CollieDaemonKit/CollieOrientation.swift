@@ -9,6 +9,8 @@ enum CollieOrientation {
     /// "Delegate to a terminal" means a Collie terminal (collie summon): agents reach for their own subagents otherwise.
     /// ponytail: a Shepherd is 10-20 characters under the cap; it labels the Team line instead of adding one
     static let delegate = "Delegate (no own subagents):"
+    /// M2.4, on the Loop line: a notice typed into the terminal is a hint that may never arrive; the state is read.
+    static let loopWait = "To wait for a loop: collie work wait, not a terminal notice."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {
@@ -128,7 +130,7 @@ enum CollieOrientation {
             // collie work run needs a paddock it has to itself: not in a shared folder (its rule needs the room). One line,
             // gone only in the tightest form (a paddock Shepherd is already compact). The detail: work run --help, docs/referencia.md
             if paddock != nil && sharedFolder.isEmpty && !tight {
-                lines.append("- Loop\(loopCommand ? " (owner: /collie:loop <request>)" : ""): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks.")
+                lines.append("- Loop\(loopCommand ? " (owner: /collie:loop <request>)" : ""): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks. \(loopWait)")
             }
             if morePanels && !tight { lines.append("- More panels: collie plugin list") }   // tight: on the Shepherd line
             // the owner's language: the Shepherd relays it (`text` drops it where it can't fit)

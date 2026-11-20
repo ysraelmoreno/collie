@@ -99,6 +99,31 @@ import CollieCore
         #expect(WorkStatusText.loopEnded(w).hasPrefix("[collie] Laço de \"W\" terminou: 0 feitas, 0 adiadas."))
     }
 
+    /// M2.4: both notices end with where the state is read, once, and the task's stays on one line.
+    @Test func noticesEndWithTheStateHint() {
+        let hint = " · estado: collie work status"
+        let e = TaskEvidence(commits: ["abc1234 feat: x"], shortstat: "1 file changed", checkTail: "ok", seconds: 9, attempt: 1)
+        let done = WorkTask(id: "a", title: "Build\nit", state: .done, evidence: e)
+        let late = WorkTask(id: "b", title: "Flaky", state: .deferred, reason: "loop: check failed\n(exit 1)")
+        for t in [done, late, WorkTask(id: "c", title: "By hand", state: .done)] {
+            let line = WorkStatusText.taskEnded(t)
+            #expect(line.hasPrefix("[collie] Laço, tarefa terminada: ") && line.hasSuffix(hint), "\(line)")
+            #expect(!line.contains("\n") && line.components(separatedBy: "collie work status").count == 2, "\(line)")
+            #expect(!line.hasSuffix("?"))   // a notice is never read as a question
+        }
+        #expect(WorkStatusText.taskEnded(done) == "[collie] Laço, tarefa terminada: ✓ Build it · tentativa 1 · 1 commit · 1 file changed" + hint)
+        var w = Work(title: "W", terminalId: term, tasks: [done, late])
+        var stopped = WorkLoopState(state: .stopped, used: 3)
+        stopped.stopReason = .init(.maxReached)
+        for state in [WorkLoopState(state: .finished, tasks: ["a", "b"]), stopped] {
+            w.loop = state
+            let lines = WorkStatusText.loopEnded(w).components(separatedBy: "\n")
+            #expect(lines[0].hasPrefix("[collie] Laço de \"W\" ") && lines[0].hasSuffix("1 feitas, 1 adiadas." + hint), "\(lines[0])")
+            #expect(WorkStatusText.loopEnded(w).components(separatedBy: "collie work status").count == 2)   // once
+            #expect(lines.count == 3 && !lines.contains { $0.hasSuffix("?") })
+        }
+    }
+
     /// M1.2: the journal shows only where it is asked for (`work status --events`): every status line reads as before.
     @Test func theJournalChangesNoStatusLine() {
         var w = Work(title: "W", terminalId: term, tasks: [WorkTask(id: "a", title: "Build it", state: .inProgress)])

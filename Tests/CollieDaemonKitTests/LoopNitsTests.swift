@@ -46,7 +46,8 @@ private func call(_ d: Daemon, _ p: Paths, _ t: Term, _ cmd: String, _ args: [St
             // M2b.2: the event is the loop's own `Task` ending (it ends once `cancelled` is written), not the stop's
             // 2 s: under load a real terminal's attempt can take longer to unwind. That the stop waits for a loop
             // that ends in time, and gives up one that does not, is in LoopCancelWaitTests (injected wait, no PTY).
-            let loop = try #require(await d.router.workLoops[id]?.task)
+            let loops = await d.router.workLoops
+            let loop = try #require(loops[id]?.task)
             await d.router.cancelLoops()   // the daemon's stop
             await loop.value
             let w = try #require(try await d.router.work.get(id))

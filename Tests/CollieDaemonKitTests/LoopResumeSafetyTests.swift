@@ -20,7 +20,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     private func fall(_ r: LoopRig, task i: Int = 0, from: String? = nil, at: Date? = nil, commit file: String? = nil) async throws -> String {
         let head = try await git(r.repo, "rev-parse", "HEAD"), on = try await git(r.repo, "rev-parse", "--abbrev-ref", "HEAD")
         if let file { try await commit(file, "ok\n", in: r.repo) }
-        let left = at ?? Date()
+        let left = at ?? Date() + 1   // M2c: a commit of the very second of `resumeAt` is not adopted
         try await r.store.update(r.work) { $0.tasks[i].resumeFrom = from ?? head; $0.tasks[i].resumeBranch = on; $0.tasks[i].resumeAt = left }
         return from ?? head
     }
@@ -210,7 +210,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let json = #"{"id":"a","title":"A","state":"open","updatedAt":0,"spec":"/s.md","check":"true","tries":2,"lastFailure":"x",\#(field)}"#
         let t = try JSONDecoder().decode(WorkTask.self, from: Data(json.utf8))
         #expect(t.id == "a" && t.title == "A" && t.state == .open && t.spec == "/s.md" && t.check == "true" && t.tries == 2 && t.lastFailure == "x")
-        #expect(t.resumeFrom == nil || t.resumeBranch == nil || t.resumeAt == nil)
+        #expect(t.resumeFrom == nil && t.resumeBranch == nil && t.resumeAt == nil)
         // inside a work too: the work's file still loads
         let work = #"{"id":"\#(UUID().uuidString)","title":"W","terminalId":"\#(UUID().uuidString)","openedAt":0,"tasks":[\#(json)],"jobs":[],"notes":[],"commits":[]}"#
         #expect(try JSONDecoder().decode(Work.self, from: Data(work.utf8)).tasks.count == 1)

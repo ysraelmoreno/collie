@@ -144,7 +144,9 @@ actor WorkLoop {
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                 x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
                 // where a fall resumes from; `forget` clears it when the attempt ends
-                x.tasks[i].resumeFrom = before; x.tasks[i].resumeBranch = branch; x.tasks[i].resumeAt = nil
+                // M2c: an adoption keeps the `resumeAt` it was judged by (when the attempt was first left): cancelled
+                // or fallen again, a commit made during it is still after that, and never adopted
+                x.tasks[i].resumeFrom = before; x.tasks[i].resumeBranch = branch; x.tasks[i].resumeAt = adopt ? task.resumeAt : nil
             }
             // M2b.1: one attempt, one live `resumeFrom`: from here on the commits are this task's, so what another
             // task was left with can no longer tell its own commits from these
@@ -384,8 +386,11 @@ actor WorkLoop {
                 x.loop?.used = Swift.max(0, used - 1)
                 if let j = x.jobs.firstIndex(where: { $0.id == name && $0.state == .running }) { x.jobs[j].state = .gone; x.jobs[j].endedAt = at }
                 // M2.2b: `resumeFrom` stays, as after a fall (M2.2a): a commit already there is judged by the next run
-                // M2b.1: left now: only what was committed up to here is the attempt's
-                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].resumeFrom != nil { x.tasks[i].resumeAt = at }
+                // M2b.1: left now: only what was committed before here is the attempt's. M2c: not an adoption's, which
+                // still carries when its attempt was first left
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].resumeFrom != nil, x.tasks[i].resumeAt == nil {
+                    x.tasks[i].resumeAt = at
+                }
             }
         case .reopen(let why):
             let at = host.now()
@@ -514,9 +519,10 @@ actor WorkLoop {
 
     /// M2.2a: `task` was left mid-attempt by a daemon that fell and its commit is here to be judged: `resumeFrom` is a
     /// sha of this repository, the worktree is on the same branch and HEAD is ahead of it (`committed`). The caller
-    /// already saw the tracked tree clean. M2b.1: and every commit between them was made up to `resumeAt`, when the
+    /// already saw the tracked tree clean. M2b.1: and every commit between them was made before `resumeAt`, when the
     /// attempt was left: one made after it (the owner's) is not the attempt's. No `resumeAt`, or a date that cannot be
-    /// read: not adopted.
+    /// read: not adopted. M2c: `%ct` is whole seconds and `resumeAt` is not, so a commit of the very second of
+    /// `resumeAt` may be from after it: in doubt, not adopted (a fresh agent is called instead; nothing is deleted).
     // ponytail: the committer date is the commit's own word (GIT_COMMITTER_DATE, a clock set back): it keeps out what
     // came after the fall, not a forged commit. A failed adoption deletes nothing either way.
     private func adoptable(_ task: WorkTask, branch: String, _ dir: URL) async -> Bool {
@@ -524,7 +530,7 @@ actor WorkLoop {
               (try? await host.git(["cat-file", "-e", "\(from)^{commit}"], in: dir))?.status == 0,
               await committed(before: from, branch: branch, dir),
               let dates = await out(["log", "--format=%ct", "\(from)..HEAD"], dir), !dates.isEmpty else { return false }
-        return dates.split(separator: "\n").allSatisfy { Int($0).map { Double($0) <= left.timeIntervalSince1970 } ?? false }
+        return dates.split(separator: "\n").allSatisfy { Int($0).map { Double($0) < left.timeIntervalSince1970.rounded(.down) } ?? false }
     }
 
     /// The attempt of `task` ended (a verdict, or none: reopened): there is nothing to resume. Not when cancelled.

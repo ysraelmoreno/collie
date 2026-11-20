@@ -22,7 +22,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let head = try await git(r.repo, "rev-parse", "HEAD"), on = try await git(r.repo, "rev-parse", "--abbrev-ref", "HEAD")
         if let file { try await commit(file, "ok\n", in: r.repo) }
         try await r.store.update(r.work) { $0.tasks[0].resumeFrom = from ?? head; $0.tasks[0].resumeBranch = branch ?? on; $0.tasks[0].tries = tries
-            $0.tasks[0].resumeAt = Date()   // M2b.1: left after the dead agent's commit
+            $0.tasks[0].resumeAt = Date() + 1   // M2b.1: left after the dead agent's commit (M2c: not in its very second)
         }
         return from ?? head
     }

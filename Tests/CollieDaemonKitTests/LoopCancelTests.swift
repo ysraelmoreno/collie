@@ -118,6 +118,8 @@ private actor Hold {
     @Test func theNextRunAdoptsTheCommitTheCancelLeft() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")], tries: 1); defer { r.cleanup() }
         let from = try await agentCommits(r), hold = Hold()
+        // M2c: the agent committed seconds before the cancel (a commit of the cancel's very second is not adopted)
+        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", at: Date(timeIntervalSinceNow: -5), in: $0) }))
         await r.host.setProbe { _ in await hold.park() }
         try await expectNoVerdict(try await cancel(r, at: hold), r, from: from)
         try await r.store.update(r.work) { $0.loop?.state = .running }   // `work run` again

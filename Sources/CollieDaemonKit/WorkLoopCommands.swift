@@ -226,6 +226,7 @@ extension CommandRouter {
             // M2b.1: the latest the fallen attempt can have committed: a commit made after this is never adopted.
             // ponytail: the sweep's time, not the fall's (nobody saw it): what the owner commits between a crash and
             // this start can still be adopted, and a failed adoption deletes nothing. A heartbeat if that gap matters.
+            // M2c: an adoption that fell keeps the `resumeAt` of the first fall (never moved forward)
             if x.tasks[i].resumeFrom != nil, x.tasks[i].resumeAt == nil { x.tasks[i].resumeAt = now }
         }
         for j in x.jobs.indices where x.jobs[j].kind == .loop && x.jobs[j].state == .running {

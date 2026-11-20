@@ -111,8 +111,10 @@ enum LaneWorktree {
         return refs.split(separator: "\n").map(String.init).filter { $0.hasPrefix(branchPrefix) }.sorted().compactMap { branch in
             let name = branch.dropFirst(branchPrefix.count)
             if known.contains(String(name.prefix(8))) { return nil }
-            let path = listed.first { $0.branch == branch }.map { URL(fileURLWithPath: $0.path) }
-                ?? paddocksDir(repoRoot).appendingPathComponent(dirPrefix + name)
+            // the path `create` gave it (git prints the symlink-free one: /private/var for /var); git's only if it was moved
+            var path = paddocksDir(repoRoot).appendingPathComponent(dirPrefix + name)
+            if let wt = listed.first(where: { $0.branch == branch }).map({ URL(fileURLWithPath: $0.path) }),
+               SignedAppCheck.realPath(wt) != SignedAppCheck.realPath(path) { path = wt }
             return Lane(repoRoot: repoRoot, path: path, branch: branch, base: "")
         }
     }

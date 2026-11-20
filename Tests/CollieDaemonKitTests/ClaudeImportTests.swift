@@ -109,7 +109,9 @@ private let codeLink = "https://claude.ai/code/artifact/0f8fad5b-d9cb-469f-a165-
                  + ["<img" + String(repeating: " src=\"", count: 8000) + ">"] {
             let t0 = ContinuousClock.now
             _ = OfflineRewrite.html(s, libs: libs)
-            #expect(ContinuousClock.now - t0 < .milliseconds(200), "\(s.prefix(12)): \(ContinuousClock.now - t0)")
+            // ~80 ms each in a debug build on a dev Mac and 200-750 ms on a loaded CI runner: 200 ms failed there with linear
+            // code. 1 s keeps the guard against a scan that grows with the square of these 24-48 KB inputs.
+            #expect(ContinuousClock.now - t0 < .seconds(1), "\(s.prefix(12)): \(ContinuousClock.now - t0)")
         }
     }
 

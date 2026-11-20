@@ -44,6 +44,9 @@ enum Config {
     @State private var error: String?
     @State private var paletteOpen = false
     @State private var herdsOpen = false
+    /// Canvas or Preferências in Completa's main area. Not persisted: the app always opens on the canvas. Here, not in
+    /// `ContentView`: ⌘, with the main window closed sets it and the window reopens already on the tab.
+    @State private var mainView = MainViewState()
     @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
 
     init() { Self.migrateDefaults(from: Self.legacyDefaultsDomain, into: .standard); Self.renameDefaults(in: .standard)
@@ -90,7 +93,7 @@ enum Config {
 
     var body: some Scene {
         Window("Collie", id: "main") {
-            ContentView(client: client, canvas: canvas, error: $error, paletteOpen: $paletteOpen, herdsOpen: $herdsOpen)
+            ContentView(client: client, canvas: canvas, error: $error, paletteOpen: $paletteOpen, herdsOpen: $herdsOpen, mainView: $mainView)
                 .sheet(isPresented: .constant(!consented)) { consentSheet }
                 .task(id: consented) { if consented { startService() } }
                 .onAppear(perform: Self.applyTheme)
@@ -98,6 +101,8 @@ enum Config {
         }
         .windowStyle(.hiddenTitleBar)   // no title bar band; the traffic lights stay, over the content (the sidebar/bar are inset)
         .commands {
+            // in place of the standard Ajustes… item, which always opens the Ajustes window
+            CommandGroup(replacing: .appSettings) { PreferencesMenuItem(mainView: $mainView) }
             CommandGroup(after: .newItem) {
                 Divider()
                 Button("Exportar dados do Collie…") { DataBackupMenu.export(client) }
@@ -161,6 +166,17 @@ enum Config {
     }
 }
 
+/// The app menu's "Preferências…" (⌘,): the same decision as every other entry (`ContentView.openPreferences`).
+private struct PreferencesMenuItem: View {
+    @Binding var mainView: MainViewState
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Preferências…") { ContentView.openPreferences(mainView: $mainView, openSettings: openSettings, openWindow: openWindow) }
+            .keyboardShortcut(",")
+    }
+}
+
 struct ContentView: View {
     let client: DaemonClient
     let canvas: CanvasState
@@ -169,6 +185,8 @@ struct ContentView: View {
     @Binding var herdsOpen: Bool
     @AppStorage(AppearanceKeys.structure) private var structureRaw = WindowStructure.compact.rawValue
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
+    @Binding var mainView: MainViewState
     @State private var paddocks: PaddockActions
     @State private var usage = UsageFeed()
     @State private var paletteRun: PaletteCommand?   // run once the palette sheet is gone
@@ -192,8 +210,6 @@ struct ContentView: View {
     @State private var store: PanelViewStore
     @StateObject private var herds: HerdsModel
     @State private var usageOpen = false
-    /// Canvas or Preferências in Completa's main area. Not persisted: the app always opens on the canvas.
-    @State private var mainView = MainViewState()
     @State private var bundledBuild: String?
     @State private var staleDismissed = false
     private var staleDaemon: Bool {
@@ -201,8 +217,10 @@ struct ContentView: View {
     }
     private let notifier = Notifier.shared
 
-    init(client: DaemonClient, canvas: CanvasState, error: Binding<String?>, paletteOpen: Binding<Bool>, herdsOpen: Binding<Bool>) {
+    init(client: DaemonClient, canvas: CanvasState, error: Binding<String?>, paletteOpen: Binding<Bool>, herdsOpen: Binding<Bool>,
+         mainView: Binding<MainViewState>) {
         self.client = client; self.canvas = canvas; _error = error; _paletteOpen = paletteOpen; _herdsOpen = herdsOpen
+        _mainView = mainView
         _herds = StateObject(wrappedValue: HerdsModel(call: { cmd, args throws(ProtocolError) in try await client.adminCall(cmd, args) },
                                                                 nodeName: { client.nodeName($0) }))
         _paddocks = State(initialValue: PaddockActions(client: client))
@@ -259,7 +277,18 @@ struct ContentView: View {
                      usageOpen: $usageOpen, newTerminal: { sheet = .newTerminal(nil) }, openPanel: { sheet = .openPanel(nil) },
                      fit: { canvas.fitAll(viewport: viewport) }, openPalette: { paletteOpen = true },
                      herds: herds, openHerds: { sheet = .herds(nil, $0) },
-                     focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: { openSettings() })
+                     focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: openPreferences)
+    }
+
+    /// Every way into Preferências (⌘, the palette, the rail's gear, `collieOpenPreferences`) comes through here.
+    func openPreferences() { Self.openPreferences(mainView: $mainView, openSettings: openSettings, openWindow: openWindow) }
+
+    /// The one decision: Completa shows the tab in the main window, Compacta opens the Ajustes window. Static for the
+    /// app menu, which also works with the main window closed: `openWindow` brings it back (or forward), on the tab.
+    static func openPreferences(mainView: Binding<MainViewState>, openSettings: OpenSettingsAction, openWindow: OpenWindowAction) {
+        guard AppearanceSettings(defaults: .standard).structure == .full else { openSettings(); return }
+        mainView.wrappedValue.show(.preferences)
+        openWindow(id: "main")
     }
 
     /// Each command runs the same closure as its button.
@@ -275,7 +304,7 @@ struct ContentView: View {
             + (client.paddocks.first { $0.id == client.currentPaddock }.map(paddocks.commands) ?? [])
             + [PaletteCommand(id: "fit", title: "Ajustar à tela", run: s.fit),
                PaletteCommand(id: "usage", title: "Uso dos agentes", run: { usageOpen = true }),
-               PaletteCommand(id: "settings", title: "Preferências…", run: { openSettings() })]
+               PaletteCommand(id: "settings", title: "Preferências…", run: openPreferences)]
     }
 
     @ViewBuilder private var banners: some View {
@@ -299,7 +328,7 @@ struct ContentView: View {
                 .overlay(alignment: .top) { CanvasChrome(structure: structure, ctx: shell) { banners } }
             }
         } preferences: {
-            PreferencesView(client: client)
+            PreferencesView(client: client, remembered: $mainView.page)
         }
         // Compacta has no tab strip (Preferências there is the Ajustes window): coming back to Completa starts on the canvas
         .onChange(of: structureRaw) { if structure != .full { mainView.back() } }
@@ -337,10 +366,11 @@ struct ContentView: View {
         .modifier(UpdateLaunchHost(client: client, bundledBuild: bundledBuild))   // launch check, notice, "Instalar ao sair"
         .onChange(of: client.panels) { _, ps in store.sync(ps) }   // views of closed panels are released
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in store.closeAll() }
-        // the Design panel's Abrir Preferências (a plug-in has no openSettings): open Preferências on the page it names
+        // the Design panel's Abrir Preferências (a plug-in has no openSettings): open Preferências on the page it names.
+        // The page goes through the defaults mailbox in both structures: `PreferencesView` reads it wherever it is shown.
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("collieOpenPreferences"))) { n in
             if let p = PreferencePage.requested(n.object) { UserDefaults.standard.set(p.rawValue, forKey: PreferencePage.requestKey) }
-            openSettings()
+            openPreferences()
         }
         .onAppear {
             client.panelHandler = { [store] panel, command, args, timeout throws(ProtocolError) in

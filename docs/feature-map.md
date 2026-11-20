@@ -201,7 +201,9 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Nome na UI:** "Preferências" (⌘,). Páginas: "Aparência", "Terminal e fontes", "Atualizações" (grupo "Interface");
   "Desenho e sandbox", "Memória", "Plug-ins" (grupo "Agentes"); "Celular", "Android" (grupo "Dispositivos").
 - **Para que serve:** aparência, fontes, atualização, sandbox, curador da memória, plug-ins, iPhone pareado, Android.
-  Na estrutura Completa a aba "Preferências" as mostra no lugar do canvas, que continua vivo por baixo.
+  Na estrutura Completa a aba "Preferências" as mostra no lugar do canvas, que continua vivo por baixo: ⌘,, o comando
+  "Preferências…", a engrenagem do trilho e "Abrir Preferências" abrem a aba (Esc ou a aba "Canvas" voltam, na mesma
+  página ao reabrir); na Compacta abrem a janela de Ajustes.
 - **Arquivos:** `Sources/CollieApp/PreferencesView.swift`, `Sources/CollieApp/PreferencePage.swift`,
   `Sources/CollieApp/UpdatePreferences.swift`, `Sources/CollieApp/CuratorPreferences.swift`,
   `Sources/CollieApp/CursorMemoryPreferences.swift`, `Sources/CollieApp/PluginsPreferences.swift`,

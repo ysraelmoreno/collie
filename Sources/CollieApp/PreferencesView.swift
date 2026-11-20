@@ -45,6 +45,8 @@ struct FontRow: Equatable, Identifiable {
 
 struct PreferencesView: View {
     let client: DaemonClient
+    /// Completa's tab (`MainViewState.page`): the page survives this view being unmounted. Nil in the Ajustes window.
+    var remembered: Binding<PreferencePage>?
     @State private var designFirst = DesignFirst.artifact
     @State private var sandboxMode = SandboxMode.open
     @State private var googleFonts = true
@@ -84,8 +86,13 @@ struct PreferencesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)   // free size: the Ajustes scene sets its window's, the main area fills
         .background(Color.collieBackground)
-        .onAppear { AppearanceSettings.normalize(.standard); showRequestedPage() }   // a stale or hand-edited value would leave a picker blank
+        .onAppear {
+            AppearanceSettings.normalize(.standard)
+            if let remembered { page = remembered.wrappedValue }   // before the request: a page asked for wins
+            showRequestedPage()
+        }   // a stale or hand-edited value would leave a picker blank
         .onChange(of: requestedPage) { showRequestedPage() }
+        .onChange(of: page) { remembered?.wrappedValue = page }
         .task(id: client.state == .connected) { await loadDesignFirst(); await loadSandboxMode(); await loadFonts() }   // no workspace event: read when shown
         // ponytail: one `android.status` and one `design.engine.status` read every 5 s, only while this window is shown and connected (the task dies with it)
         .task(id: client.state == .connected) {

@@ -56,7 +56,7 @@ struct Shell<Content: View, Preferences: View>: View {
                 if full { MainTabs(ctx: ctx, mainView: $mainView) }
                 ZStack {
                     content.opacity(prefs ? 0 : 1).allowsHitTesting(!prefs).accessibilityHidden(prefs)
-                    if prefs { preferences }
+                    if prefs { preferences.background(EscCatcher { mainView.back() }) }
                 }
                 if full { StatusBar(ctx: ctx) }
             }
@@ -70,6 +70,40 @@ struct Shell<Content: View, Preferences: View>: View {
             }
         } message: {
             Text("Os terminais rodam no sandbox aberto (padrão): o agente lê e escreve tudo na sua conta, inclusive chaves e tokens, e pode apagar qualquer coisa; só os dados, o app e o daemon do Collie ficam fechados ao acesso direto. O que ele gravar e você executar depois (rc do shell, LaunchAgents, binários, hooks do git) roda sem sandbox e alcança tudo, o Collie incluído. Em Preferências, \"Modo do sandbox\" muda para Estrito (escrita só no projeto, segredos fechados, cartões para liberar); vale para terminais abertos depois.")
+        }
+    }
+}
+
+/// Behind Completa's Preferências: Esc goes back to the canvas. It also takes the keyboard from whatever had it on the
+/// hidden canvas (a terminal would keep receiving the typing). A monitor, like `CanvasViewport`'s: clicking empty space
+/// leaves the window itself as first responder and no view would see the key. Esc stays with a text field or editor
+/// (`NSText`, the field editor included) and with a sheet (another window, or attached to this one).
+private struct EscCatcher: NSViewRepresentable {
+    let back: () -> Void
+    func makeNSView(context: Context) -> Catcher { Catcher() }
+    func updateNSView(_ v: Catcher, context: Context) { v.back = back }
+
+    final class Catcher: NSView {
+        var back: () -> Void = {}
+        private var monitor: Any?
+        override var acceptsFirstResponder: Bool { true }
+        override func keyDown(with e: NSEvent) {}   // typing with nothing focused: no beep (⌘ shortcuts never come here)
+
+        override func viewDidMoveToWindow() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard let window else { return }
+            window.makeFirstResponder(self)
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
+                MainActor.assumeIsolated { self?.escape(e) ?? false } ? nil : e
+            }
+        }
+
+        private func escape(_ e: NSEvent) -> Bool {
+            guard e.keyCode == 53, e.window === window, window?.attachedSheet == nil,
+                  !(window?.firstResponder is NSText) else { return false }
+            back()
+            return true
         }
     }
 }

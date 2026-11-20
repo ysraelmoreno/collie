@@ -29,7 +29,6 @@ import Foundation
     }
 
     static let maxFiles = 200
-    static let burst: TimeInterval = 0.15
 
     static var defaultFolder: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -183,7 +182,7 @@ import Foundation
     // MARK: Watching
 
     /// The folder (create, delete, rename) and each listed file (in-place edits), none followed through a link.
-    /// A burst of events becomes one `onChange`, `burst` seconds after the last.
+    /// A burst of events becomes one `onChange` (see `event`).
     private func startWatching() {
         if dirSource == nil {
             let fd = open(folder.path, O_EVTONLY | O_CLOEXEC)
@@ -218,8 +217,10 @@ import Foundation
         return src
     }
 
+    /// Events of one burst (an editor's save is several) arrive before the main queue turns: one call for all of them,
+    /// with no timer. A later event starts a new call.
     private func event() {
-        pending?.cancel()
+        guard pending == nil else { return }
         let item = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -229,6 +230,6 @@ import Foundation
             }
         }
         pending = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.burst, execute: item)
+        DispatchQueue.main.async(execute: item)
     }
 }

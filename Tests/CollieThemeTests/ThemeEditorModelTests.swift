@@ -50,7 +50,8 @@ private func model() -> ThemeEditorModel {
     m.set("surface", RGB(hex: 0xFFFFFF)) // near-white text on white
     let after = try #require(m.rows.first { $0.key == "text" })
     #expect(after.low)
-    #expect(try #require(after.ratio) < try #require(before.ratio))
+    let (ra, rb) = (try #require(after.ratio), try #require(before.ratio))
+    #expect(ra < rb)
 }
 
 @Test func editorRowsWithoutReadingHaveNoRatio() throws {

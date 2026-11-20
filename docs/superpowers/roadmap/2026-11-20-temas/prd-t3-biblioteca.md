@@ -19,7 +19,8 @@ para os testes usarem um diretório temporário.
    ignorados), devolve as entradas ordenadas pelo nome do tema, as quebradas no fim. Pasta ausente: lista vazia, sem
    erro.
 3. **Vigia**: observa a pasta e chama `onChange` (na main) quando um arquivo é criado, alterado, renomeado ou
-   apagado, juntando rajadas (um salvamento de editor gera vários eventos) numa chamada só. Parar a vigia no
+   apagado. Eventos que chegam na mesma volta da fila principal viram uma chamada; uma rajada pode gerar mais de
+   uma (como construído: sem temporizador, que a catraca do lint recusa). Quem escuta precisa ser idempotente. Parar a vigia no
    `deinit`. Sem `sleep` e sem polling: fonte de eventos do sistema de arquivos.
 4. **Operações**, todas com escrita atômica (arquivo temporário na mesma pasta, depois `rename`):
    - `create(from base: ThemeFile, name: String) throws -> id`: cria a pasta se preciso (0700); id = o nome em

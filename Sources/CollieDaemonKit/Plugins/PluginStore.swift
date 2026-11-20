@@ -241,6 +241,7 @@ actor PluginStore {
         let o = open(to, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard o >= 0 else { throw ProtocolError(code: .internal, message: "erro de arquivo ao instalar o plug-in") }
         defer { close(o) }
+        if st.st_mode & 0o100 != 0 { fchmod(o, 0o700) }   // a helper stays executable (`lock` makes it 0555)
         var buf = [UInt8](repeating: 0, count: max(4096, min(1 << 20, Int(st.st_size) + 1)))   // +1: sees growth
         while true {
             let n = read(i, &buf, buf.count)
@@ -264,9 +265,13 @@ actor PluginStore {
         return h.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Files 0444, dirs below the root 0555 (deepest first). The root itself is locked after its last move.
+    /// Files 0444 (0555 if the source was executable: a helper), dirs below the root 0555 (deepest first). The root itself is locked after its last move.
     static func lock(_ root: URL, _ files: [String]) throws(ProtocolError) {
-        for f in files where chmod(root.appendingPathComponent(f).path, 0o444) != 0 {
+        for f in files {
+            let path = root.appendingPathComponent(f).path
+            var st = stat()
+            let exec = stat(path, &st) == 0 && st.st_mode & 0o100 != 0
+            if chmod(path, exec ? 0o555 : 0o444) == 0 { continue }
             throw ProtocolError(code: .internal, message: "não foi possível proteger '\(f)'")
         }
         let dirs = (FileManager.default.enumerator(atPath: root.path)?.allObjects as? [String] ?? [])

@@ -105,6 +105,8 @@ actor CommandRouter {
     var lastTurn: [UUID: String] = [:]
     /// Turns each terminal ended (`turn.completed`, not continued): `wait` sees one end. ponytail: never pruned (tiny).
     var turnEnds: [UUID: Int] = [:]
+    /// Files each Claude terminal wrote this turn, for the plug-ins' `stop` event (`pluginHook`; dropped with the terminal).
+    var pluginTurn = PluginTurn()
     /// Turn notices waiting for each Shepherd to be idle, typed as one block (`noticeTurnEnded`).
     var turnNotices: [UUID: [String]] = [:]
     /// Shepherds' open leash requests (cards), oldest first. ponytail: in memory, a restart drops them (asked again).
@@ -432,7 +434,7 @@ actor CommandRouter {
             if req.command.hasPrefix("herd.") {   // admin or Shepherd; app-only ones checked in herdCommand
                 return Response(id: req.id, ok: true, result: try await herdCommand(req, peer: peer))
             }
-            if req.command.hasPrefix("plugin.") {   // install/uninstall/enable/disable: admin only; list/specs: terminals too
+            if req.command.hasPrefix("plugin."), req.command != "plugin.hook" {   // install/uninstall/enable/disable: admin only; list/specs: terminals too
                 return Response(id: req.id, ok: true, result: try await pluginAdminCommand(req, peer: peer))
             }
             if req.command.hasPrefix("app.") {   // list/attach: admin or terminal; approve: admin only
@@ -522,6 +524,8 @@ actor CommandRouter {
                 }
                 await workHook(req, from: tid)
                 return Response(id: req.id, ok: true, result: .object([:]))
+            case "plugin.hook":
+                return Response(id: req.id, ok: true, result: await pluginHook(req, from: tid))
             default:
                 guard Commands.spec(req.command)?.shepherdOnly == true else {
                     throw ProtocolError(code: .internal, message: "'\(req.command)' not implemented yet")
@@ -680,6 +684,7 @@ actor CommandRouter {
         await registry.remove(id)
         await auth.revoke(id)
         AgentLaunch.removeHooks(for: id, in: hooksDir)
+        pluginTurn.drop(id)
         await memory.endSession(id)
         await design.callerGone(id.uuidString)
         await jobsGone(terminal: id)
@@ -965,6 +970,7 @@ actor CommandRouter {
 
     private func processExited(_ id: UUID, _ process: ObjectIdentifier) async {
         if await registry.process(id).map(ObjectIdentifier.init) == process {
+            pluginTurn.drop(id)
             await memory.endSession(id); await jobsGone(terminal: id); await closeHeadless(of: id)
             await cursorTerminalEnded(id)   // Cursor has no session-end hook: the rest of its conversation now
             // the session's end for agents without a SessionEnd hook (Codex): its learnings become proposals

@@ -84,6 +84,10 @@ public enum Commands {
                     params: [ParamSpec("hook", .string, help: "tool|subagent-stop|precompact|session-end|notification"),
                              ParamSpec("payload", .string, help: "The hook's stdin JSON")],
                     timeoutSeconds: 2, exposedToMCP: false),
+        CommandSpec(name: "plugin.hook", summary: "Hook: an agent event for the plug-ins' helpers {guide?,block?} (terminal only, always ok)",
+                    params: [ParamSpec("event", .string, required: true, help: "edit|stop"),
+                             ParamSpec("payload", .string, help: "The Claude hook's stdin JSON (64 KiB at most)")],
+                    timeoutSeconds: 6, exposedToMCP: false),
         // Shepherd-only: the daemon checks isShepherd; every target must be within the Shepherd's leashes
         CommandSpec(name: "summon", summary: "Spawn an agent leashed to you",
                     params: [ParamSpec("name", .string, positional: true, required: true, help: "New agent name"),

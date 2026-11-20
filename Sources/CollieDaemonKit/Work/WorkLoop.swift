@@ -63,46 +63,57 @@ actor WorkLoop {
     /// and `.running`. Returns the final state.
     func run(work id: UUID, dir: URL) async -> WorkLoopState.State {
         var end = WorkLoopState.State.stopped
-        while !stopping.contains(id), !Task.isCancelled {
+        var stop: WorkLoopState.Stop?   // why it stopped; nil only when it finished
+        try? await store.update(id) { w in if w.loop?.state == .running { w.loop?.stopReason = nil } }
+        while true {
+            if stopping.contains(id) { stop = .init(.requested); break }
+            if Task.isCancelled { stop = .init(.cancelled); break }
             // closed, missing or stopped from outside (a daemon restart's sweep): stop
-            guard let w = try? await store.get(id), w.closedAt == nil, let loop = w.loop, loop.state == .running,
-                  await host.starterAlive() else { break }
+            guard let w = try? await store.get(id), w.closedAt == nil, let loop = w.loop, loop.state == .running else { stop = .init(.workGone); break }
+            guard await host.starterAlive() else { stop = .init(.starterGone); break }
             // only the tasks the owner approved: one added since waits for the next run
             guard let task = w.tasks.first(where: { $0.state == .open && (loop.tasks?.contains($0.id) ?? true) }) else { end = .finished; break }
-            if let max = loop.max, loop.used >= max { break }
+            if let max = loop.max, loop.used >= max { stop = .init(.maxReached); break }
             if let b = loop.budget, (loop.spent ?? 0) >= b {
                 await note(id, "[loop] orçamento de tempo usado (\(loop.spent ?? 0) de \(b) s); laço parado")
-                break
+                stop = .init(.budgetSpent); break
             }
             let t0 = host.now()
-            let go = await attempt(w, loop, task, dir)
+            let ended = await attempt(w, loop, task, dir)
             let secs = Int(host.now().timeIntervalSince(t0).rounded(.up))
             try? await store.update(id) { x in let was = x.loop?.spent ?? 0; x.loop?.spent = was + secs }
-            guard go else { break }
+            if case .stop(let s) = ended { stop = s; break }
         }
         stopping.remove(id)
-        let now = host.now(), final = end
+        let now = host.now(), final = end, why = stop
         try? await store.update(id) { w in
             guard w.loop != nil else { return }
-            w.loop!.state = final; w.loop!.endedAt = now; w.loop!.task = nil
+            // stopped from outside with its own reason and note (the daemon's sweep): those stay
+            let outside = w.loop!.state == .running ? nil : w.loop!.stopReason
+            w.loop!.state = final; w.loop!.endedAt = now; w.loop!.task = nil; w.loop!.stopReason = outside ?? why
+            // always one summary note, after the path's own longer one (if any)
+            if outside == nil, let why { w.notes.append(WorkNote(at: now, text: why.note)) }
         }
         return end
     }
 
-    /// One attempt of `task`, through its verdict. False: the loop stops (no verdict when the work closed, the starter is
+    /// How an attempt ends for the loop: on to the next one, or the loop stops and why.
+    enum AttemptEnd: Equatable { case go, stop(WorkLoopState.Stop) }
+
+    /// One attempt of `task`, through its verdict. `.stop`: the loop stops (no verdict when the work closed, the starter is
     /// gone, or the tree holds changes that are not the attempt's; a verdict and no reset when another terminal works).
-    private func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> Bool {
+    private func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
         let n = (task.tries ?? 0) + 1, name = "loop-\(task.id)-\(n)", started = host.now()
         // git failing here (the loop's profile gone, not a repo): stop, nothing to judge
         guard let before = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
               let pending = await out(["status", "--porcelain", "--untracked-files=no"], dir) else {
             await note(w.id, "[loop] git falhou em \(dir.path); laço parado")
-            return false
+            return .stop(.init(.gitFailed))
         }
         // tracked changes now are someone else's (each attempt ends on a clean tree): never the loop's to reset
         guard pending.isEmpty else {
             await note(w.id, "[loop] arquivos rastreados modificados (dirty) antes da tentativa de \"\(task.title)\", e não são do laço; laço parado, worktree intocada:\n\(pending.prefix(500))")
-            return false
+            return .stop(.init(.dirtyTree))
         }
         // pre-existing untracked files are never the attempt's: the reset must not delete them
         let keep = await untracked(dir)
@@ -141,7 +152,7 @@ actor WorkLoop {
                 x.loop?.used = Swift.max(0, used - 1)
                 if let j = x.jobs.firstIndex(where: { $0.id == name && $0.state == .running }) { x.jobs[j].state = .gone; x.jobs[j].endedAt = at }
             }
-            return false
+            return .stop(.init(.cancelled))
         }
 
         let closed = (try? await store.get(w.id)).map { $0?.closedAt != nil } ?? true
@@ -152,7 +163,7 @@ actor WorkLoop {
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
                 Self.endJob(&x, name, why, at: at)
             }
-            return false
+            return .stop(.init(closed ? .workGone : .starterGone))
         }
 
         var reason: String, output = ""
@@ -234,8 +245,9 @@ actor WorkLoop {
                 Self.endJob(&x, name, head, at: at)
             }
             await reportEnd(w.id, task.id)
-            if let blocked { await note(w.id, Self.blockedNote(blocked)) }
-            return blocked == nil
+            guard let blocked else { return .go }
+            await note(w.id, Self.blockedNote(blocked))
+            return .stop(.init(.othersWorking, detail: blocked))
         }
 
         if blocked == nil { blocked = await othersWorkingWaiting() }
@@ -254,8 +266,8 @@ actor WorkLoop {
             Self.endJob(&x, name, reason, at: at)
         }
         if last { await reportEnd(w.id, task.id) }
-        if let blocked { await note(w.id, Self.blockedNote(blocked)); return false }
-        return true
+        if let blocked { await note(w.id, Self.blockedNote(blocked)); return .stop(.init(.othersWorking, detail: blocked)) }
+        return .go
     }
 
     /// Another terminal that can edit the worktree is in a turn: no reset under it. It gets `othersWait` to finish (a short

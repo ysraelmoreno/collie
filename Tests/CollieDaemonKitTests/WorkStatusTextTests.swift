@@ -83,6 +83,22 @@ import CollieCore
         #expect(!WorkStatusText.recall(w).contains("laço"))
     }
 
+    /// M1.1: a stopped loop says why, in the status line and in the end notice; a finished one reads as before.
+    @Test func stoppedLoopShowsItsReason() {
+        var w = Work(title: "W", terminalId: term, tasks: [WorkTask(id: "a", title: "Build it")])
+        w.loop = WorkLoopState(state: .stopped, used: 3)
+        #expect(WorkStatusText.loopLine(w) == "laço parado (3 tentativas)")   // written before the field existed
+        w.loop?.stopReason = .init(.maxReached)
+        #expect(WorkStatusText.loopLine(w) == "laço parado (3 tentativas) · limite de tentativas (--max) atingido")
+        #expect(WorkStatusText.recall(w).contains("· limite de tentativas (--max) atingido"))
+        #expect(WorkStatusText.loopEnded(w).hasPrefix("[collie] Laço de \"W\" parou (limite de tentativas (--max) atingido): 0 feitas, 0 adiadas."))
+        w.loop?.stopReason = .init(.othersWorking, detail: "dev")
+        #expect(WorkStatusText.loopLine(w) == "laço parado (3 tentativas) · 'dev' trabalhando no cercado")
+        w.loop = WorkLoopState(state: .finished, used: 3)
+        #expect(WorkStatusText.loopLine(w) == "laço terminou (3 tentativas)")
+        #expect(WorkStatusText.loopEnded(w).hasPrefix("[collie] Laço de \"W\" terminou: 0 feitas, 0 adiadas."))
+    }
+
     @Test func doneLineShowsTheEvidence() {
         var t = WorkTask(id: "a", title: "Build\nit", state: .done)
         #expect(WorkStatusText.doneLine(t) == nil)   // no evidence: the status line stays as it was

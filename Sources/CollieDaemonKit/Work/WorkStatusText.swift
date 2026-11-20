@@ -69,14 +69,15 @@ public enum WorkStatusText {
         return out
     }
 
-    /// A work run by `collie work run`: "em laço: <task> (tentativa n/N)", or how its loop ended. nil: a sequential work.
+    /// A work run by `collie work run`: "em laço: <task> (tentativa n/N)", or how its loop ended (a stopped one with
+    /// its `stopReason`'s label). nil: a sequential work.
     public static func loopLine(_ w: Work) -> String? {
         guard let l = w.loop else { return nil }
         switch l.state {
         case .running:
             let title = w.tasks.first { $0.id == l.task }.map { RerailText.clean($0.title) } ?? "?"
             return "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.phase.map { " · \($0.label)" } ?? "")
-        case .stopped: return "laço parado (\(l.used) tentativas)"
+        case .stopped: return "laço parado (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
         case .finished: return "laço terminou (\(l.used) tentativas)"
         }
     }
@@ -103,14 +104,15 @@ public enum WorkStatusText {
         return "[collie] Laço, tarefa terminada: \(line)"
     }
 
-    /// The line the starter gets when its loop ends, then one line per task of the loop: a done one with its evidence
+    /// The line the starter gets when its loop ends (a stopped one: "parou (<why>)"), then one line per task of the loop: a done one with its evidence
     /// (one without it was marked by hand, no check judged it: it counts as done and says so), a deferred one with the
     /// reason. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
     /// Only counts and git's shortstat go beside the agent's titles: never a commit subject or the check's output.
     static func loopEnded(_ w: Work) -> String {
         let ran = w.tasks.filter { t in w.loop?.tasks?.contains(t.id) ?? true }
         let done = ran.filter { $0.state == .done }, deferred = ran.filter { $0.state == .deferred }
-        var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" terminou: \(done.count) feitas, \(deferred.count) adiadas. Veja: collie work status"]
+        let how = w.loop?.stopReason.map { "parou (\(RerailText.clean($0.label)))" } ?? "terminou"
+        var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" \(how): \(done.count) feitas, \(deferred.count) adiadas. Veja: collie work status"]
         lines += done.map { doneLine($0) ?? "✓ \(RerailText.clean($0.title)) · marcada à mão, sem check" }
         lines += deferred.map { "– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))" }
         return bounded(lines, limit: RerailText.limit)

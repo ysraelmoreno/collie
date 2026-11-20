@@ -182,7 +182,7 @@ extension CommandRouter {
         return s.count <= Self.loopCardMax ? s : nil
     }
 
-    /// Ends the loop after the current attempt's verdict; a loop still waiting for the owner's card: withdraws the card.
+    /// Ends the loop after the current attempt's verdict (the engine records `requested` when it does stop); a loop still waiting for the owner's card: withdraws the card.
     func workStop(_ t: TerminalRecord) async throws -> JSONValue {
         if let w = try await work.active(terminal: t.id), let card = loopCards.removeValue(forKey: w.id) {
             appWaiters.removeValue(forKey: card)?.resume(returning: false)   // the approval task frees the paddock and tells the starter
@@ -214,17 +214,24 @@ extension CommandRouter {
             // its agents' records (the processes died with the daemon): named as its loop jobs, in its paddock
             let agents = Set(w.jobs.filter { $0.kind == .loop }.map(\.id))
             for t in ws.terminals where agents.contains(t.name) && t.paddockId == w.paddockId { try? await remove(t) }
-            try? await work.update(w.id) { x in
-                for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task { x.tasks[i].state = .open }
-                for j in x.jobs.indices where x.jobs[j].kind == .loop && x.jobs[j].state == .running {
-                    x.jobs[j].state = .gone; x.jobs[j].endedAt = now
-                }
-                x.loop?.state = .stopped; x.loop?.endedAt = now; x.loop?.task = nil
-            }
+            try? await work.update(w.id) { Self.sweepLeftRunning(&$0, now: now) }
         }
     }
 
-    /// Daemon stop: the loops end with it (their state stays `running` until the next start's sweep).
+    /// What the start sweep writes on a work whose loop a previous daemon left `running`: stopped by `daemonRestart`,
+    /// with its note.
+    static func sweepLeftRunning(_ x: inout Work, now: Date) {
+        for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task { x.tasks[i].state = .open }
+        for j in x.jobs.indices where x.jobs[j].kind == .loop && x.jobs[j].state == .running {
+            x.jobs[j].state = .gone; x.jobs[j].endedAt = now
+        }
+        let why = WorkLoopState.Stop(.daemonRestart)
+        x.loop?.state = .stopped; x.loop?.endedAt = now; x.loop?.task = nil; x.loop?.stopReason = why
+        x.notes.append(WorkNote(at: now, text: why.note))
+    }
+
+    /// Daemon stop: the loops end with it: `cancelled` when the engine still gets to write it, else their state stays
+    /// `running` until the next start's sweep (`daemonRestart`).
     func cancelLoops() { for l in workLoops.values { l.task.cancel() }; workLoops = [:]; loopPaddocks = [] }
 
     // MARK: what RouterLoopHost needs from the router

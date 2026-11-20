@@ -5,7 +5,8 @@ import CollieProtocol
 @testable import CollieDaemonKit
 
 /// What one attempt's "agent" does, keyed by its terminal name (`loop-<task>-<n>`).
-private struct Script: Sendable {
+/// Shared with `LoopStopReasonTests`.
+struct LoopScript: Sendable {
     /// Runs during `ask`, in the worktree.
     var act: @Sendable (URL) async throws -> Void = { _ in }
     var source: AskResult.Source = .hook
@@ -16,9 +17,9 @@ private struct Script: Sendable {
 }
 
 /// A host without PTYs: scripted agents, real git and a real (unsandboxed) check in a temp repo.
-private actor FakeHost: LoopHost {
+actor LoopFakeHost: LoopHost {
     nonisolated let dir: URL, patches: URL
-    var scripts: [String: Script] = [:]
+    var scripts: [String: LoopScript] = [:]
     var summoned: [String] = [], dismissed: [String] = [], prompts: [String: String] = [:], checks = 0
     /// Every command `check` ran (the tasks' checks and the gate), in order.
     var commands: [String] = []
@@ -47,13 +48,13 @@ private actor FakeHost: LoopHost {
         self.dir = dir
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
     }
-    func set(_ name: String, _ s: Script) { scripts[name] = s }
+    func set(_ name: String, _ s: LoopScript) { scripts[name] = s }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
         let id = UUID(); names[id] = name; summoned.append(name); return id
     }
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
-        let name = names[terminal]!, s = scripts[name] ?? Script()
+        let name = names[terminal]!, s = scripts[name] ?? LoopScript()
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if name == starterGoneAfter { starterGone = true }
@@ -61,7 +62,7 @@ private actor FakeHost: LoopHost {
         return s.source
     }
     func working(_ terminal: UUID) async -> Bool {
-        let name = names[terminal]!, s = scripts[name] ?? Script()
+        let name = names[terminal]!, s = scripts[name] ?? LoopScript()
         guard let after = s.lateAfter else { return false }
         let n = (workingCalls[terminal] ?? 0) + 1; workingCalls[terminal] = n
         if n == after { do { try await s.late(dir) } catch { Issue.record("late \(name): \(error)") }; return false }
@@ -98,8 +99,8 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 }
 
 /// A repo, a store holding a work with `tasks` and a running loop, a fake host and the loop.
-private struct Rig {
-    let repo: URL, storeDir: URL, store: WorkStore, host: FakeHost, loop: WorkLoop, work: UUID
+struct LoopRig {
+    let repo: URL, storeDir: URL, store: WorkStore, host: LoopFakeHost, loop: WorkLoop, work: UUID
     init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil,
          checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50)) async throws {
         repo = try await makeRepo()
@@ -111,13 +112,16 @@ private struct Rig {
             $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id), gate: gate)
         }
         work = w.id
-        host = FakeHost(dir: repo)
+        host = LoopFakeHost(dir: repo)
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait)
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }
     func cleanup() { for u in [repo, storeDir, host.patches] { try? FileManager.default.removeItem(at: u) } }
 }
+
+private typealias Script = LoopScript
+private typealias Rig = LoopRig
 
 private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, title: "Task \(id)", check: check) }
 
@@ -287,7 +291,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.host.summoned.isEmpty)
         #expect(try String(contentsOf: r.repo.appendingPathComponent("f.txt"), encoding: .utf8) == "someone's\n")
         let w = try await r.get()
-        #expect(w.tasks[0].state == .open && w.notes.last?.text.contains("dirty") == true)
+        #expect(w.tasks[0].state == .open && w.notes.contains { $0.text.contains("dirty") })   // then the loop's summary note
     }
 
     /// Finding 4: another terminal of the paddock in a turn: no reset, no checkout; the loop stops.

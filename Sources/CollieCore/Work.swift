@@ -66,6 +66,37 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão" } }
     }
     public var phase: Phase?
+    /// Why a loop that did not finish stopped: one `code` per way out of the engine, `detail` (at most 200 characters)
+    /// what the code alone does not say (`othersWorking`: the terminal's name).
+    public struct Stop: Codable, Sendable, Equatable {
+        /// `unknown` is a reserve (a code written by a newer daemon decodes as it): no path of this daemon produces it.
+        public enum Code: String, Codable, Sendable, CaseIterable {
+            case requested, workGone, starterGone, maxReached, budgetSpent, gitFailed, dirtyTree, othersWorking, cancelled, daemonRestart, unknown
+            public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
+        }
+        public var code: Code; public var detail: String?
+        public init(_ code: Code, detail: String? = nil) { self.code = code; self.detail = detail.map { String($0.prefix(200)) } }
+        /// For the owner, short.
+        public var label: String {
+            switch code {
+            case .requested: "pedido pelo dono (work stop)"
+            case .workGone: "trabalho fechado ou parado por fora"
+            case .starterGone: "o Pastor que iniciou sumiu"
+            case .maxReached: "limite de tentativas (--max) atingido"
+            case .budgetSpent: "orçamento de tempo esgotado"
+            case .gitFailed: "git falhou"
+            case .dirtyTree: "arquivos rastreados modificados fora do laço"
+            case .othersWorking: "'\(detail ?? "outro terminal")' trabalhando no cercado"
+            case .cancelled: "o daemon parou"
+            case .daemonRestart: "o daemon reiniciou durante o laço"
+            case .unknown: "motivo desconhecido"
+            }
+        }
+        /// The note every stopped loop leaves.
+        public var note: String { "[loop] laço parado: \(label)" }
+    }
+    /// Set when the loop ends `stopped`; nil while it runs and when it `finished`.
+    public var stopReason: Stop?
     public var startedAt: Date; public var endedAt: Date?
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,

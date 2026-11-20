@@ -1,13 +1,36 @@
 #!/usr/bin/env bash
-# Check de cada tarefa do laço "estado do laço" (Onda 1): scripts/laco-check.sh M1.1..M1.4
+# Check de cada tarefa do laço "estado do laço" (Ondas 1, 1b, 2 e 3): scripts/laco-check.sh M1.1 .. M3.7
+# Cada tarefa exige o seu arquivo de testes novo e roda TODAS as suítes da família (cumulativo: nada pode regredir).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
-base=(--filter WorkLoopTests --filter WorkStatusTextTests --filter WorkStoreTests)
-case "${1:?M1.1..M1.4}" in
-  M1.1) grep -q 'stopReason' Sources/CollieCore/Work.swift && test -f Tests/CollieDaemonKitTests/LoopStopReasonTests.swift && t "${base[@]}" --filter LoopStopReasonTests ;;
-  M1.2) grep -q 'struct LoopEvent' Sources/CollieCore/Work.swift && test -f Tests/CollieDaemonKitTests/LoopJournalTests.swift && t "${base[@]}" --filter LoopStopReasonTests --filter LoopJournalTests ;;
-  M1.3) test -f Sources/CollieDaemonKit/Work/AttemptDecision.swift && test -f Tests/CollieDaemonKitTests/AttemptDecisionTests.swift && t "${base[@]}" --filter LoopStopReasonTests --filter LoopJournalTests --filter AttemptDecisionTests ;;
-  M1.4) test -f Sources/CollieDaemonKit/Work/AttemptMachine.swift && test -f Tests/CollieDaemonKitTests/AttemptMachineTests.swift && t "${base[@]}" --filter LoopStopReasonTests --filter LoopJournalTests --filter AttemptDecisionTests --filter AttemptMachineTests ;;
+suites=(WorkLoopTests WorkStatusTextTests WorkStoreTests LoopStopReasonTests LoopJournalTests AttemptDecisionTests AttemptMachineTests
+        LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests WorkWaitTests LoopOrientationTests
+        WorkTaskReopenTests TaskSchedulerTests LaneWorktreeTests LaneHostTests LaneIntegrationTests LoopParallelTests
+        LoopLaneLifecycleTests LoopParallelE2ETests WorkCommandTests CommandsTests WorkPanelTests)
+filters=(); for s in "${suites[@]}"; do filters+=(--filter "$s"); done
+need() { test -f "$1" || { echo "falta $1" >&2; exit 1; }; }
+D=Tests/CollieDaemonKitTests
+case "${1:?M1.1..M3.7}" in
+  M1.1)  grep -q stopReason Sources/CollieCore/Work.swift; need $D/LoopStopReasonTests.swift ;;
+  M1.2)  grep -q 'struct LoopEvent' Sources/CollieCore/Work.swift; need $D/LoopJournalTests.swift ;;
+  M1.3)  need Sources/CollieDaemonKit/Work/AttemptDecision.swift; need $D/AttemptDecisionTests.swift ;;
+  M1.4)  need Sources/CollieDaemonKit/Work/AttemptMachine.swift; need $D/AttemptMachineTests.swift ;;
+  M1b.1) need $D/LoopRobustnessTests.swift ;;
+  M1b.2) need $D/LoopJournalWritesTests.swift ;;
+  M1b.3) need $D/LoopNitsTests.swift ;;
+  M2.1)  need $D/LoopNudgeTests.swift ;;
+  M2.2)  need $D/LoopResumeTests.swift ;;
+  M2.3)  need $D/WorkWaitTests.swift ;;
+  M2.4)  need $D/LoopOrientationTests.swift ;;
+  M2.5)  need $D/WorkTaskReopenTests.swift ;;
+  M3.1)  need Sources/CollieDaemonKit/Work/TaskScheduler.swift; need $D/TaskSchedulerTests.swift ;;
+  M3.2)  need Sources/CollieDaemonKit/Work/LaneWorktree.swift; need $D/LaneWorktreeTests.swift ;;
+  M3.3)  need $D/LaneHostTests.swift ;;
+  M3.4)  need Sources/CollieDaemonKit/Work/LaneIntegrator.swift; need $D/LaneIntegrationTests.swift ;;
+  M3.5)  need $D/LoopParallelTests.swift ;;
+  M3.6)  need $D/LoopLaneLifecycleTests.swift ;;
+  M3.7)  need $D/LoopParallelE2ETests.swift ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;
 esac
+t "${filters[@]}"

@@ -289,16 +289,26 @@ extension CommandRouter {
             // (MCP/JSON: `events: true` is the bare flag, `events: false` is no journal, as if absent)
             let last: Int? = if case .bool(false)? = r.args["events"] { nil }
                 else { try flag(r, "events") ? Self.loopEventsDefault : num(r, "events", max: Double(WorkLoopState.eventsMax)).map { Int($0) } }
-            var o: [String: JSONValue] = ["works": .array(try works.map(isoJSON))]
-            o["output"] = .string(works.isEmpty ? "No active work." : works.map { w in
-                let journal = last.flatMap { n in w.loop.map { WorkStatusText.events($0, last: n) } } ?? ""
-                return workSummary(w) + (journal.isEmpty ? "" : "\nDiário do laço:\n" + journal)
-            }.joined(separator: "\n\n"))
-            if let last {
-                o["events"] = .object(Dictionary(uniqueKeysWithValues: try works.filter { $0.loop != nil }.map {
-                    ($0.id.uuidString.lowercased(), try isoJSON(Array(($0.loop?.events ?? []).suffix(last))))
-                }))
+            return .object(try workStatus(works, events: last, now: now))
+
+        case "work.wait":   // the caller's active work (or a leashed terminal's): answers when it changed past --since
+            let t = try target(), w = try await active(t)
+            let timeout = try num(r, "timeout", max: Self.workWaitMax) ?? Self.workWaitDefault
+            let since: Int?
+            switch r.args["since"] {   // a version: 0 is one (a work no counting store wrote yet), so not `num` (1...)
+            case nil, .null?: since = nil
+            case .number(let n)? where n >= 0 && n <= 1e15 && n == n.rounded(): since = Int(n)
+            case .string(let s)? where Int(s).map({ $0 >= 0 }) ?? false: since = Int(s)
+            default: throw invalid("--since must be a version (an integer, 0 or more)")
             }
+            // no --since: the state as it is, with the version to wait from; a loop that ended never waits
+            if let since, w.loop.map({ $0.state == .running }) ?? true { _ = try await workChanged(w.id, since: since, timeout: timeout) }
+            guard let cur = try await work.get(w.id), visible(cur) else { throw missing("no active work for '\(t.name)'") }
+            let version = cur.version ?? 0, ended = cur.loop.map { $0.state != .running } ?? false
+            let timedOut = since.map { version <= $0 && !ended } ?? false
+            var o = try workStatus([cur], events: nil, now: Date())
+            o["version"] = .number(Double(version)); o["ended"] = .bool(ended); o["timedOut"] = .bool(timedOut)
+            o["output"] = .string(WorkStatusText.waitLine(cur, version: version, timedOut: timedOut, now: Date()))
             return .object(o)
 
         case "work.summary":   // same reach as work.status; `--natural`: the on-device model's rewrite, the markdown always
@@ -357,13 +367,44 @@ extension CommandRouter {
 
     /// `work status --events` with no number.
     static let loopEventsDefault = 20
+    /// `work wait --timeout`: its default and the most it takes (seconds).
+    static let workWaitDefault: Double = 600, workWaitMax: Double = 3600
+
+    /// What `work.status` answers for `works` (`work.wait` answers the same, plus its own keys): `works`, the text in
+    /// `output` and, with `events` (the last N of each loop's journal), `events` by work id.
+    private func workStatus(_ works: [Work], events last: Int?, now: Date) throws -> [String: JSONValue] {
+        var o: [String: JSONValue] = ["works": .array(try works.map(isoJSON))]
+        o["output"] = .string(works.isEmpty ? "No active work." : works.map { w in
+            let journal = last.flatMap { n in w.loop.map { WorkStatusText.events($0, last: n) } } ?? ""
+            return workSummary(w, now: now) + (journal.isEmpty ? "" : "\nDiário do laço:\n" + journal)
+        }.joined(separator: "\n\n"))
+        if let last {
+            o["events"] = .object(Dictionary(uniqueKeysWithValues: try works.filter { $0.loop != nil }.map {
+                ($0.id.uuidString.lowercased(), try isoJSON(Array(($0.loop?.events ?? []).suffix(last))))
+            }))
+        }
+        return o
+    }
+
+    /// `work.wait`'s wait: until the store writes a change of the work past `since`, or `timeout` seconds pass (a
+    /// one-shot timer cancels the wait: no polling), or this request's task is cancelled.
+    private func workChanged(_ id: UUID, since: Int, timeout: Double) async throws -> Int? {
+        let store = work
+        let wait = Task { try await store.changed(id, since: since) }
+        let timer = DispatchSource.makeTimerSource()
+        timer.schedule(deadline: .now() + timeout)
+        timer.setEventHandler { wait.cancel() }
+        timer.resume()
+        defer { timer.cancel() }
+        return try await withTaskCancellationHandler { try await wait.value } onCancel: { wait.cancel() }
+    }
 
     /// The `work.status` text: the work, its tasks by state (done ones last, the 5 newest), live jobs, the 5 newest notes and commits.
-    private func workSummary(_ w: Work) -> String {
+    private func workSummary(_ w: Work, now: Date) -> String {
         let who = ws.terminals.first { $0.id == w.terminalId }?.name ?? "?"
         var lines = ["\(w.title) — \(who)" + (w.branch.map { ", branch \($0)" } ?? "") + (w.closedBy.map { ", closed by \($0)" } ?? "")
                      + " [\(w.id.uuidString.lowercased())]"]
-        if let l = WorkStatusText.loopLine(w) { lines.append(l) }
+        if let l = WorkStatusText.loopLine(w, now: now) { lines.append(l) }
         if let g = WorkStatusText.gateLine(w) { lines.append(g) }
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),

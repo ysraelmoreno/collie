@@ -10,10 +10,10 @@ enum Client {
     static var socket: URL { env["COLLIE_SOCKET"].map { URL(fileURLWithPath: $0) } ?? Paths().socket }
 
     static func timeout(_ command: String, _ args: [String: JSONValue]) -> Double? {
-        if command == "ask" || command == "wait" || command == "model" && args["wait"] == .bool(true) {
+        if command == "ask" || command == "wait" || command == "work.wait" || command == "model" && args["wait"] == .bool(true) {
             let margin: Double = command == "model" ? 20 : 5   // model: the switch itself after the wait
             if case .number(let n)? = args["timeout"] { return n + margin }
-            return 1800 + margin
+            return (command == "work.wait" ? 600 : 1800) + margin   // work wait: its own default (`workWaitDefault`)
         }
         // plugin commands: the daemon times the call out itself; the margin lets its typed `.timeout` arrive first
         if PluginRegistry.command(command) != nil { return Commands.spec(command)?.timeoutSeconds.map { $0 + 5 } }

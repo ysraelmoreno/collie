@@ -17,6 +17,10 @@ actor WorkStore {
     private var saving = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private let io = DispatchQueue(label: "collie.work")
+    /// Who waits for a work's next change (`changed`), by work id then by a token of the wait.
+    private var changeWaiters: [UUID: [UUID: CheckedContinuation<Void, Never>]] = [:]
+    /// How many waits are parked (a test checks a cancelled one leaves none).
+    var changeWaiterCount: Int { changeWaiters.values.reduce(0) { $0 + $1.count } }
     /// Called with each work id added, changed or removed, once the change is on disk.
     let onChange: (@Sendable (UUID) -> Void)?
 
@@ -39,6 +43,32 @@ actor WorkStore {
         }
         return w
     }
+
+    /// The work's version (`Work.version`; 0 before its first counted write). nil: no such work.
+    func version(_ id: UUID) async throws -> Int? { try await load().first { $0.id == id }.map { $0.version ?? 0 } }
+
+    /// Returns once the work's version is past `since` (at once when it already is), the work is gone, or the calling
+    /// task is cancelled (how a timeout ends it): the version then (nil: no such work). No polling: `mutate` resumes
+    /// the wait when it writes a change of this work.
+    func changed(_ id: UUID, since: Int) async throws -> Int? {
+        let token = UUID()
+        while let v = try await version(id), v <= since, !Task.isCancelled {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    // cancelled before parking: `dropWaiter` already ran and found nothing, so it must not park
+                    if Task.isCancelled { c.resume() } else { changeWaiters[id, default: [:]][token] = c }
+                }
+            } onCancel: { Task { await self.dropWaiter(id, token) } }
+        }
+        return try await version(id)
+    }
+
+    private func dropWaiter(_ id: UUID, _ token: UUID) {
+        changeWaiters[id]?.removeValue(forKey: token)?.resume()
+        if changeWaiters[id]?.isEmpty == true { changeWaiters[id] = nil }
+    }
+
+    private func wake(_ id: UUID) { changeWaiters.removeValue(forKey: id)?.values.forEach { $0.resume() } }
 
     /// `change` applied to work `id`, then the limits enforced (overflow archived).
     func update(_ id: UUID, _ change: (inout Work) -> Void) async throws {
@@ -108,6 +138,11 @@ actor WorkStore {
         try change(&list)
         var lines: [[String: Any]] = []
         Self.enforce(&list, &lines)
+        let was = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // a work this write changes (or adds) is one version further; one it leaves as it was keeps its version
+        let changed = list.indices.filter { was[list[$0].id] != list[$0] }
+        for i in changed { list[i].version = (was[list[i].id]?.version ?? 0) + 1 }
+        let gone = Set(was.keys).subtracting(list.map(\.id))
         let data = try Self.encode(list), f = file, a = archive
         let out = try lines.map { try Self.line($0) }
         try await onIO {
@@ -117,10 +152,10 @@ actor WorkStore {
             if emptyArchive { try Self.truncate(a) }
         }
         all = list; writes += 1
+        let ids = changed.map { list[$0].id } + gone
+        for id in ids { wake(id) }
         guard let onChange else { return }
-        let was = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        for w in list where was[w.id] != w { onChange(w.id) }
-        for id in Set(was.keys).subtracting(list.map(\.id)) { onChange(id) }
+        for id in ids { onChange(id) }
     }
 
     /// `body` on the disk queue while no change is written: work.json and the archive read together are consistent (a backup).

@@ -136,7 +136,7 @@ actor WorkLoop {
         let first = LoopEvent(at: started, kind: .attemptStarted, task: task.id, attempt: n)
         try? await store.update(w.id) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started }
-            x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.phase = .agent
+            x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(.agent, at: started)
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
             x.loop?.record(first)
         }
@@ -167,7 +167,7 @@ actor WorkLoop {
         await record(w.id, &run) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
             Self.endJob(&x, name, "loop: estado inesperado do motor", at: at)
-            x.loop?.phase = nil
+            x.loop?.show(nil)
             x.notes.append(WorkNote(at: at, text: "[loop] estado inesperado do motor\(what) em \"\(task.title)\": é um bug do laço; tarefa reaberta, tentativa não contada, worktree intocada; laço parado"))
         }
         return .stop(.init(.internal))
@@ -213,7 +213,7 @@ actor WorkLoop {
         let events = r.pending, phase = r.phase
         r.pending = []; r.phase = nil
         try? await store.update(id) { x in
-            if let phase { x.loop?.phase = phase }
+            if let phase { x.loop?.show(phase) }
             for e in events { x.loop?.record(e) }
             change(&x)
         }

@@ -70,16 +70,41 @@ public enum WorkStatusText {
     }
 
     /// A work run by `collie work run`: "em laço: <task> (tentativa n/N)", or how its loop ended (a stopped one with
-    /// its `stopReason`'s label). nil: a sequential work.
-    public static func loopLine(_ w: Work) -> String? {
+    /// its `stopReason`'s label). nil: a sequential work. With `now` (`work status`, `work wait`), a running loop that
+    /// knows when its phase began also says since when and, with the agent working, when the turn expires (`times`).
+    public static func loopLine(_ w: Work, now: Date? = nil, timeZone: TimeZone = .current) -> String? {
         guard let l = w.loop else { return nil }
         switch l.state {
         case .running:
             let title = w.tasks.first { $0.id == l.task }.map { RerailText.clean($0.title) } ?? "?"
             return "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.phase.map { " · \($0.label)" } ?? "")
+                + (now.flatMap { times(l, now: $0, timeZone: timeZone) }.map { " · \($0)" } ?? "")
         case .stopped: return "laço parado (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
         case .finished: return "laço terminou (\(l.used) tentativas)"
         }
+    }
+
+    /// A running loop's phase in time: "desde 14:03 (4 min)" (the daemon's local time; whole minutes elapsed, rounded
+    /// down) and, with the agent working, " · próximo limite: turno vence em 56 min" (the attempt's start plus the
+    /// turn's `timeout`; minutes left, rounded up; past it: "turno vence agora"). nil: no phase, or no `phaseSince`.
+    static func times(_ l: WorkLoopState, now: Date, timeZone: TimeZone = .current) -> String? {
+        guard l.state == .running, let phase = l.phase, let since = l.phaseSince else { return nil }
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = timeZone; f.dateFormat = "HH:mm"
+        let elapsed = max(0, now.timeIntervalSince(since))
+        var out = "desde \(f.string(from: since)) (\(Int(elapsed / 60)) min)"
+        if phase == .agent {
+            let left = Double(l.timeout) - elapsed
+            out += " · próximo limite: " + (left > 0 ? "turno vence em \(Int((left / 60).rounded(.up))) min" : "turno vence agora")
+        }
+        return out
+    }
+
+    /// What `work wait` prints: the loop's line of `work status` (a work without a loop: its title), then the version
+    /// to wait from and how the wait ended.
+    static func waitLine(_ w: Work, version: Int, timedOut: Bool, now: Date, timeZone: TimeZone = .current) -> String {
+        let ended = w.loop.map { $0.state != .running } ?? false
+        return (loopLine(w, now: now, timeZone: timeZone) ?? "sem laço: \(RerailText.clean(w.title))")
+            + "\nversão \(version)" + (ended ? " · laço terminou (ended)" : timedOut ? " · tempo esgotado sem mudança (timedOut)" : "")
     }
 
     /// A loop with a gate (`work run --gate`): "portão: <command>", on one line. nil: no loop, or one without a gate.

@@ -853,6 +853,13 @@ dono aprovou a lista de tarefas e os checks.
   sandbox também.
 - `collie work stop` encerra depois do veredito da tentativa atual; parar o daemon não gasta a tentativa em curso. `collie work status` mostra `em laço: <tarefa>
   (tentativa 2/3)`. Reiniciar o daemon para o laço; `collie work run` de novo continua da próxima tarefa aberta.
+- **Esperar o laço sem terminal:** `collie work wait [--since N] [--timeout S]` (tool MCP `work_wait`) responde quando o
+  trabalho ativo mudou para além da versão `N` (tarefa, fase, tentativa, estado ou motivo de parada do laço, nota, evento do
+  diário), quando o laço terminou (`ended`) ou quando o tempo acabou (`timedOut`; padrão 600 s, máximo 3600). Sem
+  `--since` devolve de imediato o estado e a `version` de onde esperar. A resposta é a do `work status` mais `version`,
+  `ended` e `timedOut`; o texto é a linha do laço e `versão N`. A versão fica em disco: não volta atrás num reinício do daemon.
+- **Tempo da fase:** com o laço em curso, a linha do laço no `work status` diz `desde 14:03 (4 min)` (horário local do
+  daemon) e, com o agente trabalhando, `próximo limite: turno vence em N min` (início da tentativa mais `--timeout`).
 - **Diário do laço:** `collie work status --events [N]` (N padrão 20, máximo 100) mostra, depois do status, as últimas N
   linhas do diário: `HH:mm:ss tipo T<tarefa>#<tentativa> detalhe` (horário local do daemon, da mais antiga para a mais
   nova), por exemplo `14:03:07 turnEnded Ta#1 hook` e `14:03:14 checkFinished Ta#1 exit 1`. O laço guarda os 100 eventos

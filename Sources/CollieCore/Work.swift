@@ -87,6 +87,13 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão" } }
     }
     public var phase: Phase?
+    /// When `phase` last changed (`show`); nil: no phase, or a loop written before this existed.
+    public var phaseSince: Date?
+    /// Sets `phase`; a phase that changes starts counting at `at` (the same phase again keeps its time).
+    public mutating func show(_ p: Phase?, at: Date = Date()) {
+        if p != phase { phaseSince = p == nil ? nil : at }
+        phase = p
+    }
     /// Why a loop that did not finish stopped: one `code` per way out of the engine, `detail` (at most 200 characters)
     /// what the code alone does not say (`othersWorking`: the terminal's name).
     public struct Stop: Codable, Sendable, Equatable {
@@ -136,7 +143,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         self.startedAt = startedAt; self.endedAt = endedAt
     }
     /// The older fields decode as always (a required one missing, or one of the wrong shape, is no loop). The newer
-    /// ones (`phase`, `stopReason`, `events`) only record: a malformed one is nil, a malformed event is dropped, and
+    /// ones (`phase`, `phaseSince`, `stopReason`, `events`) only record: a malformed one is nil, a malformed event is dropped, and
     /// the loop survives. What is written (the synthesized `encode`) does not change.
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -150,6 +157,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         tasks = try c.decodeIfPresent([String].self, forKey: .tasks); gate = try c.decodeIfPresent(String.self, forKey: .gate)
         startedAt = try c.decode(Date.self, forKey: .startedAt); endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
         phase = (try? c.decodeIfPresent(Phase.self, forKey: .phase)) ?? nil
+        phaseSince = (try? c.decodeIfPresent(Date.self, forKey: .phaseSince)) ?? nil
         stopReason = (try? c.decodeIfPresent(Stop.self, forKey: .stopReason)) ?? nil
         events = ((try? c.decodeIfPresent([Lossy].self, forKey: .events)) ?? nil)?.compactMap(\.event)
     }
@@ -195,6 +203,10 @@ public struct Work: Codable, Sendable, Equatable {
     public var lotId: UUID?
     /// Set while (and after) `collie work run` runs it; nil = a sequential work.
     public var loop: WorkLoopState?
+    /// How many times the store wrote a change of this work (`WorkStore`: +1 per write that changes it; kept on disk,
+    /// so it never goes back across a daemon restart). `work wait --since` waits for it to pass a value. nil: never
+    /// written by a store that counts.
+    public var version: Int?
     public init(id: UUID = UUID(), title: String, terminalId: UUID, paddockId: UUID? = nil, branch: String? = nil, openedAt: Date = Date(),
                 closedAt: Date? = nil, closedBy: String? = nil, tasks: [WorkTask] = [], jobs: [WorkJob] = [], notes: [WorkNote] = [],
                 commits: [String] = []) {
@@ -202,7 +214,7 @@ public struct Work: Codable, Sendable, Equatable {
         self.openedAt = openedAt; self.closedAt = closedAt; self.closedBy = closedBy
         self.tasks = tasks; self.jobs = jobs; self.notes = notes; self.commits = commits
     }
-    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, proposedAt, proposedCommit, lotId, loop }
+    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, proposedAt, proposedCommit, lotId, loop, version }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -220,5 +232,6 @@ public struct Work: Codable, Sendable, Equatable {
         proposedCommit = (try? c.decodeIfPresent(String.self, forKey: .proposedCommit)) ?? nil
         lotId = (try? c.decodeIfPresent(UUID.self, forKey: .lotId)) ?? nil
         loop = (try? c.decodeIfPresent(WorkLoopState.self, forKey: .loop)) ?? nil   // malformed = no loop
+        version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? nil
     }
 }

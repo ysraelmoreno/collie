@@ -19,14 +19,14 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         return await r.store.writes - before - 2
     }
 
-    // The ceilings are today's counts: a write added to the attempt breaks the test.
+    // Exact counts: a write added to the attempt breaks the test (M1b.2's own ceiling is 8, with a gate).
 
     @Test func aPassWithoutGateWritesFiveTimes() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
         await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let n = await writes(r)
         #expect(try await r.get().tasks[0].state == .done)
-        #expect(n <= 5, "\(n)")   // start, before the ask, before the check, done, spent
+        #expect(n == 5, "\(n)")   // start, before the ask, before the check, done, spent
     }
 
     @Test func aPassWithGateWritesSixTimes() async throws {
@@ -34,7 +34,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let n = await writes(r)
         #expect(try await r.get().tasks[0].state == .done)
-        #expect(n <= 6, "\(n)")   // the same, and before the gate (M1b.2's own ceiling: 8)
+        #expect(n == 6, "\(n)")   // the same, and before the gate (M1b.2's own ceiling: 8)
     }
 
     /// An `.idle` end waits for the commit: one more write, before the wait. Still within M1b.2's 8.
@@ -43,7 +43,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         await r.host.set("loop-a-1", LoopScript(source: .idle, lateAfter: 2, late: { try await commit("done.txt", "ok\n", in: $0) }))
         let n = await writes(r)
         #expect(try await r.get().tasks[0].state == .done)
-        #expect(n <= 7, "\(n)")
+        #expect(n == 7, "\(n)")
     }
 
     @Test func aFailedCheckWritesFiveTimes() async throws {
@@ -52,7 +52,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let n = await writes(r)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.loop?.events?.last?.kind == .discarded)
-        #expect(n <= 5, "\(n)")   // start, before the ask, before the check, deferred (with verdict and discard), spent
+        #expect(n == 5, "\(n)")   // start, before the ask, before the check, deferred (with verdict and discard), spent
     }
 
     @Test func noCommitWritesFiveTimes() async throws {
@@ -60,7 +60,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let n = await writes(r)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit")
-        #expect(n <= 5, "\(n)")
+        #expect(n == 5, "\(n)")
     }
 
     @Test func theOrderOfTheEventsIsTheSame() async throws {
@@ -86,7 +86,8 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
             await seen.add(l?.events?.last?.kind, l?.phase)
         }
         #expect(await r.run() == .finished)
-        #expect(await seen.kinds == [.checkStarted, .gateStarted] && seen.phases == [.check, .gate])
+        let kinds = await seen.kinds, phases = await seen.phases
+        #expect(kinds == [.checkStarted, .gateStarted] && phases == [.check, .gate], "\(kinds) \(phases)")
     }
 
     @Test func aClosedWorkKeepsItsNewestTwenty() async throws {

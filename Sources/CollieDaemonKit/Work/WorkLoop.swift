@@ -204,7 +204,7 @@ actor WorkLoop {
     /// One write of the work: the attempt's pending phase and events (in their order), then `change`. Every write of an
     /// attempt goes through here, so an event next to another write costs no write of its own (M1b.2: at most 8
     /// `store.update` in an attempt that passes with a gate, `LoopJournalWritesTests`).
-    private func record(_ id: UUID, _ r: inout Run, _ change: (inout Work) -> Void = { _ in }) async {
+    private func record(_ id: UUID, _ r: inout Run, _ change: @Sendable (inout Work) -> Void = { _ in }) async {
         let events = r.pending, phase = r.phase
         r.pending = []; r.phase = nil
         try? await store.update(id) { x in

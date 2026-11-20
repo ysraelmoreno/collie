@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check de cada tarefa do laço "estado do laço" (Ondas 1, 1b, 2 e 3): scripts/laco-check.sh M1.1 .. M3.7
+# Check de cada tarefa do laço "estado do laço" (Ondas 1, 1b, 2 e 3): scripts/laco-check.sh M1.1 .. M3.7 (e M2.0)
 # Cada tarefa exige o seu arquivo de testes novo e roda TODAS as suítes da família (cumulativo: nada pode regredir).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -7,7 +7,7 @@ t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
 suites=(WorkLoopTests WorkStatusTextTests WorkStoreTests LoopStopReasonTests LoopJournalTests AttemptDecisionTests AttemptMachineTests
         LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests WorkWaitTests LoopOrientationTests
         WorkTaskReopenTests TaskSchedulerTests LaneWorktreeTests LaneHostTests LaneIntegrationTests LoopParallelTests
-        LoopLaneLifecycleTests LoopParallelE2ETests WorkCommandTests CommandsTests WorkPanelTests)
+        LoopLaneLifecycleTests LoopParallelE2ETests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
 filters=(); for s in "${suites[@]}"; do filters+=(--filter "$s"); done
 need() { test -f "$1" || { echo "falta $1" >&2; exit 1; }; }
 D=Tests/CollieDaemonKitTests
@@ -19,6 +19,7 @@ case "${1:?M1.1..M3.7}" in
   M1b.1) need $D/LoopRobustnessTests.swift ;;
   M1b.2) need $D/LoopJournalWritesTests.swift ;;
   M1b.3) need $D/LoopNitsTests.swift ;;
+  M2.0)  need $D/AskSubmitRetryTests.swift ;;
   M2.1)  need $D/LoopNudgeTests.swift ;;
   M2.2)  need $D/LoopResumeTests.swift ;;
   M2.3)  need $D/WorkWaitTests.swift ;;

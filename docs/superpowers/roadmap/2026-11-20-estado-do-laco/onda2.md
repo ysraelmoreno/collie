@@ -10,6 +10,7 @@ O estado do laço é o que o **daemon observa** (commit, saída do check, termin
 
 | # | Tarefa | O problema que resolve |
 |---|---|---|
+| M2.0 | Reenviar o Enter antes de falhar o prompt | o prompt fica digitado e não é submetido sob carga: `did not submit the prompt` queima a tentativa sem o agente ter trabalhado (M1b.2, 2026-11-20: 2 de 3 tentativas). **Aprovado pelo dono em 2026-11-20** (toca no `AskCoordinator`) |
 | M2.1 | Toque em fim de turno prematuro | o agente encerra o turno cedo (pergunta, diálogo, compactação), o `ask` volta `.hook` e a tentativa morre em segundos com "no new commit" (A2.2, 2026-11-19: duas tentativas queimadas com 7 s) |
 | M2.2 | Retomar o commit que já existe após queda | o `collied` cai com o commit feito e a tarefa aberta: hoje a retomada chama um agente novo e duplica trabalho (B1.2, 2026-11-18) |
 | M2.3 | `collie work wait` e status com tempo | o Pastor espera por texto injetado; falta um "me avise quando o estado mudar" feito pelo daemon, e o status não diz há quanto tempo está na fase nem quando ela vence |
@@ -18,7 +19,7 @@ O estado do laço é o que o **daemon observa** (commit, saída do check, termin
 
 ## Fora do escopo
 
-Mudar `ask`/`inject`/`AskCoordinator` (o Enter por timer é outra onda); delegação por `ask` fora do laço; mudar o prompt da tentativa; erro de ambiente parando o laço; qualquer coisa de interface além de ler campos novos opcionais.
+Mudar `ask`/`inject`/`AskCoordinator` além do reenvio único da M2.0 (o Enter por timer é outra onda); delegação por `ask` fora do laço; mudar o prompt da tentativa; erro de ambiente parando o laço; qualquer coisa de interface além de ler campos novos opcionais.
 
 ## Regras (as da Onda 1, mais estas)
 

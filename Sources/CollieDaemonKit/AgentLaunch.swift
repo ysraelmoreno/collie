@@ -123,11 +123,11 @@ public enum AgentLaunch {
             var json: [String: Any] = [
                 // plan usage (ClaudeRateLimits): the hook records rate_limits, then runs the user's own statusLine
                 "statusLine": ["type": "command", "command": hookCommand(collie, "claude-statusline"), "padding": 0],
-                "hooks": ["Stop": hook("claude-stop", 10),
+                "hooks": ["Stop": hook("claude-stop", 12),
                                                  "SessionStart": hook("claude-session-start", 5),
                                                  "UserPromptSubmit": hook("claude-prompt", 5),
                                                  // the work registry (WorkHookParser; ignores tools it does not know) and the chat body (every tool call)
-                                                 "PostToolUse": hook("claude-tool", 5),
+                                                 "PostToolUse": hook("claude-tool", 8),
                                                  "SubagentStop": hook("claude-subagent-stop", 5),
                                                  "PreCompact": hook("claude-precompact", 5),
                                                  "SessionEnd": hook("claude-session-end", 5),

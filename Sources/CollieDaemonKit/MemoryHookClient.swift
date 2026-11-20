@@ -41,6 +41,12 @@ public enum MemoryHookClient {
     /// the block reply when the daemon asks the agent to record what it learned. nil — no block — on a continued Stop
     /// (`stop_hook_active`), when there is nothing to ask, and on any error or timeout (fail open). Never writes to a PTY.
     public static func stopOutput(stdin: Data, env: [String: String], onError: (String) -> Void = { _ in }) async -> String? {
+        guard let reason = await stopAsk(stdin: stdin, env: env, onError: onError) else { return nil }
+        return HookPayload.claudeStopBlock(reason: reason)
+    }
+
+    /// The text of `stopOutput`'s block (the memory ask), before it is wrapped as a reply; same rules and same `turn.completed` call.
+    public static func stopAsk(stdin: Data, env: [String: String], onError: (String) -> Void = { _ in }) async -> String? {
         guard let sock = env["COLLIE_SOCKET"], let tid = env["COLLIE_TERMINAL_ID"], let tok = env["COLLIE_TOKEN"] else {
             onError("COLLIE_SOCKET/COLLIE_TERMINAL_ID/COLLIE_TOKEN missing"); return nil
         }
@@ -54,7 +60,7 @@ public enum MemoryHookClient {
                                                     to: URL(fileURLWithPath: sock), timeoutSeconds: 5)
             guard r.ok else { onError(r.error?.message ?? "turn.completed failed"); return nil }
             guard active == false, case .object(let o)? = r.result, case .string(let reason)? = o["ask"], !reason.isEmpty else { return nil }
-            return HookPayload.claudeStopBlock(reason: reason)
+            return reason
         } catch { onError("\(error)"); return nil }
     }
 }

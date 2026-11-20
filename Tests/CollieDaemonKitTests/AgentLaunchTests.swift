@@ -18,7 +18,7 @@ import CollieProtocol
         let o = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
         let entry = (((o["hooks"] as! [String: Any])["Stop"] as! [[String: Any]])[0]["hooks"] as! [[String: Any]])[0]
         let cmd = entry["command"] as! String
-        #expect(entry["timeout"] as? Int == 10)
+        #expect(entry["timeout"] as? Int == 12)
         #expect(cmd.hasSuffix("hook claude-stop") && cmd.hasPrefix("'/opt/o rq/collie'"))
         let note = (((o["hooks"] as! [String: Any])["Notification"] as! [[String: Any]])[0]["hooks"] as! [[String: Any]])[0]
         #expect((note["command"] as! String).hasSuffix("hook claude-notification") && note["timeout"] as? Int == 5)

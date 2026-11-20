@@ -36,7 +36,7 @@ private func additional(_ json: String?, _ event: String) -> String? {
         _ = try AgentLaunch.launchSpec(for: rec, env: [:], hooksDir: dir, collie: URL(fileURLWithPath: "/opt/o rq/collie"), shell: "/bin/zsh")
         let o = try JSONSerialization.jsonObject(with: Data(contentsOf: AgentLaunch.settingsFile(rec.id, in: dir))) as! [String: Any]
         let hooks = o["hooks"] as! [String: Any]
-        for (event, sub, timeout) in [("Stop", "claude-stop", 10), ("SessionStart", "claude-session-start", 5), ("UserPromptSubmit", "claude-prompt", 5)] {
+        for (event, sub, timeout) in [("Stop", "claude-stop", 12), ("SessionStart", "claude-session-start", 5), ("UserPromptSubmit", "claude-prompt", 5)] {
             let e = ((hooks[event] as! [[String: Any]])[0]["hooks"] as! [[String: Any]])[0]
             #expect(e["type"] as? String == "command" && e["timeout"] as? Int == timeout)
             #expect(e["command"] as? String == "'/opt/o rq/collie' hook \(sub)", "\(event)")

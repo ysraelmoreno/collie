@@ -194,7 +194,7 @@ private func hook(_ p: Paths, _ t: Term, _ name: String, _ payload: String) asyn
         for (k, sub) in [("PostToolUse", "claude-tool"), ("SubagentStop", "claude-subagent-stop"),
                          ("PreCompact", "claude-precompact"), ("SessionEnd", "claude-session-end")] {
             #expect(command(k) == "'/opt/collie' hook \(sub)", "\(k)")
-            #expect((entry(k)?["hooks"] as? [[String: Any]])?.first?["timeout"] as? Int == 5)
+            #expect((entry(k)?["hooks"] as? [[String: Any]])?.first?["timeout"] as? Int == (k == "PostToolUse" ? 8 : 5))
         }
         #expect(command("Stop")?.hasSuffix("hook claude-stop") == true)   // the existing ones stay
     }

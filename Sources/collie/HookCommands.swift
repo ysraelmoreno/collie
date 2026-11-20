@@ -42,15 +42,18 @@ enum HookCommands {
                 while let more = try stdin.read(upToCount: 1 << 16), !more.isEmpty {}   // drained: the agent's write never breaks
                 log("\(a[0]): payload over 64 KiB, dropped"); return
             }
-            try await send("work.hook", ["hook": .string(String(a[0].dropFirst("claude-".count))),
-                                         "payload": .string(String(decoding: data, as: UTF8.self))], timeout: 2)
+            // work.hook always goes out; claude-tool then asks the plug-ins (fail open, prints their verdict only)
+            if let out = await PluginHookClient.toolOutput(hook: a[0], payload: data, env: ProcessInfo.processInfo.environment,
+                                                           onError: { log("\(a[0]): \($0)") }) {
+                print(out)
+            }
             return
         case "claude-statusline":
             statusline()
             return
         case "claude-stop":
-            // prints the block reply only when the daemon asks for one; every failure is just a log line (fail open)
-            if let out = await MemoryHookClient.stopOutput(stdin: FileHandle.standardInput.readDataToEndOfFile(),
+            // prints the block reply only when a plug-in or the daemon asks for one; every failure is just a log line (fail open)
+            if let out = await PluginHookClient.stopOutput(stdin: FileHandle.standardInput.readDataToEndOfFile(),
                                                            env: ProcessInfo.processInfo.environment, onError: { log("claude-stop: \($0)") }) {
                 print(out)
             }

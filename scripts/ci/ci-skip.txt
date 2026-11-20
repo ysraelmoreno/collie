@@ -1,0 +1,12 @@
+# Tests the CI leaves out, read by scripts/ci/run-tests.sh: one regex over the test id per line (as `swift test list`
+# prints it, e.g. CollieTerminalTests.ControllingTerminalTests/cttyAcceptsSandboxLine()), then "  # " and the reason.
+# No trailing "$": swift-testing matches --skip against more than the listed id, so "…\(\)$" skips nothing.
+# A ratchet: it only shrinks. A test lands here only when it cannot run on a GitHub-hosted runner, or for a known bug
+# (reason "bug conhecido: …"); a flaky test is fixed, not listed. A pattern that matches no test fails the run.
+
+# Real Seatbelt profiles (skipped on a dev machine inside Collie's sandbox, where sandbox-exec can't nest). On the
+# runner the curator's profile denies what its /bin/sh reads ("curador bloqueado pelo sandbox: /private/var/select/sh"
+# in run 44660112287, "claude saiu com 134" in 44521855224); collie-ctty --sandbox did not print "a b|c|DENIED" in either run.
+# Unverified whether this is the runner image or the profiles: run them unsandboxed on a Mac before removing.
+^CollieDaemonKitTests\.CuratorRunnerTests/(fakeClaudeRunsSandboxed|inputViaStdin|perCallFile|creditErrorRunIsExhausted|timeoutKills)\(\)  # runner: Seatbelt profile of the curator denies /private/var/select/sh
+^CollieTerminalTests\.ControllingTerminalTests/cttyAcceptsSandboxLine\(\)  # runner: collie-ctty --sandbox output differs (both runs)

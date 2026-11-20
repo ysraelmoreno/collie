@@ -83,6 +83,64 @@ import CollieCore
         #expect(!WorkStatusText.recall(w).contains("laço"))
     }
 
+    /// M1.1: a stopped loop says why, in the status line and in the end notice; a finished one reads as before.
+    @Test func stoppedLoopShowsItsReason() {
+        var w = Work(title: "W", terminalId: term, tasks: [WorkTask(id: "a", title: "Build it")])
+        w.loop = WorkLoopState(state: .stopped, used: 3)
+        #expect(WorkStatusText.loopLine(w) == "laço parado (3 tentativas)")   // written before the field existed
+        w.loop?.stopReason = .init(.maxReached)
+        #expect(WorkStatusText.loopLine(w) == "laço parado (3 tentativas) · limite de tentativas (--max) atingido")
+        #expect(WorkStatusText.recall(w).contains("· limite de tentativas (--max) atingido"))
+        #expect(WorkStatusText.loopEnded(w).hasPrefix("[collie] Laço de \"W\" parou (limite de tentativas (--max) atingido): 0 feitas, 0 adiadas."))
+        w.loop?.stopReason = .init(.othersWorking, detail: "dev")
+        #expect(WorkStatusText.loopLine(w) == "laço parado (3 tentativas) · 'dev' trabalhando no cercado")
+        w.loop = WorkLoopState(state: .finished, used: 3)
+        #expect(WorkStatusText.loopLine(w) == "laço terminou (3 tentativas)")
+        #expect(WorkStatusText.loopEnded(w).hasPrefix("[collie] Laço de \"W\" terminou: 0 feitas, 0 adiadas."))
+    }
+
+    /// M2.4: both notices end with where the state is read, once, and the task's stays on one line.
+    @Test func noticesEndWithTheStateHint() {
+        let hint = " · estado: collie work status"
+        let e = TaskEvidence(commits: ["abc1234 feat: x"], shortstat: "1 file changed", checkTail: "ok", seconds: 9, attempt: 1)
+        let done = WorkTask(id: "a", title: "Build\nit", state: .done, evidence: e)
+        let late = WorkTask(id: "b", title: "Flaky", state: .deferred, reason: "loop: check failed\n(exit 1)")
+        for t in [done, late, WorkTask(id: "c", title: "By hand", state: .done)] {
+            let line = WorkStatusText.taskEnded(t)
+            #expect(line.hasPrefix("[collie] Laço, tarefa terminada: ") && line.hasSuffix(hint), "\(line)")
+            #expect(!line.contains("\n") && line.components(separatedBy: "collie work status").count == 2, "\(line)")
+            #expect(!line.hasSuffix("?"))   // a notice is never read as a question
+        }
+        #expect(WorkStatusText.taskEnded(done) == "[collie] Laço, tarefa terminada: ✓ Build it · tentativa 1 · 1 commit · 1 file changed" + hint)
+        var w = Work(title: "W", terminalId: term, tasks: [done, late])
+        var stopped = WorkLoopState(state: .stopped, used: 3)
+        stopped.stopReason = .init(.maxReached)
+        for state in [WorkLoopState(state: .finished, tasks: ["a", "b"]), stopped] {
+            w.loop = state
+            let lines = WorkStatusText.loopEnded(w).components(separatedBy: "\n")
+            #expect(lines[0].hasPrefix("[collie] Laço de \"W\" ") && lines[0].hasSuffix("1 feitas, 1 adiadas." + hint), "\(lines[0])")
+            #expect(WorkStatusText.loopEnded(w).components(separatedBy: "collie work status").count == 2)   // once
+            #expect(lines.count == 3 && !lines.contains { $0.hasSuffix("?") })
+        }
+    }
+
+    /// M1.2: the journal shows only where it is asked for (`work status --events`): every status line reads as before.
+    @Test func theJournalChangesNoStatusLine() {
+        var w = Work(title: "W", terminalId: term, tasks: [WorkTask(id: "a", title: "Build it", state: .inProgress)])
+        for state in [WorkLoopState.State.running, .stopped, .finished] {
+            w.loop = WorkLoopState(state: state, task: "a", attempt: 2, tries: 3, used: 2, gate: "make lint")
+            if state == .stopped { w.loop?.stopReason = .init(.maxReached) }
+            let before = [WorkStatusText.loopLine(w), WorkStatusText.gateLine(w), WorkStatusText.statsLine(w), WorkStatusText.recall(w), WorkStatusText.loopEnded(w),
+                          WorkStatusText.answer(.whereAreWe, works: [w], names: [:], badges: [:], now: now)]
+            w.loop?.record(LoopEvent(at: now, kind: .verdict, task: "a", attempt: 2, detail: "check failed (exit 1)"))
+            let after = [WorkStatusText.loopLine(w), WorkStatusText.gateLine(w), WorkStatusText.statsLine(w), WorkStatusText.recall(w), WorkStatusText.loopEnded(w),
+                         WorkStatusText.answer(.whereAreWe, works: [w], names: [:], badges: [:], now: now)]
+            #expect(before == after, "\(state)")
+            #expect(!after.compactMap { $0 }.joined().contains("verdict"))
+        }
+        #expect(WorkStatusText.loopLine(w) == "laço terminou (2 tentativas)")
+    }
+
     @Test func doneLineShowsTheEvidence() {
         var t = WorkTask(id: "a", title: "Build\nit", state: .done)
         #expect(WorkStatusText.doneLine(t) == nil)   // no evidence: the status line stays as it was

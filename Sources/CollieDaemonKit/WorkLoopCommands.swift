@@ -182,7 +182,7 @@ extension CommandRouter {
         return s.count <= Self.loopCardMax ? s : nil
     }
 
-    /// Ends the loop after the current attempt's verdict; a loop still waiting for the owner's card: withdraws the card.
+    /// Ends the loop after the current attempt's verdict (the engine records `requested` when it does stop); a loop still waiting for the owner's card: withdraws the card.
     func workStop(_ t: TerminalRecord) async throws -> JSONValue {
         if let w = try await work.active(terminal: t.id), let card = loopCards.removeValue(forKey: w.id) {
             appWaiters.removeValue(forKey: card)?.resume(returning: false)   // the approval task frees the paddock and tells the starter
@@ -214,18 +214,47 @@ extension CommandRouter {
             // its agents' records (the processes died with the daemon): named as its loop jobs, in its paddock
             let agents = Set(w.jobs.filter { $0.kind == .loop }.map(\.id))
             for t in ws.terminals where agents.contains(t.name) && t.paddockId == w.paddockId { try? await remove(t) }
-            try? await work.update(w.id) { x in
-                for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task { x.tasks[i].state = .open }
-                for j in x.jobs.indices where x.jobs[j].kind == .loop && x.jobs[j].state == .running {
-                    x.jobs[j].state = .gone; x.jobs[j].endedAt = now
-                }
-                x.loop?.state = .stopped; x.loop?.endedAt = now; x.loop?.task = nil
-            }
+            try? await work.update(w.id) { Self.sweepLeftRunning(&$0, now: now) }
         }
     }
 
-    /// Daemon stop: the loops end with it (their state stays `running` until the next start's sweep).
-    func cancelLoops() { for l in workLoops.values { l.task.cancel() }; workLoops = [:]; loopPaddocks = [] }
+    /// What the start sweep writes on a work whose loop a previous daemon left `running`: stopped by `daemonRestart`,
+    /// with its note.
+    static func sweepLeftRunning(_ x: inout Work, now: Date) {
+        for i in x.tasks.indices where x.tasks[i].state == .inProgress && x.tasks[i].id == x.loop?.task {
+            x.tasks[i].state = .open
+            // M2b.1: the latest the fallen attempt can have committed: a commit made after this is never adopted.
+            // ponytail: the sweep's time, not the fall's (nobody saw it): what the owner commits between a crash and
+            // this start can still be adopted, and a failed adoption deletes nothing. A heartbeat if that gap matters.
+            if x.tasks[i].resumeFrom != nil, x.tasks[i].resumeAt == nil { x.tasks[i].resumeAt = now }
+        }
+        for j in x.jobs.indices where x.jobs[j].kind == .loop && x.jobs[j].state == .running {
+            x.jobs[j].state = .gone; x.jobs[j].endedAt = now
+        }
+        let why = WorkLoopState.Stop(.daemonRestart)
+        x.loop?.state = .stopped; x.loop?.endedAt = now; x.loop?.task = nil; x.loop?.stopReason = why
+        x.loop?.record(LoopEvent(at: now, kind: .stopped, detail: why.label))
+        x.notes.append(WorkNote(at: now, text: why.note))
+    }
+
+    /// How long the daemon's stop waits, in all, for its cancelled loops to write their end.
+    static let loopCancelWait = Duration.seconds(2)
+
+    /// Daemon stop: the loops end with it, and it waits (`wait` in all) for each engine to write `cancelled`.
+    /// One still busy after that (a check that ignores the cancel) stays `running` until the next start's sweep
+    /// (`daemonRestart`). `wait` is a parameter for the tests (M2b.2); the daemon always passes the default.
+    func cancelLoops(wait: Duration = CommandRouter.loopCancelWait) async {
+        let tasks = workLoops.values.map(\.task)
+        workLoops = [:]; loopPaddocks = []
+        guard !tasks.isEmpty else { return }
+        for t in tasks { t.cancel() }
+        // the event is the tasks' own end; the clock only bounds it (a daemon's stop never hangs on a loop)
+        let (ended, signal) = AsyncStream<Void>.makeStream()
+        Task { for t in tasks { await t.value }; signal.finish() }
+        let limit = Task { try? await Task.sleep(for: wait); signal.finish() }
+        for await _ in ended {}
+        limit.cancel()
+    }
 
     // MARK: what RouterLoopHost needs from the router
 
@@ -337,6 +366,7 @@ struct RouterLoopHost: LoopHost {
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).source
     }
+    func resubmitted(_ terminal: UUID) async -> Bool { await router.asks.submitRetried(terminal) }
 
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }

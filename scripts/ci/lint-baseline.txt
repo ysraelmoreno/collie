@@ -55,6 +55,7 @@ sleep Sources/CollieDaemonKit/UserEnvironment.swift 1
 sleep Sources/CollieDaemonKit/Work/WorkAssistant.swift 5
 sleep Sources/CollieDaemonKit/Work/WorkLoop.swift 2
 sleep Sources/CollieDaemonKit/WorkCommands.swift 1
+sleep Sources/CollieDaemonKit/WorkLoopCommands.swift 1
 sleep Sources/ColliePlugins/BrowserPanel.swift 1
 sleep Sources/ColliePlugins/DeckExporter.swift 1
 sleep Sources/ColliePlugins/DesignPanel.swift 1

@@ -127,7 +127,10 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Para que serve:** o registro do que cada terminal está fazendo, com tarefas e o andamento do laço. A tarefa feita pelo
   laço mostra a evidência: commits, saída do check e os arquivos de evidência declarados (`--evidence`), com "Abrir".
 - **Arquivos:** `Sources/ColliePlugins/WorkPanel.swift`.
-- **Como verificar:** `collie work status`, `collie work list`; o painel, à mão.
+- **Como verificar:** `collie work status` (a linha do laço diz `desde HH:mm (N min)` e, com o agente trabalhando,
+  `próximo limite: turno vence em N min`), `collie work wait [--since N] [--timeout S]` (espera o trabalho mudar, sem
+  terminal; devolve a versão), `collie work list`, `collie work task reopen <tarefa> [--keep-tries]` (uma tarefa adiada
+  ou abandonada volta à fila, na mesma posição, com `spec` e `check`); o painel, à mão.
 
 ### Plug-ins externos e apps (`WebPluginPanel`)
 

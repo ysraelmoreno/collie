@@ -1,0 +1,15 @@
+# M3.3 Sandbox e host da faixa
+
+Leia `onda3-paralelismo.md`. Depende de M3.2. **Esta é a tarefa de maior risco de segurança da onda.** Se algum requisito não puder ser cumprido com segurança, **não improvise: deixe tudo como está e adie a tarefa com a razão** (o dono prefere uma tarefa adiada a uma barreira de sandbox furada). Código: `Sources/CollieDaemonKit/WorkLoopCommands.swift` (`RouterLoopHost`, `prepareLoopSandbox`, `loopOthersWorking`, `loopSharesWorktree`, `loopSummon`, `loopDismiss`, `loopAgentSandboxed`), `Sources/CollieDaemonKit/Sandbox*.swift` (`SandboxInput`, `SandboxLaunch`, `gitDirs(of:)`, `closedPaddocks`).
+
+## Fazer
+
+1. `RouterLoopHost` aceita um `dir` próprio **por faixa**: uma instância (ou uma derivação barata) por faixa, com `dir = lane.path`, e tudo o que ele faz usando `dir` passa a valer para a faixa: `git`, `check`, `exists`, `readSpec` (a spec lida do arquivo do cercado, nunca da faixa, como hoje lê do cercado), `copyEvidence`, `patchDir` (um subdiretório por faixa para não misturar patches).
+2. **Perfil de sandbox da faixa** (`prepareLoopSandbox` por faixa): estrito, com a **faixa como projeto** (`project = lane.path`, `worktreeGitDir` e `mainGitDir` obtidos de `SandboxInput.gitDirs(of: lane.path)`). O agente de uma faixa **não pode ler nem escrever** a worktree do cercado nem outra faixa; a worktree do cercado e as outras faixas entram em `paddockWorktrees`/lista de fechados do perfil. Escreva um teste que **prova** isso pelo perfil gerado (as regras `deny` e `allow` do arquivo do perfil), sem rodar `sandbox-exec` (que não aninha no sandbox do Collie).
+3. `loopSummon` para uma faixa: o agente nasce com `cwd = lane.path` no cercado do trabalho (sem `--paddock`), e o registro do terminal sabe que a raiz do projeto dele é a faixa (veja como `projectRoot` é resolvido: a faixa **é** um worktree git, então o git toplevel dela deve servir; confirme e, se não servir, pare e adie).
+4. `othersWorking` por faixa: conta só terminais **que alcançam a faixa** (`loopSharesWorktree` com o `dir` da faixa); os agentes das outras faixas e os terminais do dono que trabalham na worktree do cercado **não** contam para esta faixa (a worktree do cercado é do integrador, M3.4, que tem a sua própria espera).
+5. Com `--parallel 1` e sem faixas, o `RouterLoopHost` se comporta **exatamente** como hoje (mesmo `dir`, mesmo perfil, mesmos testes).
+
+## Testes (escrever antes) — novo `Tests/CollieDaemonKitTests/LaneHostTests.swift`
+
+Dois hosts de faixa e um do cercado, repositório temporário: `dir` de cada um; `git`/`check` rodam na faixa certa; `patchDir` distinto por faixa; o perfil gerado para a faixa A **não** contém permissão de escrita nem de leitura em B nem no cercado, e contém a faixa A (leitura da árvore do perfil gerado); `othersWorking` da faixa A ignora um terminal em B e um no cercado, e conta um terminal que está dentro de A; um host sem faixa produz o mesmo perfil de antes (teste de regressão, comparando o texto do perfil). Se o sandbox do daemon estiver desligado no teste, o host da faixa **recusa** (não roda sem perfil), como `check` já faz.

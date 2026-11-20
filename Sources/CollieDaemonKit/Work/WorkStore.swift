@@ -8,11 +8,19 @@ import CollieProtocol
 /// running), then the oldest of any state. Disk work runs on one serial queue, off the cooperative pool.
 actor WorkStore {
     static let maxClosed = 200, maxTasks = 500, maxJobs = 200, maxNotes = 200, maxCommits = 200
+    /// A closed work keeps only this many of its loop's newest events (the ring of 100 is the active work's).
+    static let maxClosedEvents = 20
+    /// How many times work.json was written (a test counts a loop's writes with it).
+    private(set) var writes = 0
     let dir: URL
     private var all: [Work]?   // loaded on first use
     private var saving = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private let io = DispatchQueue(label: "collie.work")
+    /// Who waits for a work's next change (`changed`), by work id then by a token of the wait.
+    private var changeWaiters: [UUID: [UUID: CheckedContinuation<Void, Never>]] = [:]
+    /// How many waits are parked (a test checks a cancelled one leaves none).
+    var changeWaiterCount: Int { changeWaiters.values.reduce(0) { $0 + $1.count } }
     /// Called with each work id added, changed or removed, once the change is on disk.
     let onChange: (@Sendable (UUID) -> Void)?
 
@@ -36,6 +44,32 @@ actor WorkStore {
         return w
     }
 
+    /// The work's version (`Work.version`; 0 before its first counted write). nil: no such work.
+    func version(_ id: UUID) async throws -> Int? { try await load().first { $0.id == id }.map { $0.version ?? 0 } }
+
+    /// Returns once the work's version is past `since` (at once when it already is), the work is gone, or the calling
+    /// task is cancelled (how a timeout ends it): the version then (nil: no such work). No polling: `mutate` resumes
+    /// the wait when it writes a change of this work.
+    func changed(_ id: UUID, since: Int) async throws -> Int? {
+        let token = UUID()
+        while let v = try await version(id), v <= since, !Task.isCancelled {
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    // cancelled before parking: `dropWaiter` already ran and found nothing, so it must not park
+                    if Task.isCancelled { c.resume() } else { changeWaiters[id, default: [:]][token] = c }
+                }
+            } onCancel: { Task { await self.dropWaiter(id, token) } }
+        }
+        return try await version(id)
+    }
+
+    private func dropWaiter(_ id: UUID, _ token: UUID) {
+        changeWaiters[id]?.removeValue(forKey: token)?.resume()
+        if changeWaiters[id]?.isEmpty == true { changeWaiters[id] = nil }
+    }
+
+    private func wake(_ id: UUID) { changeWaiters.removeValue(forKey: id)?.values.forEach { $0.resume() } }
+
     /// `change` applied to work `id`, then the limits enforced (overflow archived).
     func update(_ id: UUID, _ change: (inout Work) -> Void) async throws {
         try await mutate { list in
@@ -51,7 +85,28 @@ actor WorkStore {
         try await update(id) { w in
             guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
             w.tasks[i].state = state; w.tasks[i].reason = reason; w.tasks[i].updatedAt = at
+            w.tasks[i].forgetResume()   // M2b.1: a state set by hand is no interrupted attempt
             out = w.tasks[i]
+        }
+        return out
+    }
+
+    /// `work.task.reopen`: a deferred or dropped task goes back to `open` where it is, its `spec`, `check` and
+    /// `evidenceGlob` kept, `reason` and `lastFailure` cleared, `tries` too unless `keepTries`, with a note on the work.
+    /// Decided on the task as it is at the write. nil: the task is gone. `from` another state: nothing was changed.
+    /// `loopTakes`: a loop is running and approved this task, so it takes it again.
+    func reopenTask(_ id: UUID, task: String, keepTries: Bool, at: Date) async throws -> (task: WorkTask, from: TaskState, loopTakes: Bool)? {
+        var out: (task: WorkTask, from: TaskState, loopTakes: Bool)?
+        try await update(id) { w in
+            guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
+            let from = w.tasks[i].state
+            if from == .deferred || from == .abandoned {
+                w.tasks[i].state = .open; w.tasks[i].reason = nil; w.tasks[i].lastFailure = nil; w.tasks[i].updatedAt = at
+                if !keepTries { w.tasks[i].tries = nil }
+                w.tasks[i].forgetResume()   // M2b.1: it starts over, with a fresh agent
+                w.notes.append(WorkNote(at: at, text: "[reopen] \(w.tasks[i].title): \(from == .deferred ? "adiada" : "abandonada")"))
+            }
+            out = (w.tasks[i], from, w.loop.map { $0.state == .running && ($0.tasks?.contains(task) ?? true) } ?? false)
         }
         return out
     }
@@ -104,6 +159,11 @@ actor WorkStore {
         try change(&list)
         var lines: [[String: Any]] = []
         Self.enforce(&list, &lines)
+        let was = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // a work this write changes (or adds) is one version further; one it leaves as it was keeps its version
+        let changed = list.indices.filter { was[list[$0].id] != list[$0] }
+        for i in changed { list[i].version = (was[list[i].id]?.version ?? 0) + 1 }
+        let gone = Set(was.keys).subtracting(list.map(\.id))
         let data = try Self.encode(list), f = file, a = archive
         let out = try lines.map { try Self.line($0) }
         try await onIO {
@@ -112,11 +172,11 @@ actor WorkStore {
             try DesignService.writePrivate(data, to: f)
             if emptyArchive { try Self.truncate(a) }
         }
-        all = list
+        all = list; writes += 1
+        let ids = changed.map { list[$0].id } + gone
+        for id in ids { wake(id) }
         guard let onChange else { return }
-        let was = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        for w in list where was[w.id] != w { onChange(w.id) }
-        for id in Set(was.keys).subtracting(list.map(\.id)) { onChange(id) }
+        for id in ids { onChange(id) }
     }
 
     /// `body` on the disk queue while no change is written: work.json and the archive read together are consistent (a backup).
@@ -152,6 +212,8 @@ actor WorkStore {
             list[i].tasks = w.tasks.enumerated().filter { !t.contains($0.offset) }.map(\.element)
             list[i].jobs = w.jobs.enumerated().filter { !j.contains($0.offset) }.map(\.element)
             list[i].notes = Array(w.notes.dropFirst(n))
+            // not archived: the journal only records, and a closed work's status shows 20 lines at most
+            if w.closedAt != nil, let ev = w.loop?.events, ev.count > maxClosedEvents { list[i].loop?.events = Array(ev.suffix(maxClosedEvents)) }
         }
         // closed works: the newest 200 stay (ties by position)
         let closed = list.enumerated().filter { $0.element.closedAt != nil }

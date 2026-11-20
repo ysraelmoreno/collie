@@ -1,0 +1,16 @@
+# M3.5 O escalonador no motor (`--parallel N`)
+
+Leia `onda3-paralelismo.md`. Depende de M3.1 a M3.4. Código: `Sources/CollieDaemonKit/Work/WorkLoop.swift` (`run`, `attempt`), `AttemptMachine.swift`, `TaskScheduler.swift`, `LaneIntegrator.swift`, `WorkLoopCommands.swift` (`workRun`, `startLoop`), `Sources/CollieCore/Work.swift` (`WorkLoopState`), a declaração de `work run` em `Sources/CollieProtocol/Commands.swift`/`ArgvParser.swift`.
+
+## Fazer
+
+1. `collie work run --parallel N` (padrão 1, máximo 4, validado): `WorkLoopState.parallel: Int?` (opcional). **Com 1 ou ausente, `run` é o laço de hoje, caminho por caminho** (o código sequencial atual não é reescrito: o caminho paralelo é um ramo à parte, escolhido no início de `run`).
+2. Caminho paralelo: um laço de escalonamento que, a cada mudança de estado, chama `TaskScheduler.ready` e, para cada tarefa pronta, cria a faixa (M3.2), o host da faixa (M3.3) e roda **a mesma `attempt` (a `AttemptMachine`) na faixa** como uma `Task` própria. Ao passar na faixa, entrega ao `LaneIntegrator` (M3.4) e só então marca a tarefa `done` (evidência, `reportEnd` como hoje); `.retryFromNewBase`: remove a faixa, cria outra a partir do HEAD novo e conta a tentativa; `.defer`: adia com o motivo; `.wait`: o laço para como hoje para "outro terminal na worktree" (motivo `othersWorking`).
+3. **Contadores únicos:** `used` (`--max`), `spent` (`--budget`) e `tries` são lidos/gravados por um único ponto serializado (o actor, sem corrida entre faixas): uma tentativa só começa se `used < max` **considerando as que estão correndo**; o orçamento restante de cada faixa vem do mesmo `spent`.
+4. **Parar** (`work stop`, orçamento, `cancelled`, `starterGone`, trabalho fechado): cancela todas as faixas, dispensa seus agentes, remove as faixas e **não** integra nada que ainda não tenha passado. O `stopReason` (M1.1) é o motivo único do laço. Nenhuma faixa sobrevive ao `run`.
+5. O diário (M1.2) ganha o id da faixa em `LoopEvent` (`lane: String?` opcional) e o evento `integrated`/`integrationRetry`; a fase por faixa fica em `WorkLoopState.lanes: [LaneState]?` (tarefa, fase, desde quando; opcional e tolerante), e `loop.phase` continua refletindo uma fase só (a da faixa mais antiga) para os leitores antigos.
+6. `loopOthersWorking` do cercado continua o que é; a **worktree do cercado** só é tocada pelo integrador.
+
+## Testes (escrever antes) — novo `Tests/CollieDaemonKitTests/LoopParallelTests.swift`
+
+Host falso com faixas (repositório temporário): `--parallel 1` produz o **mesmo resultado** (mesmos estados, notas e diário) que o caminho antigo para um conjunto de tarefas (teste de regressão por comparação); `--parallel 2` com escopos disjuntos roda as duas ao mesmo tempo (o host falso prova a sobreposição no tempo por ordem de eventos, **sem `sleep`**: use continuações) e integra as duas; escopos sobrepostos rodam em série; `needs` respeitado; `--max 3` com 4 tarefas e 2 faixas nunca passa de 3 tentativas; o orçamento compartilhado esgota uma e para a outra; `stop` no meio cancela as duas, remove as faixas e não deixa nada integrado pela metade; uma faixa que falha não derruba a outra; conflito de integração refaz a tentativa a partir do HEAD novo.

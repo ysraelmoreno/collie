@@ -688,7 +688,7 @@ private final class Rig {
         #expect(try args(.claude, "env X=1 claude --model x").hasPrefix("env X=1 claude --model x --settings "))
         #expect(try args(.custom, "/opt/bin/claude").hasPrefix("/opt/bin/claude --settings "))
         #expect(try args(.custom, "env A=1 B=2 codex exec hi") == #"env A=1 B=2 codex -c 'sandbox_mode="danger-full-access"' exec hi"#)
-        #expect(try args(.custom, "env X=1 cursor-agent") == "env X=1 cursor-agent --sandbox disabled")
+        #expect(try args(.custom, "env X=1 cursor-agent").hasPrefix("env X=1 cursor-agent --sandbox disabled --plugin-dir "))   // 253b859
         #expect(try args(.custom, "node claude.js") == "node claude.js")
         #expect(EssentialPaths.agentHome(.custom, command: "/usr/bin/env X=1 cursor-agent").first == ".cursor")
     }

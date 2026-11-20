@@ -5,7 +5,8 @@ import CollieProtocol
 @testable import CollieDaemonKit
 
 /// What one attempt's "agent" does, keyed by its terminal name (`loop-<task>-<n>`).
-private struct Script: Sendable {
+/// Shared with `LoopStopReasonTests`.
+struct LoopScript: Sendable {
     /// Runs during `ask`, in the worktree.
     var act: @Sendable (URL) async throws -> Void = { _ in }
     var source: AskResult.Source = .hook
@@ -13,12 +14,17 @@ private struct Script: Sendable {
     /// `.idle` ends: `working` stays true and nothing is committed until its `n`-th call, which runs `late`.
     var lateAfter: Int?
     var late: @Sendable (URL) async throws -> Void = { _ in }
+    /// M2.1: runs when the agent is nudged, in the worktree (`act` runs only for the attempt's prompt).
+    var nudged: @Sendable (URL) async throws -> Void = { _ in }
+    /// How the nudge's turn ends (nil: like `source`); `nudgeError`: its ask throws.
+    var nudgedSource: AskResult.Source?
+    var nudgeError: ProtocolError?
 }
 
 /// A host without PTYs: scripted agents, real git and a real (unsandboxed) check in a temp repo.
-private actor FakeHost: LoopHost {
+actor LoopFakeHost: LoopHost {
     nonisolated let dir: URL, patches: URL
-    var scripts: [String: Script] = [:]
+    var scripts: [String: LoopScript] = [:]
     var summoned: [String] = [], dismissed: [String] = [], prompts: [String: String] = [:], checks = 0
     /// Every command `check` ran (the tasks' checks and the gate), in order.
     var commands: [String] = []
@@ -47,32 +53,49 @@ private actor FakeHost: LoopHost {
         self.dir = dir
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
     }
-    func set(_ name: String, _ s: Script) { scripts[name] = s }
+    func set(_ name: String, _ s: LoopScript) { scripts[name] = s }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
         let id = UUID(); names[id] = name; summoned.append(name); return id
     }
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
-        let name = names[terminal]!, s = scripts[name] ?? Script()
+        let name = names[terminal]!, s = scripts[name] ?? LoopScript()
+        // M2.1: a nudge is not the attempt's prompt: `prompts` keeps that one, `nudges` every nudge (name, text, timeout)
+        if prompt == WorkLoop.nudgePrompt {
+            nudges.append((name, prompt, timeout))
+            do { try await s.nudged(dir) } catch { Issue.record("nudged \(name): \(error)") }
+            if let e = s.nudgeError { throw e }
+            return s.nudgedSource ?? s.source
+        }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if name == starterGoneAfter { starterGone = true }
         if let e = s.askError { throw e }
         return s.source
     }
+    var nudges: [(name: String, prompt: String, timeout: Duration)] = []
+    /// M2.0: the agents (by name) whose prompt had its Enter sent again.
+    var resubmits: Set<String> = []
+    func setResubmitted(_ n: String) { resubmits.insert(n) }
+    func resubmitted(_ terminal: UUID) async -> Bool { resubmits.contains(names[terminal] ?? "") }
     func working(_ terminal: UUID) async -> Bool {
-        let name = names[terminal]!, s = scripts[name] ?? Script()
+        let name = names[terminal]!, s = scripts[name] ?? LoopScript()
         guard let after = s.lateAfter else { return false }
         let n = (workingCalls[terminal] ?? 0) + 1; workingCalls[terminal] = n
         if n == after { do { try await s.late(dir) } catch { Issue.record("late \(name): \(error)") }; return false }
         return n < after
     }
     func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
-    func othersWorking() async -> String? { busyOther }
+    /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).
+    var othersProbe: (@Sendable () async -> Void)?
+    func setOthersProbe(_ p: @escaping @Sendable () async -> Void) { othersProbe = p }
+    func othersWorking() async -> String? { await othersProbe?(); return busyOther }
     func starterAlive() async -> Bool { !starterGone }
     func setBusy(_ n: String?) { busyOther = n }
     func setStarterGone(after n: String) { starterGoneAfter = n }
-    func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await GitRunner.run(args, in: dir) }
+    /// Every git command the loop ran, in order (M2.2a: what never becomes an argument).
+    var gits: [[String]] = []
+    func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { gits.append(args); return try await GitRunner.run(args, in: dir) }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1; events.append("check"); commands.append(command)
         await probe?(command)
@@ -98,8 +121,8 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 }
 
 /// A repo, a store holding a work with `tasks` and a running loop, a fake host and the loop.
-private struct Rig {
-    let repo: URL, storeDir: URL, store: WorkStore, host: FakeHost, loop: WorkLoop, work: UUID
+struct LoopRig {
+    let repo: URL, storeDir: URL, store: WorkStore, host: LoopFakeHost, loop: WorkLoop, work: UUID
     init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil,
          checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50)) async throws {
         repo = try await makeRepo()
@@ -111,13 +134,16 @@ private struct Rig {
             $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id), gate: gate)
         }
         work = w.id
-        host = FakeHost(dir: repo)
+        host = LoopFakeHost(dir: repo)
         loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait)
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }
     func cleanup() { for u in [repo, storeDir, host.patches] { try? FileManager.default.removeItem(at: u) } }
 }
+
+private typealias Script = LoopScript
+private typealias Rig = LoopRig
 
 private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, title: "Task \(id)", check: check) }
 
@@ -217,12 +243,14 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     }
 
     @Test func checkTimeoutFails() async throws {
-        // sleep 60 vs a 20 s bound: the suite runs in parallel, and a 1 s margin failed under load (4.13 s against 4 s)
-        let r = try await Rig([task("a", "sleep 60")], tries: 1, checkTimeout: .milliseconds(200)); defer { r.cleanup() }
+        // What this proves: a check past its limit is killed and is a failure, not how fast. The bound only tells
+        // "killed" from "ran to its end" (600 s), with slack for any load: 20 s against a 60 s check measured 22.0 s
+        // with a build competing (M2b.2), and 4 s measured 4.13 s before that.
+        let r = try await Rig([task("a", "sleep 600")], tries: 1, checkTimeout: .milliseconds(200)); defer { r.cleanup() }
         await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let t0 = ContinuousClock.now
         #expect(await r.run() == .finished)
-        #expect(ContinuousClock.now - t0 < .seconds(20))
+        #expect(ContinuousClock.now - t0 < .seconds(120))
         #expect(try await r.get().tasks[0].lastFailure == "check timed out")
     }
 
@@ -287,7 +315,9 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.host.summoned.isEmpty)
         #expect(try String(contentsOf: r.repo.appendingPathComponent("f.txt"), encoding: .utf8) == "someone's\n")
         let w = try await r.get()
-        #expect(w.tasks[0].state == .open && w.notes.last?.text.contains("dirty") == true)
+        // the path's own note, then the loop's summary note: in that order
+        let notes = w.notes.suffix(2).map(\.text)
+        #expect(w.tasks[0].state == .open && notes.count == 2 && notes[0].contains("dirty") && notes[1].hasPrefix("[loop] laço parado:"), "\(notes)")
     }
 
     /// Finding 4: another terminal of the paddock in a turn: no reset, no checkout; the loop stops.

@@ -1,4 +1,4 @@
-# Lint, module boundaries, build and the full test suite, on every pull request and push to main.
+# Lint, module boundaries, build and the test suite (minus scripts/ci/ci-skip.txt), on every pull request and push to main.
 # No secrets and read-only token: safe to run on pull requests from forks.
 name: ci
 
@@ -38,9 +38,22 @@ jobs:
         run: |
           scripts/ci/test-check-architecture.sh
           scripts/ci/test-lint.sh
+          scripts/ci/test-run-tests.sh
 
       - name: Build
         run: swift build --build-tests
 
+      # not a bare `swift test`: its exit code is the test process's, which went green after exiting 0 mid-run, and
+      # all tests at once starve a 3-core runner. run-tests.sh: serial shards, each checked by its final test count
       - name: Testes
-        run: swift test --disable-sandbox
+        run: scripts/ci/run-tests.sh
+        env:
+          OUT: ${{ runner.temp }}/tests
+
+      - name: Logs dos testes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: ${{ runner.temp }}/tests
+          retention-days: 7

@@ -6,6 +6,9 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+### Fixed
+- **Deterministic CI:** the test step (`scripts/ci/run-tests.sh`) no longer trusts the exit code of `swift test`, which was green with 237 failures when the test process exited midway; it runs the suite in 3 serial parts and passes only with the final count of each. Tests the hosted runner does not run are listed in `scripts/ci/ci-skip.txt`, with the reason. Fixed outdated tests (Cursor's `--plugin-dir`, the page title on import) and a fatal error of the fake daemon in `MCPTests`.
+
 ## [0.1.7] — 2026-11-19
 
 ### Added

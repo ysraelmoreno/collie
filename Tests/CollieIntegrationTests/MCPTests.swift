@@ -18,7 +18,11 @@ private final class FakeDaemon: @unchecked Sendable {
     private var server: UnixSocketServer?
     init(_ plugins: [String], specs: [JSONValue]? = nil) throws {
         _plugins = plugins; _specs = specs
-        let s = UnixSocketServer(path: socket) { [unowned self] r in
+        // weak, not unowned: `stop()` only ends accepting; a connection already accepted (a `collie mcp` child still
+        // asking after its test gave up under load) is answered after deinit, and reading a dead unowned self is a
+        // Fatal error that killed the whole test process (CI run 44521855224)
+        let s = UnixSocketServer(path: socket) { [weak self] r in
+            guard let self else { return Response(id: r.id, ok: false, error: ProtocolError(code: .daemonUnavailable, message: "fake daemon gone")) }
             self.lock.withLock { self._calls.append(r) }
             if r.command == "memory.mcp-profile" {
                 guard let p = self.profile else {
@@ -83,8 +87,8 @@ private func lines(_ s: String) -> [[String: Any]] {
         // no daemon: panel.list fails, so only the core and panel-free tools (no plug-in reached)
         #expect(tools?.compactMap { $0["name"] as? String }.sorted() == ["ask", "wait", "model", "ask_result", "reply", "check", "paddock_list", "paddock_status", "list", "panel_list", "panel_open", "panel_close", "panel_move", "events",
                          "memory_save", "memory_search", "memory_doc-search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede", "memory_enforce", "memory_flag", "device_list",
-                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop",
-                         "work_note", "work_status", "work_summary", "work_list", "work_get", "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach", "app_event", "app_context", "app_snapshot", "app_new", "app_adopt", "app_logs",
+                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_task_reopen",
+                         "work_note", "work_status", "work_wait", "work_summary", "work_list", "work_get", "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach", "app_event", "app_context", "app_snapshot", "app_new", "app_adopt", "app_logs",
                          "design_files", "design_new", "design_help", "design_prefer", "design_system_list", "design_system_create", "design_system_history",
                          "design_system_use", "design_system_undo", "artifact_list", "artifact_get", "artifact_add", "artifact_import-claude", "artifact_import-list", "artifact_import-failed", "artifact_import", "artifact_new", "artifact_libs", "artifact_export",
                          "artifact_move", "artifact_folders"].sorted())

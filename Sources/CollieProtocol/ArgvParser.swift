@@ -27,6 +27,8 @@ public enum ArgvParser {
             let key = String(t.dropFirst(2))
             guard let p = spec.params.first(where: { $0.name == key && $0.kind != .rest && $0.kind != .list }) else { throw bad("unknown flag --\(key)") }
             if p.kind == .flag { args[key] = .bool(true); continue }
+            // `--events` alone: the next word is not its number
+            if let d = p.bare, i >= rest.count || Int(rest[i]) == nil { args[key] = .number(Double(d)); continue }
             guard i < rest.count else { throw bad("--\(key) needs a value") }
             let v = rest[i]; i += 1
             if p.kind == .int {
@@ -85,6 +87,7 @@ public enum ArgvParser {
             case (true, .rest), (true, .list): "<\(p.name)>…"
             case (true, _): "<\(p.name)>"
             case (false, .flag): "--\(p.name)"
+            case (false, _) where p.bare != nil: "--\(p.name) [<n>]"
             default: "--\(p.name) <\(p.name)>"
             }
             return p.required ? w : "[\(w)]"

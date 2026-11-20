@@ -69,21 +69,58 @@ public enum WorkStatusText {
         return out
     }
 
-    /// A work run by `collie work run`: "em laço: <task> (tentativa n/N)", or how its loop ended. nil: a sequential work.
-    public static func loopLine(_ w: Work) -> String? {
+    /// A work run by `collie work run`: "em laço: <task> (tentativa n/N)", or how its loop ended (a stopped one with
+    /// its `stopReason`'s label). nil: a sequential work. With `now` (`work status`, `work wait`), a running loop that
+    /// knows when its phase began also says since when and, with the agent working, when the turn expires (`times`).
+    public static func loopLine(_ w: Work, now: Date? = nil, timeZone: TimeZone = .current) -> String? {
         guard let l = w.loop else { return nil }
         switch l.state {
         case .running:
             let title = w.tasks.first { $0.id == l.task }.map { RerailText.clean($0.title) } ?? "?"
             return "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.phase.map { " · \($0.label)" } ?? "")
-        case .stopped: return "laço parado (\(l.used) tentativas)"
+                + (now.flatMap { times(l, now: $0, timeZone: timeZone) }.map { " · \($0)" } ?? "")
+        case .stopped: return "laço parado (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
         case .finished: return "laço terminou (\(l.used) tentativas)"
         }
+    }
+
+    /// A running loop's phase in time: "desde 14:03 (4 min)" (the daemon's local time; whole minutes elapsed, rounded
+    /// down) and, with the agent working, " · próximo limite: turno vence em 56 min" (the attempt's start plus the
+    /// turn's `timeout`; minutes left, rounded up; past it: "turno vence agora"). nil: no phase, or no `phaseSince`.
+    static func times(_ l: WorkLoopState, now: Date, timeZone: TimeZone = .current) -> String? {
+        guard l.state == .running, let phase = l.phase, let since = l.phaseSince else { return nil }
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = timeZone; f.dateFormat = "HH:mm"
+        let elapsed = max(0, now.timeIntervalSince(since))
+        var out = "desde \(f.string(from: since)) (\(Int(elapsed / 60)) min)"
+        if phase == .agent {
+            let left = Double(l.timeout) - elapsed
+            out += " · próximo limite: " + (left > 0 ? "turno vence em \(Int((left / 60).rounded(.up))) min" : "turno vence agora")
+        }
+        return out
+    }
+
+    /// What `work wait` prints: the loop's line of `work status` (a work without a loop: its title), then the version
+    /// to wait from and how the wait ended.
+    static func waitLine(_ w: Work, version: Int, timedOut: Bool, now: Date, timeZone: TimeZone = .current) -> String {
+        let ended = w.loop.map { $0.state != .running } ?? false
+        return (loopLine(w, now: now, timeZone: timeZone) ?? "sem laço: \(RerailText.clean(w.title))")
+            + "\nversão \(version)" + (ended ? " · laço terminou (ended)" : timedOut ? " · tempo esgotado sem mudança (timedOut)" : "")
     }
 
     /// A loop with a gate (`work run --gate`): "portão: <command>", on one line. nil: no loop, or one without a gate.
     public static func gateLine(_ w: Work) -> String? {
         w.loop?.gate.map { "portão: " + RerailText.clean($0, max: CommandRouter.loopCardMax) }
+    }
+
+    /// The last `last` events of a loop's journal, oldest first, one per line: `HH:mm:ss <kind> T<task>#<attempt> <detail>`
+    /// (the daemon's local time; a loop-wide event has no `T…`). Empty: no journal.
+    public static func events(_ loop: WorkLoopState, last: Int, timeZone: TimeZone = .current) -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = timeZone; f.dateFormat = "HH:mm:ss"
+        return (loop.events ?? []).suffix(max(0, last)).map { e in
+            let who = e.task.map { "T" + RerailText.clean($0, max: 40) + (e.attempt.map { "#\($0)" } ?? "") }
+            return ([f.string(from: e.at), e.kind.rawValue] + [who, e.detail.map { RerailText.clean($0, max: LoopEvent.detailMax) }].compactMap { $0 })
+                .joined(separator: " ")
+        }.joined(separator: "\n")
     }
 
     /// The numbers of the tasks a loop ran (`LoopStats.line`). nil: no loop ran a task of this work.
@@ -94,23 +131,27 @@ public enum WorkStatusText {
         t.evidence.map { "✓ \(RerailText.clean(t.title)) · \($0.summary)" }
     }
 
+    /// How both notices end (M2.4): the notice is a hint typed into a terminal and may not arrive; the state is what counts.
+    static let stateHint = " · estado: collie work status"
+
     /// The line the starter gets when one task of its loop ends: a done one with its evidence (none: marked by hand), a
     /// deferred one with the reason. Counts and git's shortstat only, never a commit subject or the check's output.
     static func taskEnded(_ t: WorkTask) -> String {
         let line = t.state == .deferred
             ? "– \(RerailText.clean(t.title)) · adiada: \(RerailText.clean(t.reason ?? t.lastFailure ?? "sem razão registrada", max: 200))"
             : doneLine(t) ?? "✓ \(RerailText.clean(t.title)) · marcada à mão, sem check"
-        return "[collie] Laço, tarefa terminada: \(line)"
+        return "[collie] Laço, tarefa terminada: \(line)" + stateHint
     }
 
-    /// The line the starter gets when its loop ends, then one line per task of the loop: a done one with its evidence
+    /// The line the starter gets when its loop ends (a stopped one: "parou (<why>)"; it ends with `stateHint`), then one line per task of the loop: a done one with its evidence
     /// (one without it was marked by hand, no check judged it: it counts as done and says so), a deferred one with the
     /// reason. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
     /// Only counts and git's shortstat go beside the agent's titles: never a commit subject or the check's output.
     static func loopEnded(_ w: Work) -> String {
         let ran = w.tasks.filter { t in w.loop?.tasks?.contains(t.id) ?? true }
         let done = ran.filter { $0.state == .done }, deferred = ran.filter { $0.state == .deferred }
-        var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" terminou: \(done.count) feitas, \(deferred.count) adiadas. Veja: collie work status"]
+        let how = w.loop?.stopReason.map { "parou (\(RerailText.clean($0.label)))" } ?? "terminou"
+        var lines = ["[collie] Laço de \"\(RerailText.clean(w.title))\" \(how): \(done.count) feitas, \(deferred.count) adiadas." + stateHint]
         lines += done.map { doneLine($0) ?? "✓ \(RerailText.clean($0.title)) · marcada à mão, sem check" }
         lines += deferred.map { "– \(RerailText.clean($0.title)) · adiada: \(RerailText.clean($0.reason ?? $0.lastFailure ?? "sem razão registrada", max: 200))" }
         return bounded(lines, limit: RerailText.limit)

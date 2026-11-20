@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Temas personalizados: 3 opções</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--color-bg); color: var(--color-fg); font-family: "Space Grotesk", system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.55; }
+main { max-width: 800px; margin: 0 auto; padding: var(--space-48) var(--space-16) var(--space-96); }
+.eyebrow, .tag { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; }
+.eyebrow { letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-text); margin: 0 0 var(--space-12); }
+.tag { color: var(--color-text-secondary); margin: 0 0 4px; } .rec { color: var(--color-accent-text); }
+h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.08; letter-spacing: -.02em; margin: 0 0 var(--space-16); text-wrap: balance; }
+h2 { font-size: 24px; line-height: 1.2; letter-spacing: -.01em; margin: 0 0 var(--space-4); }
+p { margin: 0 0 var(--space-16); max-width: 64ch; } .muted { color: var(--color-text-secondary); }
+section.opt { margin-top: var(--space-64); }
+.scroll { overflow-x: auto; margin: var(--space-16) 0; padding-bottom: 4px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px var(--space-16); margin: 0; font-size: 15px; }
+dt { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; color: var(--color-text-secondary); padding-top: 3px; } dd { margin: 0; }
+.next { margin-top: var(--space-64); padding-top: var(--space-24); border-top: 1px solid var(--color-border); }
+.next ul { padding-left: 20px; margin: 0; max-width: 64ch; } .next li { margin-bottom: 6px; }
+@media (max-width: 520px) { dl { grid-template-columns: 1fr; gap: 2px; } dd { margin-bottom: 10px; } }
+
+/* the app, in its own palette (Sources/CollieTheme/Palette.swift, dark) */
+.app { --t-bg:#0E1326; --t-sf:#161C36; --t-side:#121831; --t-sunk:#0B1020; --t-bd:#262E52; --t-tx:#E8ECF8; --t-tx2:#B6BEDB; --t-mu:#8C95B8; --t-ac:#6EE7B7; --t-on:#0E1326; --t-at:#FFB86B; --t-dg:#FF8A8A;
+  width: 760px; border-radius: 12px; overflow: hidden; border: 1px solid var(--t-bd); background: var(--t-bg); color: var(--t-tx); font: 13px/1.45 -apple-system, system-ui, sans-serif; box-shadow: 0 18px 40px -18px rgba(0,0,0,.5); }
+.app button { font: inherit; color: inherit; }
+.bar { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; background: var(--t-side); border-bottom: 1px solid var(--t-bd); position: relative; }
+.bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--t-bd); }
+.bar span { position: absolute; left: 0; right: 0; text-align: center; font-weight: 600; color: var(--t-tx2); }
+.cols { display: grid; grid-template-columns: 168px 1fr; min-height: 430px; }
+.side { background: var(--t-side); border-right: 1px solid var(--t-bd); padding: 12px 8px; }
+.side p { font-size: 11px; color: var(--t-mu); margin: 10px 8px 4px; } .side p:first-child { margin-top: 0; }
+.side a { display: block; padding: 5px 8px; border-radius: 6px; color: var(--t-tx2); } .side a.on { background: var(--t-sf); color: var(--t-tx); }
+.content { padding: 18px 20px 16px; min-width: 0; }
+.content h3 { font-size: 15px; margin: 0 0 12px; } .sub { font-weight: 400; color: var(--t-mu); font-size: 12px; margin-left: 6px; }
+.head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; } .head h3 { margin: 0; }
+.acts { display: flex; gap: 6px; } .acts button, .pv-act button { border: 1px solid var(--t-bd); background: var(--t-sf); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+.seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--t-sunk); border: 1px solid var(--t-bd); border-radius: 8px; }
+.seg button { border: 0; background: none; padding: 4px 12px; border-radius: 6px; color: var(--t-tx2); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--t-sf); color: var(--t-tx); box-shadow: 0 0 0 1px var(--t-bd); }
+.seg .mine[aria-pressed="true"], .seg .mine { color: var(--t-ac); }
+.app button:focus-visible { outline: 2px solid var(--t-ac); outline-offset: 2px; }
+.row { display: grid; grid-template-columns: 84px 1fr; align-items: center; justify-items: start; margin-top: 12px; } .row label { color: var(--t-tx2); }
+.sw { display: flex; align-items: center; gap: 8px; } .sw button { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--t-bg); background: var(--c); box-shadow: 0 0 0 1px var(--t-bd); cursor: pointer; padding: 0; }
+.sw button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--t-tx); } .hex, code { font: 11px "DM Mono", ui-monospace, monospace; color: var(--t-mu); }
+.foot { font-size: 12px; color: var(--t-mu); margin: 12px 0 0; max-width: none; }
+.pv { margin-top: 16px; display: grid; grid-template-columns: 34px 1fr; height: 176px; border: 1px solid var(--t-bd); border-radius: 10px; overflow: hidden; background: var(--t-bg); }
+.pv-rail { background: var(--t-side); border-right: 1px solid var(--t-bd); display: flex; flex-direction: column; align-items: center; gap: 7px; padding-top: 9px; }
+.pv-rail b, .pv-rail i { width: 16px; height: 16px; border-radius: 5px; background: var(--t-bd); } .pv-rail b { border-radius: 50%; background: var(--t-ac); } .pv-rail i.on { box-shadow: 0 0 0 1.5px var(--t-ac); }
+.pv-canvas { background-image: radial-gradient(var(--t-bd) 1px, transparent 1.2px); background-size: 14px 14px; padding: 12px; min-width: 0; }
+.pv-node { background: var(--t-sf); border: 1px solid var(--t-bd); border-radius: 8px; max-width: 330px; overflow: hidden; }
+.pv-bar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--t-bd); font-size: 11px; color: var(--t-tx2); }
+.pv-bar em { width: 7px; height: 7px; border-radius: 50%; background: var(--t-ac); } .pv-bar u { margin-left: auto; text-decoration: none; background: var(--t-at); color: var(--t-on); border-radius: 8px; padding: 0 6px; font-weight: 600; }
+.pv pre { margin: 0; padding: 7px 9px 4px; font: 11px/1.5 "DM Mono", ui-monospace, monospace; color: var(--t-tx); white-space: pre; overflow: hidden; }
+.pv .m { color: var(--t-mu); } .pv .a { color: var(--t-ac); } .pv .w { color: var(--t-at); }
+.pv-act { display: flex; gap: 6px; padding: 4px 9px 8px; } .pv-act button { font-size: 11px; padding: 2px 9px; } .pv-act .pri { background: var(--t-ac); color: var(--t-on); border-color: var(--t-ac); font-weight: 600; }
+.split { display: grid; grid-template-columns: 1fr 210px; gap: 14px; align-items: start; } .split .pv { margin-top: 0; height: 100%; min-height: 250px; grid-template-columns: 26px 1fr; } .split .pv-node { max-width: none; } .split .pv pre { font-size: 9.5px; }
+.tblwrap { border: 1px solid var(--t-bd); border-radius: 8px; overflow: hidden; }
+.tok { width: 100%; border-collapse: collapse; font-size: 12px; } .tok th { text-align: left; font-weight: 500; color: var(--t-mu); padding: 5px 8px; background: var(--t-side); }
+.tok td { padding: 3px 8px; border-top: 1px solid var(--t-bd); white-space: nowrap; } .tok .grp td { background: var(--t-sunk); color: var(--t-tx2); font-size: 11px; padding: 3px 8px; } .tok .more td { color: var(--t-mu); }
+.well { display: inline-block; width: 14px; height: 14px; border-radius: 4px; background: var(--c); box-shadow: 0 0 0 1px var(--t-bd); vertical-align: -3px; margin-right: 5px; }
+.ok { color: var(--t-ac); font: 11px "DM Mono", monospace; } .bad { color: var(--t-at); font: 11px "DM Mono", monospace; }
+.gal { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.card { background: none; border: 1px solid var(--t-bd); border-radius: 8px; padding: 6px; text-align: left; cursor: pointer; display: grid; gap: 2px; min-width: 0; } .card.on { border-color: var(--t-ac); box-shadow: 0 0 0 1px var(--t-ac); }
+.card strong { font-weight: 600; font-size: 12px; } .card small { font-size: 10px; color: var(--t-mu); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th { display: block; height: 46px; border-radius: 5px; background: var(--bg); position: relative; margin-bottom: 3px; box-shadow: inset 0 0 0 1px rgba(128,128,128,.25); }
+.th i { position: absolute; left: 7px; height: 4px; border-radius: 2px; background: var(--tx); opacity: .85; top: 10px; width: 46%; } .th i + i { top: 19px; width: 30%; opacity: .5; } .th b { position: absolute; right: 7px; bottom: 7px; width: 22px; height: 10px; border-radius: 3px; background: var(--ac); }
+.th.plus { display: grid; place-items: center; background: var(--t-sunk); color: var(--t-mu); font-size: 20px; }
+.file { margin-top: 12px; border: 1px solid var(--t-bd); border-radius: 8px; overflow: hidden; background: var(--t-sunk); }
+.fbar { display: flex; justify-content: space-between; gap: 10px; padding: 4px 9px; border-bottom: 1px solid var(--t-bd); font: 10.5px "DM Mono", monospace; color: var(--t-mu); } .fbar em { font-style: normal; color: var(--t-ac); white-space: nowrap; }
+.file pre { margin: 0; padding: 8px 10px; font: 11px/1.5 "DM Mono", ui-monospace, monospace; color: var(--t-tx2); } .file .k { color: var(--t-tx); } .file .s { color: var(--t-ac); }
+</style>
+</head>
+<body>
+<main id="root">
+  <p class="eyebrow">Collie · Preferências › Aparência</p>
+  <h1>Três formas de o usuário criar um tema</h1>
+  <p>Hoje a escolha é Escuro, Claro ou Sistema, sobre uma paleta fixa de 18 cores. As três opções abaixo mudam quanto o usuário decide e quanto o Collie decide por ele. Os desenhos usam a paleta real do app.</p>
+
+  <section class="opt">
+    <p class="tag rec">Opção A · recomendada como porta de entrada</p>
+    <h2>Semente</h2>
+    <p class="muted">Três escolhas, e o Collie deriva o resto. Clique nas cores e nos tons: a prévia responde.</p>
+    <div class="scroll"><div class="win app"><div class="bar"><i></i><i></i><i></i><span>Preferências</span></div><div class="cols"><nav class="side"><p>Interface</p><a class="on">Aparência</a><a>Terminal e fontes</a><a>Atualizações</a><p>Agentes</p><a>Memória</a><a>Laços</a><a>Plug-ins</a></nav><div class="content"><h3>Tema</h3>
+<div class="seg" role="group" aria-label="Base"><button aria-pressed="true">Escuro</button><button aria-pressed="false">Claro</button><button aria-pressed="false">Sistema</button><button aria-pressed="false" class="mine">Meu tema</button></div>
+<div class="row"><label>Destaque</label><div class="sw" id="acc" role="group" aria-label="Cor de destaque">
+ <button style="--c:#6EE7B7" aria-pressed="true" aria-label="Menta"></button><button style="--c:#6E9BFF" aria-pressed="false" aria-label="Azul"></button><button style="--c:#FFB86B" aria-pressed="false" aria-label="Âmbar"></button><button style="--c:#F28BD0" aria-pressed="false" aria-label="Rosa"></button><button style="--c:#C4B5FD" aria-pressed="false" aria-label="Lilás"></button><span class="hex">#6EE7B7</span></div></div>
+<div class="row"><label>Fundo</label><div class="seg sm" id="tone" role="group" aria-label="Tom do fundo"><button aria-pressed="true" data-t="frio">Frio</button><button aria-pressed="false" data-t="neutro">Neutro</button><button aria-pressed="false" data-t="quente">Quente</button></div></div>
+<div class="row"><label>Contraste</label><div class="seg sm" id="con" role="group" aria-label="Contraste"><button aria-pressed="true" data-c="normal">Normal</button><button aria-pressed="false" data-c="alto">Alto</button></div></div>
+<div class="pv" id="live" aria-hidden="true">
+  <div class="pv-rail"><b></b><i class="on"></i><i></i><i></i></div>
+  <div class="pv-canvas">
+    <div class="pv-node"><div class="pv-bar"><em></em><span>dev · claude</span><u>1</u></div>
+      <pre><span class="m">$</span> collie summon dev
+<span class="a">●</span> lendo Sources/CollieTheme
+<span class="m">  3 arquivos, 412 linhas</span>
+<span class="w">! aguardando sua aprovação</span></pre>
+      <div class="pv-act"><button class="pri">Permitir</button><button>Negar</button></div></div>
+  </div></div>
+<p class="foot">As outras 15 cores saem dessas três escolhas. O texto nunca fica abaixo de 4,5:1.</p></div></div></div></div>
+    <dl>
+      <dt>para quem</dt><dd>Quem quer o app "da sua cor" em dez segundos.</dd>
+      <dt>ganho</dt><dd>Impossível criar um tema ilegível: o contraste é calculado, nos dois modos.</dd>
+      <dt>limite</dt><dd>Não dá para acertar uma cor específica, como a borda ou o âmbar de atenção.</dd>
+    </dl>
+  </section>
+
+  <section class="opt">
+    <p class="tag">Opção B</p>
+    <h2>Papéis</h2>
+    <p class="muted">Uma tabela com cada cor do app, uma por modo, e o contraste medido ao lado.</p>
+    <div class="scroll"><div class="win app"><div class="bar"><i></i><i></i><i></i><span>Preferências</span></div><div class="cols"><nav class="side"><p>Interface</p><a class="on">Aparência</a><a>Terminal e fontes</a><a>Atualizações</a><p>Agentes</p><a>Memória</a><a>Laços</a><a>Plug-ins</a></nav><div class="content"><div class="head"><h3>Meu tema <span class="sub">cópia de Escuro</span></h3><div class="acts"><button>Duplicar</button><button>Restaurar</button></div></div>
+<div class="split"><div class="tblwrap"><table class="tok"><thead><tr><th>Papel</th><th>Escuro</th><th>Claro</th><th>Leitura</th></tr></thead><tbody>
+<tr class="grp"><td colspan="4">Fundos</td></tr><tr><td>Fundo</td><td><span class="well" style="--c:#0E1326"></span><code>#0E1326</code></td><td><span class="well" style="--c:#F3F4F1"></span><code>#F3F4F1</code></td><td></td></tr><tr><td>Superfície</td><td><span class="well" style="--c:#161C36"></span><code>#161C36</code></td><td><span class="well" style="--c:#FFFFFF"></span><code>#FFFFFF</code></td><td></td></tr><tr><td>Barra lateral</td><td><span class="well" style="--c:#121831"></span><code>#121831</code></td><td><span class="well" style="--c:#ECEDE9"></span><code>#ECEDE9</code></td><td></td></tr><tr><td>Borda</td><td><span class="well" style="--c:#262E52"></span><code>#262E52</code></td><td><span class="well" style="--c:#D9DBD5"></span><code>#D9DBD5</code></td><td></td></tr>
+<tr class="grp"><td colspan="4">Texto</td></tr><tr><td>Texto</td><td><span class="well" style="--c:#E8ECF8"></span><code>#E8ECF8</code></td><td><span class="well" style="--c:#15171C"></span><code>#15171C</code></td><td><span class="ok">15,2</span></td></tr><tr><td>Secundário</td><td><span class="well" style="--c:#B6BEDB"></span><code>#B6BEDB</code></td><td><span class="well" style="--c:#2E323B"></span><code>#2E323B</code></td><td><span class="ok">9,6</span></td></tr><tr><td>Apagado</td><td><span class="well" style="--c:#6B7396"></span><code>#6B7396</code></td><td><span class="well" style="--c:#5C6270"></span><code>#5C6270</code></td><td><span class="bad">3,7 baixo</span></td></tr>
+<tr class="grp"><td colspan="4">Destaques</td></tr><tr><td>Destaque</td><td><span class="well" style="--c:#6EE7B7"></span><code>#6EE7B7</code></td><td><span class="well" style="--c:#2448C9"></span><code>#2448C9</code></td><td><span class="ok">11,8</span></td></tr><tr><td>Atenção</td><td><span class="well" style="--c:#FFB86B"></span><code>#FFB86B</code></td><td><span class="well" style="--c:#A14A06"></span><code>#A14A06</code></td><td><span class="ok">10,4</span></td></tr><tr><td>Perigo</td><td><span class="well" style="--c:#FF8A8A"></span><code>#FF8A8A</code></td><td><span class="well" style="--c:#B42318"></span><code>#B42318</code></td><td><span class="ok">7,9</span></td></tr>
+<tr class="grp more"><td colspan="4">+ 8 papéis · Terminal (16 cores)</td></tr></tbody></table></div>
+<div class="pv"  aria-hidden="true">
+  <div class="pv-rail"><b></b><i class="on"></i><i></i><i></i></div>
+  <div class="pv-canvas">
+    <div class="pv-node"><div class="pv-bar"><em></em><span>dev · claude</span><u>1</u></div>
+      <pre><span class="m">$</span> collie summon dev
+<span class="a">●</span> lendo Sources/CollieTheme
+<span class="m">  3 arquivos, 412 linhas</span>
+<span class="w">! aguardando sua aprovação</span></pre>
+      <div class="pv-act"><button class="pri">Permitir</button><button>Negar</button></div></div>
+  </div></div></div>
+<p class="foot">Cada papel tem uma cor por modo. "Leitura" é o contraste contra o fundo em que o papel aparece; abaixo de 4,5 o app avisa, mas deixa salvar.</p></div></div></div></div>
+    <dl>
+      <dt>para quem</dt><dd>Quem quer controle total e sabe o que é um token de cor.</dd>
+      <dt>ganho</dt><dd>Qualquer tema é possível, e o aviso de leitura aponta o erro na hora.</dd>
+      <dt>limite</dt><dd>São 18 papéis vezes dois modos. É trabalho, e a maioria desiste na metade.</dd>
+    </dl>
+  </section>
+
+  <section class="opt">
+    <p class="tag">Opção C</p>
+    <h2>Arquivo</h2>
+    <p class="muted">Um tema é um arquivo de texto numa pasta. O app mostra a galeria; o editor é o do usuário.</p>
+    <div class="scroll"><div class="win app"><div class="bar"><i></i><i></i><i></i><span>Preferências</span></div><div class="cols"><nav class="side"><p>Interface</p><a class="on">Aparência</a><a>Terminal e fontes</a><a>Atualizações</a><p>Agentes</p><a>Memória</a><a>Laços</a><a>Plug-ins</a></nav><div class="content"><div class="head"><h3>Temas</h3><div class="acts"><button>Importar…</button><button>Mostrar no Finder</button></div></div>
+<div class="gal"><button class="card "><span class="th" style="--bg:#0E1326;--sf:#161C36;--ac:#6EE7B7;--tx:#E8ECF8"><i></i><i></i><b></b></span><strong>Escuro</strong><small>do Collie</small></button><button class="card "><span class="th" style="--bg:#F3F4F1;--sf:#FFFFFF;--ac:#2448C9;--tx:#15171C"><i></i><i></i><b></b></span><strong>Claro</strong><small>do Collie</small></button><button class="card on"><span class="th" style="--bg:#15171C;--sf:#1F232B;--ac:#6E9BFF;--tx:#F4F2ED"><i></i><i></i><b></b></span><strong>Tinta</strong><small>meu-tema.json</small></button><button class="card "><span class="th" style="--bg:#282828;--sf:#3C3836;--ac:#FABD2F;--tx:#EBDBB2"><i></i><i></i><b></b></span><strong>Gruvbox</strong><small>importado do Ghostty</small></button><button class="card add"><span class="th plus">+</span><strong>Novo a partir de…</strong><small>duplica um tema</small></button></div>
+<div class="file"><div class="fbar"><span>~/Library/Application Support/Collie/themes/meu-tema.json</span><em>recarrega ao salvar</em></div>
+<pre>{
+  <span class="k">"name"</span>: <span class="s">"Tinta"</span>,
+  <span class="k">"extends"</span>: <span class="s">"dark"</span>,
+  <span class="k">"colors"</span>: {
+    <span class="k">"background"</span>: <span class="s">"#15171C"</span>,
+    <span class="k">"surface"</span>:    <span class="s">"#1F232B"</span>,
+    <span class="k">"accent"</span>:     <span class="s">"#6E9BFF"</span>
+  }
+}</pre></div>
+<p class="foot">Um tema é um arquivo. Só as cores que mudam precisam estar nele; o resto vem do tema que ele estende. Importa temas de terminal (Ghostty, iTerm) e deriva as cores da interface.</p></div></div></div></div>
+    <dl>
+      <dt>para quem</dt><dd>Quem já tem um tema de terminal de que gosta, ou quer compartilhar o seu.</dd>
+      <dt>ganho</dt><dd>Compartilhar é mandar um arquivo. Importar do Ghostty ou do iTerm traz o tema pronto.</dd>
+      <dt>limite</dt><dd>Editar cor em texto, sem seletor, afasta quem não é dev.</dd>
+    </dl>
+  </section>
+
+  <section class="next">
+    <h2>Minha leitura</h2>
+    <ul>
+      <li>As três não se excluem: C é o formato, A e B são duas telas que escrevem esse arquivo.</li>
+      <li>Eu começaria por A sobre o arquivo de C. Cobre a maioria e já permite compartilhar e importar.</li>
+      <li>B entra depois, como "Avançado", se alguém pedir uma cor que A não alcança.</li>
+      <li>Em aberto: as 16 cores do terminal fazem parte do tema, ou ficam em "Terminal e fontes"?</li>
+    </ul>
+  </section>
+</main>
+<script>
+(function () {
+  var win = document.getElementById('live').closest('.app');
+  var tones = {
+    frio:   { bg:'#0E1326', sf:'#161C36', side:'#121831', sunk:'#0B1020', bd:'#262E52', tx:'#E8ECF8', tx2:'#B6BEDB', mu:'#8C95B8' },
+    neutro: { bg:'#15171C', sf:'#1F232B', side:'#191C22', sunk:'#101216', bd:'#2E323B', tx:'#F1F1EE', tx2:'#C4C6CC', mu:'#8F939C' },
+    quente: { bg:'#1A1512', sf:'#251E1A', side:'#201A16', sunk:'#14100E', bd:'#3A2F28', tx:'#F4EDE6', tx2:'#D1C4B8', mu:'#A09184' }
+  };
+  var state = { tone: 'frio', con: 'normal' };
+  function apply() {
+    var t = tones[state.tone];
+    Object.keys(t).forEach(function (k) { win.style.setProperty('--t-' + k, t[k]); });
+    win.style.setProperty('--t-on', t.bg);
+    if (state.con === 'alto') { win.style.setProperty('--t-tx', '#FFFFFF'); win.style.setProperty('--t-tx2', '#E6E8F0'); win.style.setProperty('--t-mu', '#C2C6D4'); win.style.setProperty('--t-bd', '#59607E'); }
+  }
+  function group(id, fn) {
+    var g = document.getElementById(id);
+    g.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        g.querySelectorAll('button').forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+        fn(b);
+      });
+    });
+  }
+  group('acc', function (b) { var c = b.style.getPropertyValue('--c'); win.style.setProperty('--t-ac', c); document.querySelector('#acc .hex').textContent = c; });
+  group('tone', function (b) { state.tone = b.dataset.t; apply(); });
+  group('con', function (b) { state.con = b.dataset.c; apply(); });
+})();
+</script>
+</body>
+</html>

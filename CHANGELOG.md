@@ -6,6 +6,16 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+### Added
+- **Agent hooks for plug-ins:** an external plug-in can declare `hooks` (`edit`, `stop`) and a `helper`; the daemon hands it the files an agent wrote and returns its answer to the agent, as guidance or as a block. The helper runs once per event in its own sandbox (reads the project, writes only its data folder, no network), with a 3 s deadline, and any failure is silent. Claude terminals only. Installing shows what the plug-in may do. API: `docs/plugins/api-v1.md`.
+- **Vizinho plug-in** (`Examples/plugins/vizinho`, built with `scripts/build-vizinho-plugin.sh`; not bundled): when an agent writes a file, it says what the sibling files of the same kind do (imports, paired test) and names a model file. It also mines conventions nearly every file follows and proposes them as fences; the ones the owner approves block the end of a turn that breaks them.
+- **Custom themes:** Preferences › "Aparência" has a gallery of themes and an editor with two views of the same file, "Lista" and "JSON", beside a preview. A theme is a JSON file in `~/Library/Application Support/Collie/themes/` that names the colours it changes and the built-in theme it extends; it reloads when saved in any editor.
+- **Canvas:** dragging with the middle mouse button pans; several items can be selected (⌘-click, ⇧-click, a rectangle dragged on empty canvas) on the canvas and in the side panel, with the existing actions in a context menu for all of them.
+- **DMG:** the installer window has a background and positioned icons (`scripts/make-dmg.sh`); where Finder cannot be driven the DMG is built without the layout, with a warning.
+
+### Changed
+- This changelog is written in English.
+
 ### Fixed
 - **Deterministic CI:** the test step (`scripts/ci/run-tests.sh`) no longer trusts the exit code of `swift test`, which was green with 237 failures when the test process exited midway; it runs the suite in 3 serial parts and passes only with the final count of each. Tests the hosted runner does not run are listed in `scripts/ci/ci-skip.txt`, with the reason. Fixed outdated tests (Cursor's `--plugin-dir`, the page title on import) and a fatal error of the fake daemon in `MCPTests`.
 

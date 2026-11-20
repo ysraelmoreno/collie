@@ -332,7 +332,7 @@ actor WorkLoop {
             var map: String?
             for m in Self.featureMaps where map == nil { if await host.exists(m, in: dir) { map = m } }
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: r.loop.tries, dir: dir, notes: notes, gate: r.loop.gate, map: map)
-            let turn = Swift.min(r.loop.timeout, left(r.loop, since: r.started))   // the budget bounds the turn too
+            let turn = Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started))   // the budget bounds the turn too
             r.deadline = r.started + Double(turn)
             let ended: AttemptMachine.Event
             do { ended = .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: .seconds(turn))) }
@@ -377,7 +377,7 @@ actor WorkLoop {
             return .measured(.init(committed: committed, dirty: dirty, judged: judged))
         case .runCheck:
             do {
-                let budgeted = Duration.seconds(left(r.loop, since: r.started))
+                let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
                 r.output = res.stdout + res.stderr; r.checkOutput = r.output
                 return .checkDone(status: res.status, broken: nil)
@@ -401,7 +401,7 @@ actor WorkLoop {
         case .runGate:
             // on the tree of `judged`, in the check's conditions (timeout, budget); its output is the note's
             do {
-                let budgeted = Duration.seconds(left(r.loop, since: r.started))
+                let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(r.loop.gate ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
                 r.output = res.stdout + res.stderr
                 return .gateDone(status: res.status, broken: nil)
@@ -528,10 +528,33 @@ actor WorkLoop {
         Task { await host.taskEnded(line) }
     }
 
-    /// Seconds of the budget left for this attempt (at least 1); no budget: a day.
-    func left(_ loop: WorkLoopState, since started: Date) -> Int {
+    /// Seconds of the budget left for this attempt (at least 1); no budget: a day. In a lane: `laneShare`.
+    func left(_ id: UUID, _ loop: WorkLoopState, since started: Date) async -> Int {
         guard let b = loop.budget else { return 86_400 }
+        if lane != nil { return await laneShare(id) }
         return Swift.max(1, b - (loop.spent ?? 0) - Int(host.now().timeIntervalSince(started)))
+    }
+
+    /// M3b.4: seconds of `--budget` nobody used yet (zero or less: it is spent; nil: no budget): the budget, less
+    /// `spent` (the lanes that ended), less what every lane alive has run so far. A lane is in `lanes` or in `spent`,
+    /// never in both: its seconds go to `spent` in the write that takes it out of `lanes`.
+    static func unspent(_ loop: WorkLoopState, now: Date) -> Int? {
+        guard let b = loop.budget else { return nil }
+        let live = (loop.lanes ?? []).reduce(0.0) { $0 + Swift.max(0, now.timeIntervalSince($1.started ?? $1.since)) }
+        return b - (loop.spent ?? 0) - Int(live.rounded(.up))
+    }
+
+    /// M3b.4: seconds one phase of one lane (a turn, a check, a gate, the integrator's gate) may take (at least 1; no
+    /// budget: a day): what is `unspent` now, read from the work's file, divided by the lanes alive, which all spend
+    /// it at once. Four lanes that start with 100 s get 25 s each, not 100.
+    // ponytail: a phase keeps the limit it began with. When younger lanes end early, an older phase may still run on
+    // a limit from when fewer lanes were alive: the loop's total may pass the budget by what is left of that one
+    // phase (the scheduler stops everything at the first lane that ends past the budget). No watchdog: it would be a
+    // clock of its own, and the loop has none.
+    func laneShare(_ id: UUID) async -> Int {
+        guard let loop = (try? await store.get(id))?.loop else { return 1 }
+        guard let rest = Self.unspent(loop, now: host.now()) else { return 86_400 }
+        return Swift.max(1, rest / Swift.max(1, loop.lanes?.count ?? 1))
     }
 
     static func blockedNote(_ who: String) -> String {

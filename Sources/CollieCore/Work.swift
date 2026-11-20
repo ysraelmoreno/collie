@@ -185,8 +185,11 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// between phases, or being integrated with no gate) and `since` when that phase holds.
     public struct LaneState: Codable, Sendable, Equatable {
         public var lane: String; public var task: String; public var attempt: Int?; public var phase: Phase?; public var since: Date
-        public init(lane: String, task: String, attempt: Int? = nil, phase: Phase? = nil, since: Date = Date()) {
-            self.lane = lane; self.task = task; self.attempt = attempt; self.phase = phase; self.since = since
+        /// M3b.4: when the lane began. `since` moves with every phase, so it cannot say how long the lane has run.
+        /// nil (a file from before): `since` stands in.
+        public var started: Date?
+        public init(lane: String, task: String, attempt: Int? = nil, phase: Phase? = nil, since: Date = Date(), started: Date? = nil) {
+            self.lane = lane; self.task = task; self.attempt = attempt; self.phase = phase; self.since = since; self.started = started
         }
         /// A phase or an attempt this daemon cannot read is nil: the lane still decodes.
         public init(from d: Decoder) throws {
@@ -195,6 +198,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             since = try c.decode(Date.self, forKey: .since)
             attempt = (try? c.decodeIfPresent(Int.self, forKey: .attempt)) ?? nil
             phase = (try? c.decodeIfPresent(Phase.self, forKey: .phase)) ?? nil
+            started = (try? c.decodeIfPresent(Date.self, forKey: .started)) ?? nil
         }
     }
     /// M3.5: the lanes running now, oldest first; nil: none (always, without `--parallel`).

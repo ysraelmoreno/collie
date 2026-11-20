@@ -64,14 +64,17 @@ private actor ParCore {
     /// M3.8: `named` as summoned; the scripts and the logs go by the name without its lane (`-f<n>`: which lane a
     /// task gets depends on who ended first).
     var named: [String] = []
+    /// M3b.4: the seconds each agent's first turn was given.
+    var limits: [String: Int] = [:]
     func summon(_ full: String, _ dir: URL) -> UUID {
         let name = full.replacingOccurrences(of: #"-f\d+(-t\d+)$"#, with: "$1", options: .regularExpression)
         named.append(full)
         let id = UUID(); agents[id] = (name, dir); summoned.append(name); dirs[name] = dir
         return id
     }
-    func ask(_ terminal: UUID, _ prompt: String) async -> AskResult.Source {
+    func ask(_ terminal: UUID, _ prompt: String, _ timeout: Duration) async -> AskResult.Source {
         guard prompt != WorkLoop.nudgePrompt, let a = agents[terminal] else { return .hook }
+        limits[a.name] = Int(timeout.components.seconds)
         log.append("start \(a.name)")
         do { try await scripts[a.name]?(a.dir) } catch { Issue.record("agent \(a.name): \(error)") }
         log.append("end \(a.name)")
@@ -86,7 +89,7 @@ private actor ParCore {
 private struct ParHost: LoopHost {
     let core: ParCore, clock: Clock, dir: URL
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID { await core.summon(name, dir) }
-    func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source { await core.ask(terminal, prompt) }
+    func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source { await core.ask(terminal, prompt, timeout) }
     func working(_ terminal: UUID) async -> Bool { false }
     func dismiss(_ terminal: UUID) async { await core.dismiss(terminal) }
     func othersWorking() async -> String? { nil }
@@ -307,18 +310,24 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
         #expect(left.isEmpty)
     }
 
+    /// M3b.4: this test used to assert the overrun (`spent >= 100` with `budget: 50`: each lane was given the whole
+    /// budget). Now it proves the opposite: the lanes share the 50 s, and the loop stops when their sum reaches it.
     @Test func theSharedBudgetSpentByOneLaneStopsTheOther() async throws {
         let r = try await ParRig([ptask("a", "test -f a.txt", scope: ["a.txt"]), ptask("b", "test -f b.txt", scope: ["b.txt"])], budget: 50)
         defer { r.cleanup() }
         let started = Arrivals(), forever = Forever(), clock = r.clock
-        // a takes 100 s of the loop's 50 while b is still in its turn
-        await r.core.set("w-task-a-t1") { d in await started.wait(for: 1); clock.advance(100); try await commit("a.txt", "a\n", in: d) }
+        // a takes 25 s while b is in its turn too: 25 + 25, the loop's 50
+        await r.core.set("w-task-a-t1") { d in await started.wait(for: 1); clock.advance(25); try await commit("a.txt", "a\n", in: d) }
         await r.core.set("w-task-b-t1") { _ in await started.hit(); await forever.wait() }
         let end = await r.run()
         #expect(end == .stopped)
-        let w = try await r.get(), dismissed = await r.core.dismissed
+        let w = try await r.get(), dismissed = await r.core.dismissed, limits = await r.core.limits
         #expect(w.loop?.stopReason?.code == .budgetSpent)
-        #expect((w.loop?.spent ?? 0) >= 100)
+        // no turn was given the whole budget once both lanes were alive
+        #expect(limits.count == 2 && limits.values.allSatisfy { $0 <= 50 } && (limits.values.min() ?? 50) <= 25, "\(limits)")
+        // the sum of the lanes' time: the budget, and never past it by more than one phase (the 25 s of a turn)
+        let spent = w.loop?.spent ?? 0
+        #expect(spent >= 50 && spent <= 50 + 25, "\(spent)")
         #expect(w.tasks.map(\.state) == [.done, .open], "a passed and was integrated; b was stopped with no verdict")
         #expect(r.has("a.txt") && !r.has("b.txt"))
         #expect(w.tasks[1].tries == nil && w.loop?.used == 1, "b's attempt is not counted")

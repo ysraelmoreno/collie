@@ -11,7 +11,8 @@ import CollieProtocol
 /// The counters are the loop's, in the work's file, written through the store (an actor): `used` is raised here, by
 /// the one scheduler, before a lane starts (so the attempts running count against `--max`), `spent` grows by each
 /// lane's own seconds when it ends (`--budget` is the sum of the lanes' time, not the wall clock), and `tries` is the
-/// task's, written by its lane.
+/// task's, written by its lane. M3b.4: the lanes alive count against `--budget` too, by when each began (`unspent`):
+/// what a lane may still take is what nobody used, shared by the lanes alive (`laneShare`).
 extension WorkLoop {
     /// What wakes the scheduler: a lane ended (its task's id), or something else changed (a stop was asked, a lane
     /// went to the integrator).
@@ -58,8 +59,10 @@ extension WorkLoop {
             let approved = loop.tasks.map { Set($0) }
             let open = w.tasks.filter { $0.state == .open && approved?.contains($0.id) != false }
             if alive.isEmpty, open.isEmpty { end = .finished; break }
-            if let b = loop.budget, (loop.spent ?? 0) >= b {
-                await note(id, "[loop] orçamento de tempo usado (\(loop.spent ?? 0) de \(b) s); laço parado")
+            // M3b.4: with what the lanes alive have run: no lane starts on a spent budget, and the ones alive are
+            // cancelled below, each adding its own seconds to `spent`, once, as it ends
+            if let b = loop.budget, let rest = Self.unspent(loop, now: host.now()), rest <= 0 {
+                await note(id, "[loop] orçamento de tempo usado (\(b - rest) de \(b) s, com as faixas em curso); laço parado")
                 stop = .init(.budgetSpent); break
             }
             let integrating = lanes[id]?.integrating ?? []
@@ -116,7 +119,7 @@ extension WorkLoop {
         let name = lane.path.lastPathComponent, n = (task.tries ?? 0) + 1, t0 = host.now()
         try? await store.update(id) { x in
             let others = x.loop?.lanes ?? []
-            x.loop?.lanes = others + [WorkLoopState.LaneState(lane: name, task: task.id, attempt: n, since: t0)]
+            x.loop?.lanes = others + [WorkLoopState.LaneState(lane: name, task: task.id, attempt: n, since: t0, started: t0)]
             x.loop?.mirror()
         }
         var stop: WorkLoopState.Stop?
@@ -129,7 +132,7 @@ extension WorkLoop {
             if case .stop(let s) = await engine.attempt(w, loop, fresh, lane.path) { stop = s }
             if await engine.passed != nil {
                 // nothing is integrated once the loop is stopping
-                if stop == nil, !Task.isCancelled { stop = await integrate(id, engine, lane, loop, since: t0, integrator) }
+                if stop == nil, !Task.isCancelled { stop = await integrate(id, engine, lane, loop, integrator) }
                 else { await engine.release(id, "não integrada: o laço parou") }
             }
         }
@@ -197,7 +200,7 @@ extension WorkLoop {
 
     /// The lane passed: the integrator joins it to the paddock's branch, and only then the task is done. Returns why
     /// the loop must stop (the paddock's worktree is not the loop's to touch right now), or nil.
-    private func integrate(_ id: UUID, _ engine: WorkLoop, _ lane: Lane, _ loop: WorkLoopState, since t0: Date,
+    private func integrate(_ id: UUID, _ engine: WorkLoop, _ lane: Lane, _ loop: WorkLoopState,
                            _ integrator: LaneIntegrator) async -> WorkLoopState.Stop? {
         guard let p = await engine.passed else { return nil }
         let name = lane.path.lastPathComponent, gate = loop.gate
@@ -205,7 +208,8 @@ extension WorkLoop {
         lanes[id]?.signal.yield(.poke)   // its slot is free (its scope is not): another task may start
         defer { lanes[id]?.integrating.remove(p.task.id) }
         try? await store.update(id) { $0.loop?.showLane(name, gate == nil ? nil : .gate) }
-        let timeout = Swift.min(checkTimeout, Duration.seconds(left(loop, since: t0)))
+        // M3b.4: the budget as it is now, not as the lane found it: the time in the integrator's queue counted too
+        let timeout = Swift.min(checkTimeout, Duration.seconds(loop.budget == nil ? 86_400 : await laneShare(id)))
         // in a task of its own: a stop never cuts a merge in half. It ends integrated or undone, whatever was cancelled.
         // ponytail: so a stop waits for a gate already running on the merged tree (the check's timeout bounds it)
         let result = await Task {

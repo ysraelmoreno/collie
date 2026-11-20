@@ -872,8 +872,13 @@ dono aprovou a lista de tarefas e os checks.
   editado, arquivo novo não rastreado, do dono ou do próprio portão, que o integrador não distingue), **nada é
   resetado nem apagado**: o laço para (`dirtyTree` ou `othersWorking`), a nota lista o que ficou e, se o portão
   quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a tarefa volta a aberta sem gastar
-  tentativa. `--max`, `--budget` e `--tries` são do laço inteiro (o orçamento soma o tempo
-  de todas as faixas). `collie work stop` cancela todas as faixas: nada fica integrado pela metade, a tentativa em curso
+  tentativa. `--max`, `--budget` e `--tries` são do laço inteiro. O orçamento é a **soma do
+  tempo das faixas**, não o relógio de parede: quatro faixas rodando 25 s gastam 100 s. O tempo de cada faixa vai do
+  início dela até ela sair, e **o tempo na fila do integrador conta** (a espera pela vez, o merge e o portão). As
+  faixas em curso já contam enquanto rodam: o que uma fase (turno, check, portão) pode levar é o que ninguém usou
+  ainda, dividido pelas faixas vivas; com o orçamento usado nenhuma faixa nova começa, as vivas são canceladas (a
+  tentativa delas não conta) e o laço para com `budgetSpent`. Folga: uma fase mantém o limite com que começou, então
+  o total pode passar do orçamento pelo resto de uma fase que começou quando havia menos faixas vivas. `collie work stop` cancela todas as faixas: nada fica integrado pela metade, a tentativa em curso
   não conta, e nenhuma faixa sobra (também são removidas no fim do laço e na varredura de início do daemon).
   - **Grafo de tarefas:** `collie work task add <título> --spec … --check … [--scope "<glob>,<glob>"] [--needs <id>,<id>]`.
     `--scope` são os caminhos que a tarefa pode tocar (globs relativos à raiz da worktree, sem `..` nem caminho

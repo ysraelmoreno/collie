@@ -33,7 +33,7 @@ sleep Sources/CollieDaemonKit/Devices/SimSession.swift 1
 sleep Sources/CollieDaemonKit/FontCommands.swift 1
 sleep Sources/CollieDaemonKit/Herds/HerdApplier.swift 1
 sleep Sources/CollieDaemonKit/Memory/Consolidation.swift 2
-sleep Sources/CollieDaemonKit/Memory/ConversationCapture.swift 1
+sleep Sources/CollieDaemonKit/Memory/ConversationCapture.swift 2
 sleep Sources/CollieDaemonKit/Memory/MemoryCapture.swift 1
 sleep Sources/CollieDaemonKit/Memory/MemoryService.swift 1
 sleep Sources/CollieDaemonKit/ModelCommand.swift 2

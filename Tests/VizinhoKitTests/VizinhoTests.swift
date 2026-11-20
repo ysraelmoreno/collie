@@ -69,6 +69,8 @@ private func panels(_ n: Int, dir: String = "Sources/P", imports: String = "impo
         f["s/AaaPanel.swift"] = "import A\nimport B\n" + String(repeating: "//x\n", count: 50)   // has all, biggest
         f["s/BbbPanel.swift"] = "import A\nimport B\n" + String(repeating: "//x\n", count: 10)
         f["s/CccPanel.swift"] = "import A\nimport B\n"                                             // smallest
+        f["s/EeePanel.swift"] = "import A\nimport B\n" + String(repeating: "//x\n", count: 30)
+        f["s/FffPanel.swift"] = "import A\nimport B\n" + String(repeating: "//x\n", count: 5)   // 5 of 6 have B (83%); Bbb is the median size
         f["s/DddPanel.swift"] = "import Weed\n"                                                  // lacks majority imports
         f["s/AaabPanel.swift"] = "import A\n"                                                    // new file, name-closest to Aaa
         let g = Vizinho.guide(project: project(f), file: "s/AaabPanel.swift")
@@ -120,13 +122,13 @@ private func panels(_ n: Int, dir: String = "Sources/P", imports: String = "impo
         #expect(Vizinho.respond(eventJSON: Data("lixo".utf8)) == Data("{}".utf8))
     }
 
-    @Test func sizeLimits() {
-        var f = panels(3)
-        f["Sources/P/FooPanel.swift"] = "struct FooPanel {}\n"
+    @Test func sizeLimits() throws {
         var many = ""
         for i in 0..<80 { many += "import Mod\(i)LongLongLongName\n" }
-        for i in 0..<3 { f["Sources/P/Big\(i)Panel.swift"] = many }
-        let g = Vizinho.guide(project: project(f), file: "Sources/P/FooPanel.swift")!
+        // every sibling has the 80 imports: 80 facts, so the text must be cut
+        var f = panels(3, imports: many)
+        f["Sources/P/FooPanel.swift"] = "struct FooPanel {}\n"
+        let g = try #require(Vizinho.guide(project: project(f), file: "Sources/P/FooPanel.swift"))
         #expect(g.count <= 1200)
         // a file past 256 KiB is read only up to the limit
         let huge = String(repeating: "x", count: 300_000)

@@ -336,17 +336,20 @@ import CollieProtocol
     /// `/collie:loop` (slice 2): Claude and Cursor carry the command (spike REPORT §9: outcome B), so their line names it;
     /// an agent without it (Codex) keeps the plain line.
     @Test func theLoopLineNamesTheCommandForClaude() {
-        let named = "- Loop (owner: /collie:loop <request>): work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks. To wait for a loop: collie work wait, not a terminal notice."
-        let plain = "- Loop: work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks. To wait for a loop: collie work wait, not a terminal notice."
-        for agent in ["claude", "cursor"] {
+        let plain = "- Loop: work task add --spec --check; collie work run, work stop only after the owner approved the task list and the checks."
+        let named = plain.replacingOccurrences(of: "- Loop:", with: "- Loop (owner: /collie:loop <request>):")
+        // M2.4: the line ends with how to wait for a loop, and that outranks the command's name where both do not fit
+        let wait = " Wait for a loop: collie work wait, not a terminal notice."
+        for (agent, line) in [("claude", named + wait), ("cursor", plain + wait)] {
             let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: agent)
-            #expect(t.count <= 1500 && t.split(separator: "\n").contains(Substring(named)), "\(agent) \(t.count)\n\(t)")
+            #expect(t.count <= 1500 && t.split(separator: "\n").contains(Substring(line)), "\(agent) \(t.count)\n\(t)")
         }
-        // where the named line would push the text into a shorter form, today's line stays (the command is still in the / menu)
+        // where the named line would push the text into a shorter form, the plain one stays (the command is still in the / menu)
         let both = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "F1", peers: [], panels: [("Home", "design")],
                                           paddockPanels: [("Draft", "design")])
-        #expect(both.contains("use design panel \"Home\" first") && both.split(separator: "\n").contains(Substring(plain)), "\(both.count)\n\(both)")
+        let loop = both.split(separator: "\n").first { $0.hasPrefix("- Loop") }.map(String.init) ?? ""
+        #expect(both.contains("use design panel \"Home\" first") && loop == plain, "\(both.count)\n\(both)")   // no room for the wait either
         let codex = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: "codex")
-        #expect(codex.split(separator: "\n").contains(Substring(plain)) && !codex.contains("/collie:loop"), "\(codex)")
+        #expect(codex.split(separator: "\n").contains(Substring(plain + wait)) && !codex.contains("/collie:loop"), "\(codex)")
     }
 }

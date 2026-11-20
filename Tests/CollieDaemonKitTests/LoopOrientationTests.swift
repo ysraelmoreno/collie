@@ -52,7 +52,7 @@ import CollieCore
     }
 
     @Test func theShepherdOrientationTeachesWorkWait() {
-        let phrase = "To wait for a loop: collie work wait, not a terminal notice."
+        let phrase = "Wait for a loop: collie work wait, not a terminal notice."
         for agent in ["claude", "cursor", "codex"] {
             let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: agent)
             let loop = t.split(separator: "\n").first { $0.hasPrefix("- Loop") }.map(String.init) ?? ""
@@ -60,6 +60,10 @@ import CollieCore
             #expect(t.contains("collie work status"))
             #expect(t.components(separatedBy: phrase).count == 2)   // once
         }
+        // at the cap the short sentence stays rather than the Loop line going with a shorter form (a Cursor Shepherd, real names)
+        let tightFit = CollieOrientation.text(terminal: "Collie Main", isShepherd: true, paddock: "collie", peers: ["Bob"], panels: [], agent: "cursor")
+        let short = tightFit.split(separator: "\n").first { $0.hasPrefix("- Loop") }.map(String.init) ?? ""
+        #expect(tightFit.count <= 1500 && short.hasSuffix("the checks. Wait: collie work wait."), "\(tightFit.count)\n\(tightFit)")
         // who cannot start a loop does not carry it: another agent, a Shepherd without a paddock or in a shared folder
         for t in [CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: "P", peers: ["Bob"], panels: []),
                   CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: nil, peers: ["Bob"], panels: []),

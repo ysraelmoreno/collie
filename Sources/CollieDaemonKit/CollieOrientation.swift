@@ -10,7 +10,8 @@ enum CollieOrientation {
     /// ponytail: a Shepherd is 10-20 characters under the cap; it labels the Team line instead of adding one
     static let delegate = "Delegate (no own subagents):"
     /// M2.4, on the Loop line: a notice typed into the terminal is a hint that may never arrive; the state is read.
-    static let loopWait = "To wait for a loop: collie work wait, not a terminal notice."
+    /// The short form is for a text at the cap (a Cursor Shepherd has under 60 characters to spare).
+    static let loopWait = "Wait for a loop: collie work wait, not a terminal notice.", loopWaitShort = "Wait: collie work wait."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {
@@ -37,13 +38,17 @@ enum CollieOrientation {
         // a compact UI-work line goes before the names do (a Shepherd in a shared folder keeps them)
         // `/collie:loop` named on the Loop line only where it fits: each form tries it, then the same form with today's line
         // (so the command never costs another line its place). Claude and Cursor carry it (LoopCommand; spike REPORT §9).
+        // The Loop line also says how to wait for a loop (M2.4), and that outranks the command's name (still in the / menu):
+        // the whole sentence with the name, then without it, then the short sentence, and only then the line as it was.
+        // The short sentence is shorter than the name, so no text loses a form it had before.
         let loopCommands = agent == "claude" || agent == "cursor" ? [true, false] : [false]
+        let loopLines = loopCommands.map { ($0, loopWait) } + [(false, loopWaitShort), (false, "")]
         // the candidates line (PRD B3 req. 4, a Shepherd's) may cost the names their room, never the cap: every form is
         // tried with it first, then all of them again without it
         for cands in candidates > 0 && isShepherd ? [candidates, 0] : [0] {
             for (n, claude, compact) in [(3, true, false), (3, false, false), (1, false, false), (1, false, true), (0, false, true), (-1, false, true)] {
-                for lc in loopCommands {
-                    let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc, candidates: cands)
+                for (lc, wait) in loopLines {
+                    let t = build(terminal: terminal, isShepherd: isShepherd, paddock: paddock, peers: peers, panels: panels, paddockPanels: paddockPanels, designFirst: designFirst, lot: lot, morePanels: morePanels, agent: agent, sharedFolder: sharedFolder, n, claude: claude, compact: compact, figcraftNote: note, memoryTask: memoryTask, loopCommand: lc, loopWait: wait, candidates: cands)
                     if t.count <= limit { return t }
                 }
             }
@@ -56,7 +61,7 @@ enum CollieOrientation {
                               paddockPanels: [(name: String, pluginId: String)], designFirst: DesignFirst,
                               lot: (name: String, goal: String)?, morePanels: Bool, agent: String, sharedFolder: [String] = [],
                               _ k: Int, claude: Bool = false, compact: Bool = false, figcraftNote: Bool = false, memoryTask: Bool = false,
-                              loopCommand: Bool = false, candidates: Int = 0) -> String {
+                              loopCommand: Bool = false, loopWait: String = "", candidates: Int = 0) -> String {
         func names(_ xs: [String]) -> String { Self.names(xs, max(k, 0)) }
         let tight = k < 0
         func of(_ ps: [(name: String, pluginId: String)], _ id: String) -> [String] { ps.filter { $0.pluginId == id }.map(\.name) }

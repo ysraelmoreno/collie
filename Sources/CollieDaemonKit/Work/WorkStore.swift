@@ -90,6 +90,25 @@ actor WorkStore {
         return out
     }
 
+    /// `work.task.reopen`: a deferred or dropped task goes back to `open` where it is, its `spec`, `check` and
+    /// `evidenceGlob` kept, `reason` and `lastFailure` cleared, `tries` too unless `keepTries`, with a note on the work.
+    /// Decided on the task as it is at the write. nil: the task is gone. `from` another state: nothing was changed.
+    /// `loopTakes`: a loop is running and approved this task, so it takes it again.
+    func reopenTask(_ id: UUID, task: String, keepTries: Bool, at: Date) async throws -> (task: WorkTask, from: TaskState, loopTakes: Bool)? {
+        var out: (task: WorkTask, from: TaskState, loopTakes: Bool)?
+        try await update(id) { w in
+            guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
+            let from = w.tasks[i].state
+            if from == .deferred || from == .abandoned {
+                w.tasks[i].state = .open; w.tasks[i].reason = nil; w.tasks[i].lastFailure = nil; w.tasks[i].updatedAt = at
+                if !keepTries { w.tasks[i].tries = nil }
+                w.notes.append(WorkNote(at: at, text: "[reopen] \(w.tasks[i].title): \(from == .deferred ? "adiada" : "abandonada")"))
+            }
+            out = (w.tasks[i], from, w.loop.map { $0.state == .running && ($0.tasks?.contains(task) ?? true) } ?? false)
+        }
+        return out
+    }
+
     /// Open tasks stay as they are: the summary reads them as not done.
     func close(_ id: UUID, by: String) async throws {
         try await update(id) { $0.closedAt = Date(); $0.closedBy = by }

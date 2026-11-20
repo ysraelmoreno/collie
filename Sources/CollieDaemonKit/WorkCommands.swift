@@ -259,18 +259,36 @@ extension CommandRouter {
             try await work.update(w.id) { $0.tasks.append(task) }
             return try isoJSON(task)
 
-        case "work.task.done", "work.task.defer", "work.task.drop":
+        case "work.task.done", "work.task.defer", "work.task.drop", "work.task.reopen":
             let t = try target()
             let (state, reason): (TaskState, String?) = switch r.command {
             case "work.task.done": (.done, nil)
             case "work.task.defer": (.deferred, try text("reason"))
-            default: (.abandoned, try text("reason"))
+            case "work.task.drop": (.abandoned, try text("reason"))
+            default: (.open, nil)
             }
             let w = try await active(t), key = try text("task")
             // the id first, then the title (case-insensitive)
             let hits = w.tasks.contains { $0.id == key } ? w.tasks.filter { $0.id == key }
                 : w.tasks.filter { $0.title.caseInsensitiveCompare(key) == .orderedSame }
             guard hits.count <= 1 else { throw ProtocolError(code: .ambiguous, message: "Multiple tasks titled '\(key)'; use its id") }
+            if r.command == "work.task.reopen" {
+                guard let hit = hits.first, let re = try await work.reopenTask(w.id, task: hit.id, keepTries: flag(r, "keep-tries"), at: now) else {
+                    throw missing("no task '\(key)' in the active work")
+                }
+                switch re.from {
+                case .deferred, .abandoned: break
+                case .done: throw invalid("a tarefa já está feita; use `work task defer` antes se quer refazê-la")
+                case .open: throw invalid("a tarefa já está aberta; não há o que reabrir")
+                case .inProgress:
+                    throw invalid("a tarefa está em andamento" + (w.loop?.state == .running ? " num laço rodando" : "") + "; só se reabre uma adiada ou abandonada")
+                }
+                guard case .object(var o) = try isoJSON(re.task) else { throw ProtocolError(code: .internal, message: "task encoding") }
+                o["output"] = .string("Tarefa \"\(re.task.title)\" reaberta [\(re.task.id)]: de volta à fila, na mesma posição. "
+                    + (re.loopTakes ? "O laço em curso a pega de novo: ela está entre as que ele aprovou."
+                       : "Ela espera o próximo `work run`, como uma tarefa adicionada depois: um laço só pega as tarefas aprovadas quando começou."))
+                return .object(o)
+            }
             guard let hit = hits.first, let done = try await work.setTask(w.id, task: hit.id, state: state, reason: reason, at: now) else {
                 throw missing("no task '\(key)' in the active work")
             }

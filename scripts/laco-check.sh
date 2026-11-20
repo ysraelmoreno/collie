@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
 suites=(WorkLoopTests WorkStatusTextTests WorkStoreTests LoopStopReasonTests LoopJournalTests AttemptDecisionTests AttemptMachineTests
-        LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests LoopCancelTests LoopResumeSafetyTests LoopCancelWaitTests WorkWaitTests LoopOrientationTests
+        LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests LoopCancelTests LoopResumeSafetyTests LoopResumeNitsTests LoopCancelWaitTests WorkWaitTests LoopOrientationTests
         WorkTaskReopenTests TaskSchedulerTests LaneWorktreeTests LaneHostTests LaneIntegrationTests LoopParallelTests
         LoopLaneLifecycleTests LoopParallelE2ETests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
 filters=(); for s in "${suites[@]}"; do filters+=(--filter "$s"); done
@@ -21,6 +21,7 @@ case "${1:?M1.1..M3.7}" in
   M1b.3) need $D/LoopNitsTests.swift ;;
   M2b.1) need $D/LoopResumeSafetyTests.swift ;;
   M2b.2) need $D/LoopCancelWaitTests.swift ;;
+  M2c)   need $D/LoopResumeNitsTests.swift ;;
   M2.0)  need $D/AskSubmitRetryTests.swift ;;
   M2.1)  need $D/LoopNudgeTests.swift ;;
   M2.2)  need $D/LoopResumeTests.swift ;;

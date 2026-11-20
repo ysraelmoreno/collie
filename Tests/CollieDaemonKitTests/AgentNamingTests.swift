@@ -10,7 +10,7 @@ import CollieProtocol
     struct Row: Sendable, CustomTestStringConvertible {
         let work: String, task: String, id: String, attempt: Int, lane: Int?, name: String
         var testDescription: String { name }
-        init(_ work: String, _ task: String, _ id: String = "40d1a204-aaaa", _ attempt: Int = 1, _ lane: Int? = nil, _ name: String) {
+        init(_ work: String, _ task: String, _ name: String, id: String = "40d1a204-aaaa", n attempt: Int = 1, lane: Int? = nil) {
             self.work = work; self.task = task; self.id = id; self.attempt = attempt; self.lane = lane; self.name = name
         }
     }
@@ -22,15 +22,15 @@ import CollieProtocol
         Row("Foo/Bar_baz!!", "a  b--c (d)", "foo-bar-baz-a-b-c-d-t1"),              // symbols, runs of them
         Row("!!!", "###", "trabalho-40d1a204-t1"),                                  // only symbols: the fallbacks
         Row("", "", "trabalho-40d1a204-t1"),
-        Row("   ", "\t", "///", 1, nil, "trabalho-tarefa-t1"),                      // and an id with nothing to give
-        Row("日本語", "Ωμέγα", "a/../x", 2, nil, "trabalho-a-x-t2"),
+        Row("   ", "\t", "trabalho-tarefa-t1", id: "///"),                      // and an id with nothing to give
+        Row("日本語", "Ωμέγα", "trabalho-a-x-t2", id: "a/../x", n: 2),
         // long titles: 18 characters each, cut at a `-` when the cut would fall inside a word
-        Row("Estado do laço máquina explícita", "abcdefghijklmnopqrstuvwxyz", "x", 3, nil, "estado-do-laco-abcdefghijklmnopqr-t3"),
+        Row("Estado do laço máquina explícita", "abcdefghijklmnopqrstuvwxyz", "estado-do-laco-abcdefghijklmnopqr-t3", id: "x", n: 3),
         Row("aaaaaaaaaaaaaaaaaa bbb", "M3.8 Nomes coerentes para os agentes", "aaaaaaaaaaaaaaaaaa-m3-8-nomes-t1"),
         // lanes and attempts
-        Row("W", "Task a", "a", 1, 2, "w-task-a-f2-t1"),
-        Row("W", "Task a", "a", 3, nil, "w-task-a-t3"),
-        Row("W", "Task a", "a", 3, 4, "w-task-a-f4-t3"),
+        Row("W", "Task a", "w-task-a-f2-t1", id: "a", lane: 2),
+        Row("W", "Task a", "w-task-a-t3", id: "a", n: 3),
+        Row("W", "Task a", "w-task-a-f4-t3", id: "a", n: 3, lane: 4),
         // a title is data: nothing of it starts the name with `-`, `.` or `/`, climbs a folder or breaks the line
         Row("-rf", "--force", "rf-force-t1"),
         Row(".hidden", "/etc/passwd", "hidden-etc-passwd-t1"),

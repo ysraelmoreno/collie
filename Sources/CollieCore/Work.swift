@@ -93,12 +93,17 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         case nudged
         /// M2.2a: the attempt judged a commit a fallen daemon's agent left, with no agent of its own (detail: the sha it resumed from).
         case adopted
+        /// M3.5: a lane that passed was joined to the paddock's branch (detail: the paddock's new HEAD) / its merge was
+        /// undone and the task redoes its attempt from the paddock's new HEAD (detail: why).
+        case integrated, integrationRetry
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200
     public var at: Date; public var kind: Kind; public var task: String?; public var attempt: Int?; public var detail: String?
-    public init(at: Date = Date(), kind: Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) {
-        self.at = at; self.kind = kind; self.task = task; self.attempt = attempt
+    /// M3.5: the lane the event happened in (its folder's name); nil: the paddock's worktree (always, without `--parallel`).
+    public var lane: String?
+    public init(at: Date = Date(), kind: Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil, lane: String? = nil) {
+        self.at = at; self.kind = kind; self.task = task; self.attempt = attempt; self.lane = lane
         self.detail = detail.map { String($0.prefix(Self.detailMax)) }
     }
 }
@@ -173,18 +178,51 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public static let eventsMax = 100
     /// Adds `e` to the journal; past `eventsMax`, the oldest go.
     public mutating func record(_ e: LoopEvent) { events = Array(((events ?? []) + [e]).suffix(Self.eventsMax)) }
+    /// M3.5, `work run --parallel N`: how many tasks may run at once, each in its lane. nil or 1: one at a time, in the
+    /// paddock's worktree, as always.
+    public var parallel: Int?
+    /// M3.5: one lane of a parallel loop: its folder's name, the `task` and `attempt` running in it, its `phase` (nil:
+    /// between phases, or being integrated with no gate) and `since` when that phase holds.
+    public struct LaneState: Codable, Sendable, Equatable {
+        public var lane: String; public var task: String; public var attempt: Int?; public var phase: Phase?; public var since: Date
+        public init(lane: String, task: String, attempt: Int? = nil, phase: Phase? = nil, since: Date = Date()) {
+            self.lane = lane; self.task = task; self.attempt = attempt; self.phase = phase; self.since = since
+        }
+        /// A phase or an attempt this daemon cannot read is nil: the lane still decodes.
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            lane = try c.decode(String.self, forKey: .lane); task = try c.decode(String.self, forKey: .task)
+            since = try c.decode(Date.self, forKey: .since)
+            attempt = (try? c.decodeIfPresent(Int.self, forKey: .attempt)) ?? nil
+            phase = (try? c.decodeIfPresent(Phase.self, forKey: .phase)) ?? nil
+        }
+    }
+    /// M3.5: the lanes running now, oldest first; nil: none (always, without `--parallel`).
+    public var lanes: [LaneState]?
+    /// Sets the phase of `lane` (an unknown lane: nothing), then `mirror`.
+    public mutating func showLane(_ lane: String, _ p: Phase?, at: Date = Date()) {
+        if let i = lanes?.firstIndex(where: { $0.lane == lane }), lanes?[i].phase != p { lanes?[i].phase = p; lanes?[i].since = at }
+        mirror()
+    }
+    /// For the readers that know one phase only: `task`, `attempt` and `phase` are the oldest lane's (none: no phase).
+    public mutating func mirror() {
+        guard let first = lanes?.first else { task = nil; show(nil); return }
+        task = first.task; attempt = first.attempt ?? attempt
+        phase = first.phase; phaseSince = first.phase == nil ? nil : first.since
+    }
     public var startedAt: Date; public var endedAt: Date?
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
                 budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil, phase: Phase? = nil,
-                startedAt: Date = Date(), endedAt: Date? = nil) {
+                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil) {
+        self.parallel = parallel
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
         self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate; self.phase = phase
         self.startedAt = startedAt; self.endedAt = endedAt
     }
     /// The older fields decode as always (a required one missing, or one of the wrong shape, is no loop). The newer
-    /// ones (`phase`, `phaseSince`, `stopReason`, `events`) only record: a malformed one is nil, a malformed event is dropped, and
+    /// ones (`phase`, `phaseSince`, `stopReason`, `events`, `parallel`, `lanes`) only record: a malformed one is nil, a malformed event is dropped, and
     /// the loop survives. What is written (the synthesized `encode`) does not change.
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -201,6 +239,8 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         phaseSince = (try? c.decodeIfPresent(Date.self, forKey: .phaseSince)) ?? nil
         stopReason = (try? c.decodeIfPresent(Stop.self, forKey: .stopReason)) ?? nil
         events = ((try? c.decodeIfPresent([Lossy].self, forKey: .events)) ?? nil)?.compactMap(\.event)
+        parallel = (try? c.decodeIfPresent(Int.self, forKey: .parallel)) ?? nil
+        lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {

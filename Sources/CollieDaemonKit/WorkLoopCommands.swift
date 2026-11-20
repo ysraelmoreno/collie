@@ -69,11 +69,18 @@ extension CommandRouter {
         if let gate, gate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw invalid("--gate is empty: give the command that runs after every task's check, or leave --gate out")
         }
+        // M3.5: absent is 1 (the loop as always); more runs tasks in lanes, which exist only sandboxed and are named by
+        // the task's id
+        let parallel = try num(r, "parallel", max: Double(TaskScheduler.maxParallel)).map { Int($0) }
+        if let parallel, parallel > 1 {
+            guard config.sandboxHome != nil else { throw invalid("--parallel needs the terminal sandbox: a lane's agent, check and git run only sandboxed") }
+            for t in open { try LaneWorktree.validate(task: t.id) }
+        }
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"), model: str(r, "model"), command: str(r, "command"),
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
-                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date())
+                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel)
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
@@ -303,6 +310,16 @@ extension CommandRouter {
         return there == root || there.hasPrefix(root + "/") || root.hasPrefix(there + "/")
     }
 
+    /// M3.5: the sandbox profile of one lane of the loop (`prepareLoopSandbox`), made when the lane is.
+    func loopLaneSandbox(_ work: UUID, paddock: UUID, lane: Lane) throws(ProtocolError) {
+        guard let p = ws.paddocks.first(where: { $0.id == paddock }) else {
+            throw ProtocolError(code: .notFound, message: "the loop's paddock is gone")
+        }
+        do { _ = try prepareLoopSandbox(work, paddock: p, lane: lane) } catch {
+            throw (error as? ProtocolError) ?? ProtocolError(code: .unavailable, message: "the lane's sandbox could not be prepared: \(error)")
+        }
+    }
+
     func loopTerminalExists(_ id: UUID) -> Bool { ws.terminals.contains { $0.id == id } }
 
     func loopDismiss(_ id: UUID) async {
@@ -388,6 +405,14 @@ struct RouterLoopHost: LoopHost {
     func forLane(_ lane: Lane) -> RouterLoopHost {
         RouterLoopHost(router: router, starter: starter, root: root, work: work, paddock: paddock, dir: lane.path, sandbox: sandbox, lane: lane)
     }
+
+    /// M3.5: the lane's host, its profile made first. Without a terminal sandbox there is none to make, and `profile`
+    /// refuses everything the lane would run.
+    func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
+        if sandbox != nil { try await router.loopLaneSandbox(work, paddock: paddock, lane: lane) }
+        return forLane(lane)
+    }
+    func laneGone(_ lane: Lane) async { SandboxLaunch.remove(CommandRouter.laneSandboxId(work, lane), root: root) }
 
     /// What the profile and its shims live under: the work, or the lane's own id.
     var sandboxId: UUID { lane.map { CommandRouter.laneSandboxId(work, $0) } ?? work }

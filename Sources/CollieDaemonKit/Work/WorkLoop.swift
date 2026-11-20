@@ -32,11 +32,20 @@ protocol LoopHost: Sendable {
     /// An approved task's declared evidence: what `glob` matches in the worktree `dir`, copied under `patchDir`
     /// (`EvidenceFiles`). It reads only inside the worktree: never more than the check could.
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied
+    /// M3.5: this host for one lane of the loop (M3.3), its sandbox profile made: the lane's agent, git and check run
+    /// through it. Throws when the lane cannot be given one (nothing of a lane runs without it).
+    func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost
+    /// M3.5: `lane` was removed: what `laneHost` made for it goes too.
+    func laneGone(_ lane: Lane) async
 }
 
 extension LoopHost {
     func resubmitted(_ terminal: UUID) async -> Bool { false }
     func taskEnded(_ line: String) async {}
+    func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
+        throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
+    }
+    func laneGone(_ lane: Lane) async {}
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
         EvidenceFiles.copy(glob, from: dir, to: EvidenceFiles.dir(patchDir(work), task: task))
     }
@@ -56,17 +65,27 @@ actor WorkLoop {
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration, othersWait: Duration
     /// A test's seam: the event an effect answers with, instead of carrying it out (nil: carried out as always).
     let events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)?
-    private var stopping: Set<UUID> = []
+    var stopping: Set<UUID> = []
+    /// M3.5: set on the engine of one lane (`WorkLoopLanes`): the lane's id (its folder's name). `host` is then the
+    /// lane's, an attempt that passes waits in `passed` for the integrator, and its journal and phase carry the lane.
+    /// nil: the loop's own engine, in the paddock's worktree.
+    let lane: String?
+    /// M3.5, a lane's engine: the attempt that passed in the lane, until it is integrated (or not).
+    var passed: Passed?
+    /// M3.5: the parallel runs of this engine, by work (`WorkLoopLanes`); empty without `--parallel`.
+    var lanes: [UUID: Lanes] = [:]
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
-         othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil) {
+         othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
+         lane: String? = nil) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
-        self.events = events
+        self.events = events; self.lane = lane
     }
 
     /// Ends the loop after the current attempt's verdict.
     func stop(work id: UUID) async {
         stopping.insert(id)
+        lanes[id]?.signal.yield(.poke)   // M3.5: a parallel run waits on its lanes: it is told now
         if (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
     }
 
@@ -76,7 +95,10 @@ actor WorkLoop {
         var end = WorkLoopState.State.stopped
         var stop: WorkLoopState.Stop?   // why it stopped; nil only when it finished
         try? await store.update(id) { w in if w.loop?.state == .running { w.loop?.stopReason = nil } }
-        while true {
+        // M3.5: `--parallel N` is a path of its own (`runLanes`); with 1 or none, the loop below, as it always was
+        let parallel = (try? await store.get(id))?.loop?.parallel ?? 1
+        if parallel > 1 { (end, stop) = await runLanes(work: id, dir: dir, parallel: parallel) }
+        while parallel <= 1 {
             if stopping.contains(id) { stop = .init(.requested); break }
             if Task.isCancelled { stop = .init(.cancelled); break }
             // closed, missing or stopped from outside (a daemon restart's sweep): stop
@@ -117,7 +139,7 @@ actor WorkLoop {
     /// One attempt of `task`, through its verdict. `.stop`: the loop stops (no verdict when the work closed, the starter is
     /// gone, or the tree holds changes that are not the attempt's; a verdict and no reset when another terminal works).
     /// After its first reads it only interprets `AttemptMachine`: the order of the effects and their conditions are there.
-    private func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
+    func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
         let n = (task.tries ?? 0) + 1, name = "loop-\(task.id)-\(n)", started = host.now()
         // git failing here (the loop's profile gone, not a repo): stop, nothing to judge
         guard let head = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
@@ -135,7 +157,7 @@ actor WorkLoop {
         // pre-existing untracked files are never the attempt's: the reset must not delete them
         let keep = await untracked(dir)
         // the attempt's first write carries its first event too (the machine's `attemptStarted` is not written again)
-        let first = LoopEvent(at: started, kind: .attemptStarted, task: task.id, attempt: n)
+        let first = LoopEvent(at: started, kind: .attemptStarted, task: task.id, attempt: n, lane: lane)
         // M2.2a: a fallen daemon's attempt left its commit: this attempt judges it from where that one started, with
         // no agent. Anything else the task carried is ignored (and overwritten by this attempt's own, right below)
         let adopt = await adoptable(task, branch: branch, dir)
@@ -151,7 +173,9 @@ actor WorkLoop {
             // M2b.1: one attempt, one live `resumeFrom`: from here on the commits are this task's, so what another
             // task was left with can no longer tell its own commits from these
             for j in x.tasks.indices where x.tasks[j].id != task.id { x.tasks[j].forgetResume() }
-            x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(adopt ? nil : .agent, at: started)
+            // M3.5: in a lane the scheduler already counted the attempt, and `loop.task` mirrors the oldest lane
+            if let lane { x.loop?.showLane(lane, .agent, at: started) }
+            else { x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(adopt ? nil : .agent, at: started) }
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
             x.loop?.record(first)
         }
@@ -188,7 +212,7 @@ actor WorkLoop {
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
             Self.endJob(&x, name, "loop: estado inesperado do motor", at: at)
             Self.forget(&x, task.id)
-            x.loop?.show(nil)
+            if let lane { x.loop?.showLane(lane, nil) } else { x.loop?.show(nil) }
             x.notes.append(WorkNote(at: at, text: "[loop] estado inesperado do motor\(what) em \"\(task.title)\": é um bug do laço; tarefa reaberta, tentativa não contada, worktree intocada; laço parado"))
         }
         return .stop(.init(.internal))
@@ -239,10 +263,10 @@ actor WorkLoop {
     /// attempt goes through here, so an event next to another write costs no write of its own (M1b.2: at most 8
     /// `store.update` in an attempt that passes with a gate, `LoopJournalWritesTests`).
     private func record(_ id: UUID, _ r: inout Run, _ change: @Sendable (inout Work) -> Void = { _ in }) async {
-        let events = r.pending, phase = r.phase
+        let events = r.pending, phase = r.phase, lane = lane
         r.pending = []; r.phase = nil
         try? await store.update(id) { x in
-            if let phase { x.loop?.show(phase) }
+            if let phase { if let lane { x.loop?.showLane(lane, phase) } else { x.loop?.show(phase) } }
             for e in events { x.loop?.record(e) }
             change(&x)
         }
@@ -417,15 +441,13 @@ actor WorkLoop {
                 if let n = c.note { await note(id, "[loop] evidência de \"\(task.title)\": \(n)") }
             }
             let found = evidence
-            await record(id, &r) { x in
-                // a task dropped or done meanwhile keeps that state
-                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
-                    x.tasks[i].state = .done; x.tasks[i].tries = n; x.tasks[i].reason = nil; x.tasks[i].lastFailure = nil; x.tasks[i].updatedAt = at
-                    x.tasks[i].evidence = found
-                }
-                Self.endJob(&x, name, head, at: at)
-                Self.forget(&x, task.id)
+            // M3.5: in a lane the task is `done` only once integrated: what passed waits for `WorkLoopLanes`
+            if lane != nil {
+                passed = Passed(task: task, name: name, n: n, tries: r.loop.tries, at: at, evidence: found, before: before, judged: judged, head: head, dir: dir)
+                await record(id, &r)
+                return nil
             }
+            await record(id, &r) { Self.markDone(&$0, task.id, n: n, at: at, evidence: found, job: name, head: head) }
             await reportEnd(id, task.id)
         case .markOpenOrDeferred(let reason, let last):
             let at = r.at
@@ -447,6 +469,17 @@ actor WorkLoop {
         return nil
     }
 
+    /// What an approved task is left as (the loop's own write, and a lane's once it is integrated).
+    static func markDone(_ x: inout Work, _ task: String, n: Int, at: Date, evidence: TaskEvidence, job: String, head: String) {
+        // a task dropped or done meanwhile keeps that state
+        if let i = x.tasks.firstIndex(where: { $0.id == task }), x.tasks[i].state == .inProgress {
+            x.tasks[i].state = .done; x.tasks[i].tries = n; x.tasks[i].reason = nil; x.tasks[i].lastFailure = nil; x.tasks[i].updatedAt = at
+            x.tasks[i].evidence = evidence
+        }
+        endJob(&x, job, head, at: at)
+        forget(&x, task)
+    }
+
     /// Another terminal that can edit the worktree is in a turn: no reset under it. It gets `othersWait` to finish (a short
     /// chat is no reason to end the loop); the name of the one still working after that, nil when none is.
     /// `first`: the one found working, already in the attempt's journal.
@@ -463,14 +496,14 @@ actor WorkLoop {
     /// The Shepherd hears of a task the moment it ends, not only when the whole loop does.
     /// Never awaited: the line is typed into the Shepherd only once it is idle, and a loop that waited for that stood
     /// still while the Shepherd was in a turn (up to the inject's hold), with the next task's terminal never opening.
-    private func reportEnd(_ work: UUID, _ task: String) async {
+    func reportEnd(_ work: UUID, _ task: String) async {
         guard let t = try? await store.get(work)?.tasks.first(where: { $0.id == task }) else { return }
         let line = WorkStatusText.taskEnded(t), host = host
         Task { await host.taskEnded(line) }
     }
 
     /// Seconds of the budget left for this attempt (at least 1); no budget: a day.
-    private func left(_ loop: WorkLoopState, since started: Date) -> Int {
+    func left(_ loop: WorkLoopState, since started: Date) -> Int {
         guard let b = loop.budget else { return 86_400 }
         return Swift.max(1, b - (loop.spent ?? 0) - Int(host.now().timeIntervalSince(started)))
     }
@@ -487,8 +520,8 @@ actor WorkLoop {
     }
 
     /// The event as the journal keeps it, timed now.
-    private func entry(_ kind: LoopEvent.Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) -> LoopEvent {
-        LoopEvent(at: host.now(), kind: kind, task: task, attempt: attempt, detail: detail.map(Self.eventDetail))
+    func entry(_ kind: LoopEvent.Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) -> LoopEvent {
+        LoopEvent(at: host.now(), kind: kind, task: task, attempt: attempt, detail: detail.map(Self.eventDetail), lane: lane)
     }
 
     /// An event's `detail`: it may be the agent's or the check's text, so, like the evidence, it loses its ANSI sequences
@@ -497,7 +530,7 @@ actor WorkLoop {
         String(LotBoards.scrub(RerailText.plain(ANSI.strip(s))).trimmingCharacters(in: .whitespaces).prefix(LoopEvent.detailMax))
     }
 
-    private func note(_ id: UUID, _ text: String) async {
+    func note(_ id: UUID, _ text: String) async {
         let at = host.now()
         try? await store.update(id) { $0.notes.append(WorkNote(at: at, text: text)) }
     }
@@ -534,7 +567,7 @@ actor WorkLoop {
     }
 
     /// The attempt of `task` ended (a verdict, or none: reopened): there is nothing to resume. Not when cancelled.
-    private static func forget(_ w: inout Work, _ task: String) {
+    static func forget(_ w: inout Work, _ task: String) {
         guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
         w.tasks[i].forgetResume()
     }
@@ -612,12 +645,12 @@ actor WorkLoop {
         return wrote
     }
 
-    private func out(_ args: [String], _ dir: URL) async -> String? {
+    func out(_ args: [String], _ dir: URL) async -> String? {
         guard let r = try? await host.git(args, in: dir), r.status == 0 else { return nil }
         return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func endJob(_ w: inout Work, _ id: String, _ result: String, at: Date) {
+    static func endJob(_ w: inout Work, _ id: String, _ result: String, at: Date) {
         guard let j = w.jobs.firstIndex(where: { $0.id == id && $0.state == .running }) else { return }
         w.jobs[j].state = .finished; w.jobs[j].endedAt = at; w.jobs[j].result = String(result.prefix(280))
     }

@@ -73,6 +73,10 @@ jobs:
           scripts/fetch-weblibs.sh
           scripts/build-drawio.sh
 
+      # window layout of the dmg: dmgbuild writes the .DS_Store itself (no Finder); exact versions in the file
+      - name: Install dmgbuild
+        run: python3 -m pip install -r scripts/dmg-requirements.txt
+
       - name: Signing keychain
         env:
           P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}

@@ -19,6 +19,13 @@ Só para distribuir a outros Macs. Uso local: `scripts/bundle-app.sh` (identidad
 scripts/release.sh          # gera build/Collie-<versão>.dmg assinado, notarizado e com ticket
 ```
 
+- **DMG** (`scripts/make-dmg.sh <Collie.app> <out.dmg>`, chamado pelo `release.sh`): usa o `dmgbuild` (Python), que
+  escreve o `.DS_Store` direto; não depende do Finder, então roda em terminal sandboxed e no CI. Instale antes:
+  `python3 -m pip install -r scripts/dmg-requirements.txt` (versões exatas; sem `dmgbuild` o script falha com essa
+  linha; `COLLIE_DMG_PYTHON` escolhe outro Python, ex. um venv). O `release.yml` instala do mesmo arquivo. Tamanho da
+  janela (660x420), posições dos ícones e fundo ficam só em `scripts/dmg-settings.py` (`ICON_Y`, `APP_X`,
+  `APPLICATIONS_X`): ajuste lá olhando um screenshot da janela. No fim o script monta o dmg só leitura, lê o
+  `.DS_Store` e falha se faltar a posição dos dois ícones ou a imagem de fundo (não confere o desenho, só os dados).
 - `COLLIE_SKIP_NOTARIZE=1` assina e gera o dmg sem enviar à Apple.
 - A versão vem de `CFBundleShortVersionString` em `Resources/Info.plist`.
 - Gere a partir da `main` (mesma regra do bundle).

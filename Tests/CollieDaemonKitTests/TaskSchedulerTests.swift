@@ -123,6 +123,8 @@ private func add(_ p: Paths, _ t: Term, _ args: [String: JSONValue]) async throw
         // a folder's prefix: a glob covers what is under it
         Glob("Sources/CollieApp", "Sources/CollieApp/Views/x.swift", true), Glob("Sources/CollieApp/", "Sources/CollieApp/**", true),
         Glob("Sources/CollieApp", "Sources/CollieAppKit/x.swift", false), Glob("Sources", "Sources/**", true), Glob("Sources", "Tests", false),
+        // a last segment with an extension is a file: nothing is under it (a dot folder is still a folder)
+        Glob(".github", ".github/workflows/ci.yml", true), Glob("docs/x.md", "docs/x.md/y", false),
         // in doubt, it overlaps
         Glob("a/[xy].md", "b/z.md", true), Glob("a/?.md", "b/z.md", true), Glob("a/{x,y}", "b", true), Glob("../a", "b", true),
         Glob("/a", "b", true), Glob("~/a", "b", true), Glob("", "b", true), Glob(".", "b", true), Glob("a\\b", "c", true),

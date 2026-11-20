@@ -80,14 +80,14 @@ enum TaskScheduler {
     }
 
     /// Whether some path is under both globs. `**` (a whole segment) is any number of folders, `*` any characters of
-    /// one segment. A glob also covers what is under it (`Sources/App` is the folder and its files), and letters
+    /// one segment. A glob whose last segment has no extension also covers what is under it (`Sources/App` is the folder and its files), and letters
     /// compare without case (the usual macOS volume does not tell `Docs` from `docs`): both only widen the answer.
     static func globsOverlap(_ a: String, _ b: String) -> Bool {
         guard let x = segments(a), let y = segments(b) else { return true }
         return intersects(x, y, wild: { $0 == "**" }) { s, t in intersects(Array(s), Array(t), wild: { $0 == "*" }, same: ==) }
     }
 
-    /// `glob` in segments, lowercased, ending in `**`; nil: it cannot be compared (empty, absolute, with `..`, or with
+    /// `glob` in segments, lowercased, ending in `**` unless its last segment looks like a file; nil: it cannot be compared (empty, absolute, with `..`, or with
     /// `?`, `[`, `{` or `\`, which this does not interpret).
     // ponytail: only `*` and `**` are understood; a glob with anything else just runs alone. Teach `?` and classes
     // here if scopes with them turn out to be common.
@@ -96,7 +96,10 @@ enum TaskScheduler {
         guard !g.hasPrefix("/"), !g.hasPrefix("~"), !g.contains(where: { "?[]{}\\".contains($0) || $0.isNewline }) else { return nil }
         var s = g.split(separator: "/").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0 != "." }
         guard !s.isEmpty, !s.contains(""), !s.contains("..") else { return nil }
-        if s.last != "**" { s.append("**") }
+        // ponytail: a last segment with an extension (`x.md`, `*.md`) is taken as a file and covers nothing under it;
+        // without this `**/*.md` would overlap every path (`Sources/x.swift/a.md`). The price: a folder named like a
+        // file (`Foo.xcodeproj`) only covers its contents when written `Foo.xcodeproj/**`.
+        if let last = s.last, last != "**", !last.dropFirst().contains(".") { s.append("**") }
         return s
     }
 

@@ -47,7 +47,7 @@ enum Config {
     /// Canvas or Preferências in Completa's main area. Not persisted: the app always opens on the canvas. Here, not in
     /// `ContentView`: ⌘, with the main window closed sets it and the window reopens already on the tab.
     @State private var mainView = MainViewState()
-    @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
+    @AppStorage(AppearanceKeys.theme) private var theme = ThemeSelection.dark.rawValue
     /// Bumped on every theme swap and set on the roots as an environment value: SwiftUI views that read it are
     /// evaluated again and resolve their dynamic colors anew. The roots' `id` stays (a new one would recreate the terminals).
     @State private var themeRevision = 0
@@ -60,7 +60,7 @@ enum Config {
              PluginViews.register("diagram", DiagramPanel.self); PluginViews.register("preview", PreviewPanel.self)
              PluginViews.register("designsystems", DesignSystemsPanel.self)
              PluginViews.register("artifacts", ArtifactsPanel.self); PluginViews.register("work", WorkPanel.self)   // before any panel view is made
-             Self.applyTheme()
+             ThemeGalleryModel.shared.start()   // before the first window: the saved theme is on screen from the start
              #if DEBUG
              // Unbundled `.build/debug/CollieApp` from a shell: no Dock icon and the window stays behind; make it a regular app.
              if Bundle.main.bundleIdentifier == nil {
@@ -99,8 +99,8 @@ enum Config {
             ContentView(client: client, canvas: canvas, error: $error, paletteOpen: $paletteOpen, herdsOpen: $herdsOpen, mainView: $mainView)
                 .sheet(isPresented: .constant(!consented)) { consentSheet }
                 .task(id: consented) { if consented { startService() } }
-                .onAppear(perform: Self.applyTheme)
-                .onChange(of: theme) { Self.applyTheme() }
+                .onAppear { ThemeGalleryModel.shared.reapply() }   // NSApp did not exist at init
+                .onChange(of: theme) { ThemeGalleryModel.shared.sync() }
                 .environment(\.collieThemeRevision, themeRevision)
                 .onReceive(NotificationCenter.default.publisher(for: .collieThemeChanged)) { _ in themeRevision += 1 }
         }
@@ -132,9 +132,6 @@ enum Config {
                 .onReceive(NotificationCenter.default.publisher(for: .collieThemeChanged)) { _ in themeRevision += 1 }
         }
     }
-
-    /// Also from the Preferences window (the main one may be closed). `NSApp` is nil until the app object exists.
-    static func applyTheme() { applyTheme(selection: AppearanceSettings(defaults: .standard).theme, theme: nil) }
 
     /// Built-in choice: the built-in palettes and today's appearance. Custom: the palette of `theme.extends` becomes
     /// `theme.palette` (the other side stays built-in) and the app appearance becomes that side. A custom choice
@@ -236,6 +233,7 @@ struct ContentView: View {
     @Binding var paletteOpen: Bool
     @Binding var herdsOpen: Bool
     @AppStorage(AppearanceKeys.structure) private var structureRaw = WindowStructure.compact.rawValue
+    @Environment(\.collieThemeRevision) private var themeRevision
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
     @Binding var mainView: MainViewState
@@ -377,6 +375,7 @@ struct ContentView: View {
     }
 
     var body: some View {
+        let _ = themeRevision   // a theme swap evaluates this root again (its id stays, so nothing is recreated)
         // Built once: the shell only adds chrome around it, so switching structure keeps the canvas and panels.
         Shell(structure: structure, ctx: shell, mainView: $mainView) {
             DockShell(client: client, store: store) {

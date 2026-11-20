@@ -238,11 +238,19 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   Na estrutura Completa a aba "Preferências" as mostra no lugar do canvas, que continua vivo por baixo: ⌘,, o comando
   "Preferências…", a engrenagem do trilho e "Abrir Preferências" abrem a aba (Esc ou a aba "Canvas" voltam, na mesma
   página ao reabrir); na Compacta abrem a janela de Ajustes.
+  "Aparência" tem a galeria de temas: cartões Escuro, Claro e Sistema, os temas do usuário (arquivos JSON em
+  `~/Library/Application Support/Collie/themes/`) e os quebrados (com o motivo; não selecionam). "Novo a partir de…"
+  copia um tema válido ("<nome> (cópia)") e o seleciona; "Importar…" aceita só `.json` válido; "Mostrar no Finder"
+  abre a pasta; apagar (menu de contexto, com confirmação) manda o arquivo para o Lixo e, se era o selecionado,
+  volta para Escuro. Arquivo do selecionado que muda no disco é reaplicado; que some ou quebra volta para Escuro.
+  Na partida o tema salvo (`custom:<id>`) é aplicado antes da primeira janela; ausente ou quebrado aplica Escuro e
+  mantém a preferência.
 - **Arquivos:** `Sources/CollieApp/PreferencesView.swift`, `Sources/CollieApp/PreferencePage.swift`,
   `Sources/CollieApp/UpdatePreferences.swift`, `Sources/CollieApp/CuratorPreferences.swift`,
   `Sources/CollieApp/CursorMemoryPreferences.swift`, `Sources/CollieApp/PluginsPreferences.swift`,
   `Sources/CollieApp/CelularPreferences.swift`, `Sources/CollieApp/AndroidPreferences.swift`,
-  `Sources/CollieApp/DesignEnginePreferences.swift`.
+  `Sources/CollieApp/DesignEnginePreferences.swift`, `Sources/CollieApp/ThemeGallery.swift`,
+  `Sources/CollieApp/ThemeLibrary.swift`.
 - **Como verificar:** à mão.
 
 ### Atualização e serviço

@@ -61,20 +61,21 @@ struct PreferencesView: View {
     @State private var updateBadge: String?
     @State private var loopTrustError: String?
     @AppStorage(PreferencePage.requestKey) private var requestedPage = ""
-    @AppStorage(AppearanceKeys.theme) private var theme = ThemeChoice.dark.rawValue
+    @AppStorage(AppearanceKeys.theme) private var theme = ThemeSelection.dark.rawValue
+    @State private var gallery = ThemeGalleryModel.shared
+    /// Read in `body`: a theme swap evaluates this root again and the dynamic colors below resolve anew.
+    @Environment(\.collieThemeRevision) private var themeRevision
     @AppStorage(AppearanceKeys.structure) private var structure = WindowStructure.compact.rawValue
     @AppStorage(AppearanceKeys.terminalFamily) private var family = TerminalFontChoice.default.family
     @AppStorage(AppearanceKeys.terminalSize) private var size = Double(TerminalFontChoice.default.size)
     @AppStorage(MemoryDigestNotice.defaultsKey) private var dailyNotification = MemoryDigestNotice.defaultOn
     @AppStorage(Notifier.confirmKey) private var confirmNotification = Notifier.confirmDefaultOn
 
-    private let themes: [(ThemeChoice, String, String, Palette?)] = [
-        (.dark, "Escuro", "fundo índigo, menta", .dark), (.light, "Claro", "papel, cobalto", .light),
-        (.system, "Sistema", "segue o macOS", nil)]
     private let structures: [(WindowStructure, String, String)] = [
         (.compact, "Compacta", "canvas + cabeçalho flutuante"), (.full, "Completa", "barra lateral, cercados e status")]
 
     var body: some View {
+        let _ = themeRevision
         HStack(spacing: 0) {
             sidebar
             Rectangle().fill(Color.collieBorder).frame(width: 1)
@@ -107,7 +108,7 @@ struct PreferencesView: View {
             }
             androidBadge = nil; designBadge = nil; updateBadge = nil   // connection dropped: no stale ↓
         }
-        .onChange(of: theme) { CollieApp.applyTheme() }
+        .onChange(of: theme) { gallery.sync() }
         .onChange(of: query) {   // the search hid the open page: show the first match (none: keep it)
             let m = PreferencePage.matching(query)
             if let first = m.first, !m.contains(page) { page = first }
@@ -174,15 +175,7 @@ struct PreferencesView: View {
     }
 
     private var themeSection: some View {
-        section("Tema") {
-            HStack(spacing: 12) {
-                ForEach(themes, id: \.0) { t in
-                    ChoiceCard(t.1, subtitle: t.2, selected: theme == t.0.rawValue, action: { theme = t.0.rawValue }) {
-                        miniature(t.3, sidebar: false)
-                    }
-                }
-            }
-        }
+        section("Tema") { ThemeGallery() }
     }
 
     private var structureSection: some View {
@@ -374,7 +367,7 @@ struct PreferencesView: View {
         }
     }
 
-    private var currentPalette: Palette? { ThemeChoice(rawValue: theme).flatMap { t in t == .dark ? .dark : t == .light ? .light : nil } }
+    private var currentPalette: Palette? { gallery.selectedPalette }
 
     private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
         VStack(alignment: .leading, spacing: 10) {

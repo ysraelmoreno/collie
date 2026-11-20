@@ -117,6 +117,9 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Nome na UI:** "Trabalho" (subtítulo "N ativos"). Selo "em laço: <tarefa> (tentativa n/m)"; seção "Fechados (N)".
 - **Para que serve:** o registro do que cada terminal está fazendo, com tarefas e o andamento do laço. A tarefa feita pelo
   laço mostra a evidência: commits, saída do check e os arquivos de evidência declarados (`--evidence`), com "Abrir".
+- **Laço em paralelo:** `collie work run --parallel <n>` (padrão 1, máximo 4) roda cada tarefa numa faixa (worktree
+  temporário do laço, não um cercado) e integra uma de cada vez; `work task add --scope --needs` diz quem pode rodar
+  junto (sem `--scope` a tarefa roda sozinha). O `work status` mostra uma linha por faixa. Ver `docs/referencia.md`.
 - **Arquivos:** `Sources/ColliePlugins/WorkPanel.swift`.
 - **Como verificar:** `collie work status` (a linha do laço diz `desde HH:mm (N min)` e, com o agente trabalhando,
   `próximo limite: turno vence em N min`), `collie work wait [--since N] [--timeout S]` (espera o trabalho mudar, sem

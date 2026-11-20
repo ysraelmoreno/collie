@@ -4,7 +4,19 @@ Todas as mudanças notáveis do Collie, por versão. O formato segue o [Keep a C
 
 ## [Não lançado]
 
+### Adicionado
+- **Laço que diz por que parou:** todo laço que para registra o motivo (`stopReason`), com nota, no `collie work status` e no aviso de fim.
+- **Diário do laço:** `collie work status --events [N]` mostra os últimos eventos do laço (turno, check, portão, veredito), dos 100 mais novos.
+- **Esperar o laço sem terminal:** `collie work wait [--since N] [--timeout S]` responde quando o trabalho mudou ou o laço terminou; o `work status` diz desde quando a fase corre e quando o turno vence. `/collie:loop` e a orientação do Pastor passam a ensinar o `work wait` em vez de esperar o aviso digitado.
+- **Reabrir uma tarefa:** `collie work task reopen <tarefa> [--keep-tries]` devolve à fila uma tarefa adiada ou abandonada, na mesma posição.
+- **Tarefas em paralelo:** `collie work run --parallel <n>` (padrão 1, máximo 4) roda cada tarefa numa faixa (um worktree temporário do laço) e as integra uma de cada vez, com o portão de novo depois de cada merge; `collie work task add --scope --needs` declara o que cada tarefa toca e de quem depende (sem `--scope` a tarefa roda sozinha). O status, o `work wait`, o diário e o cartão mostram as faixas. `scripts/dev/lane-coldbuild.sh` mede o custo da compilação a frio de uma faixa.
+
+### Alterado
+- O laço reenvia o Enter de um prompt que ficou digitado sem ser submetido, e dá um toque no agente que encerra o turno cedo sem commit, em vez de queimar a tentativa.
+- Depois de uma queda do daemon, o laço retoma o commit que a tentativa já tinha feito em vez de recomeçar a tarefa; parar o daemon não gasta a tentativa em curso.
+
 ### Corrigido
+- Laço: uma tarefa não fica mais presa "em andamento" por um evento fora de fase; um campo novo malformado no registro não derruba a leitura do trabalho; o diário grava metade das vezes por tentativa.
 - **CI determinístico:** o passo de testes (`scripts/ci/run-tests.sh`) não confia mais no código de saída do `swift test`, que deu verde com 237 falhas quando o processo de teste saiu no meio; roda a suíte em 3 partes seriais e só passa com a contagem final de cada uma. Testes que o runner hospedado não roda ficam em `scripts/ci/ci-skip.txt`, com o motivo. Testes desatualizados (`--plugin-dir` do Cursor, título da página no import) e uma falha fatal do falso daemon do `MCPTests` corrigidos.
 
 ## [0.1.7] — 2026-11-19

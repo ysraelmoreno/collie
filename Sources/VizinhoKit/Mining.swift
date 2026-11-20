@@ -64,12 +64,16 @@ public enum Mining {
             guard Vizinho.importExts.contains(g.ext) else { continue }
             var counts: [String: Int] = [:]
             for p in paths { for m in imports[p] ?? [] { counts[m, default: 0] += 1 } }
-            for (m, c) in counts where c * 100 >= n * Vizinho.importPct {
+            // only the project's own modules: `Foundation` in every file is not a convention worth a fence
+            for (m, c) in counts where c * 100 >= n * Vizinho.importPct && names.contains(m) {
                 add(.requireImport, m, "\(c) de \(n) importam \(m)", paths.filter { !(imports[$0]?.contains(m) ?? false) })
             }
-            for (m, total) in global where counts[m] == nil && names.contains(m)
-                && total - (perDir[g.dir]?[m] ?? 0) >= minOutside {
-                add(.forbidImport, m, "0 de \(n) importam \(m)", [])
+            // the folder's own module is never imported by itself; a module a subfolder imports is not forbidden here
+            let own = Set(g.dir.split(separator: "/").map(String.init))
+            let below = perDir.filter { $0.key == g.dir || $0.key.hasPrefix(g.dir + "/") }
+            for (m, total) in global where counts[m] == nil && names.contains(m) && !own.contains(m) {
+                let inside = below.values.reduce(0) { $0 + ($1[m] ?? 0) }
+                if inside == 0, total >= minOutside { add(.forbidImport, m, "0 de \(n) importam \(m)", []) }
             }
         }
         found.sort { $0.size != $1.size ? $0.size > $1.size : $0.fence.id < $1.fence.id }

@@ -9,10 +9,31 @@ private func panels(_ n: Int, dir: String = "Sources/P", imports: String = "impo
         f["\(dir)/Item\(i)Panel.swift"] = (skipImports.contains(i) ? "" : imports) + "struct Item\(i)Panel {}\n"
     }
     for i in tests { f["Tests/PTests/Item\(i)PanelTests.swift"] = "" }
+    f["Sources/CollieCore/Core.swift"] = "enum Core {}\n"   // CollieCore is a module of the project, not a system one
     return f
 }
 
 @Suite struct MiningTests {
+    @Test func systemModulesAreNotRequired() throws {
+        // all ten import Foundation and CollieCore: only the project's own module becomes a fence
+        let r = Mining.propose(project: try tmpProject(panels(10)))
+        #expect(r.contains { $0.kind == .requireImport && $0.module == "CollieCore" })
+        #expect(!r.contains { $0.module == "Foundation" })
+    }
+
+    @Test func aFolderNeverForbidsItsOwnModuleOrWhatASubfolderImports() throws {
+        var f: [String: String] = [:]
+        // Sources/Kit: ten files at the top import nothing; its subfolder imports Dev
+        for i in 0..<10 { f["Sources/Kit/Top\(i).swift"] = "enum Top\(i) {}\n" }
+        f["Sources/Kit/Sub/Inner.swift"] = "import Dev\n"
+        // elsewhere: twelve files import Kit, Dev and Ui (so the three are imported often enough outside Kit)
+        for i in 0..<12 { f["Sources/App/Use\(i).swift"] = "import Kit\nimport Dev\nimport Ui\n" }
+        f["Sources/Dev/D.swift"] = ""
+        f["Sources/Ui/U.swift"] = ""
+        let r = Mining.propose(project: try tmpProject(f)).filter { $0.kind == .forbidImport && $0.dir == "Sources/Kit" }
+        #expect(r.map(\.module) == ["Ui"])   // not Kit (itself), not Dev (Sub imports it)
+    }
+
     @Test func requireImportNeedsTenFiles() throws {
         let r = Mining.propose(project: try tmpProject(panels(10)))
         let f = try #require(r.first { $0.kind == .requireImport && $0.module == "CollieCore" })
@@ -68,7 +89,7 @@ private func panels(_ n: Int, dir: String = "Sources/P", imports: String = "impo
 
     @Test func atMostFiftyProposals() throws {
         var f: [String: String] = [:]
-        for d in 0..<60 { f.merge(panels(10, dir: "Sources/D\(d)", imports: "import Foundation\n")) { a, _ in a } }
+        for d in 0..<60 { f.merge(panels(10, dir: "Sources/D\(d)", imports: "import CollieCore\n")) { a, _ in a } }
         #expect(Mining.propose(project: try tmpProject(f)).count == 50)
     }
 }

@@ -172,7 +172,9 @@ private func panels11() -> [String: String] {
     }
 
     @Test func proposalsAreWrittenWhenMissingAndKeptFor24Hours() throws {
-        let root = try tmpProject(panels11())
+        var f = panels11()
+        f["Sources/CollieCore/Core.swift"] = ""   // a project module: only those are proposed
+        let root = try tmpProject(f)
         let data = try tmpProject([:])
         let file = data.appendingPathComponent(Fences.key(project: root)).appendingPathComponent("propostas.json")
         _ = try respond(root, files: [], data: data)
@@ -188,7 +190,11 @@ private func panels11() -> [String: String] {
     }
 
     @Test func approvedProposalDoesNotComeBack() throws {
-        let root = try tmpProject(panels11())
+        var f = panels11()
+        // both imports are modules of this project (only those are proposed); "Foundation" here is just a folder name
+        f["Sources/CollieCore/Core.swift"] = ""
+        f["Sources/Foundation/F.swift"] = ""
+        let root = try tmpProject(f)
         let data = try tmpProject([:])
         let dir = data.appendingPathComponent(Fences.key(project: root))
         let approved = Fence(kind: .requireImport, dir: "Sources/P", suffix: "Panel", ext: "swift", module: "CollieCore",

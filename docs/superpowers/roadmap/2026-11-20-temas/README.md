@@ -54,3 +54,24 @@ piscar e sem recriar terminais) e começa por prová-lo.
 
 T2, T5 e T6 mudam o que se vê. Cada um termina com uma conferência no app real, descrita no PRD; teste de modelo
 não substitui.
+
+## Estado em 2026-11-20
+
+T1 a T6 implementados e com testes verdes (alvos de teste do app e do tema inteiros: 287 testes; lint e
+arquitetura). **Nada foi visto no app**: quem implementou e quem verificou não podem abri-lo.
+
+Conferência pendente do dono, num `build/Collie.app` deste ramo (cobre as seções "No app real" de T2, T5 e T6):
+
+1. Preferências › Aparência: aparecem os cartões Escuro, Claro, Sistema e "Novo a partir de…".
+2. "Novo a partir de…" › Escuro: cria "Escuro (cópia)" e o seleciona.
+3. Com dois terminais abertos e um comando rodando num deles, trocar na **Lista** o Fundo, a Superfície e o
+   Destaque. Devem mudar, sem piscar: canvas, barra lateral, Preferências, o terminal (fundo, texto, cursor) e uma
+   página de plug-in ou Prévia. O comando continua rodando.
+4. Mudar para **JSON**: as três cores estão lá. Trocar uma cor no texto: a lista e a prévia acompanham.
+5. Deixar o JSON inválido: aparece "não aplicado: …" e o app não muda.
+6. Abrir o arquivo em `~/Library/Application Support/Collie/themes/` num editor, salvar outra cor: o app acompanha.
+7. Reiniciar o app: o tema vem aplicado desde a primeira janela.
+8. Apagar o tema selecionado: o app volta para Escuro.
+
+Se o passo 3 falhar só nas telas SwiftUI (barra lateral, Preferências), ver "Resultado da prova" em
+`prd-t2-paleta-ativa.md`, item 2.

@@ -31,3 +31,10 @@ A M1.4 é a de maior risco. Se a tentativa 3 falhar, ela pode ficar adiada: M1.1
 
 Testes só com `swift test --disable-sandbox --filter <Suite> --skip MemoryEventEmissionTests`, nunca a suíte inteira. Os campos novos de `WorkLoopState` são **opcionais** e decodificam de arquivos antigos (`decodeIfPresent`/`try?` como `loop` já faz): um `work` gravado pelo daemon anterior continua abrindo. Sem dependência nova. Textos que o dono vê, em português. Commits convencionais, um por tarefa, só com os arquivos da tarefa; nada de push. Não tocar em `scripts/ci/`, `architecture-rules.txt` nem `lint-baseline.txt`; o lint do repo vale: sem `sleep` novo, `try!`, `as!`. `CollieCore` não importa AppKit/SwiftUI. O app só compila e é verificado por testes: não rode o app, não instale, não rode `bundle-app.sh`.
 Verificação de cada tarefa: `scripts/laco-check.sh M1.n` (veja o script).
+
+## Regras aprendidas na prática (valem para todas as ondas)
+
+- **Nunca `await` (nem `try await`) dentro de `#expect`/`#require`**: leia o valor num `let` antes. Propriedade de actor lida dentro da expectativa é erro de compilação do alvo de testes, e derrubou duas tentativas na Onda 2.
+- **Antes de commitar, rode as suítes novas uma a uma** (`--filter <Suíte>`) e leia `Test run with N tests`; um erro de compilação do alvo de testes derruba o check inteiro e a nota do laço mostra só o rabo da saída.
+- Se a tarefa for grande, **commite cedo e em partes** (o código, depois os testes): sem commit novo a tentativa não conta.
+- Ninguém, nem o agente, cria arquivo novo fora do que a tarefa pede: o laço apaga os arquivos não rastreados criados durante a tentativa.

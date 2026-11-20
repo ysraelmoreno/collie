@@ -227,6 +227,7 @@ extension CommandRouter {
         }
         let why = WorkLoopState.Stop(.daemonRestart)
         x.loop?.state = .stopped; x.loop?.endedAt = now; x.loop?.task = nil; x.loop?.stopReason = why
+        x.loop?.record(LoopEvent(at: now, kind: .stopped, detail: why.label))
         x.notes.append(WorkNote(at: now, text: why.note))
     }
 

@@ -4,9 +4,12 @@ public struct ParamSpec: Sendable, Equatable {
     public var name: String; public var kind: Kind; public var positional: Bool; public var required: Bool; public var help: String
     /// A `.string` flag given more than once: its values joined with "," (the daemon splits on ",").
     public var repeatable: Bool
-    public init(_ name: String, _ kind: Kind, positional: Bool = false, required: Bool = false, help: String = "", repeatable: Bool = false) {
+    /// An `.int` flag given with no number after it (`work status --events`) takes this value; nil: the value is required.
+    public var bare: Int?
+    public init(_ name: String, _ kind: Kind, positional: Bool = false, required: Bool = false, help: String = "", repeatable: Bool = false,
+                bare: Int? = nil) {
         self.name = name; self.kind = kind; self.positional = positional; self.required = required; self.help = help
-        self.repeatable = repeatable
+        self.repeatable = repeatable; self.bare = bare
     }
 }
 
@@ -357,7 +360,8 @@ public enum Commands {
                     timeoutSeconds: 30),
         CommandSpec(name: "work.status", summary: "The active work: tasks by state, jobs, recent notes",
                     params: [ParamSpec("terminal", .string, help: "Terminal leashed to you (Shepherd)"),
-                             ParamSpec("all", .flag, help: "Every active work you can see")],
+                             ParamSpec("all", .flag, help: "Every active work you can see"),
+                             ParamSpec("events", .int, help: "Also the loop's journal: its last N events (default 20, at most 100)", bare: 20)],
                     timeoutSeconds: 30),
         CommandSpec(name: "work.summary", summary: "What a work did, deferred and left undone (from the registry; --natural: on-device rewrite)",
                     params: [ParamSpec("id", .string, help: "Work id (default: the active work)"),

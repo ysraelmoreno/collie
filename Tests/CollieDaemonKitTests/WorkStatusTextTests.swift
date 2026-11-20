@@ -99,6 +99,23 @@ import CollieCore
         #expect(WorkStatusText.loopEnded(w).hasPrefix("[collie] Laço de \"W\" terminou: 0 feitas, 0 adiadas."))
     }
 
+    /// M1.2: the journal shows only where it is asked for (`work status --events`): every status line reads as before.
+    @Test func theJournalChangesNoStatusLine() {
+        var w = Work(title: "W", terminalId: term, tasks: [WorkTask(id: "a", title: "Build it", state: .inProgress)])
+        for state in [WorkLoopState.State.running, .stopped, .finished] {
+            w.loop = WorkLoopState(state: state, task: "a", attempt: 2, tries: 3, used: 2, gate: "make lint")
+            if state == .stopped { w.loop?.stopReason = .init(.maxReached) }
+            let before = [WorkStatusText.loopLine(w), WorkStatusText.gateLine(w), WorkStatusText.statsLine(w), WorkStatusText.recall(w), WorkStatusText.loopEnded(w),
+                          WorkStatusText.answer(.whereAreWe, works: [w], names: [:], badges: [:], now: now)]
+            w.loop?.record(LoopEvent(at: now, kind: .verdict, task: "a", attempt: 2, detail: "check failed (exit 1)"))
+            let after = [WorkStatusText.loopLine(w), WorkStatusText.gateLine(w), WorkStatusText.statsLine(w), WorkStatusText.recall(w), WorkStatusText.loopEnded(w),
+                         WorkStatusText.answer(.whereAreWe, works: [w], names: [:], badges: [:], now: now)]
+            #expect(before == after, "\(state)")
+            #expect(!after.compactMap { $0 }.joined().contains("verdict"))
+        }
+        #expect(WorkStatusText.loopLine(w) == "laço terminou (2 tentativas)")
+    }
+
     @Test func doneLineShowsTheEvidence() {
         var t = WorkTask(id: "a", title: "Build\nit", state: .done)
         #expect(WorkStatusText.doneLine(t) == nil)   // no evidence: the status line stays as it was

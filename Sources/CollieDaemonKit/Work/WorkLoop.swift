@@ -57,7 +57,10 @@ actor WorkLoop {
     }
 
     /// Ends the loop after the current attempt's verdict.
-    func stop(work id: UUID) { stopping.insert(id) }
+    func stop(work id: UUID) async {
+        stopping.insert(id)
+        if (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
+    }
 
     /// Runs `work`'s open tasks until all are done/deferred, `max` is used or `stop` is asked. `work.loop` must be set
     /// and `.running`. Returns the final state.
@@ -92,7 +95,10 @@ actor WorkLoop {
             let outside = w.loop!.state == .running ? nil : w.loop!.stopReason
             w.loop!.state = final; w.loop!.endedAt = now; w.loop!.task = nil; w.loop!.stopReason = outside ?? why
             // always one summary note, after the path's own longer one (if any)
-            if outside == nil, let why { w.notes.append(WorkNote(at: now, text: why.note)) }
+            if outside == nil, let why {
+                w.notes.append(WorkNote(at: now, text: why.note))
+                w.loop!.record(LoopEvent(at: now, kind: .stopped, detail: Self.eventDetail(why.label)))
+            }
         }
         return end
     }
@@ -122,11 +128,15 @@ actor WorkLoop {
             x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.phase = .agent
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
         }
+        // the journal: this attempt's events (it records, it never decides)
+        func log(_ kind: LoopEvent.Kind, _ detail: String? = nil) async { await event(w.id, kind, task: task.id, attempt: n, detail: detail) }
+        await log(.attemptStarted)
 
         var failure: String?   // the attempt failed before its check: summon or ask
         var agent: UUID?
         do { agent = try await host.summon(name: name, for: w, loop: loop) } catch { failure = error.message }
         if let agent, failure == nil {
+            await log(.agentSummoned, name)
             let spec = if let s = task.spec { await host.readSpec(s) } else { String?.none }
             let notes = w.notes.filter { $0.text.hasPrefix("[loop \(task.id)] ") }   // its own failures, by id
             var map: String?
@@ -134,15 +144,20 @@ actor WorkLoop {
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: loop.tries, dir: dir, notes: notes, gate: loop.gate, map: map)
             let turn = Swift.min(loop.timeout, left(loop, since: started))   // the budget bounds the turn too
             do {
-                if try await host.ask(agent, prompt: prompt, timeout: .seconds(turn)) == .idle {
+                let source = try await host.ask(agent, prompt: prompt, timeout: .seconds(turn))
+                await log(.turnEnded, source.rawValue)
+                if source == .idle {
                     await waitForCommit(agent, before: before, branch: branch, dir: dir, until: started + Double(turn))
                 }
             } catch where error.code == .timeout {
                 // a turn past its timeout is not a failure by itself: the check decides
-            } catch { failure = error.message }
+                await log(.turnEnded, "timeout")
+            } catch { failure = error.message; await log(.turnEnded, "erro: \(error.message)") }
+            // for the journal only: the verdict reads the commit again, after the dismiss
+            if await committed(before: before, branch: branch, dir) { await log(.commitSeen, await out(["rev-parse", "--short", "HEAD"], dir)) }
         }
         // before the check: nothing edits the tree while it is judged (a turn past its timeout may still be working)
-        if let agent { await host.dismiss(agent) }
+        if let agent { await host.dismiss(agent); await log(.agentDismissed) }
         // cancelled (the daemon stops): no verdict, no discard, the attempt not counted
         if Task.isCancelled {
             let at = host.now()
@@ -180,6 +195,7 @@ actor WorkLoop {
             var status: Int32?   // nil: timed out
             var broken: String?   // the check could not even start
             await phase(w.id, .check)
+            await log(.checkStarted)
             do {
                 let budgeted = Duration.seconds(left(loop, since: started))
                 let r = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
@@ -187,29 +203,37 @@ actor WorkLoop {
             } catch where error.code == .timeout {
                 status = nil
             } catch { broken = "check could not run: \(error.message)" }
+            await log(.checkFinished, broken != nil ? "não rodou" : status.map { "exit \($0)" } ?? "timeout")
             // the check's own edits, files and commits never count, never reach the gate and never leak into the next
             // attempt: the tree goes back to exactly `judged`. Not when dirty (the agent's uncommitted work is the patch's)
             // nor while another terminal works (no reset under it).
             var moves: [String] = []   // the check or the gate moved HEAD: the attempt fails
-            if !dirty { blocked = await othersWorkingWaiting() }
-            if await settle(judged, on: on, loose: loose, reset: !dirty && blocked == nil, dir) { moves.append("o check moveu o HEAD") }
+            if !dirty { blocked = await othersWorkingWaiting(log) }
+            let afterCheck = await settle(judged, on: on, loose: loose, reset: !dirty && blocked == nil, dir)
+            if afterCheck.moved { moves.append("o check moveu o HEAD") }
+            if afterCheck.reset { await log(.treeReset, afterCheck.moved ? "moveu o HEAD" : nil) }
             // the gate: only when nothing else already fails the attempt (no budget spent on a lost one), on the tree of
             // `judged`, in the check's conditions (timeout, budget); its output is the note's
             var gate: String?
             if let g = loop.gate, broken == nil, status == 0, committed, !dirty, moves.isEmpty {
-                if blocked != nil { gate = "gate did not run (tree not reset)" }
+                if blocked != nil { gate = "gate did not run (tree not reset)"; await log(.gateFinished, "não rodou") }
                 // the agent may not rewrite the script that judges it: the gate does not run on a tree that changed it
-                else if let t = await tampered(g, spec: task.spec, before: before, judged: judged, dir) { gate = t } else {
+                else if let t = await tampered(g, spec: task.spec, before: before, judged: judged, dir) { gate = t; await log(.gateFinished, "não rodou") } else {
                     await phase(w.id, .gate)
+                    await log(.gateStarted)
+                    var ran = "não rodou"
                     do {
                         let budgeted = Duration.seconds(left(loop, since: started))
                         let r = try await host.check(g, in: dir, timeout: Swift.min(checkTimeout, budgeted))
-                        gate = Self.failure("gate", r.status); output = r.stdout + r.stderr
+                        gate = Self.failure("gate", r.status); output = r.stdout + r.stderr; ran = "exit \(r.status)"
                     } catch where error.code == .timeout {
-                        gate = Self.failure("gate", nil); output = ""
+                        gate = Self.failure("gate", nil); output = ""; ran = "timeout"
                     } catch { gate = "gate could not run: \(error.message)"; output = "" }
-                    blocked = await othersWorkingWaiting()
-                    if await settle(judged, on: on, loose: loose, reset: blocked == nil, dir) { moves.append("o portão moveu o HEAD") }
+                    await log(.gateFinished, ran)
+                    blocked = await othersWorkingWaiting(log)
+                    let afterGate = await settle(judged, on: on, loose: loose, reset: blocked == nil, dir)
+                    if afterGate.moved { moves.append("o portão moveu o HEAD") }
+                    if afterGate.reset { await log(.treeReset, afterGate.moved ? "moveu o HEAD" : nil) }
                 }
             }
             let v = Self.verdict(checkStatus: broken == nil ? status : 0, gate: gate, committed: committed, dirty: dirty)
@@ -219,6 +243,7 @@ actor WorkLoop {
         }
 
         await phase(w.id, nil)
+        await log(.verdict, passed ? "passou" : reason)
         let at = host.now()
         if passed {
             // of `judged`, never of a HEAD read after the check and the gate ran
@@ -250,8 +275,8 @@ actor WorkLoop {
             return .stop(.init(.othersWorking, detail: blocked))
         }
 
-        if blocked == nil { blocked = await othersWorkingWaiting() }
-        if blocked == nil { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir) }
+        if blocked == nil { blocked = await othersWorkingWaiting(log) }
+        if blocked == nil { await discard(w.id, task.id, n, before: before, branch: branch, keep: keep, dir); await log(.discarded, "\(task.id)-\(n).patch") }
         let last = n >= loop.tries && blocked == nil   // a stopped loop defers nothing
         let tail = output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
         // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
@@ -272,8 +297,10 @@ actor WorkLoop {
 
     /// Another terminal that can edit the worktree is in a turn: no reset under it. It gets `othersWait` to finish (a short
     /// chat is no reason to end the loop); the name of the one still working after that, nil when none is.
-    private func othersWorkingWaiting() async -> String? {
+    /// `log`: the attempt's journal, told once who it waits for.
+    private func othersWorkingWaiting(_ log: (LoopEvent.Kind, String?) async -> Void) async -> String? {
         var who = await host.othersWorking()
+        if let who { await log(.othersWaiting, who) }
         let end = ContinuousClock.now + othersWait
         while who != nil, ContinuousClock.now < end, !Task.isCancelled {
             try? await Task.sleep(for: Swift.min(poll, .seconds(5)))
@@ -303,6 +330,19 @@ actor WorkLoop {
 
     /// What the running loop is doing, for `work status` and the panel (nil: between attempts).
     private func phase(_ id: UUID, _ p: WorkLoopState.Phase?) async { try? await store.update(id) { x in x.loop?.phase = p } }
+
+    /// One line of the loop's journal (`WorkLoopState.events`, `work status --events`). It only records: no decision
+    /// reads it, and it never reaches an agent's prompt.
+    private func event(_ id: UUID, _ kind: LoopEvent.Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) async {
+        let e = LoopEvent(at: host.now(), kind: kind, task: task, attempt: attempt, detail: detail.map(Self.eventDetail))
+        try? await store.update(id) { $0.loop?.record(e) }
+    }
+
+    /// An event's `detail`: it may be the agent's or the check's text, so, like the evidence, it loses its ANSI sequences
+    /// and its control and format characters, has its secrets hidden and is cut at `LoopEvent.detailMax` characters.
+    static func eventDetail(_ s: String) -> String {
+        String(LotBoards.scrub(RerailText.plain(ANSI.strip(s))).trimmingCharacters(in: .whitespaces).prefix(LoopEvent.detailMax))
+    }
 
     private func note(_ id: UUID, _ text: String) async {
         let at = host.now()
@@ -351,19 +391,21 @@ actor WorkLoop {
         return nil
     }
 
-    /// After the check or the gate ran: true when it moved HEAD off `judged` (a commit, a branch switch). With `reset`,
+    /// After the check or the gate ran: `moved` when it moved HEAD off `judged` (a commit, a branch switch). With `reset`,
     /// the tree goes back to exactly `judged` on `on`: tracked files restored, the untracked files it created (those
-    /// not in `loose`) removed. Ignored files (build output) stay.
-    private func settle(_ judged: String, on: String, loose: Set<String>, reset: Bool, _ dir: URL) async -> Bool {
+    /// not in `loose`) removed. Ignored files (build output) stay. The result's `reset` (for the journal only): there
+    /// was something to put back.
+    private func settle(_ judged: String, on: String, loose: Set<String>, reset: Bool, _ dir: URL) async -> (moved: Bool, reset: Bool) {
         let head = await out(["rev-parse", "HEAD"], dir), ref = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir)
         let moved = head != judged || ref != on
-        guard reset else { return moved }
+        guard reset else { return (moved, false) }
+        let edited = (await out(["status", "--porcelain", "--untracked-files=no"], dir)).map { !$0.isEmpty } ?? false
         if ref != on { _ = try? await host.git(["checkout", "-q", "-f", on == "HEAD" ? judged : on], in: dir) }
         _ = try? await host.git(["reset", "-q", "--hard", judged], in: dir)
         let made = await untracked(dir).filter { !loose.contains($0) }
         // ponytail: one git call, so a check that leaves tens of thousands of untracked files passes ARG_MAX; chunk then
         if !made.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "--"] + made, in: dir) }
-        return moved
+        return (moved, moved || edited || !made.isEmpty)
     }
 
     /// Untracked files that are not ignored.

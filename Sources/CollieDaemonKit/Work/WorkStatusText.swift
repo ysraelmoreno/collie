@@ -87,6 +87,17 @@ public enum WorkStatusText {
         w.loop?.gate.map { "portão: " + RerailText.clean($0, max: CommandRouter.loopCardMax) }
     }
 
+    /// The last `last` events of a loop's journal, oldest first, one per line: `HH:mm:ss <kind> T<task>#<attempt> <detail>`
+    /// (the daemon's local time; a loop-wide event has no `T…`). Empty: no journal.
+    public static func events(_ loop: WorkLoopState, last: Int, timeZone: TimeZone = .current) -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = timeZone; f.dateFormat = "HH:mm:ss"
+        return (loop.events ?? []).suffix(max(0, last)).map { e in
+            let who = e.task.map { "T" + RerailText.clean($0, max: 40) + (e.attempt.map { "#\($0)" } ?? "") }
+            return ([f.string(from: e.at), e.kind.rawValue] + [who, e.detail.map { RerailText.clean($0, max: LoopEvent.detailMax) }].compactMap { $0 })
+                .joined(separator: " ")
+        }.joined(separator: "\n")
+    }
+
     /// The numbers of the tasks a loop ran (`LoopStats.line`). nil: no loop ran a task of this work.
     public static func statsLine(_ w: Work) -> String? { LoopStats(work: w)?.line }
 

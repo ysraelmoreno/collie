@@ -853,6 +853,10 @@ dono aprovou a lista de tarefas e os checks.
   sandbox também.
 - `collie work stop` encerra depois do veredito da tentativa atual; parar o daemon não gasta a tentativa em curso. `collie work status` mostra `em laço: <tarefa>
   (tentativa 2/3)`. Reiniciar o daemon para o laço; `collie work run` de novo continua da próxima tarefa aberta.
+- **Diário do laço:** `collie work status --events [N]` (N padrão 20, máximo 100) mostra, depois do status, as últimas N
+  linhas do diário: `HH:mm:ss tipo T<tarefa>#<tentativa> detalhe` (horário local do daemon, da mais antiga para a mais
+  nova), por exemplo `14:03:07 turnEnded Ta#1 hook` e `14:03:14 checkFinished Ta#1 exit 1`. O laço guarda os 100 eventos
+  mais novos e um novo `work run` começa um diário vazio. A resposta JSON traz `events` (por id do trabalho) quando pedido.
 
 ## Painel Trabalho
 

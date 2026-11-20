@@ -44,6 +44,23 @@ public struct WorkTask: Codable, Sendable, Equatable {
     }
 }
 
+/// One line of a loop's journal (`WorkLoopState.events`): what the loop did at `at`, on which `task` and `attempt`
+/// (nil: the loop itself), and `detail` (at most 200 characters) what the kind alone does not say.
+public struct LoopEvent: Codable, Sendable, Equatable {
+    /// `unknown` is a reserve (a kind written by a newer daemon decodes as it): this daemon never records it.
+    public enum Kind: String, Codable, Sendable, CaseIterable {
+        case attemptStarted, agentSummoned, turnEnded, commitSeen, agentDismissed, checkStarted, checkFinished
+        case gateStarted, gateFinished, treeReset, othersWaiting, verdict, discarded, stopRequested, stopped, unknown
+        public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
+    }
+    public static let detailMax = 200
+    public var at: Date; public var kind: Kind; public var task: String?; public var attempt: Int?; public var detail: String?
+    public init(at: Date = Date(), kind: Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) {
+        self.at = at; self.kind = kind; self.task = task; self.attempt = attempt
+        self.detail = detail.map { String($0.prefix(Self.detailMax)) }
+    }
+}
+
 /// A work run by `collie work run`: `task` is the current task's id, `attempt` (1-based) its attempt; `tries` and
 /// `timeout` (seconds, a turn) are per task; `max` caps and `used` counts attempts across tasks; `budget` caps and
 /// `spent` counts the seconds of all attempts (turns and checks); `tasks`: the ids the owner approved (a task added
@@ -97,6 +114,12 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     }
     /// Set when the loop ends `stopped`; nil while it runs and when it `finished`.
     public var stopReason: Stop?
+    /// The loop's journal, oldest first: a ring of the `eventsMax` newest (`record`). nil: none yet, or a loop written
+    /// before the journal existed. A new `work run` is a new `WorkLoopState`: it starts empty.
+    public var events: [LoopEvent]?
+    public static let eventsMax = 100
+    /// Adds `e` to the journal; past `eventsMax`, the oldest go.
+    public mutating func record(_ e: LoopEvent) { events = Array(((events ?? []) + [e]).suffix(Self.eventsMax)) }
     public var startedAt: Date; public var endedAt: Date?
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,

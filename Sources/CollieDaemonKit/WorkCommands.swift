@@ -285,8 +285,19 @@ extension CommandRouter {
         case "work.status":
             let works = flag(r, "all") ? try await work.list(includeClosed: false).filter(visible)
                 : try await work.active(terminal: try target().id).map { [$0] } ?? []
-            return .object(["output": .string(works.isEmpty ? "No active work." : works.map(workSummary).joined(separator: "\n\n")),
-                            "works": .array(try works.map(isoJSON))])
+            // `--events [N]`: each loop's journal after its work's status, and in `events` (by work id) for the panel and MCP
+            let last = try flag(r, "events") ? Self.loopEventsDefault : num(r, "events", max: Double(WorkLoopState.eventsMax)).map { Int($0) }
+            var o: [String: JSONValue] = ["works": .array(try works.map(isoJSON))]
+            o["output"] = .string(works.isEmpty ? "No active work." : works.map { w in
+                let journal = last.flatMap { n in w.loop.map { WorkStatusText.events($0, last: n) } } ?? ""
+                return workSummary(w) + (journal.isEmpty ? "" : "\nDiário do laço:\n" + journal)
+            }.joined(separator: "\n\n"))
+            if let last {
+                o["events"] = .object(Dictionary(uniqueKeysWithValues: try works.filter { $0.loop != nil }.map {
+                    ($0.id.uuidString.lowercased(), try isoJSON(Array(($0.loop?.events ?? []).suffix(last))))
+                }))
+            }
+            return .object(o)
 
         case "work.summary":   // same reach as work.status; `--natural`: the on-device model's rewrite, the markdown always
             let w = if let s = str(r, "id") { try await byId(s) } else { try await active(try target()) }
@@ -341,6 +352,9 @@ extension CommandRouter {
             throw invalid("Unknown command '\(r.command)'")
         }
     }
+
+    /// `work status --events` with no number.
+    static let loopEventsDefault = 20
 
     /// The `work.status` text: the work, its tasks by state (done ones last, the 5 newest), live jobs, the 5 newest notes and commits.
     private func workSummary(_ w: Work) -> String {

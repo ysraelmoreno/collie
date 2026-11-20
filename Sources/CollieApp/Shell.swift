@@ -28,21 +28,36 @@ import CollieTheme
 }
 
 /// The window frame around `content` (docks + canvas). Compacta adds nothing here (its bar floats over the canvas,
-/// see `CanvasChrome`); Completa (Trilho) adds the paddock rail, the context panel and the status bar in optional slots
-/// around `content`, which keeps one position in the hierarchy: switching structure never remakes the canvas or the panels.
-struct Shell<Content: View>: View {
+/// see `CanvasChrome`); Completa (Trilho) adds the paddock rail, the context panel, the tab strip and the status bar in
+/// optional slots around `content`, which keeps one position in the hierarchy: switching structure never remakes the
+/// canvas or the panels. In Completa, `mainView == .preferences` shows `preferences` in place of `content`, which stays
+/// mounted underneath (invisible, no hits, hidden from accessibility): terminals, zoom and positions survive.
+struct Shell<Content: View, Preferences: View>: View {
     let structure: WindowStructure
     let ctx: ShellContext
-    @ViewBuilder let content: Content
+    @Binding var mainView: MainViewState
+    let content: Content
+    let preferences: Preferences
     /// One-time sandbox notice (UserDefaults via @AppStorage, like the other UI state); a new key for open mode: shown again once.
     @AppStorage("sandbox.openNoticeSeen") private var noticeSeen = false
 
+    init(structure: WindowStructure, ctx: ShellContext, mainView: Binding<MainViewState>,
+         @ViewBuilder content: () -> Content, @ViewBuilder preferences: () -> Preferences) {
+        self.structure = structure; self.ctx = ctx; _mainView = mainView
+        self.content = content(); self.preferences = preferences()
+    }
+
     var body: some View {
         let full = structure == .full
+        let prefs = full && mainView.isPreferences   // Compacta keeps the Ajustes window
         HStack(spacing: 0) {
             if full { PaddockRail(ctx: ctx); ContextPanel(ctx: ctx) }
             VStack(spacing: 0) {
-                content
+                if full { MainTabs(ctx: ctx, mainView: $mainView) }
+                ZStack {
+                    content.opacity(prefs ? 0 : 1).allowsHitTesting(!prefs).accessibilityHidden(prefs)
+                    if prefs { preferences }
+                }
                 if full { StatusBar(ctx: ctx) }
             }
         }
@@ -56,6 +71,13 @@ struct Shell<Content: View>: View {
         } message: {
             Text("Os terminais rodam no sandbox aberto (padrão): o agente lê e escreve tudo na sua conta, inclusive chaves e tokens, e pode apagar qualquer coisa; só os dados, o app e o daemon do Collie ficam fechados ao acesso direto. O que ele gravar e você executar depois (rc do shell, LaunchAgents, binários, hooks do git) roda sem sandbox e alcança tudo, o Collie incluído. Em Preferências, \"Modo do sandbox\" muda para Estrito (escrita só no projeto, segredos fechados, cartões para liberar); vale para terminais abertos depois.")
         }
+    }
+}
+
+extension Shell where Preferences == EmptyView {
+    /// Without Preferências in the main area (Compacta only, and tests of the frame).
+    init(structure: WindowStructure, ctx: ShellContext, @ViewBuilder content: () -> Content) {
+        self.init(structure: structure, ctx: ctx, mainView: .constant(MainViewState()), content: content) { EmptyView() }
     }
 }
 
@@ -391,6 +413,45 @@ enum LotSummary {
     static func help(_ l: Lot, names: [String]) -> String {
         [l.name, l.goal.isEmpty ? nil : l.goal, names.isEmpty ? "sem terminais" : "\(names.count) terminal\(names.count == 1 ? "" : "is")"]
             .compactMap { $0 }.joined(separator: " · ")
+    }
+}
+
+/// The tab strip over Completa's main area: Canvas and Preferências, then the command field (⌘K) and the zoom.
+private struct MainTabs: View {
+    let ctx: ShellContext
+    @Binding var mainView: MainViewState
+
+    var body: some View {
+        HStack(spacing: 0) {
+            tab("Canvas", .canvas)
+            tab("Preferências", .preferences, shortcut: "⌘,")
+            Spacer(minLength: 8)
+            CommandField(ctx: ctx).frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
+            // zoom says nothing about Preferências
+            if !mainView.isPreferences { ZoomControls(ctx: ctx).padding(.leading, 10) }
+        }
+        .padding(.trailing, 10).frame(height: 38)
+        .background(Color.collieSidebar)
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.collieBorder).frame(height: 1) }
+    }
+
+    /// The selected tab: lighter fill, full-color text and the accent underline (never color alone), plus the selected trait.
+    private func tab(_ title: String, _ view: MainView, shortcut: String? = nil) -> some View {
+        let on = mainView.current == view
+        return Button { mainView.show(view) } label: {
+            HStack(spacing: 8) {
+                Text(title).font(.collieUI(13, on ? .medium : .regular))
+                if let shortcut { Text(shortcut).font(.collieMono(11)).opacity(0.7).accessibilityHidden(true) }
+            }
+            .foregroundStyle(on ? Color.collieText : .collieMuted)
+            .padding(.horizontal, 16).frame(maxHeight: .infinity)
+            .background(on ? Color.collieBackground : .clear)
+            .overlay(alignment: .bottom) { if on { Rectangle().fill(Color.collieAccent).frame(height: 2) } }
+            .overlay(alignment: .trailing) { Rectangle().fill(Color.collieBorder).frame(width: 1) }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 

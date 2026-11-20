@@ -82,7 +82,7 @@ struct PreferencesView: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .frame(minWidth: 640, idealWidth: 820, maxWidth: .infinity, minHeight: 480, idealHeight: 600, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)   // free size: the Ajustes scene sets its window's, the main area fills
         .background(Color.collieBackground)
         .onAppear { AppearanceSettings.normalize(.standard); showRequestedPage() }   // a stale or hand-edited value would leave a picker blank
         .onChange(of: requestedPage) { showRequestedPage() }

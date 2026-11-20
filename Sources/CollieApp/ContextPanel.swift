@@ -22,8 +22,6 @@ struct ContextPanel: View {
                                   paddock: client.currentPaddock, collapsed: collapsed)
         let panels = visiblePanels(client.panels, paddock: client.currentPaddock)
         VStack(alignment: .leading, spacing: 12) {
-            // ponytail: zoom lives here until T4 moves it to the tab strip
-            ZoomControls(ctx: ctx).frame(maxWidth: .infinity, alignment: .trailing)
             header(paddock)
             HStack(spacing: 6) {
                 Button(action: ctx.newTerminal) { Text("Novo terminal").frame(maxWidth: .infinity) }.buttonStyle(CollieButtonStyle(.primary))

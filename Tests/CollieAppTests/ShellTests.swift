@@ -19,15 +19,18 @@ private struct Probe: NSViewRepresentable {
     static func dismantleNSView(_ v: NSView, coordinator: Counter) { coordinator.dismantled += 1 }
 }
 
-@MainActor @Observable private final class Box { var structure = WindowStructure.compact }
+@MainActor @Observable private final class Box { var structure = WindowStructure.compact; var main = MainViewState() }
 
 private struct Host: View {
     let box: Box
     let ctx: ShellContext
     let counter: Counter
+    var prefs = Counter()
     var body: some View {
-        Shell(structure: box.structure, ctx: ctx) {
+        Shell(structure: box.structure, ctx: ctx, mainView: Binding(get: { box.main }, set: { box.main = $0 })) {
             Probe(counter: counter).overlay(alignment: .top) { CanvasChrome(structure: box.structure, ctx: ctx) { EmptyView() } }
+        } preferences: {
+            Probe(counter: prefs)
         }
     }
 }
@@ -60,6 +63,23 @@ private struct Host: View {
     settle()
     #expect(counter.made == 1)
     for s in [WindowStructure.full, .compact, .full] { box.structure = s; settle() }
+    #expect(counter.made == 1 && counter.dismantled == 0)
+}
+
+/// Canvas ↔ Preferências in Completa: Preferências mounts in the canvas's place and the canvas is never remade.
+@MainActor @Test func mainViewSwitchKeepsCanvas() {
+    let ctx = emptyContext(), box = Box(), counter = Counter(), prefs = Counter()
+    box.structure = .full
+    let host = NSHostingView(rootView: Host(box: box, ctx: ctx, counter: counter, prefs: prefs))
+    host.frame = CGRect(x: 0, y: 0, width: 1000, height: 700)
+    func settle() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded() }
+    settle()
+    #expect(counter.made == 1 && prefs.made == 0)
+    for v in [MainView.preferences, .canvas, .preferences] { box.main.show(v); settle() }
+    #expect(prefs.made == 2 && prefs.dismantled == 1)   // Preferências comes and goes
+    box.main.back(); settle()
+    box.structure = .compact; box.main.show(.preferences); settle()   // Compacta: Preferências is the Ajustes window
+    #expect(prefs.made == 2)
     #expect(counter.made == 1 && counter.dismantled == 0)
 }
 

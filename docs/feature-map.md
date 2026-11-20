@@ -146,7 +146,8 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Para que serve:** trocar de cercado, criar cercado e terminal, ver o uso dos agentes.
 - **Arquivos:** `Sources/CollieApp/Shell.swift`, `Sources/CollieApp/PaddockBar.swift`,
   `Sources/CollieApp/PaddockRail.swift`, `Sources/CollieApp/ContextPanel.swift` (estrutura Completa: o trilho de
-  cercados e o painel de contexto, com "AGENTES" em árvore e "PAINÉIS"), `Sources/CollieApp/UsagePopover.swift`.
+  cercados, o painel de contexto, com "AGENTES" em árvore e "PAINÉIS", e a faixa de abas "Canvas" / "Preferências"
+  com "Comando" e "Zoom"), `Sources/CollieApp/MainView.swift`, `Sources/CollieApp/UsagePopover.swift`.
 - **Como verificar:** `collie paddock list`; os menus, à mão.
 
 ### Paleta de comandos
@@ -200,6 +201,7 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Nome na UI:** "Preferências" (⌘,). Páginas: "Aparência", "Terminal e fontes", "Atualizações" (grupo "Interface");
   "Desenho e sandbox", "Memória", "Plug-ins" (grupo "Agentes"); "Celular", "Android" (grupo "Dispositivos").
 - **Para que serve:** aparência, fontes, atualização, sandbox, curador da memória, plug-ins, iPhone pareado, Android.
+  Na estrutura Completa a aba "Preferências" as mostra no lugar do canvas, que continua vivo por baixo.
 - **Arquivos:** `Sources/CollieApp/PreferencesView.swift`, `Sources/CollieApp/PreferencePage.swift`,
   `Sources/CollieApp/UpdatePreferences.swift`, `Sources/CollieApp/CuratorPreferences.swift`,
   `Sources/CollieApp/CursorMemoryPreferences.swift`, `Sources/CollieApp/PluginsPreferences.swift`,

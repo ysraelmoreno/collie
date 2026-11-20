@@ -115,7 +115,8 @@ enum Config {
                 Button("Parar serviço") { stopService() }
             }
         }
-        Settings { PreferencesView(client: client) }
+        // the window's size lives here, not in the view: the same view also fills Completa's main area (`Shell`)
+        Settings { PreferencesView(client: client).frame(minWidth: 640, idealWidth: 820, minHeight: 480, idealHeight: 600) }
     }
 
     /// Also from the Preferences window (the main one may be closed). `NSApp` is nil until the app object exists.
@@ -191,6 +192,8 @@ struct ContentView: View {
     @State private var store: PanelViewStore
     @StateObject private var herds: HerdsModel
     @State private var usageOpen = false
+    /// Canvas or Preferências in Completa's main area. Not persisted: the app always opens on the canvas.
+    @State private var mainView = MainViewState()
     @State private var bundledBuild: String?
     @State private var staleDismissed = false
     private var staleDaemon: Bool {
@@ -286,7 +289,7 @@ struct ContentView: View {
 
     var body: some View {
         // Built once: the shell only adds chrome around it, so switching structure keeps the canvas and panels.
-        Shell(structure: structure, ctx: shell) {
+        Shell(structure: structure, ctx: shell, mainView: $mainView) {
             DockShell(client: client, store: store) {
                 CanvasView(client: client, canvas: canvas, root: Config.root, store: store,
                            onNewTerminal: { sheet = .newTerminal($0) }, onOpenPanel: { sheet = .openPanel($0) },
@@ -295,7 +298,11 @@ struct ContentView: View {
                 .onGeometryChange(for: CGSize.self, of: \.size) { viewport = $0 }
                 .overlay(alignment: .top) { CanvasChrome(structure: structure, ctx: shell) { banners } }
             }
+        } preferences: {
+            PreferencesView(client: client)
         }
+        // Compacta has no tab strip (Preferências there is the Ajustes window): coming back to Completa starts on the canvas
+        .onChange(of: structureRaw) { if structure != .full { mainView.back() } }
         .paddockDialogs(paddocks)
         .sheet(isPresented: $paletteOpen, onDismiss: { paletteRun?.run(); paletteRun = nil }) {
             CommandPalette(commands: paletteCommands) { paletteRun = $0; paletteOpen = false }

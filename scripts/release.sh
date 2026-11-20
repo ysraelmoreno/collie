@@ -43,10 +43,8 @@ done < <(find "$APP" -type f)
 
 VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 DMG="build/Collie-$VER.dmg"
-STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
-cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
-rm -f "$DMG"
-hdiutil create -volname Collie -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+# the app, the Applications link and the window layout (background, icon positions): scripts/make-dmg.sh
+scripts/make-dmg.sh "$APP" "$DMG"
 codesign --force -s "$ID" --timestamp "$DMG"
 
 if [ "${COLLIE_SKIP_NOTARIZE:-}" = 1 ]; then echo "ok (not notarized): $DMG"; exit 0; fi

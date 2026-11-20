@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="420" viewBox="0 0 660 420">
+  <!-- DMG window background ("Tinta"): the app icon's ink, the Herd arc at poster scale, one arrow.
+       Finder draws the icons at (180,190) and (480,190) and their names below; it writes names in black (light
+       mode) or white (dark mode) whatever the picture, so each name sits on a mid-grey tag both can be read on. -->
+  <rect width="660" height="420" fill="#15171C"/>
+  <path d="M333.8 413.8 A260 260 0 1 1 333.8 46.2" fill="none" stroke="#F4F2ED" stroke-opacity=".06" stroke-width="72" stroke-linecap="round"/>
+  <circle cx="333.8" cy="46.2" r="15" fill="#6E9BFF"/>
+  <path d="M254 190H404" stroke="#F4F2ED" stroke-opacity=".45" stroke-width="2"/>
+  <path d="M394 179l12 11-12 11" fill="none" stroke="#6E9BFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="114" y="252" width="132" height="26" rx="13" fill="#7A7F8C"/>
+  <rect x="414" y="252" width="132" height="26" rx="13" fill="#7A7F8C"/>
+  <text x="32" y="390" font-family="DM Mono, Menlo, monospace" font-size="12" letter-spacing=".24" fill="#8F8F8E">arraste o Collie para Aplicativos</text>
+</svg>

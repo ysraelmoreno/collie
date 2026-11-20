@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DMG do Collie: 3 opções</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--color-bg); color: var(--color-fg); font-family: "Space Grotesk", system-ui, -apple-system, sans-serif; font-size: 16px; line-height: 1.55; }
+main { max-width: 760px; margin: 0 auto; padding: var(--space-48) var(--space-16) var(--space-96); }
+.eyebrow { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-accent-text); margin: 0 0 var(--space-12); }
+h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.08; letter-spacing: -.02em; margin: 0 0 var(--space-16); text-wrap: balance; }
+h2 { font-size: 24px; line-height: 1.2; letter-spacing: -.01em; margin: 0 0 var(--space-4); }
+p { margin: 0 0 var(--space-16); max-width: 64ch; }
+.muted { color: var(--color-text-secondary); }
+.toggle { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); margin: var(--space-8) 0 var(--space-12); }
+.toggle button { font: inherit; font-size: 14px; border: 0; background: none; color: var(--color-text-secondary); padding: 6px 14px; border-radius: 999px; cursor: pointer; }
+.toggle button[aria-pressed="true"] { background: var(--color-fg); color: var(--color-bg); }
+.toggle button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+section.opt { margin-top: var(--space-64); }
+.tag { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; color: var(--color-text-secondary); }
+.rec { color: var(--color-accent-text); }
+.scroll { overflow-x: auto; margin: var(--space-16) 0 var(--space-16); padding-bottom: 4px; }
+.win { width: 660px; border-radius: 12px; overflow: hidden; border: 1px solid var(--color-border); box-shadow: 0 18px 40px -18px rgba(0,0,0,.45); }
+.bar { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; background: #E6E3DD; position: relative; }
+.bar i { width: 11px; height: 11px; border-radius: 50%; background: #C8C4BC; }
+.bar span { position: absolute; left: 0; right: 0; text-align: center; font: 600 13px -apple-system, system-ui, sans-serif; color: #3A3D45; }
+.dark-finder .bar { background: #2B2E35; } .dark-finder .bar i { background: #4A4E57; } .dark-finder .bar span { color: #D5D7DC; }
+.stage { position: relative; width: 660px; height: 420px; }
+.bgimg { display: block; width: 660px; height: 420px; }
+.cap { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; letter-spacing: .02em; } .cap.small { font-size: 10px; }
+.ico { position: absolute; top: 134px; width: 112px; height: 112px; } .ico svg { width: 100%; height: 100%; display: block; }
+.ico.app { left: 124px; filter: drop-shadow(0 6px 10px rgba(0,0,0,.28)); } .ico.fol { left: 424px; }
+.lab { position: absolute; top: 255px; width: 160px; text-align: center; font: 13px -apple-system, system-ui, sans-serif; color: #000; }
+.lab.app { left: 100px; } .lab.fol { left: 400px; }
+.dark-finder .lab { color: #fff; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px var(--space-16); margin: 0; font-size: 15px; }
+dt { font-family: "DM Mono", ui-monospace, monospace; font-size: 12px; color: var(--color-text-secondary); padding-top: 3px; }
+dd { margin: 0; }
+.next { margin-top: var(--space-64); padding-top: var(--space-24); border-top: 1px solid var(--color-border); }
+ol { padding-left: 20px; margin: 0; max-width: 64ch; } li { margin-bottom: 6px; }
+@media (max-width: 520px) { dl { grid-template-columns: 1fr; gap: 2px; } dd { margin-bottom: 10px; } }
+</style>
+</head>
+<body>
+<main id="root">
+  <p class="eyebrow">Collie · instalador</p>
+  <h1>Três fundos para a janela do DMG</h1>
+  <p>Hoje o DMG abre uma janela vazia do Finder. Abaixo, três direções para o fundo, no tamanho real da janela (660 × 420). O ícone do app e a pasta são os que o Finder desenha; só o fundo é nosso.</p>
+  <p class="muted">O Finder escreve os nomes em preto no modo claro e em branco no modo escuro, qualquer que seja o fundo. Troque abaixo para ver cada opção nos dois casos.</p>
+  <div class="toggle" role="group" aria-label="Aparência do Finder">
+    <button type="button" aria-pressed="true" data-mode="light">Finder claro</button>
+    <button type="button" aria-pressed="false" data-mode="dark">Finder escuro</button>
+  </div>
+
+  <section class="opt">
+    <p class="tag rec">Opção A · recomendada</p>
+    <h2>Pastoreio</h2>
+    <p class="muted">A marca contada como gesto: o rebanho sai do ícone e entra no cercado, que é a pasta.</p>
+    <div class="scroll"><div class="win" data-opt="a">
+  <div class="bar"><i></i><i></i><i></i><span>Collie</span></div>
+  <div class="stage"><svg class="bgimg" viewBox="0 0 660 420" role="img" aria-label="Fundo azul: três pontos seguem do ícone até um arco que cerca a pasta Aplicativos"><rect width="660" height="420" fill="#2F6BFF"/>
+<path d="M402.2 112.2 A110 110 0 1 1 402.2 267.8" fill="none" stroke="#F4F2ED" stroke-width="12" stroke-linecap="round"/>
+<circle cx="402.2" cy="112.2" r="13" fill="#15171C"/>
+<g fill="#F4F2ED"><circle cx="252" cy="190" r="3" opacity=".45"/><circle cx="266" cy="190" r="4" opacity=".65"/><circle cx="288" cy="172" r="9"/><circle cx="320" cy="190" r="9"/><circle cx="288" cy="208" r="9"/></g>
+<text x="32" y="390" class="cap" fill="#F4F2ED" opacity=".85">arraste o Collie para Aplicativos</text></svg>
+    <div class="ico app"><svg viewBox="0 0 1024 1024" aria-hidden="true"><rect width="1024" height="1024" rx="225" fill="#15171C"/><g transform="translate(77 49) scale(4.63)"><path d="M145.25 145.25 A64 64 0 1 1 145.25 54.75" fill="none" stroke="#F4F2ED" stroke-width="18" stroke-linecap="round"/><circle cx="92" cy="82" r="11" fill="#F4F2ED"/><circle cx="120" cy="100" r="11" fill="#F4F2ED"/><circle cx="92" cy="118" r="11" fill="#F4F2ED"/><circle cx="145.3" cy="54.7" r="16" fill="#6E9BFF"/></g></svg></div><div class="ico fol"><svg viewBox="0 0 112 112" aria-hidden="true"><defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6CC3F7"/><stop offset="1" stop-color="#2E8FE6"/></linearGradient></defs><path d="M10 30a8 8 0 0 1 8-8h24l10 10h42a8 8 0 0 1 8 8v8H10z" fill="#3A9BE8"/><rect x="10" y="36" width="92" height="58" rx="8" fill="url(#fg)"/><path d="M56 50l-13 26h5l3-6h10l3 6h5zm0 9l3.4 7h-6.8z" fill="#fff" opacity=".85"/></svg></div>
+    <span class="lab app">Collie</span><span class="lab fol">Applications</span>
+  </div></div></div>
+    <dl>
+      <dt>ideia</dt><dd>Os três pontos e o arco são a própria marca do Collie, reorganizada para dizer "leve para lá".</dd>
+      <dt>nomes</dt><dd>Legíveis em preto e em branco sobre o azul, sem nenhum recurso extra.</dd>
+      <dt>risco</dt><dd>É a mais colorida; destoa do app, que é quase todo tinta e papel.</dd>
+    </dl>
+  </section>
+
+  <section class="opt">
+    <p class="tag">Opção B</p>
+    <h2>Tinta</h2>
+    <p class="muted">O fundo do ícone do app estendido à janela inteira, com o arco da marca em escala de cartaz.</p>
+    <div class="scroll"><div class="win" data-opt="b">
+  <div class="bar"><i></i><i></i><i></i><span>Collie</span></div>
+  <div class="stage"><svg class="bgimg" viewBox="0 0 660 420" role="img" aria-label="Fundo escuro com o arco da marca ampliado e uma seta entre os ícones"><rect width="660" height="420" fill="#15171C"/>
+<path d="M333.8 413.8 A260 260 0 1 1 333.8 46.2" fill="none" stroke="#F4F2ED" stroke-opacity=".06" stroke-width="72" stroke-linecap="round"/>
+<circle cx="333.8" cy="46.2" r="15" fill="#6E9BFF"/>
+<path d="M254 190H404" stroke="#F4F2ED" stroke-opacity=".45" stroke-width="2"/><path d="M394 179l12 11-12 11" fill="none" stroke="#6E9BFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="114" y="252" width="132" height="26" rx="13" fill="#7A7F8C"/><rect x="414" y="252" width="132" height="26" rx="13" fill="#7A7F8C"/>
+<text x="32" y="390" class="cap" fill="#F4F2ED" opacity=".55">arraste o Collie para Aplicativos</text></svg>
+    <div class="ico app"><svg viewBox="0 0 1024 1024" aria-hidden="true"><rect width="1024" height="1024" rx="225" fill="#15171C"/><g transform="translate(77 49) scale(4.63)"><path d="M145.25 145.25 A64 64 0 1 1 145.25 54.75" fill="none" stroke="#F4F2ED" stroke-width="18" stroke-linecap="round"/><circle cx="92" cy="82" r="11" fill="#F4F2ED"/><circle cx="120" cy="100" r="11" fill="#F4F2ED"/><circle cx="92" cy="118" r="11" fill="#F4F2ED"/><circle cx="145.3" cy="54.7" r="16" fill="#6E9BFF"/></g></svg></div><div class="ico fol"><svg viewBox="0 0 112 112" aria-hidden="true"><defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6CC3F7"/><stop offset="1" stop-color="#2E8FE6"/></linearGradient></defs><path d="M10 30a8 8 0 0 1 8-8h24l10 10h42a8 8 0 0 1 8 8v8H10z" fill="#3A9BE8"/><rect x="10" y="36" width="92" height="58" rx="8" fill="url(#fg)"/><path d="M56 50l-13 26h5l3-6h10l3 6h5zm0 9l3.4 7h-6.8z" fill="#fff" opacity=".85"/></svg></div>
+    <span class="lab app">Collie</span><span class="lab fol">Applications</span>
+  </div></div></div>
+    <dl>
+      <dt>ideia</dt><dd>Continuidade direta com o ícone e com o tema escuro do app. Uma seta, um ponto azul.</dd>
+      <dt>nomes</dt><dd>Preto sobre tinta não se lê, então cada nome ganha uma etiqueta cinza desenhada no fundo.</dd>
+      <dt>risco</dt><dd>As etiquetas são um remendo visível, e o ícone do app quase some contra o fundo da mesma cor.</dd>
+    </dl>
+  </section>
+
+  <section class="opt">
+    <p class="tag">Opção C</p>
+    <h2>Canvas</h2>
+    <p class="muted">A janela imita o canvas do Collie: dois nós na grade, ligados por uma guia.</p>
+    <div class="scroll"><div class="win" data-opt="c">
+  <div class="bar"><i></i><i></i><i></i><span>Collie</span></div>
+  <div class="stage"><svg class="bgimg" viewBox="0 0 660 420" role="img" aria-label="Fundo claro com grade de pontos: dois nós do canvas ligados por uma guia"><defs><pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="10" cy="10" r="1.3" fill="#C9C4B8"/></pattern><clipPath id="n1"><rect x="100" y="92" width="160" height="200" rx="14"/></clipPath><clipPath id="n2"><rect x="400" y="92" width="160" height="200" rx="14"/></clipPath></defs>
+<rect width="660" height="420" fill="#ECE9E2"/><rect width="660" height="420" fill="url(#grid)"/>
+<g clip-path="url(#n1)"><rect x="100" y="92" width="160" height="200" fill="#FFFFFF"/><rect x="100" y="250" width="160" height="42" fill="#7A7F8C"/></g>
+<g clip-path="url(#n2)"><rect x="400" y="92" width="160" height="200" fill="#FFFFFF"/><rect x="400" y="250" width="160" height="42" fill="#7A7F8C"/></g>
+<rect x="100" y="92" width="160" height="200" rx="14" fill="none" stroke="#DCD8CF"/><rect x="400" y="92" width="160" height="200" rx="14" fill="none" stroke="#DCD8CF"/>
+<text x="114" y="114" class="cap small" fill="#646B86">collie</text><text x="414" y="114" class="cap small" fill="#646B86">aplicativos</text>
+<path d="M260 190C310 146 350 234 400 190" fill="none" stroke="#2F6BFF" stroke-width="3"/><circle cx="260" cy="190" r="6" fill="#fff" stroke="#2F6BFF" stroke-width="3"/><circle cx="400" cy="190" r="6" fill="#fff" stroke="#2F6BFF" stroke-width="3"/>
+<text x="32" y="390" class="cap" fill="#15171C" opacity=".6">arraste o Collie para Aplicativos</text></svg>
+    <div class="ico app"><svg viewBox="0 0 1024 1024" aria-hidden="true"><rect width="1024" height="1024" rx="225" fill="#15171C"/><g transform="translate(77 49) scale(4.63)"><path d="M145.25 145.25 A64 64 0 1 1 145.25 54.75" fill="none" stroke="#F4F2ED" stroke-width="18" stroke-linecap="round"/><circle cx="92" cy="82" r="11" fill="#F4F2ED"/><circle cx="120" cy="100" r="11" fill="#F4F2ED"/><circle cx="92" cy="118" r="11" fill="#F4F2ED"/><circle cx="145.3" cy="54.7" r="16" fill="#6E9BFF"/></g></svg></div><div class="ico fol"><svg viewBox="0 0 112 112" aria-hidden="true"><defs><linearGradient id="fg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6CC3F7"/><stop offset="1" stop-color="#2E8FE6"/></linearGradient></defs><path d="M10 30a8 8 0 0 1 8-8h24l10 10h42a8 8 0 0 1 8 8v8H10z" fill="#3A9BE8"/><rect x="10" y="36" width="92" height="58" rx="8" fill="url(#fg)"/><path d="M56 50l-13 26h5l3-6h10l3 6h5zm0 9l3.4 7h-6.8z" fill="#fff" opacity=".85"/></svg></div>
+    <span class="lab app">Collie</span><span class="lab fol">Applications</span>
+  </div></div></div>
+    <dl>
+      <dt>ideia</dt><dd>Mostra o produto antes de instalar: arrastar para Aplicativos é ligar um nó ao outro.</dd>
+      <dt>nomes</dt><dd>Ficam na faixa cinza do rodapé de cada nó, legíveis nos dois modos.</dd>
+      <dt>risco</dt><dd>É a mais carregada, e só faz sentido para quem já conhece o canvas.</dd>
+    </dl>
+  </section>
+
+  <section class="next">
+    <h2>Depois da sua escolha</h2>
+    <ol>
+      <li>Gero o fundo em PNG, em 1x e 2x, a partir do desenho aprovado.</li>
+      <li>O script de release passa a montar a janela: tamanho, posição dos dois ícones e o fundo.</li>
+      <li>Abro o DMG de verdade nos dois modos do Finder e confirmo a leitura dos nomes; esta página é uma simulação.</li>
+    </ol>
+  </section>
+</main>
+<script>
+document.querySelectorAll('.toggle button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var dark = b.dataset.mode === 'dark';
+    document.querySelectorAll('.win').forEach(function (w) { w.classList.toggle('dark-finder', dark); });
+    document.querySelectorAll('.toggle button').forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+  });
+});
+</script>
+</body>
+</html>

@@ -107,8 +107,9 @@ struct CanvasView: NSViewRepresentable {
             MainActor.assumeIsolated { self?.middleButton(e) ?? false } ? nil : e
         }
         reattachObserver = NotificationCenter.default.addObserver(forName: .collieReattachTerminal, object: nil, queue: .main) { [weak self] n in
+            let id = n.object as? UUID   // read here: a Notification can't cross into the actor
             MainActor.assumeIsolated {
-                if let id = n.object as? UUID, let node = self?.nodes[id], node.streamOpen { node.setVisible(false); node.setVisible(true) }
+                if let id, let node = self?.nodes[id], node.streamOpen { node.setVisible(false); node.setVisible(true) }
             }
         }
     }

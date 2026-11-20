@@ -14,6 +14,12 @@ public final class CanvasState {
     public var zoom: CGFloat = 1
     public var frames: [UUID: CGRect] = [:]
     public var selection: Set<UUID> = []
+    /// Start of a ⇧-range in the side panel (see `Selecting.range`).
+    public var selectionAnchor: UUID?
+    public var selectionState: SelectionState {
+        get { SelectionState(ids: selection, anchor: selectionAnchor) }
+        set { selection = newValue.ids; selectionAnchor = newValue.anchor }
+    }
     /// Nodes currently on the canvas (this paddock's terminals, canvas panels). nil = every frame counts.
     /// Minimap and fit-all use only these: other paddocks and docked panels keep their frames but are not drawn.
     public var shown: Set<UUID>?
@@ -55,6 +61,16 @@ public final class CanvasState {
     /// Content follows the drag.
     public func pan(by screenDelta: CGSize) {
         offset = CGPoint(x: offset.x - screenDelta.width / zoom, y: offset.y - screenDelta.height / zoom)
+    }
+
+    /// Moves the shown nodes among `ids` by a screen-space drag delta (a selected node dragged takes the whole selection along).
+    public func move(_ ids: Set<UUID>, by screenDelta: CGSize) {
+        for id in ids where shown?.contains(id) ?? true {
+            guard var f = frames[id] else { continue }
+            f.origin.x += screenDelta.width / zoom
+            f.origin.y += screenDelta.height / zoom
+            frames[id] = f
+        }
     }
 
     private func visibleRect(_ viewport: CGSize) -> CGRect {

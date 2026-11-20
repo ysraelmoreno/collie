@@ -344,7 +344,8 @@ struct ContentView: View {
                 CanvasView(client: client, canvas: canvas, root: Config.root, store: store,
                            onNewTerminal: { sheet = .newTerminal($0) }, onOpenPanel: { sheet = .openPanel($0) },
                            onEdit: { sheet = .edit($0) },
-                           onApplyHerd: { sheet = .herds($0, nil) }, onSaveHerd: { sheet = .saveHerd })
+                           onApplyHerd: { sheet = .herds($0, nil) }, onSaveHerd: { sheet = .saveHerd },
+                           active: !(structure == .full && mainView.isPreferences))
                 .onGeometryChange(for: CGSize.self, of: \.size) { viewport = $0 }
                 .overlay(alignment: .top) { CanvasChrome(structure: structure, ctx: shell) { banners } }
             }

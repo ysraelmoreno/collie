@@ -18,8 +18,17 @@ Como verificar, em geral:
 
 - **Nome na UI:** "Canvas" (menu da barra de menus, posição de painel e o botão de voltar da tela cheia).
 - **Para que serve:** a área onde ficam os nós de terminal e de painel de um cercado, ligados por guias.
-- **Arquivos:** `Sources/CollieApp/CanvasViewport.swift`, `Sources/CollieApp/LeashLayer.swift`, `Sources/CollieCanvas/`.
-- **Como verificar:** à mão. Clique direito no fundo: "Novo terminal aqui…", "Abrir painel aqui…",
+- **Arquivos:** `Sources/CollieApp/CanvasViewport.swift`, `Sources/CollieApp/LeashLayer.swift`, `Sources/CollieCanvas/`
+  (a seleção, em `Selection.swift`), `Sources/CollieApp/NodeBatch.swift` e `NodeActions.swift` (o menu da seleção).
+- **Navegar:** rolar move o canvas; Espaço + arrastar ou segurar o botão do meio (a roda) e arrastar também; o clique
+  do meio sem arrastar não muda nada. Arrastar no fundo vazio desenha um retângulo de seleção.
+- **Seleção:** uma só, do canvas e do painel de contexto. Clique seleciona um item; ⌘-clique alterna; ⇧-clique estende
+  (no painel de contexto, vai do último clicado até o clicado); retângulo no fundo (com ⌘/⇧ soma ao que já estava);
+  clique no fundo ou Esc limpa. No terminal, ⌘/⇧-clique valem na barra de título (no corpo são do próprio terminal).
+  Arrastar um nó selecionado leva a seleção junto. Botão direito num nó ou linha da seleção abre o menu para todos
+  ("N itens selecionados"; só o que vale para todos: "Reiniciar", "Matar", "Salvar na memória", "Lote", "Mover para",
+  "Fechar N itens…", com uma confirmação que diz quantos); fora da seleção, ela passa para aquele item.
+- **Como verificar:** `swift test --filter SelectionTests` e `--filter NodeActionsTests`; o resto, à mão. Clique direito no fundo: "Novo terminal aqui…", "Abrir painel aqui…",
   "Aplicar rebanho aqui…", "Reiniciar todos os terminais…", "Ajustar à tela", "Zoom 100%". Em tela cheia: "Canvas"
   (Esc), "Janela anterior", "Próxima janela", "Tamanho do terminal", "Sair da tela cheia".
 
@@ -146,7 +155,8 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Para que serve:** trocar de cercado, criar cercado e terminal, ver o uso dos agentes.
 - **Arquivos:** `Sources/CollieApp/Shell.swift`, `Sources/CollieApp/PaddockBar.swift`,
   `Sources/CollieApp/PaddockRail.swift`, `Sources/CollieApp/ContextPanel.swift` (estrutura Completa: o trilho de
-  cercados, o painel de contexto, com "AGENTES" em árvore e "PAINÉIS", e a faixa de abas "Canvas" / "Preferências"
+  cercados, o painel de contexto, com "AGENTES" em árvore e "PAINÉIS" (seleção compartilhada com o canvas: ⌘ alterna,
+  ⇧ marca o intervalo, botão direito abre o menu do item ou da seleção), e a faixa de abas "Canvas" / "Preferências"
   com "Comando" e "Zoom"), `Sources/CollieApp/MainView.swift`, `Sources/CollieApp/UsagePopover.swift`.
 - **Como verificar:** `collie paddock list`; os menus, à mão.
 

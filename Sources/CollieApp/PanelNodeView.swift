@@ -28,6 +28,7 @@ final class PanelBody: NSView, PanelContentSizing {
     private var title: TitleHost<PanelTitleBar>!
     private let corner = DragHandle()
     private let leash = LeashHandle()
+    private let press = NodePress()
     private var label: NSTextField?
     private var mounted: NSView?
     var onLeashDrag: ((UUID, CGPoint, Bool) -> Void)?
@@ -40,11 +41,12 @@ final class PanelBody: NSView, PanelContentSizing {
         wantsLayer = true
         layer?.cornerRadius = 14
         layer?.masksToBounds = true
-        layer?.borderWidth = 1
-        applyChrome()
+        observeChrome()
         title = TitleHost(rootView: PanelTitleBar(id: id, client: client, fullscreen: { [canvas, id] in canvas.toggleFullscreen(id) }))
         title.onDrag = { [weak self] d in self?.move(d) }
-        title.onMouseUp = { [weak self] in self?.bringToFront() }
+        title.onSelect = { [weak self] m in if let self { self.press.down(self.id, canvas: self.canvas, modifiers: m) } }
+        title.menuProvider = { [weak self] e in self?.selectionMenu(e) }
+        title.onMouseUp = { [weak self] in self?.released() }
         corner.onMouseUp = { [weak self] in self?.bringToFront() }
         corner.onDrag = { [weak self] d in self?.resize(d) }
         leash.onDrag = { [weak self] p, done in if let self { self.onLeashDrag?(self.id, p, done) } }
@@ -62,12 +64,37 @@ final class PanelBody: NSView, PanelContentSizing {
 
     /// Same rule as TerminalNodeView: `cgColor`s are resolved under the view's appearance, again on theme change.
     private func applyChrome() {
+        let selected = canvas.selection.contains(id)
+        layer?.borderWidth = selected ? 2 : 1
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.borderColor = CollieColor.border.cgColor
+            layer?.borderColor = (selected ? CollieColor.accent : CollieColor.border).cgColor
             layer?.backgroundColor = CollieColor.surface.cgColor
         }
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); applyChrome() }
+
+    /// Re-runs `applyChrome` whenever the selection changes.
+    private func observeChrome() {
+        withObservationTracking { applyChrome() } onChange: { [weak self] in
+            Task { @MainActor in self?.observeChrome() }
+        }
+    }
+
+    /// Right-click on the title: the selection (moved here when the click is outside it) when it holds several nodes;
+    /// otherwise nil, and the panel's own menu stays the "…" button.
+    private func selectionMenu(_ event: NSEvent) -> NSMenu? {
+        canvas.selectionState = Selecting.contextClick(canvas.selectionState, id)
+        guard canvas.selection.count > 1 else { return nil }
+        return NodeBatch.menu(ids: canvas.selection, client: client, canvas: canvas, edit: { [weak self] in self?.onEdit?($0) })
+    }
+
+    /// Set by the canvas: the edit sheet of a terminal (a selection can mix both kinds).
+    var onEdit: ((UUID) -> Void)?
+
+    private func released() {
+        press.up(id, canvas: canvas)
+        bringToFront()
+    }
 
     /// interactive: the plug-in's view is attached; otherwise (zoom < 0.5) a static label.
     func setInteractive(_ on: Bool) {
@@ -116,11 +143,10 @@ final class PanelBody: NSView, PanelContentSizing {
         sv.addSubview(self, positioned: .below, relativeTo: sv.subviews.first { $0 is Minimap })
     }
 
+    /// A selected node takes the rest of the selection along.
     private func move(_ d: CGSize) {
-        guard var f = canvas.frames[id] else { return }
-        f.origin.x += d.width / canvas.zoom
-        f.origin.y += d.height / canvas.zoom
-        canvas.frames[id] = f
+        press.dragged()
+        canvas.move(canvas.selection.contains(id) ? canvas.selection : [id], by: d)
     }
 
     private func resize(_ d: CGSize) {

@@ -19,6 +19,8 @@ struct CanvasView: NSViewRepresentable {
     var onEdit: (UUID) -> Void = { _ in }
     var onApplyHerd: (CGPoint) -> Void = { _ in }
     var onSaveHerd: () -> Void = {}
+    /// false while Preferências covers the canvas (Esc is theirs then).
+    var active = true
     func makeNSView(context: Context) -> CanvasViewport {
         let v = CanvasViewport(client: client, canvas: canvas, root: root, store: store)
         updateNSView(v, context: context)
@@ -26,7 +28,7 @@ struct CanvasView: NSViewRepresentable {
     }
     func updateNSView(_ v: CanvasViewport, context: Context) {
         v.onNewTerminal = onNewTerminal; v.onOpenPanel = onOpenPanel; v.onEdit = onEdit
-        v.onApplyHerd = onApplyHerd; v.onSaveHerd = onSaveHerd
+        v.onApplyHerd = onApplyHerd; v.onSaveHerd = onSaveHerd; v.active = active
     }
     static func dismantleNSView(_ v: CanvasViewport, coordinator: ()) { v.teardown() }
 }
@@ -48,6 +50,7 @@ struct CanvasView: NSViewRepresentable {
     var onEdit: (UUID) -> Void = { _ in }
     var onApplyHerd: (CGPoint) -> Void = { _ in }
     var onSaveHerd: () -> Void = {}
+    var active = true
     private let minimap: Minimap
     private let leashes: LeashLayer
     private var spaceDown = false
@@ -59,6 +62,12 @@ struct CanvasView: NSViewRepresentable {
     private let fsBar: NSHostingView<FullscreenBar>
     private var fsBefore: (Int, Int)?, lastFullscreen: UUID?
     private var escMonitor: Any?
+    // selection: the rectangle being dragged on empty canvas, and the middle-button pan
+    private let marquee = MarqueeView()
+    private var marqueeStart: CGPoint?, marqueeBase: SelectionState?, marqueeMoved = false, panningWithSpace = false
+    private var middle: (travel: CGFloat, panning: Bool)?
+    private var middleMonitor: Any?
+    private var reattachObserver: NSObjectProtocol?
 
     // layout.json: nothing is placed or saved until it has been read (once, after the first connect).
     private var layoutLoaded = false, loadingLayout = false
@@ -80,6 +89,8 @@ struct CanvasView: NSViewRepresentable {
         addSubview(minimap)
         addSubview(fsBar)   // above everything, nodes included
         fsBar.isHidden = true
+        addSubview(marquee)
+        marquee.isHidden = true
         observe()
         // key monitors: ignore BrowserInput.sentinel events — see BrowserInput.sentinel
         // The terminal's scrollWheel is not overridable: route scrolls here unless the terminal under the cursor has focus.
@@ -90,6 +101,15 @@ struct CanvasView: NSViewRepresentable {
         // host windows, never this one, so the window check already ignores them.
         escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             MainActor.assumeIsolated { self?.escape(e) ?? false } ? nil : e
+        }
+        // Middle button: the press goes on to whoever is under it (a click does nothing new); once it drags, the canvas pans.
+        middleMonitor = NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown, .otherMouseDragged, .otherMouseUp]) { [weak self] e in
+            MainActor.assumeIsolated { self?.middleButton(e) ?? false } ? nil : e
+        }
+        reattachObserver = NotificationCenter.default.addObserver(forName: .collieReattachTerminal, object: nil, queue: .main) { [weak self] n in
+            MainActor.assumeIsolated {
+                if let id = n.object as? UUID, let node = self?.nodes[id], node.streamOpen { node.setVisible(false); node.setVisible(true) }
+            }
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -105,6 +125,10 @@ struct CanvasView: NSViewRepresentable {
         scrollMonitor = nil
         if let escMonitor { NSEvent.removeMonitor(escMonitor) }
         escMonitor = nil
+        if let middleMonitor { NSEvent.removeMonitor(middleMonitor) }
+        middleMonitor = nil
+        if let reattachObserver { NotificationCenter.default.removeObserver(reattachObserver) }
+        reattachObserver = nil
         for v in views.values { v.unmount(); v.removeFromSuperview() }   // drops their defaults observers
         views = [:]
         for n in nodes.values { n.close() }
@@ -129,6 +153,7 @@ struct CanvasView: NSViewRepresentable {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         leashes.frame = CGRect(origin: .zero, size: newSize)
+        marquee.frame = CGRect(origin: .zero, size: newSize)
         minimap.frame = CGRect(x: newSize.width - 180 - 12, y: newSize.height - 120 - 12, width: 180, height: 120)
         fsBar.frame = CGRect(x: 0, y: 0, width: newSize.width, height: Self.fullscreenBarHeight)
         sync()
@@ -209,6 +234,7 @@ struct CanvasView: NSViewRepresentable {
                 let v = PanelNodeView(id: id, client: client, canvas: canvas, store: store)
                 addSubview(v, positioned: .below, relativeTo: minimap)
                 v.onLeashDrag = { [weak self] id, p, done in self?.leashDrag(id, p, done) }
+                v.onEdit = { [weak self] id in self?.onEdit(id) }
                 panelViews[id] = v
                 return v
             }()
@@ -251,6 +277,7 @@ struct CanvasView: NSViewRepresentable {
 
     private func syncFullscreenChrome(_ fs: UUID?) {
         minimap.isHidden = fs != nil
+        if fs != nil { marquee.isHidden = true }
         leashes.isHidden = fs != nil
         fsBar.isHidden = fs == nil
         if let fs, let v = views[fs], let t = v.term {
@@ -267,10 +294,14 @@ struct CanvasView: NSViewRepresentable {
         canvas.fullscreen ?? Self.node(of: window?.firstResponder) ?? (canvas.selection.count == 1 ? canvas.selection.first : nil)
     }
 
+    /// Esc leaves fullscreen; otherwise it clears the selection. Both only where the key is not a terminal's or a page's own.
     private func escape(_ e: NSEvent) -> Bool {
-        guard e.keyCode == 53, e.window === window, canvas.fullscreen != nil, window?.attachedSheet == nil,
+        guard e.keyCode == 53, e.window === window, window?.attachedSheet == nil,
               Self.escExitsFullscreen(window?.firstResponder) else { return false }
-        canvas.fullscreen = nil
+        if canvas.fullscreen != nil { canvas.fullscreen = nil; return true }
+        guard active, !canvas.selection.isEmpty, !(window?.firstResponder is NSText), !Self.focusIsInPanel(window?.firstResponder)
+        else { return false }
+        canvas.selectionState = SelectionState()
         return true
     }
 
@@ -440,7 +471,65 @@ struct CanvasView: NSViewRepresentable {
         return super.hitTest(p)
     }
 
-    override func mouseDown(with e: NSEvent) { window?.makeFirstResponder(self) }
+    // MARK: selection and pan with the mouse
+
+    /// Empty canvas: a drag draws a selection rectangle (⌘/⇧ keep what is selected), a plain click clears the selection.
+    /// With Space held it pans instead.
+    override func mouseDown(with e: NSEvent) {
+        window?.makeFirstResponder(self)
+        // Space held, or a press a node left unhandled (it bubbled up): the old drag, a pan
+        let onEmpty = superview.map { hitTest($0.convert(e.locationInWindow, from: nil)) === self } ?? false
+        panningWithSpace = spaceDown || !onEmpty
+        guard !panningWithSpace else { return }
+        marqueeStart = point(e); marqueeMoved = false
+        marqueeBase = e.modifierFlags.intersection([.command, .shift]).isEmpty ? nil : canvas.selectionState
+    }
+
+    override func mouseDragged(with e: NSEvent) {
+        if panningWithSpace || marqueeStart == nil { canvas.pan(by: CGSize(width: e.deltaX, height: e.deltaY)); return }
+        guard let a = marqueeStart else { return }
+        let b = point(e)
+        if !marqueeMoved, hypot(b.x - a.x, b.y - a.y) < 3 { return }   // a click that wobbled is still a click
+        marqueeMoved = true
+        let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+        marquee.rect = r
+        marquee.isHidden = false
+        let p0 = canvas.toCanvas(r.origin), p1 = canvas.toCanvas(CGPoint(x: r.maxX, y: r.maxY))
+        canvas.selectionState = Selecting.marquee(CGRect(x: p0.x, y: p0.y, width: p1.x - p0.x, height: p1.y - p0.y),
+                                                  frames: canvas.frames, shown: canvas.shown, base: marqueeBase)
+    }
+
+    override func mouseUp(with e: NSEvent) {
+        if marqueeStart != nil, !marqueeMoved, marqueeBase == nil { canvas.selectionState = SelectionState() }
+        marqueeStart = nil; marqueeBase = nil; marqueeMoved = false; panningWithSpace = false
+        marquee.isHidden = true; marquee.rect = .zero
+    }
+
+    /// Middle button (the wheel pressed) held and dragged pans the canvas, over nodes too. Down and up pass through
+    /// untouched until a drag of a few points starts: a plain middle click stays whatever it was.
+    private func middleButton(_ e: NSEvent) -> Bool {
+        guard e.buttonNumber == 2 else { return false }
+        switch e.type {
+        case .otherMouseDown:
+            middle = nil
+            guard e.window === window, canvas.fullscreen == nil, bounds.contains(point(e)),
+                  let hit = window?.contentView?.hitTest(e.locationInWindow), hit.isDescendant(of: self) else { return false }
+            middle = (0, false)
+            return false
+        case .otherMouseDragged:
+            guard var m = middle else { return false }
+            m.travel += abs(e.deltaX) + abs(e.deltaY)
+            if m.travel >= 3 { m.panning = true }
+            middle = m
+            guard m.panning else { return false }
+            canvas.pan(by: CGSize(width: e.deltaX, height: e.deltaY))
+            return true
+        case .otherMouseUp:
+            defer { middle = nil }
+            return middle?.panning == true
+        default: return false
+        }
+    }
 
     /// Only reached by clicks that land on empty canvas (nodes and the minimap answer their own right-clicks).
     override func menu(for e: NSEvent) -> NSMenu? {
@@ -499,9 +588,20 @@ struct CanvasView: NSViewRepresentable {
             .joined(separator: "\n")
         a.beginSheetModal(for: window) { _ in }
     }
+}
 
-    // Dragging empty canvas pans as well.
-    override func mouseDragged(with e: NSEvent) { canvas.pan(by: CGSize(width: e.deltaX, height: e.deltaY)) }
+/// The selection rectangle: above the nodes, never hit.
+final class MarqueeView: NSView {
+    var rect: CGRect = .zero { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ p: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        guard rect.width > 0 || rect.height > 0 else { return }
+        CollieColor.accent.withAlphaComponent(0.12).setFill()
+        rect.fill()
+        CollieColor.accent.setStroke()
+        let b = NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)); b.lineWidth = 1; b.stroke()
+    }
 }
 
 /// A menu item with a closure action (NSMenuItem holds its target weakly, so the item is its own target).

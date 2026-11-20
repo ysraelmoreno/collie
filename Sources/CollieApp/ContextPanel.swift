@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import CollieCanvas
 import CollieClient
 import CollieCore
@@ -21,6 +22,7 @@ struct ContextPanel: View {
                                   pending: AgentTree.pending(accessCards: client.accessCards, leashRequests: client.leashRequests, appCards: client.appCards),
                                   paddock: client.currentPaddock, collapsed: collapsed)
         let panels = visiblePanels(client.panels, paddock: client.currentPaddock)
+        let order = rows.map(\.id) + panels.map(\.id)   // the rows as shown: what a ⇧-click ranges over
         VStack(alignment: .leading, spacing: 12) {
             header(paddock)
             HStack(spacing: 6) {
@@ -31,9 +33,9 @@ struct ContextPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     section("AGENTES · \(client.terminals.filter { $0.paddockId == client.currentPaddock }.count)")
-                    VStack(alignment: .leading, spacing: 0) { ForEach(rows) { agentRow($0) } }
+                    VStack(alignment: .leading, spacing: 0) { ForEach(rows) { agentRow($0, order: order) } }
                     section("PAINÉIS · \(panels.count)")
-                    VStack(alignment: .leading, spacing: 0) { ForEach(panels) { panelRow($0) } }
+                    VStack(alignment: .leading, spacing: 0) { ForEach(panels) { panelRow($0, order: order) } }
                     HerdsSection(ctx: ctx)
                     LotsSection(client: client)
                 }
@@ -71,9 +73,9 @@ struct ContextPanel: View {
 
     /// One terminal: caret (a Shepherd with leashed terminals), status mark, name, pending-cards badge, preset chip.
     /// A click focuses it on the canvas (the path of a notification click); a double click also opens its edit sheet.
-    private func agentRow(_ r: AgentTree.Row) -> some View {
+    private func agentRow(_ r: AgentTree.Row, order: [UUID]) -> some View {
         let status = NodeStatus(badge: r.status, exitCode: nil)
-        let selected = ctx.canvas.selection == [r.id]
+        let selected = ctx.canvas.selection.contains(r.id)
         return HStack(spacing: 4) {
             if r.isParent {
                 Button { collapsed.formSymmetricDifference([r.id]) } label: {
@@ -85,7 +87,7 @@ struct ContextPanel: View {
             } else {
                 Color.clear.frame(width: 16, height: 22)
             }
-            Button { ctx.focus(r.id) } label: {
+            Button { click(r.id, order: order) } label: {
                 HStack(spacing: 6) {
                     AgentStatusDot(status: status)
                     Text(r.name).font(.collieUI(13, r.depth == 0 ? .medium : .regular)).foregroundStyle(Color.collieText).lineLimit(1)
@@ -109,13 +111,35 @@ struct ContextPanel: View {
         .padding(.leading, r.depth == 0 ? 0 : 12)
         .background(selected ? Color.collieRaised : .clear, in: .rect(cornerRadius: 7))
         .overlay(alignment: .leading) { if r.depth > 0 { Rectangle().fill(Color.collieBorder).frame(width: 1).padding(.leading, 8) } }
+        .overlay { RightClickCatcher { e, v in rightClick(r.id, e, v) } }
+    }
+
+    /// ⌘-click flips the item in the selection, ⇧-click selects the rows from the anchor to it; a plain click selects it
+    /// and centers it on the canvas.
+    private func click(_ id: UUID, order: [UUID]) {
+        let m = NSEvent.modifierFlags, canvas = ctx.canvas
+        if m.contains(.command) { canvas.selectionState = Selecting.toggle(canvas.selectionState, id) }
+        else if m.contains(.shift) { canvas.selectionState = Selecting.range(canvas.selectionState, to: id, in: order) }
+        else { ctx.focus(id) }
+    }
+
+    /// As in the Finder: outside the selection the right-click moves it to the row; the menu acts on the whole selection.
+    private func rightClick(_ id: UUID, _ e: NSEvent, _ view: NSView) {
+        let canvas = ctx.canvas
+        canvas.selectionState = Selecting.contextClick(canvas.selectionState, id)
+        if let m = NodeBatch.menu(ids: canvas.selection, client: ctx.client, canvas: canvas, edit: ctx.edit) {
+            NSMenu.popUpContextMenu(m, with: e, for: view)
+        }
     }
 
     /// A panel of this paddock (docked ones show everywhere): a click selects its dock tab or centers it on the canvas.
-    private func panelRow(_ p: Panel) -> some View {
-        Button {
-            NotificationCenter.default.post(name: .collieFocusPanel, object: p.id)
-            ctx.focus(p.id)
+    private func panelRow(_ p: Panel, order: [UUID]) -> some View {
+        let selected = ctx.canvas.selection.contains(p.id)
+        return Button {
+            if NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty {
+                NotificationCenter.default.post(name: .collieFocusPanel, object: p.id)
+            }
+            click(p.id, order: order)
         } label: {
             HStack(spacing: 6) {
                 Text(p.name).font(.collieUI(13)).foregroundStyle(Color.collieText).lineLimit(1)
@@ -125,6 +149,9 @@ struct ContextPanel: View {
             .padding(.vertical, 3).padding(.horizontal, 4).contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .background(selected ? Color.collieRaised : .clear, in: .rect(cornerRadius: 7))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .overlay { RightClickCatcher { e, v in rightClick(p.id, e, v) } }
     }
 }
 

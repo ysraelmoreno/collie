@@ -21,6 +21,7 @@ import CollieTheme
     private let canvas: CanvasState
     private let node: NodeController
     private let model = NodeModel()
+    private let press = NodePress()
     private var title: TitleHost<NodeTitleBar>!
     private let corner = DragHandle()
     /// Overlay on the body's bottom edge (never part of the terminal's frame: no PTY resize when it shows).
@@ -55,8 +56,9 @@ import CollieTheme
             fullscreen: { [weak self] in if let self { self.canvas.toggleFullscreen(self.id) } }))
         title.onDrag = { [weak self] d in self?.move(d) }
         title.onClick = { [weak self] in self?.focus() }
+        title.onSelect = { [weak self] m in if let self { self.press.down(self.id, canvas: self.canvas, modifiers: m) } }
         title.menuProvider = { [weak self] e in self?.menu(for: e) }
-        title.onMouseUp = { [weak self] in self?.bringToFront() }
+        title.onMouseUp = { [weak self] in self?.released() }
         corner.onMouseUp = { [weak self] in self?.bringToFront() }
         corner.onDrag = { [weak self] d in self?.resize(d) }
         addSubview(title)
@@ -94,10 +96,10 @@ import CollieTheme
 
     /// Layer colors are fixed `cgColor`s: resolved here under the view's appearance, again on every theme change.
     private func applyChrome() {
-        let attention = client.badges[id] == .attention
-        layer?.borderWidth = attention ? 1.5 : 1
+        let attention = client.badges[id] == .attention, selected = canvas.selection.contains(id)
+        layer?.borderWidth = selected ? 2 : attention ? 1.5 : 1
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            layer?.borderColor = (attention ? CollieColor.attention : CollieColor.border).cgColor
+            layer?.borderColor = (attention ? CollieColor.attention : selected ? CollieColor.accent : CollieColor.border).cgColor
             layer?.backgroundColor = CollieColor.surface.cgColor
         }
     }
@@ -134,6 +136,12 @@ import CollieTheme
 
     /// Right-click on the title or border; the terminal body falls through to this menu too (apps with mouse reporting still get the right-click).
     override func menu(for event: NSEvent) -> NSMenu? {
+        // Like the Finder: outside the selection the right-click moves it here; inside, the menu acts on all of it.
+        canvas.selectionState = Selecting.contextClick(canvas.selectionState, id)
+        if canvas.selection.count > 1,
+           let many = NodeBatch.menu(ids: canvas.selection, client: client, canvas: canvas, edit: { [weak self] in self?.onEdit?($0) }) {
+            return many
+        }
         let m = NSMenu()
         m.addItem(ActionItem("Tela cheia") { [weak self] in if let self { self.canvas.toggleFullscreen(self.id) } })
         m.addItem(.separator())
@@ -173,8 +181,13 @@ import CollieTheme
             t.optionAsMetaKey = false   // ⌥C types "ç" (US / Brazilian Pro layouts), as in Terminal; not ESC c
             applyColors(t)
             t.terminalDelegate = self
-            t.onClick = { [weak self] in self?.focus() }
-            t.onMouseUp = { [weak self] in self?.bringToFront() }
+            t.onClick = { [weak self] in
+                guard let self else { return }
+                // ⌘/⇧ stay the terminal's own (links, extending its text selection): those select from the title bar
+                if NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty { press.down(id, canvas: canvas, modifiers: []) }
+                focus()
+            }
+            t.onMouseUp = { [weak self] in self?.released() }
             addSubview(t, positioned: .below, relativeTo: strip)
             term = t
             startReader()
@@ -350,11 +363,16 @@ import CollieTheme
         if focused { focus() }
     }
 
+    /// Mouse up on the title or body: the press ends (a click inside a group collapses it) and the node comes to the front.
+    private func released() {
+        press.up(id, canvas: canvas)
+        bringToFront()
+    }
+
+    /// A selected node takes the rest of the selection along.
     private func move(_ d: CGSize) {
-        guard var f = canvas.frames[id] else { return }
-        f.origin.x += d.width / canvas.zoom
-        f.origin.y += d.height / canvas.zoom
-        canvas.frames[id] = f
+        press.dragged()
+        canvas.move(canvas.selection.contains(id) ? canvas.selection : [id], by: d)
     }
 
     private func resize(_ d: CGSize) {
@@ -437,8 +455,10 @@ extension NSView {
 final class TitleHost<V: View>: NSHostingView<V> {
     var onDrag: ((CGSize) -> Void)?
     var onClick: (() -> Void)?, onMouseUp: (() -> Void)?
+    /// The modifiers of the press, for the selection.
+    var onSelect: ((NSEvent.ModifierFlags) -> Void)?
     var menuProvider: ((NSEvent) -> NSMenu?)?
-    override func mouseDown(with event: NSEvent) { onClick?(); super.mouseDown(with: event) }
+    override func mouseDown(with event: NSEvent) { onSelect?(event.modifierFlags); onClick?(); super.mouseDown(with: event) }
     override func mouseUp(with event: NSEvent) { super.mouseUp(with: event); onMouseUp?() }
     // The hosting view would swallow the right-click: show the node's menu ourselves.
     override func rightMouseDown(with event: NSEvent) {

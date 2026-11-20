@@ -24,7 +24,9 @@ MNT="$(hdiutil attach "$TMP/rw.dmg" -readwrite -noverify -noautoopen | awk -F'\t
 [ -d "$MNT" ] || { echo "error: could not mount the image" >&2; exit 1; }
 VOL="$(basename "$MNT")"
 
-# 660x420 of content plus the 28 pt title bar; positions are the icons' centres, matching the tags of the background
+# 660x420 of content plus the 28 pt title bar. Measured on a real window (112 pt icons, 13 pt names): Finder draws an
+# icon's centre 36 pt below the y it is given, so y 154 puts the centres on the background's arrow (y 190) and the
+# names on its tags. `.background` goes far below the window: Finder shows it to who has hidden files turned on.
 if osascript - "$VOL" "$NAME" >"$TMP/osa.log" 2>&1 <<'OSA'
 on run argv
   set vol to item 1 of argv
@@ -41,10 +43,13 @@ on run argv
       set icon size of opts to 112
       set text size of opts to 13
       set background picture of opts to file ".background:background.tiff"
-      set position of item appName of container window to {180, 190}
-      set position of item "Applications" of container window to {480, 190}
+      set position of item appName of container window to {180, 154}
+      set position of item "Applications" of container window to {480, 154}
+      set position of item ".background" of container window to {330, 900}
       close
       open
+      -- again after reopening: the first size does not always stick
+      set bounds of container window to {200, 120, 860, 568}
       update without registering applications
       delay 1
       close

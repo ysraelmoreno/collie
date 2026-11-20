@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="660" height="420" viewBox="0 0 660 420">
   <!-- DMG window background ("Tinta"): the app icon's ink, the Herd arc at poster scale, one arrow.
-       Finder draws the icons at (180,190) and (480,190) and their names below; it writes names in black (light
-       mode) or white (dark mode) whatever the picture, so each name sits on a mid-grey tag both can be read on. -->
+       Finder draws the icons centred at (180,190) and (480,190) and their names below, in black even in dark
+       mode (seen on a real window), so each name sits on a mid-grey tag black can be read on. -->
   <rect width="660" height="420" fill="#15171C"/>
   <path d="M333.8 413.8 A260 260 0 1 1 333.8 46.2" fill="none" stroke="#F4F2ED" stroke-opacity=".06" stroke-width="72" stroke-linecap="round"/>
   <circle cx="333.8" cy="46.2" r="15" fill="#6E9BFF"/>

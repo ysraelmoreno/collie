@@ -243,12 +243,14 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     }
 
     @Test func checkTimeoutFails() async throws {
-        // sleep 60 vs a 20 s bound: the suite runs in parallel, and a 1 s margin failed under load (4.13 s against 4 s)
-        let r = try await Rig([task("a", "sleep 60")], tries: 1, checkTimeout: .milliseconds(200)); defer { r.cleanup() }
+        // What this proves: a check past its limit is killed and is a failure, not how fast. The bound only tells
+        // "killed" from "ran to its end" (600 s), with slack for any load: 20 s against a 60 s check measured 22.0 s
+        // with a build competing (M2b.2), and 4 s measured 4.13 s before that.
+        let r = try await Rig([task("a", "sleep 600")], tries: 1, checkTimeout: .milliseconds(200)); defer { r.cleanup() }
         await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let t0 = ContinuousClock.now
         #expect(await r.run() == .finished)
-        #expect(ContinuousClock.now - t0 < .seconds(20))
+        #expect(ContinuousClock.now - t0 < .seconds(120))
         #expect(try await r.get().tasks[0].lastFailure == "check timed out")
     }
 

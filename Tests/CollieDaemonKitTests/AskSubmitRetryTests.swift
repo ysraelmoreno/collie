@@ -69,6 +69,10 @@ import CollieTerminal
         let t = Task { try await asks.inject(to: id, prompt: "hi") }
         defer { t.cancel() }
         #expect(await waitFor(10) { enters(w) == 1 })
+        // M2b.2: kept at 3 s. The absence is only proved past `StreamHub.workingWindow` (2 s, shared with the
+        // terminals' status, not a parameter of the coordinator): before it the prompt's own echo counts as printing
+        // and a quiet agent gets no Enter either. A shorter window would race this shell's 0.2 s prints against the
+        // scheduler, and fail under load; this sleep cannot (load only delays an Enter that must not come).
         try await Task.sleep(for: .seconds(3))   // well past submitConfirm and a working window
         #expect(enters(w) == 1 && retries(events).isEmpty)
         #expect(await asks.isBusy(id))
@@ -91,7 +95,8 @@ import CollieTerminal
         let (asks, id, w, events) = try await start(hooked: false)
         try await asks.inject(to: id, prompt: "hi")
         #expect(await asks.isBusy(id))
-        try await Task.sleep(for: .milliseconds(500))
+        // M2b.2: no sleep. A Claude prompt's inject returns only when `confirmSubmit` (the one sender of the second
+        // Enter) has decided and returned, as in `pendingApprovalGetsNoRetry`: nothing is left that could send one.
         #expect(enters(w) == 1 && retries(events).isEmpty)
     }
 

@@ -127,10 +127,13 @@ actor WorkLoop {
         }
         // pre-existing untracked files are never the attempt's: the reset must not delete them
         let keep = await untracked(dir)
+        // the attempt's first write carries its first event too (the machine's `attemptStarted` is not written again)
+        let first = LoopEvent(at: started, kind: .attemptStarted, task: task.id, attempt: n)
         try? await store.update(w.id) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) { x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started }
             x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.phase = .agent
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
+            x.loop?.record(first)
         }
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
@@ -138,19 +141,25 @@ actor WorkLoop {
         var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before), .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
+            // the journal and the phase wait for the attempt's next write, but never through a long wait: `work status`
+            // shows what the loop is doing while the agent, the check or the gate runs
+            if Self.waits(effect), run.unwritten { await record(w.id, &run) }
             var happened = events?(effect)
             if happened == nil { happened = await perform(effect, state, &run) }
             guard let happened else { continue }
             let (next, more) = AttemptMachine.reduce(state, happened)
             state = next; todo += more
         }
-        guard state.phase != .finished else { return run.end }
+        guard state.phase != .finished else {
+            if run.unwritten { await record(w.id, &run) }   // every path ends on a write of its own: this is a net
+            return run.end
+        }
         // the safety net: the machine ran out of effects before its end (an event out of its phase, `fault`). A bug:
         // the task must not stay `inProgress` with its job running. Like `.reopen`: the task is open again, the attempt
         // is not counted on it, the tree is left as it is, and the loop stops here (no next task on a broken engine).
         let at = host.now(), what = run.fault.map { " (\($0))" } ?? ""
         if let agent = state.agent { await host.dismiss(agent) }
-        try? await store.update(w.id) { x in
+        await record(w.id, &run) { x in
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
             Self.endJob(&x, name, "loop: estado inesperado do motor", at: at)
             x.loop?.phase = nil
@@ -179,6 +188,30 @@ actor WorkLoop {
         var fault: String?
         /// `discard` wrote the attempt's patch (nil: nothing was discarded).
         var patched: Bool?
+        /// The journal's events not yet written, oldest first, and the phase to show (`.some(nil)`: none): `record`.
+        var pending: [LoopEvent] = [], phase: WorkLoopState.Phase??
+        var unwritten: Bool { !pending.isEmpty || phase != nil }
+    }
+
+    /// Effects that may take long: what is pending is written before them.
+    private static func waits(_ e: AttemptMachine.Effect) -> Bool {
+        switch e {
+        case .ask, .waitForCommit, .runCheck, .runGate: true
+        default: false
+        }
+    }
+
+    /// One write of the work: the attempt's pending phase and events (in their order), then `change`. Every write of an
+    /// attempt goes through here, so an event next to another write costs no write of its own (M1b.2: at most 8
+    /// `store.update` in an attempt that passes with a gate, `LoopJournalWritesTests`).
+    private func record(_ id: UUID, _ r: inout Run, _ change: (inout Work) -> Void = { _ in }) async {
+        let events = r.pending, phase = r.phase
+        r.pending = []; r.phase = nil
+        try? await store.update(id) { x in
+            if let phase { x.loop?.phase = phase }
+            for e in events { x.loop?.record(e) }
+            change(&x)
+        }
     }
 
     /// The `discarded` event's detail when no patch was written (the diff failed or was empty).
@@ -192,10 +225,15 @@ actor WorkLoop {
         case .journal(let kind, let detail):
             // the journal: this attempt's events (it records, it never decides)
             // `discarded` names the patch only when one was written
-            await event(id, kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail)
+            // `attemptStarted` went with the attempt's first write
+            if kind != .attemptStarted {
+                r.pending.append(entry(kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail))
+            }
             if kind == .verdict { r.at = host.now() }   // the verdict's time: before any wait for another terminal
-        case .note(let text): await note(id, text)
-        case .show(let p): await phase(id, p)
+        case .note(let text):
+            let at = host.now()
+            await record(id, &r) { $0.notes.append(WorkNote(at: at, text: text)) }
+        case .show(let p): r.phase = .some(p)
         case .stopLoop(let stop): r.end = .stop(stop)
         case .fault(let what): r.fault = what
         case .summon:
@@ -249,7 +287,11 @@ actor WorkLoop {
                 return .checkDone(status: nil, broken: nil)
             } catch { return .checkDone(status: nil, broken: "check could not run: \(error.message)") }
         case .awaitOthers:
-            return .blocked(await othersWorkingWaiting { kind, detail in await self.event(id, kind, task: task.id, attempt: n, detail: detail) })
+            guard let who = await host.othersWorking() else { return .blocked(nil) }
+            // told once who it waits for, before the wait
+            r.pending.append(entry(.othersWaiting, task: task.id, attempt: n, detail: who))
+            await record(id, &r)
+            return .blocked(await othersStillWorking(who))
         case .settle(let reset):
             // the check's (or the gate's) own edits, files and commits never count, never reach the gate and never leak
             // into the next attempt
@@ -278,7 +320,7 @@ actor WorkLoop {
             r.patched = await discard(id, task.id, n, before: before, branch: branch, keep: r.keep, dir)
         case .uncount:
             let at = host.now()
-            try? await store.update(id) { x in
+            await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
                 let used = x.loop?.used ?? 0
                 x.loop?.used = Swift.max(0, used - 1)
@@ -286,7 +328,7 @@ actor WorkLoop {
             }
         case .reopen(let why):
             let at = host.now()
-            try? await store.update(id) { x in
+            await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
                 Self.endJob(&x, name, why, at: at)
             }
@@ -308,7 +350,7 @@ actor WorkLoop {
                 if let n = c.note { await note(id, "[loop] evidência de \"\(task.title)\": \(n)") }
             }
             let found = evidence
-            try? await store.update(id) { x in
+            await record(id, &r) { x in
                 // a task dropped or done meanwhile keeps that state
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                     x.tasks[i].state = .done; x.tasks[i].tries = n; x.tasks[i].reason = nil; x.tasks[i].lastFailure = nil; x.tasks[i].updatedAt = at
@@ -323,7 +365,7 @@ actor WorkLoop {
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
             let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason)"
                 + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars))))
-            try? await store.update(id) { x in
+            await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
                     x.tasks[i].tries = n; x.tasks[i].lastFailure = reason; x.tasks[i].updatedAt = at
                     if last { x.tasks[i].state = .deferred; x.tasks[i].reason = "loop: \(reason)" } else { x.tasks[i].state = .open }
@@ -338,10 +380,9 @@ actor WorkLoop {
 
     /// Another terminal that can edit the worktree is in a turn: no reset under it. It gets `othersWait` to finish (a short
     /// chat is no reason to end the loop); the name of the one still working after that, nil when none is.
-    /// `log`: the attempt's journal, told once who it waits for.
-    private func othersWorkingWaiting(_ log: (LoopEvent.Kind, String?) async -> Void) async -> String? {
-        var who = await host.othersWorking()
-        if let who { await log(.othersWaiting, who) }
+    /// `first`: the one found working, already in the attempt's journal.
+    private func othersStillWorking(_ first: String) async -> String? {
+        var who: String? = first
         let end = ContinuousClock.now + othersWait
         while who != nil, ContinuousClock.now < end, !Task.isCancelled {
             try? await Task.sleep(for: Swift.min(poll, .seconds(5)))
@@ -369,14 +410,16 @@ actor WorkLoop {
         "[loop] '\(who)' está trabalhando no cercado: o laço não reseta a worktree com outro agente nela; laço parado, worktree intocada"
     }
 
-    /// What the running loop is doing, for `work status` and the panel (nil: between attempts).
-    private func phase(_ id: UUID, _ p: WorkLoopState.Phase?) async { try? await store.update(id) { x in x.loop?.phase = p } }
-
     /// One line of the loop's journal (`WorkLoopState.events`, `work status --events`). It only records: no decision
     /// reads it, and it never reaches an agent's prompt.
-    private func event(_ id: UUID, _ kind: LoopEvent.Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) async {
-        let e = LoopEvent(at: host.now(), kind: kind, task: task, attempt: attempt, detail: detail.map(Self.eventDetail))
+    private func event(_ id: UUID, _ kind: LoopEvent.Kind) async {
+        let e = entry(kind)
         try? await store.update(id) { $0.loop?.record(e) }
+    }
+
+    /// The event as the journal keeps it, timed now.
+    private func entry(_ kind: LoopEvent.Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) -> LoopEvent {
+        LoopEvent(at: host.now(), kind: kind, task: task, attempt: attempt, detail: detail.map(Self.eventDetail))
     }
 
     /// An event's `detail`: it may be the agent's or the check's text, so, like the evidence, it loses its ANSI sequences

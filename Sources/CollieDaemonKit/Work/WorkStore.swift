@@ -8,6 +8,10 @@ import CollieProtocol
 /// running), then the oldest of any state. Disk work runs on one serial queue, off the cooperative pool.
 actor WorkStore {
     static let maxClosed = 200, maxTasks = 500, maxJobs = 200, maxNotes = 200, maxCommits = 200
+    /// A closed work keeps only this many of its loop's newest events (the ring of 100 is the active work's).
+    static let maxClosedEvents = 20
+    /// How many times work.json was written (a test counts a loop's writes with it).
+    private(set) var writes = 0
     let dir: URL
     private var all: [Work]?   // loaded on first use
     private var saving = false
@@ -112,7 +116,7 @@ actor WorkStore {
             try DesignService.writePrivate(data, to: f)
             if emptyArchive { try Self.truncate(a) }
         }
-        all = list
+        all = list; writes += 1
         guard let onChange else { return }
         let was = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for w in list where was[w.id] != w { onChange(w.id) }
@@ -152,6 +156,8 @@ actor WorkStore {
             list[i].tasks = w.tasks.enumerated().filter { !t.contains($0.offset) }.map(\.element)
             list[i].jobs = w.jobs.enumerated().filter { !j.contains($0.offset) }.map(\.element)
             list[i].notes = Array(w.notes.dropFirst(n))
+            // not archived: the journal only records, and a closed work's status shows 20 lines at most
+            if w.closedAt != nil, let ev = w.loop?.events, ev.count > maxClosedEvents { list[i].loop?.events = Array(ev.suffix(maxClosedEvents)) }
         }
         // closed works: the newest 200 stay (ties by position)
         let closed = list.enumerated().filter { $0.element.closedAt != nil }

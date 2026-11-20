@@ -39,7 +39,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.host.prompts.isEmpty)
         // it counts as the next attempt: of the task's tries and of `--max`
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2, "\(w.notes.map(\.text))")
-        #expect(w.loop?.used == 1 && w.jobs.map(\.id) == ["loop-a-2"] && w.jobs[0].state == .finished)
+        #expect(w.loop?.used == 1 && w.jobs.map(\.id) == ["w-task-a-t2"] && w.jobs[0].state == .finished)
         #expect(await r.host.checks == 1)
         // the usual evidence, measured from the sha it resumed from
         #expect(w.tasks[0].evidence?.commits.count == 1 && w.tasks[0].evidence?.attempt == 2)
@@ -79,10 +79,10 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func anotherBranchIsIgnoredAndCleared() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
         try await fall(r, branch: "some-other-branch")
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(await r.host.summoned == ["loop-a-1"] && !adopted(w))
+        #expect(await r.host.summoned == ["w-task-a-t1"] && !adopted(w))
         #expect(w.tasks[0].state == .done && w.tasks[0].resumeFrom == nil && w.tasks[0].resumeBranch == nil)
         // judged from the HEAD of now: only the agent's own commit is the attempt's
         #expect(w.tasks[0].evidence?.commits.count == 1)
@@ -93,7 +93,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         try await fall(r, commit: nil)
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(await r.host.summoned == ["loop-a-1"] && !adopted(w))
+        #expect(await r.host.summoned == ["w-task-a-t1"] && !adopted(w))
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit" && w.tasks[0].resumeFrom == nil)
     }
 
@@ -116,10 +116,10 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     func aResumeFromThatIsNotAShaNeverReachesGit(_ bad: String) async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
         try await fall(r, from: bad)
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(await r.host.summoned == ["loop-a-1"] && !adopted(w))
+        #expect(await r.host.summoned == ["w-task-a-t1"] && !adopted(w))
         #expect(w.tasks[0].state == .done && w.tasks[0].resumeFrom == nil)
         if !bad.isEmpty, bad != "HEAD", bad != "main" {   // those two are the loop's own arguments
             #expect(!(await r.host.gits).contains { $0.contains { $0.contains(bad) } })
@@ -130,10 +130,10 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
         let ghost = String(repeating: "a", count: 40)
         try await fall(r, from: ghost)
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(await r.host.summoned == ["loop-a-1"] && !adopted(w))
+        #expect(await r.host.summoned == ["w-task-a-t1"] && !adopted(w))
         #expect(w.tasks[0].state == .done && w.tasks[0].resumeFrom == nil)
         // it was only asked about, never a base for a diff, a reset or a log
         #expect(!(await r.host.gits).contains { $0.first != "cat-file" && $0.contains { $0.contains(ghost) } })
@@ -149,17 +149,17 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
             let t = (try? await store.get(id))?.tasks[0]
             seen.from = t?.resumeFrom; seen.branch = t?.resumeBranch
         }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(seen.from == head && seen.branch == on)
-        #expect(await r.host.summoned == ["loop-a-1"] && !adopted(w))
+        #expect(await r.host.summoned == ["w-task-a-t1"] && !adopted(w))
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1 && w.tasks[0].resumeFrom == nil && w.tasks[0].resumeBranch == nil)
     }
 
     @Test func aFailedAttemptClearsIt() async throws {
         let r = try await LoopRig([task("a", "false")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("x.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("x.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].resumeFrom == nil && w.tasks[0].resumeBranch == nil)
@@ -170,7 +170,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let sha = String(repeating: "1", count: 40)
         var t = WorkTask(id: "a", title: "A", state: .inProgress)
         t.resumeFrom = sha; t.resumeBranch = "main"
-        var w = Work(title: "W", terminalId: UUID(), tasks: [t], jobs: [WorkJob(id: "loop-a-1", kind: .loop, label: "A")])
+        var w = Work(title: "W", terminalId: UUID(), tasks: [t], jobs: [WorkJob(id: "w-a-t1", kind: .loop, label: "A")])
         w.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
         CommandRouter.sweepLeftRunning(&w, now: Date(timeIntervalSince1970: 9))
         #expect(w.tasks[0].state == .open && w.tasks[0].resumeFrom == sha && w.tasks[0].resumeBranch == "main")

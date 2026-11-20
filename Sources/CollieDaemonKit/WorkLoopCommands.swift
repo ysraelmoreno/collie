@@ -250,11 +250,19 @@ extension CommandRouter {
         for w in all where w.loop?.state == .running {
             await removeLanes(of: w, prepare: true)
             SandboxLaunch.remove(w.id, root: config.paths.root)
-            // its agents' records (the processes died with the daemon): named as its loop jobs, in its paddock
-            let agents = Set(w.jobs.filter { $0.kind == .loop }.map(\.id))
-            for t in ws.terminals where agents.contains(t.name) && t.paddockId == w.paddockId { try? await remove(t) }
+            // its agents' records (the processes died with the daemon)
+            for t in Self.loopAgents(of: w, in: ws.terminals) { try? await remove(t) }
             try? await work.update(w.id) { Self.sweepLeftRunning(&$0, now: now) }
         }
+    }
+
+    /// M3.8: the terminals of `w`'s loop attempts, in its paddock: those whose id is on a loop job (`WorkJob.terminal`),
+    /// whatever they are called. A job with no terminal on record (a work written before the field, or a daemon that
+    /// fell between the summon and its write) still finds its agent by the job's id, the name it was summoned with.
+    static func loopAgents(of w: Work, in terminals: [TerminalRecord]) -> [TerminalRecord] {
+        let jobs = w.jobs.filter { $0.kind == .loop }
+        let ids = Set(jobs.compactMap(\.terminal)), named = Set(jobs.filter { $0.terminal == nil }.map(\.id))
+        return terminals.filter { $0.paddockId == w.paddockId && (ids.contains($0.id) || named.contains($0.name)) }
     }
 
     /// What the start sweep writes on a work whose loop a previous daemon left `running`: stopped by `daemonRestart`,
@@ -355,6 +363,11 @@ extension CommandRouter {
         do { _ = try prepareLoopSandbox(work, paddock: p, lane: lane) } catch {
             throw (error as? ProtocolError) ?? ProtocolError(code: .unavailable, message: "the lane's sandbox could not be prepared: \(error)")
         }
+    }
+
+    /// M3.8: the names a summon would refuse: the terminals', the panels' and those being launched.
+    func loopNamesTaken() -> Set<String> {
+        Set(ws.terminals.map { $0.name.lowercased() } + ws.panels.map { $0.name.lowercased() }).union(launching)
     }
 
     func loopTerminalExists(_ id: UUID) -> Bool { ws.terminals.contains { $0.id == id } }
@@ -483,6 +496,7 @@ struct RouterLoopHost: LoopHost {
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
+    func namesTaken() async -> Set<String> { await router.loopNamesTaken() }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }
     func taskEnded(_ line: String) async { try? await router.asks.inject(to: starter, prompt: line, afterQuiet: true) }
 

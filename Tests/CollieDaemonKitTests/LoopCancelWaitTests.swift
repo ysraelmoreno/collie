@@ -45,7 +45,7 @@ private extension CommandRouter {
     /// `Task` ends.
     private func heldLoop(_ d: Daemon, _ gate: Gate, _ order: Order) async throws -> (rig: LoopRig, run: Task<Void, Never>) {
         let r = try await LoopRig([task("a", "false")], tries: 1)
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         await r.host.setProbe { _ in await gate.park() }
         let loop = r.loop, id = r.work, repo = r.repo
         let run = Task { _ = await loop.run(work: id, dir: repo); await order.add("loop") }

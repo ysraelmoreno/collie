@@ -796,7 +796,7 @@ Um trabalho sem branch nunca fecha sozinho. Os commits novos entram no trabalho 
 **Codex e shell** não têm hooks: usam só os comandos explícitos `collie work …`.
 
 **Laço autônomo (`collie work run`):** roda as tarefas abertas do trabalho sem ninguém olhando. Cada tentativa é um agente
-novo (`loop-<tarefa>-<n>`) no cercado, e quem decide se a tarefa passou é o check, nunca o agente. Só começa depois que o
+novo (`<trabalho>-<tarefa>-t<n>`, dos títulos; numa faixa, `-f<faixa>-t<n>`) no cercado, e quem decide se a tarefa passou é o check, nunca o agente. Só começa depois que o
 dono aprovou a lista de tarefas e os checks.
 
 - Confiar em laços por cercado: com "Sempre neste cercado" ligado (só o app liga e desliga, `admin.paddock.trust-loops`;

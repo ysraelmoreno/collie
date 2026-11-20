@@ -4,7 +4,7 @@ import CollieCore
 import CollieProtocol
 @testable import CollieDaemonKit
 
-/// What one attempt's "agent" does, keyed by its terminal name (`loop-<task>-<n>`).
+/// What one attempt's "agent" does, keyed by its terminal name (`<work>-<task>-t<n>`, `AgentNaming`).
 /// Shared with `LoopStopReasonTests`.
 struct LoopScript: Sendable {
     /// Runs during `ask`, in the worktree.
@@ -54,6 +54,10 @@ actor LoopFakeHost: LoopHost {
         patches = URL(fileURLWithPath: "/tmp/collie-loop-patches-\(UUID().uuidString.prefix(8))")
     }
     func set(_ name: String, _ s: LoopScript) { scripts[name] = s }
+    /// M3.8: names a live terminal already has (the attempt's agent takes another).
+    var taken: Set<String> = []
+    func setTaken(_ n: Set<String>) { taken = n }
+    func namesTaken() async -> Set<String> { taken }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
         let id = UUID(); names[id] = name; summoned.append(name); return id
@@ -150,26 +154,26 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 @Suite struct WorkLoopTests {
     @Test func passesOnFirstAttempt() async throws {
         let r = try await Rig([task("a", "test -f done.txt")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1)
         #expect(w.loop?.state == .finished && w.loop?.endedAt != nil && w.loop?.task == nil)
-        #expect(await r.host.dismissed == ["loop-a-1"])
-        #expect(w.jobs.map(\.id) == ["loop-a-1"] && w.jobs[0].kind == .loop && w.jobs[0].state == .finished)
+        #expect(await r.host.dismissed == ["w-task-a-t1"])
+        #expect(w.jobs.map(\.id) == ["w-task-a-t1"] && w.jobs[0].kind == .loop && w.jobs[0].state == .finished)
         #expect(w.jobs[0].result == (try await git(r.repo, "rev-parse", "--short", "HEAD")))
     }
 
     @Test func failsThenPassesFromACleanTree() async throws {
         let r = try await Rig([task("a", "test -f done.txt || { echo MISSING done.txt; exit 1; }")]); defer { r.cleanup() }
         let start = try await git(r.repo, "rev-parse", "HEAD")
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             try await commit("wrong.txt", "bad\n", in: d)
             try "dirty\n".write(to: d.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
         }))
         final class Seen: @unchecked Sendable { var head = "", status = "x" }
         let seen = Seen()
-        await r.host.set("loop-a-2", Script(act: { d in
+        await r.host.set("w-task-a-t2", Script(act: { d in
             seen.head = try await git(d, "rev-parse", "HEAD"); seen.status = try await git(d, "status", "--porcelain")
             try await commit("done.txt", "ok\n", in: d)
         }))
@@ -181,21 +185,21 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(patch.contains("wrong.txt") && patch.contains("dirty"))
         let note = try #require(w.notes.first { $0.text.hasPrefix("[loop a] Task a, tentativa 1/3:") })
         #expect(note.text.contains("MISSING done.txt") && note.text.contains("check failed (exit 1)") && note.text.contains("tracked files left dirty"))
-        #expect(await r.host.prompts["loop-a-2"]?.contains("O que falhou nas tentativas anteriores:\n[loop a] Task a, tentativa 1/3") == true)
-        #expect(await r.host.prompts["loop-a-1"]?.contains("O que falhou") == false)
-        #expect(await r.host.dismissed == ["loop-a-1", "loop-a-2"])
+        #expect(await r.host.prompts["w-task-a-t2"]?.contains("O que falhou nas tentativas anteriores:\n[loop a] Task a, tentativa 1/3") == true)
+        #expect(await r.host.prompts["w-task-a-t1"]?.contains("O que falhou") == false)
+        #expect(await r.host.dismissed == ["w-task-a-t1", "w-task-a-t2"])
     }
 
     @Test func defersAfterTries() async throws {
         let r = try await Rig([task("a", "false"), task("b", "true")], tries: 2); defer { r.cleanup() }
-        for n in ["loop-a-1", "loop-a-2", "loop-b-1"] { await r.host.set(n, Script(act: { try await commit("\(n).txt", "x\n", in: $0) })) }
+        for n in ["w-task-a-t1", "w-task-a-t2", "w-task-b-t1"] { await r.host.set(n, Script(act: { try await commit("\(n).txt", "x\n", in: $0) })) }
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].reason?.hasPrefix("loop:") == true && w.tasks[0].tries == 2)
         #expect(w.tasks[0].lastFailure == "check failed (exit 1)")
         #expect(w.tasks[1].state == .done)
-        #expect(await r.host.summoned == ["loop-a-1", "loop-a-2", "loop-b-1"])
-        #expect(await r.host.dismissed == ["loop-a-1", "loop-a-2", "loop-b-1"])   // finding 5: every agent goes, the last failed one too
+        #expect(await r.host.summoned == ["w-task-a-t1", "w-task-a-t2", "w-task-b-t1"])
+        #expect(await r.host.dismissed == ["w-task-a-t1", "w-task-a-t2", "w-task-b-t1"])   // finding 5: every agent goes, the last failed one too
     }
 
     @Test func noCommitFailsEvenWithGreenCheck() async throws {
@@ -207,14 +211,14 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func idleEndWaitsForTheCommit() async throws {
         let r = try await Rig([task("a", "test -f done.txt")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(source: .idle, lateAfter: 2, late: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(source: .idle, lateAfter: 2, late: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .done)
     }
 
     @Test func turnTimeoutIsNotAFailure() async throws {
         let r = try await Rig([task("a", "test -f done.txt")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) },
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) },
                                             askError: ProtocolError(code: .timeout, message: "turn timed out")))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .done)
@@ -223,7 +227,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func branchSwitchIsNotACommit() async throws {
         let r = try await Rig([task("a", "true")], tries: 1); defer { r.cleanup() }
         let start = try await git(r.repo, "rev-parse", "HEAD")
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             _ = try await git(d, "checkout", "-q", "-b", "elsewhere")
             try await commit("done.txt", "ok\n", in: d)
         }))
@@ -236,7 +240,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func checkEditsNeverCount() async throws {
         let r = try await Rig([task("a", "echo generated > f.txt")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .done)
         #expect(try await git(r.repo, "status", "--porcelain").isEmpty)
@@ -247,7 +251,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         // "killed" from "ran to its end" (600 s), with slack for any load: 20 s against a 60 s check measured 22.0 s
         // with a build competing (M2b.2), and 4 s measured 4.13 s before that.
         let r = try await Rig([task("a", "sleep 600")], tries: 1, checkTimeout: .milliseconds(200)); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let t0 = ContinuousClock.now
         #expect(await r.run() == .finished)
         #expect(ContinuousClock.now - t0 < .seconds(120))
@@ -257,7 +261,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func stopEndsAfterTheVerdict() async throws {
         let r = try await Rig([task("a", "true"), task("b", "true")], tries: 2); defer { r.cleanup() }
         let loop = r.loop, id = r.work
-        await r.host.set("loop-a-1", Script(act: { d in await loop.stop(work: id); try await commit("done.txt", "ok\n", in: d) }))
+        await r.host.set("w-task-a-t1", Script(act: { d in await loop.stop(work: id); try await commit("done.txt", "ok\n", in: d) }))
         #expect(await r.run() == .stopped)
         let w = try await r.get()
         #expect(w.tasks.map(\.state) == [.done, .open] && w.loop?.state == .stopped)
@@ -267,25 +271,25 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await Rig([task("a", "false")], tries: 3, max: 1); defer { r.cleanup() }
         #expect(await r.run() == .stopped)
         let w = try await r.get()
-        #expect(await r.host.summoned == ["loop-a-1"] && w.loop?.state == .stopped && w.loop?.used == 1)
+        #expect(await r.host.summoned == ["w-task-a-t1"] && w.loop?.state == .stopped && w.loop?.used == 1)
         #expect(w.tasks[0].state == .open && w.tasks[0].tries == 1)
     }
 
     @Test func closedWorkStopsTheLoop() async throws {
         let r = try await Rig([task("a", "true")]); defer { r.cleanup() }
         let store = r.store, id = r.work
-        await r.host.set("loop-a-1", Script(act: { _ in try await store.close(id, by: "app") }))
+        await r.host.set("w-task-a-t1", Script(act: { _ in try await store.close(id, by: "app") }))
         #expect(await r.run() == .stopped)
         let w = try await r.get()
         #expect(w.loop?.state == .stopped && w.tasks[0].state == .open)
-        #expect(await r.host.dismissed == ["loop-a-1"])
+        #expect(await r.host.dismissed == ["w-task-a-t1"])
         #expect(await r.host.checks == 0)
     }
 
     @Test func untrackedFilesFromBeforeSurviveAFailedAttempt() async throws {
         let r = try await Rig([task("a", "false")], tries: 1); defer { r.cleanup() }
         try "mine\n".write(to: r.repo.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             // ponytail: an agent that commits the owner's file itself (`git add -A`) loses it to the reset; only the patch keeps it
             try "new\n".write(to: d.appendingPathComponent("agent.txt"), atomically: true, encoding: .utf8)
             _ = try await git(d, "add", "agent.txt"); _ = try await git(d, "commit", "-q", "-m", "agent")
@@ -301,10 +305,10 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     /// Finding 5: the agent is dismissed before its check runs (a turn past its timeout may still be editing).
     @Test func agentGoesBeforeTheCheck() async throws {
         let r = try await Rig([task("a", "test -f done.txt")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) },
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) },
                                             askError: ProtocolError(code: .timeout, message: "turn timed out")))
         #expect(await r.run() == .finished)
-        #expect(await r.host.events == ["dismiss loop-a-1", "check"])
+        #expect(await r.host.events == ["dismiss w-task-a-t1", "check"])
     }
 
     /// Finding 4: tracked changes before an attempt are not the loop's: it stops and leaves them.
@@ -324,7 +328,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func otherAgentWorkingBlocksTheReset() async throws {
         let r = try await Rig([task("a", "false"), task("b", "true")]); defer { r.cleanup() }
         await r.host.setBusy("dev")
-        await r.host.set("loop-a-1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
         #expect(await r.run() == .stopped)
         #expect(FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("wrong.txt").path))   // nothing reset
         let w = try await r.get()
@@ -337,7 +341,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         await r.host.setBusy("dev")
         let host = r.host
         let freeing = Task { try? await Task.sleep(for: .milliseconds(150)); await host.setBusy(nil) }
-        await r.host.set("loop-a-1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)   // waited, then reset and deferred as usual
         await freeing.value
         let w = try await r.get()
@@ -348,12 +352,12 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     /// Review Focus 5: the starter (whose Shepherd the loop summons as) is gone: the loop stops, nothing is deferred.
     @Test func starterGoneStopsTheLoop() async throws {
         let r = try await Rig([task("a", "false"), task("b", "true")]); defer { r.cleanup() }
-        await r.host.setStarterGone(after: "loop-a-1")
+        await r.host.setStarterGone(after: "w-task-a-t1")
         #expect(await r.run() == .stopped)
         let w = try await r.get()
         #expect(w.tasks.map(\.state) == [.open, .open] && w.tasks[0].tries == nil)
-        #expect(await r.host.summoned == ["loop-a-1"])
-        #expect(await r.host.dismissed == ["loop-a-1"])
+        #expect(await r.host.summoned == ["w-task-a-t1"])
+        #expect(await r.host.dismissed == ["w-task-a-t1"])
         #expect(await r.host.checks == 0)
     }
 
@@ -362,21 +366,21 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await Rig([task("a", "sleep 1.2; false")], tries: 3, budget: 1); defer { r.cleanup() }
         #expect(await r.run() == .stopped)
         let w = try await r.get()
-        #expect(await r.host.summoned == ["loop-a-1"] && (w.loop?.spent ?? 0) >= 1)
+        #expect(await r.host.summoned == ["w-task-a-t1"] && (w.loop?.spent ?? 0) >= 1)
     }
 
     /// Finding 7: a task added while the loop runs waits for the next run.
     @Test func tasksAddedDuringTheLoopWait() async throws {
         let r = try await Rig([task("a", "true")]); defer { r.cleanup() }
         let store = r.store, id = r.work
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             try await store.update(id) { $0.tasks.append(WorkTask(id: "late", title: "Late", check: "true")) }
             try await commit("done.txt", "ok\n", in: d)
         }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks.map(\.state) == [.done, .open])
-        #expect(await r.host.summoned == ["loop-a-1"])
+        #expect(await r.host.summoned == ["w-task-a-t1"])
     }
 
     /// Finding 8: secrets in the check's output never reach the notes (nor the next prompt).
@@ -387,7 +391,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let text = try await r.get().notes.map(\.text).joined(separator: "\n")
         #expect(!text.contains("ghp_abcdefgh123456") && !text.contains("abc.def.abcdefgh") && !text.contains("sk-ant-0123456789abcdefgh"), "\(text)")
         #expect(text.contains("[hidden]"))
-        #expect(await r.host.prompts["loop-a-2"]?.contains("ghp_abcdefgh123456") == false)
+        #expect(await r.host.prompts["w-task-a-t2"]?.contains("ghp_abcdefgh123456") == false)
     }
 
     /// Finding 8: an attempt reads its own task's failures only (two tasks may share a title).
@@ -395,14 +399,14 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await Rig([WorkTask(id: "a", title: "Twin", check: "false"), WorkTask(id: "b", title: "Twin", check: "false")], tries: 1)
         defer { r.cleanup() }
         #expect(await r.run() == .finished)
-        #expect(await r.host.prompts["loop-b-1"]?.contains("O que falhou") == false)
+        #expect(await r.host.prompts["w-twin-t1"]?.contains("O que falhou") == false)
     }
 
     /// Finding 9: a task dropped (or done) while its attempt ran keeps that state; the verdict is not written over it.
     @Test func taskChangedMidAttemptKeepsItsState() async throws {
         let r = try await Rig([task("a", "true")]); defer { r.cleanup() }
         let store = r.store, id = r.work
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             try await store.update(id) { $0.tasks[0].state = .abandoned; $0.tasks[0].reason = "not needed" }
             try await commit("done.txt", "ok\n", in: d)
         }))
@@ -416,7 +420,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await Rig([task("a", "false")]); defer { r.cleanup() }
         final class Box: @unchecked Sendable { var task: Task<WorkLoopState.State, Never>? }
         let box = Box(), loop = r.loop, id = r.work, repo = r.repo
-        await r.host.set("loop-a-1", Script(act: { d in box.task?.cancel(); try await commit("wip.txt", "x\n", in: d) }))
+        await r.host.set("w-task-a-t1", Script(act: { d in box.task?.cancel(); try await commit("wip.txt", "x\n", in: d) }))
         box.task = Task { await loop.run(work: id, dir: repo) }
         #expect(await box.task!.value == .stopped)
         let w = try await r.get()
@@ -432,7 +436,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func gateFailureFailsTheTask() async throws {
         let r = try await Rig([task("a", "test -f done.txt")], tries: 1, gate: "echo GATE-OUT; exit 3"); defer { r.cleanup() }
         let start = try await git(r.repo, "rev-parse", "HEAD")
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "gate failed (exit 3)", "\(w.tasks)")
@@ -444,7 +448,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func gateDoesNotRunWhenTheCheckFails() async throws {
         let r = try await Rig([task("a", "false")], tries: 1, gate: "true"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].lastFailure == "check failed (exit 1)")
         #expect(await r.host.commands == ["false"])
@@ -452,18 +456,18 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func gatePassesAndTheTaskIsDone() async throws {
         let r = try await Rig([task("a", "test -f done.txt"), task("b", "true")], gate: "test -f done.txt"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
-        await r.host.set("loop-b-1", Script(act: { try await commit("b.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-b-t1", Script(act: { try await commit("b.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks.map(\.state) == [.done, .done])
         // after each task's check
         #expect(await r.host.commands == ["test -f done.txt", "test -f done.txt", "true", "test -f done.txt"])
-        #expect(await r.host.prompts["loop-a-1"]?.contains("test -f done.txt\ne depois este portão:\ntest -f done.txt\n") == true)
+        #expect(await r.host.prompts["w-task-a-t1"]?.contains("test -f done.txt\ne depois este portão:\ntest -f done.txt\n") == true)
     }
 
     @Test func gateTimeoutFails() async throws {
         let r = try await Rig([task("a", "true")], tries: 1, gate: "sleep 5", checkTimeout: .milliseconds(200)); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].lastFailure == "gate timed out")
     }
@@ -474,7 +478,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func gateSeesTheCommitNotTheChecksEdits() async throws {
         let r = try await Rig([task("a", "echo broken > done.txt; echo x > made.txt")], gate: "grep -q ok done.txt && test ! -e made.txt")
         defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done, "\(w.notes.map(\.text))")
@@ -484,7 +488,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     /// A check that repairs the tree does not make a bad commit pass the gate.
     @Test func gateFailsACommitTheCheckRepaired() async throws {
         let r = try await Rig([task("a", "echo ok > done.txt")], tries: 1, gate: "grep -q ok done.txt"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "bad\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "bad\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].lastFailure == "gate failed (exit 1)")
     }
@@ -493,7 +497,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let sneak = "echo x > sneak.txt && git add sneak.txt && git commit -q -m sneak"
         let r = try await Rig([task("a", sneak)], tries: 1, gate: "true"); defer { r.cleanup() }
         let start = try await git(r.repo, "rev-parse", "HEAD")
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "o check moveu o HEAD", "\(w.tasks)")
@@ -508,7 +512,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func theShepherdHearsOfEachTaskAsItEnds() async throws {
         let r = try await Rig([task("a", "test -f done.txt"), task("b", "false")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let ended = await r.host.ended
         #expect(ended.count == 2, "\(ended)")
@@ -520,8 +524,8 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func aBusyShepherdDoesNotHoldTheLoop() async throws {
         let r = try await Rig([task("a", "test -f done.txt"), task("b", "test -f more.txt")]); defer { r.cleanup() }
         await r.host.neverDeliverNotices()
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
-        await r.host.set("loop-b-1", Script(act: { try await commit("more.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-b-t1", Script(act: { try await commit("more.txt", "ok\n", in: $0) }))
         let t0 = ContinuousClock.now
         #expect(await r.run() == .finished)
         #expect(ContinuousClock.now - t0 < .seconds(60), "the loop waited for the notice")
@@ -543,7 +547,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
             let p = try? await store.get(work)?.loop?.phase
             await seen.add(cmd, p)
         }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(await seen.items == [PhaseLog.Item(command: "true", phase: .check), PhaseLog.Item(command: "echo gate", phase: .gate)])
         #expect(try await r.get().loop?.phase == nil)   // between attempts and at the end: none
@@ -553,7 +557,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let sneak = "echo x > sneak.txt && git add sneak.txt && git commit -q -m sneak"
         let r = try await Rig([task("a", "true")], tries: 1, gate: sneak); defer { r.cleanup() }
         let start = try await git(r.repo, "rev-parse", "HEAD")
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "o portão moveu o HEAD", "\(w.tasks)")
@@ -572,7 +576,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func gateDoesNotRunOnADirtyTree() async throws {
         let r = try await Rig([task("a", "true")], tries: 1, gate: "echo GATE"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             try await commit("done.txt", "ok\n", in: d)
             try "dirty\n".write(to: d.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
         }))
@@ -595,7 +599,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let gate = "bash \(Self.lint) && true"
         let r = try await Rig([task("a", "true")], tries: 1, gate: gate); defer { r.cleanup() }
         try await Self.script("exit 1\n", in: r.repo)   // there before the attempt
-        await r.host.set("loop-a-1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred, "\(w.tasks)")
@@ -610,7 +614,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await Rig([t], tries: 1, gate: gate); defer { r.cleanup() }
         try await Self.script("exit 1\n", in: r.repo)
         try await commit("spec.md", "Add a rule to \(Self.lint).\n", in: r.repo)
-        await r.host.set("loop-a-1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done, "\(w.tasks)")
@@ -623,7 +627,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await Rig([t], tries: 1, gate: gate); defer { r.cleanup() }
         try await Self.script("exit 1\n", in: r.repo)
         try await commit("spec.md", "Add a feature.\n", in: r.repo)
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             try await commit("spec.md", "Rewrite \(Self.lint).\n", in: d)
             try await Self.script("exit 0\n", in: d)
         }))
@@ -635,7 +639,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func creatingTheScriptTheGateRunsPasses() async throws {
         let gate = "bash \(Self.lint)"
         let r = try await Rig([task("a", "true")], tries: 1, gate: gate); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await Self.script("exit 0\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done, "\(w.tasks)")
@@ -645,7 +649,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func changingAFileTheGateDoesNotNamePasses() async throws {
         let r = try await Rig([task("a", "true")], tries: 1, gate: "bash \(Self.lint)"); defer { r.cleanup() }
         try await Self.script("exit 0\n", in: r.repo)
-        await r.host.set("loop-a-1", Script(act: { try await commit("f.txt", "two\n", in: $0) }))   // f.txt exists since the init
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("f.txt", "two\n", in: $0) }))   // f.txt exists since the init
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done, "\(w.tasks)")
@@ -655,7 +659,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func passedAttemptRecordsEvidence() async throws {
         let r = try await Rig([task("a", "echo CHECK-OUT; test -f done.txt")], gate: "echo GATE-OUT"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             try await commit("done.txt", "ok\n", in: d); try await commit("more.txt", "x\n", in: d)
         }))
         #expect(await r.run() == .finished)
@@ -669,8 +673,8 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func failedAttemptRecordsNoEvidence() async throws {
         let r = try await Rig([task("a", "test -f done.txt"), task("b", "false")], tries: 2); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
-        await r.host.set("loop-a-2", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t2", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         // the failed attempt's commit was discarded: only the approved one is evidence
@@ -680,7 +684,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func evidenceSecretsAreMasked() async throws {
         let r = try await Rig([task("a", "x=abcdefgh; echo GH_TOKEN=ghp_${x}123456; echo sk-ant-0123456789${x}; echo fine")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let tail = try #require(try await r.get().tasks[0].evidence).checkTail
         #expect(!tail.contains("ghp_abcdefgh123456") && !tail.contains("sk-ant-0123456789abcdefgh"), "\(tail)")
@@ -700,7 +704,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         // the check prints red text and a bidi override (U+202E, E2 80 AE)
         let r = try await Rig([task("a", "printf '\\033[31mRED\\033[0m \\342\\200\\256ok\\n'")]); defer { r.cleanup() }
         let subject = "feat: \u{1B}[31mred\u{1B}[0m \u{202E}evil\u{7} " + String(repeating: "é", count: 5000)
-        await r.host.set("loop-a-1", Script(act: { d in
+        await r.host.set("w-task-a-t1", Script(act: { d in
             try "ok\n".write(to: d.appendingPathComponent("done.txt"), atomically: true, encoding: .utf8)
             _ = try await git(d, "add", "."); _ = try await git(d, "commit", "-m", subject)
         }))
@@ -727,7 +731,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     /// on the task as it is then, so the loop's evidence and tries stay.
     @Test func taskDoneByHandAfterTheApprovalKeepsTheEvidence() async throws {
         let r = try await Rig([task("a", "true")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let at = Date(timeIntervalSince1970: 2_000_000)
         let t = try #require(try await r.store.setTask(r.work, task: "a", state: .done, reason: nil, at: at))
@@ -736,7 +740,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         // by hand first (the task still in progress): the loop keeps that state and records no evidence
         let h = try await Rig([task("a", "true")]); defer { h.cleanup() }
         let store = h.store, id = h.work
-        await h.host.set("loop-a-1", Script(act: { d in
+        await h.host.set("w-task-a-t1", Script(act: { d in
             _ = try await store.setTask(id, task: "a", state: .done, reason: nil, at: at)
             try await commit("done.txt", "ok\n", in: d)
         }))
@@ -754,7 +758,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         defer { try? FileManager.default.removeItem(at: outside) }
         var t = task("a/../x", "true"); t.evidenceGlob = "shots/*"
         let r = try await Rig([t, task("b", "true")]); defer { r.cleanup() }
-        await r.host.set("loop-a/../x-1", Script(act: { d in
+        await r.host.set("w-task-a-x-t1", Script(act: { d in
             let shots = d.appendingPathComponent("shots")
             try FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
             try "png".write(to: shots.appendingPathComponent("a.png"), atomically: true, encoding: .utf8)   // untracked: the agent's
@@ -763,7 +767,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
             try FileManager.default.createSymbolicLink(at: shots.appendingPathComponent("in.md"), withDestinationURL: d.appendingPathComponent("notes.md"))
             try await commit("notes.md", "# notes\n", in: d)
         }))
-        await r.host.set("loop-b-1", Script(act: { try await commit("b.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-b-t1", Script(act: { try await commit("b.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get(), e = try #require(w.tasks[0].evidence)
         #expect(e.files == ["a.png", "notes.md"], "\(e.files ?? [])")
@@ -808,9 +812,9 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
             try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true)
             try "# mapa\n".write(to: u, atomically: true, encoding: .utf8)
         }
-        await r.host.set("loop-a-1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", Script(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
-        return await r.host.prompts["loop-a-1"] ?? ""
+        return await r.host.prompts["w-task-a-t1"] ?? ""
     }
 
     // one test, cases in sequence: each case is a whole loop run, and four more in parallel starve the timing tests

@@ -61,12 +61,12 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         // `work run` again: the owner's commit came after the first fall, so nothing is adopted
         let owner = try await git(r.repo, "rev-parse", "HEAD")
         await r.host.setProbe { _ in }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
         try await r.store.update(r.work) { $0.loop?.state = .running }
         #expect(await r.run() == .finished)
         w = try await r.get()
         #expect(adoptions(w) == 1)
-        #expect(await r.host.summoned == ["loop-a-1"])
+        #expect(await r.host.summoned == ["w-task-a-t1"])
         #expect(w.tasks[0].state == .done && w.tasks[0].resumeAt == nil && w.tasks[0].resumeFrom == nil, "\(w.notes.map(\.text))")
         #expect(w.tasks[0].evidence?.commits.count == 1)   // judged from the owner's commit on
         #expect(try await git(r.repo, "rev-parse", "HEAD~1") == owner)
@@ -76,7 +76,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func aCancelledAttemptWithoutAdoptionSaysWhenItWasLeft() async throws {
         let r = try await LoopRig([task("a", "true")]); defer { r.cleanup() }
         let began = Date()
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         await r.host.setProbe { _ in withUnsafeCurrentTask { $0?.cancel() } }
         let id = r.work, repo = r.repo, loop = r.loop
         #expect(await Task { await loop.run(work: id, dir: repo) }.value == .stopped)
@@ -90,7 +90,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let later = fell + 50
         var t = WorkTask(id: "a", title: "A", state: .inProgress)
         t.resumeFrom = String(repeating: "1", count: 40); t.resumeBranch = "main"; t.resumeAt = fell
-        var w = Work(title: "W", terminalId: UUID(), tasks: [t], jobs: [WorkJob(id: "loop-a-1", kind: .loop, label: "A")])
+        var w = Work(title: "W", terminalId: UUID(), tasks: [t], jobs: [WorkJob(id: "w-a-t1", kind: .loop, label: "A")])
         w.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
         CommandRouter.sweepLeftRunning(&w, now: later)
         #expect(w.tasks[0].state == .open && w.tasks[0].resumeAt == fell)
@@ -105,15 +105,15 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         try await fall(r, task: 1, at: fell)
         final class Seen: @unchecked Sendable { var mine: WorkTask?, other: WorkTask? }
         let seen = Seen(), store = r.store, id = r.work
-        await r.host.set("loop-a-1", LoopScript(act: { d in
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
             if let w = try? await store.get(id) { seen.mine = w.tasks[0]; seen.other = w.tasks[1] }
             try await commit("done.txt", "ok\n", in: d)
         }))
-        await r.host.set("loop-b-1", LoopScript(act: { try await commit("z.txt", "z\n", in: $0) }))
+        await r.host.set("w-task-b-t1", LoopScript(act: { try await commit("z.txt", "z\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(adoptions(w) == 0)
-        #expect(await r.host.summoned == ["loop-a-1", "loop-b-1"])
+        #expect(await r.host.summoned == ["w-task-a-t1", "w-task-b-t1"])
         let mine = try #require(seen.mine), other = try #require(seen.other)
         #expect(mine.state == .inProgress && mine.resumeFrom == head && mine.resumeBranch == "main" && mine.resumeAt == nil, "\(mine)")
         #expect(other.resumeFrom == nil && other.resumeBranch == nil && other.resumeAt == nil, "\(other)")
@@ -126,11 +126,11 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
         try await fall(r, at: fell + 0.7)
         try await commit("done.txt", at: fell + Double(offset), in: r.repo)
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("more.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(adoptions(w) == (adopts ? 1 : 0))
-        #expect(await r.host.summoned == (adopts ? [] : ["loop-a-1"]))
+        #expect(await r.host.summoned == (adopts ? [] : ["w-task-a-t1"]))
         #expect(w.tasks[0].state == .done && w.tasks[0].resumeAt == nil, "\(w.notes.map(\.text))")
     }
 }

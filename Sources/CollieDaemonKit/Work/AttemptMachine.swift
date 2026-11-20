@@ -94,10 +94,12 @@ enum AttemptMachine {
         var nudgeable = false, nudged = false
         /// M2b.1: the attempt judges a commit it did not see being made: when it fails, nothing is discarded.
         var adopted = false
-        var name: String { "loop-\(task)-\(n)" }
+        /// M3.8: the agent's name, for the journal (`AgentNaming`; the interpreter passes the one it summons with).
+        let name: String
 
-        init(task: String, n: Int, tries: Int, hasGate: Bool, before: String) {
+        init(task: String, n: Int, tries: Int, hasGate: Bool, before: String, name: String? = nil) {
             self.task = task; self.n = n; self.before = before; judged = before
+            self.name = name ?? AgentNaming.name(work: "", task: "", taskId: task, attempt: n, lane: nil)
             facts = .init(attempt: n, tries: tries, hasGate: hasGate)
         }
     }

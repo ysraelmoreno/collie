@@ -193,7 +193,7 @@ private func expectLaneProfile(_ text: String, _ r: Rig, at: SourceLocation = #_
     @Test func laneAgentProfileIsClosedWhateverTheModeOrAGrant() async throws {
         let r = try await Rig()
         let real = URL(fileURLWithPath: SignedAppCheck.realPath(r.a.path))
-        let agent = r.term("loop-a", real, project: real)
+        let agent = r.term("w-a-t1", real, project: real)
         #expect(await r.d.router.lanePaddock(of: agent)?.path == r.f.paddock.path)
         expectLaneProfile(try await r.d.router.laneTestsProfile(agent), r)
         // a terminal of the paddock itself is no lane agent: its profile has no lane rule
@@ -251,7 +251,7 @@ private func expectLaneProfile(_ text: String, _ r: Rig, at: SourceLocation = #_
         #expect(throws: ProtocolError.self) { try a.profile() }
         await #expect(throws: ProtocolError.self) { try await a.check("true", in: a.dir, timeout: .seconds(5)) }
         await #expect(throws: ProtocolError.self) { try await a.git(["status"], in: a.dir) }
-        await #expect(throws: ProtocolError.self) { try await a.summon(name: "loop-a", for: Work(title: "W", terminalId: r.starter), loop: WorkLoopState()) }
+        await #expect(throws: ProtocolError.self) { try await a.summon(name: "w-a-t1", for: Work(title: "W", terminalId: r.starter), loop: WorkLoopState()) }
         #expect(await !r.d.router.loopAgentSandboxed(UUID(), lane: r.a.path))
     }
 

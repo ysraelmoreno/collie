@@ -73,7 +73,7 @@ private func call(_ d: Daemon, _ p: Paths, _ t: Term, _ cmd: String, _ args: [St
 
     @Test func withAPatchTheEventNamesItsFile() async throws {
         let r = try await LoopRig([task("a", "exit 3")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let ev = try await r.get().loop?.events ?? []
         #expect(ev.last { $0.kind == .discarded }?.detail == "a-1.patch")

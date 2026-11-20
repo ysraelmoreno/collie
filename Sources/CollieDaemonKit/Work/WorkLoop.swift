@@ -37,6 +37,8 @@ protocol LoopHost: Sendable {
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost
     /// M3.5: `lane` was removed: what `laneHost` made for it goes too.
     func laneGone(_ lane: Lane) async
+    /// M3.8: the names an attempt's agent may not take: every live terminal's and panel's (a summon refuses them).
+    func namesTaken() async -> Set<String>
 }
 
 extension LoopHost {
@@ -46,6 +48,7 @@ extension LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
     }
     func laneGone(_ lane: Lane) async {}
+    func namesTaken() async -> Set<String> { [] }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
         EvidenceFiles.copy(glob, from: dir, to: EvidenceFiles.dir(patchDir(work), task: task))
     }
@@ -70,6 +73,8 @@ actor WorkLoop {
     /// lane's, an attempt that passes waits in `passed` for the integrator, and its journal and phase carry the lane.
     /// nil: the loop's own engine, in the paddock's worktree.
     let lane: String?
+    /// M3.8, a lane's engine: the lane's number in its run (1…), for its agent's name (`AgentNaming`'s `f<n>`).
+    let slot: Int?
     /// M3.5, a lane's engine: the attempt that passed in the lane, until it is integrated (or not).
     var passed: Passed?
     /// M3.5: the parallel runs of this engine, by work (`WorkLoopLanes`); empty without `--parallel`.
@@ -77,9 +82,9 @@ actor WorkLoop {
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
-         lane: String? = nil) {
+         lane: String? = nil, slot: Int? = nil) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
-        self.events = events; self.lane = lane
+        self.events = events; self.lane = lane; self.slot = slot
     }
 
     /// Ends the loop after the current attempt's verdict.
@@ -140,7 +145,11 @@ actor WorkLoop {
     /// gone, or the tree holds changes that are not the attempt's; a verdict and no reset when another terminal works).
     /// After its first reads it only interprets `AttemptMachine`: the order of the effects and their conditions are there.
     func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
-        let n = (task.tries ?? 0) + 1, name = "loop-\(task.id)-\(n)", started = host.now()
+        let n = (task.tries ?? 0) + 1, started = host.now()
+        // M3.8: named after the work and the task (their titles are data: `AgentNaming` leaves only `[a-z0-9-]`), and
+        // never as a live terminal. Nothing finds the agent by this name: its terminal's id goes on the job (`record`)
+        let name = AgentNaming.unique(AgentNaming.name(work: w.title, task: task.title, taskId: task.id, attempt: n, lane: slot),
+                                      taskId: task.id, taken: await host.namesTaken())
         let lane = lane   // M3.5: the engine's own, read once for the writes below
         // git failing here (the loop's profile gone, not a repo): stop, nothing to judge
         guard let head = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
@@ -183,7 +192,7 @@ actor WorkLoop {
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
-        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before), adopt ? .adopted : .started)
+        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name), adopt ? .adopted : .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
             // the journal and the phase wait for the attempt's next write, but never through a long wait: `work status`
@@ -226,6 +235,8 @@ actor WorkLoop {
         /// Untracked files that were there before the attempt: never the attempt's, the discard must not delete them.
         let keep: [String]
         var agent: UUID?
+        /// M3.8: the agent's terminal, until it is written on the attempt's job (`record`, with the next write).
+        var mark: UUID?
         /// When the turn's time is over (set by `ask`).
         var deadline: Date?
         /// The branch and the untracked files (the owner's and the agent's) before the check: what `settle` puts back.
@@ -241,7 +252,7 @@ actor WorkLoop {
         var patched: Bool?
         /// The journal's events not yet written, oldest first, and the phase to show (`.some(nil)`: none): `record`.
         var pending: [LoopEvent] = [], phase: WorkLoopState.Phase??
-        var unwritten: Bool { !pending.isEmpty || phase != nil }
+        var unwritten: Bool { !pending.isEmpty || phase != nil || mark != nil }
     }
 
     /// Effects that may take long: what is pending is written before them.
@@ -264,9 +275,11 @@ actor WorkLoop {
     /// attempt goes through here, so an event next to another write costs no write of its own (M1b.2: at most 8
     /// `store.update` in an attempt that passes with a gate, `LoopJournalWritesTests`).
     private func record(_ id: UUID, _ r: inout Run, _ change: @Sendable (inout Work) -> Void = { _ in }) async {
-        let events = r.pending, phase = r.phase, lane = lane
-        r.pending = []; r.phase = nil
+        let events = r.pending, phase = r.phase, lane = lane, mark = r.mark, name = r.name
+        r.pending = []; r.phase = nil; r.mark = nil
         try? await store.update(id) { x in
+            // M3.8: the job knows its terminal: what the start sweep removes after a fall, whatever the agent is called
+            if let mark, let j = x.jobs.lastIndex(where: { $0.id == name && $0.kind == .loop && $0.state == .running }) { x.jobs[j].terminal = mark }
             if let phase { if let lane { x.loop?.showLane(lane, phase) } else { x.loop?.show(phase) } }
             for e in events { x.loop?.record(e) }
             change(&x)
@@ -298,7 +311,7 @@ actor WorkLoop {
         case .summon:
             do {
                 let agent = try await host.summon(name: name, for: r.work, loop: r.loop)
-                r.agent = agent
+                r.agent = agent; r.mark = agent
                 return .summoned(agent)
             } catch { return .summonFailed(error.message) }
         case .ask:
@@ -454,7 +467,8 @@ actor WorkLoop {
             let at = r.at
             let tail = r.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
-            let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason)"
+            // M3.8: and which agent it was (its terminal's name)
+            let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason) (agente \(name))"
                 + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars))))
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {

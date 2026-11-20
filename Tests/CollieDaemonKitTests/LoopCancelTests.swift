@@ -39,7 +39,7 @@ private actor Hold {
 @Suite struct LoopCancelTests {
     /// The agent of the first attempt commits `file`. Returns HEAD before it (what the attempt starts from).
     private func agentCommits(_ r: LoopRig, _ file: String = "done.txt") async throws -> String {
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit(file, "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit(file, "ok\n", in: $0) }))
         return try await git(r.repo, "rev-parse", "HEAD")
     }
 
@@ -61,7 +61,7 @@ private actor Hold {
         #expect(!w.tasks.contains { $0.state == .deferred }, sourceLocation: at)
         #expect(w.loop?.used == 0, sourceLocation: at)
         #expect(w.loop?.state == .stopped && w.loop?.stopReason == .init(.cancelled), "\(String(describing: w.loop?.stopReason))", sourceLocation: at)
-        #expect(w.jobs.map(\.id) == ["loop-a-1"] && w.jobs[0].state == .gone, "\(w.jobs)", sourceLocation: at)
+        #expect(w.jobs.map(\.id) == ["w-task-a-t1"] && w.jobs[0].state == .gone, "\(w.jobs)", sourceLocation: at)
         // nothing discarded: no failure note, no patch, and the agent's commit is still HEAD
         #expect(!w.notes.contains { $0.text.hasPrefix("[loop a]") }, "\(w.notes.map(\.text))", sourceLocation: at)
         #expect(!FileManager.default.fileExists(atPath: r.host.patchDir(r.work).appendingPathComponent("a-1.patch").path), sourceLocation: at)
@@ -81,7 +81,7 @@ private actor Hold {
         let w = try await cancel(r, at: hold)
         try await expectNoVerdict(w, r, from: from)
         #expect(await r.host.commands == ["false"])
-        #expect(await r.host.dismissed == ["loop-a-1"])
+        #expect(await r.host.dismissed == ["w-task-a-t1"])
     }
 
     @Test func duringTheGateOfTheLastAttempt() async throws {
@@ -119,13 +119,13 @@ private actor Hold {
         let r = try await LoopRig([task("a", "test -f done.txt")], tries: 1); defer { r.cleanup() }
         let from = try await agentCommits(r), hold = Hold()
         // M2c: the agent committed seconds before the cancel (a commit of the cancel's very second is not adopted)
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", at: Date(timeIntervalSinceNow: -5), in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", at: Date(timeIntervalSinceNow: -5), in: $0) }))
         await r.host.setProbe { _ in await hold.park() }
         try await expectNoVerdict(try await cancel(r, at: hold), r, from: from)
         try await r.store.update(r.work) { $0.loop?.state = .running }   // `work run` again
         #expect(await r.run() == .finished)
         let w = try await r.get()
-        #expect(await r.host.summoned == ["loop-a-1"])
+        #expect(await r.host.summoned == ["w-task-a-t1"])
         #expect(await r.host.checks == 2)
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1 && w.tasks[0].resumeFrom == nil, "\(w.notes.map(\.text))")
         #expect((w.loop?.events ?? []).contains { $0.kind == .adopted })

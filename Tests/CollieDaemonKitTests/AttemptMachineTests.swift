@@ -23,7 +23,7 @@ private func retried(_ reason: String, patch: String = "a-1.patch") -> [M.Effect
 /// A turn that ended by hook with a commit, the agent dismissed.
 private let turn: [Step] = [
     Step(.started, .summoning, [.journal(.attemptStarted, nil), .summon]),
-    Step(.summoned(agent), .turn, [.journal(.agentSummoned, "loop-a-1"), .ask]),
+    Step(.summoned(agent), .turn, [.journal(.agentSummoned, "trabalho-a-t1"), .ask]),
     Step(.turnEnded(source: .hook), .waitingCommit, [.journal(.turnEnded, "hook"), .lookForCommit]),
     Step(.commitSeen("c1"), .waitingCommit, [.journal(.commitSeen, "c1"), .dismiss, .journal(.agentDismissed, nil), .measureFacts]),
 ]
@@ -55,7 +55,7 @@ private struct Path: Sendable, CustomTestStringConvertible {
 
 private let happy = Path(name: "happy path: idle turn, check and gate pass", steps: [
     Step(.started, .summoning, [.journal(.attemptStarted, nil), .summon]),
-    Step(.summoned(agent), .turn, [.journal(.agentSummoned, "loop-a-1"), .ask]),
+    Step(.summoned(agent), .turn, [.journal(.agentSummoned, "trabalho-a-t1"), .ask]),
     Step(.turnEnded(source: .idle), .waitingCommit, [.journal(.turnEnded, "idle"), .waitForCommit]),
     Step(.commitSeen("c1"), .waitingCommit, [.journal(.commitSeen, "c1"), .dismiss, .journal(.agentDismissed, nil), .measureFacts]),
     measured(),
@@ -101,7 +101,7 @@ private let paths: [Path] = [
     ]),
     Path(name: "turn failed: dismissed, no check, deferred on the last try", n: 3, steps: [
         Step(.started, .summoning, [.journal(.attemptStarted, nil), .summon]),
-        Step(.summoned(agent), .turn, [.journal(.agentSummoned, "loop-a-3"), .ask]),
+        Step(.summoned(agent), .turn, [.journal(.agentSummoned, "trabalho-a-t3"), .ask]),
         Step(.turnFailed("boom"), .waitingCommit, [.journal(.turnEnded, "erro: boom"), .lookForCommit]),
         Step(.waitExpired, .waitingCommit, [.dismiss, .journal(.agentDismissed, nil), .measureFacts]),
         Step(.measured(nil), .deciding, verdict("boom", then: .awaitOthers)),

@@ -258,10 +258,24 @@ public enum JobState: String, Codable, Sendable { case running, finished, gone, 
 public struct WorkJob: Codable, Sendable, Equatable {
     public var id: String; public var kind: JobKind; public var label: String; public var state: JobState
     public var startedAt: Date; public var endedAt: Date?; public var result: String?; public var pid: Int32?; public var alias: String?
+    /// M3.8, a loop's attempt (`kind == .loop`, `id` its agent's name): the id of the terminal the loop summoned for
+    /// it. It is how the loop's agent is recognised (the start sweep), never its name. nil: none was summoned, or the
+    /// work was written before this field.
+    public var terminal: UUID?
     public init(id: String, kind: JobKind, label: String, state: JobState = .running, startedAt: Date = Date(),
-                endedAt: Date? = nil, result: String? = nil, pid: Int32? = nil, alias: String? = nil) {
+                endedAt: Date? = nil, result: String? = nil, pid: Int32? = nil, alias: String? = nil, terminal: UUID? = nil) {
         self.id = id; self.kind = kind; self.label = label; self.state = state; self.startedAt = startedAt
-        self.endedAt = endedAt; self.result = result; self.pid = pid; self.alias = alias
+        self.endedAt = endedAt; self.result = result; self.pid = pid; self.alias = alias; self.terminal = terminal
+    }
+    /// As the synthesized one, but a `terminal` this daemon cannot read is nil: the job (and its work) still decodes.
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id); kind = try c.decode(JobKind.self, forKey: .kind)
+        label = try c.decode(String.self, forKey: .label); state = try c.decode(JobState.self, forKey: .state)
+        startedAt = try c.decode(Date.self, forKey: .startedAt); endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
+        result = try c.decodeIfPresent(String.self, forKey: .result); pid = try c.decodeIfPresent(Int32.self, forKey: .pid)
+        alias = try c.decodeIfPresent(String.self, forKey: .alias)
+        terminal = (try? c.decodeIfPresent(UUID.self, forKey: .terminal)) ?? nil
     }
 }
 

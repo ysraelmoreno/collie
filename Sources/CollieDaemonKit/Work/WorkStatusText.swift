@@ -43,7 +43,9 @@ public enum WorkStatusText {
         case .whatIsRunning:
             for w in works {
                 for j in w.jobs where j.state == .running {
-                    lines.append("- \(j.kind == .shell ? "shell" : j.kind == .loop ? "tentativa do laço" : "subagente") \(j.label) — \(name(w.terminalId)), há \(mins(j.startedAt)) min")
+                    // M3.8: a loop's attempt is cited by its agent's name too (the job's id; `[a-z0-9-]` by construction)
+                    let what = j.kind == .shell ? "shell" : j.kind == .loop ? "tentativa do laço \(RerailText.clean(j.id)):" : "subagente"
+                    lines.append("- \(what) \(j.label) — \(name(w.terminalId)), há \(mins(j.startedAt)) min")
                 }
             }
             for id in sorted(.working) { lines.append("- \(name(id)): trabalhando") }
@@ -77,8 +79,11 @@ public enum WorkStatusText {
         switch l.state {
         case .running:
             let title = w.tasks.first { $0.id == l.task }.map { RerailText.clean($0.title) } ?? "?"
+            // M3.8: with the agent working, its terminal's name (the attempt's job; only when a single attempt runs)
+            let agents = w.jobs.filter { $0.kind == .loop && $0.state == .running }
             return "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.phase.map { " · \($0.label)" } ?? "")
                 + (now.flatMap { times(l, now: $0, timeZone: timeZone) }.map { " · \($0)" } ?? "")
+                + (l.phase == .agent && agents.count == 1 ? " · terminal \(RerailText.clean(agents[0].id))" : "")
         case .stopped: return "laço parado (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
         case .finished: return "laço terminou (\(l.used) tentativas)"
         }

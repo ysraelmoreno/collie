@@ -43,11 +43,12 @@ extension WorkLoop {
         let (woken, signal) = AsyncStream<Wake>.makeStream()
         lanes[id] = Lanes(signal: signal)
         var alive: [String: Task<Void, Never>] = [:]   // by task: running in its lane, or with the integrator
+        var slots: [String: Int] = [:]   // M3.8, by task: its lane's number, the lowest free one (the agent's `f<n>`)
         var end = WorkLoopState.State.stopped, stop: WorkLoopState.Stop?
         signal.yield(.poke)   // the first look
         // no clock: the scheduler looks again only when something changed (a cancelled daemon ends the stream)
         for await wake in woken {
-            if case .ended(let task) = wake { alive[task] = nil }
+            if case .ended(let task) = wake { alive[task] = nil; slots[task] = nil }
             if stopping.contains(id) { stop = .init(.requested); break }
             if Task.isCancelled { stop = .init(.cancelled); break }
             guard let w = try? await store.get(id), w.closedAt == nil, let loop = w.loop, loop.state == .running else { stop = .init(.workGone); break }
@@ -77,8 +78,10 @@ extension WorkLoop {
             }
             for t in ready {
                 try? await store.update(id) { $0.loop?.used += 1 }
+                let slot = (1...).first { !slots.values.contains($0) } ?? 1
+                slots[t.id] = slot
                 alive[t.id] = Task {
-                    await self.runLane(id, t, dir: dir, root: root, integrator: integrator)
+                    await self.runLane(id, t, slot: slot, dir: dir, root: root, integrator: integrator)
                     signal.yield(.ended(t.id))
                 }
             }
@@ -104,7 +107,7 @@ extension WorkLoop {
     /// One lane, from its worktree to its removal: one attempt of `task` in it and, if it passed, its integration.
     /// The scheduler already counted the attempt (`used`). A failed attempt leaves the task open (or deferred) as
     /// always, and the scheduler gives it a new lane, from the paddock's HEAD of then.
-    private func runLane(_ id: UUID, _ task: WorkTask, dir: URL, root: URL, integrator: LaneIntegrator) async {
+    private func runLane(_ id: UUID, _ task: WorkTask, slot: Int, dir: URL, root: URL, integrator: LaneIntegrator) async {
         guard !Task.isCancelled else { await noLane(id, task, nil); return }
         let lane: Lane, laneHost: any LoopHost
         do { (lane, laneHost) = try await cut(id, task.id, dir: dir, root: root) } catch {
@@ -122,7 +125,7 @@ extension WorkLoop {
             var fresh = w.tasks.first { $0.id == task.id } ?? task
             fresh.forgetResume()
             let engine = WorkLoop(store: store, host: laneHost, poll: poll, checkTimeout: checkTimeout, othersWait: othersWait,
-                                  events: events, lane: name)
+                                  events: events, lane: name, slot: slot)
             if case .stop(let s) = await engine.attempt(w, loop, fresh, lane.path) { stop = s }
             if await engine.passed != nil {
                 // nothing is integrated once the loop is stopping
@@ -255,7 +258,7 @@ extension WorkLoop {
         await keepPatch(id, p)
         let at = host.now(), task = p.task
         let tail = output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
-        let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(p.n)/\(p.tries): \(reason)"
+        let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(p.n)/\(p.tries): \(reason) (agente \(p.name))"
             + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars))))
         let e = entry(last ? .verdict : .integrationRetry, task: task.id, attempt: p.n, detail: reason)
         try? await store.update(id) { x in

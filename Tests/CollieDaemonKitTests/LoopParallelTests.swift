@@ -50,7 +50,7 @@ private actor Seen {
     func set(_ k: String, _ v: String) { items[k] = v }
 }
 
-/// What every lane's host shares: the scripted agents (by terminal name, `loop-<task>-<n>`) and what happened.
+/// What every lane's host shares: the scripted agents (by terminal name, `<work>-<task>-t<n>`, `AgentNaming`) and what happened.
 private actor ParCore {
     nonisolated let patches = URL(fileURLWithPath: "/tmp/collie-par-patches-\(UUID().uuidString.prefix(8))")
     private var scripts: [String: @Sendable (URL) async throws -> Void] = [:]
@@ -61,7 +61,12 @@ private actor ParCore {
     /// Where each agent was born.
     var dirs: [String: URL] = [:]
     func set(_ name: String, _ act: @escaping @Sendable (URL) async throws -> Void) { scripts[name] = act }
-    func summon(_ name: String, _ dir: URL) -> UUID {
+    /// M3.8: `named` as summoned; the scripts and the logs go by the name without its lane (`-f<n>`: which lane a
+    /// task gets depends on who ended first).
+    var named: [String] = []
+    func summon(_ full: String, _ dir: URL) -> UUID {
+        let name = full.replacingOccurrences(of: #"-f\d+(-t\d+)$"#, with: "$1", options: .regularExpression)
+        named.append(full)
         let id = UUID(); agents[id] = (name, dir); summoned.append(name); dirs[name] = dir
         return id
     }
@@ -170,11 +175,11 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
                      WorkTask(id: "c", title: "Task c", check: "test -f c.txt")]
         let r = try await LoopRig(tasks, tries: 2, max: 10, gate: "test -f f.txt"); defer { r.cleanup() }
         try await r.store.update(r.work) { $0.loop?.parallel = parallel }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
-        await r.host.set("loop-a-2", LoopScript(act: { try await commit("a.txt", "a\n", in: $0) }))
-        await r.host.set("loop-b-1", LoopScript(act: { try await commit("b.txt", "b\n", in: $0) }))
-        await r.host.set("loop-b-2", LoopScript(act: { try await commit("b.txt", "b\n", in: $0) }))
-        await r.host.set("loop-c-1", LoopScript(act: { try await commit("c.txt", "c\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t2", LoopScript(act: { try await commit("a.txt", "a\n", in: $0) }))
+        await r.host.set("w-task-b-t1", LoopScript(act: { try await commit("b.txt", "b\n", in: $0) }))
+        await r.host.set("w-task-b-t2", LoopScript(act: { try await commit("b.txt", "b\n", in: $0) }))
+        await r.host.set("w-task-c-t1", LoopScript(act: { try await commit("c.txt", "c\n", in: $0) }))
         let end = await r.run()
         #expect(end == .finished)
         let w = try await r.get()
@@ -199,12 +204,15 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
                                  gate: "test -f f.txt"); defer { r.cleanup() }
         // each agent only goes on once both are in their turn: in series this would never end
         let both = Arrivals()
-        await r.core.set("loop-a-1") { d in await both.hit(); await both.wait(for: 2); try await commit("a.txt", "a\n", in: d) }
-        await r.core.set("loop-b-1") { d in await both.hit(); await both.wait(for: 2); try await commit("b.txt", "b\n", in: d) }
+        await r.core.set("w-task-a-t1") { d in await both.hit(); await both.wait(for: 2); try await commit("a.txt", "a\n", in: d) }
+        await r.core.set("w-task-b-t1") { d in await both.hit(); await both.wait(for: 2); try await commit("b.txt", "b\n", in: d) }
         let end = await r.run()
         #expect(end == .finished)
         let log = await r.core.log
-        #expect(Set(log.prefix(2)) == ["start loop-a-1", "start loop-b-1"], "both turns began before either ended: \(log)")
+        #expect(Set(log.prefix(2)) == ["start w-task-a-t1", "start w-task-b-t1"], "both turns began before either ended: \(log)")
+        // M3.8: each lane's agent is summoned with its lane's number
+        let named = await r.core.named
+        #expect(named.sorted() == ["w-task-a-f1-t1", "w-task-b-f2-t1"])
         let w = try await r.get()
         #expect(w.tasks.map(\.state) == [.done, .done] && w.tasks.map(\.tries) == [1, 1])
         #expect(w.tasks.allSatisfy { $0.evidence?.commits.count == 1 && $0.resumeFrom == nil })
@@ -231,12 +239,12 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
     @Test func overlappingScopesRunInSeries() async throws {
         let r = try await ParRig([ptask("a", "test -f a.txt", scope: ["src/**"]), ptask("b", "test -f b.txt", scope: ["src/x.txt"])])
         defer { r.cleanup() }
-        await r.core.set("loop-a-1") { try await commit("a.txt", "a\n", in: $0) }
-        await r.core.set("loop-b-1") { try await commit("b.txt", "b\n", in: $0) }
+        await r.core.set("w-task-a-t1") { try await commit("a.txt", "a\n", in: $0) }
+        await r.core.set("w-task-b-t1") { try await commit("b.txt", "b\n", in: $0) }
         let end = await r.run()
         #expect(end == .finished)
         let log = await r.core.log
-        #expect(log == ["start loop-a-1", "end loop-a-1", "start loop-b-1", "end loop-b-1"])
+        #expect(log == ["start w-task-a-t1", "end w-task-a-t1", "start w-task-b-t1", "end w-task-b-t1"])
         let w = try await r.get(), ev = w.loop?.events ?? []
         let merged = try #require(ev.firstIndex { $0.kind == .integrated && $0.task == "a" })
         let began = try #require(ev.firstIndex { $0.kind == .attemptStarted && $0.task == "b" })
@@ -249,27 +257,27 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
     @Test func aTaskWithNoScopeRunsAlone() async throws {
         let r = try await ParRig([ptask("a", "test -f a.txt", scope: nil), ptask("b", "test -f b.txt", scope: ["b.txt"])])
         defer { r.cleanup() }
-        await r.core.set("loop-a-1") { try await commit("a.txt", "a\n", in: $0) }
-        await r.core.set("loop-b-1") { try await commit("b.txt", "b\n", in: $0) }
+        await r.core.set("w-task-a-t1") { try await commit("a.txt", "a\n", in: $0) }
+        await r.core.set("w-task-b-t1") { try await commit("b.txt", "b\n", in: $0) }
         let end = await r.run()
         #expect(end == .finished)
         let log = await r.core.log
-        #expect(log == ["start loop-a-1", "end loop-a-1", "start loop-b-1", "end loop-b-1"])
+        #expect(log == ["start w-task-a-t1", "end w-task-a-t1", "start w-task-b-t1", "end w-task-b-t1"])
     }
 
     @Test func needsWaitForTheIntegration() async throws {
         let r = try await ParRig([ptask("a", "test -f a.txt", scope: ["a.txt"]), ptask("b", "test -f b.txt", scope: ["b.txt"], needs: ["a"])])
         defer { r.cleanup() }
         let seen = Seen()
-        await r.core.set("loop-a-1") { try await commit("a.txt", "a\n", in: $0) }
-        await r.core.set("loop-b-1") { d in
+        await r.core.set("w-task-a-t1") { try await commit("a.txt", "a\n", in: $0) }
+        await r.core.set("w-task-b-t1") { d in
             await seen.set("a.txt", FileManager.default.fileExists(atPath: d.appendingPathComponent("a.txt").path) ? "there" : "missing")
             try await commit("b.txt", "b\n", in: d)
         }
         let end = await r.run()
         #expect(end == .finished)
         let log = await r.core.log, items = await seen.items
-        #expect(log == ["start loop-a-1", "end loop-a-1", "start loop-b-1", "end loop-b-1"])
+        #expect(log == ["start w-task-a-t1", "end w-task-a-t1", "start w-task-b-t1", "end w-task-b-t1"])
         #expect(items["a.txt"] == "there", "b's lane was cut from a HEAD that has a's work")
         let states = try await r.get().tasks.map(\.state)
         #expect(states == [.done, .done])
@@ -283,7 +291,7 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
         let w = try await r.get(), summoned = await r.core.summoned
         #expect(w.tasks.map(\.state) == [.deferred, .deferred])
         #expect(w.tasks[1].reason?.contains("adiada") == true, "\(w.tasks[1].reason ?? "")")
-        #expect(summoned == ["loop-a-1"], "b never ran")
+        #expect(summoned == ["w-task-a-t1"], "b never ran")
     }
 
     @Test func maxIsOneCounterForEveryLane() async throws {
@@ -304,8 +312,8 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
         defer { r.cleanup() }
         let started = Arrivals(), forever = Forever(), clock = r.clock
         // a takes 100 s of the loop's 50 while b is still in its turn
-        await r.core.set("loop-a-1") { d in await started.wait(for: 1); clock.advance(100); try await commit("a.txt", "a\n", in: d) }
-        await r.core.set("loop-b-1") { _ in await started.hit(); await forever.wait() }
+        await r.core.set("w-task-a-t1") { d in await started.wait(for: 1); clock.advance(100); try await commit("a.txt", "a\n", in: d) }
+        await r.core.set("w-task-b-t1") { _ in await started.hit(); await forever.wait() }
         let end = await r.run()
         #expect(end == .stopped)
         let w = try await r.get(), dismissed = await r.core.dismissed
@@ -314,7 +322,7 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
         #expect(w.tasks.map(\.state) == [.done, .open], "a passed and was integrated; b was stopped with no verdict")
         #expect(r.has("a.txt") && !r.has("b.txt"))
         #expect(w.tasks[1].tries == nil && w.loop?.used == 1, "b's attempt is not counted")
-        #expect(dismissed.sorted() == ["loop-a-1", "loop-b-1"])
+        #expect(dismissed.sorted() == ["w-task-a-t1", "w-task-b-t1"])
         let left = try await r.lanesLeft()
         #expect(left.isEmpty, "\(left)")
         #expect(w.loop?.lanes == nil)
@@ -324,7 +332,7 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
         let r = try await ParRig([ptask("a", "test -f a.txt", scope: ["a.txt"]), ptask("b", "test -f b.txt", scope: ["b.txt"])])
         defer { r.cleanup() }
         let started = Arrivals(), forever = Forever()
-        for n in ["loop-a-1", "loop-b-1"] {
+        for n in ["w-task-a-t1", "w-task-b-t1"] {
             await r.core.set(n) { d in
                 try "half\n".write(to: d.appendingPathComponent("half.txt"), atomically: true, encoding: .utf8)
                 await started.hit(); await forever.wait()
@@ -344,7 +352,7 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
         #expect(w.tasks.map(\.state) == [.open, .open] && w.tasks.allSatisfy { $0.tries == nil && $0.resumeFrom == nil })
         #expect(w.loop?.used == 0 && w.loop?.lanes == nil && w.loop?.phase == nil && w.loop?.task == nil)
         #expect(w.jobs.allSatisfy { $0.state != .running })
-        #expect(dismissed.sorted() == ["loop-a-1", "loop-b-1"])
+        #expect(dismissed.sorted() == ["w-task-a-t1", "w-task-b-t1"])
         let head = try await git(r.repo, "rev-parse", "HEAD"), status = try await git(r.repo, "status", "--porcelain")
         #expect(head == r.base && status.isEmpty, "the paddock's worktree was never touched")
         let left = try await r.lanesLeft()
@@ -356,8 +364,8 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
         let r = try await ParRig([ptask("a", "test -f a.txt", scope: ["a.txt"]), ptask("b", "test -f b.txt", scope: ["b.txt"])], tries: 1)
         defer { r.cleanup() }
         let both = Arrivals()
-        await r.core.set("loop-a-1") { _ in await both.hit(); await both.wait(for: 2) }   // commits nothing
-        await r.core.set("loop-b-1") { d in await both.hit(); await both.wait(for: 2); try await commit("b.txt", "b\n", in: d) }
+        await r.core.set("w-task-a-t1") { _ in await both.hit(); await both.wait(for: 2) }   // commits nothing
+        await r.core.set("w-task-b-t1") { d in await both.hit(); await both.wait(for: 2); try await commit("b.txt", "b\n", in: d) }
         let end = await r.run()
         #expect(end == .finished)
         let w = try await r.get()
@@ -374,8 +382,8 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
                                   ptask("b", "grep -q B f.txt || test -f b2.txt", scope: ["b.txt"])]); defer { r.cleanup() }
         let both = Arrivals(), seen = Seen()
         for (id, letter) in [("a", "A"), ("b", "B")] {
-            await r.core.set("loop-\(id)-1") { d in await both.hit(); await both.wait(for: 2); try await commit("f.txt", "\(letter)\n", in: d) }
-            await r.core.set("loop-\(id)-2") { d in
+            await r.core.set("w-task-\(id)-t1") { d in await both.hit(); await both.wait(for: 2); try await commit("f.txt", "\(letter)\n", in: d) }
+            await r.core.set("w-task-\(id)-t2") { d in
                 await seen.set(id, (try? String(contentsOf: d.appendingPathComponent("f.txt"), encoding: .utf8)) ?? "?")
                 try await commit("\(id)2.txt", "again\n", in: d)
             }

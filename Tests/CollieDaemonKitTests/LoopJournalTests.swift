@@ -12,19 +12,19 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func aPassingAttemptLeavesItsEventsInOrder() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let ev = try await r.get().loop?.events ?? []
         #expect(ev.map(\.kind) == [.attemptStarted, .agentSummoned, .turnEnded, .commitSeen, .agentDismissed, .checkStarted, .checkFinished, .verdict],
                 "\(ev.map(\.kind.rawValue))")
         #expect(ev.allSatisfy { $0.task == "a" && $0.attempt == 1 })
-        #expect(ev[1].detail == "loop-a-1" && ev[6].detail == "exit 0" && ev[7].detail == "passou")
+        #expect(ev[1].detail == "w-task-a-t1" && ev[6].detail == "exit 0" && ev[7].detail == "passou")
         #expect(zip(ev, ev.dropFirst()).allSatisfy { $0.at <= $1.at })
     }
 
     @Test func aGateAddsItsTwoEvents() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")], gate: "true"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let ev = try await r.get().loop?.events ?? []
         #expect(ev.map(\.kind) == [.attemptStarted, .agentSummoned, .turnEnded, .commitSeen, .agentDismissed, .checkStarted, .checkFinished,
@@ -34,7 +34,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func aFailedCheckLeavesTheReasonAndTheDiscard() async throws {
         let r = try await LoopRig([task("a", "exit 3")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get(), ev = w.loop?.events ?? []
         #expect(w.tasks[0].state == .deferred)
@@ -47,7 +47,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     /// What the check leaves behind is put back, and the journal says so.
     @Test func aCheckThatEditsTheTreeLeavesATreeReset() async throws {
         let r = try await LoopRig([task("a", "echo junk > made.txt; test -f done.txt")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let ev = try await r.get().loop?.events ?? []
         #expect(ev.suffix(3).map(\.kind) == [.checkFinished, .treeReset, .verdict], "\(ev.map(\.kind.rawValue))")
@@ -56,7 +56,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func turnEndedRecordsItsSource() async throws {
         for source in [AskResult.Source.hook, .idle] {
             let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
-            await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }, source: source))
+            await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }, source: source))
             #expect(await r.run() == .finished)
             let ev = try await r.get().loop?.events ?? []
             #expect(ev.first { $0.kind == .turnEnded }?.detail == source.rawValue)
@@ -71,7 +71,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(d.count <= 200 && WorkLoop.eventDetail(String(repeating: "y", count: 500)).count == 200)
 
         let r = try await LoopRig([task("a", "true")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(askError: ProtocolError(code: .invalidArgs, message: dirty)))
+        await r.host.set("w-task-a-t1", LoopScript(askError: ProtocolError(code: .invalidArgs, message: dirty)))
         #expect(await r.run() == .finished)
         let ev = try await r.get().loop?.events ?? []
         let details = ev.compactMap(\.detail)
@@ -91,7 +91,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func aStopIsRequestedThenRecorded() async throws {
         let r = try await LoopRig([task("a", "true"), task("b", "true")]); defer { r.cleanup() }
         let loop = r.loop, id = r.work
-        await r.host.set("loop-a-1", LoopScript(act: { d in await loop.stop(work: id); try await commit("done.txt", "ok\n", in: d) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in await loop.stop(work: id); try await commit("done.txt", "ok\n", in: d) }))
         #expect(await r.run() == .stopped)
         let ev = try await r.get().loop?.events ?? []
         #expect(ev.contains { $0.kind == .stopRequested && $0.task == nil })
@@ -104,7 +104,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func anotherTerminalWorkingIsNamed() async throws {
         let r = try await LoopRig([task("a", "false")]); defer { r.cleanup() }
         await r.host.setBusy("dev")
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
         #expect(await r.run() == .stopped)
         let ev = try await r.get().loop?.events ?? []
         #expect(ev.contains { $0.kind == .othersWaiting && $0.detail == "dev" })
@@ -114,9 +114,9 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     /// The journal never reaches an agent: the second attempt's prompt carries the failure note, not the events.
     @Test func theJournalIsNotInThePrompt() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
-        await r.host.set("loop-a-2", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t2", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
-        let prompt = await r.host.prompts["loop-a-2"] ?? ""
+        let prompt = await r.host.prompts["w-task-a-t2"] ?? ""
         #expect(prompt.contains("tentativa 1/3"))
         for k in Kind.allCases { #expect(!prompt.contains(k.rawValue), "\(k)") }
     }

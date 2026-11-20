@@ -35,7 +35,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func starterGone() async throws {
         let r = try await LoopRig([task("a", "false"), task("b", "true")]); defer { r.cleanup() }
-        await r.host.setStarterGone(after: "loop-a-1")
+        await r.host.setStarterGone(after: "w-task-a-t1")
         #expect(await r.run() == .stopped)
         expectStop(try await r.get(), .starterGone)
     }
@@ -43,7 +43,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func workGone() async throws {
         let r = try await LoopRig([task("a", "true")]); defer { r.cleanup() }
         let store = r.store, id = r.work
-        await r.host.set("loop-a-1", LoopScript(act: { _ in try await store.close(id, by: "app") }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { _ in try await store.close(id, by: "app") }))
         #expect(await r.run() == .stopped)
         expectStop(try await r.get(), .workGone)
     }
@@ -71,7 +71,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func othersWorkingNamesTheTerminal() async throws {
         let r = try await LoopRig([task("a", "false"), task("b", "true")]); defer { r.cleanup() }
         await r.host.setBusy("dev")
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
         #expect(await r.run() == .stopped)
         let w = try await r.get()
         expectStop(w, .othersWorking, detail: "dev")
@@ -81,7 +81,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func requested() async throws {
         let r = try await LoopRig([task("a", "true"), task("b", "true")]); defer { r.cleanup() }
         let loop = r.loop, id = r.work
-        await r.host.set("loop-a-1", LoopScript(act: { d in await loop.stop(work: id); try await commit("done.txt", "ok\n", in: d) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in await loop.stop(work: id); try await commit("done.txt", "ok\n", in: d) }))
         #expect(await r.run() == .stopped)
         let w = try await r.get()
         expectStop(w, .requested)
@@ -92,7 +92,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await LoopRig([task("a", "false")]); defer { r.cleanup() }
         final class Box: @unchecked Sendable { var task: Task<WorkLoopState.State, Never>? }
         let box = Box(), loop = r.loop, id = r.work, repo = r.repo
-        await r.host.set("loop-a-1", LoopScript(act: { _ in box.task?.cancel() }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { _ in box.task?.cancel() }))
         box.task = Task { await loop.run(work: id, dir: repo) }
         #expect(await box.task!.value == .stopped)
         expectStop(try await r.get(), .cancelled)
@@ -102,7 +102,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     @Test func daemonRestartBySweep() {
         let now = Date(timeIntervalSince1970: 1_000_000)
         var w = Work(title: "W", terminalId: UUID(), tasks: [WorkTask(id: "a", title: "A", state: .inProgress)],
-                     jobs: [WorkJob(id: "loop-a-1", kind: .loop, label: "A")])
+                     jobs: [WorkJob(id: "w-a-t1", kind: .loop, label: "A")])
         w.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
         CommandRouter.sweepLeftRunning(&w, now: now)
         expectStop(w, .daemonRestart)
@@ -113,7 +113,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
         // a reason left by an earlier run is cleared when the loop starts
         try await r.store.update(r.work) { $0.loop?.stopReason = Stop(.maxReached) }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.loop?.state == .finished && w.loop?.stopReason == nil)

@@ -94,6 +94,10 @@ actor LoopFakeHost: LoopHost {
     var othersProbe: (@Sendable () async -> Void)?
     func setOthersProbe(_ p: @escaping @Sendable () async -> Void) { othersProbe = p }
     func othersWorking() async -> String? { await othersProbe?(); return busyOther }
+    /// M3b.2: the starter in a turn (only `anyoneWorking` counts it).
+    var busyStarter: String?
+    func setStarterBusy(_ n: String?) { busyStarter = n }
+    func anyoneWorking() async -> String? { if let busyStarter { return busyStarter }; return await othersWorking() }
     func starterAlive() async -> Bool { !starterGone }
     func setBusy(_ n: String?) { busyOther = n }
     func setStarterGone(after n: String) { starterGoneAfter = n }

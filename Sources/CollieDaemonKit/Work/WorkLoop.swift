@@ -15,6 +15,9 @@ protocol LoopHost: Sendable {
     func dismiss(_ terminal: UUID) async
     /// A terminal of the work's paddock in a turn, other than the starter (the loop's agent is already gone): its name.
     func othersWorking() async -> String?
+    /// M3b.2: any terminal of the paddock in a turn in this tree, the starter included: its name. What the integrator
+    /// asks before it throws anything away (in a parallel loop the starter is free to edit the paddock's worktree).
+    func anyoneWorking() async -> String?
     /// The starter (the Shepherd the loop summons as) still exists.
     func starterAlive() async -> Bool
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
@@ -46,6 +49,8 @@ protocol LoopHost: Sendable {
 }
 
 extension LoopHost {
+    /// A host that cannot tell the starter apart (the tests' fakes).
+    func anyoneWorking() async -> String? { await othersWorking() }
     func resubmitted(_ terminal: UUID) async -> Bool { false }
     func taskEnded(_ line: String) async {}
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {

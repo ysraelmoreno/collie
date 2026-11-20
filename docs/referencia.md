@@ -862,7 +862,12 @@ dono aprovou a lista de tarefas e os checks.
   um integrador, um de cada vez, faz o merge (sem fast-forward, `merge: <tarefa>`) no branch do cercado e **roda o portão
   de novo na árvore integrada**; só então a tarefa fica feita. Conflito ou portão quebrado depois do merge: o merge é
   desfeito, o que a tentativa fez vira patch, e a tarefa refaz a tentativa numa faixa nova, a partir do HEAD novo (gasta
-  uma tentativa; na última, é adiada). `--max`, `--budget` e `--tries` são do laço inteiro (o orçamento soma o tempo
+  uma tentativa; na última, é adiada). Antes de desfazer, o integrador mede de novo: se alguém (o Shepherd que iniciou
+  o laço também) está num turno na worktree do cercado, ou se ela não está como o merge a deixou (arquivo rastreado
+  editado, arquivo novo não rastreado, do dono ou do próprio portão, que o integrador não distingue), **nada é
+  resetado nem apagado**: o laço para (`dirtyTree` ou `othersWorking`), a nota lista o que ficou e, se o portão
+  quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a tarefa volta a aberta sem gastar
+  tentativa. `--max`, `--budget` e `--tries` são do laço inteiro (o orçamento soma o tempo
   de todas as faixas). `collie work stop` cancela todas as faixas: nada fica integrado pela metade, a tentativa em curso
   não conta, e nenhuma faixa sobra (também são removidas no fim do laço e na varredura de início do daemon).
   - **Grafo de tarefas:** `collie work task add <título> --spec … --check … [--scope "<glob>,<glob>"] [--needs <id>,<id>]`.

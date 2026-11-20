@@ -26,6 +26,9 @@ enum LaneIntegration {
         var tries: Int
         /// Git's or the gate's own words, appended to the reason.
         var detail: String?
+        /// M3b.2. Measured again before undoing: someone (the starter included) is in a turn in the paddock's worktree,
+        /// or the tree is not as the integrator left it (a tracked file edited, a new untracked file).
+        var disturbed = false
     }
 
     enum Outcome: Sendable, Equatable {
@@ -38,6 +41,9 @@ enum LaneIntegration {
         /// Another terminal works in the paddock's worktree, or it is dirty: nothing was touched or undone; the caller
         /// waits or stops, as the engine does. Never a `defer`: it is not the task's fault.
         case wait(String)
+        /// M3b.2. Conflict or broken gate, but the tree was `disturbed` meanwhile: nothing was reset or removed (a
+        /// merge whose gate broke stays in the branch). The caller stops the loop saying what stayed. Never a `defer`.
+        case leftDirty(String)
         case noop
     }
 
@@ -52,6 +58,7 @@ enum LaneIntegration {
         case (.clean, .failed): why = "gate broke after the merge"
         }
         let reason = [why, f.detail].compactMap { $0 }.joined(separator: ": ")
+        if f.disturbed { return .leftDirty(reason) }
         return f.attempt >= f.tries ? .defer(reason) : .retryFromNewBase(reason)
     }
 }

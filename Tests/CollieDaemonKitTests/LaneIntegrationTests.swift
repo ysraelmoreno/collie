@@ -119,7 +119,7 @@ private func isWait(_ o: LaneIntegration.Outcome) -> Bool { if case .wait = o { 
     @Test func gateBrokenAfterTheMergeUndoesIt() async throws {
         let rig = try await Rig()
         let a = try await rig.lane("a", "a.txt", "a\n")
-        let r = try await rig.go(a, "A", gate: "echo junk > junk.txt; echo more >> f.txt; echo broke; exit 7")
+        let r = try await rig.go(a, "A", gate: "echo broke; exit 7")
         #expect(r.outcome == .retryFromNewBase("gate broke after the merge: gate failed (exit 7)"))
         #expect(r.output.contains("broke"))
         #expect(r.head == rig.base)
@@ -132,10 +132,11 @@ private func isWait(_ o: LaneIntegration.Outcome) -> Bool { if case .wait = o { 
         let moved = try await rig.go(a, "A", gate: "git commit -q --allow-empty -m sneaky")
         #expect(moved.outcome == .retryFromNewBase("gate broke after the merge: gate moved HEAD"))
         #expect(try await rig.head() == rig.base)
-        // and one that passes leaves only the merge: its own files and edits are gone
+        // M3b.2: what a gate leaves in the tree cannot be told from the owner's edits meanwhile: it stays, by name
+        // (`LaneIntegratorRaceTests`)
         let ok = try await rig.go(a, "A", gate: "echo junk > junk.txt; echo more >> f.txt")
         #expect(ok.outcome == .integrated)
-        #expect(try await rig.status() == "")
+        #expect(ok.kept == ["f.txt", "junk.txt"])
         #expect(try await git(rig.repo, "log", "-1", "--format=%s") == "merge: A")
     }
 

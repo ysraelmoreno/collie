@@ -218,7 +218,16 @@ extension WorkLoop {
         switch result.outcome {
         case .integrated, .noop:
             await engine.finish(id, head: result.head)
-            return nil
+            // M3b.2: the gate passed, but the tree changed while it ran: nothing was reset, and the next merge would
+            // find it dirty. The loop stops now, saying what is there.
+            guard !result.kept.isEmpty else { return nil }
+            await note(id, Self.keptNote(nil, result))
+            return WorkLoopState.Stop(.dirtyTree)
+        case .leftDirty(let why):
+            // M3b.2: not the task's fault: it is open again and its attempt is given back, as for `.wait`
+            await engine.release(id, "não integrada: \(why)")
+            await note(id, Self.keptNote(why, result))
+            return result.blockedBy.map { WorkLoopState.Stop(.othersWorking, detail: $0) } ?? WorkLoopState.Stop(.dirtyTree)
         case .retryFromNewBase(let why), .defer(let why):
             // the loop stopped meanwhile: no verdict on the task, as for an attempt cancelled
             if Task.isCancelled || stopping.contains(id) { await engine.release(id, "não integrada: o laço parou"); return nil }
@@ -234,6 +243,23 @@ extension WorkLoop {
                 ?? "[loop] a worktree do cercado tem arquivos rastreados modificados, e não são do laço: nada foi integrado; laço parado, worktree intocada")
             return who.map { WorkLoopState.Stop(.othersWorking, detail: $0) } ?? WorkLoopState.Stop(.dirtyTree)
         }
+    }
+
+    /// M3b.2: the note of an integration that reset nothing: what was preserved, who was there, and the merge left in
+    /// the branch (`why` nil: the gate passed and the task is integrated).
+    static func keptNote(_ why: String?, _ r: LaneIntegrator.Result) -> String {
+        var s = why.map { "[loop] não integrada (\($0))" } ?? "[loop] integrada"
+        s += ", mas a worktree do cercado não estava como o integrador a deixou: nada foi resetado nem apagado."
+        if let who = r.blockedBy { s += " '\(who)' está trabalhando nela." }
+        if !r.kept.isEmpty {
+            // ponytail: the first 10 names; `git status` shows the rest
+            let more = r.kept.count > 10 ? " e mais \(r.kept.count - 10)" : ""
+            s += " Preservado: " + eventDetail(r.kept.prefix(10).joined(separator: ", ")) + more + "."
+        }
+        if let undo = r.undo {
+            s += " O merge \(r.head.prefix(7)) ficou no branch sem passar no portão: para desfazer, guarde o que é seu e rode git reset --hard \(undo.prefix(7))."
+        }
+        return s + " Laço parado."
     }
 
     // MARK: on a lane's engine: what becomes of the attempt that passed

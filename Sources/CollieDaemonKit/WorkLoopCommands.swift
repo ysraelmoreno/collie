@@ -333,7 +333,8 @@ extension CommandRouter {
 
     /// Any terminal of the paddock in a turn but the starter (Shepherds too: the loop's reset would take their edits).
     /// M3.3: `dir` is the host's own tree: a lane's host counts only what reaches its lane.
-    func loopOthersWorking(paddock: UUID, starter: UUID, dir: URL) async -> String? {
+    /// M3b.2: `starter` nil counts the starter too (`anyoneWorking`).
+    func loopOthersWorking(paddock: UUID, starter: UUID?, dir: URL) async -> String? {
         for t in Self.loopReaching(ws.terminals, paddock: paddock, starter: starter, dir: dir) {
             if await targetBusy(t.id) { return t.name }
         }
@@ -342,7 +343,7 @@ extension CommandRouter {
 
     /// The paddock's terminals, but the starter, that can edit the tree `dir` (the paddock's worktree, or one lane).
     /// For a lane: not the other lanes' agents, nor a terminal in the paddock's worktree (that tree is the integrator's, M3.4).
-    static func loopReaching(_ terminals: [TerminalRecord], paddock: UUID, starter: UUID, dir: URL) -> [TerminalRecord] {
+    static func loopReaching(_ terminals: [TerminalRecord], paddock: UUID, starter: UUID?, dir: URL) -> [TerminalRecord] {
         terminals.filter { $0.paddockId == paddock && $0.id != starter && loopSharesWorktree($0, dir) }
     }
 
@@ -501,6 +502,7 @@ struct RouterLoopHost: LoopHost {
 
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }
+    func anyoneWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: nil, dir: dir) }
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
     func namesTaken() async -> Set<String> { await router.loopNamesTaken() }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }

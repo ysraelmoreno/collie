@@ -286,7 +286,9 @@ extension CommandRouter {
             let works = flag(r, "all") ? try await work.list(includeClosed: false).filter(visible)
                 : try await work.active(terminal: try target().id).map { [$0] } ?? []
             // `--events [N]`: each loop's journal after its work's status, and in `events` (by work id) for the panel and MCP
-            let last = try flag(r, "events") ? Self.loopEventsDefault : num(r, "events", max: Double(WorkLoopState.eventsMax)).map { Int($0) }
+            // (MCP/JSON: `events: true` is the bare flag, `events: false` is no journal, as if absent)
+            let last: Int? = if case .bool(false)? = r.args["events"] { nil }
+                else { try flag(r, "events") ? Self.loopEventsDefault : num(r, "events", max: Double(WorkLoopState.eventsMax)).map { Int($0) } }
             var o: [String: JSONValue] = ["works": .array(try works.map(isoJSON))]
             o["output"] = .string(works.isEmpty ? "No active work." : works.map { w in
                 let journal = last.flatMap { n in w.loop.map { WorkStatusText.events($0, last: n) } } ?? ""

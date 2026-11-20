@@ -171,6 +171,7 @@ enum AttemptMachine {
             return (s, [.decide])
         case (.deciding, .decided(let outcome)):
             s.phase = .finished
+            // the interpreter journals the patch's name only when `discard` wrote one (else `WorkLoop.noPatch`)
             let patch: [Effect] = [.discard, .journal(.discarded, "\(s.task)-\(s.n).patch")]
             switch outcome {
             case .pass:

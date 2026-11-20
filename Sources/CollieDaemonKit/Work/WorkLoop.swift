@@ -177,7 +177,12 @@ actor WorkLoop {
         var end = AttemptEnd.go
         /// The machine's `fault`, for the safety net's note.
         var fault: String?
+        /// `discard` wrote the attempt's patch (nil: nothing was discarded).
+        var patched: Bool?
     }
+
+    /// The `discarded` event's detail when no patch was written (the diff failed or was empty).
+    static let noPatch = "sem alterações"
 
     /// Carries one effect of `AttemptMachine` out, with the host, store and git calls the attempt always made, and
     /// returns the event it observed (nil: the effect answers with none). `state`: the machine's, after it asked.
@@ -186,7 +191,8 @@ actor WorkLoop {
         switch effect {
         case .journal(let kind, let detail):
             // the journal: this attempt's events (it records, it never decides)
-            await event(id, kind, task: task.id, attempt: n, detail: detail)
+            // `discarded` names the patch only when one was written
+            await event(id, kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail)
             if kind == .verdict { r.at = host.now() }   // the verdict's time: before any wait for another terminal
         case .note(let text): await note(id, text)
         case .show(let p): await phase(id, p)
@@ -269,7 +275,7 @@ actor WorkLoop {
         case .decide:
             return .decided(AttemptDecision.decide(state.facts))
         case .discard:
-            await discard(id, task.id, n, before: before, branch: branch, keep: r.keep, dir)
+            r.patched = await discard(id, task.id, n, before: before, branch: branch, keep: r.keep, dir)
         case .uncount:
             let at = host.now()
             try? await store.update(id) { x in
@@ -449,17 +455,20 @@ actor WorkLoop {
     }
 
     /// A failed attempt's work goes to `patchDir/<task>-<n>.patch`; the tree goes back to `before` on `branch`.
-    private func discard(_ work: UUID, _ task: String, _ n: Int, before: String, branch: String, keep: [String], _ dir: URL) async {
+    /// True: the patch was written (false: the diff failed or was empty, so there is no file).
+    private func discard(_ work: UUID, _ task: String, _ n: Int, before: String, branch: String, keep: [String], _ dir: URL) async -> Bool {
+        var wrote = false
         _ = try? await host.git(["add", "-A"], in: dir)
         if !keep.isEmpty { _ = try? await host.git(["reset", "-q", "--"] + keep, in: dir) }
         // ponytail: the patch is the first 1 MiB of the diff (BoundedProcess's cap)
-        if let d = try? await host.git(["diff", "--cached", "--binary", before], in: dir), d.status == 0 {
+        if let d = try? await host.git(["diff", "--cached", "--binary", before], in: dir), d.status == 0, !d.stdoutData.isEmpty {
             let folder = host.patchDir(work)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try? d.stdoutData.write(to: folder.appendingPathComponent("\(task)-\(n).patch"))
+            wrote = (try? d.stdoutData.write(to: folder.appendingPathComponent("\(task)-\(n).patch"))) != nil
         }
         _ = try? await host.git(["checkout", "-q", "-f", branch == "HEAD" ? before : branch], in: dir)
         _ = try? await host.git(["reset", "-q", "--hard", before], in: dir)
+        return wrote
     }
 
     private func out(_ args: [String], _ dir: URL) async -> String? {

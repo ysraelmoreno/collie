@@ -291,7 +291,9 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.host.summoned.isEmpty)
         #expect(try String(contentsOf: r.repo.appendingPathComponent("f.txt"), encoding: .utf8) == "someone's\n")
         let w = try await r.get()
-        #expect(w.tasks[0].state == .open && w.notes.contains { $0.text.contains("dirty") })   // then the loop's summary note
+        // the path's own note, then the loop's summary note: in that order
+        let notes = w.notes.suffix(2).map(\.text)
+        #expect(w.tasks[0].state == .open && notes.count == 2 && notes[0].contains("dirty") && notes[1].hasPrefix("[loop] laço parado:"), "\(notes)")
     }
 
     /// Finding 4: another terminal of the paddock in a turn: no reset, no checkout; the loop stops.

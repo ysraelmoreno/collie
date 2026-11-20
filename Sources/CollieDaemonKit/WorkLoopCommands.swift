@@ -231,9 +231,24 @@ extension CommandRouter {
         x.notes.append(WorkNote(at: now, text: why.note))
     }
 
-    /// Daemon stop: the loops end with it: `cancelled` when the engine still gets to write it, else their state stays
-    /// `running` until the next start's sweep (`daemonRestart`).
-    func cancelLoops() { for l in workLoops.values { l.task.cancel() }; workLoops = [:]; loopPaddocks = [] }
+    /// How long the daemon's stop waits, in all, for its cancelled loops to write their end.
+    static let loopCancelWait = Duration.seconds(2)
+
+    /// Daemon stop: the loops end with it, and it waits (`loopCancelWait` in all) for each engine to write `cancelled`.
+    /// One still busy after that (a check that ignores the cancel) stays `running` until the next start's sweep
+    /// (`daemonRestart`).
+    func cancelLoops() async {
+        let tasks = workLoops.values.map(\.task)
+        workLoops = [:]; loopPaddocks = []
+        guard !tasks.isEmpty else { return }
+        for t in tasks { t.cancel() }
+        // the event is the tasks' own end; the clock only bounds it (a daemon's stop never hangs on a loop)
+        let (ended, signal) = AsyncStream<Void>.makeStream()
+        Task { for t in tasks { await t.value }; signal.finish() }
+        let limit = Task { try? await Task.sleep(for: Self.loopCancelWait); signal.finish() }
+        for await _ in ended {}
+        limit.cancel()
+    }
 
     // MARK: what RouterLoopHost needs from the router
 

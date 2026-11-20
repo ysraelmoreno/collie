@@ -8,7 +8,10 @@ struct CuratorSandboxInput: Sendable {
     var home: URL
     var reads: [String]
     var writes: [String]
+    /// The Keychain login, read the way claude reads it: by running `/usr/bin/security`.
     var keychain: Bool
+    /// The system's name resolver (mDNSResponder's Unix socket, the `/var` link it is reached by); off by default.
+    var resolver: Bool = false
     /// Absolute dirs whose files may be mapped executable (native `.node` modules); none by default.
     var mapExecutable: [String] = []
     /// nil: any outbound IP port (Claude, as before); else only this one (Cursor: 443).
@@ -16,7 +19,7 @@ struct CuratorSandboxInput: Sendable {
 }
 
 /// The curator's own Seatbelt profile (spec 2026-11-17 §4, E5): `(deny default)`, then only what a headless CLI needs.
-/// No home writes, no unsandboxed `ps`, no Unix sockets, no tag (its denials raise no card). One allow per line.
+/// No home writes, no unsandboxed `ps`, no Unix socket but the resolver's, no tag (its denials raise no card). One allow per line.
 enum CuratorSandboxProfile {
     static func render(_ i: CuratorSandboxInput) -> String {
         func real(_ u: URL) -> String { SignedAppCheck.realPath(u) }
@@ -29,19 +32,22 @@ enum CuratorSandboxProfile {
             if p.hasSuffix("/") { return "(regex \(q("^" + SandboxProfile.re(p) + ".+")))" }
             return "(subpath \(q(p)))"
         }
-        let exes = i.executables.flatMap { [$0.path, real($0)] } + ["/bin/sh"]
+        // measured on the owner's Mac (claude 2.1.329, macOS 15.6): without `security` claude is "Not logged in"
+        let exes = i.executables.flatMap { [$0.path, real($0)] } + ["/bin/sh"] + (i.keychain ? ["/usr/bin/security"] : [])
         let exeDirs = i.executables.map { URL(fileURLWithPath: real($0)).deletingLastPathComponent().path }
         // a CLI installed as a link (`~/.local/bin/claude` → `…/versions/<n>`) reads the path it was started by: the link
         // itself, never its folder's other files
         let launchers = i.executables.map(\.path).filter { $0 != real(URL(fileURLWithPath: $0)) }
         let launcherReads: [String] = launchers.map { "(literal \(q($0)))" }
         let keychain = i.keychain ? [home + "/Library/Keychains"] : []
+        // measured the same way: `security` needs `/private/var/db` (else "Not logged in"); the resolver the root's `/var` link
+        let measured: [String] = (i.keychain ? [filter("/private/var/db")] : []) + (i.resolver ? ["(literal \"/var\")"] : [])
         let reads = ["/System", "/usr/lib", "/usr/share", "/usr/bin", "/bin", "/private/var/db/dyld", "/private/etc/ssl",
                      "/private/var/db/timezone", "/dev"].map(filter)
             // "/" itself (not what is under it): dyld's libignition opens it as its openat root, and aborts the process
             // (SIGABRT, exit 134, before any of the CLI's code) when it can't (the system's dyld-support.sb)
             + ["/", "/private/etc/hosts", "/private/etc/resolv.conf", "/private/etc/localtime"].map { "(literal \(q($0)))" }
-            + launcherReads
+            + launcherReads + measured
             + (exeDirs + [cwd] + keychain).map(filter) + i.reads.map(filter)
         var writes = ([cwd] + keychain).map(filter) + i.writes.map(filter) + ["(literal \"/dev/null\")"]
         // the Security framework's lock (`EssentialPaths.userCacheWrites`' `mds`)
@@ -57,7 +63,8 @@ enum CuratorSandboxProfile {
                         "com.apple.system.opendirectoryd.libinfo", "com.apple.system.notification_center",
                         "com.apple.system.logger", "com.apple.logd", "com.apple.diagnosticd", "com.apple.SystemConfiguration.configd",
                         "com.apple.SystemConfiguration.DNSConfiguration", "com.apple.networkd", "com.apple.nsurlsessiond"]
-            + (i.keychain ? ["com.apple.SecurityServer"] : [])
+            // the last three measured as a group (one or more is what `security` needs: without them "Not logged in")
+            + (i.keychain ? ["com.apple.SecurityServer", "com.apple.FSEvents", "com.apple.fseventsd", "com.apple.bsd.dirhelper"] : [])
         var out = ["(version 1)", "(deny default)",
                    "(allow process-fork)", "(allow signal (target same-sandbox))", "(allow sysctl-read)",
                    "(allow ipc-posix-shm-read-data (ipc-posix-name \"apple.shm.notification_center\"))",
@@ -70,6 +77,11 @@ enum CuratorSandboxProfile {
         out += i.mapExecutable.map { "(allow file-map-executable (subpath \(q(real(URL(fileURLWithPath: $0))))))" }
         out += services.map { "(allow mach-lookup (global-name \(q($0))))" }
         if i.keychain { out.append("(allow mach-lookup (global-name-regex \"^com\\\\.apple\\\\.securityd\"))") }
+        // the only Unix socket: without it claude's call never answers (measured)
+        if i.resolver {
+            out.append("(allow system-socket (socket-domain AF_UNIX))")
+            out.append("(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))")
+        }
         return out.joined(separator: "\n") + "\n"
     }
 
@@ -104,6 +116,6 @@ enum CuratorSandboxProfile {
     static func claude(executable: URL, cwd: URL, home: URL) -> CuratorSandboxInput {
         let state = EssentialPaths.agentStateDirs[".claude"] ?? []
         return CuratorSandboxInput(executables: [executable], cwd: cwd, home: home, reads: [".claude"] + state,
-                                   writes: [".claude/.credentials.json*"] + state.map { $0 + "/" }, keychain: true)
+                                   writes: [".claude/.credentials.json*"] + state.map { $0 + "/" }, keychain: true, resolver: true)
     }
 }

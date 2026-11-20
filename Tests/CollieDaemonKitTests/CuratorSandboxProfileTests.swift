@@ -79,7 +79,7 @@ private func writes(_ p: String, _ path: String) -> Bool { allows(p, "file-write
                 return String(line.split(separator: "\"")[1])
             })
         }
-        #expect(execs(claude) == [claudeExe.path, "/bin/sh"])
+        #expect(execs(claude) == [claudeExe.path, "/bin/sh", "/usr/bin/security"])   // `security`: claude's Keychain login
         #expect(execs(cursor) == ["/Users/u/.local/bin/cursor-agent", "/usr/bin/env", "/bin/bash", "/bin/sh"])
         #expect(!allows(claude, "process-exec", "/usr/bin/curl") && !allows(claude, "process-exec", "/bin/ps"))
     }
@@ -99,11 +99,26 @@ private func writes(_ p: String, _ path: String) -> Bool { allows(p, "file-write
         for p in [claude, cursor] { #expect(!p.contains("no-sandbox") && !p.contains("/bin/ps")) }
     }
 
-    @Test func noUnixSockets() {
+    /// The only Unix socket is the system resolver's, and only for Claude (measured: its call never answers without it).
+    @Test func onlyTheResolversUnixSocket() {
+        #expect(!cursor.contains("unix-socket") && !cursor.contains("AF_UNIX"))
+        let unix = claude.split(separator: "\n").filter { $0.contains("unix-socket") }
+        #expect(unix == ["(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))"])
+        #expect(claude.contains("(allow system-socket (socket-domain AF_UNIX))"))
         for p in [claude, cursor] {
-            #expect(!p.contains("unix-socket") && !p.contains("AF_UNIX"))
             #expect(p.contains("(allow network-outbound (remote ip))"))   // Claude: any port, as before (cursor: 443 only)
         }
+    }
+
+    /// What a real run on the owner's Mac showed claude needs to log in and answer (2026-11-19, claude 2.1.329): each
+    /// one is narrow, and none of it reaches the Cursor profile.
+    @Test func measuredClaudeNeeds() {
+        #expect(reads(claude, "/private/var/db/mds/system/mdsObject.db") && reads(claude, "/var"))
+        #expect(!reads(claude, "/private/var/root/x") && !reads(claude, "/private/var/folders/x"))
+        for s in ["com.apple.bsd.dirhelper", "com.apple.FSEvents", "com.apple.fseventsd"] {
+            #expect(claude.contains("(allow mach-lookup (global-name \"\(s)\"))") && !cursor.contains(s))
+        }
+        #expect(!reads(cursor, "/private/var/db/mds") && !cursor.contains("(literal \"/var\")") && !cursor.contains("/usr/bin/security"))
     }
 
     /// claude is installed as a link (`~/.local/bin/claude` → `…/versions/<n>`), and the CLI reads the path it was

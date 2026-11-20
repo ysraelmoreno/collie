@@ -42,7 +42,7 @@ private func failure(_ json: String) -> String? {
     #expect(failure(#"{"name":"","extends":"dark"}"#) == #""name": use de 1 a 48 caracteres, sem controle"#)
     #expect(failure(#"{"name":"a\nb","extends":"dark"}"#) == #""name": use de 1 a 48 caracteres, sem controle"#)
     #expect(failure(#"{"name":"A","extends":"blue"}"#) == #""extends": use "dark" ou "light""#)
-    #expect(failure(#"{"name":"A","extends":"dark","colors":{"fundo":"#000000"}}"#) == #"papel desconhecido: "fundo""#)
+    #expect(failure(##"{"name":"A","extends":"dark","colors":{"fundo":"#000000"}}"##) == ##"papel desconhecido: "fundo""##)
     #expect(failure(#"{"name":"A","extends":"dark","colors":{"accent":"red"}}"#) == #""accent": use #RRGGBB"#)
     #expect(failure(#"{"name":"A","extends":"dark","colors":{"accent":5}}"#) == #""accent": use #RRGGBB"#)
     #expect(failure(#"{"name":"A","extends":"dark","colors":[]}"#) == #""colors": use um objeto"#)

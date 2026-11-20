@@ -4,6 +4,9 @@ Todas as mudanças notáveis do Collie, por versão. O formato segue o [Keep a C
 
 ## [Não lançado]
 
+### Corrigido
+- **CI determinístico:** o passo de testes (`scripts/ci/run-tests.sh`) não confia mais no código de saída do `swift test`, que deu verde com 237 falhas quando o processo de teste saiu no meio; roda a suíte em 3 partes seriais e só passa com a contagem final de cada uma. Testes que o runner hospedado não roda ficam em `scripts/ci/ci-skip.txt`, com o motivo. Testes desatualizados (`--plugin-dir` do Cursor, título da página no import) e uma falha fatal do falso daemon do `MCPTests` corrigidos.
+
 ## [0.1.7] — 2026-11-19
 
 ### Adicionado

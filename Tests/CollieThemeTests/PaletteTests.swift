@@ -24,3 +24,17 @@ import CollieTheme
     #expect(abs(rgb(.aqua).redComponent - 0xF3 / 255) < 0.01)
 }
 @Test func contrastKnownPair() { #expect(abs(contrastRatio(RGB(hex: 0x000000), RGB(hex: 0xFFFFFF)) - 21) < 0.01) }
+@Test func rolesCoverEveryProperty() {
+    let keys = Palette.roles.map(\.key)
+    #expect(keys.count == 18)
+    #expect(Set(keys).count == 18)
+    let props = Set(Mirror(reflecting: Palette.dark).children.compactMap(\.label))
+    #expect(Set(keys) == props)
+    for r in Palette.roles { #expect(Palette.dark[role: r.key] == Palette.dark[keyPath: r.keyPath]) }
+    #expect(Palette.dark[role: "nope"] == nil)
+}
+@Test func replacingChangesOnlyWhatIsAsked() {
+    let p = Palette.dark.replacing(["accent": RGB(hex: 0x010203), "nope": RGB(hex: 0x040506)])
+    #expect(p.accent == RGB(hex: 0x010203))
+    for r in Palette.roles where r.key != "accent" { #expect(p[role: r.key] == Palette.dark[role: r.key]) }
+}

@@ -13,6 +13,20 @@ public struct RGB: Sendable, Equatable {
         b = UInt8(hex & 0xFF)
     }
 
+    /// Parses exactly `#RRGGBB` (7 characters, any hex case).
+    public init?(hexString: String) {
+        let u = Array(hexString.utf8)
+        guard u.count == 7, u[0] == UInt8(ascii: "#") else { return nil }
+        let digits = String(decoding: u[1...], as: UTF8.self)
+        guard digits.allSatisfy({ $0.isASCII && $0.isHexDigit }), let v = UInt32(digits, radix: 16) else { return nil }
+        self.init(hex: v)
+    }
+
+    /// `#RRGGBB`, upper case.
+    public var hexString: String {
+        String(format: "#%02X%02X%02X", r, g, b)
+    }
+
     public var nsColor: NSColor {
         NSColor(srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255, alpha: 1)
     }
@@ -93,6 +107,68 @@ public struct Palette: Sendable, Equatable {
         secondary: RGB(hex: 0x6B3FC4),
         danger: RGB(hex: 0xB42318),
     )
+}
+
+/// One of the 18 palette roles, in file order.
+public struct PaletteRole {
+    public enum Group: String {
+        case fundos = "Fundos", texto = "Texto", destaques = "Destaques", outros = "Outros"
+    }
+
+    public let key: String
+    public let keyPath: KeyPath<Palette, RGB>
+    public let name: String
+    public let group: Group
+    /// Key of the role this one is read against (for contrast), if any.
+    public let readsAgainst: String?
+}
+
+public extension Palette {
+    // Computed: KeyPath is not a safe stored static under strict concurrency.
+    static var roles: [PaletteRole] {
+        func role(_ key: String, _ kp: KeyPath<Palette, RGB>, _ name: String, _ group: PaletteRole.Group,
+                  on: String? = nil) -> PaletteRole {
+            PaletteRole(key: key, keyPath: kp, name: name, group: group, readsAgainst: on)
+        }
+        return [
+            role("background", \.background, "Fundo", .fundos),
+            role("surface", \.surface, "Superfície", .fundos),
+            role("sidebar", \.sidebar, "Barra lateral", .fundos),
+            role("sunken", \.sunken, "Rebaixado", .fundos),
+            role("raised", \.raised, "Elevado", .fundos),
+            role("border", \.border, "Borda", .outros),
+            role("borderSoft", \.borderSoft, "Borda suave", .outros),
+            role("grid", \.grid, "Grade", .outros),
+            role("scrim", \.scrim, "Véu", .outros),
+            role("text", \.text, "Texto", .texto, on: "surface"),
+            role("textSecondary", \.textSecondary, "Texto secundário", .texto, on: "surface"),
+            role("muted", \.muted, "Texto discreto", .texto, on: "surface"),
+            role("accent", \.accent, "Destaque", .destaques, on: "surface"),
+            role("onAccent", \.onAccent, "Sobre o destaque", .destaques, on: "accent"),
+            role("attention", \.attention, "Atenção", .destaques, on: "surface"),
+            role("attentionTint", \.attentionTint, "Fundo de atenção", .destaques),
+            role("secondary", \.secondary, "Secundária", .destaques, on: "surface"),
+            role("danger", \.danger, "Perigo", .destaques, on: "surface"),
+        ]
+    }
+
+    subscript(role key: String) -> RGB? {
+        Palette.roles.first { $0.key == key }.map { self[keyPath: $0.keyPath] }
+    }
+
+    /// Copy with the given roles replaced; unknown keys are ignored (ThemeFile validates).
+    func replacing(_ o: [String: RGB]) -> Palette {
+        Palette(
+            background: o["background"] ?? background, surface: o["surface"] ?? surface,
+            sidebar: o["sidebar"] ?? sidebar, sunken: o["sunken"] ?? sunken, raised: o["raised"] ?? raised,
+            border: o["border"] ?? border, borderSoft: o["borderSoft"] ?? borderSoft, grid: o["grid"] ?? grid,
+            scrim: o["scrim"] ?? scrim, text: o["text"] ?? text,
+            textSecondary: o["textSecondary"] ?? textSecondary, muted: o["muted"] ?? muted,
+            accent: o["accent"] ?? accent, onAccent: o["onAccent"] ?? onAccent,
+            attention: o["attention"] ?? attention, attentionTint: o["attentionTint"] ?? attentionTint,
+            secondary: o["secondary"] ?? secondary, danger: o["danger"] ?? danger,
+        )
+    }
 }
 
 /// Dynamic NSColors that pick the dark or light palette from the appearance.

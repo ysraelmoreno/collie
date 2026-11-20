@@ -32,7 +32,9 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let from = try await fall(r, tries: 1)
         #expect(await r.run() == .finished)
         let w = try await r.get(), ev = w.loop?.events ?? []
-        #expect(await r.host.summoned.isEmpty && r.host.dismissed.isEmpty && r.host.prompts.isEmpty)
+        #expect(await r.host.summoned.isEmpty)
+        #expect(await r.host.dismissed.isEmpty)
+        #expect(await r.host.prompts.isEmpty)
         // it counts as the next attempt: of the task's tries and of `--max`
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 2, "\(w.notes.map(\.text))")
         #expect(w.loop?.used == 1 && w.jobs.map(\.id) == ["loop-a-2"] && w.jobs[0].state == .finished)
@@ -50,7 +52,8 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         try await fall(r)
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .done)
-        #expect(await r.host.commands == ["true", "test -f done.txt"] && r.host.summoned.isEmpty)
+        #expect(await r.host.commands == ["true", "test -f done.txt"])
+        #expect(await r.host.summoned.isEmpty)
     }
 
     @Test func anAdoptionWhoseCheckFailsIsDiscardedAndTheNextAttemptHasAnAgent() async throws {
@@ -103,7 +106,8 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.run() == .stopped)
         let w = try await r.get()
         #expect(w.loop?.stopReason?.code == .dirtyTree && !adopted(w))
-        #expect(await r.host.summoned.isEmpty && r.host.checks == 0)
+        #expect(await r.host.summoned.isEmpty)
+        #expect(await r.host.checks == 0)
         #expect(w.tasks[0].state == .open && w.tasks[0].resumeFrom == nil && w.tasks[0].resumeBranch == nil)
         #expect(try String(contentsOf: r.repo.appendingPathComponent("done.txt"), encoding: .utf8) == "dirty\n")
     }

@@ -1,98 +1,100 @@
 # Changelog
 
-Todas as mudanças notáveis do Collie, por versão. O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e as versões seguem as tags `v*` do repositório (cada tag publica um release assinado e notarizado).
+All notable changes to Collie, by version. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions follow the repository's `v*` tags (each tag publishes a signed and notarized release).
 
-## [Não lançado]
+Names in quotes are labels of the app, which is in Portuguese.
+
+## [Unreleased]
 
 ## [0.1.7] — 2026-11-19
 
-### Adicionado
-- **Layout "Trilho"** na estrutura Completa: coluna de cercados à esquerda, painel de contexto com a **árvore de agentes** (o Pastor e os terminais ligados a ele por guia, com selo de cartões pendentes) e faixa de abas Canvas / Preferências. Na Completa, as Preferências passam a abrir **no lugar do canvas** (`⌘,`, paleta, engrenagem e o pedido de página de outros painéis), sem refazer os terminais. A estrutura Compacta não muda e continua abrindo a janela de Ajustes.
-- **Memória de conversa do Cursor:** o início de sessão de um terminal Cursor é registrado, a transcrição é lida em blocos e o crescimento dela dispara a captura por ociosidade.
-- **Curador:** sem limite diário por padrão (o limite passa a ser uma escolha do usuário).
+### Added
+- **"Trilho" layout** in the "Completa" structure: a column of paddocks on the left, a context panel with the **agent tree** (the Shepherd and the terminals leashed to it, with a badge for pending cards) and a strip of tabs "Canvas" / "Preferências". In "Completa", Preferences now open **in place of the canvas** (`⌘,`, the palette, the gear and a page requested by another panel), without rebuilding the terminals. The "Compacta" structure is unchanged and still opens the Settings window.
+- **Cursor conversation memory:** the session start of a Cursor terminal is recorded, the transcript is read in chunks, and its growth triggers the idle capture.
+- **Curator:** no daily cap by default (the cap is now the user's choice).
 
-### Alterado
-- No Trilho, o **Pasto** (terminais e painéis sem cercado) não é mais um cercado fixo: só aparece enquanto tiver algo, quando é a seleção ou quando não há cercado; vazio e selecionado, o app passa para o primeiro cercado. A Compacta mantém o chip "Pasto".
-- O baseline do lint para `sleep` em `ConversationCapture.swift` subiu de 1 para 2: é o poll do crescimento da transcrição do Cursor, que não tem evento para esperar.
+### Changed
+- In "Trilho", the **Pasture** ("Pasto": terminals and panels without a paddock) is no longer a fixed paddock: it shows only while it holds something, when it is the selection, or when there is no paddock; empty and selected, the app moves to the first paddock. "Compacta" keeps the "Pasto" chip.
+- The lint baseline for `sleep` in `ConversationCapture.swift` went from 1 to 2: it is the poll for the growth of the Cursor transcript, which has no event to wait for.
 
-### Corrigido
-- Curador: o perfil de sandbox do Claude deixa o `dyld` iniciar, mantém o diretório temporário dentro do perfil e deixa ler o link com que foi iniciado; o Claude sempre recebe `USER`, mesmo quando a captura do ambiente falha.
-- Memória: uma transcrição do Cursor que aparece depois do `sessionStart` é encontrada na captura.
+### Fixed
+- Curator: Claude's sandbox profile lets `dyld` start, keeps the temporary directory inside the profile and allows reading the link it was started by; Claude always gets `USER`, even when capturing the environment fails.
+- Memory: a Cursor transcript that appears after `sessionStart` is found by the capture.
 
 ## [0.1.6] — 2026-11-19
 
-### Adicionado
-- **Laços sem cartão por cercado:** o cartão do laço ganha "Sempre neste cercado"; depois disso os laços daquele cercado começam sem cartão e o Pastor recebe só um aviso. Nova página **Laços** nas Preferências, com **Revogar**.
-- **Laço mais confiável:** `collie work run --gate "<cmd>"` roda um portão (lint, build) depois do check de cada tarefa; o laço falha a tentativa que reescreve um script que o portão executa (salvo o que o spec da tarefa cita); registra e mostra a **evidência** de cada tarefa aprovada; espera outro terminal do mesmo worktree em vez de parar; avisa o Pastor ao fim de cada tarefa; mostra no status o que está fazendo (agente, check ou portão) e os números do laço (tentativas, commits revertidos).
-- **Memória que vira regra:** uma armadilha ou decisão pode ser imposta por um check (`enforcedBy`, `memory enforce`); armadilhas recorrentes sem check aparecem como candidatas; item imposto sai da injeção, do TTL e da contagem de mortas; se o check some, a memória volta à injeção.
-- **Mapa de funcionalidades** (`docs/feature-map.md`) e a regra de lint `feature-map`.
-- **CI:** `ci.yml` (lint, arquitetura, build e testes em PRs e na `main`), `check-architecture.sh` (fronteiras entre módulos; módulos-base não importam Cocoa, Carbon, Quartz, PDFKit nem SwiftUI) e um lint de catraca para `sleep`, escapes de concorrência e casts forçados.
+### Added
+- **Loops without a card, per paddock:** the loop card gains "Sempre neste cercado"; after that, loops of that paddock start without a card and the Shepherd only gets a notice. New **"Laços"** page in Preferences, with **"Revogar"**.
+- **A more reliable loop:** `collie work run --gate "<cmd>"` runs a gate (lint, build) after each task's check; the loop fails the attempt that rewrites a script the gate runs (except what the task's spec names); it records and shows the **evidence** of each task that passed; it waits for another terminal of the same worktree instead of stopping; it notifies the Shepherd at the end of each task; the status shows what it is doing (agent, check or gate) and the loop's numbers (attempts, reverted commits).
+- **Memory that becomes a rule:** a pitfall or a decision can be enforced by a check (`enforcedBy`, `memory enforce`); recurring pitfalls without a check show up as candidates; an enforced item leaves the injection, the TTL and the count of dead memories; if the check disappears, the memory returns to the injection.
+- **Feature map** (`docs/feature-map.md`) and the `feature-map` lint rule.
+- **CI:** `ci.yml` (lint, architecture, build and tests on PRs and on `main`), `check-architecture.sh` (module boundaries; base modules import neither Cocoa, Carbon, Quartz, PDFKit nor SwiftUI) and a ratchet lint for `sleep`, concurrency escapes and forced casts.
 
-### Corrigido
-- O laço não espera mais o Pastor ficar ocioso para seguir.
-- `collied` não cai mais quando o terminal some durante `noteModel`.
-- Memória: um check que sumiu não grava marca de "desatualizada"; só armadilhas verificadas viram candidatas.
-- O pacote declara `CollieCore` como dependência direta de `collie` e `collied`.
+### Fixed
+- The loop no longer waits for the Shepherd to be idle before going on.
+- `collied` no longer crashes when the terminal goes away during `noteModel`.
+- Memory: a check that disappeared does not write an "outdated" mark; only verified pitfalls become candidates.
+- The package declares `CollieCore` as a direct dependency of `collie` and `collied`.
 
 ## [0.1.5] — 2026-11-18
 
-### Adicionado
-- **Curador com provedor à escolha:** novo provedor **Cursor** (isolado e sem ferramentas); em Preferências › Memória o usuário escolhe o provedor, dá o consentimento e testa.
+### Added
+- **Curator with a provider of your choice:** new **Cursor** provider (isolated and without tools); in Preferences › "Memória" the user picks the provider, gives consent and tests it.
 
-### Corrigido
-- Curador: valida o id do modelo; o Cursor sempre roda com sandbox em produção; nunca segue um link plantado na home do Cursor; o perfil do Cursor executa as ferramentas reais e só a porta 443; distingue ambiente do usuário não capturado de `claude` ausente e procura o `claude` em diretórios conhecidos quando o ambiente não tem `PATH`.
+### Fixed
+- Curator: validates the model id; Cursor always runs sandboxed in production; it never follows a link planted in Cursor's home; Cursor's profile runs the real tools and only port 443; it tells a user environment that was not captured from a missing `claude`, and looks for `claude` in known directories when the environment has no `PATH`.
 
 ## [0.1.4] — 2026-11-18
 
-### Adicionado
-- **Laços sem supervisão:** `collie work run` / `work stop`, motor do laço (agente novo por tentativa, o check de cada tarefa decide), spec e check por tarefa, cartão de aprovação no app com limites rígidos, `/collie:loop` para terminais Claude e Cursor, e o estado do laço com ação de parar no painel Trabalho.
-- **Medição da memória:** métrica de precisão ao lado da cobertura, uso com evidência (citação do turno, `memory.get`, `--useful`), estatísticas por agente e obediência a `ask`, TTL provisório por tipo e índice de início de sessão por uso, com teto para memórias fixadas.
-- **Memória para Cursor e Codex:** `memory.task` (puxada por tarefa, para agentes sem hook de prompt), `sessionStart` focado e limitado para o Cursor, perfil do MCP e selo de memória nos cartões do Cursor, com preferência e **Confiar** em Preferências › Memória.
-- **Deriva de mapa:** memórias de mapa cujo arquivo mudou desde a âncora são contestadas, e o curador recebe o fato verificado.
-- **Curador:** provedores atrás de uma interface única, perfil de sandbox próprio (nega por padrão), pausa por saída ruim, resultados de job, e um livro de proveniência fora dos arquivos de memória; registros trazem quem os curou.
-- **Rede:** o pacote de confiança do macOS vai para o `mitmdump` em toda partida e a CA de upstream respeita a configuração do mitmproxy do usuário.
+### Added
+- **Unattended loops:** `collie work run` / `work stop`, the loop engine (a fresh agent per attempt, each task's check decides), a spec and a check per task, an approval card in the app with hard limits, `/collie:loop` for Claude and Cursor terminals, and the loop's state with a stop action in the "Trabalho" panel.
+- **Memory measurement:** a precision metric next to coverage, use with evidence (a quote from the turn, `memory.get`, `--useful`), statistics per agent and obedience to `ask`, a provisional TTL per kind, and a session-start index ordered by use, with a ceiling for pinned memories.
+- **Memory for Cursor and Codex:** `memory.task` (pulled per task, for agents without a prompt hook), a focused and bounded `sessionStart` for Cursor, the MCP profile and a memory badge on Cursor cards, with a preference and **"Confiar"** in Preferences › "Memória".
+- **Map drift:** map memories whose file changed since the anchor are contested, and the curator receives the verified fact.
+- **Curator:** providers behind a single interface, its own sandbox profile (deny by default), a pause on bad output, job results, and a provenance ledger outside the memory files; records say who curated them.
+- **Network:** the macOS trust bundle goes to `mitmdump` on every start, and the upstream CA respects the user's mitmproxy configuration.
 
-### Segurança
-- O laço nunca roda check nem `git` sem sandbox, nunca desfaz trabalho alheio nem sobrevive aos seus agentes, esconde segredos nas notas, e o cartão de aprovação mostra todas as tarefas de forma inforjável; um laço por cercado mesmo sob `work run` concorrente.
-- Memória injetada é rotulada como dado, escapada e limpa; só memória escrita pelo daemon entra por inteiro ou como regra do usuário; veredictos do curador falham fechado; um ledger de proveniência corrompido não adota nada.
-- O `git` do daemon não usa busca preguiçosa nem o transporte `ext`.
+### Security
+- The loop never runs a check or `git` without the sandbox, never undoes someone else's work nor outlives its agents, hides secrets in notes, and the approval card shows every task in a way that cannot be forged; one loop per paddock even under concurrent `work run`.
+- Injected memory is labelled as data, escaped and cleaned; only memory written by the daemon enters in full or as a user rule; curator verdicts fail closed; a corrupted provenance ledger adopts nothing.
+- The daemon's `git` uses neither lazy fetch nor the `ext` transport.
 
-### Corrigido
-- Um filho que expira e morre no SIGTERM não trava mais; `adb root` recusado nomeia a causa; leituras de arquivo de mapa interrompidas por sinal são repetidas; âncoras de mapa por loja, sem vaivém entre Pasto e worktree.
+### Fixed
+- A child that times out and dies on SIGTERM no longer hangs; a refused `adb root` names the cause; map file reads interrupted by a signal are retried; map anchors are per store, with no back and forth between the Pasture and the worktree.
 
 ## [0.1.3] — 2026-11-17
 
-### Alterado
-- A detecção de "não é admin" virou um aviso único, não uma etiqueta vermelha; a etiqueta de detecção diz o motivo e como corrigir, e o vigia do sandbox explica por que a detecção está desligada.
+### Changed
+- The "not an admin" detection became a single notice, not a red label; the detection label says why and how to fix it, and the sandbox watcher explains why detection is off.
 
 ## [0.1.2] — 2026-11-17
 
-### Adicionado
-- **Atualizador automático:** o daemon confere o manifesto de releases, prepara o dmg, e o app troca o bundle de forma verificada, guarda o anterior e reabre. Nova página **Atualizações** e folha de instalação; comandos `app.update` (admin).
-- O sandbox nega escritas ao irmão de atualização; download com limite de bytes e caminhos de release do Collie.
-- O Pastor delega com `collie summon`, não com subagentes próprios.
-- Comandos que um daemon antigo não conhece respondem "reinicie o serviço para usar isto".
+### Added
+- **Automatic updater:** the daemon checks the release manifest and prepares the dmg, and the app swaps the bundle in a verified way, keeps the previous one and reopens. New **"Atualizações"** page and an install sheet; `app.update` commands (admin).
+- The sandbox denies writes to the update sibling; downloads have a byte limit and Collie release paths.
+- The Shepherd delegates with `collie summon`, not with its own subagents.
+- Commands an older daemon does not know answer "restart the service to use this".
 
 ## [0.1.1] — 2026-11-16
 
-### Adicionado
-- **Motor do Design (figcraft) como plug-in baixável:** o app e o daemon baixam, verificam e instalam o motor (pin e resolução de versão), com comandos `design.engine` (admin) e CLI; o painel Design oferece o download; Preferências abre na página que o painel pede.
-- Release: notarização por chave de API, espera com polling e versão forçada.
+### Added
+- **Design engine (figcraft) as a downloadable plug-in:** the app and the daemon download, verify and install the engine (version pin and resolution), with `design.engine` commands (admin) and a CLI; the Design panel offers the download; Preferences open on the page the panel asks for.
+- Release: notarization with an API key, a polling wait and a forced version.
 
-### Corrigido
-- CI: tolera "already exists" ao importar o keychain e exige a identidade de assinatura.
+### Fixed
+- CI: tolerates "already exists" when importing the keychain and requires the signing identity.
 
 ## [0.1.0] — 2026-11-16
 
-Primeira versão pública (antes o projeto se chamava Orq).
+First public version (the project was previously called Orq).
 
-### Adicionado
-- **Canvas** com terminais de agentes (Claude, Codex, Cursor), guias entre eles e **cercados** (worktrees git ou pastas); tela cheia por janela.
-- **Painéis:** Navegador (dirigido pelo agente), Dispositivo (Android via adb/scrcpy, Simulador iOS via AXe), Design, Design Systems, Diagrama (draw.io), Prévia de páginas HTML com comentários, Artifacts, Rede (mapeamento local de respostas) e Trabalho.
-- **Memória** em três escopos (global, projeto e lote), injetada no prompt dos agentes.
-- **Rebanhos** (equipes prontas de terminais e painéis) e **Lotes** (agrupamento de terminais por esforço).
-- **Sandbox** (Seatbelt) em todo terminal, modo aberto (padrão) ou estrito, com cartões de acesso.
-- **Comunicação entre agentes:** `collie ask`/`reply` com remetente verificado, `summon`, `wait`.
-- **Apps do cercado** com aprovação e eventos.
-- **Preferências** com barra lateral e busca (Aparência, Terminal e fontes, Desenho e sandbox, Memória, Plug-ins, Celular, Android).
-- Release assinado com Developer ID e notarizado (dmg).
+### Added
+- **Canvas** with agent terminals (Claude, Codex, Cursor), leashes between them and **paddocks** (git worktrees or folders); full screen per window.
+- **Panels:** Browser (driven by the agent), Device (Android via adb/scrcpy, iOS Simulator via AXe), Design, Design Systems, Diagram (draw.io), Preview of HTML pages with comments, Artifacts, Network (local response mapping) and Work.
+- **Memory** in three scopes (global, project and lot), injected into the agents' prompt.
+- **Herds** (ready-made teams of terminals and panels) and **Lots** (grouping terminals by effort).
+- **Sandbox** (Seatbelt) on every terminal, open (default) or strict mode, with access cards.
+- **Communication between agents:** `collie ask`/`reply` with a verified sender, `summon`, `wait`.
+- **Paddock apps** with approval and events.
+- **Preferences** with a sidebar and search (Appearance, Terminal and fonts, Design and sandbox, Memory, Plug-ins, Phone, Android).
+- Release signed with Developer ID and notarized (dmg).

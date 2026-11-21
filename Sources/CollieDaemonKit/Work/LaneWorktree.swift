@@ -265,6 +265,8 @@ enum LaneWorktree {
               let c = try? await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: root, host) else { return out }
         let owner = await host.laneOwner(), common = URL(fileURLWithPath: c)
         for lane in lanes {
+            // M3c.3: a folder that is not the lane's own (a symlink: its mark would be read through the link) is refused first
+            if lexists(lane.path), !ownsPath(lane.path, repoRoot: root) { out.refused.append(lane); continue }
             guard !owner.isEmpty, isMarked(lane, owner: owner, common: common, work: work) else { out.spared.append(lane); continue }
             if (try? await remove(lane, host: host)) != nil { out.removed.append(lane) } else { out.refused.append(lane) }
         }

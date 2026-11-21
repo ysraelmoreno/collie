@@ -79,7 +79,8 @@ private func snapshot(_ dir: URL) -> [String: Data] {
         #expect(try await hasBranch(y.branch, repo))
         let swept = await LaneWorktree.sweep(await LaneWorktree.lanes(of: wx, repoRoot: repo, host: host), host: host) { $0 == wx }
         #expect(swept.removed.isEmpty && swept.refused.map(\.branch) == [x.branch])
-        #expect(exists(y.path.appendingPathComponent("f.txt")) && (try await hasBranch(y.branch, repo)))
+        let yBranch = try await hasBranch(y.branch, repo)
+        #expect(exists(y.path.appendingPathComponent("f.txt")) && yBranch)
         // Y itself still goes the normal way
         try await LaneWorktree.remove(y, host: host)
         #expect(!exists(y.path))
@@ -92,18 +93,18 @@ private func snapshot(_ dir: URL) -> [String: Data] {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("collie-pgid-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let fifo = dir.appendingPathComponent("pids")
-        #expect(mkfifo(fifo.path, 0o600) == 0)
-        // the child holds stdout/stderr open forever; the leader says both pids, then exits
-        let script = "tail -f /dev/null & echo \"$$ $!\" > \"$1\"; exit 0"
+        let file = dir.appendingPathComponent("pids")
+        // the child holds stdout/stderr open forever; the leader says both pids (whole, by a rename), then exits
+        let script = "tail -f /dev/null & echo \"$$ $!\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"; exit 0"
         let run = Task {
             try await BoundedProcess.$killOnCancel.withValue(true) {
-                try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/sh"), args: ["-c", script, "sh", fifo.path],
+                try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/sh"), args: ["-c", script, "sh", file.path],
                                              in: dir, env: ["PATH": "/usr/bin:/bin"], timeout: .seconds(120))
             }
         }
-        // blocks until the leader opens the fifo for writing
-        let line = try await Task.detached { try String(contentsOf: fifo, encoding: .utf8) }.value
+        // no sleep: the test yields until the leader has written (a FIFO is closed to a sandboxed check)
+        var line = ""
+        while line.isEmpty { line = (try? String(contentsOf: file, encoding: .utf8)) ?? ""; await Task.yield() }
         let pids = line.split(whereSeparator: \.isWhitespace).compactMap { pid_t(String($0)) }
         #expect(pids.count == 2)
         guard pids.count == 2 else { run.cancel(); return }

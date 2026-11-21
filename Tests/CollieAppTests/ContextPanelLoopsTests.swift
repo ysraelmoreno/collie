@@ -33,8 +33,12 @@ private func work(_ state: WorkLoopState.State? = .running, paddock: UUID? = pad
         #expect(titles(work(), paddock: nil) == before)        // the Pasto
     }
 
-    @Test func sectionComesBelowLotesWithTheCount() {
-        #expect(titles(work()) == before + ["LAÇOS · 1/4"])
+    /// M8.2: the bare header below Lotes; the count is in the card.
+    @Test func sectionComesBelowLotesAsACard() {
+        #expect(titles(work()) == before + ["LAÇOS"])
+        let c = LoopCard.make(work: work(), paddock: pad)
+        #expect(c?.progressText == "1/4" && c?.statusText == "tentativa 2 · agente trabalhando")
+        #expect(LoopCard.make(work: work(.finished), paddock: pad) == nil)
     }
 
     @Test func rowsKeepTaskOrderWithStateAndTries() {

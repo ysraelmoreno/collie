@@ -34,6 +34,8 @@ import CollieTheme
     var onOpenHistory: (String) -> Void = { _ in }
     /// The short warning the HISTÓRICO section shows when a detail could not be opened.
     var historyNotice: () -> String? = { nil }
+    /// M8.2: "Ver tudo" (or the card) of LAÇOS: the Laços modal on that tab. Empty until M8.3 opens the modal.
+    var onOpenLoops: (LoopsTab) -> Void = { _ in }
 }
 
 /// The window frame around `content` (docks + canvas). Compacta adds nothing here (its bar floats over the canvas,

@@ -43,8 +43,8 @@ struct LoopSection: Equatable {
     var rows: [TaskRow]
     var header: Header?
 
-    /// "LAÇOS · 1/4" (done over taken).
-    var title: String { "LAÇOS · " + (header?.progress ?? "0/0") }
+    /// M8.2: the bare header; the count lives in the card (`LoopCard.progressText`).
+    var title: String { "LAÇOS" }
 
     /// The terminal of the attempt a row stands for: the newest loop job of `work` that ran that task's title and
     /// recorded a terminal still in `alive`; nil when it is gone (the click then does nothing).
@@ -85,6 +85,44 @@ struct LoopSection: Equatable {
     private static func hourMinute(_ d: Date, _ tz: TimeZone) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = tz; f.dateFormat = "HH:mm"
         return f.string(from: d)
+    }
+}
+
+/// The tab the "Laços" modal (M8.3) opens on.
+enum LoopsTab: Equatable { case running, history }
+
+/// M8.2: the Trilho LAÇOS card: the work's title, done over taken with a thin bar, and the line of the attempt under way
+/// and the phase in words. Pure: built from the same `Work` as `LoopSection`; nil whenever that section is hidden.
+struct LoopCard: Equatable {
+    var title: String
+    var done: Int
+    var total: Int
+    /// The attempt of the running task (`TaskRow.attempt`); nil when no task runs right now.
+    var attempt: Int?
+    /// "agente trabalhando", "check rodando", "portão rodando", "preparando".
+    var phase: String
+
+    var progressText: String { "\(done)/\(total)" }
+    /// The bar's fill, 0...1; 0 with no task (never divides by zero).
+    var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
+    /// "tentativa 2 · check rodando".
+    var statusText: String { [attempt.map { "tentativa \($0)" }, phase].compactMap { $0 }.joined(separator: " · ") }
+    /// "laço T, 3 de 5 feitas, tentativa 2, check rodando".
+    var accessibilityLabel: String {
+        ["laço \(title)", "\(done) de \(total) feitas", attempt.map { "tentativa \($0)" }, phase].compactMap { $0 }.joined(separator: ", ")
+    }
+
+    static func make(work: Work?, paddock: UUID?) -> LoopCard? {
+        let s = LoopSection.make(work: work, paddock: paddock)
+        guard s.visible, let w = work, let loop = w.loop else { return nil }
+        let phase = switch loop.phase {
+        case .agent?: "agente trabalhando"
+        case .check?: "check rodando"
+        case .gate?: "portão rodando"
+        case nil: "preparando"
+        }
+        return LoopCard(title: w.title, done: s.rows.filter { $0.state == .done }.count, total: s.rows.count,
+                        attempt: s.rows.first { $0.state == .running }?.attempt, phase: phase)
     }
 }
 

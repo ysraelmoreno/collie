@@ -16,6 +16,7 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ### Fixed
 - The full-screen button (and the other controls of a terminal's title bar) did nothing on the canvas at any zoom other than 100%.
+- Parallel loop lanes no longer raise sandbox access cards (granting one restarted the lane's agent mid-attempt); the denials stay, they are just not asked about.
 
 ## [0.1.8] — 2026-11-21
 

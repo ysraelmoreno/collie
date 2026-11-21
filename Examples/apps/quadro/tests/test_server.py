@@ -23,7 +23,8 @@ class Running(object):
         self.store = Store(data_dir)
         self.httpd = server.serve(self.store, port=0, ping=ping)
         self.port = self.httpd.port
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05},
+                                       daemon=True)
         self.thread.start()
 
     def stop(self):

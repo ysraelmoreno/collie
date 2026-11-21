@@ -30,9 +30,10 @@ enum UsageLimit {
         return one.count <= excerptMax ? one : String(one.prefix(excerptMax - 1)) + "…"
     }
 
-    private static let menu = /(?i)(\d+\.\s*)?stop and wait for limit to reset/
-    private static let limit = /(?i)hit your .*limit|usage limit|limit reached/
-    private static let csi = /\x{1B}\[[0-9;?]*[ -\/]*[@-~]/
+    // computed: `Regex` is not Sendable
+    private static var menu: Regex<(Substring, Substring?)> { /(?i)(\d+\.\s*)?stop and wait for limit to reset/ }
+    private static var limit: Regex<Substring> { /(?i)hit your .*limit|usage limit|limit reached/ }
+    private static var csi: Regex<Substring> { /\x{1B}\[[0-9;?]*[ -\/]*[@-~]/ }
     /// Box borders and the menu's cursor around a line.
     private static func trimmed(_ s: String) -> String { s.trimmingCharacters(in: CharacterSet(charactersIn: " \t│┃|❯›⎿")) }
     /// What may follow the menu's option in the dialog: other options, its hints, borders.

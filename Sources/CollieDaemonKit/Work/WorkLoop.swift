@@ -648,7 +648,7 @@ actor WorkLoop {
         let host = host, poll = poll
         return await withTaskGroup(of: AttemptMachine.Event?.self) { g in
             g.addTask {
-                do { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: timeout)) }
+                do throws(ProtocolError) { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: timeout)) }
                 catch where error.code == .timeout { return .turnTimedOut }
                 catch { return .turnFailed(error.message) }
             }

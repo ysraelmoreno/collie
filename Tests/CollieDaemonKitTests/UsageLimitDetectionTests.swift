@@ -86,7 +86,8 @@ private let prose = [
         #expect(w.loop?.used == 0)
         #expect(t.state == .open && t.tries == nil && t.lastFailure == nil, "\(t)")
         #expect(w.tasks[1].state == .open)
-        #expect(await r.host.summoned == ["w-task-a-t1"] && r.host.dismissed == ["w-task-a-t1"])
+        #expect(await r.host.summoned == ["w-task-a-t1"])
+        #expect(await r.host.dismissed == ["w-task-a-t1"])
         #expect(await r.host.checks == 0)
         // nothing discarded: the agent's file is still there, no patch, no discarded event
         #expect(FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("wip.txt").path))

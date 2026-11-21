@@ -38,7 +38,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// The default workspace's id (for plugin storage), read once connected.
     public private(set) var workspaceId: UUID?
     /// The paddock the canvas shows (nil = pasture). View state; the app persists it.
-    public var currentPaddock: UUID?
+    public var currentPaddock: UUID? { didSet { if oldValue != currentPaddock { followWork() } } }
+    /// The current paddock's active work (loop included) and last closed works, kept by `work.wait`.
+    @ObservationIgnored public let workFeed = WorkFeed()
 
     /// Called (main actor) when a terminal starts waiting for the user: id and reason.
     @ObservationIgnored public var onAttention: ((UUID, String) -> Void)?
@@ -70,7 +72,15 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     @ObservationIgnored private var generation = 0
     @ObservationIgnored var openEventStreams = 0   // diagnostics/tests
 
-    public init(paths: Paths = Paths()) { self.paths = paths }
+    public init(paths: Paths = Paths()) {
+        self.paths = paths
+        workFeed.call = { [weak self] command, args, timeout in
+            guard let self else { throw ProtocolError(code: .daemonUnavailable, message: "no client") }
+            return try await self.adminCall(command, args, timeout: timeout)
+        }
+        workFeed.terminalName = { [weak self] id in self?.terminals.first { $0.id == id }?.name }
+    }
+    private func followWork() { workFeed.follow(paddock: currentPaddock, name: currentPaddockName) }
 
     /// Connects, mirrors `ui.events`, and reconnects with backoff 0.25 s → 2 s (each attempt re-reads admin.token).
     public func start() {
@@ -156,6 +166,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             if let c = currentPaddock, !paddocks.contains(where: { $0.id == c }) { currentPaddock = nil }   // deleted while away
             badges = Dictionary(uniqueKeysWithValues: snap.badges.compactMap { k, v in UUID(uuidString: k).map { ($0, v) } })
             state = .connected
+            followWork()
             onConnected()
             await refreshAccess()
             for await f in Self.frames(of: ev) {

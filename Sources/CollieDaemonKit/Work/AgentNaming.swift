@@ -51,6 +51,17 @@ enum AgentNaming {
             && ["already exists", "is the name of panel", "already being launched"].contains { e.message.contains($0) }
     }
 
+    /// M11.3: the `.build/<dir>` a terminal in a shared folder is told to build in (`--scratch-path`). An attempt's
+    /// terminal (`<work>-<task>[-f<lane>]-t<n>`) gets `laco-<work>-<task>[-f<lane>]`: the attempt is dropped, so attempt 2
+    /// reuses attempt 1's build; the lane stays, so two live lanes never share a folder (SwiftPM's lock). Any other
+    /// name is as before: its first `max` characters, anything not a letter or digit a `-`. Never a `/`, `..` or space.
+    static func buildDir(_ terminal: String, max: Int) -> String {
+        let plain = String(terminal.prefix(max).map { $0.isLetter || $0.isNumber ? $0 : "-" })
+        guard let m = terminal.wholeMatch(of: #/([a-z0-9]+(?:-[a-z0-9]+)+?)(-f\d+)?-t\d+/#) else { return plain }
+        let lane = String(m.2 ?? ""), head = "laco-" + m.1
+        return trim(trim(String(head.prefix(Swift.max(0, max - lane.count)))) + lane)
+    }
+
     /// Lowercase ASCII with no accents; anything out of `[a-z0-9]` is a `-`, runs of `-` are one, none at the ends.
     static func slug(_ s: String) -> String {
         let plain = s.folding(options: [.diacriticInsensitive, .caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))

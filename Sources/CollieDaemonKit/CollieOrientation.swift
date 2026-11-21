@@ -161,7 +161,7 @@ enum CollieOrientation {
             : "- Sandboxed: reads open (not secrets), writes in project only; blocked write = user card; don't work around it: collie access request <path> --write --reason \"…\". collie open <url|app>.")
         // DX backlog 11: another live terminal in this folder: its edits land mid-build and its WIP in a `git add`
         if !sharedFolder.isEmpty {
-            let own = String(terminal.prefix(maxName).map { $0.isLetter || $0.isNumber ? $0 : "-" })
+            let own = AgentNaming.buildDir(terminal, max: maxName)   // M11.3: an attempt's is stable across its loop's attempts
             lines.append(tight ? "- Shared folder: own build dir; git diff <file> before add; verify in git worktree add --detach <tmp> HEAD."
                 : "- Shared folder (\(names(sharedFolder))): build in .build/\(own) (--scratch-path); git add only your hunks (git diff <file>); verify: git worktree add --detach <tmp> HEAD, swift test --filter …, git worktree remove <tmp>.")
         }

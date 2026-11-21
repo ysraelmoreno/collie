@@ -10,7 +10,7 @@ private let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent(
 
 /// Command line for a fake agent; prints its own token first so the test can authenticate as it.
 private func fakeAgent(hook: Bool) -> String {
-    "echo T=$COLLIE_TOKEN; \(hook ? "COLLIE_FAKE_HOOK=1 " : "")exec sh '\(fixture)'"
+    "echo T=$COLLIE_TOKEN; COLLIE_FAKE_THINK=0.1 \(hook ? "COLLIE_FAKE_HOOK=1 " : "")exec sh '\(fixture)'"
 }
 
 private struct Term { var id: String; var token: String }
@@ -28,12 +28,12 @@ private func connect(_ d: Daemon, _ p: Paths, _ a: String, _ b: String) async th
     #expect(r.ok)
 }
 
-private func ask(_ p: Paths, _ from: Term, _ target: String, _ prompt: String, timeout: Int? = nil) async throws -> Response {
+private func ask(_ p: Paths, _ from: Term, _ target: String, _ prompt: String, timeout: Double? = nil) async throws -> Response {
     var args: [String: JSONValue] = ["target": .string(target), "prompt": .string(prompt)]
-    if let timeout { args["timeout"] = .number(Double(timeout)) }
+    if let timeout { args["timeout"] = .number(timeout) }
     // client waits past the daemon's own timeout so the typed .timeout (not the socket's) is what tests see
     return try await send(p, Request(id: "a", terminalId: from.id, token: from.token, command: "ask", args: args),
-                          timeoutSeconds: Double(timeout ?? 5) + 10)
+                          timeoutSeconds: (timeout ?? 5) + 10)
 }
 
 /// The fake agent echoes what it was typed: an agent's ask now starts with the sender prefix (agent-comms Task 2).
@@ -90,14 +90,39 @@ private func hookWatcher(_ d: Daemon, _ p: Paths, _ t: Term, delivered: Delivere
 
 /// Tests about the hook path: the idle fallback (2 s quiet in production) races the test's hook round trip
 /// (scrollback poll + socket), which a loaded machine can stretch past 2 s. 15 s takes idle out of that race.
+/// M11.1: a reply waits `replyQuiet` for its asker to be quiet (production 2 s), here 0.5 s.
+private let replyQuiet = 0.5
 private func withHookDaemon(_ body: (Daemon, Paths) async throws -> Void) async throws {
-    try await withDaemon(configure: { $0.idleQuietSeconds = 15 }, body)
+    try await withDaemon(configure: { c in
+        c.idleQuietSeconds = 15; c.askReplyQuiet = .seconds(replyQuiet); c.askReadyQuiet = .milliseconds(100); shortTimeouts(&c)
+    }, body)
+}
+
+/// M11.1: the shift tests' clock at 0.3 of the production idle window (2 s → 0.6 s). Every duration of those tests is
+/// this `idle` times the factor production had (hook delay 1.5×, think 0.25×), so the races they set up keep their
+/// proportions; only the wall time shrinks.
+private let idle = 0.6
+private func shiftDaemon(heldMax: Double? = nil, _ body: (Daemon, Paths) async throws -> Void) async throws {
+    try await withDaemon(configure: { c in
+        c.idleQuietSeconds = idle; c.askReadyQuiet = .milliseconds(100); shortTimeouts(&c)
+        if let heldMax { c.heldMaxSeconds = heldMax }
+    }, body)
+}
+/// Fake agent env for the shift tests: think `0.25 × idle`, plus `extra`.
+private func scaledAgent(_ extra: String) -> String {
+    "echo T=$COLLIE_TOKEN; COLLIE_FAKE_THINK=\(idle * 0.25) \(extra) exec sh '\(fixture)'"
+}
+/// Lets a test ask for a sub-second turn timeout (production floor: 1 s, `AskLimits.minTimeoutSeconds`).
+private func shortTimeouts(_ c: inout DaemonConfig) { c.askMinTimeoutSeconds = 0.1 }
+/// Idle-fallback tests: a short idle window (the rule is the same, see AskClockTests).
+private func withFastIdleDaemon(_ body: (Daemon, Paths) async throws -> Void) async throws {
+    try await withDaemon(configure: { $0.idleQuietSeconds = 0.5; $0.askReadyQuiet = .milliseconds(100) }, body)
 }
 
 /// `ask --no-wait`: the ask id from the immediate reply.
-private func askNoWait(_ p: Paths, _ from: Term, _ target: String, _ prompt: String, timeout: Int? = nil) async throws -> (id: String, resp: Response) {
+private func askNoWait(_ p: Paths, _ from: Term, _ target: String, _ prompt: String, timeout: Double? = nil) async throws -> (id: String, resp: Response) {
     var args: [String: JSONValue] = ["target": .string(target), "prompt": .string(prompt), "no-wait": .bool(true)]
-    if let timeout { args["timeout"] = .number(Double(timeout)) }
+    if let timeout { args["timeout"] = .number(timeout) }
     let r = try await send(p, Request(id: "nw", terminalId: from.id, token: from.token, command: "ask", args: args))
     guard case .object(let o)? = r.result, case .string(let id)? = o["askId"] else { return ("", r) }
     return (id, r)
@@ -122,7 +147,11 @@ private func hook(_ d: Daemon, _ p: Paths, _ t: Term, _ message: String) async t
 private let quietAgent = "echo T=$COLLIE_TOKEN; exec cat >/dev/null"
 private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
 
-@Suite(.serialized) struct AskTests {
+/// M11.1: four serial tracks that run beside each other. Within a track the cases run one at a time, as the whole
+/// suite did before; the tracks share no daemon, so the suite's time is its longest track, not the sum.
+@Suite struct AskTests {
+    /// Spawn-to-answer basics, one at a time.
+    @Suite(.serialized) struct Spawn {
     @Test func askViaHook() async throws {
         try await withHookDaemon { d, p in
             let a = try await term(d, p, "A")
@@ -175,20 +204,23 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
         }
     }
 
-    /// Hook arrives 3 s after the answer, past the 2 s idle window: turn 1 always completes by idle, and its
+    }
+
+    /// The hook-vs-idle races (late hooks, lost hooks, held caps): the most timing-sensitive cases, one at a time.
+    @Suite(.serialized) struct Shift {
+    /// Hook arrives 1.5 idle windows after the answer: turn 1 always completes by idle, and its
     /// late hook must not complete ask 2 (which would shift every later answer by one turn).
-    /// 3 s, not more: ask 2 is injected when idle fires (answer + 2 s) and its echo alone would idle-complete
-    /// it 2 s later (answer + 4 s), so turn 1's hook must land before that. 3 s leaves 1 s margin both ways.
+    /// 1.5×, not more: ask 2 is injected when idle fires (answer + idle) and its echo alone would idle-complete
+    /// it one idle later (answer + 2 idle), so turn 1's hook must land before that: half an idle margin both ways.
     @Test func hookCapableTerminalNeverShiftsAnswers() async throws {
-        try await withDaemon { d, p in
+        try await shiftDaemon { d, p in
             let a = try await term(d, p, "A")
-            let b = try await term(d, p, "B", preset: "custom",
-                                   command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_DELAY=3 exec sh '\(fixture)'")
+            let b = try await term(d, p, "B", preset: "custom", command: scaledAgent("COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_DELAY=\(idle * 1.5)"))
             try await connect(d, p, "A", "B")
             let w = hookWatcher(d, p, b); defer { w.cancel() }
             for n in 1...5 {
                 let prompt = "q\(n)-\(UUID().uuidString.prefix(6))"
-                // a turn takes ~3.5 s; ask 2 also waits ~1 s for turn 1's hook. 20 s: room for a loaded machine
+                // a turn takes ~1.75 idle; ask 2 also waits ~0.5 idle for turn 1's hook. 20 s: room for a loaded machine
                 let res = result(try await ask(p, a, "B", prompt, timeout: 20))
                 if n == 1 {
                     #expect(res.source == "idle", "ask 1 must exercise the swallow path: \(res)")
@@ -206,16 +238,15 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     /// An ask that times out while its turn is still running must not hand that turn's late hook to the
     /// next ask (every later answer would be shifted by one turn).
     @Test func timedOutTurnDoesNotShiftNextAnswer() async throws {
-        try await withDaemon { d, p in
+        try await shiftDaemon { d, p in
             let a = try await term(d, p, "A")
-            let b = try await term(d, p, "B", preset: "custom",
-                                   command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_DELAY=3 exec sh '\(fixture)'")
+            let b = try await term(d, p, "B", preset: "custom", command: scaledAgent("COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_DELAY=\(idle * 1.5)"))
             try await connect(d, p, "A", "B")
             let w = hookWatcher(d, p, b); defer { w.cancel() }
             _ = try await ask(p, a, "B", "warm", timeout: 20)           // idle-completed; latches hookCapable later
-            let slow = try await ask(p, a, "B", "slow", timeout: 1)     // turn takes ~3.5 s
+            let slow = try await ask(p, a, "B", "slow", timeout: idle / 2)   // turn takes ~1.75 idle
             #expect(slow.error?.code == .timeout, "\(slow)")
-            // waits out the slow turn's late hook (~3 s) plus its own ~3.5 s turn: 20 s leaves room for load
+            // waits out the slow turn's late hook (~1.5 idle) plus its own ~1.75 idle turn: 20 s leaves room for load
             let next = result(try await ask(p, a, "B", "next", timeout: 20))
             #expect(next.output == "answer:next", "\(next)")
         }
@@ -224,10 +255,9 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     /// A turn whose hook never comes (interrupted) is held until the cap; afterwards later asks still get their
     /// own answers — the expired turn costs at most one ask, never a chain.
     @Test func heldCapExpiryCostsAtMostOneAsk() async throws {
-        try await withDaemon(configure: { $0.heldMaxSeconds = 2 }) { d, p in
+        try await shiftDaemon(heldMax: idle / 2) { d, p in
             let a = try await term(d, p, "A")
-            let b = try await term(d, p, "B", preset: "custom",
-                                   command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_SKIP=2 exec sh '\(fixture)'")
+            let b = try await term(d, p, "B", preset: "custom", command: scaledAgent("COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_SKIP=2"))
             try await connect(d, p, "A", "B")
             let hooks = Delivered()
             let w = hookWatcher(d, p, b, delivered: hooks); defer { w.cancel() }
@@ -236,11 +266,11 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
             let q1 = result(try await ask(p, a, "B", "q1", timeout: 20))
             #expect(q1.output.split(whereSeparator: \.isNewline).last == "answer:q1", "\(q1)")
             #expect(await waitFor(20) { hooks.count >= 1 })
-            #expect(try await ask(p, a, "B", "q2", timeout: 1).error?.code == .timeout)   // hook lost: held, then cap
-            try await Task.sleep(for: .seconds(2.5))
+            #expect(try await ask(p, a, "B", "q2", timeout: idle / 2).error?.code == .timeout)   // hook lost: held, then cap
+            #expect(await waitFor(10) { !(await d.askBusy(UUID(uuidString: b.id)!)) })   // the cap freed the slot
             var failures = 0
             for n in 3...5 {
-                let r = try await ask(p, a, "B", "q\(n)", timeout: 15)
+                let r = try await ask(p, a, "B", "q\(n)", timeout: idle * 6)   // a turn ≈ 0.5 idle; the lost one costs this
                 if r.error != nil { failures += 1; continue }
                 #expect(result(r).output == "answer:q\(n)", "ask \(n): \(r)")
             }
@@ -251,11 +281,11 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     /// The idle turn's late hook carries a message that differs from its screen text (markdown etc.): it must
     /// still be swallowed, not handed to the next ask.
     @Test func decoratedLateHookDoesNotShift() async throws {
-        try await withDaemon { d, p in
+        try await shiftDaemon { d, p in
             let a = try await term(d, p, "A")
             let hooks = p.root.appendingPathComponent("hooks-b.txt")
             let b = try await term(d, p, "B", preset: "custom",
-                                   command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_HOOK=file COLLIE_FAKE_HOOK_FILE='\(hooks.path)' COLLIE_FAKE_HOOK_DELAY=3 COLLIE_FAKE_HOOK_DECOR='**' exec sh '\(fixture)'")
+                                   command: scaledAgent("COLLIE_FAKE_HOOK=file COLLIE_FAKE_HOOK_FILE='\(hooks.path)' COLLIE_FAKE_HOOK_DELAY=\(idle * 1.5) COLLIE_FAKE_HOOK_DECOR='**'"))
             try await connect(d, p, "A", "B")
             let w = fileHookWatcher(p, b, hooks); defer { w.cancel() }
             #expect(result(try await ask(p, a, "B", "q1", timeout: 20)).source == "idle")
@@ -269,11 +299,11 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     /// The next prompt quotes the previous answer: its echo must not make the idle turn's late hook look like
     /// the current turn's own.
     @Test func promptQuotingLastAnswerDoesNotShift() async throws {
-        try await withDaemon { d, p in
+        try await shiftDaemon { d, p in
             let a = try await term(d, p, "A")
             let hooks = p.root.appendingPathComponent("hooks-b.txt")
             let b = try await term(d, p, "B", preset: "custom",
-                                   command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_HOOK=file COLLIE_FAKE_HOOK_FILE='\(hooks.path)' COLLIE_FAKE_HOOK_DELAY=3 COLLIE_FAKE_HOOK_DECOR='**' exec sh '\(fixture)'")
+                                   command: scaledAgent("COLLIE_FAKE_HOOK=file COLLIE_FAKE_HOOK_FILE='\(hooks.path)' COLLIE_FAKE_HOOK_DELAY=\(idle * 1.5) COLLIE_FAKE_HOOK_DECOR='**'"))
             try await connect(d, p, "A", "B")
             let w = fileHookWatcher(p, b, hooks); defer { w.cancel() }
             #expect(result(try await ask(p, a, "B", "q1", timeout: 20)).source == "idle")
@@ -286,16 +316,15 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     /// Three hookless turns finish by idle, then the target starts sending hooks: only the first hooked
     /// turn's hook is mistaken for an idle turn's late hook, so at most one ask times out.
     @Test func lostHookCostsAtMostOneAsk() async throws {
-        try await withDaemon { d, p in
+        try await shiftDaemon { d, p in
             let a = try await term(d, p, "A")
-            let b = try await term(d, p, "B", preset: "custom",
-                                   command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_FROM=4 exec sh '\(fixture)'")
+            let b = try await term(d, p, "B", preset: "custom", command: scaledAgent("COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_FROM=4"))
             try await connect(d, p, "A", "B")
             let w = hookWatcher(d, p, b); defer { w.cancel() }
             var timeouts = 0
             for n in 1...6 {
                 let prompt = "q\(n)"
-                let r = try await ask(p, a, "B", prompt, timeout: 12)   // idle turn ≈ 2.5 s; margin for load
+                let r = try await ask(p, a, "B", prompt, timeout: idle * 4)   // idle turn ≈ 1.25 idle; 3x margin for load
                 let res = result(r)
                 if n <= 3 {
                     #expect(res.source == "idle", "ask \(n): \(r)")
@@ -309,8 +338,12 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
         }
     }
 
+    }
+
+    /// Delivery, timeouts and exits, one at a time.
+    @Suite(.serialized) struct Delivery {
     @Test func askViaIdleFallback() async throws {
-        try await withDaemon { d, p in
+        try await withFastIdleDaemon { d, p in
             let a = try await term(d, p, "A")
             _ = try await term(d, p, "B", preset: "shell", command: fakeAgent(hook: false))
             try await connect(d, p, "A", "B")
@@ -321,7 +354,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     }
 
     @Test func cursorAskCompletesOnIdle() async throws {
-        try await withDaemon { d, p in
+        try await withFastIdleDaemon { d, p in
             let a = try await term(d, p, "A")
             _ = try await term(d, p, "B", preset: "cursor", command: fakeAgent(hook: false))
             try await connect(d, p, "A", "B")
@@ -331,7 +364,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     }
 
     @Test func bracketedPasteOnlyWhenEnabled() async throws {
-        try await withDaemon { d, p in
+        try await withFastIdleDaemon { d, p in
             let a = try await term(d, p, "A")
             _ = try await term(d, p, "B", preset: "shell", command: fakeAgent(hook: false))
             try await connect(d, p, "A", "B")
@@ -371,24 +404,24 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     }
 
     @Test func askTimesOut() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let a = try await term(d, p, "A")
             _ = try await spawn(d, p, "B", preset: "claude", command: "sleep 999")
             try await connect(d, p, "A", "B")
             let t0 = ContinuousClock.now
-            let r = try await ask(p, a, "B", "hi", timeout: 1)
+            let r = try await ask(p, a, "B", "hi", timeout: 0.2)
             #expect(r.error?.code == .timeout)
-            #expect(ContinuousClock.now - t0 < .seconds(10))   // B never answers: only the 1 s timeout ends it
+            #expect(ContinuousClock.now - t0 < .seconds(10))   // B never answers: only the 0.2 s timeout ends it
         }
     }
 
     /// Readiness gate never opened (target silent): the timeout must say the prompt was never delivered.
     @Test func timeoutBeforeReadySaysNotDelivered() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let a = try await term(d, p, "A")
             _ = try await spawn(d, p, "B", preset: "custom", command: "sh -c 'sleep 30'")
             try await connect(d, p, "A", "B")
-            let r = try await ask(p, a, "B", "hi", timeout: 2)
+            let r = try await ask(p, a, "B", "hi", timeout: 0.3)
             #expect(r.error == ProtocolError(code: .timeout, message: "'B' produced no output yet; prompt not delivered"), "\(r)")
         }
     }
@@ -444,7 +477,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     /// 1.5 MB (> the 1 MB cap) without newlines: `yes` output grew 1.5x on the wire via onlcr, and the
     /// PTY moves ~2.5 MB/s with spill in debug, which ate most of a 6 s budget under suite load (now 30 s).
     @Test func askMarksTruncated() async throws {
-        try await withDaemon { d, p in
+        try await withFastIdleDaemon { d, p in
             let a = try await term(d, p, "A")
             _ = try await spawn(d, p, "B", preset: "custom", command: "echo up; read x; head -c 1572864 /dev/zero | tr '\\0' x; exec sleep 999")
             try await connect(d, p, "A", "B")
@@ -470,13 +503,14 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
         }
     }
 
-    /// The write stall is injected at 10 s (production: 2 s) so the bound on B's answer can be generous under load
-    /// and still catch an actor blocked for the stall. Idle at 15 s: see `withHookDaemon`.
+    /// The write stall is injected at 3 s (production: 2 s) so the bound on B's answer (0.6 of it) can be generous
+    /// under load and still catch an actor blocked for the stall. Idle at 15 s: see `withHookDaemon`.
     @Test func writeStallDoesNotBlockOtherAsks() async throws {
-        try await withDaemon(configure: { $0.writeStall = .seconds(10); $0.idleQuietSeconds = 15 }) { d, p in
+        let stall = 3.0
+        try await withDaemon(configure: { $0.writeStall = .seconds(stall); $0.idleQuietSeconds = 15 }) { d, p in
             let a = try await term(d, p, "A")
             let xs = try await spawn(d, p, "X", preset: "claude", command: "echo up; exec sleep 60")
-            let b = try await term(d, p, "B", preset: "custom", command: fakeAgent(hook: true))
+            let b = try await term(d, p, "B", preset: "custom", command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_THINK=0.1 COLLIE_FAKE_HOOK=1 exec sh '\(fixture)'")
             try await connect(d, p, "A", "X"); try await connect(d, p, "A", "B")
             let w = hookWatcher(d, p, b); defer { w.cancel() }
             // newline-separated so the canonical input queue fills and the PTY stops accepting bytes
@@ -487,7 +521,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
             let t0 = ContinuousClock.now
             let r = try await ask(p, a, "B", "hello", timeout: 20)
             #expect(result(r).output == "answer:hello", "\(r)")
-            #expect(ContinuousClock.now - t0 < .seconds(6))   // answer takes ~0.6 s; a 10 s actor stall fails this
+            #expect(ContinuousClock.now - t0 < .seconds(stall * 0.6))   // answer takes ~0.2 s; an actor stalled for `stall` fails this
             let x = try await stalled.value
             #expect(x.error == ProtocolError(code: .timeout, message: "target 'X' is not accepting input"), "\(x)")
         }
@@ -496,14 +530,14 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     /// A timed-out turn that is still running keeps the slot: the next queued ask is not typed into the busy
     /// agent (its late hook would complete that ask) and fails with a clear "still busy" error.
     @Test func timedOutTurnHoldsSlotForNextQueued() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: { $0.askReadyQuiet = .milliseconds(100) }) { d, p in
             let a = try await term(d, p, "A")
             let b = try await spawn(d, p, "B", preset: "claude", command: "echo up; exec sleep 999")
             try await connect(d, p, "A", "B")
             let bid = UUID(uuidString: b.id)!
-            let first = Task { try await ask(p, a, "B", "first-prompt", timeout: 2) }
+            let first = Task { try await ask(p, a, "B", "first-prompt", timeout: 1) }
             #expect(await waitFor(15) { await d.scrollbackText(bid).contains("first-prompt") })   // delivered
-            let second = Task { try await ask(p, a, "B", "second-prompt", timeout: 4) }
+            let second = Task { try await ask(p, a, "B", "second-prompt", timeout: 2) }
             #expect(try await first.value.error?.code == .timeout)   // held: B is still on that turn
             let r = try await second.value
             #expect(r.error?.code == .timeout)
@@ -540,6 +574,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
             #expect(res.output == "last")
             #expect(res.truncated == false)
         }
+    }
     }
 }
 
@@ -588,6 +623,8 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
 // MARK: - ask --no-wait (plan 2X)
 
 extension AskTests {
+/// `ask --no-wait`, one at a time.
+@Suite(.serialized) struct NoWait {
 
     @Test func noWaitReturnsImmediately() async throws {
         try await withDaemon { d, p in
@@ -644,8 +681,8 @@ extension AskTests {
 
     @Test func noWaitNotTypedMidTurn() async throws {
         try await withHookDaemon { d, p in
-            // prints for ~5 s (a turn in progress), then reads quietly
-            let busy = "echo T=$COLLIE_TOKEN; i=0; while [ $i -lt 50 ]; do echo tick; sleep 0.1; i=$((i+1)); done; exec cat >/dev/null"
+            // prints for ~2 s (a turn in progress, 4x the reply's quiet window), then reads quietly
+            let busy = "echo T=$COLLIE_TOKEN; i=0; while [ $i -lt 20 ]; do echo tick; sleep 0.1; i=$((i+1)); done; exec cat >/dev/null"
             let a = try await term(d, p, "A", preset: "claude", command: busy)
             let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
             try await connect(d, p, "A", "B")
@@ -660,13 +697,13 @@ extension AskTests {
     }
 
     @Test func noWaitNotDeadlockEdge() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let a = try await term(d, p, "A", preset: "claude", command: silentTarget)
             let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
             try await connect(d, p, "A", "B")
             _ = try await askNoWait(p, a, "B", "never answered", timeout: 30)
             #expect(await waitFor(10) { await d.askBusy(UUID(uuidString: b.id)!) })
-            let r = try await ask(p, b, "A", "back", timeout: 1)
+            let r = try await ask(p, b, "A", "back", timeout: 0.3)
             #expect(r.error?.code != .deadlock, "\(r)")
         }
     }
@@ -701,11 +738,11 @@ extension AskTests {
     }
 
     @Test func noWaitFailureDelivered() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
             _ = try await spawn(d, p, "B", preset: "claude", command: "sleep 999")
             try await connect(d, p, "A", "B")
-            let (id, _) = try await askNoWait(p, a, "B", "hi", timeout: 1)
+            let (id, _) = try await askNoWait(p, a, "B", "hi", timeout: 0.3)
             let aid = UUID(uuidString: a.id)!
             #expect(await waitFor(10) { await d.scrollbackText(aid).contains("[collie] Ask \(id) to B failed: ") })
             let res = try await askResult(p, a, id)
@@ -721,7 +758,7 @@ extension AskTests {
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
             #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
-            try await Task.sleep(for: .seconds(3))   // past the quiet window a delivery waits for
+            try await Task.sleep(for: .seconds(replyQuiet * 1.5))   // past the quiet window a delivery waits for
             #expect(!(await d.scrollbackText(UUID(uuidString: a.id)!).contains("[collie]")))
             #expect(field(try await askResult(p, a, id), "output") == "done")
         }
@@ -741,7 +778,7 @@ extension AskTests {
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
             #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
-            try await Task.sleep(for: .seconds(3))
+            try await Task.sleep(for: .seconds(replyQuiet * 1.5))   // past the quiet window a delivery waits for
             #expect(!(await d.scrollbackText(aid).contains("[collie] Reply")))   // never typed into the prompt
             let r = try await send(p, Request(id: "x", token: d.adminToken, command: "work.approval.dismiss", args: ["id": .string(approval.id.uuidString)]))
             #expect(r.ok, "\(r)")
@@ -811,6 +848,7 @@ extension AskTests {
         }
     }
 }
+}
 
 /// DX backlog 14: the inbox survives a daemon restart; an ask still pending then can't finish anymore.
 @Suite struct AskInboxPersistenceTests {
@@ -848,6 +886,8 @@ private func inFlight(_ asks: AskCoordinator, _ id: UUID) async -> Bool {
 }
 
 extension AskTests {
+/// `collie wait` in the deadlock graph, one at a time.
+@Suite(.serialized) struct WaitGraph {
     @Test func waitThenCrossedAskIsDeadlock() async throws {
         let asks = AskCoordinator(idleQuietSeconds: 1)
         let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
@@ -919,19 +959,20 @@ extension AskTests {
 
     /// A `wait` that timed out leaves no edge: the crossed blocking ask that follows is not a deadlock.
     @Test func timedOutWaitReleasesEdge() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let ticks = "echo T=$COLLIE_TOKEN; while :; do echo tick; sleep 0.1; done"
             let a = try await term(d, p, "A", preset: "custom", command: ticks)
             let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
             try await connect(d, p, "A", "B")
             #expect(await waitFor(10) { await d.badge(UUID(uuidString: a.id)!) == .working })
             let w = try await send(p, Request(id: "w", terminalId: b.id, token: b.token, command: "wait",
-                                              args: ["target": .string("A"), "timeout": .number(1)]), timeoutSeconds: 15)
+                                              args: ["target": .string("A"), "timeout": .number(0.3)]), timeoutSeconds: 15)
             #expect(w.error?.code == .timeout, "\(w)")
-            let r = try await ask(p, a, "B", "pode testar?", timeout: 1)
+            let r = try await ask(p, a, "B", "pode testar?", timeout: 0.3)
             #expect(r.error?.code != .deadlock, "\(r)")
         }
     }
+}
 }
 
 // MARK: - collie reply (agent-comms Task 3)
@@ -945,6 +986,8 @@ private func cursorTarget(_ asks: AskCoordinator, _ name: String) async throws -
 }
 
 extension AskTests {
+/// `collie reply`, one at a time.
+@Suite(.serialized) struct Reply {
     @Test func replyCompletesInflightAsk() async throws {
         let asks = AskCoordinator(idleQuietSeconds: 15)
         let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
@@ -1025,4 +1068,5 @@ extension AskTests {
             #expect(res.output == "feito" && res.source == "hook", "\(res)")
         }
     }
+}
 }

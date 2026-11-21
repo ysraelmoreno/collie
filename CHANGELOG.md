@@ -9,6 +9,7 @@ Names in quotes are labels of the app, which is in Portuguese.
 ### Added
 - **Shepherd context lifecycle:** the large-context advice now reads the real context size in tokens (150k and 250k levels, numbers only, never conversation text), and at the end of a loop the daemon writes a short handoff for the next turn (`collie work handoff`).
 - **Turn safety for loops:** the attempt prompt carries two fixed rules (run build and tests in the foreground; `swift build` does not compile tests), and `collie work run --precheck <cmd>` runs a fast check in the agent's own session before the full check, so a compile error costs a nudge instead of an attempt.
+- **Quadro example app** (`Examples/apps/quadro`): a local kanban board (Python 3.9, standard library only) with a `collie.json` contract, so `collie app adopt quadro` gives agents commands to create, move, comment on, archive and restore cards while the owner watches the board in a panel. Data stays in `$QUADRO_DIR` (default `~/.collie/quadro`), with a readable `BOARD.md` mirror.
 - **Tokens in the immutable summary:** each task keeps its attempts' token counts (counts and model name only); `collie work usage` also reads closed works of the caller's paddock, and the loops modal shows the totals.
 
 ### Changed

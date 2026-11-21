@@ -476,7 +476,7 @@ actor CommandRouter {
                 guard await registry.process(t.id)?.isRunning == true else {   // also covers records reloaded after restart
                     throw ProtocolError(code: .notRunning, message: "Terminal '\(t.name)' is not running")
                 }
-                let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", max: 86_400) ?? 1800)
+                let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", min: asks.limits.minTimeoutSeconds, max: 86_400) ?? 1800)
                 if let e = ClaudeModel.slashRefusal(prompt, target: t) { throw e }   // DX backlog 20: no turn, no reply
                 if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout)) }
                 let busy = await targetBusy(t.id)
@@ -499,7 +499,7 @@ actor CommandRouter {
                 return Response(id: req.id, ok: true, result: .object(model.merging(["output": .string(s.text), "truncated": .bool(s.truncated)]) { $1 }))
             case "wait":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
-                return Response(id: req.id, ok: true, result: try await waitTurn(t, from: tid, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
+                return Response(id: req.id, ok: true, result: try await waitTurn(t, from: tid, timeout: .seconds(try num(req, "timeout", min: asks.limits.minTimeoutSeconds, max: 86_400) ?? 1800)))
             case "turn.completed":
                 if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr) }   // restarts the idle capture
                 // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
@@ -666,7 +666,7 @@ actor CommandRouter {
         return v
     }
     /// Number or numeric string in 1...max; nil when absent. The bound keeps Duration/Int conversions from trapping.
-    func num(_ r: Request, _ k: String, max: Double) throws(ProtocolError) -> Double? {
+    func num(_ r: Request, _ k: String, min: Double = 1, max: Double) throws(ProtocolError) -> Double? {
         let v: Double?
         switch r.args[k] {
         case nil, .null?: return nil
@@ -674,8 +674,9 @@ actor CommandRouter {
         case .string(let s)?: v = Double(s)
         default: v = nil
         }
-        guard let v, v >= 1, v <= max else {
-            throw ProtocolError(code: .invalidArgs, message: "'\(k)' must be a number between 1 and \(Int(max))")
+        guard let v, v >= min, v <= max else {
+            let low = min == min.rounded() ? String(Int(min)) : String(min)
+            throw ProtocolError(code: .invalidArgs, message: "'\(k)' must be a number between \(low) and \(Int(max))")
         }
         return v
     }

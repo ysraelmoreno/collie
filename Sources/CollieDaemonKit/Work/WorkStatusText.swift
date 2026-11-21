@@ -43,7 +43,9 @@ public enum WorkStatusText {
         case .whatIsRunning:
             for w in works {
                 for j in w.jobs where j.state == .running {
-                    lines.append("- \(j.kind == .shell ? "shell" : j.kind == .loop ? "tentativa do laço" : "subagente") \(j.label) — \(name(w.terminalId)), há \(mins(j.startedAt)) min")
+                    // M3.8: a loop's attempt is cited by its agent's name too (the job's id; `[a-z0-9-]` by construction)
+                    let what = j.kind == .shell ? "shell" : j.kind == .loop ? "tentativa do laço \(RerailText.clean(j.id)):" : "subagente"
+                    lines.append("- \(what) \(j.label) — \(name(w.terminalId)), há \(mins(j.startedAt)) min")
                 }
             }
             for id in sorted(.working) { lines.append("- \(name(id)): trabalhando") }
@@ -77,8 +79,11 @@ public enum WorkStatusText {
         switch l.state {
         case .running:
             let title = w.tasks.first { $0.id == l.task }.map { RerailText.clean($0.title) } ?? "?"
+            // M3.8: with the agent working, its terminal's name (the attempt's job; only when a single attempt runs)
+            let agents = w.jobs.filter { $0.kind == .loop && $0.state == .running }
             return "em laço: \(title) (tentativa \(l.attempt)/\(l.tries))" + (l.phase.map { " · \($0.label)" } ?? "")
                 + (now.flatMap { times(l, now: $0, timeZone: timeZone) }.map { " · \($0)" } ?? "")
+                + (l.phase == .agent && agents.count == 1 ? " · terminal \(RerailText.clean(agents[0].id))" : "")
         case .stopped: return "laço parado (\(l.used) tentativas)" + (l.stopReason.map { " · \(RerailText.clean($0.label))" } ?? "")
         case .finished: return "laço terminou (\(l.used) tentativas)"
         }
@@ -99,11 +104,25 @@ public enum WorkStatusText {
         return out
     }
 
-    /// What `work wait` prints: the loop's line of `work status` (a work without a loop: its title), then the version
-    /// to wait from and how the wait ended.
+    /// M3.6, a running loop with lanes (`--parallel`): "N de M em paralelo", then one line per lane, oldest first:
+    /// "faixa T<task> · <phase> · desde 14:03 (4 min)" (the daemon's local time; whole minutes, rounded down; no phase:
+    /// "entre fases", which is also a lane being integrated with no gate). Empty: no lane, and `work status` reads as
+    /// it always did.
+    public static func laneLines(_ w: Work, now: Date, timeZone: TimeZone = .current) -> [String] {
+        guard let l = w.loop, l.state == .running, let lanes = l.lanes, !lanes.isEmpty else { return [] }
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = timeZone; f.dateFormat = "HH:mm"
+        return ["\(lanes.count) de \(max(l.parallel ?? 1, lanes.count)) em paralelo"] + lanes.map {
+            "faixa T\(RerailText.clean($0.task, max: 40)) · \($0.phase?.label ?? "entre fases") · "
+                + "desde \(f.string(from: $0.since)) (\(Int(max(0, now.timeIntervalSince($0.since)) / 60)) min)"
+        }
+    }
+
+    /// What `work wait` prints: the loop's line of `work status` (a work without a loop: its title) and its lanes'
+    /// (`laneLines`), then the version to wait from and how the wait ended.
     static func waitLine(_ w: Work, version: Int, timedOut: Bool, now: Date, timeZone: TimeZone = .current) -> String {
         let ended = w.loop.map { $0.state != .running } ?? false
-        return (loopLine(w, now: now, timeZone: timeZone) ?? "sem laço: \(RerailText.clean(w.title))")
+        return ([loopLine(w, now: now, timeZone: timeZone) ?? "sem laço: \(RerailText.clean(w.title))"]
+                + laneLines(w, now: now, timeZone: timeZone)).joined(separator: "\n")
             + "\nversão \(version)" + (ended ? " · laço terminou (ended)" : timedOut ? " · tempo esgotado sem mudança (timedOut)" : "")
     }
 
@@ -112,13 +131,14 @@ public enum WorkStatusText {
         w.loop?.gate.map { "portão: " + RerailText.clean($0, max: CommandRouter.loopCardMax) }
     }
 
-    /// The last `last` events of a loop's journal, oldest first, one per line: `HH:mm:ss <kind> T<task>#<attempt> <detail>`
-    /// (the daemon's local time; a loop-wide event has no `T…`). Empty: no journal.
+    /// The last `last` events of a loop's journal, oldest first, one per line: `HH:mm:ss <kind> T<task>#<attempt> [<lane>] <detail>`
+    /// (the daemon's local time; a loop-wide event has no `T…`; `[<lane>]`, M3.6: only an event of a lane). Empty: no journal.
     public static func events(_ loop: WorkLoopState, last: Int, timeZone: TimeZone = .current) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = timeZone; f.dateFormat = "HH:mm:ss"
         return (loop.events ?? []).suffix(max(0, last)).map { e in
             let who = e.task.map { "T" + RerailText.clean($0, max: 40) + (e.attempt.map { "#\($0)" } ?? "") }
-            return ([f.string(from: e.at), e.kind.rawValue] + [who, e.detail.map { RerailText.clean($0, max: LoopEvent.detailMax) }].compactMap { $0 })
+            let lane = e.lane.map { "[" + RerailText.clean($0, max: 60) + "]" }
+            return ([f.string(from: e.at), e.kind.rawValue] + [who, lane, e.detail.map { RerailText.clean($0, max: LoopEvent.detailMax) }].compactMap { $0 })
                 .joined(separator: " ")
         }.joined(separator: "\n")
     }
@@ -157,11 +177,12 @@ public enum WorkStatusText {
         return bounded(lines, limit: RerailText.limit)
     }
 
-    /// What the starter gets when its loop starts without the owner's card (a paddock trusted for loops): the limits,
-    /// then one line per task with its check. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
+    /// What the starter gets when its loop starts without the owner's card (a paddock trusted for loops): the limits
+    /// (`--parallel` when over 1), then one line per task with its check. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
     static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState) -> String {
         var lines = ["[collie] Laço iniciado sem cartão (cercado «\(RerailText.clean(paddock))» é confiável): "
-            + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), --max \(l.max ?? 0), orçamento \(l.budget ?? 0) s. Parar: collie work stop."]
+            + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), --max \(l.max ?? 0), "
+            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s. Parar: collie work stop."]
         lines += tasks.enumerated().map { "#\($0 + 1) «\(RerailText.clean($1.title))» check «\(RerailText.clean($1.check ?? "", max: 200))»" }
         return bounded(lines, limit: RerailText.limit)
     }

@@ -44,7 +44,7 @@ private func stopped() -> WorkLoopState {
         #expect(await l.run(work: r.work, dir: r.repo) == .stopped)
         let w = try await r.get()
         #expect(w.tasks.map(\.state) == [.open, .open] && w.tasks[0].tries == nil)   // reopened, the attempt not counted on it
-        #expect(w.jobs.map(\.id) == ["loop-a-1"] && w.jobs[0].state == .finished && w.jobs[0].result == "loop: estado inesperado do motor")
+        #expect(w.jobs.map(\.id) == ["w-task-a-t1"] && w.jobs[0].state == .finished && w.jobs[0].result == "loop: estado inesperado do motor")
         #expect(w.loop?.state == .stopped && w.loop?.stopReason == .init(.internal) && w.loop?.phase == nil && w.loop?.task == nil)
         // its own note (the pair), then the summary
         #expect(w.notes.contains { $0.text.hasPrefix("[loop] estado inesperado do motor (summoning × gateDone) em \"Task a\"") }, "\(w.notes.map(\.text))")
@@ -61,13 +61,13 @@ private func stopped() -> WorkLoopState {
         let w = try await r.get()
         #expect(w.tasks.map(\.state) == [.open, .open])
         #expect(w.jobs.allSatisfy { $0.state == .finished } && w.loop?.stopReason?.code == .internal)
-        #expect(await r.host.summoned == ["loop-a-1"])
-        #expect(await r.host.dismissed == ["loop-a-1"])
+        #expect(await r.host.summoned == ["w-task-a-t1"])
+        #expect(await r.host.dismissed == ["w-task-a-t1"])
     }
 
     @Test func theNormalPathDoesNotPassThroughTheNet() async throws {
         let r = try await LoopRig([task("a", "true"), task("b", "false")], tries: 1); defer { r.cleanup() }
-        for n in ["loop-a-1", "loop-b-1"] { await r.host.set(n, LoopScript(act: { try await commit("\(UUID().uuidString.prefix(6)).txt", "x\n", in: $0) })) }
+        for n in ["w-task-a-t1", "w-task-b-t1"] { await r.host.set(n, LoopScript(act: { try await commit("\(UUID().uuidString.prefix(6)).txt", "x\n", in: $0) })) }
         let l = loop(r) { _ in nil }   // the seam answers nothing: every effect is carried out
         #expect(await l.run(work: r.work, dir: r.repo) == .finished)
         let w = try await r.get()

@@ -23,7 +23,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func aPassWithoutGateWritesFiveTimes() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let n = await writes(r)
         #expect(try await r.get().tasks[0].state == .done)
         #expect(n == 5, "\(n)")   // start, before the ask, before the check, done, spent
@@ -31,7 +31,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func aPassWithGateWritesSixTimes() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")], gate: "true"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let n = await writes(r)
         #expect(try await r.get().tasks[0].state == .done)
         #expect(n == 6, "\(n)")   // the same, and before the gate (M1b.2's own ceiling: 8)
@@ -40,7 +40,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     /// An `.idle` end waits for the commit: one more write, before the wait. Still within M1b.2's 8.
     @Test func anIdleEndWithGateStaysWithinEight() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")], gate: "true"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(source: .idle, lateAfter: 2, late: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(source: .idle, lateAfter: 2, late: { try await commit("done.txt", "ok\n", in: $0) }))
         let n = await writes(r)
         #expect(try await r.get().tasks[0].state == .done)
         #expect(n == 7, "\(n)")
@@ -48,7 +48,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
 
     @Test func aFailedCheckWritesFiveTimes() async throws {
         let r = try await LoopRig([task("a", "exit 3")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("wrong.txt", "x\n", in: $0) }))
         let n = await writes(r)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.loop?.events?.last?.kind == .discarded)
@@ -67,7 +67,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         let head: [Kind] = [.attemptStarted, .agentSummoned, .turnEnded, .commitSeen, .agentDismissed, .checkStarted, .checkFinished]
         for gate in [String?.none, "true"] {
             let r = try await LoopRig([task("a", "test -f done.txt")], gate: gate); defer { r.cleanup() }
-            await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+            await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
             #expect(await r.run() == .finished)
             let ev = try await r.get().loop?.events ?? []
             #expect(ev.map(\.kind) == head + (gate == nil ? [] : [.gateStarted, .gateFinished]) + [.verdict], "\(ev.map(\.kind.rawValue))")
@@ -79,7 +79,7 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
     /// The events are on disk before each long wait: the check sees its own `checkStarted` and the phase.
     @Test func theJournalIsWrittenBeforeTheCheckRuns() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")], gate: "true"); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         let seen = Seen(), store = r.store, id = r.work
         await r.host.setProbe { _ in
             let l = try? await store.get(id)?.loop

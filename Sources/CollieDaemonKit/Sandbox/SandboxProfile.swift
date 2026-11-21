@@ -12,6 +12,10 @@ struct SandboxInput {
     var worktreeGitDir: URL? = nil
     /// Never writable (a pasture terminal: the paddock worktrees nested in its project).
     var paddockWorktrees: [URL] = []
+    /// A lane's profile (M3.3; `project` is the lane): the worktree of its paddock. That worktree and every other lane
+    /// (the project's `lane-*` siblings, the ones made later too) are closed for reading and writing, whatever the
+    /// mode or a grant says. nil: not a lane.
+    var lanePaddock: URL? = nil
     var home: URL
     var collieRoot: URL
     /// Collie's generated files for this terminal (settings/hooks/MCP config, Cursor's plugin dir): readable, with what
@@ -110,7 +114,13 @@ enum SandboxProfile {
         // the updater's sibling next to the app (`.Collie-update-XXXXXX`, spec 2026-11-17 §2): a verified bundle waits
         // there for its swap into the app's name; no terminal plants or edits one, in either mode
         let updateSibling = i.appBundle.map { rx("^" + re(real($0.deletingLastPathComponent())) + "/\\.Collie-update-") }
-        if i.mode == .open {
+        // M3.3: a lane is strict whatever the workspace's mode. Its paddock's worktree, and any `lane-*` sibling of the
+        // project (a regex: a lane made after this profile too; the same shape as an `EssentialPaths` `x*` entry).
+        let strict = i.mode == .strict || i.lanePaddock != nil
+        let laneClosed = i.lanePaddock.map {
+            [sub(real($0)), rx("^" + re(URL(fileURLWithPath: project).deletingLastPathComponent().path + "/" + LaneWorktree.dirPrefix) + "[^/]*(/|$)")]
+        } ?? []
+        if !strict {
             // user decision (2026-10-25): everything in the account is open but Collie's internals: its data (below), the
             // app bundle and its LaunchAgents (writes), and their parents (renaming one away, writing inside and renaming
             // back would get past the leaves), every ancestor. Signals out and the socket rule stay (below)
@@ -132,6 +142,14 @@ enum SandboxProfile {
             // swapped in later opens nothing (Seatbelt matches the resolved path)
             let grants = i.grants.map { (path: $0.path, access: $0.access) }
 
+            if !laneClosed.isEmpty {
+                // first of the read rules: every later read deny still holds inside the lane. Untagged: no card asks
+                // the owner to open what is never opened.
+                out.append(";; lane: its paddock's worktree and the other lanes closed (read and write); the lane itself open")
+                rule("deny", "file-read*", laneClosed)
+                rule("allow", "file-read*", [sub(project)])
+            }
+
             // 2Q (user decision): reads are open, except what `readClosed` lists (secrets, browser profiles, mail, messages,
             // containers) and Collie's data (below). No read grant is rendered (a stored one is moot): nothing re-opens them.
             // ssh keeps what `git`/`ssh` need without the keys
@@ -148,7 +166,24 @@ enum SandboxProfile {
             rule("deny", "file-write*", tagged: true, [sub(home)] + [common].compactMap { $0.map(sub) })
             var writes = [sub(project)] + EssentialPaths.homeWrites.map { entry(home, $0) }
             if let common {
-                if let worktree {   // a worktree commits through the common dir; its own git dir is its index/HEAD
+                if let worktree, i.lanePaddock != nil {
+                    // M3b.3: a lane moves its own branch and nothing else of the repository's refs (not its paddock's
+                    // branch, not `main`, no reflog but its own, no `packed-refs`): the integrator is the only way in.
+                    // The branch is named from the lane's folder (`lane-<name>` → `collie/lane/<name>`, as
+                    // `LaneWorktree.create` makes them), never from a file the lane writes (its HEAD). Literals: no
+                    // name becomes a pattern. HEAD's reflog and the index are in its own git dir; `<common>/logs/HEAD`
+                    // is the main checkout's, and stays closed.
+                    // ponytail: the folders `refs/heads/collie/lane` and its `logs` twin are not opened (a literal
+                    // on a folder would let it be renamed away, the other lanes' branches with it). If a gc of the
+                    // owner packs every lane's ref and prunes the folder mid-lane, the lane's commit fails and the
+                    // attempt is retried in a new lane; open `file-write-create` on them if that is ever seen.
+                    writes += [sub(common + "/objects"), sub(worktree)]
+                    let folder = URL(fileURLWithPath: project).lastPathComponent
+                    if folder.hasPrefix(LaneWorktree.dirPrefix), folder.count > LaneWorktree.dirPrefix.count {
+                        let ref = "/refs/heads/" + LaneWorktree.branchPrefix + folder.dropFirst(LaneWorktree.dirPrefix.count)
+                        writes += [lit(common + ref), lit(common + ref + ".lock"), lit(common + "/logs" + ref)]
+                    }
+                } else if let worktree {   // a worktree commits through the common dir; its own git dir is its index/HEAD
                     writes += ["objects", "refs", "logs"].map { sub(common + "/" + $0) }
                         + [lit(common + "/packed-refs"), lit(common + "/packed-refs.lock"), sub(worktree)]
                 } else {
@@ -175,6 +210,12 @@ enum SandboxProfile {
             let reopened = writeGrants.filter { g in agentConfig.contains { under(g, $0) || under($0, g) } }
             rule("allow", "file-write*", reopened.map(sub))
             gitDeny(reopened)
+            // M3.3 lane: after every allow that could reach them (temp, caches, grants); the project is opened again
+            // before the denies below (its nested paddocks folder, nested `.git`, the git pointers), which still hold
+            if !laneClosed.isEmpty {
+                rule("deny", "file-write*", laneClosed)
+                rule("allow", "file-write*", [sub(project)])
+            }
             // a pasture never writes its paddocks: their worktrees, nor any worktree's git dir in the common dir
             var closed = i.paddockWorktrees.map { sub(real($0)) }
             if let common, worktree == nil { closed.append(sub(common + "/worktrees")) }
@@ -202,12 +243,13 @@ enum SandboxProfile {
             rule("deny", "file-write*", tagged: true, parents.sorted().map(lit))
             // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
             // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
+            // M3b.5: nor a worktree's lane mark (`LaneWorktree.markerName`): only the daemon writes which lanes are its own.
             if let common {
                 let c = re(common)
                 rule("deny", "file-write*", tagged: true, [
                     lit(common), lit(project + "/.git"), sub(common + "/hooks"), lit(common + "/config"),
                     lit(common + "/config.worktree"), lit(common + "/info/attributes"), lit(common + "/commondir"),
-                    rx("^" + c + "/worktrees/[^/]+/(commondir|gitdir|config\\.worktree)$"),
+                    rx("^" + c + "/worktrees/[^/]+/(commondir|gitdir|config\\.worktree|\(LaneWorktree.markerName))$"),
                     rx("^" + c + "/modules/.+/(hooks(/|$)|config$|config\\.worktree$|commondir$|info/attributes$)"),
                 ])
             } else {
@@ -229,7 +271,7 @@ enum SandboxProfile {
         rule("deny", "network-outbound", tagged: true, ["(remote unix-socket \(sub(collie)))"])
         rule("allow", "network-outbound", ["(remote unix-socket (path-literal \(q(real(i.socket)))))"])
 
-        if i.mode == .strict {
+        if strict {
             // R14: by path only (a copy of the binary runs): defence in depth, not a boundary. R12: `security` stays (Keychain logins)
             out.append(";; processes: no launchd, no LaunchServices `open` (the shim asks the daemon); no signals out")
             rule("deny", "process-exec", tagged: true, [lit("/bin/launchctl"), lit("/usr/bin/open")])

@@ -15,9 +15,18 @@ protocol LoopHost: Sendable {
     func dismiss(_ terminal: UUID) async
     /// A terminal of the work's paddock in a turn, other than the starter (the loop's agent is already gone): its name.
     func othersWorking() async -> String?
+    /// M3b.2: any terminal of the paddock in a turn in this tree, the starter included: its name. What the integrator
+    /// asks before it throws anything away (in a parallel loop the starter is free to edit the paddock's worktree).
+    func anyoneWorking() async -> String?
     /// The starter (the Shepherd the loop summons as) still exists.
     func starterAlive() async -> Bool
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
+    /// M3b.1: the git that makes, removes and prunes lanes (`LaneWorktree`, nothing else): the daemon's own, outside
+    /// the loop's profile, which cannot write a sibling `lane-*` worktree nor `<common>/worktrees/lane-*`. Only on
+    /// paths the daemon builds and validates itself. What runs inside a lane (agent, check, gate) stays in `git`.
+    func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
+    /// M3b.5: this daemon's id (its install id), written in every lane it makes: a sweep removes only lanes with it.
+    func laneOwner() async -> String
     /// `command` via `/bin/bash -c` in `dir`, under the loop's own sandbox profile; throws (never runs unsandboxed) when
     /// the daemon sandboxes terminals and that profile is missing.
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult
@@ -32,11 +41,29 @@ protocol LoopHost: Sendable {
     /// An approved task's declared evidence: what `glob` matches in the worktree `dir`, copied under `patchDir`
     /// (`EvidenceFiles`). It reads only inside the worktree: never more than the check could.
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied
+    /// M3.5: this host for one lane of the loop (M3.3), its sandbox profile made: the lane's agent, git and check run
+    /// through it. Throws when the lane cannot be given one (nothing of a lane runs without it).
+    func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost
+    /// M3.5: `lane` was removed: what `laneHost` made for it goes too.
+    func laneGone(_ lane: Lane) async
+    /// M3.8: the names an attempt's agent may not take: every live terminal's and panel's (a summon refuses them).
+    func namesTaken() async -> Set<String>
 }
 
 extension LoopHost {
+    /// A host that cannot tell the starter apart (the tests' fakes).
+    func anyoneWorking() async -> String? { await othersWorking() }
     func resubmitted(_ terminal: UUID) async -> Bool { false }
     func taskEnded(_ line: String) async {}
+    func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
+        throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
+    }
+    func laneGone(_ lane: Lane) async {}
+    /// A host with one git (the tests' fakes, which have no profile).
+    func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await git(args, in: dir) }
+    func namesTaken() async -> Set<String> { [] }
+    /// The tests' fakes: one daemon.
+    func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
         EvidenceFiles.copy(glob, from: dir, to: EvidenceFiles.dir(patchDir(work), task: task))
     }
@@ -56,17 +83,29 @@ actor WorkLoop {
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration, othersWait: Duration
     /// A test's seam: the event an effect answers with, instead of carrying it out (nil: carried out as always).
     let events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)?
-    private var stopping: Set<UUID> = []
+    var stopping: Set<UUID> = []
+    /// M3.5: set on the engine of one lane (`WorkLoopLanes`): the lane's id (its folder's name). `host` is then the
+    /// lane's, an attempt that passes waits in `passed` for the integrator, and its journal and phase carry the lane.
+    /// nil: the loop's own engine, in the paddock's worktree.
+    let lane: String?
+    /// M3.8, a lane's engine: the lane's number in its run (1…), for its agent's name (`AgentNaming`'s `f<n>`).
+    let slot: Int?
+    /// M3.5, a lane's engine: the attempt that passed in the lane, until it is integrated (or not).
+    var passed: Passed?
+    /// M3.5: the parallel runs of this engine, by work (`WorkLoopLanes`); empty without `--parallel`.
+    var lanes: [UUID: Lanes] = [:]
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
-         othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil) {
+         othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
+         lane: String? = nil, slot: Int? = nil) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
-        self.events = events
+        self.events = events; self.lane = lane; self.slot = slot
     }
 
     /// Ends the loop after the current attempt's verdict.
     func stop(work id: UUID) async {
         stopping.insert(id)
+        lanes[id]?.signal.yield(.poke)   // M3.5: a parallel run waits on its lanes: it is told now
         if (try? await store.get(id))?.loop?.state == .running { await event(id, .stopRequested) }
     }
 
@@ -76,7 +115,10 @@ actor WorkLoop {
         var end = WorkLoopState.State.stopped
         var stop: WorkLoopState.Stop?   // why it stopped; nil only when it finished
         try? await store.update(id) { w in if w.loop?.state == .running { w.loop?.stopReason = nil } }
-        while true {
+        // M3.5: `--parallel N` is a path of its own (`runLanes`); with 1 or none, the loop below, as it always was
+        let parallel = (try? await store.get(id))?.loop?.parallel ?? 1
+        if parallel > 1 { (end, stop) = await runLanes(work: id, dir: dir, parallel: parallel) }
+        while parallel <= 1 {
             if stopping.contains(id) { stop = .init(.requested); break }
             if Task.isCancelled { stop = .init(.cancelled); break }
             // closed, missing or stopped from outside (a daemon restart's sweep): stop
@@ -117,8 +159,13 @@ actor WorkLoop {
     /// One attempt of `task`, through its verdict. `.stop`: the loop stops (no verdict when the work closed, the starter is
     /// gone, or the tree holds changes that are not the attempt's; a verdict and no reset when another terminal works).
     /// After its first reads it only interprets `AttemptMachine`: the order of the effects and their conditions are there.
-    private func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
-        let n = (task.tries ?? 0) + 1, name = "loop-\(task.id)-\(n)", started = host.now()
+    func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
+        let n = (task.tries ?? 0) + 1, started = host.now()
+        // M3.8: named after the work and the task (their titles are data: `AgentNaming` leaves only `[a-z0-9-]`), and
+        // never as a live terminal. Nothing finds the agent by this name: its terminal's id goes on the job (`record`)
+        let name = AgentNaming.unique(AgentNaming.name(work: w.title, task: task.title, taskId: task.id, attempt: n, lane: slot),
+                                      taskId: task.id, taken: await host.namesTaken())
+        let lane = lane   // M3.5: the engine's own, read once for the writes below
         // git failing here (the loop's profile gone, not a repo): stop, nothing to judge
         guard let head = await out(["rev-parse", "HEAD"], dir), let branch = await out(["rev-parse", "--abbrev-ref", "HEAD"], dir),
               let pending = await out(["status", "--porcelain", "--untracked-files=no"], dir) else {
@@ -135,7 +182,7 @@ actor WorkLoop {
         // pre-existing untracked files are never the attempt's: the reset must not delete them
         let keep = await untracked(dir)
         // the attempt's first write carries its first event too (the machine's `attemptStarted` is not written again)
-        let first = LoopEvent(at: started, kind: .attemptStarted, task: task.id, attempt: n)
+        let first = LoopEvent(at: started, kind: .attemptStarted, task: task.id, attempt: n, lane: lane)
         // M2.2a: a fallen daemon's attempt left its commit: this attempt judges it from where that one started, with
         // no agent. Anything else the task carried is ignored (and overwritten by this attempt's own, right below)
         let adopt = await adoptable(task, branch: branch, dir)
@@ -144,19 +191,23 @@ actor WorkLoop {
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
                 x.tasks[i].state = .inProgress; x.tasks[i].updatedAt = started
                 // where a fall resumes from; `forget` clears it when the attempt ends
-                x.tasks[i].resumeFrom = before; x.tasks[i].resumeBranch = branch; x.tasks[i].resumeAt = nil
+                // M2c: an adoption keeps the `resumeAt` it was judged by (when the attempt was first left): cancelled
+                // or fallen again, a commit made during it is still after that, and never adopted
+                x.tasks[i].resumeFrom = before; x.tasks[i].resumeBranch = branch; x.tasks[i].resumeAt = adopt ? task.resumeAt : nil
             }
             // M2b.1: one attempt, one live `resumeFrom`: from here on the commits are this task's, so what another
             // task was left with can no longer tell its own commits from these
             for j in x.tasks.indices where x.tasks[j].id != task.id { x.tasks[j].forgetResume() }
-            x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(adopt ? nil : .agent, at: started)
+            // M3.5: in a lane the scheduler already counted the attempt, and `loop.task` mirrors the oldest lane
+            if let lane { x.loop?.showLane(lane, .agent, at: started) }
+            else { x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(adopt ? nil : .agent, at: started) }
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
             x.loop?.record(first)
         }
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
-        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before), adopt ? .adopted : .started)
+        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name), adopt ? .adopted : .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
             // the journal and the phase wait for the attempt's next write, but never through a long wait: `work status`
@@ -186,7 +237,7 @@ actor WorkLoop {
             if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress { x.tasks[i].state = .open }
             Self.endJob(&x, name, "loop: estado inesperado do motor", at: at)
             Self.forget(&x, task.id)
-            x.loop?.show(nil)
+            if let lane { x.loop?.showLane(lane, nil) } else { x.loop?.show(nil) }
             x.notes.append(WorkNote(at: at, text: "[loop] estado inesperado do motor\(what) em \"\(task.title)\": é um bug do laço; tarefa reaberta, tentativa não contada, worktree intocada; laço parado"))
         }
         return .stop(.init(.internal))
@@ -199,6 +250,8 @@ actor WorkLoop {
         /// Untracked files that were there before the attempt: never the attempt's, the discard must not delete them.
         let keep: [String]
         var agent: UUID?
+        /// M3.8: the agent's terminal, until it is written on the attempt's job (`record`, with the next write).
+        var mark: UUID?
         /// When the turn's time is over (set by `ask`).
         var deadline: Date?
         /// The branch and the untracked files (the owner's and the agent's) before the check: what `settle` puts back.
@@ -214,7 +267,7 @@ actor WorkLoop {
         var patched: Bool?
         /// The journal's events not yet written, oldest first, and the phase to show (`.some(nil)`: none): `record`.
         var pending: [LoopEvent] = [], phase: WorkLoopState.Phase??
-        var unwritten: Bool { !pending.isEmpty || phase != nil }
+        var unwritten: Bool { !pending.isEmpty || phase != nil || mark != nil }
     }
 
     /// Effects that may take long: what is pending is written before them.
@@ -237,10 +290,12 @@ actor WorkLoop {
     /// attempt goes through here, so an event next to another write costs no write of its own (M1b.2: at most 8
     /// `store.update` in an attempt that passes with a gate, `LoopJournalWritesTests`).
     private func record(_ id: UUID, _ r: inout Run, _ change: @Sendable (inout Work) -> Void = { _ in }) async {
-        let events = r.pending, phase = r.phase
-        r.pending = []; r.phase = nil
+        let events = r.pending, phase = r.phase, lane = lane, mark = r.mark, name = r.name
+        r.pending = []; r.phase = nil; r.mark = nil
         try? await store.update(id) { x in
-            if let phase { x.loop?.show(phase) }
+            // M3.8: the job knows its terminal: what the start sweep removes after a fall, whatever the agent is called
+            if let mark, let j = x.jobs.lastIndex(where: { $0.id == name && $0.kind == .loop && $0.state == .running }) { x.jobs[j].terminal = mark }
+            if let phase { if let lane { x.loop?.showLane(lane, phase) } else { x.loop?.show(phase) } }
             for e in events { x.loop?.record(e) }
             change(&x)
         }
@@ -270,8 +325,13 @@ actor WorkLoop {
         case .fault(let what): r.fault = what
         case .summon:
             do {
-                let agent = try await host.summon(name: name, for: r.work, loop: r.loop)
-                r.agent = agent
+                // M3b.6: a name taken since `attempt` read the names gives way to the next one (the job keeps `name`)
+                let work = r.work, loop = r.loop, host = host
+                let base = AgentNaming.name(work: work.title, task: task.title, taskId: task.id, attempt: n, lane: slot)
+                let agent = try await AgentNaming.summon(base, taskId: task.id, taken: await host.namesTaken()) { (x: String) async throws(ProtocolError) -> UUID in
+                    try await host.summon(name: x, for: work, loop: loop)
+                }
+                r.agent = agent; r.mark = agent
                 return .summoned(agent)
             } catch { return .summonFailed(error.message) }
         case .ask:
@@ -281,7 +341,7 @@ actor WorkLoop {
             var map: String?
             for m in Self.featureMaps where map == nil { if await host.exists(m, in: dir) { map = m } }
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: r.loop.tries, dir: dir, notes: notes, gate: r.loop.gate, map: map)
-            let turn = Swift.min(r.loop.timeout, left(r.loop, since: r.started))   // the budget bounds the turn too
+            let turn = Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started))   // the budget bounds the turn too
             r.deadline = r.started + Double(turn)
             let ended: AttemptMachine.Event
             do { ended = .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: .seconds(turn))) }
@@ -326,7 +386,7 @@ actor WorkLoop {
             return .measured(.init(committed: committed, dirty: dirty, judged: judged))
         case .runCheck:
             do {
-                let budgeted = Duration.seconds(left(r.loop, since: r.started))
+                let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
                 r.output = res.stdout + res.stderr; r.checkOutput = r.output
                 return .checkDone(status: res.status, broken: nil)
@@ -350,7 +410,7 @@ actor WorkLoop {
         case .runGate:
             // on the tree of `judged`, in the check's conditions (timeout, budget); its output is the note's
             do {
-                let budgeted = Duration.seconds(left(r.loop, since: r.started))
+                let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(r.loop.gate ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
                 r.output = res.stdout + res.stderr
                 return .gateDone(status: res.status, broken: nil)
@@ -384,8 +444,11 @@ actor WorkLoop {
                 x.loop?.used = Swift.max(0, used - 1)
                 if let j = x.jobs.firstIndex(where: { $0.id == name && $0.state == .running }) { x.jobs[j].state = .gone; x.jobs[j].endedAt = at }
                 // M2.2b: `resumeFrom` stays, as after a fall (M2.2a): a commit already there is judged by the next run
-                // M2b.1: left now: only what was committed up to here is the attempt's
-                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].resumeFrom != nil { x.tasks[i].resumeAt = at }
+                // M2b.1: left now: only what was committed before here is the attempt's. M2c: not an adoption's, which
+                // still carries when its attempt was first left
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].resumeFrom != nil, x.tasks[i].resumeAt == nil {
+                    x.tasks[i].resumeAt = at
+                }
             }
         case .reopen(let why):
             let at = host.now()
@@ -412,21 +475,20 @@ actor WorkLoop {
                 if let n = c.note { await note(id, "[loop] evidência de \"\(task.title)\": \(n)") }
             }
             let found = evidence
-            await record(id, &r) { x in
-                // a task dropped or done meanwhile keeps that state
-                if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
-                    x.tasks[i].state = .done; x.tasks[i].tries = n; x.tasks[i].reason = nil; x.tasks[i].lastFailure = nil; x.tasks[i].updatedAt = at
-                    x.tasks[i].evidence = found
-                }
-                Self.endJob(&x, name, head, at: at)
-                Self.forget(&x, task.id)
+            // M3.5: in a lane the task is `done` only once integrated: what passed waits for `WorkLoopLanes`
+            if lane != nil {
+                passed = Passed(task: task, name: name, n: n, tries: r.loop.tries, at: at, evidence: found, before: before, judged: judged, head: head, dir: dir)
+                await record(id, &r)
+                return nil
             }
+            await record(id, &r) { Self.markDone(&$0, task.id, n: n, at: at, evidence: found, job: name, head: head) }
             await reportEnd(id, task.id)
         case .markOpenOrDeferred(let reason, let last):
             let at = r.at
             let tail = r.output.split(separator: "\n", omittingEmptySubsequences: false).suffix(Self.noteLines).joined(separator: "\n")
             // the next attempt's prompt carries it: secrets hidden (LotBoards.scrub's known shapes). ponytail: tail capped at 4000 chars
-            let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason)"
+            // M3.8: and which agent it was (its terminal's name)
+            let text = LotBoards.scrub("[loop \(task.id)] \(task.title), tentativa \(n)/\(r.loop.tries): \(reason) (agente \(name))"
                 + (tail.isEmpty ? "" : "\n" + String(tail.suffix(Self.noteChars))))
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }), x.tasks[i].state == .inProgress {
@@ -440,6 +502,17 @@ actor WorkLoop {
             if last { await reportEnd(id, task.id) }
         }
         return nil
+    }
+
+    /// What an approved task is left as (the loop's own write, and a lane's once it is integrated).
+    static func markDone(_ x: inout Work, _ task: String, n: Int, at: Date, evidence: TaskEvidence, job: String, head: String) {
+        // a task dropped or done meanwhile keeps that state
+        if let i = x.tasks.firstIndex(where: { $0.id == task }), x.tasks[i].state == .inProgress {
+            x.tasks[i].state = .done; x.tasks[i].tries = n; x.tasks[i].reason = nil; x.tasks[i].lastFailure = nil; x.tasks[i].updatedAt = at
+            x.tasks[i].evidence = evidence
+        }
+        endJob(&x, job, head, at: at)
+        forget(&x, task)
     }
 
     /// Another terminal that can edit the worktree is in a turn: no reset under it. It gets `othersWait` to finish (a short
@@ -458,16 +531,39 @@ actor WorkLoop {
     /// The Shepherd hears of a task the moment it ends, not only when the whole loop does.
     /// Never awaited: the line is typed into the Shepherd only once it is idle, and a loop that waited for that stood
     /// still while the Shepherd was in a turn (up to the inject's hold), with the next task's terminal never opening.
-    private func reportEnd(_ work: UUID, _ task: String) async {
+    func reportEnd(_ work: UUID, _ task: String) async {
         guard let t = try? await store.get(work)?.tasks.first(where: { $0.id == task }) else { return }
         let line = WorkStatusText.taskEnded(t), host = host
         Task { await host.taskEnded(line) }
     }
 
-    /// Seconds of the budget left for this attempt (at least 1); no budget: a day.
-    private func left(_ loop: WorkLoopState, since started: Date) -> Int {
+    /// Seconds of the budget left for this attempt (at least 1); no budget: a day. In a lane: `laneShare`.
+    func left(_ id: UUID, _ loop: WorkLoopState, since started: Date) async -> Int {
         guard let b = loop.budget else { return 86_400 }
+        if lane != nil { return await laneShare(id) }
         return Swift.max(1, b - (loop.spent ?? 0) - Int(host.now().timeIntervalSince(started)))
+    }
+
+    /// M3b.4: seconds of `--budget` nobody used yet (zero or less: it is spent; nil: no budget): the budget, less
+    /// `spent` (the lanes that ended), less what every lane alive has run so far. A lane is in `lanes` or in `spent`,
+    /// never in both: its seconds go to `spent` in the write that takes it out of `lanes`.
+    static func unspent(_ loop: WorkLoopState, now: Date) -> Int? {
+        guard let b = loop.budget else { return nil }
+        let live = (loop.lanes ?? []).reduce(0.0) { $0 + Swift.max(0, now.timeIntervalSince($1.started ?? $1.since)) }
+        return b - (loop.spent ?? 0) - Int(live.rounded(.up))
+    }
+
+    /// M3b.4: seconds one phase of one lane (a turn, a check, a gate, the integrator's gate) may take (at least 1; no
+    /// budget: a day): what is `unspent` now, read from the work's file, divided by the lanes alive, which all spend
+    /// it at once. Four lanes that start with 100 s get 25 s each, not 100.
+    // ponytail: a phase keeps the limit it began with. When younger lanes end early, an older phase may still run on
+    // a limit from when fewer lanes were alive: the loop's total may pass the budget by what is left of that one
+    // phase (the scheduler stops everything at the first lane that ends past the budget). No watchdog: it would be a
+    // clock of its own, and the loop has none.
+    func laneShare(_ id: UUID) async -> Int {
+        guard let loop = (try? await store.get(id))?.loop else { return 1 }
+        guard let rest = Self.unspent(loop, now: host.now()) else { return 86_400 }
+        return Swift.max(1, rest / Swift.max(1, loop.lanes?.count ?? 1))
     }
 
     static func blockedNote(_ who: String) -> String {
@@ -482,8 +578,8 @@ actor WorkLoop {
     }
 
     /// The event as the journal keeps it, timed now.
-    private func entry(_ kind: LoopEvent.Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) -> LoopEvent {
-        LoopEvent(at: host.now(), kind: kind, task: task, attempt: attempt, detail: detail.map(Self.eventDetail))
+    func entry(_ kind: LoopEvent.Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil) -> LoopEvent {
+        LoopEvent(at: host.now(), kind: kind, task: task, attempt: attempt, detail: detail.map(Self.eventDetail), lane: lane)
     }
 
     /// An event's `detail`: it may be the agent's or the check's text, so, like the evidence, it loses its ANSI sequences
@@ -492,7 +588,7 @@ actor WorkLoop {
         String(LotBoards.scrub(RerailText.plain(ANSI.strip(s))).trimmingCharacters(in: .whitespaces).prefix(LoopEvent.detailMax))
     }
 
-    private func note(_ id: UUID, _ text: String) async {
+    func note(_ id: UUID, _ text: String) async {
         let at = host.now()
         try? await store.update(id) { $0.notes.append(WorkNote(at: at, text: text)) }
     }
@@ -514,9 +610,10 @@ actor WorkLoop {
 
     /// M2.2a: `task` was left mid-attempt by a daemon that fell and its commit is here to be judged: `resumeFrom` is a
     /// sha of this repository, the worktree is on the same branch and HEAD is ahead of it (`committed`). The caller
-    /// already saw the tracked tree clean. M2b.1: and every commit between them was made up to `resumeAt`, when the
+    /// already saw the tracked tree clean. M2b.1: and every commit between them was made before `resumeAt`, when the
     /// attempt was left: one made after it (the owner's) is not the attempt's. No `resumeAt`, or a date that cannot be
-    /// read: not adopted.
+    /// read: not adopted. M2c: `%ct` is whole seconds and `resumeAt` is not, so a commit of the very second of
+    /// `resumeAt` may be from after it: in doubt, not adopted (a fresh agent is called instead; nothing is deleted).
     // ponytail: the committer date is the commit's own word (GIT_COMMITTER_DATE, a clock set back): it keeps out what
     // came after the fall, not a forged commit. A failed adoption deletes nothing either way.
     private func adoptable(_ task: WorkTask, branch: String, _ dir: URL) async -> Bool {
@@ -524,11 +621,11 @@ actor WorkLoop {
               (try? await host.git(["cat-file", "-e", "\(from)^{commit}"], in: dir))?.status == 0,
               await committed(before: from, branch: branch, dir),
               let dates = await out(["log", "--format=%ct", "\(from)..HEAD"], dir), !dates.isEmpty else { return false }
-        return dates.split(separator: "\n").allSatisfy { Int($0).map { Double($0) <= left.timeIntervalSince1970 } ?? false }
+        return dates.split(separator: "\n").allSatisfy { Int($0).map { Double($0) < left.timeIntervalSince1970.rounded(.down) } ?? false }
     }
 
     /// The attempt of `task` ended (a verdict, or none: reopened): there is nothing to resume. Not when cancelled.
-    private static func forget(_ w: inout Work, _ task: String) {
+    static func forget(_ w: inout Work, _ task: String) {
         guard let i = w.tasks.firstIndex(where: { $0.id == task }) else { return }
         w.tasks[i].forgetResume()
     }
@@ -606,12 +703,12 @@ actor WorkLoop {
         return wrote
     }
 
-    private func out(_ args: [String], _ dir: URL) async -> String? {
+    func out(_ args: [String], _ dir: URL) async -> String? {
         guard let r = try? await host.git(args, in: dir), r.status == 0 else { return nil }
         return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func endJob(_ w: inout Work, _ id: String, _ result: String, at: Date) {
+    static func endJob(_ w: inout Work, _ id: String, _ result: String, at: Date) {
         guard let j = w.jobs.firstIndex(where: { $0.id == id && $0.state == .running }) else { return }
         w.jobs[j].state = .finished; w.jobs[j].endedAt = at; w.jobs[j].result = String(result.prefix(280))
     }

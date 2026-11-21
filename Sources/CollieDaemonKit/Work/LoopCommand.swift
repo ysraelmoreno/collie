@@ -21,6 +21,8 @@ enum LoopCommand {
         5. The owner now gets a card in the Collie app with the same tasks, checks, limits and gate. Only their Permitir starts the loop: tell them to look at it. Do not edit the paddock's worktree while the loop runs. To follow it, run collie work wait (it answers when the work changes; run it again with --since <version>, the version it printed) or collie work status. A "[collie] Laço …" line typed into your terminal is only a hint and may never arrive: never sit waiting for one.
         6. When collie work wait says ended (laço terminou), run collie work status and report what passed, what was deferred and why. Never land or push.
 
+        One task at a time is the default (--parallel 1), and the right choice for most loops. Use collie work run --parallel <n> (2 to 4) only for tasks that are independent and long, each with its scope declared: collie work task add … --scope '<globs, comma separated>' (the paths the task may touch) and, when one builds on another, --needs <task ids, comma separated> (it starts only after those are integrated). Two tasks run at the same time only when their scopes do not overlap; a task with no scope is exclusive: it runs alone. Do not use --parallel for tasks that touch the same file, or Package.swift or any other file every task shares: they conflict when integrated and the attempt is redone. Each parallel task runs in a lane, a temporary worktree with no build cache, so its first build is a cold one (minutes): short tasks end sooner one at a time. Show the scopes, the needs and --parallel to the owner in step 3, with the rest.
+
         To stop a loop: collie work stop. Answer in the owner's language.
 
         """

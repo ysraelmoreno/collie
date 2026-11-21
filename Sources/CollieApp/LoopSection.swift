@@ -10,16 +10,26 @@ struct LoopSection: Equatable {
         var id: String
         var title: String
         var state: State
-        /// Attempts the loop used on this task, and the most it may use (`work run --tries`).
+        /// Attempts the loop finished on this task (`WorkTask.tries` counts one at its end), and the most it may use
+        /// (`work run --tries`).
         var tries: Int
         var max: Int
-        /// "tentativa 2/3".
-        var triesText: String { "tentativa \(tries)/\(max)" }
+        /// M8.1: the attempt the row names: running, the one under way (`tries + 1`, never past `max`); done or deferred,
+        /// those used; open, none until one was used.
+        var attempt: Int? {
+            switch state {
+            case .running: Swift.min(tries + 1, max)
+            case .done, .deferred: tries
+            case .open: tries > 0 ? tries : nil
+            }
+        }
+        /// "tentativa 2/3"; "" for an open task never tried.
+        var triesText: String { attempt.map { "tentativa \($0)/\(max)" } ?? "" }
         var stateText: String {
             switch state { case .done: "feita"; case .running: "rodando"; case .deferred: "adiada"; case .open: "aberta" }
         }
         /// What VoiceOver reads: the state in words, never only the icon.
-        var accessibilityLabel: String { "\(title), \(stateText), \(triesText)" }
+        var accessibilityLabel: String { [title, stateText, triesText].filter { !$0.isEmpty }.joined(separator: ", ") }
     }
     struct Header: Equatable {
         /// Short: "agente", "check", "portão" ("preparando" between phases).

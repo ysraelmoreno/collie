@@ -19,7 +19,8 @@ extension CommandRouter {
         do {
             var w = try await work.active(terminal: tid)
             if w == nil {
-                guard events.contains(where: Self.opensWork), let me = ws.terminals.first(where: { $0.id == tid }) else { return }
+                guard events.contains(where: Self.opensWork), let me = ws.terminals.first(where: { $0.id == tid }),
+                      !Self.isLoopAttempt(me.id, name: me.name, in: try await work.list(includeClosed: true)) else { return }
                 w = try await implicitWork(me, now: now)
             }
             guard let w else { return }
@@ -51,6 +52,13 @@ extension CommandRouter {
         guard !workStoreBroken else { return }
         workStoreBroken = true
         workLog("\(context): \((error as? ProtocolError)?.message ?? "\(error)")")
+    }
+
+    /// M8.1: the terminal is a loop's attempt (a running `.loop` job names it, by its terminal or, before the loop marks
+    /// it, its agent name). Its hooks open no implicit work: a background shell or subagent of the attempt used to open
+    /// "<attempt> — <day>" with no task, and the history listed each attempt as a work.
+    static func isLoopAttempt(_ id: UUID, name: String, in works: [Work]) -> Bool {
+        works.contains { $0.jobs.contains { $0.kind == .loop && $0.state == .running && ($0.terminal == id || $0.id == name) } }
     }
 
     /// A task or a job opens an implicit work; notes and job ends alone do not.
@@ -408,7 +416,7 @@ extension CommandRouter {
                 guard let a = all.first(where: { $0.id == id.lowercased() }) else { throw missing("no closed work \(id)") }
                 return try isoJSON(a)
             }
-            let rows = all.prefix(limit)
+            let rows = all.filter(\.listed).prefix(limit)   // M8.1: an empty work stays readable by id, never listed
             let iso = ISO8601DateFormatter()
             return .object(["history": .array(rows.map { a in
                 var o: [String: JSONValue] = ["id": .string(a.id), "title": .string(a.title), "done": .number(Double(a.done)),

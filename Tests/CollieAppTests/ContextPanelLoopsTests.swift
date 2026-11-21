@@ -9,7 +9,7 @@ private let term = UUID()
 
 private func work(_ state: WorkLoopState.State? = .running, paddock: UUID? = pad, closed: Bool = false) -> Work {
     var w = Work(title: "T", terminalId: UUID(), paddockId: paddock, tasks: [
-        WorkTask(id: "a", title: "Feita", state: .done, tries: 1), WorkTask(id: "b", title: "Rodando", state: .inProgress, tries: 2),
+        WorkTask(id: "a", title: "Feita", state: .done, tries: 1), WorkTask(id: "b", title: "Rodando", state: .inProgress, tries: 1),
         WorkTask(id: "c", title: "Adiada", state: .deferred, tries: 3), WorkTask(id: "d", title: "Aberta")])
     if closed { w.closedAt = Date() }
     if let state { var l = WorkLoopState(state: state, task: "b", attempt: 2, tries: 3); l.show(.agent); w.loop = l }
@@ -40,13 +40,13 @@ private func work(_ state: WorkLoopState.State? = .running, paddock: UUID? = pad
     @Test func rowsKeepTaskOrderWithStateAndTries() {
         let s = LoopSection.make(work: work(), paddock: pad)
         #expect(s.rows.map(\.title) == ["Feita", "Rodando", "Adiada", "Aberta"])
-        #expect(s.rows.map(\.triesText) == ["tentativa 1/3", "tentativa 2/3", "tentativa 3/3", "tentativa 0/3"])
+        #expect(s.rows.map(\.triesText) == ["tentativa 1/3", "tentativa 2/3", "tentativa 3/3", ""])
     }
 
     @Test func accessibilityLabelSaysTheStateInWords() {
         let s = LoopSection.make(work: work(), paddock: pad)
         #expect(s.rows.map(\.accessibilityLabel) == ["Feita, feita, tentativa 1/3", "Rodando, rodando, tentativa 2/3",
-                                                     "Adiada, adiada, tentativa 3/3", "Aberta, aberta, tentativa 0/3"])
+                                                     "Adiada, adiada, tentativa 3/3", "Aberta, aberta"])
     }
 
     @Test func clickOpensTheAttemptTerminalOnlyWhileItExists() {

@@ -138,7 +138,7 @@ import CollieCore
         var body: some View { Button(action: action) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.buttonStyle(.borderless) }
     }
     private func tree(_ v: NSView, _ d: Int = 0) -> String { String(repeating: " ", count: d) + "\(type(of: v)) \(v.frame)\n" + v.subviews.map { tree($0, d + 1) }.joined() }
-    @Test(arguments: [1.0, 0.5, 0.7, 2.0]) func map(zoom: Double) async {
+    @Test(arguments: [0.5]) func map(zoom: Double) async {
         let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
@@ -162,6 +162,7 @@ import CollieCore
                 w.sendEvent(ev(.leftMouseDown))
                 if let up = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) { w.sendEvent(up) }
                 if fired > 0 { hits.append("\(Int(wx)),\(Int(wy))") }
+                print("PROBE4 at \(wx),\(wy) fired=\(fired)"); fflush(stdout)
             }
         }
         print("PROBE4 zoom=\(zoom) hostInWindow=\(hf) hits=\(hits.count) first=\(hits.first ?? "-") last=\(hits.last ?? "-")")

@@ -97,11 +97,47 @@ enum LaneWorktree {
         if try await hasBranch(branch, in: repoRoot, host) { throw fail("branch \(branch) already exists") }
         let common = URL(fileURLWithPath: try await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: repoRoot, host))
         try GitRunner.exclude("\(LegacyOrq.repoDirName(repoRoot: repoRoot))/paddocks/", commonDir: common)
+        let owner = await host.laneOwner()
+        guard owner.range(of: "^[A-Za-z0-9._-]{1,64}$", options: .regularExpression) != nil else { throw fail("no daemon id to mark lane \(name) with") }
         try await git(["worktree", "add", "-b", branch, path.path, base], in: repoRoot, host)
-        return Lane(repoRoot: repoRoot, path: path, branch: branch, base: base)
+        let lane = Lane(repoRoot: repoRoot, path: path, branch: branch, base: base)
+        // M3b.5: the daemon's mark, before anything runs in the lane: without it, no sweep ever removes the lane
+        do {
+            guard let admin = adminDir(of: path, common: common) else { throw fail("git made no worktree dir for \(path.path)") }
+            try Data("\(owner) \(work.uuidString.lowercased())\n".utf8).write(to: admin.appendingPathComponent(markerName))
+        } catch {
+            try? await remove(lane, host: host)
+            throw fail("cannot mark lane \(name): \(error)")
+        }
+        return lane
+    }
+
+    /// M3b.5: the file in a lane's own git dir (`<common>/worktrees/<dir>/`) that says which daemon made it and for
+    /// which work: "<owner> <work uuid>". Written only here, by the daemon; the lane's profile closes it like `gitdir`.
+    static let markerName = "collie-lane"
+
+    /// The git dir in `common/worktrees` whose `gitdir` points at `path/.git` (both closed to the lane), never what the
+    /// lane's own `.git` file says (the lane writes that).
+    static func adminDir(of path: URL, common: URL) -> URL? {
+        let dir = common.appendingPathComponent("worktrees"), want = SignedAppCheck.realPath(path.appendingPathComponent(".git"))
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return names.sorted().map { dir.appendingPathComponent($0) }.first { d in
+            guard let s = try? String(contentsOf: d.appendingPathComponent("gitdir"), encoding: .utf8) else { return false }
+            return SignedAppCheck.realPath(URL(fileURLWithPath: s.trimmingCharacters(in: .whitespacesAndNewlines))) == want
+        }
+    }
+
+    /// The lane carries this daemon's mark (`owner`) for the work its branch names.
+    static func isMarked(_ lane: Lane, owner: String, common: URL) -> Bool {
+        guard let admin = adminDir(of: lane.path, common: common),
+              let s = try? String(contentsOf: admin.appendingPathComponent(markerName), encoding: .utf8) else { return false }
+        let f = s.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").map(String.init)
+        let w8 = String(lane.branch.dropFirst(branchPrefix.count).prefix(8))
+        return f.count == 2 && f[0] == owner && UUID(uuidString: f[1]).map(work8) == w8
     }
 
     /// Removes the lane's worktree, its leftover directory and its branch. Idempotent: what is already gone is skipped.
+    /// M3b.5: only for a lane the caller made (the loop's own `dropLane`) or found marked (`sweep`): it checks no mark.
     static func remove(_ lane: Lane, host: some LoopHost) async throws(ProtocolError) {
         guard lane.branch.hasPrefix(branchPrefix) else { throw fail("'\(lane.branch)' is not a lane branch") }
         let root = lane.repoRoot
@@ -124,13 +160,13 @@ enum LaneWorktree {
         if try await hasBranch(lane.branch, in: root, host) { try await git(["branch", "-D", lane.branch], in: root, host) }
     }
 
-    /// The lanes (branches under `collie/lane/`) whose work is not in `knownWork`. Empty when git cannot answer.
-    static func orphans(repoRoot: URL, knownWork: Set<UUID>, host: some LoopHost) async -> [Lane] {
+    /// The lanes (branches under `collie/lane/`) whose work's short id `pick` takes. Empty when git cannot answer.
+    static func lanes(repoRoot: URL, host: some LoopHost, _ pick: (String) -> Bool) async -> [Lane] {
         guard let refs = try? await git(["for-each-ref", "--format=%(refname:short)", "refs/heads/\(branchPrefix)"], in: repoRoot, host) else { return [] }
-        let known = Set(knownWork.map(work8)), listed = (try? await worktrees(repoRoot, host)) ?? []
+        let listed = (try? await worktrees(repoRoot, host)) ?? []
         return refs.split(separator: "\n").map(String.init).filter { $0.hasPrefix(branchPrefix) }.sorted().compactMap { branch in
             let name = branch.dropFirst(branchPrefix.count)
-            if known.contains(String(name.prefix(8))) { return nil }
+            guard pick(String(name.prefix(8))) else { return nil }
             // the path `create` gave it (git prints the symlink-free one: /private/var for /var); git's only if it was moved
             var path = paddocksDir(repoRoot).appendingPathComponent(dirPrefix + name)
             if let wt = listed.first(where: { $0.branch == branch }).map({ URL(fileURLWithPath: $0.path) }),
@@ -139,13 +175,32 @@ enum LaneWorktree {
         }
     }
 
-    /// Removes every orphan lane (the daemon's start-up sweep, M3.6). Returns the ones removed.
-    @discardableResult
-    static func sweep(repoRoot: URL, active: Set<UUID>, host: some LoopHost) async -> [Lane] {
-        var removed: [Lane] = []
-        for lane in await orphans(repoRoot: repoRoot, knownWork: active, host: host) where (try? await remove(lane, host: host)) != nil {
-            removed.append(lane)
+    /// The lanes whose work is not in `knownWork`.
+    static func orphans(repoRoot: URL, knownWork: Set<UUID>, host: some LoopHost) async -> [Lane] {
+        let known = Set(knownWork.map(work8))
+        return await lanes(repoRoot: repoRoot, host: host) { !known.contains($0) }
+    }
+
+    /// The lanes of `work`.
+    static func lanes(of work: UUID, repoRoot: URL, host: some LoopHost) async -> [Lane] {
+        await lanes(repoRoot: repoRoot, host: host) { $0 == work8(work) }
+    }
+
+    /// What a sweep did: `removed`, and `spared` (no mark of this daemon: another daemon's, or the owner's own
+    /// `collie/lane/…` branch or worktree; never touched, not even `branch -D`).
+    struct Swept: Equatable { var removed: [Lane] = [], spared: [Lane] = [] }
+
+    /// M3b.5: removes each of `lanes` (all of one repository) that this daemon marked (`isMarked`); the rest is spared.
+    /// A marked lane git will not remove (moved out of the paddocks folder) is in neither list.
+    static func sweep(_ lanes: [Lane], host: some LoopHost) async -> Swept {
+        var out = Swept()
+        guard let root = lanes.first?.repoRoot,
+              let c = try? await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: root, host) else { return out }
+        let owner = await host.laneOwner(), common = URL(fileURLWithPath: c)
+        for lane in lanes {
+            guard !owner.isEmpty, isMarked(lane, owner: owner, common: common) else { out.spared.append(lane); continue }
+            if (try? await remove(lane, host: host)) != nil { out.removed.append(lane) }
         }
-        return removed
+        return out
     }
 }

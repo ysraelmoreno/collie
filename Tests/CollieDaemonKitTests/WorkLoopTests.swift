@@ -58,6 +58,10 @@ actor LoopFakeHost: LoopHost {
     var taken: Set<String> = []
     func setTaken(_ n: Set<String>) { taken = n }
     func namesTaken() async -> Set<String> { taken }
+    /// M3b.5: the daemon this host marks lanes as (a router's install id, to make lanes its sweep takes as its own).
+    var owner = "collie-test"
+    func laneOwner() async -> String { owner }
+    func setOwner(_ o: String) { owner = o }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
         let id = UUID(); names[id] = name; summoned.append(name); return id

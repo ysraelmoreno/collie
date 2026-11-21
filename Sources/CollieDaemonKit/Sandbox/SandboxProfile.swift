@@ -243,12 +243,13 @@ enum SandboxProfile {
             rule("deny", "file-write*", tagged: true, parents.sorted().map(lit))
             // what the user's own unsandboxed git executes from, and the pointers that pick it (renaming .git, rewriting a
             // worktree's .git file or commondir/gitdir would swap in a planted config): never writable, grants included.
+            // M3b.5: nor a worktree's lane mark (`LaneWorktree.markerName`): only the daemon writes which lanes are its own.
             if let common {
                 let c = re(common)
                 rule("deny", "file-write*", tagged: true, [
                     lit(common), lit(project + "/.git"), sub(common + "/hooks"), lit(common + "/config"),
                     lit(common + "/config.worktree"), lit(common + "/info/attributes"), lit(common + "/commondir"),
-                    rx("^" + c + "/worktrees/[^/]+/(commondir|gitdir|config\\.worktree)$"),
+                    rx("^" + c + "/worktrees/[^/]+/(commondir|gitdir|config\\.worktree|\(LaneWorktree.markerName))$"),
                     rx("^" + c + "/modules/.+/(hooks(/|$)|config$|config\\.worktree$|commondir$|info/attributes$)"),
                 ])
             } else {

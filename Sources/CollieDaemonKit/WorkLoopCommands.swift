@@ -224,21 +224,45 @@ extension CommandRouter {
         try? await asks.inject(to: starter, prompt: WorkStatusText.loopEnded(w), afterQuiet: true)
     }
 
-    /// M3.6: what is left on disk of the lanes of `w`'s loop goes: worktree, branch (`LaneWorktree.sweep`: only what is
-    /// a lane, and never a lane of another work on record) and the lane's sandbox files. Idempotent. A loop that never
-    /// had a lane (no `--parallel` over 1, none on record) costs no git: it ends exactly as before lanes.
+    /// M3.6: what is left on disk of the lanes of `w`'s loop goes: worktree, branch and the lane's sandbox files.
+    /// Idempotent. A loop that never had a lane (no `--parallel` over 1, none on record) costs no git: it ends exactly
+    /// as before lanes.
     /// M3b.1: the same git as the lanes' birth (`laneGit`: the daemon's, outside the loop's profile), at the loop's end
     /// and in the start sweep alike: no profile is needed, or made, to remove a lane.
-    /// ponytail: a lane of a work no longer on record goes too, but its sandbox files stay (its work's id is unknown).
+    /// M3b.5: only `w`'s own lanes (never another work's, on record or not), and of those only the ones this daemon
+    /// marked (`LaneWorktree.sweep`); one without the mark stays, with a note on `w`.
     func removeLanes(of w: Work) async {
         guard (w.loop?.parallel ?? 1) > 1 || w.loop?.lanes?.isEmpty == false,
               let p = ws.paddocks.first(where: { $0.id == w.paddockId }), !p.isFolder else { return }
-        let host = RouterLoopHost(router: self, starter: w.terminalId, root: config.paths.root, work: w.id, paddock: p.id,
-                                  dir: URL(fileURLWithPath: p.path), sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
-        let others = Set(((try? await work.list(includeClosed: true)) ?? []).map(\.id)).subtracting([w.id])
-        for lane in await LaneWorktree.sweep(repoRoot: URL(fileURLWithPath: p.repoRoot), active: others, host: host) {
-            await host.laneGone(lane)
+        let host = laneSweepHost(p, work: w.id, starter: w.terminalId)
+        let s = await LaneWorktree.sweep(await LaneWorktree.lanes(of: w.id, repoRoot: URL(fileURLWithPath: p.repoRoot), host: host), host: host)
+        for lane in s.removed { await host.laneGone(lane) }
+        guard !s.spared.isEmpty else { return }
+        let note = Self.sparedNote(s.spared)
+        try? await work.update(w.id) { x in if x.notes.last?.text != note { x.notes.append(WorkNote(at: Date(), text: note)) } }
+    }
+
+    /// M3b.5: at start, the lanes of no work on record (one removed while its loop ran) that this daemon marked go
+    /// too; the others stay, with a line in the daemon's log. One `for-each-ref` per repository with a paddock.
+    /// ponytail: such a lane's sandbox files stay (`laneGone` needs its work's id); harmless, they only take space.
+    func sweepOrphanLanes() async {
+        guard let all = try? await work.list(includeClosed: true) else { return }
+        let known = Set(all.map(\.id))
+        var seen: Set<String> = []
+        for p in ws.paddocks where !p.isFolder && seen.insert(p.repoRoot).inserted {
+            let host = laneSweepHost(p, work: UUID(), starter: UUID())
+            let s = await LaneWorktree.sweep(await LaneWorktree.orphans(repoRoot: URL(fileURLWithPath: p.repoRoot), knownWork: known, host: host), host: host)
+            if !s.spared.isEmpty { FileHandle.standardError.write(Data("collied: \(Self.sparedNote(s.spared))\n".utf8)) }
         }
+    }
+
+    private func laneSweepHost(_ p: Paddock, work: UUID, starter: UUID) -> RouterLoopHost {
+        RouterLoopHost(router: self, starter: starter, root: config.paths.root, work: work, paddock: p.id,
+                       dir: URL(fileURLWithPath: p.path), sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
+    }
+
+    static func sparedNote(_ lanes: [Lane]) -> String {
+        "[loop] faixa não removida (sem a marca deste daemon: de outro daemon ou do dono): " + lanes.map(\.branch).joined(separator: ", ")
     }
 
     /// At start: a loop a previous daemon left `running` is `stopped` (its task back to open, its attempt's job gone):
@@ -254,6 +278,7 @@ extension CommandRouter {
             for t in Self.loopAgents(of: w, in: ws.terminals) { try? await remove(t) }
             try? await work.update(w.id) { Self.sweepLeftRunning(&$0, now: now) }
         }
+        await sweepOrphanLanes()
     }
 
     /// M3.8: the terminals of `w`'s loop attempts, in its paddock: those whose id is on a loop job (`WorkJob.terminal`),
@@ -531,6 +556,8 @@ struct RouterLoopHost: LoopHost {
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
         try await laneRunner(args, dir, nil)
     }
+    /// M3b.5: the install id (`remote/install-id` of this daemon's root): a dev daemon and the installed one differ.
+    func laneOwner() async -> String { (try? await router.remoteInstallId()) ?? "" }
 
     /// Git for the loop, in an agent-writable repo: under `profile`, hooks and fsmonitor off (GitRunner), and the filter
     /// drivers the repo's own config defines (local/worktree scope: what an agent can plant), external diffs and textconv off.

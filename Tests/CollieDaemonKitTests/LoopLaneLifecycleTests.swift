@@ -31,6 +31,7 @@ private struct Left {
         repo = try await makeRepo()
         paddock = await d.router.addPaddock(repo)
         let host = LoopFakeHost(dir: repo)
+        await host.setOwner(try await d.router.remoteInstallId())   // M3b.5: lanes this daemon marked
         let sha = try await GitRunner.run(["rev-parse", "HEAD"], in: repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
         let w = try await d.router.work.start(title: "looping", terminal: UUID(), paddockId: paddock, branch: nil)
         let other = try await d.router.work.start(title: "another", terminal: UUID(), paddockId: paddock, branch: nil)

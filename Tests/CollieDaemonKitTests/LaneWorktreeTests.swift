@@ -153,12 +153,14 @@ private func hasBranch(_ b: String, _ repo: URL) async throws -> Bool {
         #expect(Set(orphans.map(\.branch)) == [o1.branch, o2.branch, o3.branch])
         #expect(Set(orphans.map(\.path.path)) == [o1.path.path, o2.path.path, o3.path.path])
 
-        let removed = await LaneWorktree.sweep(repoRoot: repo, active: [active], host: host)
-        #expect(removed.count == 3)
-        for o in [o1, o2, o3] {
+        // M3b.5: o3's mark went with its worktree: its branch is spared, never `branch -D` without the mark
+        let swept = await LaneWorktree.sweep(orphans, host: host)
+        #expect(Set(swept.removed.map(\.branch)) == [o1.branch, o2.branch] && swept.spared.map(\.branch) == [o3.branch])
+        for o in [o1, o2] {
             #expect(!exists(o.path))
             #expect(!(try await hasBranch(o.branch, repo)))
         }
+        #expect(try await hasBranch(o3.branch, repo))
         #expect(exists(keep.path.appendingPathComponent("f.txt")))
         #expect(try await hasBranch(keep.branch, repo))
         for (p, b) in [(pad, "collie/foo"), (pad2, "collie/lane-fake")] {
@@ -168,8 +170,9 @@ private func hasBranch(_ b: String, _ repo: URL) async throws -> Bool {
         }
         #expect(try await hasBranch("feature/collie/lane/x", repo))
         #expect(try await hasBranch("main", repo))
-        #expect(await LaneWorktree.orphans(repoRoot: repo, knownWork: [active], host: host).isEmpty)
-        #expect(await LaneWorktree.sweep(repoRoot: repo, active: [active], host: host).isEmpty)
+        let left = await LaneWorktree.orphans(repoRoot: repo, knownWork: [active], host: host)
+        #expect(left.map(\.branch) == [o3.branch])
+        #expect(await LaneWorktree.sweep(left, host: host).removed.isEmpty)
         #expect(try await git(repo, "status", "--porcelain") == "")
     }
 }

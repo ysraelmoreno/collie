@@ -249,7 +249,7 @@ private actor StrictFake: LoopHost {
         #expect(!LaneWorktree.ownsPath(moved, repoRoot: repo) && LaneWorktree.ownsPath(lane.path, repoRoot: repo))
         await #expect(throws: ProtocolError.self) { try await LaneWorktree.remove(lane, host: host) }
         #expect(exists(moved.appendingPathComponent("f.txt")), "a worktree outside the paddocks folder is never force-removed")
-        let swept = await LaneWorktree.sweep(repoRoot: repo, active: [], host: host)
-        #expect(swept.isEmpty && exists(moved.appendingPathComponent("f.txt")))
+        let swept = await LaneWorktree.sweep(await LaneWorktree.orphans(repoRoot: repo, knownWork: [], host: host), host: host)
+        #expect(swept.removed.isEmpty && exists(moved.appendingPathComponent("f.txt")))
     }
 }

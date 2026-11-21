@@ -255,6 +255,12 @@ enum SandboxProfile {
             } else {
                 rule("deny", "file-write*", tagged: true, [lit(project + "/.git")])   // no planting a pointer in a non-git project
             }
+            // M3c.3 (finding 4 of the 3b review): a lane never renames nor deletes its own folder or its git dir in
+            // `<common>/worktrees` (what is in them stays writable). Moving the git dir out, rewriting `gitdir` and the
+            // mark where the regex above does not reach and moving it back, or swapping the lane's folder for a symlink
+            // to another lane, would get past the rules above. Git needs neither inside the lane. Untagged, as the
+            // lane's other denies.
+            if i.lanePaddock != nil { rule("deny", "file-write*", [lit(project)] + [worktree].compactMap { $0.map(lit) }) }
         }
         out.append(";; Collie: closed (data, tokens, grants, workspace.json); this terminal's files readable; only the socket")
         rule("deny", "file-read* file-write*", tagged: true, [sub(collie)])

@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import os
 import CollieCore
 import CollieProtocol
 
@@ -235,10 +236,10 @@ extension CommandRouter {
         guard (w.loop?.parallel ?? 1) > 1 || w.loop?.lanes?.isEmpty == false,
               let p = ws.paddocks.first(where: { $0.id == w.paddockId }), !p.isFolder else { return }
         let host = laneSweepHost(p, work: w.id, starter: w.terminalId)
-        let s = await LaneWorktree.sweep(await LaneWorktree.lanes(of: w.id, repoRoot: URL(fileURLWithPath: p.repoRoot), host: host), host: host)
+        let id = w.id
+        let s = await LaneWorktree.sweep(await LaneWorktree.lanes(of: id, repoRoot: URL(fileURLWithPath: p.repoRoot), host: host), host: host) { $0 == id }
         for lane in s.removed { await host.laneGone(lane) }
-        guard !s.spared.isEmpty else { return }
-        let note = Self.sparedNote(s.spared)
+        guard let note = Self.sparedNote(s) else { return }
         try? await work.update(w.id) { x in if x.notes.last?.text != note { x.notes.append(WorkNote(at: Date(), text: note)) } }
     }
 
@@ -251,8 +252,8 @@ extension CommandRouter {
         var seen: Set<String> = []
         for p in ws.paddocks where !p.isFolder && seen.insert(p.repoRoot).inserted {
             let host = laneSweepHost(p, work: UUID(), starter: UUID())
-            let s = await LaneWorktree.sweep(await LaneWorktree.orphans(repoRoot: URL(fileURLWithPath: p.repoRoot), knownWork: known, host: host), host: host)
-            if !s.spared.isEmpty { FileHandle.standardError.write(Data("collied: \(Self.sparedNote(s.spared))\n".utf8)) }
+            let s = await LaneWorktree.sweep(await LaneWorktree.orphans(repoRoot: URL(fileURLWithPath: p.repoRoot), knownWork: known, host: host), host: host) { !known.contains($0) }
+            if let note = Self.sparedNote(s) { FileHandle.standardError.write(Data("collied: \(note)\n".utf8)) }
         }
     }
 
@@ -261,9 +262,22 @@ extension CommandRouter {
                        dir: URL(fileURLWithPath: p.path), sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
     }
 
-    static func sparedNote(_ lanes: [Lane]) -> String {
-        "[loop] faixa não removida (sem a marca deste daemon: de outro daemon ou do dono): " + lanes.map(\.branch).joined(separator: ", ")
+    /// M3c.3: the lanes already noted by this daemon (repository and branch). A spared lane stays until someone removes
+    /// it; one note per daemon says so, not one at every end of its work's loop.
+    private static let notedLanes = OSAllocatedUnfairLock(initialState: Set<String>())
+
+    /// The note for what `s` left behind that this daemon has not noted yet; nil when there is none.
+    static func sparedNote(_ s: LaneWorktree.Swept) -> String? {
+        func fresh(_ ls: [Lane]) -> String {
+            ls.filter { l in notedLanes.withLock { $0.insert(l.repoRoot.path + " " + l.branch).inserted } }.map(\.branch).joined(separator: ", ")
+        }
+        let spared = fresh(s.spared), refused = fresh(s.refused)
+        let parts = [spared.isEmpty ? nil : "faixa não removida (sem a marca deste daemon: de outro daemon ou do dono): " + spared,
+                     refused.isEmpty ? nil : "faixa marcada não removida (a pasta não é a da faixa: movida ou trocada por symlink): " + refused]
+            .compactMap { $0 }
+        return parts.isEmpty ? nil : "[loop] " + parts.joined(separator: "; ")
     }
+
 
     /// At start: a loop a previous daemon left `running` is `stopped` (its task back to open, its attempt's job gone):
     /// `collie work run` again continues from the next open task. M3.6: its lanes go first (no orphan lane is left

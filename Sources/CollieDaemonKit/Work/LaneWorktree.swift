@@ -87,12 +87,21 @@ enum LaneWorktree {
         repoRoot.appendingPathComponent("\(LegacyOrq.repoDirName(repoRoot: repoRoot))/paddocks")
     }
 
-    /// `path` is a `lane-*` folder directly in the repository's own paddocks folder (symlinks resolved).
+    /// `path` is a `lane-*` folder directly in the repository's own paddocks folder, and not a symlink.
+    /// M3c.3 (finding 4 of the 3b review): a lane that put a symlink to another lane in its own place resolved to that
+    /// lane and passed. Decision: the folder itself must be its own real path (`realPath(path)` is `realPath(parent)/name`);
+    /// links above the paddocks folder (`/var` → `/private/var`) stay allowed, `create` already keeps that folder in
+    /// the repository.
     static func ownsPath(_ path: URL, repoRoot: URL) -> Bool {
         let real = URL(fileURLWithPath: SignedAppCheck.realPath(path))
+        let parent = SignedAppCheck.realPath(path.deletingLastPathComponent())
         return real.lastPathComponent.hasPrefix(dirPrefix)
+            && real.path == URL(fileURLWithPath: parent).appendingPathComponent(path.lastPathComponent).path
             && real.deletingLastPathComponent().path == SignedAppCheck.realPath(paddocksDir(repoRoot))
     }
+
+    /// Something (a link included, followed or not) is at `u`.
+    private static func lexists(_ u: URL) -> Bool { (try? FileManager.default.attributesOfItem(atPath: u.path)) != nil }
 
     /// The daemon's git through the host (`laneGit`), throwing with stderr on a non-zero exit.
     @discardableResult
@@ -176,13 +185,15 @@ enum LaneWorktree {
         }
     }
 
-    /// The lane carries this daemon's mark (`owner`) for the work its branch names.
-    static func isMarked(_ lane: Lane, owner: String, common: URL) -> Bool {
+    /// The lane carries this daemon's mark (`owner`) for the work its branch names, and that work (the whole id the
+    /// mark keeps, M3c.3: two works may share the branch's 8 characters) is one `work` takes.
+    static func isMarked(_ lane: Lane, owner: String, common: URL, work: (UUID) -> Bool) -> Bool {
         guard let admin = adminDir(of: lane.path, common: common),
               let s = try? String(contentsOf: admin.appendingPathComponent(markerName), encoding: .utf8) else { return false }
         let f = s.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").map(String.init)
         let w8 = String(lane.branch.dropFirst(branchPrefix.count).prefix(8))
-        return f.count == 2 && f[0] == owner && UUID(uuidString: f[1]).map(work8) == w8
+        guard f.count == 2, f[0] == owner, let id = UUID(uuidString: f[1]), work8(id) == w8 else { return false }
+        return work(id)
     }
 
     /// Removes the lane's worktree, its leftover directory and its branch. Idempotent: what is already gone is skipped.
@@ -194,6 +205,8 @@ enum LaneWorktree {
     private static func removeLocked(_ lane: Lane, host: some LoopHost) async throws(ProtocolError) {
         guard lane.branch.hasPrefix(branchPrefix) else { throw fail("'\(lane.branch)' is not a lane branch") }
         let root = lane.repoRoot
+        // M3c.3: a lane folder swapped for a symlink (or moved out) is never removed, whatever it points at
+        if lexists(lane.path), !ownsPath(lane.path, repoRoot: root) { throw fail("lane folder \(lane.path.path) is not the lane's own (a symlink, or moved)") }
         // by branch, not by path: a worktree on any other branch is never this lane's
         if let wt = try await worktrees(root, host).first(where: { $0.branch == lane.branch }) {
             // M3b.1: this git runs outside any profile, with --force: never on a path that is not a lane's
@@ -240,19 +253,20 @@ enum LaneWorktree {
     }
 
     /// What a sweep did: `removed`, and `spared` (no mark of this daemon: another daemon's, or the owner's own
-    /// `collie/lane/…` branch or worktree; never touched, not even `branch -D`).
-    struct Swept: Equatable { var removed: [Lane] = [], spared: [Lane] = [] }
+    /// `collie/lane/…` branch or worktree; never touched, not even `branch -D`). M3c.3: `refused`, a marked lane
+    /// `remove` would not touch (its folder moved out of the paddocks folder, or swapped for a symlink).
+    struct Swept: Equatable { var removed: [Lane] = [], spared: [Lane] = [], refused: [Lane] = [] }
 
-    /// M3b.5: removes each of `lanes` (all of one repository) that this daemon marked (`isMarked`); the rest is spared.
-    /// A marked lane git will not remove (moved out of the paddocks folder) is in neither list.
-    static func sweep(_ lanes: [Lane], host: some LoopHost) async -> Swept {
+    /// M3b.5: removes each of `lanes` (all of one repository) that this daemon marked for a work `work` takes
+    /// (`isMarked`); the rest is spared. The default takes any work (the branch's 8 characters still have to match).
+    static func sweep(_ lanes: [Lane], host: some LoopHost, work: (UUID) -> Bool = { _ in true }) async -> Swept {
         var out = Swept()
         guard let root = lanes.first?.repoRoot,
               let c = try? await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], in: root, host) else { return out }
         let owner = await host.laneOwner(), common = URL(fileURLWithPath: c)
         for lane in lanes {
-            guard !owner.isEmpty, isMarked(lane, owner: owner, common: common) else { out.spared.append(lane); continue }
-            if (try? await remove(lane, host: host)) != nil { out.removed.append(lane) }
+            guard !owner.isEmpty, isMarked(lane, owner: owner, common: common, work: work) else { out.spared.append(lane); continue }
+            if (try? await remove(lane, host: host)) != nil { out.removed.append(lane) } else { out.refused.append(lane) }
         }
         return out
     }

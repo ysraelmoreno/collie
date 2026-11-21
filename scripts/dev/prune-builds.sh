@@ -31,10 +31,16 @@ if command -v collie >/dev/null 2>&1; then
     [ -n "$name" ] || continue
     plain=$(printf '%s' "${name:0:40}" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')
     live+=("$plain")
-    if [[ $name =~ ^([a-z0-9]+(-[a-z0-9]+)+)-t[0-9]+$ ]]; then live+=("laco-${BASH_REMATCH[1]%-f*}" "laco-${BASH_REMATCH[1]}"); fi
+    if [[ $name =~ ^([a-z0-9]+(-[a-z0-9]+)+)-t[0-9]+$ ]]; then
+      head=${BASH_REMATCH[1]} lane=""
+      [[ $head =~ ^(.+-.+)(-f[0-9]+)$ ]] && head=${BASH_REMATCH[1]} lane=${BASH_REMATCH[2]}
+      head="laco-$head"; head=${head:0:$((40 - ${#lane}))}
+      while [ "${head%-}" != "$head" ]; do head=${head%-}; done
+      live+=("$head$lane")
+    fi
   done < <(collie list --all 2>/dev/null || true)
 fi
-is_live() { local l; for l in "${live[@]+"${live[@]}"}"; do [ "${1:0:${#l}}" = "$l" ] && [ ${#1} -le $((${#l} + 3)) ] && return 0; done; return 1; }
+is_live() { local l; for l in "${live[@]+"${live[@]}"}"; do [ "$1" = "$l" ] && return 0; done; return 1; }
 
 now=$(date +%s) kept=0 removed=0
 for d in "$build"/*; do

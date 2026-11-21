@@ -100,7 +100,7 @@ private func withHookDaemon(_ body: (Daemon, Paths) async throws -> Void) async 
 private let idle = 1.0
 private func shiftDaemon(heldMax: Double? = nil, _ body: (Daemon, Paths) async throws -> Void) async throws {
     try await withDaemon(configure: { c in
-        c.idleQuietSeconds = idle; c.askReadyQuiet = .milliseconds(100)
+        c.idleQuietSeconds = idle; c.askReadyQuiet = .milliseconds(100); shortTimeouts(&c)
         if let heldMax { c.heldMaxSeconds = heldMax }
     }, body)
 }
@@ -108,6 +108,8 @@ private func shiftDaemon(heldMax: Double? = nil, _ body: (Daemon, Paths) async t
 private func scaledAgent(_ extra: String) -> String {
     "echo T=$COLLIE_TOKEN; COLLIE_FAKE_THINK=\(idle * 0.25) \(extra) exec sh '\(fixture)'"
 }
+/// Lets a test ask for a sub-second turn timeout (production floor: 1 s, `AskLimits.minTimeoutSeconds`).
+private func shortTimeouts(_ c: inout DaemonConfig) { c.askMinTimeoutSeconds = 0.1 }
 /// Idle-fallback tests: a short idle window (the rule is the same, see AskClockTests).
 private func withFastIdleDaemon(_ body: (Daemon, Paths) async throws -> Void) async throws {
     try await withDaemon(configure: { $0.idleQuietSeconds = 0.5; $0.askReadyQuiet = .milliseconds(100) }, body)
@@ -386,7 +388,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
     }
 
     @Test func askTimesOut() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let a = try await term(d, p, "A")
             _ = try await spawn(d, p, "B", preset: "claude", command: "sleep 999")
             try await connect(d, p, "A", "B")
@@ -399,7 +401,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
 
     /// Readiness gate never opened (target silent): the timeout must say the prompt was never delivered.
     @Test func timeoutBeforeReadySaysNotDelivered() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let a = try await term(d, p, "A")
             _ = try await spawn(d, p, "B", preset: "custom", command: "sh -c 'sleep 30'")
             try await connect(d, p, "A", "B")
@@ -676,7 +678,7 @@ extension AskTests {
     }
 
     @Test func noWaitNotDeadlockEdge() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let a = try await term(d, p, "A", preset: "claude", command: silentTarget)
             let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
             try await connect(d, p, "A", "B")
@@ -717,7 +719,7 @@ extension AskTests {
     }
 
     @Test func noWaitFailureDelivered() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let a = try await term(d, p, "A", preset: "claude", command: quietAgent)
             _ = try await spawn(d, p, "B", preset: "claude", command: "sleep 999")
             try await connect(d, p, "A", "B")
@@ -935,7 +937,7 @@ extension AskTests {
 
     /// A `wait` that timed out leaves no edge: the crossed blocking ask that follows is not a deadlock.
     @Test func timedOutWaitReleasesEdge() async throws {
-        try await withDaemon { d, p in
+        try await withDaemon(configure: shortTimeouts) { d, p in
             let ticks = "echo T=$COLLIE_TOKEN; while :; do echo tick; sleep 0.1; done"
             let a = try await term(d, p, "A", preset: "custom", command: ticks)
             let b = try await term(d, p, "B", preset: "claude", command: silentTarget)

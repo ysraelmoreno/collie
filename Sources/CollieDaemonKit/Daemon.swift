@@ -21,6 +21,8 @@ public struct DaemonConfig: Sendable {
     /// Ask injection readiness (quiet after first output / ceiling after attach); see `AskLimits`.
     public var askReadyQuiet: Duration = AskLimits.production.readyQuiet
     public var askReadyMax: Duration = AskLimits.production.readyMax
+    /// The shortest `timeout` an ask/wait request may ask for (seconds); see `AskLimits`.
+    public var askMinTimeoutSeconds: Double = AskLimits.production.minTimeoutSeconds
     public var memoryCapBytes: Int = 1_048_576
     /// How long a terminal input write may block on a full tty before the stream is cut.
     public var writeStall: Duration = .seconds(2)
@@ -194,7 +196,7 @@ public final class Daemon: Sendable {
         let asks = AskCoordinator(limits: AskLimits(
             idleQuiet: .seconds(config.idleQuietSeconds), heldMax: .seconds(config.heldMaxSeconds),
             captureHold: .seconds(config.captureHoldSeconds), readyQuiet: config.askReadyQuiet, readyMax: config.askReadyMax,
-            submitConfirm: AskLimits.production.submitConfirm))
+            submitConfirm: AskLimits.production.submitConfirm, minTimeoutSeconds: config.askMinTimeoutSeconds))
         // a replay (base64 of the whole memory tail) must always fit the stream send queue on its own
         precondition(config.memoryCapBytes / 3 * 4 + 64 * 1024 < UnixSocketServer.Connection.sendCap,
                      "memoryCapBytes too large for the stream send queue")

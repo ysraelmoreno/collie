@@ -61,17 +61,18 @@ private let ceiling: Duration = .seconds(limit * 80)
         let p = AskLimits.production
         #expect(p.idleQuiet == .seconds(2) && p.heldMax == .seconds(600) && p.captureHold == .seconds(120))
         #expect(p.readyQuiet == .milliseconds(300) && p.readyMax == .seconds(10) && p.submitConfirm == .seconds(8))
+        #expect(p.minTimeoutSeconds == 1)
         // the defaults (no injection) are those same numbers, through every entry point
         #expect(AskCoordinator(idleQuietSeconds: 2).limits == p)
         let c = DaemonConfig(paths: Paths(root: URL(fileURLWithPath: "/nonexistent")),
                              collieExecutable: URL(fileURLWithPath: "/usr/bin/true"), workspaceId: UUID())
         #expect(c.idleQuietSeconds == 2 && c.heldMaxSeconds == 600 && c.captureHoldSeconds == 120)
-        #expect(c.askReadyQuiet == p.readyQuiet && c.askReadyMax == p.readyMax)
+        #expect(c.askReadyQuiet == p.readyQuiet && c.askReadyMax == p.readyMax && c.askMinTimeoutSeconds == p.minTimeoutSeconds)
     }
 
     /// Turn timeout: a target that never answers ends the ask on the injected 100 ms timeout.
     @Test func injectedTurnTimeoutExpires() async throws {
-        try await withDaemon(configure: { $0.askReadyQuiet = .milliseconds(50) }) { d, p in
+        try await withDaemon(configure: { $0.askReadyQuiet = .milliseconds(50); $0.askMinTimeoutSeconds = 0.05 }) { d, p in
             let a = try await term(d, p, "A")
             _ = try await spawn(d, p, "B", preset: "claude", command: "echo up; exec sleep 999")
             try await connect(d, p, "A", "B")
@@ -84,7 +85,7 @@ private let ceiling: Duration = .seconds(limit * 80)
 
     /// Held cap: a delivered turn that timed out keeps the slot only until the injected cap, then the next ask is typed.
     @Test func injectedHeldCapFreesTheSlot() async throws {
-        try await withDaemon(configure: { $0.heldMaxSeconds = limit; $0.askReadyQuiet = .milliseconds(50) }) { d, p in
+        try await withDaemon(configure: { $0.heldMaxSeconds = limit; $0.askReadyQuiet = .milliseconds(50); $0.askMinTimeoutSeconds = 0.05 }) { d, p in
             let a = try await term(d, p, "A")
             let b = try await spawn(d, p, "B", preset: "claude", command: "echo up; exec sleep 999")
             try await connect(d, p, "A", "B")
@@ -103,7 +104,7 @@ private let ceiling: Duration = .seconds(limit * 80)
     /// Lost hook: a hook-capable target skips one turn's hook; that ask times out, its turn is held until the
     /// injected cap, and the asks after it get their own answers again (at most one more lost).
     @Test func injectedCapRecoversFromALostHook() async throws {
-        try await withDaemon(configure: { $0.heldMaxSeconds = limit; $0.idleQuietSeconds = 15; $0.askReadyQuiet = .milliseconds(50) }) { d, p in
+        try await withDaemon(configure: { $0.heldMaxSeconds = limit; $0.idleQuietSeconds = 15; $0.askReadyQuiet = .milliseconds(50); $0.askMinTimeoutSeconds = 0.05 }) { d, p in
             let a = try await term(d, p, "A")
             let b = try await term(d, p, "B", preset: "custom",
                                    command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_THINK=0.05 COLLIE_FAKE_HOOK=1 COLLIE_FAKE_HOOK_SKIP=2 exec sh '\(fixture)'")
@@ -125,7 +126,7 @@ private let ceiling: Duration = .seconds(limit * 80)
 
     /// The fake agent with a short think time still follows the real rule: no hook, so the injected idle window ends it.
     @Test func fakeWithShortLimitsEndsByIdle() async throws {
-        try await withDaemon(configure: { $0.idleQuietSeconds = 0.3; $0.askReadyQuiet = .milliseconds(50) }) { d, p in
+        try await withDaemon(configure: { $0.idleQuietSeconds = 0.3; $0.askReadyQuiet = .milliseconds(50); $0.askMinTimeoutSeconds = 0.05 }) { d, p in
             let a = try await term(d, p, "A")
             _ = try await term(d, p, "B", preset: "shell", command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_THINK=0.05 exec sh '\(fixture)'")
             try await connect(d, p, "A", "B")

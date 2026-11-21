@@ -260,14 +260,18 @@ public struct AskLimits: Sendable, Equatable {
     public var readyMax: Duration
     /// A Claude prompt written and no UserPromptSubmit after this: not submitted, if the agent is quiet too.
     public var submitConfirm: Duration
+    /// The shortest turn timeout an `ask`/`wait` request may ask for, in seconds.
+    public var minTimeoutSeconds: Double
 
     public static let production = AskLimits(idleQuiet: .seconds(2), heldMax: .seconds(600), captureHold: .seconds(120),
-                                             readyQuiet: .milliseconds(300), readyMax: .seconds(10), submitConfirm: .seconds(8))
+                                             readyQuiet: .milliseconds(300), readyMax: .seconds(10), submitConfirm: .seconds(8),
+                                             minTimeoutSeconds: 1)
 
     public init(idleQuiet: Duration, heldMax: Duration, captureHold: Duration, readyQuiet: Duration, readyMax: Duration,
-                submitConfirm: Duration) {
+                submitConfirm: Duration, minTimeoutSeconds: Double) {
         self.idleQuiet = idleQuiet; self.heldMax = heldMax; self.captureHold = captureHold
         self.readyQuiet = readyQuiet; self.readyMax = readyMax; self.submitConfirm = submitConfirm
+        self.minTimeoutSeconds = minTimeoutSeconds
     }
 }
 

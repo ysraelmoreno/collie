@@ -7,10 +7,10 @@ t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
 suites=(WorkLoopTests WorkStatusTextTests WorkStoreTests LoopStopReasonTests LoopJournalTests AttemptDecisionTests AttemptMachineTests
         LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests LoopCancelTests LoopResumeSafetyTests LoopResumeNitsTests LoopCancelWaitTests WorkWaitTests LoopOrientationTests
         WorkTaskReopenTests TaskSchedulerTests LaneWorktreeTests LaneHostTests LaneIntegrationTests LoopParallelTests
-        LoopLaneLifecycleTests LoopParallelE2ETests AgentNamingTests LaneProfileIntentTests LaneIntegratorRaceTests LaneRefsProfileTests LoopParallelBudgetTests LaneSweepScopeTests LoopLaneNitsTests LaneCreateSerialTests LaneIntegratorWaitTests LaneHardeningTests LoopNotifyTests StarterWaitLivenessTests ShepherdWaitIntegrationTests GateLeftoversTests LoopNoticePolicyTests StopHookThrottleTests UsageLimitDetectionTests TokenUsageTests ContextAdviceTests LoopModelDefaultTests WorkArchiveTests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
+        LoopLaneLifecycleTests LoopParallelE2ETests AgentNamingTests LaneProfileIntentTests LaneIntegratorRaceTests LaneRefsProfileTests LoopParallelBudgetTests LaneSweepScopeTests LoopLaneNitsTests LaneCreateSerialTests LaneIntegratorWaitTests LaneHardeningTests LoopNotifyTests StarterWaitLivenessTests ShepherdWaitIntegrationTests GateLeftoversTests LoopNoticePolicyTests StopHookThrottleTests UsageLimitDetectionTests TokenUsageTests ContextAdviceTests LoopModelDefaultTests WorkArchiveTests HistoryDetailOpenTests WorkFeedFollowTests GateCleanLiteralTests ArchiveRunningLoopTests Onda5NitsTests LoopSectionTests ContextPanelLoopsTests ContextPanelHistoryTests HistoryPageTests OpenPanelSheetTests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
 filters=(); for s in "${suites[@]}"; do filters+=(--filter "$s"); done
 need() { test -f "$1" || { echo "falta $1" >&2; exit 1; }; }
-D=Tests/CollieDaemonKitTests
+D=Tests/CollieDaemonKitTests; A=Tests/CollieAppTests
 case "${1:?M1.1..M5.6}" in
   M1.1)  grep -q stopReason Sources/CollieCore/Work.swift; need $D/LoopStopReasonTests.swift ;;
   M1.2)  grep -q 'struct LoopEvent' Sources/CollieCore/Work.swift; need $D/LoopJournalTests.swift ;;
@@ -57,6 +57,11 @@ case "${1:?M1.1..M5.6}" in
   M3d.1) need $D/StarterWaitLivenessTests.swift ;;
   M3d.2) need $D/ShepherdWaitIntegrationTests.swift ;;
   M3d.3) need $D/GateLeftoversTests.swift ;;
+  M6.1)  need $A/HistoryDetailOpenTests.swift ;;
+  M6.2)  need Tests/CollieClientTests/WorkFeedFollowTests.swift ;;
+  M6.3)  need $D/GateCleanLiteralTests.swift ;;
+  M6.4)  need $D/ArchiveRunningLoopTests.swift ;;
+  M6.5)  need $D/Onda5NitsTests.swift ;;
   M3.8)  need Sources/CollieDaemonKit/Work/AgentNaming.swift; need $D/AgentNamingTests.swift ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;
 esac

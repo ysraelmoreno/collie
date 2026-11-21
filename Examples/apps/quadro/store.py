@@ -20,7 +20,11 @@ import threading
 import uuid
 from contextlib import contextmanager
 
-SCHEMA = 1
+SCHEMA = 2
+TYPES = ("impl", "bug", "refactor", "spike", "test", "docs", "chore")
+PRIORITIES = ("high", "medium", "low")
+DEFAULT_TYPE = "impl"
+DEFAULT_PRIORITY = "medium"
 JOURNAL_LIMIT = 5 * 1024 * 1024
 EVENTS_PAGE = 200
 
@@ -41,7 +45,7 @@ DEFAULT_COLUMNS = [
     {"id": "done", "name": "Feito"},
 ]
 
-UPDATABLE = ("title", "body", "labels", "assignee")
+UPDATABLE = ("title", "body", "labels", "assignee", "type", "priority")
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
@@ -119,6 +123,28 @@ def _labels(value):
     return out
 
 
+def _type(value):
+    if not isinstance(value, str) or value not in TYPES:
+        raise Invalid("tipo inválido")
+    return value
+
+
+def _priority(value):
+    if not isinstance(value, str) or value not in PRIORITIES:
+        raise Invalid("prioridade inválida")
+    return value
+
+
+def _normalize_cards(doc):
+    """Missing or unknown type/priority (a hand-edited board) reads as the
+    default; the next write stores it."""
+    for card in doc["cards"]:
+        if card.get("type") not in TYPES:
+            card["type"] = DEFAULT_TYPE
+        if card.get("priority") not in PRIORITIES:
+            card["priority"] = DEFAULT_PRIORITY
+
+
 def _card_id(value):
     if not isinstance(value, str) or not value:
         raise Invalid("id must be text")
@@ -154,6 +180,7 @@ class Store(object):
         self.journal_path = os.path.join(self.dir, "events.jsonl")
         self.journal_old_path = os.path.join(self.dir, "events.1.jsonl")
         self.lock_path = os.path.join(self.dir, "board.lock")
+        self.backup_v1_path = os.path.join(self.dir, "board.json.v1.bak")
 
     # ---- locking -------------------------------------------------------
 
@@ -202,7 +229,50 @@ class Store(object):
                 or not all(isinstance(c, dict) and isinstance(c.get("id"), str)
                            for c in doc["cards"])):
             raise StoreCorrupt("board.json has an unexpected shape")
+        schema = doc.get("schema", 1)
+        if not isinstance(schema, int) or isinstance(schema, bool) or schema < 1:
+            raise StoreCorrupt("board.json has an unexpected shape")
+        if schema > SCHEMA:
+            raise StoreCorrupt("board.json schema %d is newer than this Quadro" % schema)
+        if schema == 1:
+            self._migrate_v1(doc, raw)
+        _normalize_cards(doc)
         return doc
+
+    def _migrate_v1(self, doc, raw):
+        """schema 1 -> 2, in place, under the lock: keep a copy of the old
+        file (never overwritten), give every card (archived too) the default
+        type and priority, write once, journal `migrate`, regenerate the
+        mirror. The next load sees schema 2 and does nothing."""
+        self._write_backup(self.backup_v1_path, raw)
+        for card in doc["cards"]:
+            card["type"] = DEFAULT_TYPE
+            card["priority"] = DEFAULT_PRIORITY
+        doc["schema"] = SCHEMA
+        doc["revision"] = doc["revision"] + 1
+        self._commit(doc, _iso(self._clock()), "",
+                     ("migrate", None, {"from": 1, "to": SCHEMA, "cards": len(doc["cards"])}))
+
+    def _write_backup(self, path, raw):
+        """Writes `raw` to `path` (0600) only if `path` does not exist yet."""
+        if os.path.exists(path):
+            return
+        fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".tmp-", suffix=".part")
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(raw)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(tmp, 0o600)
+            try:
+                os.link(tmp, path)   # fails if a copy appeared meanwhile: never overwrite it
+            except FileExistsError:
+                pass
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     def _atomic_write(self, path, data):
         fd, tmp = tempfile.mkstemp(dir=self.dir, prefix=".tmp-", suffix=".part")
@@ -258,21 +328,26 @@ class Store(object):
             result, event = change(doc, now)
             if event is None:
                 return copy.deepcopy(result)
-            doc["schema"] = doc.get("schema", SCHEMA)
+            doc["schema"] = SCHEMA
             doc["revision"] = doc["revision"] + 1
-            data = json.dumps(doc, ensure_ascii=False, indent=1).encode("utf-8")
-            self._atomic_write(self.board_path, data)
-            record = {"seq": doc["revision"], "at": now, "by": by,
-                      "type": event[0], "card": event[1], "detail": event[2]}
-            try:
-                self._append_event(record)
-            except Exception:
-                pass
-            try:
-                self._write_mirror(doc)
-            except Exception:
-                pass
+            self._commit(doc, now, by, event)
             return copy.deepcopy(result)
+
+    def _commit(self, doc, now, by, event):
+        """Writes board.json once (atomically), then the journal, then the
+        mirror; only the first can fail the change."""
+        data = json.dumps(doc, ensure_ascii=False, indent=1).encode("utf-8")
+        self._atomic_write(self.board_path, data)
+        record = {"seq": doc["revision"], "at": now, "by": by,
+                  "type": event[0], "card": event[1], "detail": event[2]}
+        try:
+            self._append_event(record)
+        except Exception:
+            pass
+        try:
+            self._write_mirror(doc)
+        except Exception:
+            pass
 
     @staticmethod
     def _find(doc, card_id):
@@ -302,7 +377,8 @@ class Store(object):
             doc["cards"] = [c for c in doc["cards"] if not c.get("archived")]
         return doc
 
-    def cards(self, column=None, label=None, assignee=None, q=None):
+    def cards(self, column=None, label=None, assignee=None, q=None, type=None,
+              priority=None):
         with self._locked():
             doc = self._load()
         needle = q.casefold() if q else None
@@ -315,6 +391,10 @@ class Store(object):
             if label and label not in card.get("labels", []):
                 continue
             if assignee and card.get("assignee") != assignee:
+                continue
+            if type and card.get("type") != type:
+                continue
+            if priority and card.get("priority") != priority:
                 continue
             if needle is not None:
                 hay = [card.get("title", ""), card.get("body", "")]
@@ -357,7 +437,10 @@ class Store(object):
 
     # ---- writes --------------------------------------------------------
 
-    def create_card(self, title, body="", column="todo", labels=(), assignee="", by=""):
+    def create_card(self, title, body="", column="todo", labels=(), assignee="", by="",
+                    type=DEFAULT_TYPE, priority=DEFAULT_PRIORITY):
+        kind = _type(type)
+        level = _priority(priority)
         title = _text(title, "title", 1, MAX_TITLE)
         body = _text(body, "body", 0, MAX_BODY)
         labels = _labels(labels)
@@ -373,11 +456,13 @@ class Store(object):
             while card_id in taken:
                 card_id = _new_id()
             card = {"id": card_id, "title": title, "body": body, "column": column,
-                    "labels": labels, "assignee": assignee, "createdBy": who,
+                    "labels": labels, "assignee": assignee, "type": kind,
+                    "priority": level, "createdBy": who,
                     "createdAt": now, "updatedAt": now, "archived": False,
                     "comments": []}
             doc["cards"].append(card)
-            return card, ("card.create", card_id, {"title": title, "column": column})
+            return card, ("card.create", card_id, {"title": title, "column": column,
+                                                    "type": kind, "priority": level})
 
         return self._mutate(change, who)
 
@@ -394,6 +479,9 @@ class Store(object):
             checked["labels"] = _labels(fields["labels"])
         if "assignee" in fields:
             checked["assignee"] = _text(fields["assignee"], "assignee", 0, MAX_ASSIGNEE)
+        for key, check in (("type", _type), ("priority", _priority)):
+            if fields.get(key) is not None:   # None = leave it as it is
+                checked[key] = check(fields[key])
 
         def change(doc, now):
             card = self._find(doc, id)
@@ -403,7 +491,11 @@ class Store(object):
             for key in changed:
                 card[key] = checked[key]
             card["updatedAt"] = now
-            return card, ("card.update", card["id"], {"fields": changed})
+            detail = {"fields": changed}
+            for key in ("type", "priority"):
+                if key in changed:
+                    detail[key] = checked[key]
+            return card, ("card.update", card["id"], detail)
 
         return self._mutate(change, by)
 
@@ -483,7 +575,9 @@ def render_markdown(doc):
         if not cards:
             lines.append("_vazio_")
         for card in cards:
-            meta = [md_escape(card.get("id"))]
+            meta = [md_escape(card.get("id")),
+                    "tipo: " + md_escape(card.get("type") or DEFAULT_TYPE),
+                    "prioridade: " + md_escape(card.get("priority") or DEFAULT_PRIORITY)]
             if card.get("assignee"):
                 meta.append("responsável: " + md_escape(card["assignee"]))
             if card.get("labels"):
@@ -503,6 +597,9 @@ def render_markdown(doc):
         lines.append("## Arquivados (%d)" % len(archived))
         lines.append("")
         for card in archived:
-            lines.append("- %s (%s)" % (md_escape(card.get("title")), md_escape(card.get("id"))))
+            lines.append("- %s (%s; tipo: %s; prioridade: %s)" % (
+                md_escape(card.get("title")), md_escape(card.get("id")),
+                md_escape(card.get("type") or DEFAULT_TYPE),
+                md_escape(card.get("priority") or DEFAULT_PRIORITY)))
         lines.append("")
     return "\n".join(lines)

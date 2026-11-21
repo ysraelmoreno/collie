@@ -4,10 +4,57 @@
   "use strict";
 
   var BY = "painel";
+  var SVG_NS = "http://www.w3.org/2000/svg";
+
+  // Card types and priorities of the contract (onda 12). A card without them reads as impl / medium.
+  var TYPES = [
+    { id: "impl", name: "Impl" }, { id: "bug", name: "Bug" }, { id: "refactor", name: "Refactor" },
+    { id: "spike", name: "Spike" }, { id: "test", name: "Test" }, { id: "docs", name: "Docs" },
+    { id: "chore", name: "Chore" }
+  ];
+  var PRIORITIES = [{ id: "high", name: "Alta" }, { id: "medium", name: "Média" }, { id: "low", name: "Baixa" }];
+  var DEFAULT_TYPE = "impl";
+  var DEFAULT_PRIORITY = "medium";
+
+  // 16x16 glyph per type (same drawing as the design prototype), built as SVG elements, never as markup.
+  var LINE = { stroke: "currentColor", "stroke-linecap": "round", fill: "none" };
+  function attrs(base, more) {
+    var o = {}, k;
+    for (k in base) o[k] = base[k];
+    for (k in more) o[k] = more[k];
+    return o;
+  }
+  var GLYPHS = {
+    impl: [["path", attrs(LINE, { d: "M8 2.5v11M2.5 8h11", "stroke-width": "2" })]],
+    bug: [
+      ["ellipse", { cx: "8", cy: "9.5", rx: "3.6", ry: "4.4", fill: "currentColor" }],
+      ["path", attrs(LINE, { d: "M5.5 6l-2-2M10.5 6l2-2M4.4 9.5H2M11.6 9.5H14M5.4 12.6l-2 1.8M10.6 12.6l2 1.8M6.5 4.6a1.6 1.6 0 013 0", "stroke-width": "1.4" })]
+    ],
+    refactor: [
+      ["path", attrs(LINE, { d: "M3 6.5A5 5 0 0112.4 5M13 9.5A5 5 0 013.6 11", "stroke-width": "1.6" })],
+      ["path", attrs(LINE, { d: "M12.8 2.4v3h-3M3.2 13.6v-3h3", "stroke-width": "1.6", "stroke-linejoin": "round" })]
+    ],
+    spike: [["path", { d: "M9 1.8L3.6 9h3.6l-.8 5.2L12.4 7H8.8z", fill: "currentColor" }]],
+    test: [["path", { d: "M6 2h4M7 2v4.2L3.4 12.4A1.4 1.4 0 004.6 14.5h6.8a1.4 1.4 0 001.2-2.1L9 6.2V2", stroke: "currentColor", "stroke-width": "1.5", "stroke-linejoin": "round", fill: "none" }]],
+    docs: [
+      ["path", { d: "M4 2h5.5L12.5 5v9H4z", stroke: "currentColor", "stroke-width": "1.5", "stroke-linejoin": "round", fill: "none" }],
+      ["path", attrs(LINE, { d: "M6 8h4.5M6 10.6h4.5", "stroke-width": "1.4" })]
+    ],
+    chore: [
+      ["circle", { cx: "8", cy: "8", r: "2.2", stroke: "currentColor", "stroke-width": "1.5", fill: "none" }],
+      ["path", attrs(LINE, { d: "M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4", "stroke-width": "1.4" })]
+    ]
+  };
   var state = {
     board: null,          // last document from api/board or api/stream
     showArchived: false,
     label: "",
+    types: {},            // type id -> true for the pressed type filters (none pressed = all)
+    priorities: {},       // idem for priorities
+    newType: {},          // column id -> type picked for its next card
+    newPriority: {},      // column id -> priority picked for its next card
+    panelType: DEFAULT_TYPE,
+    panelPriority: DEFAULT_PRIORITY,
     query: "",
     matches: null,        // Set of ids from api/cards?q=, or null when no search
     openId: "",
@@ -24,6 +71,50 @@
     if (cls) n.className = cls;
     if (text !== undefined && text !== null) n.textContent = String(text);
     return n;
+  }
+
+  function known(list, id) {
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  function cardType(card) { return known(TYPES, card.type) ? card.type : DEFAULT_TYPE; }
+  function cardPriority(card) { return known(PRIORITIES, card.priority) ? card.priority : DEFAULT_PRIORITY; }
+  function priorityLabel(id) { return "Prioridade " + known(PRIORITIES, id).name.toLowerCase(); }
+
+  function glyph(type) {
+    var svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("class", "glyph");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    (GLYPHS[type] || GLYPHS[DEFAULT_TYPE]).forEach(function (part) {
+      var n = document.createElementNS(SVG_NS, part[0]);
+      for (var k in part[1]) n.setAttribute(k, part[1][k]);
+      svg.appendChild(n);
+    });
+    return svg;
+  }
+
+  // glyph + label + color: the type never shows as color alone
+  function typeChip(type) {
+    var chip = el("span", "chip type-" + type);
+    chip.appendChild(glyph(type));
+    chip.appendChild(document.createTextNode(known(TYPES, type).name));
+    return chip;
+  }
+
+  // three bars: high 3, medium 2, low 1. Named (role img) on cards, decorative inside a labelled button.
+  function priorityMark(priority, named) {
+    var mark = el("span", "prio " + priority);
+    for (var i = 0; i < 3; i++) mark.appendChild(el("i"));
+    if (named) {
+      mark.setAttribute("role", "img");
+      mark.setAttribute("aria-label", priorityLabel(priority));
+      mark.title = priorityLabel(priority);
+    } else {
+      mark.setAttribute("aria-hidden", "true");
+    }
+    return mark;
   }
 
   function showError(msg) {
@@ -85,10 +176,15 @@
     return id;
   }
 
-  function visible(card) {
+  function anyOn(set) { return Object.keys(set).length > 0; }
+
+  // skip: "type" or "priority" leaves that filter out (used for the counts on the filter buttons)
+  function visible(card, skip) {
     if (Boolean(card.archived) !== state.showArchived) return false;
     if (state.label && (card.labels || []).indexOf(state.label) < 0) return false;
     if (state.matches && !state.matches.has(card.id)) return false;
+    if (skip !== "type" && anyOn(state.types) && !state.types[cardType(card)]) return false;
+    if (skip !== "priority" && anyOn(state.priorities) && !state.priorities[cardPriority(card)]) return false;
     return true;
   }
 
@@ -116,6 +212,7 @@
     if (key && active && typeof active.selectionStart === "number") sel = [active.selectionStart, active.selectionEnd];
 
     renderLabels();
+    renderFilters();
     var cols = (state.board && state.board.columns) || [];
     var cards = (state.board && state.board.cards) || [];
     var frag = document.createDocumentFragment();
@@ -160,8 +257,71 @@
     select.value = state.label;
   }
 
+  // ---- type and priority filters (buttons built once; render only updates counts and state) ----
+
+  function buildFilters() {
+    TYPES.forEach(function (t) {
+      var b = el("button", "tf type-" + t.id);
+      b.type = "button";
+      b.dataset.filter = t.id;
+      b.appendChild(glyph(t.id));
+      b.appendChild(document.createTextNode(t.name));
+      b.appendChild(el("span", "n", "0"));
+      b.addEventListener("click", function () { toggleFilter(state.types, t.id); });
+      $("type-filter").appendChild(b);
+    });
+    PRIORITIES.forEach(function (p) {
+      var b = el("button", "pf");
+      b.type = "button";
+      b.dataset.filter = p.id;
+      b.appendChild(priorityMark(p.id, false));
+      b.appendChild(document.createTextNode(p.name));
+      b.appendChild(el("span", "n", "0"));
+      b.addEventListener("click", function () { toggleFilter(state.priorities, p.id); });
+      $("priority-filter").appendChild(b);
+    });
+  }
+
+  function toggleFilter(set, id) {
+    if (set[id]) delete set[id];
+    else set[id] = true;
+    scheduleRender();
+  }
+
+  function renderFilters() {
+    var cards = (state.board && state.board.cards) || [];
+    function update(groupId, list, set, skip, valueOf, what) {
+      var counts = {};
+      cards.forEach(function (c) { if (visible(c, skip)) counts[valueOf(c)] = (counts[valueOf(c)] || 0) + 1; });
+      Array.prototype.forEach.call($(groupId).querySelectorAll("button"), function (b) {
+        var item = known(list, b.dataset.filter);
+        var n = counts[item.id] || 0;
+        b.lastChild.textContent = String(n);
+        b.setAttribute("aria-pressed", String(Boolean(set[item.id])));
+        b.setAttribute("aria-label", what + " " + item.name + ", " + n + (n === 1 ? " cartão" : " cartões"));
+      });
+    }
+    update("type-filter", TYPES, state.types, "type", cardType, "Tipo");
+    update("priority-filter", PRIORITIES, state.priorities, "priority", cardPriority, "Prioridade");
+  }
+
+  function picker(list, value, label, key, onChange) {
+    var s = el("select");
+    s.setAttribute("aria-label", label);
+    s.dataset.key = key;
+    list.forEach(function (item) {
+      var o = el("option", null, item.name);
+      o.value = item.id;
+      s.appendChild(o);
+    });
+    s.value = value;
+    s.addEventListener("change", function () { onChange(s.value); });
+    return s;
+  }
+
   function renderColumn(col, ci, cols, cards) {
     var section = el("section", "column");
+    if (col.id === "done") section.classList.add("done");
     section.dataset.column = col.id;
     var headId = "col-" + col.id;
     section.setAttribute("aria-labelledby", headId);
@@ -175,7 +335,8 @@
     section.appendChild(h);
 
     if (!state.showArchived) {
-      var input = el("input", "new-card");
+      var box = el("div", "new-card");
+      var input = el("input", "new-title");
       input.type = "text";
       input.maxLength = 200;
       input.placeholder = "Novo cartão (Enter)";
@@ -188,13 +349,22 @@
         ev.preventDefault();
         var title = input.value.trim();
         if (!title) return;
-        post("api/card/create", { title: title, column: col.id }).then(function () {
+        post("api/card/create", {
+          title: title, column: col.id,
+          type: state.newType[col.id] || DEFAULT_TYPE,
+          priority: state.newPriority[col.id] || DEFAULT_PRIORITY
+        }).then(function () {
           state.drafts[col.id] = "";
           input.value = "";
           return loadBoard();
         }, function () { /* error shown */ });
       });
-      section.appendChild(input);
+      box.appendChild(input);
+      box.appendChild(picker(TYPES, state.newType[col.id] || DEFAULT_TYPE, "Tipo do novo cartão em " + col.name,
+        "newtype:" + col.id, function (v) { state.newType[col.id] = v; }));
+      box.appendChild(picker(PRIORITIES, state.newPriority[col.id] || DEFAULT_PRIORITY,
+        "Prioridade do novo cartão em " + col.name, "newprio:" + col.id, function (v) { state.newPriority[col.id] = v; }));
+      section.appendChild(box);
     }
 
     var list = el("ol", "cards");
@@ -253,14 +423,22 @@
   }
 
   function renderCard(card, ci, cols) {
-    var li = el("li", "card");
+    var type = cardType(card);
+    var priority = cardPriority(card);
+    var li = el("li", "card type-" + type);
     li.dataset.id = card.id;
     li.draggable = !state.showArchived;
+
+    var head = el("div", "head");
+    head.appendChild(typeChip(type));
+    head.appendChild(el("span", "cid", String(card.id || "").slice(0, 8)));
+    li.appendChild(head);
 
     var open = el("button", "open", card.title);
     open.type = "button";
     open.dataset.key = "open:" + card.id;
-    open.setAttribute("aria-label", "Abrir cartão " + card.title);
+    open.setAttribute("aria-label", "Abrir cartão " + card.title + " (" + known(TYPES, type).name + ", " +
+      priorityLabel(priority).toLowerCase() + ")");
     open.addEventListener("click", function () { openPanel(card.id); });
     li.appendChild(open);
 
@@ -269,7 +447,9 @@
       card.labels.forEach(function (l) { labels.appendChild(el("span", "label", l)); });
       li.appendChild(labels);
     }
-    if (card.assignee) li.appendChild(el("div", "assignee", "Responsável: " + card.assignee));
+    var foot = el("div", "foot");
+    foot.appendChild(priorityMark(priority, true));
+    foot.appendChild(el("span", "assignee", card.assignee ? "Responsável: " + card.assignee : ""));
 
     var moves = el("div", "moves");
     if (state.showArchived) {
@@ -285,7 +465,8 @@
       if (ci > 0) moves.appendChild(moveButton(card, cols[ci - 1], "←", "anterior", "prev"));
       if (ci < cols.length - 1) moves.appendChild(moveButton(card, cols[ci + 1], "→", "seguinte", "next"));
     }
-    li.appendChild(moves);
+    foot.appendChild(moves);
+    li.appendChild(foot);
 
     li.addEventListener("dragstart", function (ev) {
       state.dragging = { id: card.id };
@@ -363,7 +544,10 @@
       $("panel-body").value = card.body || "";
       $("panel-labels").value = (card.labels || []).join(", ");
       $("panel-assignee").value = card.assignee || "";
+      state.panelType = cardType(card);
+      state.panelPriority = cardPriority(card);
     }
+    syncRadios();
     var archive = $("panel-archive");
     archive.textContent = card.archived ? "Restaurar" : "Arquivar";
     archive.setAttribute("aria-label", card.archived ? "Restaurar cartão" : "Arquivar cartão");
@@ -401,8 +585,51 @@
       title: $("panel-title").value.trim(),
       body: $("panel-body").value,
       labels: labels,
-      assignee: $("panel-assignee").value.trim()
+      assignee: $("panel-assignee").value.trim(),
+      type: state.panelType,
+      priority: state.panelPriority
     }).then(function () { state.panelDirty = false; return loadBoard(); }, function () {});
+  }
+
+  // radiogroups of the panel (type: 7, priority: 3); one tab stop each, arrows move the choice
+  function buildRadios(groupId, list, field, makeContent) {
+    var group = $(groupId);
+    list.forEach(function (item) {
+      var b = el("button");
+      b.type = "button";
+      b.setAttribute("role", "radio");
+      b.setAttribute("aria-label", item.name);
+      b.dataset.value = item.id;
+      makeContent(b, item);
+      b.addEventListener("click", function () { pick(field, item.id); });
+      b.addEventListener("keydown", function (ev) {
+        var step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+        if (!step) return;
+        ev.preventDefault();
+        var i = list.indexOf(item);
+        var next = list[(i + step + list.length) % list.length];
+        pick(field, next.id);
+        group.querySelector('[data-value="' + next.id + '"]').focus();
+      });
+      group.appendChild(b);
+    });
+  }
+
+  function pick(field, value) {
+    if (state[field] === value) return;
+    state[field] = value;
+    state.panelDirty = true;
+    syncRadios();
+  }
+
+  function syncRadios() {
+    [["panel-type", state.panelType], ["panel-priority", state.panelPriority]].forEach(function (pair) {
+      Array.prototype.forEach.call($(pair[0]).querySelectorAll("button"), function (b) {
+        var on = b.dataset.value === pair[1];
+        b.setAttribute("aria-checked", String(on));
+        b.tabIndex = on ? 0 : -1;
+      });
+    });
   }
 
   function addComment() {
@@ -451,6 +678,17 @@
 
   function init() {
     var searchTimer = 0;
+    buildFilters();
+    buildRadios("panel-type", TYPES, "panelType", function (b, t) {
+      b.classList.add("type-" + t.id);
+      b.appendChild(glyph(t.id));
+      b.appendChild(document.createTextNode(t.name));
+    });
+    buildRadios("panel-priority", PRIORITIES, "panelPriority", function (b, p) {
+      b.appendChild(priorityMark(p.id, false));
+      b.appendChild(document.createTextNode(p.name));
+    });
+    syncRadios();
     $("search").addEventListener("input", function () {
       state.query = $("search").value;
       clearTimeout(searchTimer);

@@ -276,6 +276,96 @@ class RouteTests(ServerTestCase):
             self.assertError(self.call("GET", path), 404)
 
 
+class TypePriorityTests(ServerTestCase):
+    def test_create_defaults_and_explicit(self):
+        plain = self.create("a")
+        self.assertEqual((plain["type"], plain["priority"]), ("impl", "medium"))
+        made = self.create("b", type="bug", priority="high")
+        self.assertEqual((made["type"], made["priority"]), ("bug", "high"))
+        got = self.ok("GET", "/api/card?id=" + made["id"])
+        self.assertEqual((got["type"], got["priority"]), ("bug", "high"))
+
+    def test_invalid_values_are_400(self):
+        self.assertEqual(self.assertError(
+            self.call("POST", "/api/card/create", {"title": "t", "type": "feature"}), 400),
+            "tipo inválido")
+        self.assertEqual(self.assertError(
+            self.call("POST", "/api/card/create", {"title": "t", "priority": "urgent"}), 400),
+            "prioridade inválida")
+        card = self.create("a")
+        self.assertEqual(self.assertError(
+            self.call("POST", "/api/card/update", {"id": card["id"], "type": 5}), 400),
+            "tipo inválido")
+        self.assertEqual(self.assertError(
+            self.call("POST", "/api/card/update", {"id": card["id"], "priority": ""}), 400),
+            "prioridade inválida")
+        self.assertEqual(self.ok("GET", "/api/health")["revision"], 1)
+
+    def test_update_one_field(self):
+        card = self.create("a", type="spike")
+        got = self.ok("POST", "/api/card/update", {"id": card["id"], "priority": "low", "by": "ag"})
+        self.assertEqual((got["type"], got["priority"]), ("spike", "low"))
+        got = self.ok("POST", "/api/card/update", {"id": card["id"], "type": "chore"})
+        self.assertEqual((got["type"], got["priority"]), ("chore", "low"))
+        events = self.ok("GET", "/api/events")["events"]
+        self.assertEqual([e["detail"].get("priority") for e in events[1:]], ["low", None])
+        self.assertEqual(events[1]["by"], "ag")
+        self.ok("POST", "/api/card/update", {"id": card["id"], "type": "chore"})
+        self.assertEqual(self.ok("GET", "/api/health")["revision"], 3)
+
+    def test_cards_filters(self):
+        self.create("a", type="bug", priority="high")
+        self.create("b", type="bug", column="doing")
+        self.create("c", priority="high", labels=["x"])
+        titles = lambda q: [c["title"] for c in self.ok("GET", "/api/cards" + q)["cards"]]  # noqa: E731
+        self.assertEqual(titles("?type=bug"), ["a", "b"])
+        self.assertEqual(titles("?priority=high"), ["a", "c"])
+        self.assertEqual(titles("?type=bug&priority=high"), ["a"])
+        self.assertEqual(titles("?type=bug&column=doing"), ["b"])
+        self.assertEqual(titles("?priority=high&label=x"), ["c"])
+        self.assertEqual(titles("?type=&priority="), ["a", "b", "c"])
+        self.assertTrue(all("type" in c and "priority" in c
+                            for c in self.ok("GET", "/api/cards")["cards"]))
+
+    def test_board_and_stream_carry_fields(self):
+        a = self.create("a", type="docs", priority="low")
+        self.ok("POST", "/api/card/archive", {"id": self.create("b")["id"]})
+        board = self.ok("GET", "/api/board?archived=1")
+        self.assertEqual([(c["type"], c["priority"]) for c in board["cards"]],
+                         [("docs", "low"), ("impl", "medium")])
+        self.assertEqual(board["schema"], 2)
+        reader = self.stream()
+        doc = reader.next("document")
+        self.assertEqual([(c["id"], c["type"], c["priority"]) for c in doc["cards"]],
+                         [(a["id"], "docs", "low")])
+        self.ok("POST", "/api/card/update", {"id": a["id"], "type": "test"})
+        doc = reader.document_where(lambda d: d["revision"] >= 4)
+        self.assertEqual(doc["cards"][0]["type"], "test")
+        self.assertEqual(doc["events"][-1]["detail"], {"fields": ["type"], "type": "test"})
+
+
+class MigrationServerTests(unittest.TestCase):
+    def test_v1_board_is_served_migrated(self):
+        tmp = tempfile.mkdtemp(prefix="quadro-server-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        data = os.path.join(tmp, "data")
+        os.mkdir(data)
+        with open(os.path.join(data, "board.json"), "w") as handle:
+            json.dump({"schema": 1, "revision": 2, "columns": [{"id": "todo", "name": "A"}],
+                       "cards": [{"id": "aaaaaaa1", "title": "velho", "column": "todo"}]}, handle)
+        srv = Running(data)
+        self.addCleanup(srv.stop)
+        conn = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=WAIT)
+        self.addCleanup(conn.close)
+        conn.request("GET", "/api/board")
+        board = json.loads(conn.getresponse().read().decode("utf-8"))
+        self.assertEqual(board["schema"], 2)
+        self.assertEqual(board["revision"], 3)
+        self.assertEqual((board["cards"][0]["type"], board["cards"][0]["priority"]),
+                         ("impl", "medium"))
+        self.assertTrue(os.path.exists(os.path.join(data, "board.json.v1.bak")))
+
+
 class SecurityTests(ServerTestCase):
     def test_stalled_body_frees_its_thread(self):
         # review Q2: Content-Length promises 100 bytes, one arrives: the handler gives up at its socket timeout

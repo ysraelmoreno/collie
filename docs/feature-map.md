@@ -161,8 +161,8 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 
 ### Quadro (app de exemplo adotado: kanban local)
 
-- **Para que serve:** kanban local (`Examples/apps/quadro`, Python 3.9 sem dependências) que o Collie adota com `collie app adopt quadro … --event-diff events`; o dono vê o quadro no painel e os agentes criam, movem, comentam e arquivam cartões por `collie quadro <comando>` (contrato em `collie.json`; dados em `$QUADRO_DIR`, padrão `$HOME/.collie/quadro`, com espelho `BOARD.md`).
-- **Como verificar:** `scripts/check-onda11.sh q11-4`.
+- **Para que serve:** kanban local (`Examples/apps/quadro`, Python 3.9 sem dependências) que o Collie adota com `collie app adopt quadro … --event-diff events`; o dono vê o quadro no painel e os agentes criam, movem, comentam e arquivam cartões por `collie quadro <comando>`; cada cartão tem tipo (`impl`, `bug`, `refactor`, `spike`, `test`, `docs`, `chore`; padrão `impl`) e prioridade (`high`, `medium`, `low`; padrão `medium`), que `create-card`/`update-card` aceitam e `list-cards` filtra (quadros de `schema` 1 migram para 2 com cópia `board.json.v1.bak`) (contrato em `collie.json`; dados em `$QUADRO_DIR`, padrão `$HOME/.collie/quadro`, com espelho `BOARD.md`).
+- **Como verificar:** `scripts/check-onda11.sh q11-4`, `scripts/check-onda12.sh q12-2`.
 
 ### Vizinho e Cercas (plug-in de exemplo com ganchos `edit` e `stop`)
 

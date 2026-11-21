@@ -112,7 +112,6 @@ struct HistoryRowTests {
     }
     private func feed(_ w: Work, paddocks: [UUID: Bool] = [:], log: Log, failing: Bool = false) -> WorkFeed {
         let f = WorkFeed()
-        f.terminalName = { _ in "t" }
         f.call = { cmd, args, _ in
             log.calls.append((cmd, args))
             if failing { throw ProtocolError(code: .daemonUnavailable, message: "down") }
@@ -120,8 +119,7 @@ struct HistoryRowTests {
             case "work.status": return .object(["works": .array([self.workJSON(w)])])
             case "work.history":
                 return .array([.object(["id": .string("h"), "title": .string("Antigo"), "closedAt": .string("2025-11-21T02:02:00Z")])])
-            default:   // work.wait: hold until cancelled, like the daemon
-                try await Task.sleep(for: .seconds(60)); return .null
+            default: throw ProtocolError(code: .internal, message: "unexpected \(cmd)")
             }
         }
         return f
@@ -131,14 +129,13 @@ struct HistoryRowTests {
         for _ in 0..<200 where !ok() { try? await Task.sleep(for: .milliseconds(10)) }
     }
 
-    @Test func followLoadsTheWorkAndHistoryThenWaitsFromItsVersion() async {
-        var w = work(); w.version = 7
+    @Test func followLoadsTheWorkAndHistory() async {
+        let w = work()
         let log = Log(), f = feed(w, log: log)
         f.follow(paddock: pad, name: "collie")
-        await settle(f) { f.work != nil && !f.history.isEmpty && log.calls.contains { $0.0 == "work.wait" } }
+        await settle(f) { f.work != nil && !f.history.isEmpty }
         #expect(f.work?.id == w.id && f.history.map(\.id) == ["h"])
-        let wait = log.calls.first { $0.0 == "work.wait" }
-        #expect(wait?.1["since"] == .number(7) && wait?.1["terminal"] == .string("t"))
+        #expect(!log.calls.contains { $0.0 == "work.wait" })   // M6.2: kept fresh by the daemon's work event
         #expect(log.calls.first { $0.0 == "work.history" }?.1["limit"] == .number(Double(WorkFeed.historyFetch)))
         #expect(log.calls.first { $0.0 == "work.history" }?.1["paddock"] == .string("collie"))
         f.follow(paddock: nil, name: nil)

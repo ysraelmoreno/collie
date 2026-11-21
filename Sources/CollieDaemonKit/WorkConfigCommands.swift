@@ -23,6 +23,20 @@ enum WorkConfigFile: Equatable {
         guard data.count <= ProjectWorkConfig.maxBytes else { return .refused(ProjectWorkConfig.ConfigError.tooLarge(data.count).message) }
         return .loaded(data)
     }
+
+    /// M13.2: the file read and parsed. `.success(nil)`: no file; `.failure`: one line, cleaned, saying why it is not used.
+    static func config(root: URL) -> Result<ProjectWorkConfig?, ProtocolError> {
+        func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: RerailText.clean(m, max: 300)) }
+        switch read(root: root) {
+        case .absent: return .success(nil)
+        case .refused(let m): return .failure(bad(m))
+        case .loaded(let d):
+            switch ProjectWorkConfig.parse(d) {
+            case .success(let ok): return .success(ok.config)
+            case .failure(let e): return .failure(bad(e.message))
+            }
+        }
+    }
 }
 
 extension CommandRouter {

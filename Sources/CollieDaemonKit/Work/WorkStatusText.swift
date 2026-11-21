@@ -211,10 +211,12 @@ public enum WorkStatusText {
 
     /// What the starter gets when its loop starts without the owner's card (a paddock trusted for loops): the limits
     /// (`--parallel` when over 1), then one line per task with its check. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").
-    static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState) -> String {
+    /// `gateFromFile` (M13.2): the gate came from `collie-work.json`, not `--gate`: the first line names it and its source.
+    static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState, gateFromFile: Bool = false) -> String {
+        let gate = gateFromFile ? l.gate.map { ", portão (\(ProjectWorkConfig.fileName)) «\(RerailText.clean($0, max: 200))»" } ?? "" : ""
         var lines = ["[collie] Laço iniciado sem cartão (cercado «\(RerailText.clean(paddock))» é confiável): "
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), --max \(l.max ?? 0), "
-            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s" + (l.notify == .end ? ", avisos: só no fim" : "") + ". Parar: collie work stop."]
+            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s" + (l.notify == .end ? ", avisos: só no fim" : "") + gate + ". Parar: collie work stop."]
         lines += tasks.enumerated().map { "#\($0 + 1) «\(RerailText.clean($1.title))» check «\(RerailText.clean($1.check ?? "", max: 200))»" }
         return bounded(lines, limit: RerailText.limit)
     }

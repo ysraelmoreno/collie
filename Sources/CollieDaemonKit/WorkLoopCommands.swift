@@ -67,15 +67,20 @@ extension CommandRouter {
         if let p = str(r, "preset"), Preset(rawValue: p) == nil { throw invalid("preset must be shell|claude|codex|cursor|custom") }
         if let m = str(r, "model") { try ClaudeModel.validate(m) }
         // absent: no gate; given: a command (an empty one is a mistake, never "no gate")
-        let gate = str(r, "gate")
-        if let gate, gate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let gateFlag = str(r, "gate")
+        if let gateFlag, gateFlag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw invalid("--gate is empty: give the command that runs after every task's check, or leave --gate out")
         }
         // M10.2: the same for the pre-check (absent: none, the loop as before)
-        let precheck = str(r, "precheck")
-        if let precheck, precheck.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let precheckFlag = str(r, "precheck")
+        if let precheckFlag, precheckFlag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw invalid("--precheck is empty: give the command that runs at the end of each turn, before the check, or leave --precheck out")
         }
+        // M13.2: a flag left out takes the paddock's collie-work.json; no file or an invalid one: today's defaults (none),
+        // and an invalid one a one-line warning in the reply, never a refusal
+        let (fileConfig, fileWarning) = Self.loopFileDefaults(dir, needed: gateFlag == nil || precheckFlag == nil)
+        let gate = gateFlag ?? fileConfig?.gate, precheck = precheckFlag ?? fileConfig?.precheck
+        let from = (gate: gateFlag == nil && gate != nil, precheck: precheckFlag == nil && precheck != nil)
         // M3.5: absent is 1 (the loop as always); more runs tasks in lanes, which exist only sandboxed and are named by
         // the task's id
         let parallel = try num(r, "parallel", max: Double(TaskScheduler.maxParallel)).map { Int($0) }
@@ -93,7 +98,7 @@ extension CommandRouter {
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
                                  spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck)
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
-        guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name) else {
+        guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
@@ -105,9 +110,9 @@ extension CommandRouter {
                 throw ProtocolError(code: .unavailable, message: "the loop did not start")
             }
             started = true   // the reservation now belongs to the loop
-            let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop)
+            let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop, gateFromFile: from.gate)
             Task { [weak self] in try? await self?.asks.inject(to: starter, prompt: notice, afterQuiet: true) }
-            return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")])
+            return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")], fileWarning)
         }
         let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
                            base: nil, call: text, command: "run", by: t.id)
@@ -123,7 +128,25 @@ extension CommandRouter {
             }
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
-        return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")])
+        return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], fileWarning)
+    }
+
+    /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults, read only when a flag is left out. Never fails:
+    /// an absent file is nil with no warning, a refused or invalid one nil with its one-line warning.
+    static func loopFileDefaults(_ dir: URL, needed: Bool) -> (ProjectWorkConfig?, String?) {
+        guard needed else { return (nil, nil) }
+        switch WorkConfigFile.config(root: dir) {
+        case .success(let c): return (c, nil)
+        case .failure(let e):
+            return (nil, "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão nem pré-check vindos do arquivo): "
+                    + e.message.replacingOccurrences(of: "\n", with: " "))
+        }
+    }
+
+    private static func runReply(_ o: [String: JSONValue], _ warning: String?) -> JSONValue {
+        var o = o
+        if let warning { o["warning"] = .string(warning) }
+        return .object(o)
     }
 
     /// M5.6: `--model` given always wins; absent, the daemon's `loopModel`, but only for agents that run Claude (summon
@@ -220,15 +243,18 @@ extension CommandRouter {
     /// then every task, its check, its evidence glob, its `scope` and its `needs` (those it has), each in «…», which none
     /// may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
     /// and nothing the owner would not see is ever approved.
-    static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String) -> String? {
+    /// `fromFile`: the gate / pre-check came from `collie-work.json` (M13.2), not from the flag: the card says so.
+    static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String,
+                             fromFile: (gate: Bool, precheck: Bool) = (false, false)) -> String? {
+        let file = " (\(ProjectWorkConfig.fileName))"
         func quoted(_ x: String) -> String {
             "«" + x.replacingOccurrences(of: "«", with: "‹").replacingOccurrences(of: "»", with: "›") + "»"
         }
         var s = "rodar sem supervisão \(quoted(w.title)) no cercado \(quoted(paddock)): até \(l.max ?? 0) tentativas no total "
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
             + (l.parallel.flatMap { $0 > 1 ? "até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). " : nil } ?? "")
-            + (l.gate.map { "portão depois de cada check: \(quoted($0)). " } ?? "")
-            + (l.precheck.map { "pré-check no fim de cada turno: \(quoted($0)). " } ?? "")
+            + (l.gate.map { "portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). " } ?? "")
+            + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)

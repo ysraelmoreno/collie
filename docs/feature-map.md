@@ -149,6 +149,10 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   (`ContextAdvice`) mede o contexto da última chamada (rabo de 256 KB do transcript, só números): 150 mil avisa, 250 mil
   avisa forte, um por nível a cada 2 h, e cita esse comando. `collie memory stats` traz `cost.pastorContext` (atual e
   máximo por sessão).
+- **Check por projeto (M13.1):** `collie-work.json` na raiz do projeto (convenção em `onda13.md`; `ProjectWorkConfig`
+  em CollieCore, leitor estrito: ≤ 16 KB, `version` 1, comandos ≤ 1000 caracteres sem controle, até 50 áreas
+  `a-z0-9-`). `collie work config [--terminal]` (só CLI) mostra de onde veio, avisos, `gate`/`precheck`/`smoke`/`full`
+  e o check de cada área; arquivo por symlink, não regular ou grande é recusado. Só leitura: nunca executa nada.
 
 ### Plug-ins externos e apps (`WebPluginPanel`)
 

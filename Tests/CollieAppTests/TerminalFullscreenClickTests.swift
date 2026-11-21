@@ -124,3 +124,28 @@ import CollieCore
         v.unmount(); w.close()
     }
 }
+
+@MainActor @Suite struct TerminalFullscreenUpProbe {
+    final class Flipped: NSView { override var isFlipped: Bool { true } }
+    @Test(arguments: [0.7, 1.0]) func up(zoom: Double) {
+        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
+        node.setBoundsSize(CGSize(width: 600, height: 300))
+        var log: [String] = []
+        let host = TitleHost(rootView: FullscreenButton(action: { log.append("action") }))
+        host.frame = CGRect(x: 200, y: 0, width: 400, height: 32)
+        host.onClick = { log.append("down") }
+        host.onMouseUp = { log.append("up") }
+        node.addSubview(host)
+        w.contentView!.addSubview(node)
+        w.makeKeyAndOrderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        let at = host.convert(NSPoint(x: 100, y: 16), to: nil)
+        for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            w.sendEvent(NSEvent.mouseEvent(with: t, location: at, modifierFlags: [], timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+        }
+        print("PROBE6 zoom=\(zoom) \(log) hit=\(String(describing: w.contentView!.hitTest(at).map { type(of: $0) }))")
+        w.close()
+    }
+}

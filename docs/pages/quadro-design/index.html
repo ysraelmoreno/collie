@@ -56,6 +56,18 @@ button, input, select { font: inherit; color: inherit; }
 .impl { --c: var(--t-impl); } .bug { --c: var(--t-bug); } .refactor { --c: var(--t-refactor); } .spike { --c: var(--t-spike); }
 .test { --c: var(--t-test); } .docs { --c: var(--t-docs); } .chore { --c: var(--t-chore); }
 
+
+/* priority: three bars (alta 3, media 2, baixa 1), never color alone */
+.prio { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; margin-right: 8px; }
+.prio i { width: 3px; border-radius: 1px; background: var(--border); }
+.prio i:nth-child(1) { height: 5px; } .prio i:nth-child(2) { height: 8px; } .prio i:nth-child(3) { height: 12px; }
+.prio.high i { background: var(--danger); }
+.prio.medium i:nth-child(-n+2) { background: var(--attention); }
+.prio.low i:nth-child(1) { background: var(--muted); }
+.pf { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-size: 13px; }
+.pf[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.sep { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }
+
 /* board */
 .board { display: grid; grid-template-columns: repeat(4, minmax(250px, 1fr)); gap: 14px; padding: 16px 20px 28px; overflow-x: auto; align-items: start; }
 .col { background: var(--sunken); border: 1px solid var(--border-soft); border-radius: var(--r-lg); padding: 10px; }
@@ -118,7 +130,7 @@ main { min-width: 0; }
 </svg>
 
 <div class="notes">
-  <span>Protótipo de design · tokens do app (Palette.swift) · Space Grotesk + DM Mono · 7 tipos: glifo + rótulo + cor (nunca só cor)</span>
+  <span>Protótipo de design · tipo + prioridade · tokens do app (Palette.swift) · Space Grotesk + DM Mono · 7 tipos: glifo + rótulo + cor (nunca só cor)</span>
   <button id="theme" type="button">Tema: escuro</button>
 </div>
 
@@ -143,6 +155,10 @@ main { min-width: 0; }
     <button class="tf test" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-test"/></svg>Test <span class="n">2</span></button>
     <button class="tf docs" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-docs"/></svg>Docs <span class="n">1</span></button>
     <button class="tf chore" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-chore"/></svg>Chore <span class="n">1</span></button>
+    <span class="sep"></span><span class="label">PRIORIDADE</span>
+    <button class="pf" type="button" aria-pressed="false"><span class="prio high" aria-hidden="true"><i></i><i></i><i></i></span>Alta</button>
+    <button class="pf" type="button" aria-pressed="false"><span class="prio medium" aria-hidden="true"><i></i><i></i><i></i></span>Média</button>
+    <button class="pf" type="button" aria-pressed="false"><span class="prio low" aria-hidden="true"><i></i><i></i><i></i></span>Baixa</button>
   </div>
 
   <div class="board">
@@ -153,18 +169,18 @@ main { min-width: 0; }
         <li class="card bug"><div class="head"><span class="chip bug"><svg class="glyph"><use href="#g-bug"/></svg>Bug</span><span class="id">6ef4d3fb</span></div>
           <div class="title">Painel do app fica branco na primeira abertura</div>
           <div class="labels"><span class="label">painel</span><span class="label">daemon</span></div>
-          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span>💬 2</span></div></li>
+          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span class="prio high" role="img" aria-label="Prioridade alta" title="Prioridade alta"><i></i><i></i><i></i></span><span>💬 2</span></div></li>
         <li class="card impl"><div class="head"><span class="chip impl"><svg class="glyph"><use href="#g-impl"/></svg>Impl</span><span class="id">0f4e5edc</span></div>
           <div class="title">Push da main e release v0.1.9</div>
           <div class="labels"><span class="label">release</span></div>
-          <div class="foot"><span class="who"><span class="av">YM</span>Ysrael</span><span class="moves"><button type="button" aria-label="Mover para a coluna seguinte">→</button></span></div></li>
+          <div class="foot"><span class="who"><span class="av">YM</span>Ysrael</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span class="moves"><button type="button" aria-label="Mover para a coluna seguinte">→</button></span></div></li>
         <li class="card spike"><div class="head"><span class="chip spike"><svg class="glyph"><use href="#g-spike"/></svg>Spike</span><span class="id">2d789296</span></div>
           <div class="title">Convenção genérica de check por projeto</div>
           <div class="labels"><span class="label">laço</span></div>
-          <div class="foot"><span class="who"><span class="av">·</span>sem responsável</span><span>💬 0</span></div></li>
+          <div class="foot"><span class="who"><span class="av">·</span>sem responsável</span><span class="prio low" role="img" aria-label="Prioridade baixa" title="Prioridade baixa"><i></i><i></i><i></i></span><span>💬 0</span></div></li>
         <li class="card chore"><div class="head"><span class="chip chore dashed"><svg class="glyph"><use href="#g-chore"/></svg>Chore</span><span class="id">91ab33c0</span></div>
           <div class="title">Limpar pastas .build antigas (prune-builds)</div>
-          <div class="foot"><span class="who"><span class="av agent">Q</span>agente</span><span>💬 0</span></div></li>
+          <div class="foot"><span class="who"><span class="av agent">Q</span>agente</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span>💬 0</span></div></li>
       </ol>
     </section>
 
@@ -174,15 +190,15 @@ main { min-width: 0; }
         <li class="card refactor"><div class="head"><span class="chip refactor"><svg class="glyph"><use href="#g-refactor"/></svg>Refactor</span><span class="id">a1b2c3d4</span></div>
           <div class="title">Dividir WorkLoop em fases menores</div>
           <div class="labels"><span class="label">motor</span><span class="label">laço</span></div>
-          <div class="foot"><span class="who"><span class="av agent">L2</span>faixa-2</span><span>💬 5</span></div></li>
+          <div class="foot"><span class="who"><span class="av agent">L2</span>faixa-2</span><span class="prio high" role="img" aria-label="Prioridade alta" title="Prioridade alta"><i></i><i></i><i></i></span><span>💬 5</span></div></li>
         <li class="drop" aria-hidden="true"></li>
         <li class="card impl"><div class="head"><span class="chip impl"><svg class="glyph"><use href="#g-impl"/></svg>Impl</span><span class="id">b7c8d9e0</span></div>
           <div class="title">Tipos de tarefa no Quadro</div>
           <div class="labels"><span class="label">quadro</span><span class="label">ui</span></div>
-          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span>💬 1</span></div></li>
+          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span>💬 1</span></div></li>
         <li class="card test"><div class="head"><span class="chip test"><svg class="glyph"><use href="#g-test"/></svg>Test</span><span class="id">c0d1e2f3</span></div>
           <div class="title">Cobrir o desligamento do SSE sob carga</div>
-          <div class="foot"><span class="who"><span class="av">YM</span>Ysrael</span><span>💬 0</span></div></li>
+          <div class="foot"><span class="who"><span class="av">YM</span>Ysrael</span><span class="prio low" role="img" aria-label="Prioridade baixa" title="Prioridade baixa"><i></i><i></i><i></i></span><span>💬 0</span></div></li>
       </ol>
     </section>
 
@@ -191,7 +207,7 @@ main { min-width: 0; }
       <ol class="cards">
         <li class="card docs"><div class="head"><span class="chip docs"><svg class="glyph"><use href="#g-docs"/></svg>Docs</span><span class="id">d4e5f6a7</span></div>
           <div class="title">README do Quadro: como adotar e fazer backup</div>
-          <div class="foot"><span class="who"><span class="av agent">RV</span>rev-onda11</span><span>💬 3</span></div></li>
+          <div class="foot"><span class="who"><span class="av agent">RV</span>rev-onda11</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span>💬 3</span></div></li>
       </ol>
     </section>
 
@@ -200,10 +216,10 @@ main { min-width: 0; }
       <ol class="cards">
         <li class="card impl done"><div class="head"><span class="chip impl"><svg class="glyph"><use href="#g-impl"/></svg>Impl</span><span class="id">747b925d</span></div>
           <div class="title">Quadro adotado e funcionando</div>
-          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span>💬 1</span></div></li>
+          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span class="prio low" role="img" aria-label="Prioridade baixa" title="Prioridade baixa"><i></i><i></i><i></i></span><span>💬 1</span></div></li>
         <li class="card bug done"><div class="head"><span class="chip bug"><svg class="glyph"><use href="#g-bug"/></svg>Bug</span><span class="id">f8a9b0c1</span></div>
           <div class="title">Faixa pedia acesso e reiniciava o agente</div>
-          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span>💬 4</span></div></li>
+          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span>💬 4</span></div></li>
       </ol>
     </section>
   </div>
@@ -232,6 +248,12 @@ main { min-width: 0; }
     <button class="test" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-test"/></svg>Test</button>
     <button class="docs" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-docs"/></svg>Docs</button>
     <button class="chore" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-chore"/></svg>Chore</button>
+  </div>
+  <span class="field-l" id="pl">Prioridade</span>
+  <div class="seg" role="radiogroup" aria-labelledby="pl" style="grid-template-columns:repeat(3,1fr)">
+    <button type="button" role="radio" aria-checked="false"><span class="prio high" aria-hidden="true"><i></i><i></i><i></i></span>Alta</button>
+    <button type="button" role="radio" aria-checked="true" style="--c:var(--accent)"><span class="prio medium" aria-hidden="true"><i></i><i></i><i></i></span>Média</button>
+    <button type="button" role="radio" aria-checked="false"><span class="prio low" aria-hidden="true"><i></i><i></i><i></i></span>Baixa</button>
   </div>
   <label class="field-l" for="d-title">Título</label>
   <input id="d-title" class="field" value="Tipos de tarefa no Quadro">

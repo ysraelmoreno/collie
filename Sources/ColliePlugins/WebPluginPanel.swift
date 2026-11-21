@@ -156,6 +156,10 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     private(set) var origin: String?
     /// An app do cercado's page (URL or `ui/` file): `collie.context` and `app.snapshot` are for these only.
     private(set) var isApp = false
+    /// An app's service page, once `load` has issued it (after the rule list): what a `running` event or Tentar de novo
+    /// loads while no document of it has committed (M13.4: a `reload()` of a web view whose only load failed does nothing).
+    private var page: URL?
+    private var committed = false
 
     /// `folder`: an installed plug-in's, served by `PluginSchemeHandler`; `origin`: an app's loopback service, the only
     /// origin its rule list lets through and the only one that gets the bridge.
@@ -164,6 +168,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         let g = gen
         self.origin = origin
         isApp = app || origin != nil
+        page = nil; committed = false
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list and the CSP
@@ -189,6 +194,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
                 if self.gen == g { self.teardown(WebLockdown.failure); self.box.placeholder("Plug-in \(title): \(WebLockdown.failure)") }
                 return
             }
+            if origin != nil { self.page = page }
             web.load(URLRequest(url: page))   // only after the rules: no load ever runs unblocked
         }
     }
@@ -198,7 +204,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         gen += 1
         for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: why))) }
         pending = [:]
-        ready = false; version = nil; origin = nil; isApp = false; outputs = [:]   // files stay (plugins-out keeps the newest `outputsKept`)
+        ready = false; version = nil; origin = nil; isApp = false; outputs = [:]; page = nil; committed = false   // files stay (plugins-out keeps the newest `outputsKept`)
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil; web.uiDelegate = nil
@@ -605,7 +611,7 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
             guard let web = webView else { return }
             web.isHidden = false
             box.show(web)
-            web.reload()
+            reloadPage(web)
         case "failed":
             let why: String = if case .string(let r)? = o["reason"] { r } else { "o serviço parou" }
             webView?.isHidden = true
@@ -619,14 +625,24 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
         guard webView === self.webView, let origin else { return }
         let at = origin.replacingOccurrences(of: "http://", with: "").replacingOccurrences(of: "https://", with: "")
+        // a load we replaced ourselves (a `running` event's, Tentar de novo's) is not the service failing
+        if (error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled { return }
         let g = gen
         webView.isHidden = true
-        box.placeholder("\(title) não está respondendo em \(at)", retry: { [weak self, weak webView] in
+        // nothing of the page shown yet: the service is still coming up (attach returns while it is `starting`); its
+        // `running` event loads the page
+        box.placeholder(committed ? "\(title) não está respondendo em \(at)" : "Iniciando \(title)…", retry: { [weak self, weak webView] in
             guard let self, self.gen == g, let webView, webView === self.webView else { return }
             webView.isHidden = false
             self.box.show(webView)
-            webView.reload()
+            self.reloadPage(webView)
         })
+    }
+
+    /// The page again: a reload once a document of it committed, else its first load (only once `load` issued it,
+    /// after the rule list; before that, `load` itself loads it).
+    private func reloadPage(_ web: WKWebView) {
+        if committed { web.reload() } else if let page { web.load(URLRequest(url: page)) }
     }
     /// A process death fails the calls in flight and reloads after 0.5, 1, 2 s; the fourth one leaves the placeholder.
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -648,7 +664,9 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
     }
     /// A new document in the main frame (an in-plug-in navigation, a reload): its handler isn't registered yet.
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        guard webView === self.webView, ready else { return }
+        guard webView === self.webView else { return }
+        committed = true
+        guard ready else { return }
         ready = false
         for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: "a página do plug-in recarregou"))) }
         pending = [:]

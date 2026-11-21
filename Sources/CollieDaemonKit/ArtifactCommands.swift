@@ -134,10 +134,14 @@ extension CommandRouter {
             await artifactsChanged()
             return .object(["folder": folder.map { .string($0) } ?? .null, "moved": .number(Double(ids.count))])
         case "artifact.folders":
+            // M9.2 (B6): a history detail the caller cannot see is neither in `items` nor counted
+            let gone = try await artifacts.list().filter { Self.hidden($0, from: caller) }, ids = Set(gone.map(\.id))
             return .array(try await artifacts.folders().map { f in
-                .object(["path": .string(f.path), "count": .number(Double(f.count)), "total": .number(Double(f.total)),
+                let items = f.items.filter { !ids.contains($0) }
+                let total = f.total - gone.filter { ArtifactFolder.isUnder($0.inFolder, f.path) }.count
+                return .object(["path": .string(f.path), "count": .number(Double(f.count - (f.items.count - items.count))), "total": .number(Double(total)),
                          "color": f.color.map { .string($0) } ?? .null, "pinned": .bool(f.pinned), "presentation": .bool(f.presentation),
-                         "items": .array(f.items.map { .string($0.uuidString.lowercased()) })])
+                         "items": .array(items.map { .string($0.uuidString.lowercased()) })])
             })
         case "artifact.folder.create", "artifact.folder.rename", "artifact.folder.remove", "artifact.folder.set":
             guard let path = try ArtifactFolder.normalize(try need(r, "path")) else { throw invalid("Missing argument 'path'") }
@@ -176,11 +180,11 @@ extension CommandRouter {
     static let historyFolder = "Histórico"
 
     /// A history detail (`origin` history-*) is the app's and its work's paddock's only (rev-onda6 A1): a terminal of
-    /// another paddock neither lists nor reads it. Every other artifact: seen by all, as before.
-    /// ponytail: `artifact.folders` still counts it (ids only, no page); filter there too if that matters.
+    /// another paddock neither lists nor reads it (nor sees its id in `artifact.folders`). M9.2 (B6): one with no
+    /// paddock (written before M7.1) is the app's only. Every other artifact: seen by all, as before.
     static func hidden(_ a: Artifact, from caller: TerminalRecord?) -> Bool {
         guard let caller, a.origin?.hasPrefix("history-") == true else { return false }
-        return a.paddockId != caller.paddockId
+        return a.paddockId == nil || a.paddockId != caller.paddockId
     }
 
     /// `artifact.changed` to every Artifacts panel (a move or a folder change).

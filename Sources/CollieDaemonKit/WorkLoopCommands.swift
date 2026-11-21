@@ -27,7 +27,7 @@ extension CommandRouter {
         }
         // reserved before the first await: a concurrent work.run (actor reentrancy) finds it taken
         guard !loopPaddocks.contains(pid) else {
-            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it, collie work stop ends it")
+            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it; collie work stop, from the terminal that started it, ends it")
         }
         loopPaddocks.insert(pid)
         var started = false
@@ -50,7 +50,7 @@ extension CommandRouter {
         // M7.2 (A2): a closed work's loop may still run (M6.4: it ends at its next wake, after its lanes): it holds the paddock too
         let others = try await work.list(includeClosed: true).filter { $0.paddockId == paddock.id }
         if workLoops[w.id] != nil || others.contains(where: { $0.loop?.state == .running }) {
-            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it, collie work stop ends it")
+            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it; collie work stop, from the terminal that started it, ends it")
         }
         for o in ws.terminals where o.paddockId == paddock.id && o.id != t.id && !o.isShepherd && Self.loopSharesWorktree(o, URL(fileURLWithPath: paddock.path)) {
             if await targetBusy(o.id) {
@@ -237,17 +237,25 @@ extension CommandRouter {
     }
 
     /// Ends the loop after the current attempt's verdict (the engine records `requested` when it does stop); a loop still waiting for the owner's card: withdraws the card.
+    /// M9.2 (B5): a closed work of `t`'s whose loop still runs (M6.4: it ends at its next wake) is reached too.
     func workStop(_ t: TerminalRecord) async throws -> JSONValue {
-        if let w = try await work.active(terminal: t.id), let card = loopCards.removeValue(forKey: w.id) {
+        let active = try await work.active(terminal: t.id)
+        if let w = active, let card = loopCards.removeValue(forKey: w.id) {
             appWaiters.removeValue(forKey: card)?.resume(returning: false)   // the approval task frees the paddock and tells the starter
             await dropAppCard(card)
             return .object(["state": .string("cancelled")])
         }
-        guard let w = try await work.active(terminal: t.id), let l = workLoops[w.id], !l.stopping else {
+        var id = active.flatMap { workLoops[$0.id] == nil ? nil : $0.id }
+        if id == nil {
+            for k in Array(workLoops.keys) {
+                if try await work.get(k)?.terminalId == t.id { id = k; break }
+            }
+        }
+        guard let id, let l = workLoops[id], !l.stopping else {
             throw ProtocolError(code: .invalidArgs, message: "no loop is running on '\(t.name)'s work")
         }
-        workLoops[w.id]?.stopping = true
-        await l.engine.stop(work: w.id)
+        workLoops[id]?.stopping = true
+        await l.engine.stop(work: id)
         return .object(["state": .string("stopped")])
     }
 

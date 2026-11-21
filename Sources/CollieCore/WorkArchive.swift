@@ -84,9 +84,10 @@ extension WorkArchive {
 
     public var done: Int { tasks.filter { $0.state == TaskState.done.rawValue }.count }
     public var deferred: Int { tasks.filter { $0.state == TaskState.deferred.rawValue }.count }
-    /// M8.1: what `work.history` lists: a work with tasks, or one a loop ran (even with none done). A work with neither
-    /// (a loop attempt's terminal opened it implicitly, a `work start` left empty) is kept on disk, never listed.
-    public var listed: Bool { !tasks.isEmpty || stopReason != nil || !timeline.isEmpty || !loopSummary.isEmpty }
+    /// M8.1: what `work.history` lists: a work with tasks or notes (M9.2, B4), or one a loop ran (even with none done).
+    /// A work with none (a loop attempt's terminal opened it implicitly, a `work start` left empty) is kept on disk,
+    /// never listed.
+    public var listed: Bool { !tasks.isEmpty || !notes.isEmpty || stopReason != nil || !timeline.isEmpty || !loopSummary.isEmpty }
     public var durationSeconds: Int { max(0, Int((closedAt ?? .distantPast).timeIntervalSince(openedAt ?? closedAt ?? .distantPast))) }
 
     /// What `w` (closed) leaves: `previous` (the timeline of this work's last archive) then its loop's journal, no event

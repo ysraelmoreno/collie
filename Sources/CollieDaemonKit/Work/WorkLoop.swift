@@ -783,9 +783,11 @@ actor WorkLoop {
         return (moved, moved || edited || !made.isEmpty)
     }
 
-    /// Untracked files that are not ignored.
+    /// Untracked files that are not ignored. M9.2 (B3): raw `stdout`, never `out()`: its trim would cut a space or a
+    /// newline off the first and the last name, and `discard` would then lose that owner's file.
     private func untracked(_ dir: URL) async -> [String] {
-        (await out(["ls-files", "-z", "--others", "--exclude-standard"], dir) ?? "").split(separator: "\0").map(String.init)
+        guard let r = try? await host.git(["ls-files", "-z", "--others", "--exclude-standard"], in: dir), r.status == 0 else { return [] }
+        return r.stdout.split(separator: "\0").map(String.init)
     }
 
     /// A failed attempt's work goes to `patchDir/<task>-<n>.patch`; the tree goes back to `before` on `branch`.

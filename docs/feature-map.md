@@ -37,8 +37,12 @@ Como verificar, em geral:
 - **Nome na UI:** o nome do terminal; menu "Ações do terminal": "Tela cheia", "Editar…", "Reiniciar", "Matar",
   "Salvar na memória", "Lote", "Fechar nó…". Selos: "pastoreando N", "desconectado".
 - **Para que serve:** um agente (ou shell) rodando num terminal do canvas.
-- **Arquivos:** `Sources/CollieApp/TerminalNodeView.swift`, `Sources/CollieTerminal/`.
-- **Como verificar:** `collie list` e `collie check <nome> --screen`.
+- **Arquivos:** `Sources/CollieApp/TerminalNodeView.swift`, `Sources/CollieApp/TerminalDrop.swift`, `Sources/CollieTerminal/`.
+- **Arrastar para o terminal:** soltar arquivos ou uma imagem cola os caminhos, com escape de shell, como o Terminal
+  do macOS (colagem com marcadores quando o programa pede, e os agentes anexam a imagem). Imagem sem arquivo
+  (navegador, Fotos, miniatura de captura) é gravada como PNG em `$TMPDIR/collie-drops/` antes.
+- **Como verificar:** `collie list` e `collie check <nome> --screen`; `swift test --filter TerminalDropTests`;
+  arrastar uma imagem do Finder para um terminal Claude, à mão.
 
 ### Nó de painel e docas
 

@@ -14,6 +14,8 @@ Names in quotes are labels of the app, which is in Portuguese.
 - **Canvas:** dragging with the middle mouse button pans; several items can be selected (⌘-click, ⇧-click, a rectangle dragged on empty canvas) on the canvas and in the side panel, with the existing actions in a context menu for all of them.
 - **DMG:** the installer window has a background and positioned icons (`scripts/make-dmg.sh`); where Finder cannot be driven the DMG is built without the layout, with a warning.
 
+- **Drag and drop into terminals:** dropping files or an image on a terminal pastes their shell-escaped paths, as Terminal.app does, so agents attach the image; an image with no file of its own is saved as a PNG first.
+
 ### Changed
 - This changelog is written in English.
 

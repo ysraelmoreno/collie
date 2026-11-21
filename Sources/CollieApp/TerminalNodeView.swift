@@ -443,6 +443,19 @@ final class NodeTerminal: TerminalView {
     var onClick: (() -> Void)?, onMouseUp: (() -> Void)?
     override func mouseDown(with event: NSEvent) { onClick?(); super.mouseDown(with: event) }
     override func mouseUp(with event: NSEvent) { super.mouseUp(with: event); onMouseUp?() }
+    /// Files and images dropped on the terminal paste their paths (`TerminalDrop`); SwiftTerm takes no drops itself.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, registeredDraggedTypes.isEmpty { registerForDraggedTypes(TerminalDrop.types) }
+    }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { TerminalDrop.accepts(sender.draggingPasteboard) ? .copy : [] }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        TerminalDrop.receive(sender.draggingPasteboard) { [weak self] text in
+            guard let self else { return }
+            window?.makeFirstResponder(self)
+            pasteText(text)   // bracketed when the program asked for it, so agents see a paste
+        }
+    }
     /// Views SwiftTerm adds later (caret, progress bar, marked text) take the terminal's current scale.
     override func didAddSubview(_ v: NSView) {
         super.didAddSubview(v)

@@ -104,6 +104,11 @@ extension WorkLoop {
         // stopping: every lane is cancelled; each dismisses its agent, reopens its task and removes itself
         for t in alive.values { t.cancel() }
         for t in alive.values { await t.value }
+        // M3d.3: what the last gate left goes with the loop, unless someone works in the tree now
+        if await host.othersWorking() == nil {
+            let spared = await integrator.sweep()
+            if !spared.isEmpty { await note(id, Self.sparedNote(spared)) }
+        }
         lanes[id] = nil
         signal.finish()
         try? await store.update(id) { $0.loop?.lanes = nil; $0.loop?.mirror() }
@@ -236,6 +241,7 @@ extension WorkLoop {
         }
         // M3c.2: new untracked files never stop the loop nor a reset: they stay, and the note names them
         if result.kept.isEmpty, !result.left.isEmpty { await note(id, Self.leftNote(result.left)) }
+        if !result.spared.isEmpty { await note(id, Self.sparedNote(result.spared)) }
         switch result.outcome {
         case .integrated, .noop:
             await engine.finish(id, head: result.head)
@@ -283,11 +289,22 @@ extension WorkLoop {
         return s + " Laço parado."
     }
 
-    /// M3c.2: the untracked files a merge's gate (or someone meanwhile) left in the paddock's worktree, which go on.
+    /// M3c.2: the untracked files a merge's gate (or someone meanwhile) left in the paddock's worktree. M3d.3: removed
+    /// before the next merge (or at the loop's end) if still as the gate left them.
     static func leftNote(_ left: [String]) -> String {
-        let more = left.count > 10 ? " e mais \(left.count - 10)" : ""
-        return "[loop] arquivos não rastreados novos na worktree do cercado, deixados lá (nada foi apagado): "
-            + eventDetail(left.prefix(10).joined(separator: ", ")) + more + "."
+        "[loop] arquivos não rastreados novos na worktree do cercado (do portão): " + fileList(left)
+            + ". Saem antes do próximo merge, ou no fim do laço, se ninguém mexer neles."
+    }
+
+    /// M3d.3: files a gate left that changed since: they are the owner's now, and stay.
+    static func sparedNote(_ spared: [String]) -> String {
+        "[loop] arquivos deixados pelo portão mudaram depois dele e ficaram na worktree do cercado (nada foi apagado): "
+            + fileList(spared) + "."
+    }
+
+    private static func fileList(_ files: [String]) -> String {
+        let more = files.count > 10 ? " e mais \(files.count - 10)" : ""
+        return eventDetail(files.prefix(10).joined(separator: ", ")) + more
     }
 
     // MARK: on a lane's engine: what becomes of the attempt that passed

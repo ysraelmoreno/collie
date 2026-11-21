@@ -119,8 +119,16 @@ private func isWait(_ o: LaneIntegration.Outcome) -> Bool { if case .wait = o { 
     @Test func gateBrokenAfterTheMergeUndoesIt() async throws {
         let rig = try await Rig()
         let a = try await rig.lane("a", "a.txt", "a\n")
-        // M3c.2: the gate writes its own file and rewrites a tracked one as the merge left it (a formatter): undone as in
-        // the original design (back to the HEAD of before, the task redone from it); its untracked file stays, by name
+        // M3d.3: a formatter that really changes a tracked file cannot be told from the owner's edit (M3c.2): nothing is
+        // reset, the merge stays in the branch, both files are named
+        let fmt = try await rig.go(a, "A", gate: "echo junk > junk.txt; printf 'ONE\\n' > f.txt; echo broke; exit 7")
+        #expect(fmt.outcome == .leftDirty("gate broke after the merge: gate failed (exit 7)"))
+        #expect(fmt.kept == ["f.txt", "junk.txt"] && fmt.undo == rig.base)
+        #expect(try String(contentsOf: rig.repo.appendingPathComponent("f.txt"), encoding: .utf8) == "ONE\n")
+        _ = try await git(rig.repo, "reset", "-q", "--hard", rig.base)
+        try FileManager.default.removeItem(at: rig.repo.appendingPathComponent("junk.txt"))
+        // M3c.2: the gate writes its own file and rewrites a tracked one as the merge left it: undone as in the original
+        // design (back to the HEAD of before, the task redone from it); its untracked file stays, by name
         let r = try await rig.go(a, "A", gate: "echo junk > junk.txt; cat f.txt > f.new; mv f.new f.txt; echo broke; exit 7")
         #expect(r.outcome == .retryFromNewBase("gate broke after the merge: gate failed (exit 7)"))
         #expect(r.output.contains("broke"))

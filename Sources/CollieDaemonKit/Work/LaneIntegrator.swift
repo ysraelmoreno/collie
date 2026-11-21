@@ -13,6 +13,10 @@ import CollieProtocol
 /// M3c.2: only the tracked files (their diff from what the integrator left) and who works there decide; a new untracked
 /// file (a gate's report, coverage) never stops a reset nor the loop: `git reset --hard` does not touch it, and it is
 /// never removed, only named (`left`).
+/// M3d.3: except what the gate itself made: the untracked files new after it ran (`left`, when nothing was kept) are
+/// recorded with their content, and before the next merge (and at the loop's end, `sweep`) the ones still untracked and
+/// unchanged are removed, by name. One the owner changed since is left and named (`spared`). A merge git refuses for an
+/// untracked file that is not the gate's in the lane's way stops the loop (`.leftDirty`) instead of redoing the task.
 actor LaneIntegrator {
     struct Result: Sendable, Equatable {
         var outcome: LaneIntegration.Outcome
@@ -30,10 +34,14 @@ actor LaneIntegrator {
         var blockedBy: String? = nil
         /// M3b.2. A merge whose gate broke was left in the branch: the HEAD of before it (`git reset --hard` to undo).
         var undo: String? = nil
+        /// M3d.3. Files an earlier gate left that the owner changed since: not removed, named in the task's note.
+        var spared: [String] = []
     }
 
     private let host: any LoopHost, dir: URL
     private var busy = false, waiters: [CheckedContinuation<Void, Never>] = []
+    /// M3d.3. The untracked files the last gates made, by path: their `git hash-object` right after the gate.
+    private var gateMade: [String: String] = [:]
 
     /// `host`: the paddock's (its `othersWorking` is about the paddock's worktree); `dir`: the paddock's worktree.
     init(host: any LoopHost, dir: URL) { self.host = host; self.dir = dir }
@@ -68,10 +76,10 @@ actor LaneIntegrator {
 
     private func run(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration) async -> Result {
         var f = LaneIntegration.Facts(mergeResult: .noop, gateAfterMerge: .notRun, treeClean: false, othersWorking: nil, attempt: attempt, tries: tries)
-        var kept: [String] = [], left: [String] = [], blockedBy: String?, undo: String?
+        var kept: [String] = [], left: [String] = [], blockedBy: String?, undo: String?, spared: [String] = []
         func done(_ f: LaneIntegration.Facts, _ output: String = "") async -> Result {
             .init(outcome: LaneIntegration.decide(f), head: await out(["rev-parse", "HEAD"]) ?? "", output: output,
-                  kept: kept, left: left, blockedBy: blockedBy, undo: undo)
+                  kept: kept, left: left, blockedBy: blockedBy, undo: undo, spared: spared)
         }
         f.othersWorking = await host.othersWorking()
         // dirt is what the engine calls dirt: a modified tracked file. A status git cannot give counts as dirty.
@@ -79,6 +87,7 @@ actor LaneIntegrator {
         let dirt = await out(["status", "--porcelain", "--untracked-files=no"])
         f.treeClean = before != nil && dirt == ""
         guard f.othersWorking == nil, f.treeClean, let before else { return await done(f) }
+        spared = await sweep()
         if (try? await host.git(["merge-base", "--is-ancestor", lane.branch, "HEAD"], in: dir))?.status == 0 { return await done(f) }
         // M3b.6: cancelled (the loop or the daemon stopping) before its merge: nothing is merged, and it is no verdict
         if Task.isCancelled { return .init(outcome: .retryFromNewBase(Self.cancelled), head: before) }
@@ -94,17 +103,25 @@ actor LaneIntegrator {
             if !s.reset { (blockedBy, kept, f.disturbed) = (s.who, s.tracked + s.left, true) }
             f.mergeResult = .conflict
             f.detail = merge.map { Self.firstLine($0.stdout + "\n" + $0.stderr) } ?? "git merge could not run"
+            // M3d.3: an untracked file that is not the gate's (it was swept) in the lane's way: no retry fixes that
+            let way = await inTheWay(lane.branch, from: before)
+            if !way.isEmpty {
+                (blockedBy, kept, f.disturbed) = (s.who, kept + way.filter { !kept.contains($0) }, true)
+                f.detail = "arquivos não rastreados que não são do portão no caminho do merge: "
+                    + WorkLoop.eventDetail(way.prefix(10).joined(separator: ", "))
+            }
             return await done(f)
         }
         f.mergeResult = .clean
         guard let gate else { return await done(f) }
 
-        var output = ""
+        var output = "", ran = false
         do throws(ProtocolError) {
             // M3b.6: a cancel ends the gate (its process is killed, or it never starts): the merge is then undone as
             // for a broken gate, under the same rule (only a tree exactly as the merge left it is reset)
             if Task.isCancelled { throw ProtocolError(code: .internal, message: Self.cancelled) }
             let res: ProcessResult
+            ran = true
             do { res = try await BoundedProcess.$killOnCancel.withValue(true) { try await host.check(gate, in: dir, timeout: gateTimeout) } }
             catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
             output = res.stdout + res.stderr
@@ -128,6 +145,11 @@ actor LaneIntegrator {
             left = s.left
             if !s.reset { (blockedBy, kept, undo, f.disturbed) = (s.who, s.tracked + s.left, before, true) }
         }
+        // M3d.3: only a tree as the integrator expects: with anything kept, nothing new is taken as the gate's
+        // ponytail: a file the owner made while the gate ran counts as the gate's; the hash check spares it once edited
+        if ran, kept.isEmpty, !left.isEmpty, let h = await hashes(left) {
+            for (file, hash) in zip(left, h) { gateMade[file] = hash }
+        }
         return await done(f, output)
     }
 
@@ -142,6 +164,37 @@ actor LaneIntegrator {
         let reset = who == nil && tracked.isEmpty
         if reset { _ = try? await host.git(["reset", "-q", "--hard", sha], in: dir) }
         return (who, tracked, await made(loose), reset)
+    }
+
+    /// M3d.3: removes the files the gates made that are still untracked and as the gate left them (`git clean`, by
+    /// name: it never touches a tracked or ignored file). Returns the ones the owner changed since, left there. Each
+    /// file is forgotten either way: one spared is the owner's from then on.
+    /// ponytail: the owner may still edit between the hash and the clean; a lock on the owner's tree does not exist
+    func sweep() async -> [String] {
+        guard !gateMade.isEmpty else { return [] }
+        let made = gateMade
+        gateMade = [:]
+        let still = Set(await untracked()), here = made.keys.filter(still.contains).sorted()
+        guard !here.isEmpty else { return [] }
+        guard let now = await hashes(here) else { return here }
+        var gone: [String] = [], spared: [String] = []
+        for (file, hash) in zip(here, now) { if made[file] == hash { gone.append(file) } else { spared.append(file) } }
+        if !gone.isEmpty { _ = try? await host.git(["clean", "-q", "-f", "--"] + gone, in: dir) }
+        return spared
+    }
+
+    /// The contents' hashes of `files`, in order (nil when git cannot say for every one).
+    private func hashes(_ files: [String]) async -> [String]? {
+        guard let o = await out(["hash-object", "--"] + files) else { return nil }
+        let h = o.split(separator: "\n").map(String.init)
+        return h.count == files.count ? h : nil
+    }
+
+    /// Untracked files that the lane's branch adds or changes since `sha`: the ones a merge refuses to overwrite.
+    private func inTheWay(_ branch: String, from sha: String) async -> [String] {
+        guard let d = await out(["diff", "--name-only", "-z", sha + "..." + branch, "--"]) else { return [] }
+        let theirs = Set(d.split(separator: "\0").map(String.init))
+        return await untracked().filter(theirs.contains)
     }
 
     /// Tracked files that differ from `sha`. A diff git cannot give counts as one.

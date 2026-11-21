@@ -7,7 +7,7 @@ t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
 suites=(WorkLoopTests WorkStatusTextTests WorkStoreTests LoopStopReasonTests LoopJournalTests AttemptDecisionTests AttemptMachineTests
         LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests LoopCancelTests LoopResumeSafetyTests LoopResumeNitsTests LoopCancelWaitTests WorkWaitTests LoopOrientationTests
         WorkTaskReopenTests TaskSchedulerTests LaneWorktreeTests LaneHostTests LaneIntegrationTests LoopParallelTests
-        LoopLaneLifecycleTests LoopParallelE2ETests AgentNamingTests LaneProfileIntentTests LaneIntegratorRaceTests LaneRefsProfileTests LoopParallelBudgetTests LaneSweepScopeTests LoopLaneNitsTests LaneCreateSerialTests LaneIntegratorWaitTests LaneHardeningTests LoopNotifyTests StarterWaitLivenessTests ShepherdWaitIntegrationTests GateLeftoversTests LoopNoticePolicyTests StopHookThrottleTests UsageLimitDetectionTests TokenUsageTests ContextAdviceTests LoopModelDefaultTests WorkArchiveTests HistoryDetailOpenTests WorkFeedFollowTests GateCleanLiteralTests ArchiveRunningLoopTests Onda5NitsTests HistoryArtifactPrivacyTests LoopLockClosedWorkTests WorkFeedClosedLoopTests HistoryRealWorksTests LoopSectionAttemptTests LoopCardTests LoopsModalTests LoopSectionTests ContextPanelLoopsTests ContextPanelHistoryTests HistoryPageTests OpenPanelSheetTests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
+        LoopLaneLifecycleTests LoopParallelE2ETests AgentNamingTests LaneProfileIntentTests LaneIntegratorRaceTests LaneRefsProfileTests LoopParallelBudgetTests LaneSweepScopeTests LoopLaneNitsTests LaneCreateSerialTests LaneIntegratorWaitTests LaneHardeningTests LoopNotifyTests StarterWaitLivenessTests ShepherdWaitIntegrationTests GateLeftoversTests LoopNoticePolicyTests StopHookThrottleTests UsageLimitDetectionTests TokenUsageTests ContextAdviceTests LoopModelDefaultTests WorkArchiveTests HistoryDetailOpenTests WorkFeedFollowTests GateCleanLiteralTests ArchiveRunningLoopTests Onda5NitsTests HistoryArtifactPrivacyTests LoopLockClosedWorkTests WorkFeedClosedLoopTests HistoryRealWorksTests LoopSectionAttemptTests LoopCardTests LoopsModalTests HistoryReachTests DiscardRawNamesTestsLoopSectionTests ContextPanelLoopsTests ContextPanelHistoryTests HistoryPageTests OpenPanelSheetTests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
 filters=(); for s in "${suites[@]}"; do filters+=(--filter "$s"); done
 need() { test -f "$1" || { echo "falta $1" >&2; exit 1; }; }
 D=Tests/CollieDaemonKitTests; A=Tests/CollieAppTests
@@ -68,6 +68,8 @@ case "${1:?M1.1..M5.6}" in
   M8.1)  need $A/LoopSectionAttemptTests.swift; need $D/HistoryRealWorksTests.swift ;;
   M8.2)  need $A/LoopCardTests.swift ;;
   M8.3)  need $A/LoopsModalTests.swift ;;
+  M9.1)  need $A/HistoryReachTests.swift ;;
+  M9.2)  need $D/DiscardRawNamesTests.swift ;;
   M3.8)  need Sources/CollieDaemonKit/Work/AgentNaming.swift; need $D/AgentNamingTests.swift ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;
 esac

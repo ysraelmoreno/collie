@@ -235,9 +235,19 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     private static var compiled: WKContentRuleList?
     static func rules() async -> WKContentRuleList? {
         if let compiled { return compiled }
-        let list = try? await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "collie-plugin-offline", encodedContentRuleList: ruleJSON)
+        let list = await compile("collie-plugin-offline", ruleJSON)
         compiled = list
         return list
+    }
+
+    /// Compiled in WebKit's default store (`~/Library/WebKit/<app>`); where that folder can't be written (a sandboxed
+    /// run: WebKit says "Moving file failed"), in a store of this user's own temp folder instead. nil: neither compiled.
+    static func compile(_ ident: String, _ json: String) async -> WKContentRuleList? {
+        if let l = try? await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: ident, encodedContentRuleList: json) { return l }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("collie-content-rules", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil,
+              let store = WKContentRuleListStore(url: dir) else { return nil }
+        return try? await store.compileContentRuleList(forIdentifier: ident, encodedContentRuleList: json)
     }
 
     /// An app do cercado's page: every load blocked but its service's origin (and local data/blob URLs). One list per
@@ -258,7 +268,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     static func rules(origin: String) async -> WKContentRuleList? {
         if let r = compiledApps[origin] { return r }
         let ident = "collie-app-" + origin.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? String($0) : "-" }.joined()
-        let list = try? await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: ident, encodedContentRuleList: ruleJSON(origin: origin))
+        let list = await compile(ident, ruleJSON(origin: origin))
         compiledApps[origin] = list
         return list
     }

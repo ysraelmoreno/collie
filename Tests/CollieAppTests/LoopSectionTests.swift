@@ -139,7 +139,7 @@ struct HistoryRowTests {
         #expect(f.work?.id == w.id && f.history.map(\.id) == ["h"])
         let wait = log.calls.first { $0.0 == "work.wait" }
         #expect(wait?.1["since"] == .number(7) && wait?.1["terminal"] == .string("t"))
-        #expect(log.calls.first { $0.0 == "work.history" }?.1["limit"] == .number(20))
+        #expect(log.calls.first { $0.0 == "work.history" }?.1["limit"] == .number(Double(WorkFeed.historyFetch)))
         #expect(log.calls.first { $0.0 == "work.history" }?.1["paddock"] == .string("collie"))
         f.follow(paddock: nil, name: nil)
     }

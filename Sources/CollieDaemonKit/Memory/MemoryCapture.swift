@@ -19,10 +19,34 @@ enum MemoryCapture {
         return w.commits[(i + 1)...]
     }
 
-    /// A new chunk since the last capture: a task done after it, or a new commit (what Claude's Stop asks about).
+    /// A new chunk since the last capture: a task done after it, or a new commit that is not a loop attempt's (what
+    /// Claude's Stop asks about; M5.2: the loop's commits go in its end summary, and its tasks done count once it ends).
     static func hasNewWork(_ w: Work) -> Bool {
         let since = w.capturedAt ?? .distantPast
-        return !newCommits(w).isEmpty || w.tasks.contains { $0.state == .done && $0.updatedAt > since }
+        return newCommits(w).contains { !loopCommit($0, of: w) } || w.tasks.contains { $0.state == .done && $0.updatedAt > since }
+    }
+
+    /// M5.2: a commit an attempt of `w`'s loop made: in an approved task's evidence, or seen or integrated by the loop's
+    /// journal. Matched by short sha (`%h` may grow). ponytail: a failed attempt's commit the journal's ring (100) already
+    /// dropped counts as the owner's: one extra ask at most.
+    static func loopCommit(_ c: String, of w: Work) -> Bool {
+        func sha(_ s: String) -> String { String(s.split(separator: " ").first ?? "") }
+        let h = sha(c)
+        guard !h.isEmpty else { return false }
+        let evidence = w.tasks.flatMap { $0.evidence?.commits ?? [] }.map(sha)
+        let seen = (w.loop?.events ?? []).filter { $0.kind == .commitSeen || $0.kind == .integrated }.compactMap(\.detail)
+        return (evidence + seen).contains { !$0.isEmpty && ($0.hasPrefix(h) || h.hasPrefix($0)) }
+    }
+
+    /// M5.2: at most one Stop ask every `askEvery` per terminal's work.
+    static let askEvery: TimeInterval = 20 * 60
+
+    /// M5.2: whether Claude's Stop may ask now: never while a loop runs `w` (its commits are the loop's, and a
+    /// `memory save` would fail the attempt), never within `askEvery` of the last ask, and only for new work. No work: no.
+    static func shouldAsk(_ w: Work?, now: Date) -> Bool {
+        guard let w, w.loop?.state != .running else { return false }
+        if let a = w.askedAt, now.timeIntervalSince(a) < askEvery { return false }
+        return hasNewWork(w)
     }
 
     /// `since`/`afterCommit`: the last proposals' mark (`proposedAt`/`proposedCommit`).
@@ -71,22 +95,26 @@ extension CommandRouter {
     /// Claude's `Stop`: the reason to make the agent record what it learned — at most once per chunk of new work (done
     /// tasks, commits since the last capture), never when it saved a memory itself meanwhile. The chunk is marked captured
     /// either way. nil: no ask (also on any error: fail open).
-    func stopAsk(_ tid: UUID) async -> String? {
+    /// M5.2: not while a loop runs the work nor within 20 min of the last ask (`MemoryCapture.shouldAsk`); then the
+    /// chunk is left unmarked, so it is asked about on a later Stop.
+    func stopAsk(_ tid: UUID, now: Date = Date()) async -> String? {
         guard let me = ws.terminals.first(where: { $0.id == tid }) else { return nil }
         do {
-            guard let w = try await work.active(terminal: tid), MemoryCapture.hasNewWork(w) else { return nil }
+            guard let w = try await work.active(terminal: tid), MemoryCapture.shouldAsk(w, now: now) else { return nil }
             let state = await captureState(me, w)
-            guard try await mark(w) else { return nil }   // a concurrent Stop or capture took this chunk
+            guard try await mark(w, asked: !state.saved, now: now) else { return nil }   // a concurrent Stop or capture took this chunk
             return state.saved ? nil : ws.lot(of: me.id) != nil ? MemoryCapture.stopReason : MemoryCapture.stopReasonNoLot
         } catch { workLog("stop ask: \((error as? ProtocolError)?.message ?? "\(error)")"); return nil }
     }
 
     /// Marks `w`'s chunk asked about unless another Stop marked it since `w` was read; true when this one did.
-    private func mark(_ w: Work) async throws -> Bool {
-        let now = Date(), was = w.capturedAt
+    /// `asked`: the Stop really asks (`askedAt`, the throttle's clock).
+    private func mark(_ w: Work, asked: Bool, now: Date) async throws -> Bool {
+        let was = w.capturedAt
         try await work.update(w.id) { x in
             guard x.capturedAt == was else { return }
             x.capturedAt = now; x.capturedCommit = x.commits.last
+            if asked { x.askedAt = now }
         }
         return try await work.get(w.id)?.capturedAt == now
     }

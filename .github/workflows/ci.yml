@@ -40,11 +40,24 @@ jobs:
           scripts/ci/test-lint.sh
           scripts/ci/test-run-tests.sh
 
+      - name: Versão do Swift
+        id: swift
+        run: echo "version=$(swift --version 2>&1 | sed -nE 's/.*Swift version ([0-9.]+).*/\1/p' | head -1)" >> "$GITHUB_OUTPUT"
+
+      # only this test build's .build: a cold build cost 6-9 min every run. release.yml stays cold (signed build)
+      - name: Cache .build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: build-${{ runner.os }}-swift${{ steps.swift.outputs.version }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: build-${{ runner.os }}-swift${{ steps.swift.outputs.version }}-
+
       - name: Build
         run: swift build --build-tests
 
       # not a bare `swift test`: its exit code is the test process's, which went green after exiting 0 mid-run, and
-      # all tests at once starve a 3-core runner. run-tests.sh: serial shards, each checked by its final test count
+      # all tests at once starve a 3-core runner. run-tests.sh: serial shards, each checked by its final test count and
+      # under CI_SHARD_TIMEOUT (900 s): a hang fails naming the last test started instead of waiting for cancellation
       - name: Testes
         run: scripts/ci/run-tests.sh
         env:

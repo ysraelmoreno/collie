@@ -479,8 +479,24 @@ final class TitleHost<V: View>: NSHostingView<V> {
     /// The modifiers of the press, for the selection.
     var onSelect: ((NSEvent.ModifierFlags) -> Void)?
     var menuProvider: ((NSEvent) -> NSMenu?)?
-    override func mouseDown(with event: NSEvent) { onSelect?(event.modifierFlags); onClick?(); super.mouseDown(with: event) }
-    override func mouseUp(with event: NSEvent) { super.mouseUp(with: event); onMouseUp?() }
+    override func mouseDown(with event: NSEvent) { onSelect?(event.modifierFlags); onClick?(); super.mouseDown(with: unzoomed(event)) }
+    override func mouseUp(with event: NSEvent) { super.mouseUp(with: unzoomed(event)); onMouseUp?() }
+
+    /// A terminal node scales its bounds by the canvas zoom, and SwiftUI reads a click as the window offset from this
+    /// view's top-left without that scale: at any zoom ≠ 1 its controls (the ⤢, the access badge) missed every click.
+    /// The location is rewritten so that offset is the one in this view's own points. No-op unscaled (panels, fullscreen).
+    // ponytail: matches SwiftUI's offset math as of macOS 14/15; TerminalFullscreenClickTests fails if that changes.
+    private func unzoomed(_ e: NSEvent) -> NSEvent {
+        let r = convert(bounds, to: nil)
+        guard bounds.width > 0, bounds.height > 0 else { return e }
+        let sx = r.width / bounds.width, sy = r.height / bounds.height
+        guard abs(sx - 1) > 0.001 || abs(sy - 1) > 0.001 else { return e }
+        let p = e.locationInWindow
+        let q = NSPoint(x: r.minX + (p.x - r.minX) / sx, y: r.maxY - (r.maxY - p.y) / sy)
+        return NSEvent.mouseEvent(with: e.type, location: q, modifierFlags: e.modifierFlags, timestamp: e.timestamp,
+                                  windowNumber: e.windowNumber, context: nil, eventNumber: e.eventNumber,
+                                  clickCount: e.clickCount, pressure: e.pressure) ?? e
+    }
     // The hosting view would swallow the right-click: show the node's menu ourselves.
     override func rightMouseDown(with event: NSEvent) {
         if let m = menuProvider?(event) { NSMenu.popUpContextMenu(m, with: event, for: self) } else { super.rightMouseDown(with: event) }

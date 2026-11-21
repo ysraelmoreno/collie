@@ -20,12 +20,24 @@ import CollieCore
         override func didAddSubview(_ v: NSView) { super.didAddSubview(v); adds += 1 }
     }
 
-    @MainActor struct Rig {
+    /// Events go to the view under the press and stay with it until the up, as a key window delivers them (the test
+    /// window is never key: a SwiftUI host would then gate the first click on the same broken hit math).
+    @MainActor final class Rig {
         let canvas: CanvasState, window: NSWindow, parent: Parent, node: TerminalNodeView, other: TerminalNodeView
-        func at(_ p: CGPoint) -> NSPoint { node.convert(NSPoint(x: p.x, y: p.y), to: nil) }
+        private var target: NSView?
+        init(canvas: CanvasState, window: NSWindow, parent: Parent, node: TerminalNodeView, other: TerminalNodeView) {
+            self.canvas = canvas; self.window = window; self.parent = parent; self.node = node; self.other = other
+        }
         func send(_ type: NSEvent.EventType, _ p: CGPoint) {
-            window.sendEvent(NSEvent.mouseEvent(with: type, location: at(p), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+            let at = node.convert(NSPoint(x: p.x, y: p.y), to: nil)
+            let e = NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                       windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            if type == .leftMouseDown { target = window.contentView?.hitTest(at) }
+            switch type {
+            case .leftMouseDown: target?.mouseDown(with: e)
+            case .leftMouseDragged: target?.mouseDragged(with: e)
+            default: target?.mouseUp(with: e); target = nil
+            }
         }
         func click(_ p: CGPoint = TerminalFullscreenClickTests.button) { send(.leftMouseDown, p); send(.leftMouseUp, p) }
         var nodes: [NSView] { parent.subviews.filter { $0 is TerminalNodeView } }
@@ -103,51 +115,3 @@ import CollieCore
     }
 }
 
-@MainActor @Suite struct TerminalFullscreenHitProbe {
-    @Test(arguments: [0.5, 0.7, 1.0, 1.5]) func hit(zoom: Double) {
-        let canvas = CanvasState(); canvas.zoom = zoom
-        let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-fsh-\(UUID())")))
-        let id = UUID()
-        let v = TerminalNodeView(id: id, client: client, canvas: canvas, node: NodeController(id: id, client: client))
-        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1600, height: 1000), styleMask: [.titled], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false
-        w.contentView!.addSubview(v)
-        let s = CGSize(width: 640, height: 400)
-        v.place(CGRect(origin: CGPoint(x: 20, y: 20), size: CGSize(width: s.width * zoom, height: s.height * zoom)), canvasSize: s)
-        v.setInteractive(true); v.layoutSubtreeIfNeeded()
-        var line = ""
-        for x in stride(from: 20.0, to: 640, by: 60) {
-            let at = v.convert(NSPoint(x: x, y: 16), to: nil)
-            line += " \(Int(x)):\(w.contentView!.hitTest(at).map { "\(type(of: $0))".prefix(12) } ?? "nil")"
-        }
-        print("PROBE5 zoom=\(zoom)\(line)")
-        v.unmount(); w.close()
-    }
-}
-
-@MainActor @Suite struct TerminalFullscreenUpProbe {
-    final class Flipped: NSView { override var isFlipped: Bool { true } }
-    final class KeyWindow: NSWindow { override var isKeyWindow: Bool { true }; override var canBecomeKey: Bool { true } }
-    @Test(arguments: [(0.7, 100.0), (1.0, 100.0), (0.7, 200.0), (1.0, 200.0)]) func up(zoom: Double, x: Double) {
-        let w = KeyWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false
-        let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
-        node.setBoundsSize(CGSize(width: 600, height: 300))
-        var log: [String] = []
-        let host = TitleHost(rootView: FullscreenButton(action: { log.append("action") }))
-        host.frame = CGRect(x: 200, y: 0, width: 400, height: 32)
-        host.onClick = { log.append("down") }
-        host.onMouseUp = { log.append("up") }
-        node.addSubview(host)
-        w.contentView!.addSubview(node)
-        w.makeKeyAndOrderFront(nil)
-        host.layoutSubtreeIfNeeded()
-        let at = host.convert(NSPoint(x: x, y: 16), to: nil)
-        for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let e = NSEvent.mouseEvent(with: t, location: at, modifierFlags: [], timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
-            if t == .leftMouseDown { host.mouseDown(with: e) } else { host.mouseUp(with: e) }
-        }
-        print("PROBE6 zoom=\(zoom) x=\(x) key=\(w.isKeyWindow) \(log) hit=\(String(describing: w.contentView!.hitTest(at).map { type(of: $0) }))")
-        w.close()
-    }
-}

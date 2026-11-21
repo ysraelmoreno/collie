@@ -446,20 +446,31 @@ extension CommandRouter {
             }
             return .object(["output": .string(text ?? Handoff.none), "exists": .bool(text != nil)])
 
-        case "work.usage":   // M5.4: the caller's paddock's newest works, open or closed, with their token counts only
+        case "work.usage":   // M5.4: the caller's paddock's newest works with their token counts only; M10.3: a closed
+            // one from its summary (`work.history`'s files, the same paddock scope), an open one from the registry
             let t = try target(), limit = Int(try num(r, "limit", max: 100) ?? 10)
-            let works = try await work.list(includeClosed: true).filter { visible($0) && $0.paddockId == t.paddockId }
-                .sorted { $0.openedAt > $1.openedAt }.prefix(limit)
+            let scope = t.paddockId?.uuidString.lowercased(), only = str(r, "id")?.lowercased()
+            let open = try await work.list(includeClosed: false).filter { visible($0) && $0.paddockId == t.paddockId }.map { w in
+                var a = WorkArchive.make(w, paddock: nil, terminal: nil, loopSummary: ""); a.closedAt = nil; return a
+            }
+            let closed = try await work.history { $0.paddockId == scope }
+            let works = (open + closed.filter { c in !open.contains { $0.id == c.id } })
+                .filter { only.map { id in $0.id.hasPrefix(id) } ?? true }
+                .sorted { ($0.openedAt ?? .distantPast) > ($1.openedAt ?? .distantPast) }.prefix(limit)
+            if let only, works.isEmpty { throw missing("no work \(only) in this paddock") }
             func row(_ c: TokenCount?) -> [String: JSONValue] {
                 c.map { ["tokens": (try? isoJSON($0)) ?? .null, "index": .number($0.index)] } ?? [:]
             }
             return .object(["works": .array(works.map { w in
-                var o: [String: JSONValue] = ["id": .string(w.id.uuidString.lowercased()), "title": .string(RerailText.clean(w.title)),
+                var o: [String: JSONValue] = ["id": .string(w.id), "title": .string(RerailText.clean(w.title)),
                                               "closed": .bool(w.closedAt != nil),
                                               "tasks": .array(w.tasks.filter { $0.tokens != nil }.map { t in
-                                                  .object(["id": .string(t.id), "title": .string(RerailText.clean(t.title))].merging(row(t.tokens)) { a, _ in a })
+                                                  var to: [String: JSONValue] = ["id": .string(t.id), "title": .string(RerailText.clean(t.title))]
+                                                  to.merge(row(t.tokens)) { a, _ in a }
+                                                  if let at = t.attempts, !at.isEmpty { to["attempts"] = (try? isoJSON(at)) ?? .null }
+                                                  return .object(to)
                                               })]
-                o.merge(row(WorkStatusText.tokens(w))) { a, _ in a }
+                o.merge(row(w.tokens)) { a, _ in a }
                 return .object(o)
             }), "output": .string(WorkStatusText.usage(Array(works)))])
 

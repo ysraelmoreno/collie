@@ -4,22 +4,40 @@ import Foundation
 /// wrong type becomes its empty value, never an error. Text comes from the work as it is; whoever renders it escapes it.
 /// T6.1: the daemon writes it once when the work closes (`WorkArchiveFiles`); `paddockId`/`terminalId` scope `work.history`.
 public struct WorkArchive: Codable, Sendable, Equatable {
+    /// M10.3: one attempt of a task: its agent's counts (`model` inside) and the seconds of its agent and of its check
+    /// (nil: not seen in the journal). Numbers and a model id only, never a conversation's text.
+    public struct Attempt: Codable, Sendable, Equatable {
+        public var n: Int
+        public var tokens: TokenCount?, agentSeconds: Int?, checkSeconds: Int?
+        public init(n: Int, tokens: TokenCount? = nil, agentSeconds: Int? = nil, checkSeconds: Int? = nil) {
+            self.n = n; self.tokens = tokens; self.agentSeconds = agentSeconds; self.checkSeconds = checkSeconds
+        }
+        private enum K: String, CodingKey { case n, tokens, agentSeconds, checkSeconds }
+        public init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: K.self)
+            n = (try? c.decode(Int.self, forKey: .n)) ?? 0; tokens = try? c.decode(TokenCount.self, forKey: .tokens)
+            agentSeconds = try? c.decode(Int.self, forKey: .agentSeconds); checkSeconds = try? c.decode(Int.self, forKey: .checkSeconds)
+        }
+    }
     public struct Task: Codable, Sendable, Equatable {
         public var id: String, title: String, state: String, tries: Int
         public var failure: String?, evidenceNote: String?
         public var commits: [String]
+        /// M10.3: the task's counts (every attempt's, summed) and its attempts; nil in an archive written before.
+        public var tokens: TokenCount?, attempts: [Attempt]?
         public init(id: String = "", title: String = "", state: String = "", tries: Int = 0, failure: String? = nil,
-                    commits: [String] = [], evidenceNote: String? = nil) {
+                    commits: [String] = [], evidenceNote: String? = nil, tokens: TokenCount? = nil, attempts: [Attempt]? = nil) {
             self.id = id; self.title = title; self.state = state; self.tries = tries; self.failure = failure
-            self.commits = commits; self.evidenceNote = evidenceNote
+            self.commits = commits; self.evidenceNote = evidenceNote; self.tokens = tokens; self.attempts = attempts
         }
-        private enum K: String, CodingKey { case id, title, state, tries, failure, commits, evidenceNote }
+        private enum K: String, CodingKey { case id, title, state, tries, failure, commits, evidenceNote, tokens, attempts }
         public init(from d: Decoder) throws {
             let c = try d.container(keyedBy: K.self)
             id = (try? c.decode(String.self, forKey: .id)) ?? ""; title = (try? c.decode(String.self, forKey: .title)) ?? ""
             state = (try? c.decode(String.self, forKey: .state)) ?? ""; tries = (try? c.decode(Int.self, forKey: .tries)) ?? 0
             failure = try? c.decode(String.self, forKey: .failure); evidenceNote = try? c.decode(String.self, forKey: .evidenceNote)
             commits = (try? c.decode([String].self, forKey: .commits)) ?? []
+            tokens = try? c.decode(TokenCount.self, forKey: .tokens); attempts = try? c.decode([Attempt].self, forKey: .attempts)
         }
     }
     public struct Event: Codable, Sendable, Equatable, Hashable {
@@ -88,6 +106,13 @@ extension WorkArchive {
     /// A work with none (a loop attempt's terminal opened it implicitly, a `work start` left empty) is kept on disk,
     /// never listed.
     public var listed: Bool { !tasks.isEmpty || !notes.isEmpty || stopReason != nil || !timeline.isEmpty || !loopSummary.isEmpty }
+    /// M10.3: every task's counts summed (nil: none has any, e.g. an archive written before M10.3).
+    public var tokens: TokenCount? {
+        let ts = tasks.compactMap(\.tokens)
+        return ts.isEmpty ? nil : ts.reduce(TokenCount(), +)
+    }
+    /// M10.3: "tokens: 1,2 M (índice relativo) · 14 msgs" (nil: no counts): what the history's detail shows.
+    public static func tokensLine(_ t: TokenCount?) -> String? { t.map { "tokens: " + $0.label } }
     public var durationSeconds: Int { max(0, Int((closedAt ?? .distantPast).timeIntervalSince(openedAt ?? closedAt ?? .distantPast))) }
 
     /// What `w` (closed) leaves: `previous` (the timeline of this work's last archive) then its loop's journal, no event
@@ -107,11 +132,12 @@ extension WorkArchive {
             timeline = [Event(at: keep[0].at, kind: "truncated", detail: "\(timeline.count - keep.count) eventos mais antigos cortados")] + keep
             truncated = true
         }
+        let runs = attempts(w.loop?.events ?? [])
         let tasks = w.tasks.map { t in
             Task(id: t.id, title: t.title, state: t.state.rawValue, tries: t.tries ?? 0,
                  failure: t.lastFailure ?? (t.state == .done ? nil : t.reason),
                  commits: (t.evidence?.commits ?? []).prefix(20).map { String($0.prefix { $0 != " " }) },
-                 evidenceNote: t.evidence?.summary)
+                 evidenceNote: t.evidence?.summary, tokens: t.tokens, attempts: runs[t.id])
         }
         return WorkArchive(id: w.id.uuidString.lowercased(), title: w.title, paddock: paddock ?? "", branch: w.branch ?? "",
                            terminal: terminal ?? "", openedAt: w.openedAt, closedAt: w.closedAt ?? Date(),
@@ -119,6 +145,31 @@ extension WorkArchive {
                            notes: w.notes.suffix(notesMax).map(\.text), loopSummary: loopSummary,
                            reconstructed: reconstructed, truncated: truncated,
                            paddockId: w.paddockId?.uuidString.lowercased(), terminalId: w.terminalId.uuidString.lowercased()).fitted()
+    }
+
+    /// M10.3: per task, its attempts the journal still has (oldest first): the counts its `agentDismissed` carries,
+    /// the seconds from its first `attemptStarted`/`agentSummoned` to its `agentDismissed`, from `checkStarted` to
+    /// `checkFinished`. ponytail: the journal is a ring, so an attempt it dropped (or one of an earlier close) is not
+    /// here; the task's `tokens` still sums every one.
+    static func attempts(_ events: [LoopEvent]) -> [String: [Attempt]] {
+        struct Key: Hashable { var task: String; var n: Int }
+        var order: [Key] = [], agentFrom: [Key: Date] = [:], checkFrom: [Key: Date] = [:], out: [Key: Attempt] = [:]
+        func secs(_ a: Date?, _ b: Date) -> Int? { a.map { max(0, Int(b.timeIntervalSince($0).rounded())) } }
+        for e in events {
+            guard let task = e.task, let n = e.attempt else { continue }
+            let k = Key(task: task, n: n)
+            if out[k] == nil { out[k] = Attempt(n: n); order.append(k) }
+            switch e.kind {
+            case .attemptStarted, .agentSummoned: if agentFrom[k] == nil { agentFrom[k] = e.at }
+            case .agentDismissed:
+                out[k]?.agentSeconds = secs(agentFrom[k], e.at)
+                if let t = e.tokens { out[k]?.tokens = (out[k]?.tokens).map { $0 + t } ?? t }
+            case .checkStarted: checkFrom[k] = e.at
+            case .checkFinished: if let s = secs(checkFrom[k], e.at) { out[k]?.checkSeconds = (out[k]?.checkSeconds ?? 0) + s }; checkFrom[k] = nil
+            default: break
+            }
+        }
+        return Dictionary(grouping: order, by: \.task).mapValues { $0.compactMap { out[$0] } }
     }
 
     /// Within `maxBytes` encoded: every text clipped (4000 characters, then half again, down to 125), then the oldest

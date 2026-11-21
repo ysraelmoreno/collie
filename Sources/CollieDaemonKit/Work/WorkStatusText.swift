@@ -160,11 +160,12 @@ public enum WorkStatusText {
     public static func tokensLine(_ w: Work) -> String? { tokens(w).map { "tokens: " + $0.label } }
 
     /// M5.4, `work usage`: each work (newest first) with its total, then its tasks that have counts. Counts and titles only.
-    public static func usage(_ works: [Work]) -> String {
+    /// M10.3: from summaries (an open work's made on the spot, `closedAt` nil), so a closed one reads its file.
+    public static func usage(_ works: [WorkArchive]) -> String {
         guard !works.isEmpty else { return "Nenhum trabalho neste cercado." }
         return works.map { w in
-            ["\(RerailText.clean(w.title)) [\(w.id.uuidString.lowercased().prefix(8))] · \(w.closedAt == nil ? "ativo" : "fechado") · "
-                + (tokensLine(w) ?? "tokens: sem número")]
+            ["\(RerailText.clean(w.title)) [\(w.id.prefix(8))] · \(w.closedAt == nil ? "ativo" : "fechado") · "
+                + (WorkArchive.tokensLine(w.tokens) ?? "tokens: sem número")]
                 + w.tasks.compactMap { t in t.tokens.map { "  - \(RerailText.clean(t.title)) [\(RerailText.clean(t.id, max: 40))]: tokens: \($0.label)" } }
         }.flatMap { $0 }.joined(separator: "\n")
     }

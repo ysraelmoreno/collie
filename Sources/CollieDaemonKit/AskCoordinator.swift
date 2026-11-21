@@ -262,6 +262,9 @@ public struct AskLimits: Sendable, Equatable {
     public var submitConfirm: Duration
     /// The shortest turn timeout an `ask`/`wait` request may ask for, in seconds.
     public var minTimeoutSeconds: Double
+    /// An `afterQuiet` write (a reply typed into its asker, the user's ask) waits for its target to print nothing
+    /// this long (production: the hub's `working` window, what the badge reads).
+    public var replyQuiet: Duration = StreamHub.workingWindow
 
     public static let production = AskLimits(idleQuiet: .seconds(2), heldMax: .seconds(600), captureHold: .seconds(120),
                                              readyQuiet: .milliseconds(300), readyMax: .seconds(10), submitConfirm: .seconds(8),
@@ -490,7 +493,7 @@ public actor AskCoordinator {
 
     /// Types `prompt` into `to` through the same readiness gate and FIFO as `ask`; returns once written,
     /// not when the turn ends. The turn still holds the queue, up to `hold`.
-    /// `afterQuiet`: typed only once `to` is idle (printed nothing for `StreamHub.workingWindow`, not waiting on an ask).
+    /// `afterQuiet`: typed only once `to` is idle (printed nothing for `limits.replyQuiet`, not waiting on an ask).
     public func inject(to: UUID, prompt: String, hold: Duration = .seconds(1800), afterQuiet: Bool = false) async throws(ProtocolError) {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
@@ -791,7 +794,7 @@ public actor AskCoordinator {
         // output after an input not scanned yet may hold a prompt `pending` doesn't show: wait for the scan
         let unscanned = w.guardsApproval && t.approval.inWindow
         if unscanned { windowDeferrals += 1 }
-        if unscanned || held || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < StreamHub.workingWindow }) == true {
+        if unscanned || held || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < limits.replyQuiet }) == true {
             // ponytail: 100 ms polling of lastOutputAt (what the hub's `working` badge reads); bounded by the waiter's timeout
             guard !t.quietPoll else { return }
             targets[to]?.quietPoll = true

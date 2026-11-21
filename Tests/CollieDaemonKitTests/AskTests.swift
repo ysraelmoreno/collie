@@ -10,7 +10,7 @@ private let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent(
 
 /// Command line for a fake agent; prints its own token first so the test can authenticate as it.
 private func fakeAgent(hook: Bool) -> String {
-    "echo T=$COLLIE_TOKEN; \(hook ? "COLLIE_FAKE_HOOK=1 " : "")exec sh '\(fixture)'"
+    "echo T=$COLLIE_TOKEN; COLLIE_FAKE_THINK=0.1 \(hook ? "COLLIE_FAKE_HOOK=1 " : "")exec sh '\(fixture)'"
 }
 
 private struct Term { var id: String; var token: String }
@@ -90,14 +90,18 @@ private func hookWatcher(_ d: Daemon, _ p: Paths, _ t: Term, delivered: Delivere
 
 /// Tests about the hook path: the idle fallback (2 s quiet in production) races the test's hook round trip
 /// (scrollback poll + socket), which a loaded machine can stretch past 2 s. 15 s takes idle out of that race.
+/// M11.1: a reply waits `replyQuiet` for its asker to be quiet (production 2 s), here 0.5 s.
+private let replyQuiet = 0.5
 private func withHookDaemon(_ body: (Daemon, Paths) async throws -> Void) async throws {
-    try await withDaemon(configure: { $0.idleQuietSeconds = 15 }, body)
+    try await withDaemon(configure: { c in
+        c.idleQuietSeconds = 15; c.askReplyQuiet = .seconds(replyQuiet); c.askReadyQuiet = .milliseconds(100); shortTimeouts(&c)
+    }, body)
 }
 
-/// M11.1: the shift tests' clock at half the production idle window (2 s → 1 s). Every duration of those tests is
+/// M11.1: the shift tests' clock at 0.3 of the production idle window (2 s → 0.6 s). Every duration of those tests is
 /// this `idle` times the factor production had (hook delay 1.5×, think 0.25×), so the races they set up keep their
 /// proportions; only the wall time shrinks.
-private let idle = 1.0
+private let idle = 0.6
 private func shiftDaemon(heldMax: Double? = nil, _ body: (Daemon, Paths) async throws -> Void) async throws {
     try await withDaemon(configure: { c in
         c.idleQuietSeconds = idle; c.askReadyQuiet = .milliseconds(100); shortTimeouts(&c)
@@ -258,7 +262,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
             #expect(await waitFor(10) { !(await d.askBusy(UUID(uuidString: b.id)!)) })   // the cap freed the slot
             var failures = 0
             for n in 3...5 {
-                let r = try await ask(p, a, "B", "q\(n)", timeout: 15)
+                let r = try await ask(p, a, "B", "q\(n)", timeout: idle * 6)   // a turn ≈ 0.5 idle; the lost one costs this
                 if r.error != nil { failures += 1; continue }
                 #expect(result(r).output == "answer:q\(n)", "ask \(n): \(r)")
             }
@@ -487,10 +491,10 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
         }
     }
 
-    /// The write stall is injected at 4 s (production: 2 s) so the bound on B's answer (0.6 of it) can be generous
+    /// The write stall is injected at 3 s (production: 2 s) so the bound on B's answer (0.6 of it) can be generous
     /// under load and still catch an actor blocked for the stall. Idle at 15 s: see `withHookDaemon`.
     @Test func writeStallDoesNotBlockOtherAsks() async throws {
-        let stall = 4.0
+        let stall = 3.0
         try await withDaemon(configure: { $0.writeStall = .seconds(stall); $0.idleQuietSeconds = 15 }) { d, p in
             let a = try await term(d, p, "A")
             let xs = try await spawn(d, p, "X", preset: "claude", command: "echo up; exec sleep 60")
@@ -662,8 +666,8 @@ extension AskTests {
 
     @Test func noWaitNotTypedMidTurn() async throws {
         try await withHookDaemon { d, p in
-            // prints for ~2.5 s (a turn in progress), then reads quietly
-            let busy = "echo T=$COLLIE_TOKEN; i=0; while [ $i -lt 25 ]; do echo tick; sleep 0.1; i=$((i+1)); done; exec cat >/dev/null"
+            // prints for ~2 s (a turn in progress, 4x the reply's quiet window), then reads quietly
+            let busy = "echo T=$COLLIE_TOKEN; i=0; while [ $i -lt 20 ]; do echo tick; sleep 0.1; i=$((i+1)); done; exec cat >/dev/null"
             let a = try await term(d, p, "A", preset: "claude", command: busy)
             let b = try await term(d, p, "B", preset: "claude", command: silentTarget)
             try await connect(d, p, "A", "B")
@@ -739,7 +743,7 @@ extension AskTests {
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
             #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
-            try await Task.sleep(for: .seconds(3))   // past the quiet window a delivery waits for
+            try await Task.sleep(for: .seconds(replyQuiet * 1.5))   // past the quiet window a delivery waits for
             #expect(!(await d.scrollbackText(UUID(uuidString: a.id)!).contains("[collie]")))
             #expect(field(try await askResult(p, a, id), "output") == "done")
         }
@@ -759,7 +763,7 @@ extension AskTests {
             let (id, _) = try await askNoWait(p, a, "B", "hello", timeout: 30)
             try await hook(d, p, b, "done")
             #expect(await waitFor(10) { (try? await askResult(p, a, id)).flatMap { field($0, "status") } == "done" })
-            try await Task.sleep(for: .seconds(3))
+            try await Task.sleep(for: .seconds(replyQuiet * 1.5))   // past the quiet window a delivery waits for
             #expect(!(await d.scrollbackText(aid).contains("[collie] Reply")))   // never typed into the prompt
             let r = try await send(p, Request(id: "x", token: d.adminToken, command: "work.approval.dismiss", args: ["id": .string(approval.id.uuidString)]))
             #expect(r.ok, "\(r)")

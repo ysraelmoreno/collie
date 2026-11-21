@@ -61,13 +61,14 @@ private let ceiling: Duration = .seconds(limit * 80)
         let p = AskLimits.production
         #expect(p.idleQuiet == .seconds(2) && p.heldMax == .seconds(600) && p.captureHold == .seconds(120))
         #expect(p.readyQuiet == .milliseconds(300) && p.readyMax == .seconds(10) && p.submitConfirm == .seconds(8))
-        #expect(p.minTimeoutSeconds == 1)
+        #expect(p.minTimeoutSeconds == 1 && p.replyQuiet == .seconds(2) && p.replyQuiet == StreamHub.workingWindow)
         // the defaults (no injection) are those same numbers, through every entry point
         #expect(AskCoordinator(idleQuietSeconds: 2).limits == p)
         let c = DaemonConfig(paths: Paths(root: URL(fileURLWithPath: "/nonexistent")),
                              collieExecutable: URL(fileURLWithPath: "/usr/bin/true"), workspaceId: UUID())
         #expect(c.idleQuietSeconds == 2 && c.heldMaxSeconds == 600 && c.captureHoldSeconds == 120)
-        #expect(c.askReadyQuiet == p.readyQuiet && c.askReadyMax == p.readyMax && c.askMinTimeoutSeconds == p.minTimeoutSeconds)
+        #expect(c.askReadyQuiet == p.readyQuiet && c.askReadyMax == p.readyMax && c.askMinTimeoutSeconds == p.minTimeoutSeconds
+                && c.askReplyQuiet == p.replyQuiet)
     }
 
     /// Turn timeout: a target that never answers ends the ask on the injected 100 ms timeout.
@@ -116,7 +117,7 @@ private let ceiling: Duration = .seconds(limit * 80)
             #expect(q2.error?.code == .timeout, "\(q2)")
             var failures = 0
             for n in 3...5 {
-                let r = try await ask(p, a, "B", "q\(n)", timeout: 10)
+                let r = try await ask(p, a, "B", "q\(n)", timeout: 2)   // a turn ≈ 0.1 s; the lost one costs this
                 if r.error != nil { failures += 1; continue }
                 #expect(output(r) == "answer:q\(n)", "ask \(n): \(r)")
             }

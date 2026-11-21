@@ -47,7 +47,8 @@ extension CommandRouter {
         guard unchecked.isEmpty else {
             throw invalid("every open task needs a --check; these have none: " + unchecked.map { "\"\($0.title)\" [\($0.id)]" }.joined(separator: ", "))
         }
-        let others = try await work.list(includeClosed: false).filter { $0.paddockId == paddock.id }
+        // M7.2 (A2): a closed work's loop may still run (M6.4: it ends at its next wake, after its lanes): it holds the paddock too
+        let others = try await work.list(includeClosed: true).filter { $0.paddockId == paddock.id }
         if workLoops[w.id] != nil || others.contains(where: { $0.loop?.state == .running }) {
             throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it, collie work stop ends it")
         }

@@ -753,10 +753,11 @@ actor WorkLoop {
             let rel = spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
             if !rel.hasPrefix("/"), !rel.contains(".."), let r = try? await host.git(["show", "\(before):\(rel)"], in: dir), r.status == 0 { named = r.stdout }
         }
-        guard let changed = await out(["-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", before, judged], dir) else {
+        // M7.2 (A5): `-z`, read untrimmed: a name with a newline or a space at an end is that name
+        guard let d = try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir), d.status == 0 else {
             return "gate did not run (could not list what the attempt changed)"
         }
-        for path in changed.split(separator: "\n").map(String.init) where gate.contains(path) && !named.contains(path) {
+        for path in d.stdout.split(separator: "\0").map(String.init) where gate.contains(path) && !named.contains(path) {
             if (try? await host.git(["cat-file", "-e", "\(before):\(path)"], in: dir))?.status == 0 {
                 return "a tentativa alterou «\(path)», que o portão executa"
             }
@@ -792,7 +793,7 @@ actor WorkLoop {
     private func discard(_ work: UUID, _ task: String, _ n: Int, before: String, branch: String, keep: [String], _ dir: URL) async -> Bool {
         var wrote = false
         _ = try? await host.git(["add", "-A"], in: dir)
-        if !keep.isEmpty { _ = try? await host.git(["reset", "-q", "--"] + keep, in: dir) }
+        if !keep.isEmpty { _ = try? await host.git(["--literal-pathspecs", "reset", "-q", "--"] + keep, in: dir) }
         // ponytail: the patch is the first 1 MiB of the diff (BoundedProcess's cap)
         if let d = try? await host.git(["diff", "--cached", "--binary", before], in: dir), d.status == 0, !d.stdoutData.isEmpty {
             let folder = host.patchDir(work)

@@ -300,6 +300,8 @@ private func proposals(_ store: RepoMemory, count: Int = 1) async throws -> [Mem
             try await call(p, t, "memory.save", ["kind": "decision", "subject": "sessions", "title": "Sessions in Redis"])
             #expect(await stop(p, t, "stop-continued") == nil)
             try await doneTask(p, t, "csrf")
+            let w = try #require(try await d.router.work.active(terminal: t.uuid))   // M5.2: past the 20-min throttle
+            try await d.router.work.update(w.id) { $0.askedAt = Date().addingTimeInterval(-MemoryCapture.askEvery) }
             #expect(reason(await stop(p, t)) != nil)
         }
     }

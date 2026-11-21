@@ -60,8 +60,8 @@ private func loopWork() -> Work {
             guard cmd == "work.history" else { throw ProtocolError(code: .internal, message: "x") }
             var n = 0
             if case .string("A")? = args["paddock"] { n = 2 } else { n = 5 }
-            let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
-            return try JSONDecoder().decode(JSONValue.self, from: e.encode(entries(n)))
+            return .array(entries(n).map { .object(["id": .string($0.id), "title": .string($0.title), "closedAt": .string("2025-11-21T02:02:00Z"),
+                                                    "done": .number(4), "total": .number(6)]) })
         }
         func settle(_ count: Int) async { for _ in 0..<200 where feed.history.count != count { try? await Task.sleep(for: .milliseconds(10)) } }
         feed.follow(paddock: UUID(), name: "A"); await settle(2)

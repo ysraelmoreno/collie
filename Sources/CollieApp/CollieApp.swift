@@ -42,7 +42,6 @@ enum Config {
     @State private var canvas = CanvasState()
     @State private var consented: Bool
     @State private var error: String?
-    @State private var historyOpener: HistoryOpener?
     @State private var paletteOpen = false
     @State private var herdsOpen = false
     /// Canvas or Preferências in Completa's main area. Not persisted: the app always opens on the canvas. Here, not in
@@ -231,6 +230,7 @@ struct ContentView: View {
     let client: DaemonClient
     let canvas: CanvasState
     @Binding var error: String?
+    @State private var historyOpener: HistoryOpener?
     @Binding var paletteOpen: Bool
     @Binding var herdsOpen: Bool
     @AppStorage(AppearanceKeys.structure) private var structureRaw = WindowStructure.compact.rawValue

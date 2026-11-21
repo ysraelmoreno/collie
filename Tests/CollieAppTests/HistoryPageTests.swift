@@ -35,9 +35,10 @@ private func archive(title: String = "Trabalho", events: Int = 0, reconstructed:
     @Test func selfContained() {
         let h = HistoryPage.html(for: archive(title: evil, events: 5), timeZone: utc)
         #expect(!h.contains("http"))
-        #expect(!h.contains("src="))
         #expect(!h.contains("href"))
-        #expect(!h.contains("onerror=\""))
+        #expect(!h.contains("<img") && !h.contains("<a ") && !h.contains("<link") && !h.contains("<iframe"))
+        let plain = HistoryPage.html(for: archive(events: 5), timeZone: utc).replacingOccurrences(of: HistoryPage.esc(evil), with: "")   // only our own markup is left
+        #expect(!plain.contains("src=") && !plain.contains("href"))
         #expect(h.contains("prefers-color-scheme:dark"))
     }
 

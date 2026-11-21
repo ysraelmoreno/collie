@@ -20,8 +20,13 @@ enum HistoryPage {
     }
 
     static func html(for a: WorkArchive, timeZone: TimeZone = .current) -> String {
-        func when(_ d: Date?) -> String { d.map { $0.formatted(.dateTime.day().month().year().hour().minute().second().locale(Locale(identifier: "pt_BR")).timeZone(timeZone)) } ?? "—" }
-        func clock(_ d: Date?) -> String { d.map { $0.formatted(.dateTime.hour().minute().second().locale(Locale(identifier: "pt_BR")).timeZone(timeZone)) } ?? "—" }
+        func fmt(_ pattern: String, _ d: Date?) -> String {
+            guard let d else { return "—" }
+            let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = timeZone; f.dateFormat = pattern
+            return f.string(from: d)
+        }
+        func when(_ d: Date?) -> String { fmt("dd/MM/yyyy HH:mm:ss", d) }
+        func clock(_ d: Date?) -> String { fmt("HH:mm:ss", d) }
         var dur = "—"
         if let o = a.openedAt, let c = a.closedAt { let s = max(0, Int(c.timeIntervalSince(o))); dur = s >= 3600 ? "\(s / 3600)h\(String(format: "%02d", s % 3600 / 60))" : "\(s / 60)min \(s % 60)s" }
         var h = """

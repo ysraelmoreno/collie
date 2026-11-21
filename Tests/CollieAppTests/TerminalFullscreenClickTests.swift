@@ -58,7 +58,7 @@ import CollieCore
 
 /// Probe 2: the real terminal node, its real title bar, with and without another node in front.
 @MainActor @Suite struct TerminalFullscreenRealProbe {
-    @Test(arguments: [false, true]) func probe(behind: Bool) async throws {
+    @Test(arguments: [(false, 1.0), (false, 0.7), (false, 1.5)]) func probe(behind: Bool, zoom: Double) async throws {
         let canvas = CanvasState()
         let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-fsc-\(UUID())")))
         let id = UUID()
@@ -69,7 +69,8 @@ import CollieCore
         w.contentView!.addSubview(parent)
         parent.addSubview(v)
         let size = CGSize(width: 640, height: 400)
-        v.place(CGRect(origin: CGPoint(x: 20, y: 20), size: size), canvasSize: size)
+        canvas.zoom = zoom
+        v.place(CGRect(origin: CGPoint(x: 20, y: 20), size: CGSize(width: size.width * zoom, height: size.height * zoom)), canvasSize: size)
         v.setInteractive(true)
         let other = NSView(frame: CGRect(x: 900, y: 600, width: 100, height: 100))
         if behind { parent.addSubview(other) }
@@ -88,10 +89,10 @@ import CollieCore
                                                windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
             }
             for _ in 0..<5 { await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in DispatchQueue.main.async { c.resume() } } }
-            print("PROBE2 behind=\(behind) x=\(x) hit=\(String(describing: w.contentView!.hitTest(at))) fs=\(canvas.fullscreen != nil)")
+            print("PROBE2 zoom=\(zoom) x=\(x) hit=\(String(describing: w.contentView!.hitTest(at))) fs=\(canvas.fullscreen != nil)")
             if canvas.fullscreen != nil { hitX = x; break }
         }
-        print("PROBE2 behind=\(behind) hitX=\(String(describing: hitX))")
+        print("PROBE2 zoom=\(zoom) hitX=\(String(describing: hitX))")
         v.unmount(); w.close()
     }
 }

@@ -18,6 +18,9 @@ public struct DaemonConfig: Sendable {
     public var heldMaxSeconds: Double = 600
     /// How long a Claude capture block holds the terminal's queued asks when the continued Stop never comes.
     public var captureHoldSeconds: Double = 120
+    /// Ask injection readiness (quiet after first output / ceiling after attach); see `AskLimits`.
+    public var askReadyQuiet: Duration = AskLimits.production.readyQuiet
+    public var askReadyMax: Duration = AskLimits.production.readyMax
     public var memoryCapBytes: Int = 1_048_576
     /// How long a terminal input write may block on a full tty before the stream is cut.
     public var writeStall: Duration = .seconds(2)
@@ -188,8 +191,10 @@ public final class Daemon: Sendable {
         ws.panels.removeAll { headless.contains($0.id) }
         ws.connections.removeAll { headless.contains($0.a) || headless.contains($0.b) }
         for id in headless { CommandRouter.removeScreenshots(of: id, root: config.paths.root) }
-        let asks = AskCoordinator(idleQuietSeconds: config.idleQuietSeconds, heldMaxSeconds: config.heldMaxSeconds,
-                                  captureHoldSeconds: config.captureHoldSeconds)
+        let asks = AskCoordinator(limits: AskLimits(
+            idleQuiet: .seconds(config.idleQuietSeconds), heldMax: .seconds(config.heldMaxSeconds),
+            captureHold: .seconds(config.captureHoldSeconds), readyQuiet: config.askReadyQuiet, readyMax: config.askReadyMax,
+            submitConfirm: AskLimits.production.submitConfirm))
         // a replay (base64 of the whole memory tail) must always fit the stream send queue on its own
         precondition(config.memoryCapBytes / 3 * 4 + 64 * 1024 < UnixSocketServer.Connection.sendCap,
                      "memoryCapBytes too large for the stream send queue")

@@ -1,5 +1,6 @@
 #!/bin/sh
 # Fake coding agent for tests: answers each input line; COLLIE_FAKE_HOOK=1 prints a stop marker.
+# COLLIE_FAKE_THINK=<s> how long a turn "thinks" before its answer (default 0.5).
 # COLLIE_FAKE_HOOK_DELAY=<s> sleeps that long after the answer before the hook (a hook slower than idle detection).
 # COLLIE_FAKE_HOOK_FROM=<n> sends hooks only from turn n on (a terminal that starts hooking mid-session).
 # COLLIE_FAKE_HOOK_SKIP=<n> sends no hook for turn n (a lost hook, e.g. an interrupted turn).
@@ -11,7 +12,7 @@ turn=0
 while IFS= read -r line; do
   turn=$((turn + 1))
   echo "thinking..."
-  sleep 0.5
+  sleep "${COLLIE_FAKE_THINK:-0.5}"
   echo "answer:$line"
   if [ -n "$COLLIE_FAKE_HOOK_DELAY" ]; then sleep "$COLLIE_FAKE_HOOK_DELAY"; fi
   if [ "$turn" -lt "${COLLIE_FAKE_HOOK_FROM:-1}" ]; then continue; fi

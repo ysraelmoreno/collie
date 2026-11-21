@@ -12,6 +12,7 @@ Regras: as de `README.md`; `--parallel 1` idêntico; nenhum `sleep` nem relógio
 | M10.2 | Rede de segurança do turno: regra no prompt da tentativa e pré-check na mesma sessão | P5, P2 |
 | M10.3 | Tokens por tentativa no resumo imutável e `work usage` para trabalho fechado | P6 |
 | M10.4 | Memórias quase duplicadas não entram juntas na injeção | medida: 5 armadilhas do mesmo assunto na mesma sessão |
+| M10.5 | O botão de tela cheia do terminal não responde no canvas | pedido do dono (2026-11-21) |
 
 Fora desta onda (esperam o relatório da suíte de testes): P4 (check por área), P8 (lint de spec). P7 (modelo por papel) é só configuração: `loopModel` nas Preferências.
 

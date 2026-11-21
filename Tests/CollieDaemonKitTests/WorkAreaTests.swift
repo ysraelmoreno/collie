@@ -76,7 +76,7 @@ private let withSmoke = """
             let r = try await work(d, p, a, "work.task.add", ["title": .string("T"), "area": .string("ask,nope")])
             #expect(r.error?.code == .invalidArgs, "\(r)")
             let m = r.error?.message ?? ""
-            #expect(m.contains("nope") && m.contains("ask, quadro"), m)
+            #expect(m.contains("nope") && m.contains("ask, quadro"), "\(m)")
             #expect(try await d.router.work.active(terminal: a.uuid)?.tasks.isEmpty ?? true)
         }
     }
@@ -128,7 +128,7 @@ private let withSmoke = """
             let x = try await pad(d, p)
             let (r, card) = try await runCard(d, p, x)
             #expect(warning(r) == nil, "\(r)")
-            #expect(!card.contains("portão") && !card.contains("pré-check") && !card.contains("collie-work.json"), card)
+            #expect(!card.contains("portão") && !card.contains("pré-check") && !card.contains("collie-work.json"), "\(card)")
         }
     }
 
@@ -138,8 +138,8 @@ private let withSmoke = """
             try writeConfig(x.dir, withSmoke)   // untracked: the tree stays clean for the loop
             let (r, card) = try await runCard(d, p, x)
             #expect(warning(r) == nil, "\(r)")
-            #expect(card.contains("portão (collie-work.json) depois de cada check: «scripts/ci/lint.sh»"), card)
-            #expect(card.contains("pré-check (collie-work.json) no fim de cada turno: «swift build --build-tests»"), card)
+            #expect(card.contains("portão (collie-work.json) depois de cada check: «scripts/ci/lint.sh»"), "\(card)")
+            #expect(card.contains("pré-check (collie-work.json) no fim de cada turno: «swift build --build-tests»"), "\(card)")
         }
     }
 
@@ -148,9 +148,9 @@ private let withSmoke = """
             let x = try await pad(d, p)
             try writeConfig(x.dir, withSmoke)
             let (_, card) = try await runCard(d, p, x, ["gate": .string("echo flag-gate"), "precheck": .string("echo flag-pre")])
-            #expect(card.contains("portão depois de cada check: «echo flag-gate»"), card)
-            #expect(card.contains("pré-check no fim de cada turno: «echo flag-pre»"), card)
-            #expect(!card.contains("collie-work.json") && !card.contains("lint.sh"), card)
+            #expect(card.contains("portão depois de cada check: «echo flag-gate»"), "\(card)")
+            #expect(card.contains("pré-check no fim de cada turno: «echo flag-pre»"), "\(card)")
+            #expect(!card.contains("collie-work.json") && !card.contains("lint.sh"), "\(card)")
         }
     }
 
@@ -160,8 +160,8 @@ private let withSmoke = """
             try writeConfig(x.dir, #"{ "gate": 3 }"#)
             let (r, card) = try await runCard(d, p, x)
             let w = try #require(warning(r), "\(r)")
-            #expect(!w.contains("\n") && w.contains("collie-work.json"), w)
-            #expect(!card.contains("portão") && !card.contains("pré-check"), card)
+            #expect(!w.contains("\n") && w.contains("collie-work.json"), "\(w)")
+            #expect(!card.contains("portão") && !card.contains("pré-check"), "\(card)")
         }
     }
 
@@ -169,7 +169,7 @@ private let withSmoke = """
         let tasks = [WorkTask(id: "a", title: "A", check: "true")]
         let l = WorkLoopState(max: 3, gate: "scripts/ci/lint.sh")
         let fromFile = WorkStatusText.loopTrusted(paddock: "p", tasks, l, gateFromFile: true)
-        #expect(fromFile.contains("[collie] Laço iniciado") && fromFile.contains("portão (collie-work.json) «scripts/ci/lint.sh»"), fromFile)
+        #expect(fromFile.contains("[collie] Laço iniciado") && fromFile.contains("portão (collie-work.json) «scripts/ci/lint.sh»"), "\(fromFile)")
         // a gate given as a flag: the notice as before
         #expect(WorkStatusText.loopTrusted(paddock: "p", tasks, l) == WorkStatusText.loopTrusted(paddock: "p", tasks, l, gateFromFile: false))
         #expect(!WorkStatusText.loopTrusted(paddock: "p", tasks, l).contains("collie-work.json"))

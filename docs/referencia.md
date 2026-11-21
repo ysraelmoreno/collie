@@ -1004,6 +1004,13 @@ O índice é **relativo** (entrada 1, escrita de cache 1,25, saída 5, leitura d
 nunca custo em dinheiro. Sem transcript, recusado, sumido ou grande demais: sem número, sem erro, o laço segue.
 - CLI: `collie work usage [--limit N] [--terminal <nome>]`: os N (padrão 10) trabalhos mais novos do cercado, abertos ou
   fechados, com o índice total e por tarefa.
+- CLI: `collie work history [--limit N] [--id <trabalho>]` (MCP `work_history`): os N (padrão 20, no máximo 50)
+  trabalhos fechados do **seu** cercado, do mais novo ao mais velho (`id, title, openedAt, closedAt, stopReason, done,
+  total, deferred, durationSeconds`); `--id`: o resumo inteiro daquele. O resumo é gravado uma vez quando o trabalho
+  fecha (o fim do laço, se ele fechou com o laço rodando), em `work/work-archive/<id>.json` (`-2`… se reaberto e
+  fechado de novo), e nunca muda; o diário vai até 500 eventos (os mais velhos saem, com um evento `truncated`), o
+  arquivo até 1 MB, e ficam os 200 mais novos. Trabalho fechado antes disso aparece montado do registro
+  (`reconstructed: true`). O app pede o cercado com `--paddock`.
 - Painel: botão **Resumo** e a seção Resumo do trabalho selecionado. Com a reescrita do modelo local, o link **Ver dados**
   alterna para o resumo do registro (e **Ver resumo** volta). Sem reescrita, o painel mostra o registro e a linha cinza
   "Resumo sem reescrita: ‹motivo›".

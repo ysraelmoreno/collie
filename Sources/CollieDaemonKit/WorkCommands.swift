@@ -393,6 +393,38 @@ extension CommandRouter {
         case "work.get":
             return try isoJSON(try await byId(try need(r, "id")))
 
+        case "work.history":   // T6.1: the caller's paddock's closed works only (the app: the paddock it names; none: the pasture)
+            let limit = Int(try num(r, "limit", max: Double(Self.historyMax)) ?? Double(Self.historyDefault))
+            let scope: String?
+            if let caller { scope = caller.paddockId?.uuidString.lowercased() }
+            else if let name = str(r, "paddock"), !name.isEmpty {
+                guard let p = ws.paddocks.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame || $0.id.uuidString.lowercased() == name.lowercased() })
+                else { throw missing("Paddock '\(name)' not found") }
+                scope = p.id.uuidString.lowercased()
+            } else { scope = nil }
+            let anyPaddock = caller == nil && str(r, "paddock") == nil && str(r, "id") != nil   // the app reading one by id
+            let all = try await work.history { anyPaddock || $0.paddockId == scope }
+            if let id = str(r, "id") {
+                guard let a = all.first(where: { $0.id == id.lowercased() }) else { throw missing("no closed work \(id)") }
+                return try isoJSON(a)
+            }
+            let rows = all.prefix(limit)
+            let iso = ISO8601DateFormatter()
+            return .object(["history": .array(rows.map { a in
+                var o: [String: JSONValue] = ["id": .string(a.id), "title": .string(a.title), "done": .number(Double(a.done)),
+                                              "total": .number(Double(a.tasks.count)), "deferred": .number(Double(a.deferred)),
+                                              "durationSeconds": .number(Double(a.durationSeconds))]
+                if let d = a.openedAt { o["openedAt"] = .string(iso.string(from: d)) }
+                if let d = a.closedAt { o["closedAt"] = .string(iso.string(from: d)) }
+                if let s = a.stopReason { o["stopReason"] = .string(s) }
+                if a.reconstructed { o["reconstructed"] = .bool(true) }
+                return .object(o)
+            }), "output": .string(rows.isEmpty ? "Nenhum trabalho fechado neste cercado." : rows.map { a in
+                "\(RerailText.clean(a.title)) [\(a.id)] · \(a.done)/\(a.tasks.count) feitas · \(a.deferred) "
+                    + (a.deferred == 1 ? "adiada" : "adiadas") + (a.stopReason.map { " · parou: \($0)" } ?? "")
+                    + (a.reconstructed ? " · reconstruído" : "")
+            }.joined(separator: "\n"))])
+
         case "work.usage":   // M5.4: the caller's paddock's newest works, open or closed, with their token counts only
             let t = try target(), limit = Int(try num(r, "limit", max: 100) ?? 10)
             let works = try await work.list(includeClosed: true).filter { visible($0) && $0.paddockId == t.paddockId }
@@ -427,6 +459,14 @@ extension CommandRouter {
         default:
             throw invalid("Unknown command '\(r.command)'")
         }
+    }
+
+    /// `work history --limit`: its default and the most it takes.
+    static let historyDefault = 20, historyMax = 50
+
+    /// T6.1: what a work's summary names: its paddock and its terminal (nil: gone, or none).
+    func archiveNames(_ w: Work) -> (paddock: String?, terminal: String?) {
+        (ws.paddocks.first { $0.id == w.paddockId }?.name, ws.terminals.first { $0.id == w.terminalId }?.name)
     }
 
     /// `work status --events` with no number.

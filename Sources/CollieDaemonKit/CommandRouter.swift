@@ -253,7 +253,7 @@ actor CommandRouter {
         self.plugins = PluginStore(root: config.paths.root)
         let workDir = config.paths.root.appendingPathComponent("work")
         let remoteEvents = RemoteEventBus(); self.remoteEvents = remoteEvents
-        self.work = WorkStore(dir: workDir) { id in
+        self.work = WorkStore(dir: workDir, namer: { w in await me.router?.archiveNames(w) ?? (nil, nil) }) { id in
             Task { await me.router?.workChanged(id) }
             remoteEvents.publish(.object(["t": .string("work"), "id": .string(id.uuidString.lowercased())]))   // re-read with work.get
         }

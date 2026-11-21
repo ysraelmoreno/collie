@@ -27,7 +27,8 @@ enum Handoff {
         if let n = nextWave { lines.append("Próxima onda prevista: \(RerailText.clean(n, max: 200))") }
         // short shas only: a commit subject is agent text
         var seen = Set<String>()
-        let shas = done.flatMap { $0.evidence?.commits ?? [] }.compactMap { $0.split(separator: " ").first.map(String.init) }
+        let commits: [String] = done.flatMap { t -> [String] in t.evidence?.commits ?? [] }
+        let shas = commits.compactMap { $0.split(separator: " ").first.map { String($0) } }
             .filter { (4...40).contains($0.count) && $0.allSatisfy(\.isHexDigit) && seen.insert($0).inserted }
         if !shas.isEmpty { lines.append("Commits: " + shas.prefix(30).joined(separator: " ")) }
         if !ran.isEmpty { lines.append("## Tarefas") }

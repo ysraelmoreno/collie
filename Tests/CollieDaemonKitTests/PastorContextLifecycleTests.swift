@@ -117,7 +117,7 @@ private func assistant(input: Int, write: Int = 0, read: Int = 0, output: Int = 
         let m = Handoff.Memory(id: UUID(), kind: .pitfall, title: "Não use ask para adiar")
         let s = Handoff.text(work(tasks: 2), memories: [m], nextWave: "Onda 11 (docs/r/onda11.md)")
         #expect(s.contains("Tarefa 0") && s.contains("Tarefa 1") && s.contains("adiada: falhou o check"))
-        #expect(s.contains("abc0def") && !s.contains(secret))   // short shas only, never a subject nor the check's output
+        #expect(s.contains("abc0def") && !s.contains(secret), "\(s)")   // short shas only, never a subject nor the check's output
         #expect(s.contains("armadilha \(String(m.id.uuidString.prefix(8)).lowercased()): Não use ask para adiar"))
         #expect(s.contains("Onda 11 (docs/r/onda11.md)"))
         #expect(!Handoff.text(work(tasks: 1), memories: [], nextWave: nil).contains("Próxima onda"))

@@ -14,7 +14,7 @@ enum CollieOrientation {
     static let loopWait = "Wait for a loop: collie work wait, not a terminal notice.", loopWaitShort = "Wait: collie work wait."
     /// M3c.4: before `loopWait` where it fits (a form that would lose its place to it keeps today's line).
     /// M5.1: `end` is the default now: the line says per-task notices are off and the state is read with a long wait.
-    static let loopNotify = "Per-task notices are off by default; read state with a long work wait."
+    static let loopNotify = "Per-task notices are off by default; use a long work wait."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {

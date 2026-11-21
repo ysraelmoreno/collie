@@ -17,7 +17,7 @@ private struct Step: Sendable {
 
 private let summoned: [Step] = [
     Step(.started, .summoning, [.journal(.attemptStarted, nil), .summon]),
-    Step(.summoned(agent), .turn, [.journal(.agentSummoned, "loop-a-1"), .ask]),
+    Step(.summoned(agent), .turn, [.journal(.agentSummoned, "trabalho-a-t1"), .ask]),
 ]
 private let hook = Step(.turnEnded(source: .hook), .waitingCommit, [.journal(.turnEnded, "hook"), .lookForCommit])
 private let toCheck: [M.Effect] = [.dismiss, .journal(.agentDismissed, nil), .measureFacts]
@@ -103,14 +103,14 @@ private let paths: [Path] = [
 
     @Test func anAgentThatCommitsOnlyAfterTheNudgePassesOnItsFirstAttempt() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")], max: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(nudged: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(nudged: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         let w = try await r.get(), ev = w.loop?.events ?? []
         #expect(w.tasks[0].state == .done && w.tasks[0].tries == 1, "\(w.notes.map(\.text))")
         // the same attempt: one terminal, one of `--max`, one try
-        #expect(w.loop?.used == 1 && w.jobs.map(\.id) == ["loop-a-1"])
-        #expect(await r.host.summoned == ["loop-a-1"])
-        #expect(await r.host.dismissed == ["loop-a-1"])
+        #expect(w.loop?.used == 1 && w.jobs.map(\.id) == ["w-task-a-t1"])
+        #expect(await r.host.summoned == ["w-task-a-t1"])
+        #expect(await r.host.dismissed == ["w-task-a-t1"])
         let kinds = ev.map(\.kind)
         let i = try #require(kinds.firstIndex(of: .nudged))
         #expect(ev[i].detail == "hook" && ev[i].task == "a" && ev[i].attempt == 1)
@@ -118,11 +118,11 @@ private let paths: [Path] = [
         // the turn ended, the nudge, the nudge's turn ended, the commit
         #expect(Array(kinds[(i - 1)...(i + 2)]) == [.turnEnded, .nudged, .turnEnded, .commitSeen], "\(kinds.map(\.rawValue))")
         let nudges = await r.host.nudges
-        #expect(nudges.count == 1 && nudges[0].name == "loop-a-1" && nudges[0].prompt == WorkLoop.nudgePrompt)
+        #expect(nudges.count == 1 && nudges[0].name == "w-task-a-t1" && nudges[0].prompt == WorkLoop.nudgePrompt)
         // what is left of the turn (60 s in the rig)
         #expect(nudges[0].timeout >= .seconds(1) && nudges[0].timeout <= .seconds(60))
         // the attempt's own prompt is not the nudge
-        #expect(await r.host.prompts["loop-a-1"]?.contains("Tarefa \"Task a\"") == true)
+        #expect(await r.host.prompts["w-task-a-t1"]?.contains("Tarefa \"Task a\"") == true)
     }
 
     @Test func theNudgeIsTheConstant() {
@@ -135,7 +135,7 @@ private let paths: [Path] = [
         let w = try await r.get(), ev = w.loop?.events ?? []
         #expect(w.tasks[0].state == .deferred && w.tasks[0].tries == 2 && w.tasks[0].lastFailure == "no new commit")
         // once per attempt, never twice in one
-        #expect(await r.host.nudges.map(\.name) == ["loop-a-1", "loop-a-2"])
+        #expect(await r.host.nudges.map(\.name) == ["w-task-a-t1", "w-task-a-t2"])
         #expect(ev.filter { $0.kind == .nudged }.map(\.attempt) == [1, 2])
         #expect(w.loop?.used == 2)
         #expect(await r.host.checks == 2)
@@ -143,7 +143,7 @@ private let paths: [Path] = [
 
     @Test func aTurnThatEndedWithACommitIsNotNudged() async throws {
         let r = try await LoopRig([task("a", "true")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("a.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .done)
         #expect(await r.host.nudges.isEmpty)
@@ -152,7 +152,7 @@ private let paths: [Path] = [
 
     @Test func anIdleEndIsNotNudged() async throws {
         let r = try await LoopRig([task("a", "true")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(source: .idle, lateAfter: 2, late: { try await commit("a.txt", "x\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(source: .idle, lateAfter: 2, late: { try await commit("a.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .done)
         #expect(await r.host.nudges.isEmpty)
@@ -160,7 +160,7 @@ private let paths: [Path] = [
 
     @Test(arguments: [ErrorCode.timeout, .internal]) func aTurnPastItsTimeoutOrAFailedAskIsNotNudged(_ code: ErrorCode) async throws {
         let r = try await LoopRig([task("a", "true")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(askError: ProtocolError(code: code, message: "boom")))
+        await r.host.set("w-task-a-t1", LoopScript(askError: ProtocolError(code: code, message: "boom")))
         #expect(await r.run() == .finished)
         #expect(try await r.get().tasks[0].state == .deferred)
         #expect(await r.host.nudges.isEmpty)
@@ -169,7 +169,7 @@ private let paths: [Path] = [
     @Test func aLoopAskedToStopDoesNotNudge() async throws {
         let r = try await LoopRig([task("a", "true")]); defer { r.cleanup() }
         let loop = r.loop, id = r.work
-        await r.host.set("loop-a-1", LoopScript(act: { _ in await loop.stop(work: id) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { _ in await loop.stop(work: id) }))
         #expect(await r.run() == .stopped)
         let w = try await r.get()
         // the attempt still has its verdict, as before
@@ -179,7 +179,7 @@ private let paths: [Path] = [
 
     @Test func aNudgeThatCouldNotBeAskedLeavesTheVerdictToTheCommit() async throws {
         let r = try await LoopRig([task("a", "true")], tries: 1); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(nudgeError: ProtocolError(code: .internal, message: "did not submit the prompt")))
+        await r.host.set("w-task-a-t1", LoopScript(nudgeError: ProtocolError(code: .internal, message: "did not submit the prompt")))
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .deferred && w.tasks[0].lastFailure == "no new commit")

@@ -134,6 +134,11 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         }
         return nil
     }
+    /// M3.8: the terminals of `work`'s loop attempts still there, found by the id on their job (never by a name's prefix).
+    private func loopAgentsLeft(_ d: Daemon, _ work: UUID) async -> Int {
+        guard let w = try? await d.router.work.get(work) else { return 0 }
+        return CommandRouter.loopAgents(of: w, in: await d.router.ws.terminals).count
+    }
     private func loopEnded(_ d: Daemon, _ id: UUID) async -> Bool {
         await waitFor(60) { (try? await d.router.work.get(id))?.loop.map { $0.state != .running } ?? false }
     }
@@ -209,7 +214,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             #expect(await loopEnded(d, x.work))
             let w = try #require(try await d.router.work.get(x.work))
             #expect(w.tasks.first?.state == .done && w.loop?.state == .finished, "\(w.tasks) \(String(describing: w.loop)) \(w.notes.map(\.text))")
-            #expect(await d.router.ws.terminals.allSatisfy { !$0.name.hasPrefix("loop-") })
+            #expect(await loopAgentsLeft(d, x.work) == 0)
             #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("[collie] Laço de \"Loop work\" terminou: 1 feitas, 0 adiadas") })
             // a `work.task.done` that lands after the approval does not take the evidence away
             let done = try await work(d, p, x.s, "work.task.done", ["task": .string("Write done")])
@@ -275,10 +280,13 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             try await addTask(d, p, x.s, "A", check: "true")
             let none = try await work(d, p, x.s, "work.run")
             #expect(none.error?.code == .invalidArgs && none.error?.message.contains("--max") == true, "\(none)")
-            for (k, v) in [("max", 31.0), ("timeout", 14_401), ("budget", 43_201), ("tries", 11)] {
+            for (k, v) in [("max", 31.0), ("timeout", 14_401), ("budget", 43_201), ("tries", 11), ("parallel", 5), ("parallel", 0)] {
                 var a: [String: JSONValue] = ["max": .number(3)]; a[k] = .number(v)
                 #expect(try await work(d, p, x.s, "work.run", a).error?.code == .invalidArgs, "\(k)")
             }
+            // M3.5: lanes run only sandboxed, and this daemon sandboxes no terminal
+            let lanes = try await work(d, p, x.s, "work.run", ["max": .number(3), "parallel": .number(2)])
+            #expect(lanes.error?.code == .invalidArgs && lanes.error?.message.contains("--parallel") == true, "\(lanes)")
             #expect(await d.router.appCards.isEmpty)
         }
     }
@@ -296,7 +304,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             #expect(await waitFor(20) { await d.scrollbackText(x.s.uuid).contains("não aprovou o laço") })
             let w = try #require(try await d.router.work.get(x.work))
             #expect(w.loop == nil && w.tasks[0].state == .open)
-            #expect(await d.router.ws.terminals.allSatisfy { !$0.name.hasPrefix("loop-") })
+            #expect(await loopAgentsLeft(d, x.work) == 0)
             // the reservation is released: a new run asks again
             #expect(try await run(d, p, x.s, [:], approve: false).ok)
             #expect(try await answerCard(d, p, allow: false) != nil)
@@ -396,7 +404,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
             #expect(rs.filter(\.ok).count == 1, "\(rs)")
             #expect(rs.contains { $0.error?.message.contains("already") == true }, "\(rs)")
             #expect(await loopEnded(d, x.work))
-            #expect(await waitFor(20) { await d.router.ws.terminals.filter { $0.name.hasPrefix("loop-") }.count <= 1 })
+            #expect(await waitFor(20) { await loopAgentsLeft(d, x.work) <= 1 })
         }
     }
 
@@ -421,12 +429,12 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
     /// Finding 5: a loop's agents left by a dead daemon are removed by the start sweep.
     @Test func restartSweepRemovesLeftAgents() async throws {
         try await withDaemon { d, p in
-            let left = try await spawnIn(d, p, "loop-a-1", cwd: URL(fileURLWithPath: "/tmp"))
-            let other = try await spawnIn(d, p, "loop-zz-9", cwd: URL(fileURLWithPath: "/tmp"))   // not this work's
+            let left = try await spawnIn(d, p, "w-a-t1", cwd: URL(fileURLWithPath: "/tmp"))
+            let other = try await spawnIn(d, p, "w-zz-t9", cwd: URL(fileURLWithPath: "/tmp"))   // not this work's
             let w = try await d.router.work.start(title: "looping", terminal: UUID(), paddockId: nil, branch: nil)
             try await d.router.work.update(w.id) {
                 $0.tasks = [WorkTask(id: "a", title: "A", state: .inProgress, check: "true")]
-                $0.jobs = [WorkJob(id: "loop-a-1", kind: .loop, label: "A")]
+                $0.jobs = [WorkJob(id: "w-a-t1", kind: .loop, label: "A")]
                 $0.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
             }
             await d.router.stopLoopsLeftRunning()
@@ -442,7 +450,7 @@ private func work(_ d: Daemon, _ p: Paths, _ t: Term?, _ cmd: String, _ args: [S
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         var w = Work(title: "looping", terminalId: UUID(), paddockId: UUID(),
                      tasks: [WorkTask(id: "a", title: "A", state: .inProgress, check: "true"), WorkTask(id: "b", title: "B", state: .done)],
-                     jobs: [WorkJob(id: "loop-a-1", kind: .loop, label: "A")])
+                     jobs: [WorkJob(id: "w-a-t1", kind: .loop, label: "A")])
         w.loop = WorkLoopState(state: .running, task: "a", attempt: 1)
         let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
         try e.encode([w]).write(to: dir.appendingPathComponent("work.json"))

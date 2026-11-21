@@ -15,11 +15,20 @@ Names in quotes are labels of the app, which is in Portuguese.
 - **DMG:** the installer window has a background and positioned icons (`scripts/make-dmg.sh`); where Finder cannot be driven the DMG is built without the layout, with a warning.
 
 - **Drag and drop into terminals:** dropping files or an image on a terminal pastes their shell-escaped paths, as Terminal.app does, so agents attach the image; an image with no file of its own is saved as a PNG first.
+- **Loops that say why they stopped:** every loop that stops records the reason (`stopReason`), with a note, in `collie work status` and in the end notice.
+- **Loop journal:** `collie work status --events [N]` shows the latest loop events (turn, check, gate, verdict), up to the newest 100.
+- **Waiting on a loop without a terminal:** `collie work wait [--since N] [--timeout S]` answers when the work changed or the loop ended; `work status` says since when the phase has been running and when the turn expires. `/collie:loop` and the Shepherd's orientation now teach `work wait` instead of waiting for a typed notice.
+- **Reopening a task:** `collie work task reopen <task> [--keep-tries]` puts a deferred or abandoned task back in the queue, in the same position.
+- **Parallel tasks:** `collie work run --parallel <n>` (default 1, at most 4) runs each task in a lane (a temporary worktree of the loop) and integrates them one at a time, running the gate again after each merge; `collie work task add --scope --needs` declares what each task touches and what it depends on (without `--scope` a task runs alone). Status, `work wait`, the journal and the card show the lanes. A lane writes only its own branch; `--budget` counts the lanes alive; the sweeper removes only lanes its own daemon made. `scripts/dev/lane-coldbuild.sh` measures a lane's cold build cost.
+- **Agents of the loop have names of their work:** `<work>-<task>-t<attempt>` instead of `loop-<random>`.
 
 ### Changed
+- The loop resubmits the Enter of a prompt that was typed but not submitted, and nudges an agent that ends its turn early with no commit, instead of burning the attempt.
+- After a daemon crash, the loop resumes the commit the attempt had already made instead of restarting the task; stopping the daemon no longer spends the attempt in progress.
 - This changelog is written in English.
 
 ### Fixed
+- Loop: a task no longer stays "in progress" because of an out-of-phase event; a malformed new field in the work record no longer breaks reading the work; the journal writes half as often per attempt.
 - **Deterministic CI:** the test step (`scripts/ci/run-tests.sh`) no longer trusts the exit code of `swift test`, which was green with 237 failures when the test process exited midway; it runs the suite in 3 serial parts and passes only with the final count of each. Tests the hosted runner does not run are listed in `scripts/ci/ci-skip.txt`, with the reason. Fixed outdated tests (Cursor's `--plugin-dir`, the page title on import) and a fatal error of the fake daemon in `MCPTests`.
 
 ## [0.1.7] — 2026-11-19

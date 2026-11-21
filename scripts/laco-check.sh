@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Check de cada tarefa do laço "estado do laço" (Ondas 1, 1b, 2 e 3): scripts/laco-check.sh M1.1 .. M3.7 (e M2.0)
+# Check de cada tarefa do laço "estado do laço" (Ondas 1, 1b, 2 e 3): scripts/laco-check.sh M1.1 .. M3.8, M3b.1 .. M3b.6 (e M2.0)
 # Cada tarefa exige o seu arquivo de testes novo e roda TODAS as suítes da família (cumulativo: nada pode regredir).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
 suites=(WorkLoopTests WorkStatusTextTests WorkStoreTests LoopStopReasonTests LoopJournalTests AttemptDecisionTests AttemptMachineTests
-        LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests LoopCancelTests LoopResumeSafetyTests LoopCancelWaitTests WorkWaitTests LoopOrientationTests
+        LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests LoopCancelTests LoopResumeSafetyTests LoopResumeNitsTests LoopCancelWaitTests WorkWaitTests LoopOrientationTests
         WorkTaskReopenTests TaskSchedulerTests LaneWorktreeTests LaneHostTests LaneIntegrationTests LoopParallelTests
-        LoopLaneLifecycleTests LoopParallelE2ETests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
+        LoopLaneLifecycleTests LoopParallelE2ETests AgentNamingTests LaneProfileIntentTests LaneIntegratorRaceTests LaneRefsProfileTests LoopParallelBudgetTests LaneSweepScopeTests LoopLaneNitsTests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
 filters=(); for s in "${suites[@]}"; do filters+=(--filter "$s"); done
 need() { test -f "$1" || { echo "falta $1" >&2; exit 1; }; }
 D=Tests/CollieDaemonKitTests
-case "${1:?M1.1..M3.7}" in
+case "${1:?M1.1..M3b.6}" in
   M1.1)  grep -q stopReason Sources/CollieCore/Work.swift; need $D/LoopStopReasonTests.swift ;;
   M1.2)  grep -q 'struct LoopEvent' Sources/CollieCore/Work.swift; need $D/LoopJournalTests.swift ;;
   M1.3)  need Sources/CollieDaemonKit/Work/AttemptDecision.swift; need $D/AttemptDecisionTests.swift ;;
@@ -21,6 +21,7 @@ case "${1:?M1.1..M3.7}" in
   M1b.3) need $D/LoopNitsTests.swift ;;
   M2b.1) need $D/LoopResumeSafetyTests.swift ;;
   M2b.2) need $D/LoopCancelWaitTests.swift ;;
+  M2c)   need $D/LoopResumeNitsTests.swift ;;
   M2.0)  need $D/AskSubmitRetryTests.swift ;;
   M2.1)  need $D/LoopNudgeTests.swift ;;
   M2.2)  need $D/LoopResumeTests.swift ;;
@@ -36,6 +37,13 @@ case "${1:?M1.1..M3.7}" in
   M3.5)  need $D/LoopParallelTests.swift ;;
   M3.6)  need $D/LoopLaneLifecycleTests.swift ;;
   M3.7)  need $D/LoopParallelE2ETests.swift ;;
+  M3b.1) need $D/LaneProfileIntentTests.swift ;;
+  M3b.2) need $D/LaneIntegratorRaceTests.swift ;;
+  M3b.3) need $D/LaneRefsProfileTests.swift ;;
+  M3b.4) need $D/LoopParallelBudgetTests.swift ;;
+  M3b.5) need $D/LaneSweepScopeTests.swift ;;
+  M3b.6) need $D/LoopLaneNitsTests.swift ;;
+  M3.8)  need Sources/CollieDaemonKit/Work/AgentNaming.swift; need $D/AgentNamingTests.swift ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;
 esac
 # a nota do laço guarda só o rabo da saída: no fim, os nomes dos testes que falharam e o resumo, para a nota levar o que importa

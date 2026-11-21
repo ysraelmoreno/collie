@@ -186,6 +186,19 @@ extension CommandRouter {
             guard v.count <= Self.maxWorkText else { throw invalid("'\(k)' is longer than \(Self.maxWorkText) characters") }
             return v
         }
+        /// M3b.6: a comma-separated string (the CLI's repeated flag) or a JSON array of strings (an MCP client); nil:
+        /// absent. Any other type is refused: a value dropped in silence would let a task start before its `needs`.
+        func strings(_ k: String) throws(ProtocolError) -> [String]? {
+            switch r.args[k] {
+            case nil, .null?: return nil
+            case .string(let s)?: return TaskScheduler.list(s)
+            case .array(let a)?:
+                let items = a.compactMap { if case .string(let s) = $0 { s } else { nil } }
+                guard items.count == a.count else { throw invalid("--\(k) must be a string or an array of strings") }
+                return TaskScheduler.list(items.joined(separator: ","))
+            default: throw invalid("--\(k) must be a string or an array of strings")
+            }
+        }
         func active(_ t: TerminalRecord) async throws -> Work {
             guard let w = try await work.active(terminal: t.id) else {
                 throw missing("no active work for '\(t.name)'; start one with collie work start <title>")
@@ -253,9 +266,15 @@ extension CommandRouter {
                 guard ProjectRoot.contains(real, root: root) else { throw invalid("--spec \(given) is outside the project \(root.path)") }
                 spec = real
             }
+            // M3.1: the graph is checked on the way in (before a work is opened for a task that is refused)
+            let id = String(UUID().uuidString.prefix(8)).lowercased()
+            let needs = try strings("needs"), scope = try strings("scope")
+            if let scope, let why = TaskScheduler.scopeRefusal(scope) { throw invalid("--scope: \(why)") }
+            if let needs, let why = TaskScheduler.needsRefusal(id: id, needs: needs, tasks: try await work.active(terminal: t.id)?.tasks ?? []) {
+                throw invalid("--needs: \(why)")
+            }
             let w = try await implicitWork(t, now: now)
-            let task = WorkTask(id: String(UUID().uuidString.prefix(8)).lowercased(), title: title, updatedAt: now, spec: spec, check: check,
-                                evidenceGlob: evidence)
+            let task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope)
             try await work.update(w.id) { $0.tasks.append(task) }
             return try isoJSON(task)
 
@@ -423,6 +442,7 @@ extension CommandRouter {
         var lines = ["\(w.title) — \(who)" + (w.branch.map { ", branch \($0)" } ?? "") + (w.closedBy.map { ", closed by \($0)" } ?? "")
                      + " [\(w.id.uuidString.lowercased())]"]
         if let l = WorkStatusText.loopLine(w, now: now) { lines.append(l) }
+        lines += WorkStatusText.laneLines(w, now: now)   // M3.6: none without lanes
         if let g = WorkStatusText.gateLine(w) { lines.append(g) }
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),

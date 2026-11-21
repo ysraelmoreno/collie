@@ -107,26 +107,26 @@ import CollieTerminal
     /// (d) the loop's ask went through a retry: its journal says so, with the terminal's name.
     @Test func loopJournalsTheRetry() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
-        await r.host.setResubmitted("loop-a-1")
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.setResubmitted("w-task-a-t1")
         #expect(await r.run() == .finished)
         let ev = try await r.get().loop?.events ?? []
         let i = try #require(ev.firstIndex { $0.kind == .resubmitted })
-        #expect(ev[i].detail == "loop-a-1" && ev[i].task == "a" && ev[i].attempt == 1)
+        #expect(ev[i].detail == "w-task-a-t1" && ev[i].task == "a" && ev[i].attempt == 1)
         #expect(ev.filter { $0.kind == .resubmitted }.count == 1)
         #expect(ev[..<i].contains { $0.kind == .agentSummoned } && ev[i...].contains { $0.kind == .turnEnded || $0.kind == .commitSeen })
     }
 
     @Test func loopWithoutRetryJournalsNone() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt")]); defer { r.cleanup() }
-        await r.host.set("loop-a-1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
+        await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
         #expect(!(try await r.get().loop?.events ?? []).contains { $0.kind == .resubmitted })
     }
 
     /// The new kind round-trips, and one this daemon does not know still decodes (as `unknown`).
     @Test func resubmittedKindDecodesTolerantly() throws {
-        let e = LoopEvent(at: Date(timeIntervalSince1970: 1), kind: .resubmitted, task: "a", attempt: 1, detail: "loop-a-1")
+        let e = LoopEvent(at: Date(timeIntervalSince1970: 1), kind: .resubmitted, task: "a", attempt: 1, detail: "w-task-a-t1")
         #expect(try JSONDecoder().decode(LoopEvent.self, from: JSONEncoder().encode(e)) == e)
         #expect(try JSONDecoder().decode(LoopEvent.Kind.self, from: Data(#""resubmitted""#.utf8)) == .resubmitted)
         #expect(try JSONDecoder().decode(LoopEvent.Kind.self, from: Data(#""resubmittedTwice""#.utf8)) == .unknown)

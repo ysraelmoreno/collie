@@ -316,6 +316,30 @@ private actor Fake {
         #expect(m.loopBadge(w) == .init(text: "laço terminou (4 tentativas)", running: false))
     }
 
+    /// M3.6: the panel only decodes the lanes' fields (optional); what it shows is what it showed.
+    @Test func decodesALoopWithLanesAndWithout() async throws {
+        let (m, _) = make()
+        var w = Work(id: workA, title: "Piso", terminalId: termA,
+                     tasks: [WorkTask(id: "a1", title: "Piso de relevância", state: .inProgress, needs: ["a0"], scope: ["Sources/**"])])
+        w.loop = WorkLoopState(state: .running, task: "a1", attempt: 1, tries: 3, max: 10, used: 1)
+        let plain = try #require(WorkPanelModel.decode(Work.self, iso(w)))
+        #expect(plain.loop?.lanes == nil && plain.loop?.parallel == nil)
+        w.loop?.parallel = 2
+        w.loop?.lanes = [.init(lane: "lane-x-a1", task: "a1", attempt: 1, phase: .agent, since: Date(timeIntervalSince1970: 60)),
+                         .init(lane: "lane-x-b2", task: "b2", attempt: 2, since: Date(timeIntervalSince1970: 120))]
+        let got = try #require(WorkPanelModel.decode(Work.self, iso(w)))
+        #expect(got.loop?.parallel == 2 && got.loop?.lanes == w.loop?.lanes)
+        #expect(got.tasks.first?.needs == ["a0"] && got.tasks.first?.scope == ["Sources/**"])
+        #expect(m.loopBadge(got) == m.loopBadge(plain), "the same badge: no new visual")
+        // a lane whose phase a newer daemon wrote still decodes
+        var raw = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(iso(w))) as? [String: Any])
+        var loop = try #require(raw["loop"] as? [String: Any]), lanes = try #require(loop["lanes"] as? [[String: Any]])
+        lanes[0]["phase"] = "integrating"; loop["lanes"] = lanes; raw["loop"] = loop
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        let newer = try d.decode(Work.self, from: JSONSerialization.data(withJSONObject: raw))
+        #expect(newer.loop?.lanes?.count == 2 && newer.loop?.lanes?.first?.phase == nil)
+    }
+
     @Test func stopLoopCallsWorkStopOnTheTerminal() async {
         let (m, f) = make()
         await m.stopLoop("Collie Main")

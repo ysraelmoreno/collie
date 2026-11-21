@@ -138,7 +138,7 @@ private func hook(_ p: Paths, _ t: Term, _ name: String, _ payload: String) asyn
         try await withDaemon { d, _ in
             // a terminal that has no process: the start sweep would mark its jobs gone
             let w = try await d.router.work.start(title: "loop", terminal: UUID(), paddockId: nil, branch: nil)
-            try await d.router.work.update(w.id) { $0.jobs.append(WorkJob(id: "loop-ab12cd34-1", kind: .loop, label: "t")) }
+            try await d.router.work.update(w.id) { $0.jobs.append(WorkJob(id: "w-t-t1", kind: .loop, label: "t")) }
             await d.router.sweepJobs(now: Date().addingTimeInterval(31 * 60))
             await d.router.jobsGoneWithoutProcess()
             #expect(try await d.router.work.get(w.id)?.jobs.map(\.state) == [.running])

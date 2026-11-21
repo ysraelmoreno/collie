@@ -786,8 +786,8 @@ não verificadas contra payloads reais**; o parser é tolerante, mas confira com
 **Trabalho implícito:** sem trabalho ativo, o primeiro hook com tarefas, título de tarefa ou job abre um trabalho
 chamado `"<nome do terminal> — AAAA-MM-DD"`, com o cercado e a branch do terminal. `collie work task add` e `collie work note` também abrem um.
 
-**Comandos** (`collie work …`): `start`, `done [--reason]`, `reopen`, `task add|done|defer|drop` (defer/drop pedem o motivo),
-`note`, `status [--all]`, `list [--closed]`, `get`. `clear-history` é só do app. Guias: um terminal vê só o próprio
+**Comandos** (`collie work …`): `start`, `done [--reason]`, `reopen`, `task add|done|defer|drop|reopen` (defer/drop pedem o motivo),
+`note`, `status [--all] [--events [N]]`, `wait`, `list [--closed]`, `get`, e os do laço: `run`, `stop`. `clear-history` é só do app. Guias: um terminal vê só o próprio
 trabalho; um Pastor vê também o dos terminais ligados por guia a ele (`--terminal`); o app vê tudo. Um terminal fora
 do alcance dá o mesmo "não encontrado" de um inexistente.
 
@@ -798,7 +798,7 @@ Um trabalho sem branch nunca fecha sozinho. Os commits novos entram no trabalho 
 **Codex e shell** não têm hooks: usam só os comandos explícitos `collie work …`.
 
 **Laço autônomo (`collie work run`):** roda as tarefas abertas do trabalho sem ninguém olhando. Cada tentativa é um agente
-novo (`loop-<tarefa>-<n>`) no cercado, e quem decide se a tarefa passou é o check, nunca o agente. Só começa depois que o
+novo (`<trabalho>-<tarefa>-t<n>`, dos títulos; numa faixa, `-f<faixa>-t<n>`) no cercado, e quem decide se a tarefa passou é o check, nunca o agente. Só começa depois que o
 dono aprovou a lista de tarefas e os checks.
 
 - Confiar em laços por cercado: com "Sempre neste cercado" ligado (só o app liga e desliga, `admin.paddock.trust-loops`;
@@ -824,7 +824,7 @@ dono aprovou a lista de tarefas e os checks.
   e uma nota do trabalho avisa). O painel Trabalho lista os arquivos da tarefa feita com a ação "Abrir". Vale o que está
   na worktree depois do veredito: o commit julgado, arquivos não rastreados que o agente deixou e arquivos ignorados; um
   arquivo não rastreado criado pelo check ou pelo portão já foi removido.
-- `collie work run --max <n> [--gate "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--preset …] [--model …] [--command …]`: só um
+- `collie work run --max <n> [--gate "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …]`: só um
   Pastor com sandbox (ou o app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma
   tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo
   rastreado modificado. Volta na hora com `awaiting approval`: um cartão no app mostra ao dono o cercado, os limites e cada
@@ -856,6 +856,54 @@ dono aprovou a lista de tarefas e os checks.
   sandbox também.
 - `collie work stop` encerra depois do veredito da tentativa atual; parar o daemon não gasta a tentativa em curso. `collie work status` mostra `em laço: <tarefa>
   (tentativa 2/3)`. Reiniciar o daemon para o laço; `collie work run` de novo continua da próxima tarefa aberta.
+- **Tarefas em paralelo (`collie work run --parallel <n>`):** o padrão é 1 (uma tarefa por vez, o laço de sempre, sem
+  faixa nenhuma) e o máximo 4. Acima de 1, cada tarefa pronta roda numa **faixa**: um worktree temporário do laço
+  (`<repo>/.collie/paddocks/lane-…`, branch `collie/lane/…`), cortado do HEAD do cercado naquela hora. Não é um cercado:
+  não aparece no app e o próprio laço a cria e apaga. O agente, o check e o portão rodam na faixa, sob o sandbox estrito
+  do cercado com a faixa como projeto (por isso `--parallel` acima de 1 exige o sandbox de terminais). Do git do
+  repositório, a faixa só grava objetos e o **próprio branch** (`collie/lane/<faixa>` e o reflog dele): não move o branch
+  do cercado, `main` nem o de outra faixa, não grava `packed-refs`, `refs/stash`, tags nem outro reflog (`git stash`,
+  `git tag` e `git branch` falham na faixa); o único caminho para o branch do cercado é o integrador. A faixa **lê** os
+  commits de todas as branches (o object store é comum ao repositório); só os arquivos não commitados do dono (a
+  worktree do cercado e as outras faixas) ficam fechados. Passou na faixa:
+  um integrador, um de cada vez, faz o merge (sem fast-forward, `merge: <tarefa>`) no branch do cercado e **roda o portão
+  de novo na árvore integrada**; só então a tarefa fica feita. Conflito ou portão quebrado depois do merge: o merge é
+  desfeito, o que a tentativa fez vira patch, e a tarefa refaz a tentativa numa faixa nova, a partir do HEAD novo (gasta
+  uma tentativa; na última, é adiada). Antes de desfazer, o integrador mede de novo: se alguém (o Shepherd que iniciou
+  o laço também) está num turno na worktree do cercado, ou se ela não está como o merge a deixou (arquivo rastreado
+  editado, arquivo novo não rastreado, do dono ou do próprio portão, que o integrador não distingue), **nada é
+  resetado nem apagado**: o laço para (`dirtyTree` ou `othersWorking`), a nota lista o que ficou e, se o portão
+  quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a tarefa volta a aberta sem gastar
+  tentativa. `--max`, `--budget` e `--tries` são do laço inteiro. O orçamento é a **soma do
+  tempo das faixas**, não o relógio de parede: quatro faixas rodando 25 s gastam 100 s. O tempo de cada faixa vai do
+  início dela até ela sair, e **o tempo na fila do integrador conta** (a espera pela vez, o merge e o portão). As
+  faixas em curso já contam enquanto rodam: o que uma fase (turno, check, portão) pode levar é o que ninguém usou
+  ainda, dividido pelas faixas vivas; com o orçamento usado nenhuma faixa nova começa, as vivas são canceladas (a
+  tentativa delas não conta) e o laço para com `budgetSpent`. Folga: uma fase mantém o limite com que começou, então
+  o total pode passar do orçamento pelo resto de uma fase que começou quando havia menos faixas vivas. `collie work stop` cancela todas as faixas: nada fica integrado pela metade, a tentativa em curso
+  não conta, e nenhuma faixa sobra (também são removidas no fim do laço e na varredura de início do daemon).
+  - **Grafo de tarefas:** `collie work task add <título> --spec … --check … [--scope "<glob>,<glob>"] [--needs <id>,<id>]`.
+    `--scope` são os caminhos que a tarefa pode tocar (globs relativos à raiz da worktree, sem `..` nem caminho
+    absoluto); `--needs` são ids de tarefas do mesmo trabalho (o `id` que o `task add` devolve), sem ciclo: a tarefa só
+    começa depois de elas estarem feitas **e integradas**, e a faixa dela já tem o código delas. Se uma delas é adiada,
+    a dependente é adiada junto.
+  - **Regra do escopo exclusivo:** duas tarefas só rodam ao mesmo tempo quando os `--scope` não se sobrepõem. Uma tarefa
+    **sem `--scope` é exclusiva**: roda sozinha, como no laço de uma por vez. O escopo decide só quem roda junto; não
+    impede o agente de tocar outro arquivo, e por isso o portão roda de novo depois de cada merge.
+  - **Quando usar:** tarefas independentes e longas, de áreas disjuntas, com `--scope` declarado. **Quando não:** tudo
+    o que mexe no mesmo arquivo, em `Package.swift` ou em outro arquivo que todas tocam (índices, um arquivo de projeto):
+    conflita na integração e a tentativa é refeita.
+  - **Custo da compilação a frio:** uma faixa nova não tem cache de build; neste repositório um `swift build` a frio
+    passa de 10 minutos, pagos por faixa e por tentativa. Tarefas curtas terminam antes uma por vez.
+    `scripts/dev/lane-coldbuild.sh` mede o tempo na sua máquina (cria um worktree descartável, compila, remove; leva
+    minutos e não roda no CI).
+  - **Acompanhar:** `collie work status` diz `2 de 3 em paralelo` e uma linha por faixa (`faixa T<tarefa> · <fase> ·
+    desde HH:mm (N min)`); `collie work wait` acorda com a mudança de qualquer faixa; o diário (`work status --events`)
+    traz a faixa entre colchetes e os eventos `integrated` e `integrationRetry`. O cartão do dono mostra `--parallel`, o
+    escopo e as dependências de cada tarefa.
+- **Reabrir uma tarefa:** `collie work task reopen <tarefa> [--keep-tries]` devolve à fila, na mesma posição e com o mesmo
+  `spec` e `check`, uma tarefa adiada ou abandonada; sem `--keep-tries` as tentativas voltam a zero. Um laço
+  em curso que já tinha a tarefa na lista a roda; senão, o próximo `collie work run`.
 - **Esperar o laço sem terminal:** `collie work wait [--since N] [--timeout S]` (tool MCP `work_wait`) responde quando o
   trabalho ativo mudou para além da versão `N` (tarefa, fase, tentativa, estado ou motivo de parada do laço, nota, evento do
   diário), quando o laço terminou (`ended`) ou quando o tempo acabou (`timedOut`; padrão 600 s, máximo 3600). Sem

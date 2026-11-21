@@ -40,6 +40,7 @@ Uma worktree só; o laço a reseta entre tentativas e vê qualquer arquivo rastr
 | M3.5 | O escalonador no motor (`--parallel N`) | host falso com 2 e 3 faixas; `--parallel 1` idêntico; orçamento e `--max` compartilhados |
 | M3.6 | Ciclo de vida, status e cartão | faixa órfã varrida; `work status`/`wait`/diário com faixas; cartão mostra `--parallel` |
 | M3.7 | Ponta a ponta e documentação | repositório real temporário: 2 tarefas disjuntas integram; sobrepostas rodam em série; conflito refaz; parar mata tudo |
+| M3.8 | Nomes coerentes para os agentes do laço (pedido do dono, 2026-11-20) | tabela de nomes; `loop-<id>` some; varredor reconhece o agente sem o prefixo |
 
 ## Fora do escopo
 

@@ -6,6 +6,17 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+### Added
+- **Shepherd context lifecycle:** the large-context advice now reads the real context size in tokens (150k and 250k levels, numbers only, never conversation text), and at the end of a loop the daemon writes a short handoff for the next turn (`collie work handoff`).
+- **Turn safety for loops:** the attempt prompt carries two fixed rules (run build and tests in the foreground; `swift build` does not compile tests), and `collie work run --precheck <cmd>` runs a fast check in the agent's own session before the full check, so a compile error costs a nudge instead of an attempt.
+- **Tokens in the immutable summary:** each task keeps its attempts' token counts (counts and model name only); `collie work usage` also reads closed works of the caller's paddock, and the loops modal shows the totals.
+
+### Changed
+- Near-duplicate memories of the same kind and scope (same subject, three or more shared title terms, or close vectors) no longer enter one injection block together; only the best of each group is injected. Nothing in the memory store changes.
+
+### Fixed
+- The full-screen button (and the other controls of a terminal's title bar) did nothing on the canvas at any zoom other than 100%.
+
 ## [0.1.8] — 2026-11-21
 
 ### Added

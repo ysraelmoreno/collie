@@ -78,7 +78,6 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             guard let self else { throw ProtocolError(code: .daemonUnavailable, message: "no client") }
             return try await self.adminCall(command, args, timeout: timeout)
         }
-        workFeed.terminalName = { [weak self] id in self?.terminals.first { $0.id == id }?.name }
     }
     private func followWork() { workFeed.follow(paddock: currentPaddock, name: currentPaddockName) }
 
@@ -238,6 +237,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .appCardRemoved(let id): appCards.removeAll { $0.id == id }
         case .remotePairing(let r): remotePairing = r
         case .remoteReveal(let t, let a, _): onRemoteReveal?(t, a)
+        case .work(_, let paddock): workFeed.workChanged(paddock: paddock)
         }
     }
     private func setPlugins(_ ms: [PluginManifest]) { guard ms != plugins else { return }; plugins = ms; PluginManifest.register(ms) }   // unchanged: the registry stays

@@ -29,77 +29,85 @@ public struct HistoryEntry: Decodable, Sendable, Equatable {
 }
 
 /// What the Trilho panel shows of the followed paddock: its active work (the loop inside it) and its last closed works.
-/// Kept fresh by `work.wait` (a long wait the daemon answers when the work changes: never a timer), asking again from the
-/// version it last saw; `follow` (a paddock switch) starts over. A daemon that fails leaves it empty, never throws.
+/// Kept fresh by the daemon's `work` event (`WorkspaceEvent.work`, on `ui.events`: never a timer): each one of this
+/// paddock re-reads `work.status`, at most one read in flight (a burst meanwhile is one more read). The history is read
+/// again on `follow`, when an active work of the paddock leaves the list (`work done`, removed) and when a loop ends.
+/// `follow` (a paddock switch) starts over. A daemon that fails leaves it empty, never throws.
 @MainActor @Observable public final class WorkFeed {
     public private(set) var work: Work?
     public private(set) var history: [HistoryEntry] = []
     public nonisolated static let historyLimit = 20
     /// What is asked and kept: one more than shown, so the panel knows older works exist ("mais antigos no Work").
     public nonisolated static let historyFetch = historyLimit + 1
-    /// The daemon's `work.wait` timeout (it answers `timedOut` and the feed waits again from the same version).
-    static let waitSeconds = 600.0
 
     public typealias Call = @MainActor (_ command: String, _ args: [String: JSONValue], _ timeout: Double) async throws -> JSONValue
     @ObservationIgnored public var call: Call?
-    /// A terminal's name by id (`work.wait` names its target).
-    @ObservationIgnored public var terminalName: @MainActor (UUID) -> String? = { _ in nil }
-    @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var followed: (id: UUID?, name: String?) = (nil, nil)
+    /// A read runs; `again`: an event came meanwhile; `needHistory`: the next read also reads the history.
+    @ObservationIgnored private var busy = false
+    @ObservationIgnored private var again = false
+    @ObservationIgnored private var needHistory = false
+    /// The paddock's active works and those with a running loop, at the last read (what tells a close or a loop's end).
+    @ObservationIgnored private var active: Set<UUID> = []
+    @ObservationIgnored private var running: Set<UUID> = []
 
     public init() {}
 
     /// Follows `paddock` (nil: the Pasto, which has no work to show): drops what the last one left and loads again.
     public func follow(paddock: UUID?, name: String?) {
-        followed = (paddock, name)
-        restart()
+        followed = (paddock, name); generation += 1
+        work = nil; history = []; active = []; running = []
+        needHistory = true
+        refresh()
     }
-    /// Loads again for the followed paddock (the daemon came back, a work was opened).
-    public func refresh() { restart() }
-
-    private func restart() {
-        task?.cancel(); generation += 1
-        work = nil; history = []
-        let gen = generation, (paddock, name) = followed
-        guard let paddock, let name else { return }
-        task = Task { [weak self] in await self?.run(gen, paddock, name) }
+    /// A work changed in `paddock` (the daemon's `work` event; nil: unknown, a removed work): re-read when it is ours.
+    public func workChanged(paddock: UUID?) {
+        guard let mine = followed.id, paddock == nil || paddock == mine else { return }
+        refresh()
+    }
+    /// Reads `work.status` again for the followed paddock (the daemon came back, a work changed): coalesced.
+    public func refresh() {
+        guard followed.id != nil else { return }
+        again = true
+        guard !busy else { return }
+        busy = true
+        Task { [weak self] in await self?.drain() }
     }
 
-    private func live(_ gen: Int) -> Bool { gen == generation && !Task.isCancelled }
-
-    private func run(_ gen: Int, _ paddock: UUID, _ name: String) async {
-        Task { [weak self] in await self?.loadHistory(gen, name) }   // not in the work's way
-        do {
-            let st = try await ask("work.status", ["all": .bool(true)], 30)
-            guard live(gen) else { return }
+    /// One read at a time, as long as something asked for one. A `follow` during a read makes it read again (the
+    /// generation tells): the old answer is dropped, never shown in the new paddock.
+    private func drain() async {
+        defer { busy = false }
+        while again {
+            again = false
+            let gen = generation
+            guard let paddock = followed.id, let name = followed.name else { return }
             struct Status: Decodable { let works: [Work] }
-            guard let found = Self.decode(Status.self, st)?.works.first(where: { $0.paddockId == paddock && $0.closedAt == nil }) else {
-                work = nil; return   // nothing active here: nothing to wait on
+            let st = try? await ask("work.status", ["all": .bool(true)], 30)
+            guard gen == generation else { again = true; continue }
+            let works = st.flatMap { Self.decode(Status.self, $0) }?.works.filter { $0.paddockId == paddock && $0.closedAt == nil } ?? []
+            let ids = Set(works.map(\.id)), runs = Set(works.filter { $0.loop?.state == .running }.map(\.id))
+            if !active.subtracting(ids).isEmpty || !running.subtracting(runs).isEmpty { needHistory = true }   // closed, or a loop ended
+            active = ids; running = runs
+            work = Self.pick(works)
+            if needHistory {
+                needHistory = false
+                await loadHistory(gen, name)
             }
-            work = found
-            var version = found.version ?? 0
-            var ended = found.loop.map { $0.state != .running } ?? false
-            while !ended {
-                guard let terminal = terminalName(found.terminalId) else { return }
-                let r = try await ask("work.wait", ["terminal": .string(terminal), "since": .number(Double(version)),
-                                                    "timeout": .number(Self.waitSeconds)], Self.waitSeconds + 10)
-                guard live(gen) else { return }
-                struct Wait: Decodable { let works: [Work]; let version: Int?; let ended: Bool? }
-                guard let w = Self.decode(Wait.self, r), let cur = w.works.first else { throw ProtocolError(code: .internal, message: "work.wait") }
-                work = cur; version = w.version ?? version; ended = w.ended ?? false
-            }
-            await loadHistory(gen, name)   // the loop is over: its work may close next
-        } catch {
-            guard live(gen) else { return }
-            work = nil   // the work closed (or the daemon failed): the history is what is left
-            await loadHistory(gen, name)
         }
+    }
+
+    /// The work the panel shows: one with a running loop; none: the newest with a loop; then the first.
+    nonisolated static func pick(_ works: [Work]) -> Work? {
+        works.first { $0.loop?.state == .running }
+            ?? works.filter { $0.loop != nil }.max { $0.openedAt < $1.openedAt }
+            ?? works.first
     }
 
     private func loadHistory(_ gen: Int, _ name: String) async {
         let r = try? await ask("work.history", ["paddock": .string(name), "limit": .number(Double(Self.historyFetch))], 30)
-        guard live(gen) else { return }
+        guard gen == generation else { needHistory = true; again = true; return }
         history = Self.entries(r)
     }
 

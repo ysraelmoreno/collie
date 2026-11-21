@@ -234,6 +234,8 @@ extension WorkLoop {
             await engine.refuse(id, "integração recusada: o branch não é de uma faixa", output: "", last: true)
             return nil
         }
+        // M3c.2: new untracked files never stop the loop nor a reset: they stay, and the note names them
+        if result.kept.isEmpty, !result.left.isEmpty { await note(id, Self.leftNote(result.left)) }
         switch result.outcome {
         case .integrated, .noop:
             await engine.finish(id, head: result.head)
@@ -279,6 +281,13 @@ extension WorkLoop {
             s += " O merge \(r.head.prefix(7)) ficou no branch sem passar no portão: para desfazer, guarde o que é seu e rode git reset --hard \(undo.prefix(7))."
         }
         return s + " Laço parado."
+    }
+
+    /// M3c.2: the untracked files a merge's gate (or someone meanwhile) left in the paddock's worktree, which go on.
+    static func leftNote(_ left: [String]) -> String {
+        let more = left.count > 10 ? " e mais \(left.count - 10)" : ""
+        return "[loop] arquivos não rastreados novos na worktree do cercado, deixados lá (nada foi apagado): "
+            + eventDetail(left.prefix(10).joined(separator: ", ")) + more + "."
     }
 
     // MARK: on a lane's engine: what becomes of the attempt that passed

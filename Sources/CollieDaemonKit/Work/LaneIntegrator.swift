@@ -10,6 +10,9 @@ import CollieProtocol
 /// works there (the starter included) and what changed are measured again, and a tree that is not as the integrator
 /// left it is left alone (`.leftDirty`, or `.integrated` with `kept`). The integrator cannot tell the gate's own
 /// leftovers from the owner's edits, so those stay too.
+/// M3c.2: only the tracked files (their diff from what the integrator left) and who works there decide; a new untracked
+/// file (a gate's report, coverage) never stops a reset nor the loop: `git reset --hard` does not touch it, and it is
+/// never removed, only named (`left`).
 actor LaneIntegrator {
     struct Result: Sendable, Equatable {
         var outcome: LaneIntegration.Outcome
@@ -17,8 +20,12 @@ actor LaneIntegrator {
         var head: String
         /// The gate's output on the merged tree ("" when it did not run), for the task's note.
         var output = ""
-        /// M3b.2. What was in the tree and not the integrator's when it would have reset: left there, by name.
+        /// M3b.2. What was in the tree and not the integrator's when it would have reset: left there, by name. M3c.2:
+        /// never empty only because of untracked files (those are in `left`): a gate that passed with `kept` stops the loop.
         var kept: [String] = []
+        /// M3c.2. The untracked files that were not there before the merge (the gate's, or the owner's meanwhile): never
+        /// removed, named in the task's note.
+        var left: [String] = []
         /// M3b.2. Who was in a turn in the worktree then (the starter included).
         var blockedBy: String? = nil
         /// M3b.2. A merge whose gate broke was left in the branch: the HEAD of before it (`git reset --hard` to undo).
@@ -61,10 +68,10 @@ actor LaneIntegrator {
 
     private func run(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration) async -> Result {
         var f = LaneIntegration.Facts(mergeResult: .noop, gateAfterMerge: .notRun, treeClean: false, othersWorking: nil, attempt: attempt, tries: tries)
-        var kept: [String] = [], blockedBy: String?, undo: String?
+        var kept: [String] = [], left: [String] = [], blockedBy: String?, undo: String?
         func done(_ f: LaneIntegration.Facts, _ output: String = "") async -> Result {
             .init(outcome: LaneIntegration.decide(f), head: await out(["rev-parse", "HEAD"]) ?? "", output: output,
-                  kept: kept, blockedBy: blockedBy, undo: undo)
+                  kept: kept, left: left, blockedBy: blockedBy, undo: undo)
         }
         f.othersWorking = await host.othersWorking()
         // dirt is what the engine calls dirt: a modified tracked file. A status git cannot give counts as dirty.
@@ -82,8 +89,9 @@ actor LaneIntegrator {
         guard let merge, merge.status == 0, let merged = await out(["rev-parse", "HEAD"]), merged != before else {
             // a conflict, or git refused (an untracked file in the way, no identity): either way nothing stays merged
             _ = try? await host.git(["merge", "--abort"], in: dir)
-            (blockedBy, kept) = await intruders(since: before, loose)
-            if blockedBy == nil, kept.isEmpty { await restore(before, loose) } else { f.disturbed = true }
+            let s = await settle(back: before, from: before, loose)
+            left = s.left
+            if !s.reset { (blockedBy, kept, f.disturbed) = (s.who, s.tracked + s.left, true) }
             f.mergeResult = .conflict
             f.detail = merge.map { Self.firstLine($0.stdout + "\n" + $0.stderr) } ?? "git merge could not run"
             return await done(f)
@@ -107,16 +115,18 @@ actor LaneIntegrator {
         // like the engine: a gate that moved HEAD does not pass
         if f.detail == nil, await out(["rev-parse", "HEAD"]) != merged { f.detail = "gate moved HEAD" }
         f.gateAfterMerge = f.detail == nil ? .passed : .failed
-        // measured again, the gate may have taken long: only a tree exactly as the merge left it, with nobody in it, is
-        // reset (to before the merge, when the gate broke). A gate that passed on such a tree leaves nothing to restore.
+        // measured again, the gate may have taken long: only a tree whose tracked files are as the merge left them, with
+        // nobody in it, is reset (to before the merge, when the gate broke). A gate that passed leaves nothing to restore:
+        // what it leaves stops the loop only when a tracked file changed (the next merge would find the tree dirty).
         // ponytail: someone can still start between this and the reset; integrating outside the owner's tree ends it
-        let who = await host.anyoneWorking(), changed = await changes(since: merged, loose)
         if f.detail == nil {
-            kept = changed
-        } else if who == nil, changed.isEmpty {
-            await restore(before, loose)
+            let tracked = await trackedChanges(since: merged)
+            left = await made(loose)
+            kept = tracked.isEmpty ? [] : tracked + left
         } else {
-            (blockedBy, kept, undo, f.disturbed) = (who, changed, before, true)
+            let s = await settle(back: before, from: merged, loose)
+            left = s.left
+            if !s.reset { (blockedBy, kept, undo, f.disturbed) = (s.who, s.tracked + s.left, before, true) }
         }
         return await done(f, output)
     }
@@ -124,24 +134,23 @@ actor LaneIntegrator {
     /// M3b.6: why an integration that was cancelled did not go on.
     static let cancelled = "integração cancelada: o laço parou"
 
-    /// The tree at exactly `sha`: tracked files restored, untracked files not in `loose` removed. Ignored files stay.
-    private func restore(_ sha: String, _ loose: Set<String>) async {
-        _ = try? await host.git(["reset", "-q", "--hard", sha], in: dir)
-        let made = await untracked().filter { !loose.contains($0) }
-        // ponytail: one git call, as the engine's `settle`; chunk if a gate ever leaves tens of thousands of files
-        if !made.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "--"] + made, in: dir) }
+    /// M3c.2: the tracked files back at `sha` (`reset --hard`) when nobody is in a turn in the worktree (`anyoneWorking`:
+    /// not the starter only waiting on this work) and they are as the integrator left them (`at`). Untracked files are
+    /// never removed: the new ones (not in `loose`) are named in `left`.
+    private func settle(back sha: String, from at: String, _ loose: Set<String>) async -> (who: String?, tracked: [String], left: [String], reset: Bool) {
+        let who = await host.anyoneWorking(), tracked = await trackedChanges(since: at)
+        let reset = who == nil && tracked.isEmpty
+        if reset { _ = try? await host.git(["reset", "-q", "--hard", sha], in: dir) }
+        return (who, tracked, await made(loose), reset)
     }
 
-    /// Who is in a turn in the worktree (the starter included) and what in it is not `sha`'s nor in `loose`.
-    private func intruders(since sha: String, _ loose: Set<String>) async -> (String?, [String]) {
-        (await host.anyoneWorking(), await changes(since: sha, loose))
+    /// Tracked files that differ from `sha`. A diff git cannot give counts as one.
+    private func trackedChanges(since sha: String) async -> [String] {
+        (await out(["diff", "--name-only", "-z", sha, "--"]))?.split(separator: "\0").map(String.init) ?? ["?"]
     }
 
-    /// Tracked files that differ from `sha` and untracked files not in `loose`. A diff git cannot give counts as one.
-    private func changes(since sha: String, _ loose: Set<String>) async -> [String] {
-        let tracked = (await out(["diff", "--name-only", "-z", sha, "--"]))?.split(separator: "\0").map(String.init) ?? ["?"]
-        return tracked + (await untracked()).filter { !loose.contains($0) }
-    }
+    /// Untracked files not in `loose` (not there before the merge).
+    private func made(_ loose: Set<String>) async -> [String] { await untracked().filter { !loose.contains($0) } }
 
     private func untracked() async -> [String] {
         (await out(["ls-files", "-z", "--others", "--exclude-standard"]) ?? "").split(separator: "\0").map(String.init)

@@ -119,25 +119,35 @@ private func isWait(_ o: LaneIntegration.Outcome) -> Bool { if case .wait = o { 
     @Test func gateBrokenAfterTheMergeUndoesIt() async throws {
         let rig = try await Rig()
         let a = try await rig.lane("a", "a.txt", "a\n")
-        let r = try await rig.go(a, "A", gate: "echo broke; exit 7")
+        // M3c.2: the gate writes its own file and rewrites a tracked one as the merge left it (a formatter): undone as in
+        // the original design (back to the HEAD of before, the task redone from it); its untracked file stays, by name
+        let r = try await rig.go(a, "A", gate: "echo junk > junk.txt; cat f.txt > f.new; mv f.new f.txt; echo broke; exit 7")
         #expect(r.outcome == .retryFromNewBase("gate broke after the merge: gate failed (exit 7)"))
         #expect(r.output.contains("broke"))
         #expect(r.head == rig.base)
         #expect(try await rig.head() == rig.base)
-        #expect(try await rig.status() == "")
+        #expect(try await git(rig.repo, "status", "--porcelain", "--untracked-files=no") == "")
+        #expect(try await rig.status() == "?? junk.txt")
+        #expect(r.left == ["junk.txt"] && r.kept.isEmpty && r.undo == nil)
         #expect(!FileManager.default.fileExists(atPath: rig.repo.appendingPathComponent("a.txt").path))
+        try FileManager.default.removeItem(at: rig.repo.appendingPathComponent("junk.txt"))
         #expect(isDefer(try await rig.go(a, "A", attempt: 2, tries: 2, gate: "false").outcome))
         #expect(try await rig.head() == rig.base)
         // a gate that commits does not pass either
         let moved = try await rig.go(a, "A", gate: "git commit -q --allow-empty -m sneaky")
         #expect(moved.outcome == .retryFromNewBase("gate broke after the merge: gate moved HEAD"))
         #expect(try await rig.head() == rig.base)
-        // M3b.2: what a gate leaves in the tree cannot be told from the owner's edits meanwhile: it stays, by name
-        // (`LaneIntegratorRaceTests`)
-        let ok = try await rig.go(a, "A", gate: "echo junk > junk.txt; echo more >> f.txt")
+        // one that passes and leaves only an untracked file: integrated, nothing kept (the loop goes on), the file named
+        let ok = try await rig.go(a, "A", gate: "echo junk > junk.txt")
         #expect(ok.outcome == .integrated)
-        #expect(ok.kept == ["f.txt", "junk.txt"])
+        #expect(ok.kept.isEmpty && ok.left == ["junk.txt"])
         #expect(try await git(rig.repo, "log", "-1", "--format=%s") == "merge: A")
+        #expect(try await rig.status() == "?? junk.txt")
+        // M3b.2: a tracked edit cannot be told from the owner's: it stays, by name (`LaneIntegratorRaceTests`)
+        let b = try await rig.lane("b", "b.txt", "b\n")
+        let edited = try await rig.go(b, "B", gate: "echo more >> f.txt")
+        #expect(edited.outcome == .integrated)
+        #expect(edited.kept == ["f.txt"])
     }
 
     @Test func dirtyTreeOrAnotherTerminalWaitsAndTouchesNothing() async throws {

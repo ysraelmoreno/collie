@@ -372,6 +372,31 @@ extension CommandRouter {
         return nil
     }
 
+    /// M3c.2: who is in a turn in `dir`, the starter included, unless all the starter has open in the daemon is its
+    /// `work.wait`/`work.status` of `work` (the recommended flow: the Shepherd blocked in `collie work wait`). Any other
+    /// request of the starter's (an `ask`, another command) counts it, as do the paddock's other terminals.
+    /// ponytail: what the starter does outside the daemon (an edit beside a backgrounded wait) is not seen here; the
+    /// integrator's diff of the tracked files still keeps such an edit.
+    func loopAnyoneWorking(paddock: UUID, starter: UUID, work: UUID, dir: URL) async -> String? {
+        let waits = Self.loopStarterWaits(open: openRequests[starter] ?? 0, waitsOnWork: ownWorkWaits[starter]?[work] ?? 0)
+        return await loopOthersWorking(paddock: paddock, starter: waits ? starter : nil, dir: dir)
+    }
+
+    /// M3c.2: every request the starter has open is a wait on the loop's work (and there is one).
+    static func loopStarterWaits(open: Int, waitsOnWork: Int) -> Bool { waitsOnWork > 0 && open == waitsOnWork }
+
+    func requestBegan(_ t: UUID) { openRequests[t, default: 0] += 1 }
+    func requestEnded(_ t: UUID) {
+        openRequests[t, default: 1] -= 1
+        if openRequests[t] ?? 0 <= 0 { openRequests[t] = nil }
+    }
+    func ownWaitBegan(_ t: UUID, on work: UUID) { ownWorkWaits[t, default: [:]][work, default: 0] += 1 }
+    func ownWaitEnded(_ t: UUID, on work: UUID) {
+        ownWorkWaits[t]?[work, default: 1] -= 1
+        if ownWorkWaits[t]?[work] ?? 0 <= 0 { ownWorkWaits[t]?[work] = nil }
+        if ownWorkWaits[t]?.isEmpty == true { ownWorkWaits[t] = nil }
+    }
+
     /// The paddock's terminals, but the starter, that can edit the tree `dir` (the paddock's worktree, or one lane).
     /// For a lane: not the other lanes' agents, nor a terminal in the paddock's worktree (that tree is the integrator's, M3.4).
     static func loopReaching(_ terminals: [TerminalRecord], paddock: UUID, starter: UUID?, dir: URL) -> [TerminalRecord] {
@@ -533,7 +558,7 @@ struct RouterLoopHost: LoopHost {
 
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }
-    func anyoneWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: nil, dir: dir) }
+    func anyoneWorking() async -> String? { await router.loopAnyoneWorking(paddock: paddock, starter: starter, work: work, dir: dir) }
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
     func namesTaken() async -> Set<String> { await router.loopNamesTaken() }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }

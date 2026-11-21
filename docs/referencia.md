@@ -870,11 +870,13 @@ dono aprovou a lista de tarefas e os checks.
   de novo na árvore integrada**; só então a tarefa fica feita. Conflito ou portão quebrado depois do merge: o merge é
   desfeito, o que a tentativa fez vira patch, e a tarefa refaz a tentativa numa faixa nova, a partir do HEAD novo (gasta
   uma tentativa; na última, é adiada). Antes de desfazer, o integrador mede de novo: se alguém (o Shepherd que iniciou
-  o laço também) está num turno na worktree do cercado, ou se ela não está como o merge a deixou (arquivo rastreado
-  editado, arquivo novo não rastreado, do dono ou do próprio portão, que o integrador não distingue), **nada é
-  resetado nem apagado**: o laço para (`dirtyTree` ou `othersWorking`), a nota lista o que ficou e, se o portão
-  quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a tarefa volta a aberta sem gastar
-  tentativa. `--max`, `--budget` e `--tries` são do laço inteiro. O orçamento é a **soma do
+  o laço também, salvo quando tudo o que ele tem aberto no daemon é o `collie work wait`/`work status` deste trabalho)
+  está num turno na worktree do cercado, ou se um arquivo rastreado não está como o merge o deixou (do dono ou do
+  próprio portão, que o integrador não distingue), **nada é resetado**: o laço para (`dirtyTree` ou `othersWorking`), a
+  nota lista o que ficou e, se o portão quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a
+  tarefa volta a aberta sem gastar tentativa. Arquivo novo **não rastreado** (relatório, cobertura) nunca é apagado nem
+  impede o desfazer: fica na worktree e a nota o cita. Depois de um portão que passou, o laço só para se um arquivo
+  rastreado mudou. `--max`, `--budget` e `--tries` são do laço inteiro. O orçamento é a **soma do
   tempo das faixas**, não o relógio de parede: quatro faixas rodando 25 s gastam 100 s. O tempo de cada faixa vai do
   início dela até ela sair, e **o tempo na fila do integrador conta** (a espera pela vez, o merge e o portão). As
   faixas em curso já contam enquanto rodam: o que uma fase (turno, check, portão) pode levar é o que ninguém usou

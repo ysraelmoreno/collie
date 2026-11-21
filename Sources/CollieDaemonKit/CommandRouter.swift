@@ -32,6 +32,9 @@ actor CommandRouter {
     /// Recent plugin events per panel (ring of `panelEventCap`) and the last sequence number handed out.
     var panelEvents: [UUID: [PanelEvent]] = [:]
     var eventSeq = 0
+    /// M3c.2: the requests each terminal has open in the daemon (by the id it sent: a forged id only adds), and, by work,
+    /// its `work.wait`/`work.status` on its own active work (counted after the caller is checked).
+    var openRequests: [UUID: Int] = [:], ownWorkWaits: [UUID: [UUID: Int]] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
     nonisolated let devices: DeviceService
@@ -379,6 +382,8 @@ actor CommandRouter {
         // R4: the daemon's git for an open terminal's request runs under its profile (a forged id only narrows)
         let caller = req.terminalId.flatMap(UUID.init(uuidString:)).flatMap { id in ws.terminals.first { $0.id == id } }
         let profile = caller.flatMap { startedOpen($0) && sandboxed($0) ? SandboxLaunch.profileFile($0.id, root: config.paths.root) : nil }
+        if let id = caller?.id { requestBegan(id) }
+        defer { if let id = caller?.id { requestEnded(id) } }
         return await GitRunner.$sandbox.withValue(profile) { await route(req, peer: peer) }
     }
 

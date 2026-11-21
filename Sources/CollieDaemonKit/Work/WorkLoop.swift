@@ -532,7 +532,9 @@ actor WorkLoop {
     /// Never awaited: the line is typed into the Shepherd only once it is idle, and a loop that waited for that stood
     /// still while the Shepherd was in a turn (up to the inject's hold), with the next task's terminal never opening.
     func reportEnd(_ work: UUID, _ task: String) async {
-        guard let t = try? await store.get(work)?.tasks.first(where: { $0.id == task }) else { return }
+        guard let w = try? await store.get(work), let t = w.tasks.first(where: { $0.id == task }) else { return }
+        // M3c.4: `--notify end` keeps a task done for the loop's end notice (a deferred one still goes now)
+        if w.loop?.notify == .end && t.state == .done { return }
         let line = WorkStatusText.taskEnded(t), host = host
         Task { await host.taskEnded(line) }
     }

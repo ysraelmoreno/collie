@@ -453,6 +453,7 @@ extension CommandRouter {
         if let l = WorkStatusText.loopLine(w, now: now) { lines.append(l) }
         lines += WorkStatusText.laneLines(w, now: now)   // M3.6: none without lanes
         if let g = WorkStatusText.gateLine(w) { lines.append(g) }
+        if let n = WorkStatusText.notifyLine(w) { lines.append(n) }
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),
                                              (.abandoned, "Dropped"), (.done, "Done")]

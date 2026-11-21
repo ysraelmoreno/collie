@@ -181,6 +181,11 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// M3.5, `work run --parallel N`: how many tasks may run at once, each in its lane. nil or 1: one at a time, in the
     /// paddock's worktree, as always.
     public var parallel: Int?
+    /// M3c.4, `work run --notify task|end`: `task` (or nil, a loop from before): the Shepherd hears of every task as
+    /// it ends, as always. `end`: not of a task done (each notice wakes a turn); a deferred task, a stop and the end
+    /// still reach it.
+    public enum Notify: String, Codable, Sendable, CaseIterable { case task, end }
+    public var notify: Notify?
     /// M3.5: one lane of a parallel loop: its folder's name, the `task` and `attempt` running in it, its `phase` (nil:
     /// between phases, or being integrated with no gate) and `since` when that phase holds.
     public struct LaneState: Codable, Sendable, Equatable {
@@ -218,15 +223,15 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
                 budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil, phase: Phase? = nil,
-                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil) {
-        self.parallel = parallel
+                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil) {
+        self.parallel = parallel; self.notify = notify
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
         self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate; self.phase = phase
         self.startedAt = startedAt; self.endedAt = endedAt
     }
     /// The older fields decode as always (a required one missing, or one of the wrong shape, is no loop). The newer
-    /// ones (`phase`, `phaseSince`, `stopReason`, `events`, `parallel`, `lanes`) only record: a malformed one is nil, a malformed event is dropped, and
+    /// ones (`phase`, `phaseSince`, `stopReason`, `events`, `parallel`, `lanes`, `notify`) only record: a malformed one is nil, a malformed event is dropped, and
     /// the loop survives. What is written (the synthesized `encode`) does not change.
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -245,6 +250,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         events = ((try? c.decodeIfPresent([Lossy].self, forKey: .events)) ?? nil)?.compactMap(\.event)
         parallel = (try? c.decodeIfPresent(Int.self, forKey: .parallel)) ?? nil
         lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
+        notify = (try? c.decodeIfPresent(Notify.self, forKey: .notify)) ?? nil
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {

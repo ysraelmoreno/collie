@@ -1,171 +1,104 @@
 import AppKit
 import SwiftUI
 import Testing
-@testable import CollieApp
-
-/// Probe: when does the ⤢ action fire for a synthetic click, with and without the re-add on mouseUp.
-@MainActor @Suite struct TerminalFullscreenClickTests {
-    final class Box { var fired = 0; var hop = -1 }
-
-    private func rig(_ box: Box) -> (NSWindow, NSView, TitleHost<FullscreenButton>, NSView) {
-        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false
-        let parent = NSView(frame: w.contentView!.bounds)
-        w.contentView!.addSubview(parent)
-        let node = NSView(frame: CGRect(x: 10, y: 10, width: 200, height: 100))
-        let host = TitleHost(rootView: FullscreenButton(action: { box.fired += 1 }))
-        host.frame = CGRect(x: 0, y: 0, width: 40, height: 32)
-        node.addSubview(host)
-        parent.addSubview(node)
-        let other = NSView(frame: CGRect(x: 250, y: 150, width: 100, height: 100))   // a sibling in front, not under the click
-        parent.addSubview(other)
-        w.makeKeyAndOrderFront(nil)
-        host.layoutSubtreeIfNeeded()
-        return (w, parent, host, other)
-    }
-
-    private func send(_ w: NSWindow, _ host: NSView, _ type: NSEvent.EventType) {
-        let at = host.convert(NSPoint(x: host.bounds.midX, y: host.bounds.midY), to: nil)
-        let e = NSEvent.mouseEvent(with: type, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                   windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
-        w.sendEvent(e)
-    }
-
-    private func hops(_ box: Box, _ n: Int) async {
-        for i in 0..<n {
-            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in DispatchQueue.main.async { c.resume() } }
-            if box.fired > 0, box.hop < 0 { box.hop = i }
-        }
-    }
-
-    @Test(arguments: [false, true]) func probe(readd: Bool) async {
-        let box = Box()
-        let (w, parent, host, other) = rig(box)
-        let node = host.superview!
-        if readd { host.onMouseUp = { parent.addSubview(node, positioned: .above, relativeTo: other) } }
-        send(w, host, .leftMouseDown)
-        send(w, host, .leftMouseUp)
-        let sync = box.fired
-        await hops(box, 20)
-        print("PROBE readd=\(readd) sync=\(sync) fired=\(box.fired) hop=\(box.hop)")
-        w.close()
-    }
-}
-
 import CollieCanvas
 import CollieClient
 import CollieCore
+@testable import CollieApp
 
-/// Probe 2: the real terminal node, its real title bar, with and without another node in front.
-@MainActor @Suite struct TerminalFullscreenRealProbe {
-    @Test(arguments: [(false, 1.0), (false, 0.7), (false, 1.5)]) func probe(behind: Bool, zoom: Double) async throws {
-        let canvas = CanvasState()
+/// M10.5: the ⤢ in a terminal's title bar on the canvas. Cause found by these tests (not the mouseUp re-add): the
+/// terminal node scales its bounds by the zoom, and SwiftUI reads a click inside the title host as the unscaled window
+/// offset from the host's top-left, so at any zoom ≠ 1 every SwiftUI control of the bar missed. Panels (frame only)
+/// and fullscreen (scale 1) were never scaled. The re-add on mouseUp is harmless: the button fires inside `super.mouseUp`.
+@MainActor @Suite(.serialized) struct TerminalFullscreenClickTests {
+    static let size = CGSize(width: 640, height: 400)   // canvas pt
+    /// The ⤢ in canvas pt: right padding 10, the "…" menu, spacing 8, then the button (found by scanning at zoom 1).
+    static let button = CGPoint(x: size.width - 46, y: TerminalNodeView.titleHeight / 2)
+
+    final class Parent: NSView {
+        var adds = 0
+        override func didAddSubview(_ v: NSView) { super.didAddSubview(v); adds += 1 }
+    }
+
+    struct Rig {
+        let canvas: CanvasState, window: NSWindow, parent: Parent, node: TerminalNodeView, other: TerminalNodeView
+        func at(_ p: CGPoint) -> NSPoint { node.convert(NSPoint(x: p.x, y: p.y), to: nil) }
+        func send(_ type: NSEvent.EventType, _ p: CGPoint) {
+            window.sendEvent(NSEvent.mouseEvent(with: type, location: at(p), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+        }
+        func click(_ p: CGPoint = TerminalFullscreenClickTests.button) { send(.leftMouseDown, p); send(.leftMouseUp, p) }
+        var nodes: [NSView] { parent.subviews.filter { $0 is TerminalNodeView } }
+        func close() { node.unmount(); other.unmount(); window.close() }
+    }
+
+    /// `node` at the zoom, and another node placed away from the click; `inFront` puts that one on top.
+    private func rig(zoom: CGFloat, inFront: Bool) -> Rig {
+        let canvas = CanvasState(); canvas.zoom = zoom
         let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-fsc-\(UUID())")))
-        let id = UUID()
-        let v = TerminalNodeView(id: id, client: client, canvas: canvas, node: NodeController(id: id, client: client))
-        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
+        func make() -> TerminalNodeView {
+            let id = UUID()
+            return TerminalNodeView(id: id, client: client, canvas: canvas, node: NodeController(id: id, client: client))
+        }
+        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1600, height: 1000), styleMask: [.titled], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
-        let parent = NSView(frame: w.contentView!.bounds)
+        let parent = Parent(frame: w.contentView!.bounds)
         w.contentView!.addSubview(parent)
-        parent.addSubview(v)
-        let size = CGSize(width: 640, height: 400)
-        canvas.zoom = zoom
-        v.place(CGRect(origin: CGPoint(x: 20, y: 20), size: CGSize(width: size.width * zoom, height: size.height * zoom)), canvasSize: size)
-        v.setInteractive(true)
-        let other = NSView(frame: CGRect(x: 900, y: 600, width: 100, height: 100))
-        if behind { parent.addSubview(other) }
-        let mini = Minimap(canvas: canvas); parent.addSubview(mini)
+        let node = make(), other = make()
+        let s = Self.size, screen = CGSize(width: s.width * zoom, height: s.height * zoom)
+        node.place(CGRect(origin: CGPoint(x: 20, y: 20), size: screen), canvasSize: s)
+        other.place(CGRect(origin: CGPoint(x: 40 + screen.width, y: 40 + screen.height), size: screen), canvasSize: s)
+        for v in inFront ? [node, other] : [other, node] { parent.addSubview(v) }
+        parent.addSubview(Minimap(canvas: canvas))
+        for v in [node, other] { v.setInteractive(true); v.layoutSubtreeIfNeeded() }
         w.makeKeyAndOrderFront(nil)
-        v.layoutSubtreeIfNeeded()
-        var hitX: CGFloat?
-        for x in stride(from: size.width - 64, to: size.width - 10, by: 2) {
-            canvas.fullscreen = nil
-            if behind, parent.subviews.firstIndex(of: v)! > parent.subviews.firstIndex(of: other)! {
-                parent.addSubview(other, positioned: .below, relativeTo: mini)
-            }
-            let at = v.convert(NSPoint(x: x, y: 16), to: nil)
-            for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                w.sendEvent(NSEvent.mouseEvent(with: t, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                               windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
-            }
-            for _ in 0..<5 { await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in DispatchQueue.main.async { c.resume() } } }
-            print("PROBE2 zoom=\(zoom) x=\(x) hit=\(String(describing: w.contentView!.hitTest(at))) fs=\(canvas.fullscreen != nil)")
-            if canvas.fullscreen != nil { hitX = x; break }
-        }
-        print("PROBE2 zoom=\(zoom) hitX=\(String(describing: hitX))")
-        v.unmount(); w.close()
+        return Rig(canvas: canvas, window: w, parent: parent, node: node, other: other)
     }
-}
 
-/// Probe 3: where a scaled ancestor makes SwiftUI think the click landed.
-@MainActor @Suite struct TerminalFullscreenMapProbe {
-    final class Flipped: NSView { override var isFlipped: Bool { true } }
-    @Test(arguments: [1.0, 0.5, 2.0]) func map(zoom: Double) async {
-        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false
-        let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
-        node.setBoundsSize(CGSize(width: 600, height: 300))
-        var fired = 0
-        let host = TitleHost(rootView: FullscreenButton(action: { fired += 1 }))
-        host.frame = CGRect(x: 200, y: 0, width: 40, height: 32)
-        node.addSubview(host)
-        w.contentView!.addSubview(node)
-        w.makeKeyAndOrderFront(nil)
-        host.layoutSubtreeIfNeeded()
-        var hits: [String] = []
-        for wx in stride(from: 0.0, to: 1200, by: 4) {
-            for wy in stride(from: 300.0, to: 800, by: 4) {
-                fired = 0
-                for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                    w.sendEvent(NSEvent.mouseEvent(with: t, location: NSPoint(x: wx, y: wy), modifierFlags: [], timestamp: 0,
-                                                   windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
-                }
-                if fired > 0 { hits.append("\(Int(wx)),\(Int(wy))") }
-            }
-        }
-        let hf = host.convert(host.bounds, to: nil)
-        print("PROBE3 zoom=\(zoom) hostInWindow=\(hf) hits=\(hits.count) first=\(hits.first ?? "-") last=\(hits.last ?? "-")")
-        w.close()
+    /// Lets anything the click queued on the main queue run (no sleep, no clock).
+    private func settle() async {
+        for _ in 0..<5 { await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in DispatchQueue.main.async { c.resume() } } }
     }
-}
 
-/// Probe 4: the same map with an AppKit-backed (borderless) button. NSButton tracks the press itself (it pulls the
-/// mouseUp from the queue), so the up is posted first and the down sent.
-@MainActor @Suite(.serialized) struct TerminalFullscreenBorderlessProbe {
-    final class Flipped: NSView { override var isFlipped: Bool { true } }
-    struct B: View {
-        let action: () -> Void
-        var body: some View { Button(action: action) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.buttonStyle(.borderless) }
+    /// The reported bug: another node in front, canvas zoomed. Fails before the fix (the click never reaches the button).
+    @Test(arguments: [0.7, 1.0, 1.5]) func clickWithANodeInFrontFires(zoom: Double) async {
+        let r = rig(zoom: zoom, inFront: true); defer { r.close() }
+        r.click()
+        await settle()
+        #expect(r.canvas.fullscreen == r.node.id)
+        #expect(r.nodes.last === r.node)   // and it came to the front
     }
-    private func tree(_ v: NSView, _ d: Int = 0) -> String { String(repeating: " ", count: d) + "\(type(of: v)) \(v.frame)\n" + v.subviews.map { tree($0, d + 1) }.joined() }
-    @Test(arguments: [0.5]) func map(zoom: Double) async {
-        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false
-        let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
-        node.setBoundsSize(CGSize(width: 600, height: 300))
-        var fired = 0
-        let host = TitleHost(rootView: B(action: { fired += 1 }))
-        host.frame = CGRect(x: 200, y: 0, width: 40, height: 32)
-        node.addSubview(host)
-        w.contentView!.addSubview(node)
-        w.makeKeyAndOrderFront(nil)
-        host.layoutSubtreeIfNeeded()
-        print("PROBE4 tree\n" + tree(host))
-        let hf = host.convert(host.bounds, to: nil)
-        var hits: [String] = []
-        for wx in stride(from: hf.minX - 8, to: hf.maxX + 8, by: 2) {
-            for wy in stride(from: hf.minY - 8, to: hf.maxY + 8, by: 2) {
-                fired = 0
-                let ev = { (t: NSEvent.EventType) in NSEvent.mouseEvent(with: t, location: NSPoint(x: wx, y: wy), modifierFlags: [], timestamp: 0,
-                                                  windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)! }
-                NSApplication.shared.postEvent(ev(.leftMouseUp), atStart: false)
-                w.sendEvent(ev(.leftMouseDown))
-                if let up = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) { w.sendEvent(up) }
-                if fired > 0 { hits.append("\(Int(wx)),\(Int(wy))") }
-                print("PROBE4 at \(wx),\(wy) fired=\(fired)"); fflush(stdout)
-            }
-        }
-        print("PROBE4 zoom=\(zoom) hostInWindow=\(hf) hits=\(hits.count) first=\(hits.first ?? "-") last=\(hits.last ?? "-")")
-        w.close()
+
+    @Test(arguments: [0.5, 0.7, 1.0, 2.0]) func clickWithoutANodeInFrontStillFires(zoom: Double) async {
+        let r = rig(zoom: zoom, inFront: false); defer { r.close() }
+        r.click()
+        await settle()
+        #expect(r.canvas.fullscreen == r.node.id)
+    }
+
+    /// A drag that starts on the ⤢ moves the node: no fullscreen, and the view is never re-added mid-drag
+    /// (that would cancel the mouse tracking); it comes to the front only on mouseUp.
+    @Test func dragAcrossTheBarNeitherFiresNorReaddsMidDrag() async {
+        let r = rig(zoom: 0.7, inFront: true); defer { r.close() }
+        let adds = r.parent.adds
+        var p = Self.button
+        r.send(.leftMouseDown, p)
+        for _ in 0..<10 { p.x -= 12; r.send(.leftMouseDragged, p) }
+        #expect(r.parent.adds == adds)
+        r.send(.leftMouseUp, p)
+        await settle()
+        #expect(r.canvas.fullscreen == nil)
+        #expect(r.nodes.last === r.node)
+    }
+
+    /// Coming to the front re-adds the view, which drops the first responder: focus goes back to its terminal.
+    @Test func clickKeepsTheTerminalFocused() async throws {
+        let r = rig(zoom: 0.7, inFront: true); defer { r.close() }
+        let t = try #require(r.node.term)
+        r.window.makeFirstResponder(t)
+        r.click()
+        await settle()
+        #expect(r.nodes.last === r.node)
+        #expect(r.window.firstResponder === t)
     }
 }

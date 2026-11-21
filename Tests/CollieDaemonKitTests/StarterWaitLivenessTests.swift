@@ -27,11 +27,15 @@ import CollieProtocol
             return await cond()
         }
         func parked(_ n: Int) async -> Bool {
-            await until { await router.work.changeWaiterCount == n && (await router.ownWorkWaits[me]?[work] ?? 0) == n }
+            await until {
+                let waits = await router.ownWorkWaits[me]?[work] ?? 0
+                return await router.work.changeWaiterCount == n && waits == n
+            }
         }
         func clean() async -> Bool {
             await until {
-                await router.openRequests[me] == nil && (await router.ownWorkWaits[me]) == nil && (await router.work.changeWaiterCount) == 0
+                let open = await router.openRequests[me], own = await router.ownWorkWaits[me], parked = await router.work.changeWaiterCount
+                return open == nil && own == nil && parked == 0
             }
         }
         /// A `work.hook` of Claude's PostToolUse, as `collie hook claude-tool` sends it.

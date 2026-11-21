@@ -1,43 +1,71 @@
 import Foundation
 
-/// M5.5: a Shepherd whose transcript passed `threshold` is told, once every `every`, that each turn rereads it and a new
-/// session would be cheaper. Only the file's size is looked at (`stat` of a path `TranscriptChunk.allowed` accepts: a
-/// regular `.jsonl` under the agent's projects dir, no symlink, no FIFO); its content is never read nor quoted.
+/// M5.5, M10.1: a Shepherd whose context passed `warn` (or `strong`) tokens is told that each turn rereads it and that a
+/// new session starts from the handoff (`collie work handoff`). The context is the last call's: input + cache written +
+/// cache read of the last assistant `usage` in the transcript's tail (at most `tailMax` bytes, of a path
+/// `TranscriptChunk.allowed` accepts: a regular `.jsonl` under the agent's projects dir, no symlink, no FIFO). Only those
+/// numbers are kept; no text is ever kept nor quoted. Once per level every `every`; a higher level goes out at once.
 enum ContextAdvice {
-    static let threshold: UInt64 = 20 << 20
+    static let warn = 150_000, strong = 250_000
     static let every: TimeInterval = 2 * 3600
+    static let tailMax: UInt64 = 256 << 10
 
-    /// The advice line: fixed text, only the size (whole MB) varies.
-    static func line(megabytes: UInt64) -> String {
-        "Contexto grande (\(megabytes) MB): cada turno relê ~esse contexto. Considere uma sessão nova; as decisões estão na memória e nos docs."
+    /// When the advice last went out and at which level (1: warn, 2: strong).
+    struct Advised: Equatable, Sendable { var at: Date; var level: Int }
+
+    static func level(_ tokens: Int) -> Int { tokens >= strong ? 2 : tokens >= warn ? 1 : 0 }
+
+    /// The advice line: fixed text per level, only the number (whole thousands) varies.
+    static func line(tokens: Int, level: Int) -> String {
+        let k = tokens / 1000
+        return level >= 2
+            ? "Contexto muito grande (\(k) mil tokens): cada turno relê esse contexto. Abra uma sessão nova agora e leia a passagem de turno: collie work handoff."
+            : "Contexto grande (\(k) mil tokens): cada turno relê esse contexto. Considere uma sessão nova e leia a passagem de turno: collie work handoff."
     }
 
-    /// The transcript's size in bytes, or nil when the path is not allowed or cannot be measured.
-    static func size(_ path: String, projectsDir: URL) -> UInt64? {
+    /// The last call's context in tokens, from the transcript's tail; nil: the path is not allowed, it cannot be read, or
+    /// no call with usage is in the tail. Sidechain lines are not the session's own context.
+    static func lastContext(_ path: String, projectsDir: URL) -> Int? {
         guard let url = TranscriptChunk.allowed(path, projectsDir: projectsDir) else { return nil }
         var st = stat()
         guard lstat(url.path, &st) == 0, st.st_mode & S_IFMT == S_IFREG, st.st_size >= 0 else { return nil }
-        return UInt64(st.st_size)
+        let size = UInt64(st.st_size), from = size > tailMax ? size - tailMax : 0
+        var last: Int?
+        // the first line of the tail may be cut: it is not JSON and is skipped
+        guard TranscriptChunk.lines(url, from: from, maxBytes: 2 * tailMax, { raw in
+            guard let e = try? JSONSerialization.jsonObject(with: raw) as? [String: Any], e["type"] as? String == "assistant",
+                  e["isSidechain"] as? Bool != true,
+                  let msg = e["message"] as? [String: Any], let u = msg["usage"] as? [String: Any] else { return }
+            func n(_ k: String) -> Int { max(0, (u[k] as? NSNumber)?.intValue ?? 0) }
+            let c = n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens")
+            if c > 0 { last = c }
+        }) != nil else { return nil }
+        return last
     }
 
-    /// The advice for this Stop, or nil: not a Shepherd, the memory ask goes out this Stop (one text per Stop), advised
-    /// less than `every` ago, small transcript, or any failure to measure.
-    static func advice(transcript: String?, projectsDir: URL, isShepherd: Bool, memoryAsked: Bool, last: Date?, now: Date) -> String? {
-        guard isShepherd, !memoryAsked, let transcript else { return nil }
-        if let last, now.timeIntervalSince(last) < every { return nil }
-        guard let bytes = size(transcript, projectsDir: projectsDir), bytes > threshold else { return nil }
-        return line(megabytes: bytes >> 20)
+    /// What to record when the advice goes out this Stop, or nil: not a Shepherd, the memory ask goes out this Stop (one
+    /// text per Stop), no number, under `warn`, or the same (or a lower) level advised less than `every` ago.
+    static func decide(tokens: Int?, isShepherd: Bool, memoryAsked: Bool, last: Advised?, now: Date) -> Advised? {
+        guard isShepherd, !memoryAsked, let tokens else { return nil }
+        let l = level(tokens)
+        guard l > 0 else { return nil }
+        if let last, l <= last.level, now.timeIntervalSince(last.at) < every { return nil }
+        return Advised(at: now, level: l)
     }
 }
 
 extension CommandRouter {
-    /// M5.5: `ContextAdvice.advice` for `tid`'s Stop, its clock per terminal (`contextAdvisedAt`). Never fails.
+    /// M5.5, M10.1: `ContextAdvice` for the Shepherd `tid`'s Stop, its clock per terminal (`contextAdvisedAt`). The
+    /// measured context is logged (`pastorContext`, numbers only) for `memory stats`. Never fails.
     func contextAdvice(_ tid: UUID, transcript: String?, memoryAsked: Bool, now: Date = Date()) async -> String? {
-        guard let me = ws.terminals.first(where: { $0.id == tid }) else { return nil }
+        guard let me = ws.terminals.first(where: { $0.id == tid }), me.isShepherd, !memoryAsked, let transcript else { return nil }
         let dir = await projectsDir(me)
-        guard let a = ContextAdvice.advice(transcript: transcript, projectsDir: dir, isShepherd: me.isShepherd,
-                                           memoryAsked: memoryAsked, last: contextAdvisedAt[tid], now: now) else { return nil }
-        contextAdvisedAt[tid] = now
-        return a
+        guard let tokens = try? await UnixSocketClient.offPool({ ContextAdvice.lastContext(transcript, projectsDir: dir) }) else { return nil }
+        let session = URL(fileURLWithPath: transcript).deletingPathExtension().lastPathComponent
+        memory.events.emit(MemoryEvent(type: .pastorContext, terminal: tid, session: session, project: await memory.repo(for: me.cwd).root?.path,
+                                       tokens: tokens))
+        guard let a = ContextAdvice.decide(tokens: tokens, isShepherd: true, memoryAsked: false, last: contextAdvisedAt[tid], now: now) else { return nil }
+        contextAdvisedAt[tid] = a
+        return ContextAdvice.line(tokens: tokens, level: a.level)
     }
 }

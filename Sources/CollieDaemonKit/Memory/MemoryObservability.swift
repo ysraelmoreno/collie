@@ -81,7 +81,10 @@ enum MemoryObservability {
         var completedTasks = 0
         /// Session tokens (all four kinds) of the works completed in the period, per work; nil without one.
         var sessionTokensPerTask: Double?
+        /// M10.1: the Shepherd's context per session (the last measure and the most), the highest first; numbers only.
+        var pastorContext: [PastorContext] = []
     }
+    struct PastorContext: Codable, Sendable, Equatable { var session: String; var current: Int; var max: Int }
     struct Week: Codable, Sendable, Equatable {
         var start: Date
         var tokensPerTask: Double?, searchesPerTask: Double?, coverage: Double?
@@ -244,8 +247,19 @@ enum MemoryObservability {
         r.byAgent = agents(inPeriod, now: now)
         let t = tasks(events, from: since, to: now)
         c.completedTasks = t.count; c.sessionTokensPerTask = t.perTask
+        c.pastorContext = pastorContext(inPeriod)
         r.cost = c
         return r
+    }
+
+    /// M10.1: per session, the last `pastorContext` measure and the most; at most `topMax` sessions, the highest first.
+    static func pastorContext(_ es: [MemoryEvent]) -> [PastorContext] {
+        var out: [String: PastorContext] = [:]
+        for e in es.sorted(by: { $0.at < $1.at }) where e.type == .pastorContext {
+            guard let s = e.session, let n = e.tokens else { continue }
+            out[s] = PastorContext(session: s, current: n, max: Swift.max(n, out[s]?.max ?? 0))
+        }
+        return out.values.sorted { ($0.max, $0.session) > ($1.max, $1.session) }.prefix(topMax).map { $0 }
     }
 
     static func sessionTokens(_ e: MemoryEvent) -> Int {

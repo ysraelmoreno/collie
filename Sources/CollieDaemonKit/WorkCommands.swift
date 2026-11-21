@@ -433,6 +433,19 @@ extension CommandRouter {
                     + (a.reconstructed ? " · reconstruído" : "")
             }.joined(separator: "\n"))])
 
+        case "work.handoff":   // M10.1: the caller's paddock's handoff file (the app: the paddock it names)
+            let pid: UUID?
+            if let caller { pid = caller.paddockId }
+            else if let name = str(r, "paddock"), !name.isEmpty {
+                guard let p = ws.paddocks.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame || $0.id.uuidString.lowercased() == name.lowercased() })
+                else { throw missing("Paddock '\(name)' not found") }
+                pid = p.id
+            } else { pid = nil }
+            let text = pid.flatMap { id in
+                (try? Data(contentsOf: Handoff.file(root: config.paths.root, paddock: id))).flatMap { $0.count <= 2 * Handoff.maxBytes ? String(data: $0, encoding: .utf8) : nil }
+            }
+            return .object(["output": .string(text ?? Handoff.none), "exists": .bool(text != nil)])
+
         case "work.usage":   // M5.4: the caller's paddock's newest works, open or closed, with their token counts only
             let t = try target(), limit = Int(try num(r, "limit", max: 100) ?? 10)
             let works = try await work.list(includeClosed: true).filter { visible($0) && $0.paddockId == t.paddockId }

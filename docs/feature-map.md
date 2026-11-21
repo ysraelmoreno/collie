@@ -143,6 +143,12 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Resumo imutável (T6.1):** ao fechar (`work done`, ou o fim do laço de um trabalho já fechado) o daemon grava uma vez
   `<raiz>/work/work-archive/<id>.json` (`-2`, `-3`… a cada novo fechamento; diário até 500 eventos; ≤ 1 MB; os 200 mais
   novos ficam). `collie work history [--limit N] [--id <trabalho>]` (MCP `work_history`) lista só os do seu cercado.
+- **Passagem de turno (M10.1):** ao fim de cada laço o daemon grava `<raiz>/handoff/<id do cercado>.md` (um por cercado,
+  sobrescrito, 0600, ≤ 4 KB: trabalho, tarefas, shas curtos, decisões e armadilhas novas só por título e id, próxima onda
+  se o roadmap tiver o arquivo). `collie work handoff` (MCP `work_handoff`) imprime. O aviso de contexto do Pastor
+  (`ContextAdvice`) mede o contexto da última chamada (rabo de 256 KB do transcript, só números): 150 mil avisa, 250 mil
+  avisa forte, um por nível a cada 2 h, e cita esse comando. `collie memory stats` traz `cost.pastorContext` (atual e
+  máximo por sessão).
 
 ### Plug-ins externos e apps (`WebPluginPanel`)
 

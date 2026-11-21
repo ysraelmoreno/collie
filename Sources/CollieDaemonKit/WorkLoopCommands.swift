@@ -268,6 +268,7 @@ extension CommandRouter {
         }
         SandboxLaunch.remove(id, root: config.paths.root)
         guard let w = try? await work.get(id) else { return }
+        await writeHandoff(w, paddock: paddock)   // M10.1: before the notice, so the starter can read it at once
         try? await asks.inject(to: starter, prompt: WorkStatusText.loopEnded(w), afterQuiet: true)
     }
 

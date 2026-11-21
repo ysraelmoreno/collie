@@ -454,9 +454,10 @@ extension CommandRouter {
                 var a = WorkArchive.make(w, paddock: nil, terminal: nil, loopSummary: ""); a.closedAt = nil; return a
             }
             let closed = try await work.history { $0.paddockId == scope }
-            let works = (open + closed.filter { c in !open.contains { $0.id == c.id } })
-                .filter { only.map { id in $0.id.hasPrefix(id) } ?? true }
-                .sorted { ($0.openedAt ?? .distantPast) > ($1.openedAt ?? .distantPast) }.prefix(limit)
+            let openIds = Set(open.map(\.id))
+            let all: [WorkArchive] = open + closed.filter { !openIds.contains($0.id) }
+            let picked: [WorkArchive] = all.filter { (a: WorkArchive) -> Bool in only.map { a.id.hasPrefix($0) } ?? true }
+            let works = picked.sorted { ($0.openedAt ?? .distantPast) > ($1.openedAt ?? .distantPast) }.prefix(limit)
             if let only, works.isEmpty { throw missing("no work \(only) in this paddock") }
             func row(_ c: TokenCount?) -> [String: JSONValue] {
                 c.map { ["tokens": (try? isoJSON($0)) ?? .null, "index": .number($0.index)] } ?? [:]

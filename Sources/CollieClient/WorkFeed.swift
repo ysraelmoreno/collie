@@ -102,7 +102,7 @@ public struct HistoryEntry: Decodable, Sendable, Equatable {
     }
 
     /// The rows a `work.history` answer holds (a bare array, or `{works|history: [...]}`); a row that does not decode is skipped.
-    nonisolated static func entries(_ v: JSONValue?) -> [HistoryEntry] {
+    public nonisolated static func entries(_ v: JSONValue?) -> [HistoryEntry] {
         var list: [JSONValue] = []
         switch v {
         case .array(let a)?: list = a

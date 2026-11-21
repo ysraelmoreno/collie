@@ -50,6 +50,8 @@ struct PreferencesView: View {
     @State private var designFirst = DesignFirst.artifact
     @State private var sandboxMode = SandboxMode.open
     @State private var googleFonts = true
+    @State private var loopModel = ""
+    @State private var loopModelError: String?
     @State private var fonts: [FontRow] = []
     @State private var newFont = ""
     @State private var fontBusy = false
@@ -166,7 +168,7 @@ struct PreferencesView: View {
         case .terminal: VStack(alignment: .leading, spacing: 22) { terminalSection; fontsSection }
         case .atualizacoes: UpdatePreferences(client: client)
         case .desenho: VStack(alignment: .leading, spacing: 22) { DesignEnginePreferences(client: client); designSection; sandboxSection }
-        case .lacos: loopTrustSection
+        case .lacos: VStack(alignment: .leading, spacing: 22) { loopTrustSection; loopModelSection }
         case .memoria: VStack(alignment: .leading, spacing: 22) { memorySection; CuratorPreferences(client: client); CursorMemoryPreferences(client: client) }
         case .plugins: PluginsPreferences(client: client)
         case .celular: CelularPreferences(client: client)
@@ -265,6 +267,27 @@ struct PreferencesView: View {
                     .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// M5.6: `admin.loop-model`, what `work run` uses when given no --model (Claude agents); empty: the Shepherd's.
+    private var loopModelSection: some View {
+        section("Modelo dos agentes") {
+            Text("O modelo dos agentes de um laço quando collie work run não traz --model (só agentes Claude). Vazio: o modelo do Pastor.")
+                .font(.collieMono(12)).foregroundStyle(Color.collieMuted).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                TextField("ex.: claude-sonnet-5-5", text: $loopModel).frame(width: 220).onSubmit(saveLoopModel)
+                Button("Salvar", action: saveLoopModel).disabled(client.state != .connected)
+            }
+            if let loopModelError { Text(loopModelError).font(.collieMono(12)).foregroundStyle(Color.collieDanger) }
+        }
+        .task {
+            guard client.state == .connected, case .object(let o)? = try? await client.adminCall("admin.loop-model", [:]) else { return }
+            if case .string(let m)? = o["model"] { loopModel = m } else { loopModel = "" }
+        }
+    }
+
+    private func saveLoopModel() {
+        Task { loopModelError = await call("admin.loop-model", ["model": .string(loopModel.trimmingCharacters(in: .whitespaces))]) }
     }
 
     private var fontsSection: some View {

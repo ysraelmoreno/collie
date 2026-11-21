@@ -80,7 +80,10 @@ extension CommandRouter {
         let notify = try Self.loopNotify(str(r, "notify"))
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
-                                 preset: str(r, "preset"), model: str(r, "model"), command: str(r, "command"),
+                                 preset: str(r, "preset"),
+                                 model: Self.loopModel(given: str(r, "model"), preference: CollieSettings.load(config.paths.root).loopModel,
+                                                       preset: str(r, "preset"), command: str(r, "command"), shepherd: t),
+                                 command: str(r, "command"),
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
                                  spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify)
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
@@ -115,6 +118,30 @@ extension CommandRouter {
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
         return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")])
+    }
+
+    /// M5.6: `--model` given always wins; absent, the daemon's `loopModel`, but only for agents that run Claude (summon
+    /// refuses `--model` for any other: a preference must never fail every attempt of a codex or shell loop); else nil,
+    /// the Shepherd's model as before. The agent is the summon's: `--preset`, else the Shepherd's (with its command).
+    static func loopModel(given: String?, preference: String?, preset: String?, command: String?, shepherd t: TerminalRecord) -> String? {
+        if let given { return given }
+        guard let preference, let p = preset.map({ Preset(rawValue: $0) }) ?? t.preset else { return nil }
+        let probe = TerminalRecord(id: UUID(), name: "loop", preset: p, command: command ?? (preset == nil ? t.command : nil), cwd: "/", isShepherd: false)
+        return p == .claude || AgentLaunch.isClaude(probe) ? preference : nil
+    }
+
+    /// `admin.loop-model` (app only): nil reads; "" clears; else a model id (`CollieSettings.isLoopModel`), saved.
+    func setLoopModel(_ v: String?) throws -> JSONValue {
+        var s = CollieSettings.load(config.paths.root)
+        if let v {
+            let m = v.trimmingCharacters(in: .whitespaces)
+            guard m.isEmpty || CollieSettings.isLoopModel(m) else {
+                throw ProtocolError(code: .invalidArgs, message: "model must be a model id (letters, digits, . _ : -, up to 64), or empty for the Shepherd's")
+            }
+            s.loopModel = m.isEmpty ? nil : m
+            do { try s.save(config.paths.root) } catch { throw ProtocolError(code: .internal, message: "preferences.json: \(error)") }
+        }
+        return .object(["model": s.loopModel.map(JSONValue.string) ?? .null])
     }
 
     /// M5.1: `--notify` absent is `end` for a new loop (a loop already running keeps what its state says: nil, `task`);

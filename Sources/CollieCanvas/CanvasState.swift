@@ -36,10 +36,10 @@ public final class CanvasState {
     }
 
     /// First placement of a live node: its pending frame, else the free spot nearest `near` (its creator's frame),
-    /// else the next free grid cell.
+    /// else the next free grid cell. Only shown frames block: other paddocks' are never drawn beside this one.
     public func place(_ id: UUID, viewport: CGSize, near: CGRect? = nil) {
         frames[id] = pendingFrames.removeValue(forKey: id)
-            ?? near.map { nearestFreeFrame(size: Self.defaultTerminalSize, near: $0, avoiding: Array(frames.values)) }
+            ?? near.map { nearestFreeFrame(size: Self.defaultTerminalSize, near: $0, avoiding: shownFrames) }
             ?? placeNew(viewport: viewport)
     }
 
@@ -92,9 +92,10 @@ public final class CanvasState {
             CGRect(x: v.minX + 16 + CGFloat(k % cols) * step.width, y: v.minY + 16 + CGFloat(k / cols) * step.height,
                    width: size.width, height: size.height)
         }
-        let last = 4 * frames.count
+        let taken = shownFrames
+        let last = 4 * taken.count
         // ponytail: O(cells × frames) scan; fine for hundreds of nodes, use a spatial index past that
-        return (0...last).lazy.map(cell).first { r in !self.frames.values.contains { $0.intersects(r) } } ?? cell(last)
+        return (0...last).lazy.map(cell).first { r in !taken.contains { $0.intersects(r) } } ?? cell(last)
     }
 
     // MARK: tela cheia

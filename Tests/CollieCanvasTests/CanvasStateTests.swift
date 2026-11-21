@@ -81,6 +81,22 @@ import Testing
         #expect(s.frames[other]!.minX < 1300)
     }
 
+    @Test func hiddenPaddockFramesDoNotPushPlacementAway() {
+        let s = CanvasState(), maker = UUID(), id = UUID(), solo = UUID()
+        let m = CGRect(x: 0, y: 0, width: 640, height: 400)
+        s.frames[maker] = m
+        for k in 0..<40 {   // another paddock's terminals, kept but not drawn, all around the creator
+            s.frames[UUID()] = CGRect(x: CGFloat(k % 8 - 4) * 672, y: CGFloat(k / 8 - 2) * 432, width: 640, height: 400)
+        }
+        s.shown = [maker, id, solo]
+        s.place(id, viewport: vp, near: m)
+        let r = s.frames[id]!
+        #expect(!r.intersects(m) && abs(r.midX - m.midX) <= 700 && abs(r.midY - m.midY) <= 450)
+        s.offset = CGPoint(x: -2000, y: -1000)
+        s.place(solo, viewport: vp)   // no creator: first grid cell of the view, not pushed below hidden frames
+        #expect(s.frames[solo]!.origin == CGPoint(x: -1984, y: -984))
+    }
+
     @Test func placeNewNeverStacksManyNodes() {
         let s = CanvasState()
         var rects: [CGRect] = []

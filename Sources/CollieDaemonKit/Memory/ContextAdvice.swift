@@ -1,4 +1,5 @@
 import Foundation
+import CollieCore
 
 /// M5.5, M10.1: a Shepherd whose context passed `warn` (or `strong`) tokens is told that each turn rereads it and that a
 /// new session starts from the handoff (`collie work handoff`). The context is the last call's: input + cache written +

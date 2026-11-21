@@ -124,7 +124,7 @@ private func assistant(input: Int, write: Int = 0, read: Int = 0, output: Int = 
     }
 
     @Test func handoffStaysUnderFourKilobytes() {
-        let many = (0..<40).map { Handoff.Memory(id: UUID(), kind: .decision, title: String(repeating: "d", count: 150)) }
+        let many = (0..<40).map { _ in Handoff.Memory(id: UUID(), kind: .decision, title: String(repeating: "d", count: 150)) }
         let s = Handoff.text(work(tasks: 200), memories: many, nextWave: "Onda 11")
         #expect(s.utf8.count <= Handoff.maxBytes)
         #expect(s.contains("… e mais"))
@@ -160,7 +160,7 @@ private func assistant(input: Int, write: Int = 0, read: Int = 0, output: Int = 
             try await d.router.work.update(w.id) { $0.loop = WorkLoopState(state: .finished, startedAt: Date()) }
             let pid = UUID()
             await d.router.loopEnded(w.id, starter: a.uuid, paddock: pid)
-            let f = Handoff.file(root: d.router.config.paths.root, paddock: pid)
+            let f = Handoff.file(root: p.root, paddock: pid)
             let first = try String(contentsOf: f, encoding: .utf8)
             #expect(first.contains("Primeiro"))
             let mode = try #require(try FileManager.default.attributesOfItem(atPath: f.path)[.posixPermissions] as? NSNumber)

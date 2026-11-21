@@ -24,6 +24,10 @@ extension WorkLoop {
         var integrating: Set<String> = []
         /// The first lane that said the loop must stop, and why.
         var stop: WorkLoopState.Stop?
+        /// M3b.6: the integrations running, by task, and whether the daemon's stop cancelled them (only it does: a
+        /// budget spent or the owner's stop still lets a merge end integrated or undone, as before).
+        var integrations: [String: Task<LaneIntegrator.Result?, Never>] = [:]
+        var aborted = false
         let signal: AsyncStream<Wake>.Continuation
     }
 
@@ -91,6 +95,12 @@ extension WorkLoop {
         }
         // the stream ended under the loop: the daemon is stopping
         if stop == nil, end != .finished { stop = .init(stopping.contains(id) ? .requested : .cancelled) }
+        // M3b.6: the daemon stopping (the loop's own task cancelled) also cancels the integrations running: a gate on the
+        // merged tree is killed and the merge undone under M3b.2's rule. Any other stop lets them end.
+        if stop?.code == .cancelled {
+            lanes[id]?.aborted = true
+            for t in (lanes[id]?.integrations ?? [:]).values { t.cancel() }
+        }
         // stopping: every lane is cancelled; each dismisses its agent, reopens its task and removes itself
         for t in alive.values { t.cancel() }
         for t in alive.values { await t.value }
@@ -211,12 +221,15 @@ extension WorkLoop {
         // M3b.4: the budget as it is now, not as the lane found it: the time in the integrator's queue counted too
         let timeout = Swift.min(checkTimeout, Duration.seconds(loop.budget == nil ? 86_400 : await laneShare(id)))
         // in a task of its own: a stop never cuts a merge in half. It ends integrated or undone, whatever was cancelled.
-        // M3b.6: the lane's cancel (the loop or the daemon stopping) reaches it: a gate running on the merged tree is
-        // killed and the merge undone, under M3b.2's rule. The lane is removed only after this returns (`runLane`).
+        // M3b.6: only the daemon's stop cancels it (`aborted`, at the end of `runLanes`): a gate running on the merged
+        // tree is killed and the merge undone, under M3b.2's rule. The lane is removed only after this returns (`runLane`).
         let run = Task {
             try? await integrator.integrate(lane, title: p.task.title, attempt: p.n, tries: p.tries, gate: gate, gateTimeout: timeout)
         }
-        let result = await withTaskCancellationHandler { await run.value } onCancel: { run.cancel() }
+        lanes[id]?.integrations[p.task.id] = run
+        if lanes[id]?.aborted == true { run.cancel() }
+        let result = await run.value
+        lanes[id]?.integrations[p.task.id] = nil
         guard let result else {
             await engine.refuse(id, "integração recusada: o branch não é de uma faixa", output: "", last: true)
             return nil

@@ -149,7 +149,7 @@ private struct LoopRun {
         for k in ["needs", "scope"] {
             guard case .object(let prop)? = props[k], case .string(let help)? = prop["description"] else { Issue.record("no \(k)"); continue }
             #expect(prop["type"] == .string("string"), "the CLI's comma list stays the documented form")
-            #expect(help.contains("array of strings"), help)
+            #expect(help.contains("array of strings"), "\(help)")
         }
     }
 
@@ -230,7 +230,7 @@ private struct LoopRun {
             }
         }
         killed.cancel()
-        #expect(try await killed.value.status == 128 + SIGTERM)
+        #expect(try await killed.value.status == 128 + SIGKILL)
         let plain = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/bash"), args: ["-c", "exit 3"], in: dir, env: [:], timeout: .seconds(60))

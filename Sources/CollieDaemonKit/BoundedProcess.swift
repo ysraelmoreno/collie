@@ -52,9 +52,10 @@ enum BoundedProcess {
     static func track(_ pid: pid_t) { live.withLock { _ = $0.insert(pid) } }
     static func untrack(_ pid: pid_t) { live.withLock { _ = $0.remove(pid) } }
 
-    /// M3b.6: set around the lane integrator's gate: a cancelled task sends SIGTERM to the process's group instead of
-    /// waiting for its timeout (the run then returns as for any signal, 128+15). Off everywhere else: git under a
-    /// cancelled task still runs to its end (the loop's restores need it).
+    /// M3b.6: set around the lane integrator's gate: a cancelled task kills the process's group instead of waiting for
+    /// its timeout (the run then returns as for any signal, 128+9). SIGKILL, as the timeout's last word: a child of
+    /// the daemon inherits its SIGTERM ignored. Off everywhere else: git under a cancelled task still runs to its end
+    /// (the loop's restores need it).
     @TaskLocal static var killOnCancel = false
 
     /// `stdin`: written to the child's stdin, then closed (nil: `/dev/null`). A child that exits without reading it never
@@ -70,7 +71,7 @@ enum BoundedProcess {
                 try await spawn(executable, args, dir, env, timeout, cap, salvage, stdin, leader: leader)
             } onCancel: {
                 let pid = leader.withLock { $0.cancelled = true; return $0.pid }
-                if pid > 0 { kill(-pid, SIGTERM) }
+                if pid > 0 { kill(-pid, SIGKILL) }
             }
         } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
     }
@@ -105,7 +106,7 @@ enum BoundedProcess {
             if rc == 0 {
                 track(child)
                 // a cancel that came before the spawn kills it now
-                if leader?.withLock({ $0.pid = child; return $0.cancelled }) == true { kill(-child, SIGTERM) }
+                if leader?.withLock({ $0.pid = child; return $0.cancelled }) == true { kill(-child, SIGKILL) }
             }
             close(o[1]); close(e[1])
             if i[0] >= 0 { close(i[0]) }

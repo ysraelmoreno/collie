@@ -1,4 +1,5 @@
 import Foundation
+import CollieProtocol
 
 /// M3.8: the name of an attempt's terminal, from what it works on: `<work>-<task>-t<n>`, or
 /// `<work>-<task>-f<lane>-t<n>` in a lane. Pure. The titles are the owner's or an agent's text: data, never an

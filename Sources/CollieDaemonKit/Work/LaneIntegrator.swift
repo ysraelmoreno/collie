@@ -92,13 +92,13 @@ actor LaneIntegrator {
         guard let gate else { return await done(f) }
 
         var output = ""
-        do {
+        do throws(ProtocolError) {
             // M3b.6: a cancel ends the gate (its process is killed, or it never starts): the merge is then undone as
             // for a broken gate, under the same rule (only a tree exactly as the merge left it is reset)
             if Task.isCancelled { throw ProtocolError(code: .internal, message: Self.cancelled) }
-            let res = try await BoundedProcess.$killOnCancel.withValue(true) { () async throws(ProtocolError) -> ProcessResult in
-                try await host.check(gate, in: dir, timeout: gateTimeout)
-            }
+            let res: ProcessResult
+            do { res = try await BoundedProcess.$killOnCancel.withValue(true) { try await host.check(gate, in: dir, timeout: gateTimeout) } }
+            catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
             output = res.stdout + res.stderr
             f.detail = WorkLoop.failure("gate", res.status)
         } catch where error.code == .timeout {

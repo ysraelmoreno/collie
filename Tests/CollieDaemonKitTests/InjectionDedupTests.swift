@@ -34,8 +34,8 @@ import CollieCore
     private func count(_ text: String, _ recs: [MemoryRecord]) -> Int { recs.filter { text.contains($0.title) }.count }
     private func snapshot(_ dir: String) throws -> [String: Data] {
         var out: [String: Data] = [:]
-        for case let u as URL in FileManager.default.enumerator(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil) ?? []
-        where u.pathExtension == "md" { out[u.lastPathComponent] = try Data(contentsOf: u) }
+        let urls = FileManager.default.enumerator(at: URL(fileURLWithPath: dir), includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
+        for u in urls where u.pathExtension == "md" { out[u.lastPathComponent] = try Data(contentsOf: u) }
         return out
     }
     private let prompt = "escrita worktree derruba tentativa laço commit compilação"

@@ -203,7 +203,7 @@ class RouteTests(ServerTestCase):
         self.assertError(self.call("POST", "/api/card/create", {"title": "t" * 201}), 400)
         self.assertError(self.call("POST", "/api/card/create", {"title": "t", "labels": 5}), 400)
         # a Collie string param: comma-separated labels
-        got = self.ok("POST", "/api/card/create", {"title": "t", "labels": "a, b,,a"})
+        got = self.ok("POST", "/api/card/create", {"title": "t", "labels": "a, b,,a"}, status=201)
         self.assertEqual(got["labels"], ["a", "b"])
 
     def test_update(self):

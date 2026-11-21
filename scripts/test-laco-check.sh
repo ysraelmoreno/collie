@@ -45,7 +45,7 @@ SMOKE="WorkLoopTests AttemptMachineTests WorkStoreTests LoopJournalTests Command
 for s in $SUITES; do printf '@Suite struct %s {}\n' "$s" > "$R/Tests/CollieDaemonKitTests/$s.swift"; done
 N=$(wc -w <<< "$SUITES" | tr -d ' ')
 [ "$N" -gt 70 ] || fail "suite list not found in the script ($N)"
-fresh() { cp "$SRC" "$R/scripts/laco-check.sh"; }
+fresh() { cp "$SRC" "$R/scripts/laco-check.sh"; touch "$R/scripts/test-laco-check.sh"; }
 run() { rm -rf "$FAKE"; mkdir -p "$FAKE"; set +e; "$R/scripts/laco-check.sh" "$@" >"$T/out" 2>"$T/err"; rc=$?; set -e; }
 ran() { sort "$FAKE/ran" 2>/dev/null | tr '\n' ' '; }
 want() { tr ' ' '\n' <<< "$*" | grep . | sort -u | tr '\n' ' '; }

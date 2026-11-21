@@ -159,6 +159,11 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   `Sources/ColliePlugins/WebLockdown.swift`, `Sources/CollieCore/PluginManifest.swift`.
 - **Como verificar:** `collie plugin --help`, `collie app list`; instalar é à mão (Preferências → "Plug-ins").
 
+### Quadro (app de exemplo adotado: kanban local)
+
+- **Para que serve:** kanban local (`Examples/apps/quadro`, Python 3.9 sem dependências) que o Collie adota com `collie app adopt quadro … --event-diff events`; o dono vê o quadro no painel e os agentes criam, movem, comentam e arquivam cartões por `collie quadro <comando>` (contrato em `collie.json`; dados em `$QUADRO_DIR`, padrão `$HOME/.collie/quadro`, com espelho `BOARD.md`).
+- **Como verificar:** `scripts/check-onda11.sh q11-4`.
+
 ### Vizinho e Cercas (plug-in de exemplo com ganchos `edit` e `stop`)
 
 - **Para que serve:** (1) `edit`: depois que um terminal Claude escreve um arquivo, o helper olha os irmãos (mesma pasta,

@@ -167,6 +167,7 @@ class RouteTests(ServerTestCase):
         board = self.ok("GET", "/api/board")
         self.assertEqual([c["title"] for c in board["cards"]], ["b"])
         self.assertEqual([c["id"] for c in board["columns"]], ["todo", "doing", "review", "done"])
+        self.assertEqual(self.ok("GET", "/api/board?archived=true"), self.ok("GET", "/api/board?archived=1"))
         full = self.ok("GET", "/api/board?archived=1")
         self.assertEqual(sorted(c["title"] for c in full["cards"]), ["a", "b"])
 
@@ -200,7 +201,10 @@ class RouteTests(ServerTestCase):
         self.assertError(self.call("POST", "/api/card/create", {"title": ""}), 400)
         self.assertError(self.call("POST", "/api/card/create", {"title": "t", "column": "x"}), 400)
         self.assertError(self.call("POST", "/api/card/create", {"title": "t" * 201}), 400)
-        self.assertError(self.call("POST", "/api/card/create", {"title": "t", "labels": "a"}), 400)
+        self.assertError(self.call("POST", "/api/card/create", {"title": "t", "labels": 5}), 400)
+        # a Collie string param: comma-separated labels
+        got = self.ok("POST", "/api/card/create", {"title": "t", "labels": "a, b,,a"}, status=201)
+        self.assertEqual(got["labels"], ["a", "b"])
 
     def test_update(self):
         card = self.create("old")

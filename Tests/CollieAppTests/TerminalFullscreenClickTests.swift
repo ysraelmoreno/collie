@@ -96,3 +96,35 @@ import CollieCore
         v.unmount(); w.close()
     }
 }
+
+/// Probe 3: where a scaled ancestor makes SwiftUI think the click landed.
+@MainActor @Suite struct TerminalFullscreenMapProbe {
+    final class Flipped: NSView { override var isFlipped: Bool { true } }
+    @Test(arguments: [1.0, 0.5, 2.0]) func map(zoom: Double) async {
+        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
+        node.setBoundsSize(CGSize(width: 600, height: 300))
+        var fired = 0
+        let host = TitleHost(rootView: FullscreenButton(action: { fired += 1 }))
+        host.frame = CGRect(x: 200, y: 0, width: 40, height: 32)
+        node.addSubview(host)
+        w.contentView!.addSubview(node)
+        w.makeKeyAndOrderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        var hits: [String] = []
+        for wx in stride(from: 0.0, to: 1200, by: 4) {
+            for wy in stride(from: 300.0, to: 800, by: 4) {
+                fired = 0
+                for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    w.sendEvent(NSEvent.mouseEvent(with: t, location: NSPoint(x: wx, y: wy), modifierFlags: [], timestamp: 0,
+                                                   windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+                }
+                if fired > 0 { hits.append("\(Int(wx)),\(Int(wy))") }
+            }
+        }
+        let hf = host.convert(host.bounds, to: nil)
+        print("PROBE3 zoom=\(zoom) hostInWindow=\(hf) hits=\(hits.count) first=\(hits.first ?? "-") last=\(hits.last ?? "-")")
+        w.close()
+    }
+}

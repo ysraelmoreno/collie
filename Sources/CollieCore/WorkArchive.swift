@@ -158,16 +158,18 @@ extension WorkArchive {
         for e in events {
             guard let task = e.task, let n = e.attempt else { continue }
             let k = Key(task: task, n: n)
-            if out[k] == nil { out[k] = Attempt(n: n); order.append(k) }
+            if out[k] == nil { order.append(k) }
+            var a = out[k] ?? Attempt(n: n)   // a copy: no overlapping access to `out`
             switch e.kind {
             case .attemptStarted, .agentSummoned: if agentFrom[k] == nil { agentFrom[k] = e.at }
             case .agentDismissed:
-                out[k]?.agentSeconds = secs(agentFrom[k], e.at)
-                if let t = e.tokens { out[k]?.tokens = (out[k]?.tokens).map { $0 + t } ?? t }
+                a.agentSeconds = secs(agentFrom[k], e.at)
+                if let t = e.tokens { a.tokens = a.tokens.map { $0 + t } ?? t }
             case .checkStarted: checkFrom[k] = e.at
-            case .checkFinished: if let s = secs(checkFrom[k], e.at) { out[k]?.checkSeconds = (out[k]?.checkSeconds ?? 0) + s }; checkFrom[k] = nil
+            case .checkFinished: if let s = secs(checkFrom[k], e.at) { a.checkSeconds = (a.checkSeconds ?? 0) + s }; checkFrom[k] = nil
             default: break
             }
+            out[k] = a
         }
         return Dictionary(grouping: order, by: \.task).mapValues { $0.compactMap { out[$0] } }
     }

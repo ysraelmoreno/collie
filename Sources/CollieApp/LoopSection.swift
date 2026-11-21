@@ -13,6 +13,13 @@ struct LoopSection: Equatable {
         /// Attempts the loop used on this task, and the most it may use (`work run --tries`).
         var tries: Int
         var max: Int
+        /// "tentativa 2/3".
+        var triesText: String { "tentativa \(tries)/\(max)" }
+        var stateText: String {
+            switch state { case .done: "feita"; case .running: "rodando"; case .deferred: "adiada"; case .open: "aberta" }
+        }
+        /// What VoiceOver reads: the state in words, never only the icon.
+        var accessibilityLabel: String { "\(title), \(stateText), \(triesText)" }
     }
     struct Header: Equatable {
         /// Short: "agente", "check", "portão" ("preparando" between phases).
@@ -26,7 +33,18 @@ struct LoopSection: Equatable {
     var rows: [TaskRow]
     var header: Header?
 
-    static let hidden = LoopSection(visible: false, rows: [], header: nil)
+    /// "LAÇOS · 1/4" (done over taken).
+    var title: String { "LAÇOS · " + (header?.progress ?? "0/0") }
+
+    /// The terminal of the attempt a row stands for: the newest loop job of `work` that ran that task's title and
+    /// recorded a terminal still in `alive`; nil when it is gone (the click then does nothing).
+    // ponytail: jobs carry the task's title (`label`), not its id: two tasks with one title share the newest agent
+    static func agent(forTask id: String, in work: Work?, alive: Set<UUID>) -> UUID? {
+        guard let work, let title = work.tasks.first(where: { $0.id == id })?.title else { return nil }
+        return work.jobs.last { $0.kind == .loop && $0.label == title && $0.terminal.map(alive.contains) == true }?.terminal
+    }
+
+    static let hidden =LoopSection(visible: false, rows: [], header: nil)
 
     /// Shown only while a loop of the active work of `paddock` is running (any phase). No work, a work of another paddock
     /// or a closed one, no loop, a finished or stopped loop: hidden.

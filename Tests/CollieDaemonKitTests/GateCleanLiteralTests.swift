@@ -35,6 +35,10 @@ private struct Rig {
     }
     var box: URL { repo.appendingPathComponent(".git/\(LaneIntegrator.quarantineDir)") }
     func quarantined(_ file: String, _ n: Int = 1) -> String? { read("\(n)/\(file)", in: box) }
+    /// The sweep `n`'s box, as git names it (`/private/var` and `/var` are the same folder).
+    func isBox(_ path: String?, _ n: Int) -> Bool {
+        path.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path == box.appendingPathComponent("\(n)").resolvingSymlinksInPath().path } ?? false
+    }
 }
 
 /// M6.3: the gate's leftovers are taken by literal name and moved into a quarantine in the git dir, never removed.
@@ -85,17 +89,17 @@ private struct Rig {
         #expect(s.moved == ["draft.md"])
         #expect(!exists("draft.md", in: rig.repo))
         #expect(rig.quarantined("draft.md") == "my draft\n", "recoverable, as it was")
-        #expect(s.at == rig.box.appendingPathComponent("1").path)
-        #expect(WorkLoop.movedNote(s.moved, at: s.at ?? "").contains(rig.box.path), "the note says where")
+        #expect(rig.isBox(s.at, 1), "\(s.at ?? "nil")")
+        #expect(WorkLoop.movedNote(s.moved, at: s.at ?? "").contains(s.at ?? "?"), "the note says where")
     }
 
     @Test func theNextMergeMovesItAndTheResultSaysWhere() async throws {
         let rig = try await Rig()
         _ = try await rig.go("a", gate: "echo r > report.txt")
         let rb = try await rig.go("b", gate: "echo r2 > report.txt")
-        #expect(rb.moved == ["report.txt"] && rb.quarantine == rig.box.appendingPathComponent("1").path, "\(rb)")
+        #expect(rb.moved == ["report.txt"] && rig.isBox(rb.quarantine, 1), "\(rb)")
         let s = await rig.integ.sweep()
-        #expect(s.moved == ["report.txt"] && s.at == rig.box.appendingPathComponent("2").path, "a new box per sweep")
+        #expect(s.moved == ["report.txt"] && rig.isBox(s.at, 2), "a new box per sweep")
         #expect(rig.quarantined("report.txt", 1) == "r\n" && rig.quarantined("report.txt", 2) == "r2\n")
     }
 

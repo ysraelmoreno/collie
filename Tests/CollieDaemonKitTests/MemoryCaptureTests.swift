@@ -98,6 +98,9 @@ private func proposals(_ store: RepoMemory, count: Int = 1) async throws -> [Mem
             #expect(await stop(p, t, "stop-continued") == nil)
             try await doneTask(p, t, "csrf")
             #expect(await stop(p, t, "stop-continued") == nil)   // stop_hook_active: never, even with new work
+            #expect(await stop(p, t) == nil)   // M5.2: within 20 min of the last ask
+            let w = try #require(try await d.router.work.active(terminal: t.uuid))
+            try await d.router.work.update(w.id) { $0.askedAt = Date().addingTimeInterval(-MemoryCapture.askEvery) }
             #expect(reason(await stop(p, t)) != nil)   // that work is still a chunk not asked about
             #expect(await stop(p, t) == nil)
             #expect(await stop(p, t) == nil)

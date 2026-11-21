@@ -127,7 +127,7 @@ import CollieCore
 
 @MainActor @Suite struct TerminalFullscreenUpProbe {
     final class Flipped: NSView { override var isFlipped: Bool { true } }
-    @Test(arguments: [0.7, 1.0]) func up(zoom: Double) {
+    @Test(arguments: [(0.7, 100.0), (1.0, 100.0), (0.7, 200.0), (1.0, 200.0)]) func up(zoom: Double, x: Double) {
         let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
@@ -141,11 +141,11 @@ import CollieCore
         w.contentView!.addSubview(node)
         w.makeKeyAndOrderFront(nil)
         host.layoutSubtreeIfNeeded()
-        let at = host.convert(NSPoint(x: 100, y: 16), to: nil)
+        let at = host.convert(NSPoint(x: x, y: 16), to: nil)
         for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
             w.sendEvent(NSEvent.mouseEvent(with: t, location: at, modifierFlags: [], timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
         }
-        print("PROBE6 zoom=\(zoom) \(log) hit=\(String(describing: w.contentView!.hitTest(at).map { type(of: $0) }))")
+        print("PROBE6 zoom=\(zoom) x=\(x) key=\(w.isKeyWindow) \(log) hit=\(String(describing: w.contentView!.hitTest(at).map { type(of: $0) }))")
         w.close()
     }
 }

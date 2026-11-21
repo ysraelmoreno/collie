@@ -930,6 +930,13 @@ public actor AskCoordinator {
     /// M2.0: a prompt written to `terminal` had its Enter sent again (the loop's journal).
     func submitRetried(_ terminal: UUID) -> Bool { targets[terminal]?.submitRetried ?? false }
 
+    /// M5.3: `terminal`'s last non-empty lines on screen, and whether it printed nothing for `quiet` (nil: unknown).
+    func screen(_ terminal: UUID, quiet: Duration) -> (lines: [String], quiet: Bool)? {
+        guard let t = targets[terminal] else { return nil }
+        let still = t.process.lastOutputAt.map { ContinuousClock.now - $0 >= quiet } ?? false
+        return (ApprovalTracker.lines(t.scrollback, 20), still)
+    }
+
     /// Hook: this Claude's SessionStart reached the daemon.
     func sessionHooked(_ terminal: UUID) { targets[terminal]?.sessionHooked = true }
     /// Hook: this Claude submitted a prompt.

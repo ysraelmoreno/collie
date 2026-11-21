@@ -19,6 +19,8 @@ struct LoopScript: Sendable {
     /// How the nudge's turn ends (nil: like `source`); `nudgeError`: its ask throws.
     var nudgedSource: AskResult.Source?
     var nudgeError: ProtocolError?
+    /// M5.3: what the agent's screen shows while its attempt's turn hangs (it never ends by itself): `usageLimit` reads it.
+    var screen: [String]?
 }
 
 /// A host without PTYs: scripted agents, real git and a real (unsandboxed) check in a temp repo.
@@ -80,6 +82,10 @@ actor LoopFakeHost: LoopHost {
         }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
+        if s.screen != nil {   // M5.3: stuck in a dialog until the loop gives up on the turn
+            try? await Task.sleep(for: .seconds(3600))
+            throw ProtocolError(code: .internal, message: "ask cancelled")
+        }
         if name == starterGoneAfter { starterGone = true }
         if let e = s.askError { throw e }
         return s.source
@@ -95,6 +101,10 @@ actor LoopFakeHost: LoopHost {
         let n = (workingCalls[terminal] ?? 0) + 1; workingCalls[terminal] = n
         if n == after { do { try await s.late(dir) } catch { Issue.record("late \(name): \(error)") }; return false }
         return n < after
+    }
+    /// M5.3: the screen is quiet (the agent prints nothing while it sits in a dialog).
+    func usageLimit(_ terminal: UUID) async -> String? {
+        (scripts[names[terminal] ?? ""]?.screen).flatMap { UsageLimit.detect($0, quiet: true) }
     }
     func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
     /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).

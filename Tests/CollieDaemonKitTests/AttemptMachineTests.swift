@@ -167,7 +167,19 @@ private let paths: [Path] = [
         Step(.blocked(nil), .gating, [.settle(reset: true)]),
         Step(.settled(moved: false, reset: false), .deciding, verdict("gate could not run: x", then: .awaitOthers)),
     ]),
+    // M5.3: the agent sits in the usage-limit dialog: dismissed, not counted, nothing discarded, the loop stops
+    Path(name: "usage limit during the turn: no verdict, the loop stops", n: 3, steps: Array(turn.prefix(2)) + [
+        Step(.usageLimit("You've hit your limit · resets 3pm"), .finished, limited("You've hit your limit · resets 3pm")),
+    ]),
+    Path(name: "usage limit during the nudge's turn: the same", steps: Array(turn.prefix(3)) + [
+        Step(.waitExpired, .turn, [.nudge]),
+        Step(.usageLimit("limit"), .finished, limited("limit")),
+    ]),
 ]
+
+private func limited(_ text: String) -> [M.Effect] {
+    [.journal(.turnEnded, "limite de uso"), .dismiss, .journal(.agentDismissed, nil), .uncount, .stopLoop(.init(.usageLimit, detail: text))]
+}
 
 /// The happy path's state after each of its events (and before the first): every phase but `finished`.
 private func alongTheHappyPath() -> [M.State] {
@@ -245,7 +257,7 @@ private func alongTheHappyPath() -> [M.State] {
     /// M1b.1: the state stays, and the interpreter is told (`fault`) instead of nothing.
     @Test func anEventOfAnotherPhaseChangesNothing() {
         let states = alongTheHappyPath()
-        let strays: [M.Event] = [.started, .gateDone(status: 0, broken: nil), .decided(.pass), .turnTimedOut]
+        let strays: [M.Event] = [.started, .gateDone(status: 0, broken: nil), .decided(.pass), .turnTimedOut, .usageLimit("x")]
         for s in states where s.phase == .checking {
             for e in strays {
                 let (next, fx) = M.reduce(s, e)

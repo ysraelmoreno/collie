@@ -145,6 +145,8 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case requested, workGone, starterGone, maxReached, budgetSpent, gitFailed, dirtyTree, othersWorking, cancelled, daemonRestart, `internal`, unknown
                 /// M2b.1: an adopted commit did not pass its check or the gate: nothing was reset, the owner decides.
                 case adoptionFailed
+                /// M5.3: the attempt's agent hit the model's usage limit (detail: the dialog's text, short): not counted.
+                case usageLimit
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -164,6 +166,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .daemonRestart: "o daemon reiniciou durante o laço"
             case .internal: "estado inesperado do motor (bug); a tarefa foi reaberta"
             case .adoptionFailed: "a adoção do commit interrompido falhou; a árvore ficou intocada para você decidir"
+            case .usageLimit: "o agente atingiu o limite de uso do modelo (\(detail ?? "sem texto")); relance com work run --model <outro>"
             case .unknown: "motivo desconhecido"
             }
         }

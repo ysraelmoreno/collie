@@ -121,6 +121,7 @@ struct HistoryRow: Equatable, Identifiable {
         case .daemonRestart?: return "daemon reiniciou"
         case .internal?: return "erro interno"
         case .adoptionFailed?: return "adoção falhou"
+        case .usageLimit?: return "limite de uso do modelo"
         case .unknown?, nil: return "motivo desconhecido"
         }
     }

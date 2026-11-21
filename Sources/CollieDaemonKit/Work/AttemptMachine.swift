@@ -21,6 +21,8 @@ enum AttemptMachine {
         case adopted
         case summoned(UUID), summonFailed(String)
         case turnEnded(source: AskResult.Source), turnTimedOut, turnFailed(String)
+        /// M5.3: the agent sits in the model's usage-limit dialog (its text, short: `UsageLimit.excerpt`).
+        case usageLimit(String)
         /// A new commit is there (its short hash, for the journal) / there is none.
         case commitSeen(String?), waitExpired
         /// The daemon stops / the work closed / the Shepherd that started the loop is gone: no verdict.
@@ -133,6 +135,11 @@ enum AttemptMachine {
             // a turn past its timeout is not a failure by itself: the check decides
             s.phase = .waitingCommit
             return (s, [.journal(.turnEnded, "timeout"), .lookForCommit])
+        // M5.3: the turn would only end at its timeout and the next attempts would hit the same limit: not counted,
+        // nothing discarded (as a cancel), the loop stops and says what to do
+        case (.turn, .usageLimit(let text)) where s.agent != nil:
+            s.agent = nil; s.phase = .finished
+            return (s, [.journal(.turnEnded, "limite de uso"), .dismiss, .journal(.agentDismissed, nil), .uncount, .stopLoop(.init(.usageLimit, detail: text))])
         case (.turn, .turnFailed(let message)):
             // a nudge that could not be asked fails nothing: the attempt is judged as if it had not gone
             if !s.nudged { s.facts.failure = message }

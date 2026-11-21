@@ -12,6 +12,9 @@ protocol LoopHost: Sendable {
     func resubmitted(_ terminal: UUID) async -> Bool
     /// True while the terminal's agent is in a turn (the daemon's own badge/turn state).
     func working(_ terminal: UUID) async -> Bool
+    /// M5.3: the terminal sits in the model's usage-limit dialog, printing nothing (`UsageLimit.detect` on its screen):
+    /// the dialog's text, short. nil: not in it. Read only, never typed into.
+    func usageLimit(_ terminal: UUID) async -> String?
     func dismiss(_ terminal: UUID) async
     /// A terminal of the work's paddock in a turn, other than the starter (the loop's agent is already gone): its name.
     func othersWorking() async -> String?
@@ -54,6 +57,7 @@ extension LoopHost {
     /// A host that cannot tell the starter apart (the tests' fakes).
     func anyoneWorking() async -> String? { await othersWorking() }
     func resubmitted(_ terminal: UUID) async -> Bool { false }
+    func usageLimit(_ terminal: UUID) async -> String? { nil }
     func taskEnded(_ line: String) async {}
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
@@ -367,10 +371,7 @@ actor WorkLoop {
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: r.loop.tries, dir: dir, notes: notes, gate: r.loop.gate, map: map)
             let turn = Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started))   // the budget bounds the turn too
             r.deadline = r.started + Double(turn)
-            let ended: AttemptMachine.Event
-            do { ended = .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: .seconds(turn))) }
-            catch where error.code == .timeout { ended = .turnTimedOut }
-            catch { ended = .turnFailed(error.message) }
+            let ended = await talk(agent, prompt, .seconds(turn))
             // M2.0: it only records (the turn's end, good or bad, is journaled right after)
             if await host.resubmitted(agent) { r.pending.append(entry(.resubmitted, task: task.id, attempt: n, detail: name)) }
             return ended
@@ -382,9 +383,7 @@ actor WorkLoop {
             // part of the same attempt (no `used`, no try); written now, with the turn's end: the nudge's turn may be long
             r.pending.append(entry(.nudged, task: task.id, attempt: n, detail: AskResult.Source.hook.rawValue))
             await record(id, &r)
-            do { return .turnEnded(source: try await host.ask(agent, prompt: Self.nudgePrompt, timeout: .seconds(rest))) }
-            catch where error.code == .timeout { return .turnTimedOut }
-            catch { return .turnFailed(error.message) }
+            return await talk(agent, Self.nudgePrompt, .seconds(rest))
         case .waitForCommit, .lookForCommit:
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
                 await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline)
@@ -546,7 +545,7 @@ actor WorkLoop {
         var who: String? = first
         let end = ContinuousClock.now + othersWait
         while who != nil, ContinuousClock.now < end, !Task.isCancelled {
-            try? await Task.sleep(for: Swift.min(poll, .seconds(5)))
+            await Self.nap(Swift.min(poll, .seconds(5)))
             who = await host.othersWorking()
         }
         return who
@@ -636,7 +635,32 @@ actor WorkLoop {
         if await committed(before: before, branch: branch, dir) { return }
         while host.now() < deadline, !Task.isCancelled {
             if !(await host.working(agent)), await committed(before: before, branch: branch, dir) { return }
-            try? await Task.sleep(for: poll)
+            await Self.nap(poll)
+        }
+    }
+
+    /// The loop's one wait on the clock: its polls (a commit, another terminal, the agent's screen) have no event.
+    private static func nap(_ d: Duration) async { try? await Task.sleep(for: d) }
+
+    /// `host.ask` as the machine's event. M5.3: every `poll` meanwhile the agent's screen is read; one stuck in the
+    /// usage-limit dialog ends the turn now (the ask is dropped, nothing is typed) instead of at its timeout.
+    private func talk(_ agent: UUID, _ prompt: String, _ timeout: Duration) async -> AttemptMachine.Event {
+        let host = host, poll = poll
+        return await withTaskGroup(of: AttemptMachine.Event?.self) { g in
+            g.addTask {
+                do { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: timeout)) }
+                catch where error.code == .timeout { return .turnTimedOut }
+                catch { return .turnFailed(error.message) }
+            }
+            g.addTask {
+                while !Task.isCancelled {
+                    await Self.nap(poll)
+                    if !Task.isCancelled, let text = await host.usageLimit(agent) { return .usageLimit(UsageLimit.excerpt(text)) }
+                }
+                return nil
+            }
+            for await e in g { if let e { g.cancelAll(); return e } }
+            return .turnFailed("no turn")
         }
     }
 

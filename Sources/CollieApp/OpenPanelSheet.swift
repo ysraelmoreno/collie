@@ -33,7 +33,7 @@ struct OpenPanelTarget: Equatable {
         case .unauthorized: return "O Collie não tem acesso a esse arquivo. Use um arquivo do projeto ou aprove o acesso."
         case .timeout: return "O painel demorou demais para abrir. Tente de novo."
         case .daemonUnavailable, .unavailable: return "O serviço do Collie não está disponível. Tente de novo em instantes."
-        case .invalidArgs: return "Não foi possível abrir o painel com essas opções: \(e.message)"
+        case .invalidArgs: return "Não foi possível abrir o painel com essas opções."
         default: return "Não foi possível abrir o painel. Tente de novo."
         }
     }

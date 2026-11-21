@@ -42,7 +42,7 @@ private func isDefer(_ o: LaneIntegration.Outcome) -> Bool { if case .defer = o 
 private func isWait(_ o: LaneIntegration.Outcome) -> Bool { if case .wait = o { true } else { false } }
 
 /// M3.4: the pure decision in a table, and the integrator in temporary git repositories.
-@Suite struct LaneIntegrationTests {
+@Suite(.timeLimit(.minutes(3))) struct LaneIntegrationTests {
     typealias F = LaneIntegration.Facts
 
     @Test func decideTable() {
@@ -182,9 +182,8 @@ private func isWait(_ o: LaneIntegration.Outcome) -> Bool { if case .wait = o { 
         await rig.host.setProbe { command in
             if command.hasSuffix("# A") {
                 await log.set(Task { try? await rig.go(b, "B", gate: "true # B") })
-                // until the second one is in the queue (bounded: without a queue this would never be true)
-                var spins = 0
-                while await rig.integ.waiting == 0, spins < 5000 { spins += 1; try? await Task.sleep(for: .milliseconds(1)) }
+                // until the second one is in the queue (M3b.6: a continuation; without a queue the suite's time limit ends it)
+                await rig.integ.untilWaiting(1)
                 await log.add("waiting \(await rig.integ.waiting)")
             }
             await log.add("gate \(command.suffix(1)) merges \(await rig.merges())")

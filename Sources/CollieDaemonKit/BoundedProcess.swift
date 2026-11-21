@@ -52,11 +52,32 @@ enum BoundedProcess {
     static func track(_ pid: pid_t) { live.withLock { _ = $0.insert(pid) } }
     static func untrack(_ pid: pid_t) { live.withLock { _ = $0.remove(pid) } }
 
+    /// M3b.6: set around the lane integrator's gate: a cancelled task sends SIGTERM to the process's group instead of
+    /// waiting for its timeout (the run then returns as for any signal, 128+15). Off everywhere else: git under a
+    /// cancelled task still runs to its end (the loop's restores need it).
+    @TaskLocal static var killOnCancel = false
+
     /// `stdin`: written to the child's stdin, then closed (nil: `/dev/null`). A child that exits without reading it never
     /// raises SIGPIPE in the daemon (`F_SETNOSIGPIPE`).
     static func run(executable: URL, args: [String], in dir: URL, env: [String: String], timeout: Duration,
                     cap: Int = 1 << 20, salvage: (@Sendable (Data) -> Bool)? = nil,
                     stdin: Data? = nil) async throws(ProtocolError) -> ProcessResult {
+        guard killOnCancel else { return try await spawn(executable, args, dir, env, timeout, cap, salvage, stdin, leader: nil) }
+        // the leader's pid while it runs (0: not yet, or reaped) and whether the cancel came
+        let leader = OSAllocatedUnfairLock(initialState: (pid: pid_t(0), cancelled: false))
+        do {
+            return try await withTaskCancellationHandler {
+                try await spawn(executable, args, dir, env, timeout, cap, salvage, stdin, leader: leader)
+            } onCancel: {
+                let pid = leader.withLock { $0.cancelled = true; return $0.pid }
+                if pid > 0 { kill(-pid, SIGTERM) }
+            }
+        } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
+    }
+
+    private static func spawn(_ executable: URL, _ args: [String], _ dir: URL, _ env: [String: String], _ timeout: Duration,
+                              _ cap: Int, _ salvage: (@Sendable (Data) -> Bool)?, _ stdin: Data?,
+                              leader: OSAllocatedUnfairLock<(pid: pid_t, cancelled: Bool)>?) async throws(ProtocolError) -> ProcessResult {
         let secs = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
         return try await UnixSocketClient.offPool {
             var o: [Int32] = [0, 0], e: [Int32] = [0, 0]
@@ -81,7 +102,11 @@ enum BoundedProcess {
             var pid: pid_t = 0
             let rc = posix_spawn(&pid, executable.path, &fa, &at, argv, envp)
             let child = pid
-            if rc == 0 { track(child) }
+            if rc == 0 {
+                track(child)
+                // a cancel that came before the spawn kills it now
+                if leader?.withLock({ $0.pid = child; return $0.cancelled }) == true { kill(-child, SIGTERM) }
+            }
             close(o[1]); close(e[1])
             if i[0] >= 0 { close(i[0]) }
             guard rc == 0 else {
@@ -111,6 +136,7 @@ enum BoundedProcess {
             let exited = DispatchSemaphore(value: 0), st = Status()
             Thread {
                 var s: Int32 = 0; while waitpid(child, &s, 0) < 0 && errno == EINTR {}
+                leader?.withLock { $0.pid = 0 }   // reaped: a late cancel must not signal a reused pid
                 untrack(child)   // reaped: the pid may be reused
                 st.value = s; exited.signal()
             }.start()

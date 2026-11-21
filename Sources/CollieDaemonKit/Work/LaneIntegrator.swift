@@ -34,6 +34,19 @@ actor LaneIntegrator {
     /// Integrations waiting for the one running.
     var waiting: Int { waiters.count }
 
+    /// M3b.6: returns once `n` integrations wait for the one running (a continuation, no clock: the tests' wait).
+    private var watchers: [(n: Int, c: CheckedContinuation<Void, Never>)] = []
+    func untilWaiting(_ n: Int) async {
+        guard waiters.count < n else { return }
+        await withCheckedContinuation { watchers.append((n, $0)) }
+    }
+    private func queued(_ c: CheckedContinuation<Void, Never>) {
+        waiters.append(c)
+        let ready = watchers.filter { $0.n <= waiters.count }
+        watchers.removeAll { $0.n <= waiters.count }
+        for w in ready { w.c.resume() }
+    }
+
     /// `gateTimeout`: the engine's conditions, measured by the caller (`min(checkTimeout, what is left of the budget)`).
     /// Throws only for a branch that is not a lane's (nothing ran).
     func integrate(_ lane: Lane, title: String, attempt: Int, tries: Int, gate: String?, gateTimeout: Duration) async throws(ProtocolError) -> Result {
@@ -41,7 +54,7 @@ actor LaneIntegrator {
             throw ProtocolError(code: .invalidArgs, message: "'\(lane.branch)' is not a lane branch")
         }
         // FIFO: an actor is reentrant at each await, so the turn is handed over explicitly (`busy` stays true)
-        if busy { await withCheckedContinuation { waiters.append($0) } } else { busy = true }
+        if busy { await withCheckedContinuation { queued($0) } } else { busy = true }
         defer { if waiters.isEmpty { busy = false } else { waiters.removeFirst().resume() } }
         return await run(lane, title: title, attempt: attempt, tries: tries, gate: gate, gateTimeout: gateTimeout)
     }
@@ -60,6 +73,8 @@ actor LaneIntegrator {
         f.treeClean = before != nil && dirt == ""
         guard f.othersWorking == nil, f.treeClean, let before else { return await done(f) }
         if (try? await host.git(["merge-base", "--is-ancestor", lane.branch, "HEAD"], in: dir))?.status == 0 { return await done(f) }
+        // M3b.6: cancelled (the loop or the daemon stopping) before its merge: nothing is merged, and it is no verdict
+        if Task.isCancelled { return .init(outcome: .retryFromNewBase(Self.cancelled), head: before) }
 
         let loose = Set(await untracked())   // the owner's untracked files: never removed
         let message = "merge: " + WorkLoop.eventDetail(title)
@@ -78,7 +93,12 @@ actor LaneIntegrator {
 
         var output = ""
         do {
-            let res = try await host.check(gate, in: dir, timeout: gateTimeout)
+            // M3b.6: a cancel ends the gate (its process is killed, or it never starts): the merge is then undone as
+            // for a broken gate, under the same rule (only a tree exactly as the merge left it is reset)
+            if Task.isCancelled { throw ProtocolError(code: .internal, message: Self.cancelled) }
+            let res = try await BoundedProcess.$killOnCancel.withValue(true) { () async throws(ProtocolError) -> ProcessResult in
+                try await host.check(gate, in: dir, timeout: gateTimeout)
+            }
             output = res.stdout + res.stderr
             f.detail = WorkLoop.failure("gate", res.status)
         } catch where error.code == .timeout {
@@ -100,6 +120,9 @@ actor LaneIntegrator {
         }
         return await done(f, output)
     }
+
+    /// M3b.6: why an integration that was cancelled did not go on.
+    static let cancelled = "integração cancelada: o laço parou"
 
     /// The tree at exactly `sha`: tracked files restored, untracked files not in `loose` removed. Ignored files stay.
     private func restore(_ sha: String, _ loose: Set<String>) async {

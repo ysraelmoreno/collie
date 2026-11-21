@@ -321,18 +321,24 @@ extension CommandRouter {
     /// One still busy after that (a check that ignores the cancel) stays `running` until the next start's sweep
     /// (`daemonRestart`). `wait` is a parameter for the tests (M2b.2); the daemon always passes the default.
     /// M3.6: then the lanes still on disk go (a loop that ended in time already removed its own: nothing to do).
+    /// M3b.6: only a loop that ended: one still busy may be integrating in a lane (its cancelled gate unwinding), and its
+    /// lanes stay for the next start's sweep (`daemonRestart`), never removed under a merge.
     func cancelLoops(wait: Duration = CommandRouter.loopCancelWait) async {
-        let tasks = workLoops.values.map(\.task), ids = Array(workLoops.keys)
+        let loops = workLoops.map { (id: $0.key, task: $0.value.task) }
         workLoops = [:]; loopPaddocks = []
-        guard !tasks.isEmpty else { return }
-        for t in tasks { t.cancel() }
+        guard !loops.isEmpty else { return }
+        for l in loops { l.task.cancel() }
         // the event is the tasks' own end; the clock only bounds it (a daemon's stop never hangs on a loop)
-        let (ended, signal) = AsyncStream<Void>.makeStream()
-        Task { for t in tasks { await t.value }; signal.finish() }
+        let (ended, signal) = AsyncStream<UUID>.makeStream()
+        Task {
+            await withTaskGroup(of: Void.self) { g in for l in loops { g.addTask { await l.task.value; signal.yield(l.id) } } }
+            signal.finish()
+        }
         let limit = Task { try? await Task.sleep(for: wait); signal.finish() }
-        for await _ in ended {}
+        var done: [UUID] = []
+        for await id in ended { done.append(id) }
         limit.cancel()
-        for id in ids { if let w = try? await work.get(id) { await removeLanes(of: w) } }
+        for id in done { if let w = try? await work.get(id) { await removeLanes(of: w) } }
     }
 
     // MARK: what RouterLoopHost needs from the router

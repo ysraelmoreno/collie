@@ -27,6 +27,29 @@ enum AgentNaming {
         return with("-" + short(taskId))
     }
 
+    /// M3b.6: summons (`go`) with the first name `unique` gives over `taken`. `taken` is read before the summon: a
+    /// terminal (or panel) born meanwhile makes the summon refuse the name, and the next one is tried, up to the last
+    /// `unique` gives (the short id). Any other refusal, or the last name refused, is the summon's error.
+    static func summon(_ name: String, taskId: String, taken: Set<String>,
+                       _ go: (String) async throws(ProtocolError) -> UUID) async throws(ProtocolError) -> UUID {
+        var taken = Set(taken.map { $0.lowercased() }), last: ProtocolError?
+        while true {
+            let next = unique(name, taskId: taskId, taken: taken)
+            if let last, taken.contains(next) { throw last }
+            do { return try await go(next) } catch {
+                guard refusedAsTaken(error, next) else { throw error }
+                last = error; taken.insert(next)
+            }
+        }
+    }
+
+    /// M3b.6: the summon refused `name` because a terminal or panel has it, or one is being launched with it.
+    // ponytail: told by the summon's own text (`ShepherdCommands`, `CommandRouter.reserve`); a code of its own if it moves
+    static func refusedAsTaken(_ e: ProtocolError, _ name: String) -> Bool {
+        e.code == .invalidArgs && e.message.lowercased().contains("'\(name)'")
+            && ["already exists", "is the name of panel", "already being launched"].contains { e.message.contains($0) }
+    }
+
     /// Lowercase ASCII with no accents; anything out of `[a-z0-9]` is a `-`, runs of `-` are one, none at the ends.
     static func slug(_ s: String) -> String {
         let plain = s.folding(options: [.diacriticInsensitive, .caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))

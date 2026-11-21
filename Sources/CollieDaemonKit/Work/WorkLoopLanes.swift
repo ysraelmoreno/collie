@@ -211,10 +211,12 @@ extension WorkLoop {
         // M3b.4: the budget as it is now, not as the lane found it: the time in the integrator's queue counted too
         let timeout = Swift.min(checkTimeout, Duration.seconds(loop.budget == nil ? 86_400 : await laneShare(id)))
         // in a task of its own: a stop never cuts a merge in half. It ends integrated or undone, whatever was cancelled.
-        // ponytail: so a stop waits for a gate already running on the merged tree (the check's timeout bounds it)
-        let result = await Task {
+        // M3b.6: the lane's cancel (the loop or the daemon stopping) reaches it: a gate running on the merged tree is
+        // killed and the merge undone, under M3b.2's rule. The lane is removed only after this returns (`runLane`).
+        let run = Task {
             try? await integrator.integrate(lane, title: p.task.title, attempt: p.n, tries: p.tries, gate: gate, gateTimeout: timeout)
-        }.value
+        }
+        let result = await withTaskCancellationHandler { await run.value } onCancel: { run.cancel() }
         guard let result else {
             await engine.refuse(id, "integração recusada: o branch não é de uma faixa", output: "", last: true)
             return nil

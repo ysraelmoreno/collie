@@ -186,6 +186,19 @@ extension CommandRouter {
             guard v.count <= Self.maxWorkText else { throw invalid("'\(k)' is longer than \(Self.maxWorkText) characters") }
             return v
         }
+        /// M3b.6: a comma-separated string (the CLI's repeated flag) or a JSON array of strings (an MCP client); nil:
+        /// absent. Any other type is refused: a value dropped in silence would let a task start before its `needs`.
+        func strings(_ k: String) throws(ProtocolError) -> [String]? {
+            switch r.args[k] {
+            case nil, .null?: return nil
+            case .string(let s)?: return TaskScheduler.list(s)
+            case .array(let a)?:
+                let items = a.compactMap { if case .string(let s) = $0 { s } else { nil } }
+                guard items.count == a.count else { throw invalid("--\(k) must be a string or an array of strings") }
+                return TaskScheduler.list(items.joined(separator: ","))
+            default: throw invalid("--\(k) must be a string or an array of strings")
+            }
+        }
         func active(_ t: TerminalRecord) async throws -> Work {
             guard let w = try await work.active(terminal: t.id) else {
                 throw missing("no active work for '\(t.name)'; start one with collie work start <title>")
@@ -255,7 +268,7 @@ extension CommandRouter {
             }
             // M3.1: the graph is checked on the way in (before a work is opened for a task that is refused)
             let id = String(UUID().uuidString.prefix(8)).lowercased()
-            let needs = str(r, "needs").map(TaskScheduler.list), scope = str(r, "scope").map(TaskScheduler.list)
+            let needs = try strings("needs"), scope = try strings("scope")
             if let scope, let why = TaskScheduler.scopeRefusal(scope) { throw invalid("--scope: \(why)") }
             if let needs, let why = TaskScheduler.needsRefusal(id: id, needs: needs, tasks: try await work.active(terminal: t.id)?.tasks ?? []) {
                 throw invalid("--needs: \(why)")

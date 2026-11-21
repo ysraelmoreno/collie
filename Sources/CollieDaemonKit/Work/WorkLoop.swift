@@ -325,7 +325,12 @@ actor WorkLoop {
         case .fault(let what): r.fault = what
         case .summon:
             do {
-                let agent = try await host.summon(name: name, for: r.work, loop: r.loop)
+                // M3b.6: a name taken since `attempt` read the names gives way to the next one (the job keeps `name`)
+                let work = r.work, loop = r.loop, host = host
+                let base = AgentNaming.name(work: work.title, task: task.title, taskId: task.id, attempt: n, lane: slot)
+                let agent = try await AgentNaming.summon(base, taskId: task.id, taken: await host.namesTaken()) { (x: String) async throws(ProtocolError) -> UUID in
+                    try await host.summon(name: x, for: work, loop: loop)
+                }
                 r.agent = agent; r.mark = agent
                 return .summoned(agent)
             } catch { return .summonFailed(error.message) }

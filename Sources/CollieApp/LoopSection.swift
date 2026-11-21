@@ -44,7 +44,7 @@ struct LoopSection: Equatable {
         return work.jobs.last { $0.kind == .loop && $0.label == title && $0.terminal.map(alive.contains) == true }?.terminal
     }
 
-    static let hidden =LoopSection(visible: false, rows: [], header: nil)
+    static let hidden = LoopSection(visible: false, rows: [], header: nil)
 
     /// Shown only while a loop of the active work of `paddock` is running (any phase). No work, a work of another paddock
     /// or a closed one, no loop, a finished or stopped loop: hidden.

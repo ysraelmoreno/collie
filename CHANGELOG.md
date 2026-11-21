@@ -6,6 +6,8 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-11-21
+
 ### Added
 - **"O que o Collie faz":** an info icon (above the usage summary in "Trilho", beside it in "Compacta") opens a carousel of 17 cards, one per feature, with how to call it and a button that takes you there. It never opens by itself; a dot on the icon shows while there are cards you have not seen.
 - **Agent hooks for plug-ins:** an external plug-in can declare `hooks` (`edit`, `stop`) and a `helper`; the daemon hands it the files an agent wrote and returns its answer to the agent, as guidance or as a block. The helper runs once per event in its own sandbox (reads the project, writes only its data folder, no network), with a 3 s deadline, and any failure is silent. Claude terminals only. Installing shows what the plug-in may do. API: `docs/plugins/api-v1.md`.

@@ -33,7 +33,11 @@ private struct Rig {
     }
     func head() async throws -> String { try await git(repo, "rev-parse", "HEAD") }
     func status() async throws -> String { try await git(repo, "status", "--porcelain") }
-    func cleans() async -> [[String]] { await host.gits.filter { $0.first == "clean" } }
+    func cleans() async -> [[String]] { await host.gits.filter { $0.contains("clean") } }
+    /// M6.3: a file in the quarantine of the sweep `n`.
+    func quarantined(_ file: String, _ n: Int = 1) -> String? {
+        read(".git/\(LaneIntegrator.quarantineDir)/\(n)/\(file)", in: repo)
+    }
 }
 
 private func isLeftDirty(_ o: LaneIntegration.Outcome) -> Bool { if case .leftDirty = o { true } else { false } }
@@ -53,7 +57,11 @@ private func isLeftDirty(_ o: LaneIntegration.Outcome) -> Bool { if case .leftDi
         #expect(rb.spared.isEmpty)
         #expect(read("report.txt", in: rig.repo) == "from b\n")
         #expect(try await rig.status() == "")
-        #expect(await rig.cleans() == [["clean", "-q", "-f", "--", "report.txt"]], "only the gate's file, by name")
+        // M6.3: moved into the quarantine (was: removed by git clean), only the gate's file, by name
+        #expect(await rig.cleans().isEmpty)
+        #expect(rb.moved == ["report.txt"])
+        #expect(rig.quarantined("report.txt") == "report\n")
+        #expect(rb.quarantine?.hasSuffix("/.git/\(LaneIntegrator.quarantineDir)/1") == true, "\(rb.quarantine ?? "nil")")
     }
 
     @Test func theOwnersFileInTheWayIsNeverRemovedAndTheLoopStops() async throws {
@@ -97,7 +105,7 @@ private func isLeftDirty(_ o: LaneIntegration.Outcome) -> Bool { if case .leftDi
         let a = try await rig.lane("a", "a.txt", "a\n")
         #expect(try await rig.go(a, gate: "echo report > report.txt").outcome == .integrated)
         _ = try await git(rig.repo, "add", "report.txt")
-        #expect(await rig.integ.sweep().isEmpty)
+        #expect(await rig.integ.sweep() == .init())
         #expect(read("report.txt", in: rig.repo) == "report\n")
         #expect(await rig.cleans().isEmpty)
     }
@@ -107,11 +115,14 @@ private func isLeftDirty(_ o: LaneIntegration.Outcome) -> Bool { if case .leftDi
         write("mine\n", "loose.txt", in: rig.repo)
         let a = try await rig.lane("a", "a.txt", "a\n")
         #expect(try await rig.go(a, gate: "echo report > report.txt; mkdir -p cov; echo x > cov/lcov.info").outcome == .integrated)
-        #expect(await rig.integ.sweep().isEmpty)
+        let s = await rig.integ.sweep()
+        #expect(s.spared.isEmpty && s.moved == ["cov/lcov.info", "report.txt"], "\(s)")
         #expect(read("report.txt", in: rig.repo) == nil)
         #expect(read("cov/lcov.info", in: rig.repo) == nil)
+        // M6.3: moved into the quarantine (was: removed)
+        #expect(rig.quarantined("report.txt") == "report\n" && rig.quarantined("cov/lcov.info") == "x\n")
         #expect(read("loose.txt", in: rig.repo) == "mine\n", "the owner's never")
-        #expect(await rig.integ.sweep().isEmpty, "once")
+        #expect(await rig.integ.sweep() == .init(), "once")
     }
 
     /// M3c.2 preserved: a formatter that really changes a tracked file is the owner's to the integrator: nothing reset.
@@ -123,7 +134,7 @@ private func isLeftDirty(_ o: LaneIntegration.Outcome) -> Bool { if case .leftDi
         #expect(broke.kept == ["f.txt", "junk.txt"] && broke.undo == rig.base)
         #expect(read("f.txt", in: rig.repo) == "ONE\n")
         // a tree left dirty: nothing of the gate's is taken as its own (the note said "nothing removed")
-        #expect(await rig.integ.sweep().isEmpty)
+        #expect(await rig.integ.sweep() == .init())
         #expect(read("junk.txt", in: rig.repo) == "junk\n")
         #expect(await rig.cleans().isEmpty)
     }

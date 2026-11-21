@@ -45,6 +45,7 @@ extension WorkLoop {
             return (.stopped, .init(.gitFailed))
         }
         let integrator = LaneIntegrator(host: host, dir: dir)
+        await integrator.clearQuarantine()   // M6.3: what the last loop's gates left goes now
         let (woken, signal) = AsyncStream<Wake>.makeStream()
         lanes[id] = Lanes(signal: signal)
         var alive: [String: Task<Void, Never>] = [:]   // by task: running in its lane, or with the integrator
@@ -106,8 +107,9 @@ extension WorkLoop {
         for t in alive.values { await t.value }
         // M3d.3: what the last gate left goes with the loop, unless someone works in the tree now
         if await host.othersWorking() == nil {
-            let spared = await integrator.sweep()
-            if !spared.isEmpty { await note(id, Self.sparedNote(spared)) }
+            let swept = await integrator.sweep()
+            if let at = swept.at, !swept.moved.isEmpty { await note(id, Self.movedNote(swept.moved, at: at)) }
+            if !swept.spared.isEmpty { await note(id, Self.sparedNote(swept.spared)) }
         }
         lanes[id] = nil
         signal.finish()
@@ -241,6 +243,7 @@ extension WorkLoop {
         }
         // M3c.2: new untracked files never stop the loop nor a reset: they stay, and the note names them
         if result.kept.isEmpty, !result.left.isEmpty { await note(id, Self.leftNote(result.left)) }
+        if let at = result.quarantine, !result.moved.isEmpty { await note(id, Self.movedNote(result.moved, at: at)) }
         if !result.spared.isEmpty { await note(id, Self.sparedNote(result.spared)) }
         switch result.outcome {
         case .integrated, .noop:
@@ -293,12 +296,18 @@ extension WorkLoop {
     /// before the next merge (or at the loop's end) if still as the gate left them.
     static func leftNote(_ left: [String]) -> String {
         "[loop] arquivos não rastreados novos na worktree do cercado (do portão): " + fileList(left)
-            + ". Saem antes do próximo merge, ou no fim do laço, se ninguém mexer neles."
+            + ". Vão para a quarentena antes do próximo merge, ou no fim do laço, se ninguém mexer neles."
+    }
+
+    /// M6.3: the gate's files moved out of the tree: where they are (nothing removed).
+    static func movedNote(_ moved: [String], at: String) -> String {
+        "[loop] arquivos deixados pelo portão foram movidos para a quarentena \(at) (nada foi apagado; ela é esvaziada no começo do próximo laço): "
+            + fileList(moved) + "."
     }
 
     /// M3d.3: files a gate left that changed since: they are the owner's now, and stay.
     static func sparedNote(_ spared: [String]) -> String {
-        "[loop] arquivos deixados pelo portão mudaram depois dele e ficaram na worktree do cercado (nada foi apagado): "
+        "[loop] arquivos deixados pelo portão ficaram na worktree do cercado (mudaram depois dele, têm nome que o laço não toca ou a quarentena estava cheia; nada foi apagado): "
             + fileList(spared) + "."
     }
 

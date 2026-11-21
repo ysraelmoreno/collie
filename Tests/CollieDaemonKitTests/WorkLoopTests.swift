@@ -21,6 +21,8 @@ struct LoopScript: Sendable {
     var nudgeError: ProtocolError?
     /// M5.3: what the agent's screen shows while its attempt's turn hangs (it never ends by itself): `usageLimit` reads it.
     var screen: [String]?
+    /// M10.2: runs when the agent is told its commit failed the pre-check, in the worktree.
+    var prechecked: @Sendable (URL) async throws -> Void = { _ in }
 }
 
 /// A host without PTYs: scripted agents, real git and a real (unsandboxed) check in a temp repo.
@@ -80,6 +82,12 @@ actor LoopFakeHost: LoopHost {
             if let e = s.nudgeError { throw e }
             return s.nudgedSource ?? s.source
         }
+        // M10.2: the pre-check's nudge is not the attempt's prompt either
+        if prompt.hasPrefix(WorkLoop.precheckPromptHead) {
+            precheckNudges.append((name, prompt))
+            do { try await s.prechecked(dir) } catch { Issue.record("prechecked \(name): \(error)") }
+            return s.source
+        }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
         if s.screen != nil {   // M5.3: stuck in a dialog until the loop gives up on the turn
@@ -91,6 +99,7 @@ actor LoopFakeHost: LoopHost {
         return s.source
     }
     var nudges: [(name: String, prompt: String, timeout: Duration)] = []
+    var precheckNudges: [(name: String, prompt: String)] = []
     /// M2.0: the agents (by name) whose prompt had its Enter sent again.
     var resubmits: Set<String> = []
     func setResubmitted(_ n: String) { resubmits.insert(n) }
@@ -180,7 +189,7 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 /// A repo, a store holding a work with `tasks` and a running loop, a fake host and the loop.
 struct LoopRig {
     let repo: URL, storeDir: URL, store: WorkStore, host: LoopFakeHost, loop: WorkLoop, work: UUID
-    init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil,
+    init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil, precheck: String? = nil,
          checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50), noticeWindow: TimeInterval = 0) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
@@ -188,7 +197,7 @@ struct LoopRig {
         let w = try await store.start(title: "W", terminal: UUID(), paddockId: UUID(), branch: "main")
         try await store.update(w.id) {
             $0.tasks = tasks
-            $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id), gate: gate)
+            $0.loop = WorkLoopState(tries: tries, timeout: 60, max: max, budget: budget, tasks: tasks.map(\.id), gate: gate, precheck: precheck)
         }
         work = w.id
         host = LoopFakeHost(dir: repo)

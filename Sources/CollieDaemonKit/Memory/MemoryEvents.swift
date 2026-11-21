@@ -21,6 +21,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
         /// `memory enforce`: `ids` is the memory, `mode` set|clear, `reason` the check's path (set only). Mode `gone` (source
         /// `lifecycle`): the pass cleared it because the check's path is no longer in HEAD; `reason` is that path.
         case enforced
+        /// M10.1: a Shepherd's Stop measured its context (`ContextAdvice.lastContext`): `tokens`, `session`, `terminal`.
+        case pastorContext
     }
     var at = Date.distantPast   // stamped by the log
     var type: Kind
@@ -51,6 +53,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
     var verdict: String? = nil
     /// `used` (item 2 phase 1): the ids of `ids` that also had evidence, and parallel to it the kind (cite|get|flag).
     var evidenced: [UUID]? = nil, evidence: [String]? = nil
+    /// `injected` (M10.4): near-duplicates of `ids` the block left out (`InjectionDedup`): seen by the session, not injected.
+    var collapsed: [UUID]? = nil
 
     static func estimate(bytes: Int) -> Int { (bytes + 3) / 4 }
 

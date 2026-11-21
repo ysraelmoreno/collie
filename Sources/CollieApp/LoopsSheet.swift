@@ -88,6 +88,8 @@ enum LoopsModal {
         struct TaskLine: Equatable, Identifiable {
             var id: String, title: String, state: String, tries: String
             var commits: [String], why: [String]
+            /// M10.3: the task's counts ("tokens: …"); nil: the archive has none.
+            var tokens: String? = nil
         }
         struct EventLine: Equatable, Identifiable {
             var id: Int, time: String, task: String, kind: String, detail: String
@@ -99,6 +101,8 @@ enum LoopsModal {
         var timeline: [EventLine]
         var loopSummary: String
         var notes: [String]
+        /// M10.3: the work's counts in all ("tokens: …"); nil: the archive has none (written before, or no attempt read).
+        var tokens: String?
 
         init(_ a: WorkArchive, timeZone: TimeZone = .current) {
             id = a.id; title = a.title
@@ -106,8 +110,10 @@ enum LoopsModal {
             facts = HistoryPage.facts(for: a, timeZone: timeZone).map { Fact(label: $0.label, value: $0.value) }
             tasks = a.tasks.map { t in
                 TaskLine(id: t.id, title: t.title, state: Self.state(t.state), tries: "\(t.tries)",
-                         commits: t.commits.map { String($0.prefix(8)) }, why: [t.failure, t.evidenceNote].compactMap { $0 })
+                         commits: t.commits.map { String($0.prefix(8)) }, why: [t.failure, t.evidenceNote].compactMap { $0 },
+                         tokens: WorkArchive.tokensLine(t.tokens))
             }
+            tokens = WorkArchive.tokensLine(a.tokens)
             // the daemon already cuts at 500; an older or foreign archive is cut here too (the newest kept)
             timeline = a.timeline.suffix(WorkArchive.timelineMax).enumerated().map { i, e in
                 EventLine(id: i, time: HistoryPage.format("HH:mm:ss", e.at, timeZone), task: e.task ?? "", kind: e.kind, detail: e.detail)
@@ -286,6 +292,7 @@ struct LoopsSheet: View {
                         }
                     }
                     .font(.collieUI(12))
+                    if let tk = d.tokens { Text(verbatim: tk).font(.collieUI(12)).foregroundStyle(Color.collieMuted) }
                     heading("TAREFAS")
                     ForEach(d.tasks) { t in
                         VStack(alignment: .leading, spacing: 2) {
@@ -295,6 +302,7 @@ struct LoopsSheet: View {
                                 Text(verbatim: "\(t.state) · \(t.tries) tentativas").foregroundStyle(Color.collieMuted)
                             }
                             .font(.collieUI(12))
+                            if let tk = t.tokens { Text(verbatim: tk).font(.collieUI(11)).foregroundStyle(Color.collieMuted) }
                             if !t.commits.isEmpty { Text(verbatim: t.commits.joined(separator: " ")).font(.collieMono(11)).foregroundStyle(Color.collieMuted) }
                             ForEach(Array(t.why.enumerated()), id: \.offset) { Text(verbatim: $0.element).font(.collieUI(11)).foregroundStyle(Color.collieMuted) }
                         }

@@ -111,7 +111,7 @@ actor CommandRouter {
     /// Turns each terminal ended (`turn.completed`, not continued): `wait` sees one end. ponytail: never pruned (tiny).
     var turnEnds: [UUID: Int] = [:]
     /// M5.5: when each terminal's Stop last gave the large-context advice. ponytail: never pruned (tiny).
-    var contextAdvisedAt: [UUID: Date] = [:]
+    var contextAdvisedAt: [UUID: ContextAdvice.Advised] = [:]
     /// Files each Claude terminal wrote this turn, for the plug-ins' `stop` event (`pluginHook`; dropped with the terminal).
     var pluginTurn = PluginTurn()
     /// Turn notices waiting for each Shepherd to be idle, typed as one block (`noticeTurnEnded`).

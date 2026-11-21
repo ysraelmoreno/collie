@@ -123,6 +123,11 @@ actor WorkLoop {
     static let featureMaps = ["docs/feature-map.md", "FEATURES.md"]
     /// M2.1: what an agent that ended its turn by hook with no new commit is told, once per attempt.
     static let nudgePrompt = "Você encerrou o turno sem fazer commit. Ninguém vai responder perguntas neste laço: decida sozinho. Faça commit do que escreveu (ou diga em uma linha o que impede) e encerre."
+    /// M10.2: what an agent whose commit failed the pre-check is told, once per attempt, before its output's tail.
+    static let precheckPromptHead = "O pré-check do laço falhou no seu commit. Ninguém vai responder perguntas neste laço: corrija, faça commit e encerre o turno. Fim da saída:"
+    static func precheckPrompt(_ tail: String) -> String { precheckPromptHead + "\n" + tail }
+    /// M10.2: the pre-check's own limit (the budget's rest bounds it too) and its tail's size.
+    static let precheckTimeout = 180, precheckLines = 40, precheckChars = 3000
     static let evidenceCommits = 20, evidenceSubject = 200, evidenceLines = 20, evidenceChars = 2000
     let store: WorkStore, host: any LoopHost, poll: Duration, checkTimeout: Duration, othersWait: Duration
     /// A test's seam: the event an effect answers with, instead of carrying it out (nil: carried out as always).
@@ -254,7 +259,7 @@ actor WorkLoop {
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
-        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name), adopt ? .adopted : .started)
+        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name, precheck: loop.precheck != nil), adopt ? .adopted : .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
             // the journal and the phase wait for the attempt's next write, but never through a long wait: `work status`
@@ -322,7 +327,7 @@ actor WorkLoop {
     /// Effects that may take long: what is pending is written before them.
     private static func waits(_ e: AttemptMachine.Effect) -> Bool {
         switch e {
-        case .ask, .waitForCommit, .runCheck, .runGate: true   // `nudge` writes by itself, once, when it goes
+        case .ask, .waitForCommit, .runCheck, .runGate, .runPrecheck: true   // the nudges write by themselves, when they go
         default: false
         }
     }
@@ -411,6 +416,22 @@ actor WorkLoop {
             r.pending.append(entry(.nudged, task: task.id, attempt: n, detail: AskResult.Source.hook.rawValue))
             await record(id, &r)
             return await talk(agent, Self.nudgePrompt, .seconds(rest))
+        case .precheckNudge(let tail):
+            // as `nudge`: what is left of the turn, never when the loop or the daemon is stopping
+            guard let agent = r.agent, let deadline = r.deadline, !Task.isCancelled, !stopping.contains(id) else { return .waitExpired }
+            let rest = Int(deadline.timeIntervalSince(host.now()))
+            guard rest >= 1 else { return .waitExpired }
+            await record(id, &r)
+            return await talk(agent, Self.precheckPrompt(tail), .seconds(rest))
+        case .runPrecheck:
+            // a timeout, or a pre-check that could not run, is a failure (status nil): its tail says which
+            let limit = Swift.min(Self.precheckTimeout, await left(id, r.loop, since: r.started))
+            do {
+                let res = try await host.check(r.loop.precheck ?? "false", in: dir, timeout: .seconds(limit))
+                return .precheckDone(status: res.status, tail: Self.evidenceTail(check: res.stdout + res.stderr, gate: nil, lines: Self.precheckLines, chars: Self.precheckChars))
+            } catch where error.code == .timeout {
+                return .precheckDone(status: nil, tail: "o pré-check passou de \(limit) s")
+            } catch { return .precheckDone(status: nil, tail: "o pré-check não rodou: \(error.message)") }
         case .waitForCommit, .lookForCommit:
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
                 await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline)
@@ -829,12 +850,12 @@ actor WorkLoop {
     /// The evidence's `checkTail`: the last `evidenceLines` lines of the check's output, then the gate's (if any),
     /// without ANSI sequences or control and format characters (`RerailText.plain`, line by line), secrets hidden
     /// (LotBoards.scrub's known shapes), the last `evidenceChars` characters.
-    static func evidenceTail(check: String, gate: String?) -> String {
+    static func evidenceTail(check: String, gate: String?, lines: Int = evidenceLines, chars: Int = evidenceChars) -> String {
         let tails = [check, gate ?? ""].map {
             ANSI.strip($0).trimmingCharacters(in: .newlines).split(separator: "\n", omittingEmptySubsequences: false)
-                .suffix(evidenceLines).map { RerailText.plain(String($0)) }.joined(separator: "\n")
+                .suffix(lines).map { RerailText.plain(String($0)) }.joined(separator: "\n")
         }.filter { !$0.isEmpty }
-        return String(LotBoards.scrub(tails.joined(separator: "\n")).suffix(evidenceChars))
+        return String(LotBoards.scrub(tails.joined(separator: "\n")).suffix(chars))
     }
 
     /// Why `what` (the check, the gate) did not pass, from its exit status (nil: it timed out); nil = it passed.
@@ -851,12 +872,17 @@ actor WorkLoop {
         return r.isEmpty ? nil : r.joined(separator: "; ")
     }
 
+    /// M10.2: the turn's rules, fixed lines of every attempt's prompt.
+    static let turnRule = "Rode build e testes em primeiro plano; não encerre o turno com comando em segundo plano nem monitor pendente."
+    static let buildRule = "`swift build` não compila os testes: use `swift build --build-tests` ou `swift test --filter`."
+
     /// The attempt's prompt, in the owner's language.
     static func prompt(task: WorkTask, spec: String?, attempt: Int, tries: Int, dir: URL, notes: [WorkNote], gate: String? = nil, map: String? = nil) -> String {
         var lines = [
             "Tarefa \"\(task.title)\", tentativa \(attempt) de \(tries), num laço autônomo: ninguém vai responder perguntas, então decida e registre a decisão no commit.",
             "Trabalhe só em \(dir.path). Faça só esta tarefa. Não faça push nem land.",
             "Faça commit assim que código e testes estiverem escritos, ANTES de rodar build ou teste: sem commit novo a tarefa não conta. Se depois corrigir algo, faça outro commit. Não deixe arquivo modificado sem commit.",
+            turnRule, buildRule,
             "Depois do seu turno, o laço roda este comando em \(dir.path) e só ele decide se a tarefa passou:",
             task.check ?? "",
         ]

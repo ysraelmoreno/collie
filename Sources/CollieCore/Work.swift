@@ -134,6 +134,8 @@ public struct LoopEvent: Codable, Sendable, Equatable {
         /// M3.5: a lane that passed was joined to the paddock's branch (detail: the paddock's new HEAD) / its merge was
         /// undone and the task redoes its attempt from the paddock's new HEAD (detail: why).
         case integrated, integrationRetry
+        /// M10.2: the work's `--precheck` failed / passed at the end of a turn (detail: `exit n` or `timeout`).
+        case precheckFailed, precheckPassed
         public init(from d: Decoder) throws { self = Kind(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
     }
     public static let detailMax = 200
@@ -163,6 +165,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public var max: Int?; public var used: Int
     public var budget: Int?; public var spent: Int?; public var tasks: [String]?
     public var gate: String?
+    /// M10.2: a command run at the end of each turn, before the check, with the agent still there: when it fails the
+    /// agent is told its output's tail once (nil: none, the loop as before).
+    public var precheck: String?
     /// What a running loop is doing right now: its terminal is only open during `agent`, so without this a loop in its
     /// check or gate looks idle (no terminal, no signal).
     public enum Phase: String, Codable, Sendable {
@@ -269,15 +274,15 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
                 budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil, phase: Phase? = nil,
-                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil) {
-        self.parallel = parallel; self.notify = notify
+                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil, precheck: String? = nil) {
+        self.parallel = parallel; self.notify = notify; self.precheck = precheck
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
         self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate; self.phase = phase
         self.startedAt = startedAt; self.endedAt = endedAt
     }
     /// The older fields decode as always (a required one missing, or one of the wrong shape, is no loop). The newer
-    /// ones (`phase`, `phaseSince`, `stopReason`, `events`, `parallel`, `lanes`, `notify`) only record: a malformed one is nil, a malformed event is dropped, and
+    /// ones (`phase`, `phaseSince`, `stopReason`, `events`, `parallel`, `lanes`, `notify`, `precheck`) only record: a malformed one is nil, a malformed event is dropped, and
     /// the loop survives. What is written (the synthesized `encode`) does not change.
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -297,6 +302,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         parallel = (try? c.decodeIfPresent(Int.self, forKey: .parallel)) ?? nil
         lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
         notify = (try? c.decodeIfPresent(Notify.self, forKey: .notify)) ?? nil
+        precheck = (try? c.decodeIfPresent(String.self, forKey: .precheck)) ?? nil
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {

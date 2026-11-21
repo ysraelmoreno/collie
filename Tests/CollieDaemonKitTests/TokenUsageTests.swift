@@ -133,7 +133,7 @@ private let user = #"{"type":"user","message":{"role":"user","content":"\#(secre
     @Test func workUsageIsACommandOfCLIAndMCP() throws {
         let spec = try #require(Commands.spec("work.usage"))
         #expect(spec.mcpName == "work_usage" && spec.exposedToMCP && !spec.shepherdOnly)
-        #expect(spec.params.map(\.name) == ["limit", "terminal"])
+        #expect(spec.params.map(\.name) == ["limit", "id", "terminal"])
         let p = try ArgvParser.parse(["work", "usage", "--limit", "3"])
         #expect(p.command == "work.usage" && p.args["limit"] == .number(3))
         let names = MCPSchema.tools().compactMap { if case .object(let o) = $0, case .string(let n)? = o["name"] { n } else { nil } }

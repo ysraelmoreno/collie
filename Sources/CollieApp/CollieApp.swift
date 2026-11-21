@@ -249,9 +249,12 @@ struct ContentView: View {
         case herds(CGPoint?, String?), saveHerd
         /// "O que o Collie faz", and the panel sheet with that plug-in selected (a tour button).
         case tour, openPanelFor(String)
+        /// M8.3: the Laços modal on that tab.
+        case loops(LoopsTab)
         var id: String {
             switch self {
             case .tour: "tour"
+            case .loops: "loops"
             case .openPanelFor(let p): "panel for \(p)"
             case .herds(let p, let s): "herds \(String(describing: p)) \(s ?? "")"
             case .saveHerd: "save herd"
@@ -345,10 +348,11 @@ struct ContentView: View {
                      herds: herds, openHerds: { sheet = .herds(nil, $0) },
                      focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: openPreferences,
                      tour: tour, openTour: { sheet = .tour }, openWork: { showPanel("work") },
-                     onOpenHistory: { id in Task { @MainActor in
+                     onOpenHistory: { id in
                          if historyOpener == nil { historyOpener = .live(client: client, focus: { notifier.onFocus?($0) }) }
-                         await historyOpener?.show(id) } },
-                     historyNotice: { historyOpener?.message })
+                         await historyOpener?.show(id) },
+                     historyNotice: { historyOpener?.message }, onOpenLoops: { sheet = .loops($0) },
+                     fetchHistory: { [client] in try await HistoryOpener.archive($0, client: client) })
     }
 
     /// The tour's button, once the tour sheet has closed: the same entries as the rail, the palette and the menus.
@@ -463,6 +467,7 @@ struct ContentView: View {
             case .openPanel(let p): OpenPanelSheet(client: client, canvas: canvas, at: p)
             case .openPanelFor(let id): OpenPanelSheet(client: client, canvas: canvas, initial: id)
             case .tour: FeatureTourView(store: tour) { tourAction = $0 }
+            case .loops(let tab): LoopsSheet(ctx: shell, initial: tab)
             case .herds(let p, let s):
                 HerdsSheet(model: herds, client: client, canvas: canvas, anchor: p ?? canvas.toCanvas(CGPoint(x: 40, y: 40)), initial: s)
             case .saveHerd: SaveHerdSheet(model: herds, client: client, canvas: canvas)

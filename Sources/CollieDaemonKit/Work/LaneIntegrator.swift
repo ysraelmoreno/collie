@@ -56,14 +56,17 @@ actor LaneIntegrator {
     static let quarantineDir = "collie-gate-leftovers"
 
     private let host: any LoopHost, dir: URL
+    /// M7.2. The loop's work: each box it makes carries it (`<n>.work`), and `clearQuarantine` empties only those.
+    private let work: UUID?
     private var busy = false, waiters: [CheckedContinuation<Void, Never>] = []
     /// M3d.3. The untracked files the last gates made, by path: their `git hash-object` right after the gate.
     private var gateMade: [String: String] = [:]
     /// M6.3. What this loop's sweeps moved into the quarantine so far.
     private var quarantined = (files: 0, bytes: 0)
 
-    /// `host`: the paddock's (its `othersWorking` is about the paddock's worktree); `dir`: the paddock's worktree.
-    init(host: any LoopHost, dir: URL) { self.host = host; self.dir = dir }
+    /// `host`: the paddock's (its `othersWorking` is about the paddock's worktree); `dir`: the paddock's worktree;
+    /// `work`: the loop's (nil: its boxes carry no mark, and `clearQuarantine` empties nothing).
+    init(host: any LoopHost, dir: URL, work: UUID? = nil) { self.host = host; self.dir = dir; self.work = work }
 
     /// Integrations waiting for the one running.
     var waiting: Int { waiters.count }
@@ -206,6 +209,8 @@ actor LaneIntegrator {
         let fm = FileManager.default
         for file in gone {
             let src = dir.appendingPathComponent(file)
+            // M7.2 (A6): a parent swapped for a symlink since the hash would move a file from outside the tree
+            guard Self.inside(src, dir) else { out.spared.append(file); continue }
             let size = ((try? fm.attributesOfItem(atPath: src.path))?[.size] as? Int) ?? 0
             guard quarantined.files < Self.quarantineFiles, quarantined.bytes + size <= Self.quarantineBytes else {
                 out.spared.append(file); continue
@@ -218,9 +223,20 @@ actor LaneIntegrator {
                 out.moved.append(file)
             } catch { out.spared.append(file) }
         }
-        if !out.moved.isEmpty { out.at = box.path } else { try? fm.removeItem(at: box) }
+        if !out.moved.isEmpty { out.at = box.path } else { try? fm.removeItem(at: box); try? fm.removeItem(at: Self.mark(box)) }
         return out
     }
+
+    /// M7.2 (A6): `src`'s folder, symlinks resolved, is `root`'s real folder or inside it (`src` itself is not
+    /// resolved: a symlink the gate left is moved as a link).
+    /// ponytail: a swap between this check and the `rename` still wins; only an `openat` walk would close it
+    static func inside(_ src: URL, _ root: URL) -> Bool {
+        let real = root.resolvingSymlinksInPath().path, parent = src.deletingLastPathComponent().resolvingSymlinksInPath().path
+        return parent == real || parent.hasPrefix(real + "/")
+    }
+
+    /// M7.2: box `<root>/<n>`'s mark, `<root>/<n>.work`: the id of the work whose loop made it.
+    static func mark(_ box: URL) -> URL { box.deletingLastPathComponent().appendingPathComponent(box.lastPathComponent + ".work") }
 
     /// M6.3: a gate's file name the integrator may move: relative, inside the tree, not git's, no backslash.
     static func touchable(_ file: String) -> Bool {
@@ -242,14 +258,23 @@ actor LaneIntegrator {
         while FileManager.default.fileExists(atPath: root.appendingPathComponent("\(n)").path) { n += 1 }
         let box = root.appendingPathComponent("\(n)")
         do { try FileManager.default.createDirectory(at: box, withIntermediateDirectories: true) } catch { return nil }
+        if let work { try? Data(work.uuidString.lowercased().utf8).write(to: Self.mark(box)) }
         return box
     }
 
-    /// M6.3: the loop's start empties what the last loop quarantined.
+    /// M6.3: the loop's start empties what the last loop quarantined. M7.2 (A2): only the boxes this loop's work made
+    /// (their mark); another work's, maybe of a loop still running, and an unmarked one are never touched.
+    /// ponytail: a work that never runs again leaves its boxes; the owner removes them (they are named in its notes)
     func clearQuarantine() async {
-        guard let root = await quarantineRoot() else { return }
-        try? FileManager.default.removeItem(at: root)
         quarantined = (0, 0)
+        guard let work, let root = await quarantineRoot() else { return }
+        let fm = FileManager.default, me = work.uuidString.lowercased()
+        for name in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] where !name.hasSuffix(".work") {
+            let box = root.appendingPathComponent(name)
+            guard (try? String(contentsOf: Self.mark(box), encoding: .utf8)) == me else { continue }
+            try? fm.removeItem(at: box); try? fm.removeItem(at: Self.mark(box))
+        }
+        if ((try? fm.contentsOfDirectory(atPath: root.path)) ?? ["?"]).isEmpty { try? fm.removeItem(at: root) }
     }
 
     /// The contents' hashes of `files`, in order (nil when git cannot say for every one).

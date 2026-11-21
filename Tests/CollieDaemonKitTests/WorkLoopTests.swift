@@ -133,10 +133,14 @@ actor LoopFakeHost: LoopHost {
     var inFlight = 0, maxInFlight = 0
     var fault: (prefix: [String], stderr: String)?
     func setFault(_ prefix: [String], _ stderr: String) { fault = (prefix, stderr) }
+    /// M7.2: runs after each git, with its arguments (a test changes the tree between two of the integrator's gits).
+    var gitProbe: (@Sendable ([String]) async -> Void)?
+    func setGitProbe(_ p: @escaping @Sendable ([String]) async -> Void) { gitProbe = p }
     func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
         gits.append(args); inFlight += 1; maxInFlight = Swift.max(maxInFlight, inFlight)
         defer { inFlight -= 1 }
         let r = try await GitRunner.run(args, in: dir)
+        await gitProbe?(args)
         if let f = fault, args.starts(with: f.prefix) { fault = nil; return ProcessResult(status: 128, stdout: "", stderr: f.stderr, truncated: false) }
         return r
     }

@@ -26,7 +26,6 @@ private func loopWork() -> Work {
     @Test func sectionOnlyWithAtLeastOneItem() {
         #expect(!HistorySection.make([]).visible)
         #expect(HistorySection.make(entries(1)).visible)
-        #expect(ContextPanel.sectionTitles(agents: 0, panels: 0, loops: .hidden, history: .make([])) == ["AGENTES · 0", "PAINÉIS · 0", "REBANHOS", "LOTES"])
     }
 
     @Test func exactlyTwentyOfThirtyAndTheMoreLink() {
@@ -72,22 +71,10 @@ private func loopWork() -> Work {
         #expect(!HistorySection.make(feed.history).visible)
     }
 
-    @Test func hookCallsWithTheRightId() {
-        var got: [String] = []
-        let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-hist-\(UUID())")))
-        var ctx = ShellContext(client: client, canvas: CanvasState(), paddocks: PaddockActions(client: client), usage: UsageFeed(),
-                               usageOpen: .constant(false), newTerminal: {}, openPanel: {}, fit: {}, openPalette: {},
-                               herds: HerdsModel(call: { _, _ in .null }, nodeName: { _ in nil }), openHerds: { _ in })
-        ctx.onOpenHistory = { got.append($0) }
-        let rows = HistorySection.make(entries(3)).rows
-        ContextPanel.open(rows[1], ctx: ctx); ContextPanel.open(rows[2], ctx: ctx)
-        #expect(got == ["h1", "h2"])
-    }
-
-    @Test func loopsAndHistoryLiveTogetherInOrder() {
+    /// M8.2: HISTÓRICO left the Trilho (the Laços modal shows it); the model above stays for the modal.
+    @Test func historyIsNoLongerATrilhoSection() {
         let loops = LoopSection.make(work: loopWork(), paddock: pad)
-        let t = ContextPanel.sectionTitles(agents: 2, panels: 1, loops: loops, history: .make(entries(4)))
-        #expect(t == ["AGENTES · 2", "PAINÉIS · 1", "REBANHOS", "LOTES", "LAÇOS · 1/1", "HISTÓRICO · 4"])
-        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: .hidden, history: .make(entries(4))).suffix(2) == ["LOTES", "HISTÓRICO · 4"])
+        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: loops) == ["AGENTES · 2", "PAINÉIS · 1", "REBANHOS", "LOTES", "LAÇOS"])
+        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: .hidden) == ["AGENTES · 2", "PAINÉIS · 1", "REBANHOS", "LOTES"])
     }
 }

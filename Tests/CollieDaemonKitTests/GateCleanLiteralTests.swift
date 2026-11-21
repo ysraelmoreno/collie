@@ -24,7 +24,7 @@ private struct Rig {
     let repo: URL, host: LoopFakeHost, integ: LaneIntegrator, base: String, work = UUID()
     init() async throws {
         repo = try await makeRepo(); host = LoopFakeHost(dir: repo)
-        integ = LaneIntegrator(host: host, dir: repo)
+        integ = LaneIntegrator(host: host, dir: repo, work: work)
         base = try await git(repo, "rev-parse", "HEAD")
     }
     /// A lane that adds `file`, integrated under `gate`.
@@ -140,7 +140,7 @@ private struct Rig {
         _ = try await rig.go("a", gate: "echo r > report.txt")
         #expect(await rig.integ.sweep().moved == ["report.txt"])
         #expect(rig.quarantined("report.txt") == "r\n")
-        await LaneIntegrator(host: rig.host, dir: rig.repo).clearQuarantine()
+        await LaneIntegrator(host: rig.host, dir: rig.repo, work: rig.work).clearQuarantine()
         #expect(!FileManager.default.fileExists(atPath: rig.box.path))
     }
 }

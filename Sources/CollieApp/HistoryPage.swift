@@ -19,16 +19,27 @@ enum HistoryPage {
         return o
     }
 
-    static func html(for a: WorkArchive, timeZone: TimeZone = .current) -> String {
-        func fmt(_ pattern: String, _ d: Date?) -> String {
-            guard let d else { return "—" }
-            let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = timeZone; f.dateFormat = pattern
-            return f.string(from: d)
-        }
-        func when(_ d: Date?) -> String { fmt("dd/MM/yyyy HH:mm:ss", d) }
-        func clock(_ d: Date?) -> String { fmt("HH:mm:ss", d) }
+    /// M8.3: the notices the page and the Laços modal show (one text for both).
+    static let reconstructedNotice = "Resumo reconstruído de um trabalho fechado antes do arquivo imutável: o diário é curto."
+    static let truncatedNotice = "A linha do tempo foi cortada nos 500 eventos mais recentes."
+
+    /// M8.3: the work's data as (label, value), raw text (whoever renders escapes): the page's `<dl>` and the modal's detail.
+    static func facts(for a: WorkArchive, timeZone: TimeZone = .current) -> [(label: String, value: String)] {
         var dur = "—"
         if let o = a.openedAt, let c = a.closedAt { let s = max(0, Int(c.timeIntervalSince(o))); dur = s >= 3600 ? "\(s / 3600)h\(String(format: "%02d", s % 3600 / 60))" : "\(s / 60)min \(s % 60)s" }
+        let stop = a.stopReason.map { WorkLoopState.Stop(WorkLoopState.Stop.Code(rawValue: $0) ?? .unknown).label + " (\($0))" } ?? "—"
+        return [("Cercado", a.paddock), ("Branch", a.branch), ("Abertura", format("dd/MM/yyyy HH:mm:ss", a.openedAt, timeZone)),
+                ("Fechamento", format("dd/MM/yyyy HH:mm:ss", a.closedAt, timeZone)), ("Duração", dur), ("Motivo de parada", stop)]
+    }
+
+    static func format(_ pattern: String, _ d: Date?, _ timeZone: TimeZone) -> String {
+        guard let d else { return "—" }
+        let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = timeZone; f.dateFormat = pattern
+        return f.string(from: d)
+    }
+
+    static func html(for a: WorkArchive, timeZone: TimeZone = .current) -> String {
+        func clock(_ d: Date?) -> String { format("HH:mm:ss", d, timeZone) }
         var h = """
         <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
@@ -43,12 +54,11 @@ enum HistoryPage {
         </style></head><body>
         <h1>\(esc(a.title))</h1>
         """
-        if a.reconstructed { h += "<p class=\"warn\">Resumo reconstruído de um trabalho fechado antes do arquivo imutável: o diário é curto.</p>" }
-        if a.truncated { h += "<p class=\"warn\">A linha do tempo foi cortada nos 500 eventos mais recentes.</p>" }
-        let stop = a.stopReason.map { WorkLoopState.Stop(WorkLoopState.Stop.Code(rawValue: $0) ?? .unknown).label + " (\($0))" } ?? "—"
-        h += "<dl><dt>Cercado</dt><dd>\(esc(a.paddock))</dd><dt>Branch</dt><dd><code>\(esc(a.branch))</code></dd>"
-        h += "<dt>Abertura</dt><dd>\(esc(when(a.openedAt)))</dd><dt>Fechamento</dt><dd>\(esc(when(a.closedAt)))</dd>"
-        h += "<dt>Duração</dt><dd>\(esc(dur))</dd><dt>Motivo de parada</dt><dd>\(esc(stop))</dd></dl>"
+        if a.reconstructed { h += "<p class=\"warn\">\(reconstructedNotice)</p>" }
+        if a.truncated { h += "<p class=\"warn\">\(truncatedNotice)</p>" }
+        h += "<dl>" + facts(for: a, timeZone: timeZone).map { f in
+            "<dt>\(f.label)</dt><dd>" + (f.label == "Branch" ? "<code>\(esc(f.value))</code>" : esc(f.value)) + "</dd>"
+        }.joined() + "</dl>"
         h += "<h2>Tarefas</h2><table><tr><th>Tarefa</th><th>Estado</th><th>Tentativas</th><th>Commits</th><th>Razão / nota</th></tr>"
         for t in a.tasks {
             let commits = t.commits.map { "<code>\(esc(String($0.prefix(8))))</code>" }.joined(separator: " ")
@@ -81,7 +91,7 @@ enum HistoryPage {
     @ObservationIgnored var focus: (UUID) -> Void
     /// A short notice for the section (fixed text, never the protocol's message nor a path); nil once a detail opens.
     private(set) var message: String?
-    static let failure = "Não foi possível abrir o histórico"
+    nonisolated static let failure = "Não foi possível abrir o histórico"
     @ObservationIgnored private var panels: [String: UUID] = [:]
 
     init(fetch: @escaping (String) async throws -> WorkArchive, add: @escaping (String, String, String) async throws -> String,
@@ -90,6 +100,7 @@ enum HistoryPage {
     }
 
     func show(_ id: String) async {
+        message = nil   // a notice is about the last try only
         guard let source = HistoryPage.source(id: id) else { message = "Histórico: id inválido"; return }
         if let p = panels[source], isOpen(p) { return focus(p) }
         do {
@@ -101,13 +112,16 @@ enum HistoryPage {
 }
 
 extension HistoryOpener {
+    /// `work.history --id`: a closed work's `WorkArchive` (the Prévia page and the Laços modal's detail, M8.3).
+    static func archive(_ id: String, client: DaemonClient) async throws -> WorkArchive {
+        let v = try await client.adminCall("work.history", ["id": .string(id)])
+        let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+        return try d.decode(WorkArchive.self, from: JSONEncoder().encode(v))
+    }
+
     /// The app's wiring: `work.history --id` and `artifact.add` (inline page) over the admin socket, a Prévia through `panel.open`.
     static func live(client: DaemonClient, focus: @escaping (UUID) -> Void) -> HistoryOpener {
-        HistoryOpener(fetch: { id in
-            let v = try await client.adminCall("work.history", ["id": .string(id)])
-            let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
-            return try d.decode(WorkArchive.self, from: JSONEncoder().encode(v))
-        }, add: { html, source, title in
+        HistoryOpener(fetch: { try await archive($0, client: client) }, add: { html, source, title in
             guard case .object(let o) = try await client.adminCall("artifact.add", ["html": .string(html), "source": .string(source), "title": .string(title)]),
                   case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "malformed artifact.add reply") }
             return id

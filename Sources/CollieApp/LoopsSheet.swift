@@ -12,7 +12,7 @@ enum LoopsModal {
     static func initialTab(_ requested: LoopsTab, running: Running?) -> LoopsTab { running == nil ? .history : requested }
 
     /// "Abrir no canvas": the Prévia artifact of before (`HistoryPage`, M7.1), through the old hook.
-    static func openInCanvas(_ id: String, ctx: ShellContext) { ctx.onOpenHistory(id) }
+    @MainActor static func openInCanvas(_ id: String, ctx: ShellContext) { ctx.onOpenHistory(id) }
 
     struct TaskLine: Equatable, Identifiable {
         var row: LoopSection.TaskRow

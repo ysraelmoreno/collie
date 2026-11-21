@@ -73,6 +73,28 @@ extension LoopHost {
 /// attempts. A task passes only when its check exits 0, the loop's gate (if any) exits 0 too, there is a new commit on
 /// the same branch, no tracked file is left dirty and neither the check nor the gate moved HEAD. The gate judges the
 /// tree of the commit the check judged, and not one whose commit changed a script the gate's text names. The loop never pushes, lands or creates a paddock.
+/// M5.1: the notices a loop sends to its Shepherd inside `window` seconds of the last one sent go as one line with the
+/// counts. No timer and no sleep (the clock is the caller's `now`, the host's): what is held goes with the next notice
+/// past the window. The loop's end notice (the daemon's `WorkStatusText.loopEnded`) is never held and names every
+/// task of the loop, so what was still held when the loop ended goes with it.
+/// ponytail: held lines wait for the next notice or the loop's end; a timer, if a deferral must never wait that long.
+actor LoopNotices {
+    static let window: TimeInterval = 60
+    let window: TimeInterval
+    private var last: Date?
+    private var pending: [Bool] = []   // done (true) or deferred, one per notice held
+    init(window: TimeInterval = LoopNotices.window) { self.window = window }
+    var held: Int { pending.count }
+
+    /// What goes now for `line` (a task's notice; `done`: it was done, not deferred) at `now`; nil: held.
+    func offer(_ line: String, done: Bool, at now: Date) -> String? {
+        if let last, now.timeIntervalSince(last) < window { pending.append(done); return nil }
+        let all = pending + [done]
+        pending = []; last = now
+        return all.count == 1 ? line : WorkStatusText.noticeBatch(done: all.filter { $0 }.count, deferred: all.filter { !$0 }.count)
+    }
+}
+
 actor WorkLoop {
     static let noteLines = 40, noteChars = 4000
     /// Where a project keeps its feature map, in order of preference.
@@ -94,12 +116,14 @@ actor WorkLoop {
     var passed: Passed?
     /// M3.5: the parallel runs of this engine, by work (`WorkLoopLanes`); empty without `--parallel`.
     var lanes: [UUID: Lanes] = [:]
+    /// M5.1: the Shepherd's notice window, one per loop: a lane's engine shares its loop's.
+    let notices: LoopNotices
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
-         lane: String? = nil, slot: Int? = nil) {
+         lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices()) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
-        self.events = events; self.lane = lane; self.slot = slot
+        self.events = events; self.lane = lane; self.slot = slot; self.notices = notices
     }
 
     /// Ends the loop after the current attempt's verdict.
@@ -532,9 +556,12 @@ actor WorkLoop {
     /// Never awaited: the line is typed into the Shepherd only once it is idle, and a loop that waited for that stood
     /// still while the Shepherd was in a turn (up to the inject's hold), with the next task's terminal never opening.
     /// M3d.2: the line it sent (nil: none), decided before the `Task`, so a test reads the decision without a clock.
+    /// M5.1: inside the window of the last one sent it is held (`LoopNotices`), and goes with the next one as counts.
     @discardableResult
     func reportEnd(_ work: UUID, _ task: String) async -> String? {
-        guard let w = try? await store.get(work), let line = Self.endNotice(w, task) else { return nil }
+        guard let w = try? await store.get(work), let one = Self.endNotice(w, task) else { return nil }
+        let done = w.tasks.first { $0.id == task }?.state == .done
+        guard let line = await notices.offer(one, done: done, at: host.now()) else { return nil }
         let host = host
         Task { await host.taskEnded(line) }
         return line

@@ -143,7 +143,7 @@ extension WorkLoop {
             var fresh = w.tasks.first { $0.id == task.id } ?? task
             fresh.forgetResume()
             let engine = WorkLoop(store: store, host: laneHost, poll: poll, checkTimeout: checkTimeout, othersWait: othersWait,
-                                  events: events, lane: name, slot: slot)
+                                  events: events, lane: name, slot: slot, notices: notices)
             if case .stop(let s) = await engine.attempt(w, loop, fresh, lane.path) { stop = s }
             if await engine.passed != nil {
                 // nothing is integrated once the loop is stopping

@@ -397,7 +397,7 @@ public enum Commands {
                              ParamSpec("budget", .int, help: "Seconds all turns and checks may take together (default 14400, at most 43200)"),
                              ParamSpec("gate", .string, help: "A command run after every task's check, same conditions; it must exit 0 too (what is common to all tasks: lint, build)"),
                              ParamSpec("parallel", .int, help: "Tasks that may run at once, each in its own temporary worktree (default 1, at most 4); only tasks with a --scope that does not overlap run together"),
-                             ParamSpec("notify", .string, help: "task|end (default task): task tells you of each task as it ends; end only of a deferred task, a stop and the loop's end (fewer turns)"),
+                             ParamSpec("notify", .string, help: "task|end (default end): end tells you only of a deferred task, a stop and the loop's end (fewer turns); task also of each task done. Notices within 60 s go as one line"),
                              ParamSpec("preset", .string, help: "The attempts' agent preset (default: yours, as summon)"),
                              ParamSpec("model", .string, help: "Claude model for the attempts' agents"),
                              ParamSpec("command", .string, help: "Command line for the attempts' agents (custom preset)"),

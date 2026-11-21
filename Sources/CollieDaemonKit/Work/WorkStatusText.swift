@@ -166,6 +166,14 @@ public enum WorkStatusText {
         return "[collie] Laço, tarefa terminada: \(line)" + stateHint
     }
 
+    /// M5.1: the one line for the notices held inside the window (`LoopNotices`): "3 tarefas feitas · 1 adiada".
+    static func noticeBatch(done: Int, deferred: Int) -> String {
+        var parts: [String] = []
+        if done > 0 { parts.append("\(done) \(done == 1 ? "tarefa feita" : "tarefas feitas")") }
+        if deferred > 0 { parts.append("\(deferred) " + (done > 0 ? "" : deferred == 1 ? "tarefa " : "tarefas ") + (deferred == 1 ? "adiada" : "adiadas")) }
+        return "[collie] Laço: " + parts.joined(separator: " · ") + stateHint
+    }
+
     /// The line the starter gets when its loop ends (a stopped one: "parou (<why>)"; it ends with `stateHint`), then one line per task of the loop: a done one with its evidence
     /// (one without it was marked by hand, no check judged it: it counts as done and says so), a deferred one with the
     /// reason. At most `RerailText.limit` characters (the cut ends with "… e mais <n>").

@@ -131,7 +131,16 @@ actor LoopFakeHost: LoopHost {
     func readSpec(_ path: String) async -> String? { try? String(contentsOfFile: path, encoding: .utf8) }
     func exists(_ path: String, in dir: URL) async -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(path).path) }
     nonisolated func patchDir(_ work: UUID) -> URL { patches.appendingPathComponent(work.uuidString.lowercased()) }
-    nonisolated func now() -> Date { Date() }
+    /// M5.1: the fake clock, `Date()` moved on by `advance` (seconds).
+    nonisolated func now() -> Date { Date() + skew.seconds }
+    nonisolated let skew = Skew()
+    nonisolated func advance(_ s: TimeInterval) { skew.seconds += s }
+}
+
+/// M5.1: `LoopFakeHost`'s clock offset (read by the nonisolated `now`).
+final class Skew: @unchecked Sendable {
+    private let lock = NSLock(); private var s: TimeInterval = 0
+    var seconds: TimeInterval { get { lock.withLock { s } } set { lock.withLock { s = newValue } } }
 }
 
 private actor PhaseLog {
@@ -150,7 +159,7 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 struct LoopRig {
     let repo: URL, storeDir: URL, store: WorkStore, host: LoopFakeHost, loop: WorkLoop, work: UUID
     init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil,
-         checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50)) async throws {
+         checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50), noticeWindow: TimeInterval = 0) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
         store = WorkStore(dir: storeDir)
@@ -161,7 +170,9 @@ struct LoopRig {
         }
         work = w.id
         host = LoopFakeHost(dir: repo)
-        loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait)
+        // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
+        loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
+                        notices: LoopNotices(window: noticeWindow))
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }

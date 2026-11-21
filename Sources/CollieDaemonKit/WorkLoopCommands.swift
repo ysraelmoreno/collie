@@ -77,12 +77,7 @@ extension CommandRouter {
             guard config.sandboxHome != nil else { throw invalid("--parallel needs the terminal sandbox: a lane's agent, check and git run only sandboxed") }
             for t in open { try LaneWorktree.validate(task: t.id) }
         }
-        // M3c.4: absent is `task` (every task's notice, as always); anything but task|end is refused
-        var notify: WorkLoopState.Notify?
-        if let v = str(r, "notify") {
-            guard let n = WorkLoopState.Notify(rawValue: v) else { throw invalid("--notify must be task|end") }
-            notify = n
-        }
+        let notify = try Self.loopNotify(str(r, "notify"))
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"), model: str(r, "model"), command: str(r, "command"),
@@ -120,6 +115,14 @@ extension CommandRouter {
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
         return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")])
+    }
+
+    /// M5.1: `--notify` absent is `end` for a new loop (a loop already running keeps what its state says: nil, `task`);
+    /// anything but task|end is refused (M3c.4).
+    static func loopNotify(_ v: String?) throws(ProtocolError) -> WorkLoopState.Notify {
+        guard let v else { return .end }
+        guard let n = WorkLoopState.Notify(rawValue: v) else { throw ProtocolError(code: .invalidArgs, message: "--notify must be task|end") }
+        return n
     }
 
     /// The card was answered or expired: forget it. True when `work.stop` had withdrawn it first.

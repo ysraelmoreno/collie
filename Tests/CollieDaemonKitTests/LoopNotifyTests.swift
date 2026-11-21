@@ -134,9 +134,10 @@ private func call(_ d: Daemon, _ p: Paths, _ t: Term, _ cmd: String, _ args: [St
     }
 
     @Test func theOrientationAndTheLoopCommandTeachItWithinTheCap() {
-        #expect(LoopCommand.body.contains("collie work run --notify end"))
+        // M5.1: `end` is the default now: the texts name `--notify task`, the way back to a notice per task
+        #expect(LoopCommand.body.contains("collie work run --notify task"))
         let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: "codex")
-        #expect(t.count <= 1500 && t.contains("--notify end"), "\(t.count)\n\(t)")
+        #expect(t.count <= 1500 && t.contains(CollieOrientation.loopNotify), "\(t.count)\n\(t)")
         for agent in ["claude", "cursor", "codex"] {
             for (term, peers) in [("Ana", ["Bob"]), ("Collie Main", ["Bob", "A very long peer name that goes on and on"])] {
                 for shared in [[], ["x"]] {

@@ -7,11 +7,10 @@ import CollieProtocol
 /// M3c.4, `work run --notify task|end`: `end` spares the Shepherd a turn per task done; what it must hear still comes.
 private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, title: "Task \(id)", check: check) }
 
-/// The notices are fire-and-forget (`reportEnd`): wait until `n` arrived, then a little longer for any extra one.
-private func notices(_ h: LoopFakeHost, atLeast n: Int) async throws -> [String] {
-    let end = ContinuousClock.now + .seconds(5)
-    while await h.ended.count < n, ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(20)) }
-    try await Task.sleep(for: .milliseconds(200))
+/// The notices are fire-and-forget (`reportEnd`): the `n` that must come, counted by the fake host (no clock). That no
+/// other one comes is `reportEnd`'s answer, read before its `Task` (M3d.2).
+private func notices(_ h: LoopFakeHost, atLeast n: Int) async -> [String] {
+    await h.endedArrivals.wait(for: n)
     return await h.ended
 }
 
@@ -29,16 +28,39 @@ private func call(_ d: Daemon, _ p: Paths, _ t: Term, _ cmd: String, _ args: [St
     try await send(p, Request(id: "w", terminalId: t.id, token: t.token, command: cmd, args: args), timeoutSeconds: 60)
 }
 
-@Suite struct LoopNotifyTests {
+@Suite(.timeLimit(.minutes(3))) struct LoopNotifyTests {
     @Test func taskByDefaultNotifiesEveryTaskAsBefore() async throws {
         let r = try await LoopRig([task("a", "test -f done.txt"), task("b", "false")], tries: 1); defer { r.cleanup() }
         await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
-        let ended = try await notices(r.host, atLeast: 2)
+        let ended = await notices(r.host, atLeast: 2)
         #expect(ended.count == 2, "\(ended)")
         #expect(ended.contains { $0.hasPrefix("[collie] Laço, tarefa terminada: ✓ Task a") }, "\(ended)")
         #expect(ended.contains { $0.hasPrefix("[collie] Laço, tarefa terminada: – Task b · adiada:") }, "\(ended)")
         #expect(try await r.get().loop?.notify == nil)
+        // the decision itself, read before its `Task`: both go, and each one sent is one more `taskEnded`
+        let a = await r.loop.reportEnd(r.work, "a"), b = await r.loop.reportEnd(r.work, "b")
+        #expect(a?.hasPrefix("[collie] Laço, tarefa terminada: ✓ Task a") == true, "\(String(describing: a))")
+        #expect(b?.hasPrefix("[collie] Laço, tarefa terminada: – Task b · adiada:") == true, "\(String(describing: b))")
+        let all = await notices(r.host, atLeast: 4)
+        #expect(all.count == 4, "\(all)")
+    }
+
+    /// M3d.2: the rule, with no loop and no clock: only a task done under `--notify end` waits for the loop's end.
+    @Test func theNoticeDecisionPerStateAndChoice() {
+        var w = Work(title: "W", terminalId: UUID())
+        var done = task("a", "true"); done.state = .done
+        var deferred = task("b", "false"); deferred.state = .deferred; deferred.reason = "loop: falhou"
+        w.tasks = [done, deferred]
+        for (notify, state) in [(WorkLoopState.Notify?.none, WorkLoopState.State.running), (.task, .running), (.end, .running),
+                                (.end, .stopped), (.end, .finished)] {
+            w.loop = WorkLoopState(state: state, tasks: ["a", "b"], notify: notify)
+            let a = WorkLoop.endNotice(w, "a"), b = WorkLoop.endNotice(w, "b")
+            if notify == .end { #expect(a == nil, "\(state): a done task waits for the end") }
+            else { #expect(a?.contains("✓ Task a") == true, "\(String(describing: notify))") }
+            #expect(b?.contains("– Task b · adiada: loop: falhou") == true, "\(String(describing: notify)) \(state): a deferred one goes now")
+        }
+        #expect(WorkLoop.endNotice(w, "gone") == nil)
     }
 
     @Test func endSkipsTheDoneNoticeButNotTheDeferredOneNorTheEnd() async throws {
@@ -46,8 +68,11 @@ private func call(_ d: Daemon, _ p: Paths, _ t: Term, _ cmd: String, _ args: [St
         try await r.store.update(r.work) { $0.loop?.notify = .end }
         await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("done.txt", "ok\n", in: $0) }))
         #expect(await r.run() == .finished)
-        let ended = try await notices(r.host, atLeast: 1)
-        #expect(ended.count == 1 && ended[0].hasPrefix("[collie] Laço, tarefa terminada: – Task b · adiada:"), "\(ended)")
+        let ended = await notices(r.host, atLeast: 1)
+        #expect(ended.allSatisfy { !$0.contains("✓ Task a") } && ended.contains { $0.hasPrefix("[collie] Laço, tarefa terminada: – Task b · adiada:") }, "\(ended)")
+        // the proof that the done one never goes: `reportEnd`'s own answer, decided before any `Task` (no clock)
+        #expect(await r.loop.reportEnd(r.work, "a") == nil, "--notify end: the done task waits for the loop's end")
+        #expect(await r.loop.reportEnd(r.work, "b")?.contains("– Task b · adiada:") == true)
         // the loop's end notice (the daemon's, not the host's) still names the done task
         let w = try await r.get()
         let end = WorkStatusText.loopEnded(w)

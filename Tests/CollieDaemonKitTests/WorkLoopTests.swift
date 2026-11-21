@@ -35,7 +35,10 @@ actor LoopFakeHost: LoopHost {
     func taskEnded(_ line: String) async {
         if noticeNeverDelivered { try? await Task.sleep(for: .seconds(3600)); return }
         ended.append(line)
+        await endedArrivals.hit()
     }
+    /// M3d.2: one hit per line in `ended` (a test awaits the count, no clock).
+    nonisolated let endedArrivals = Arrivals()
     func neverDeliverNotices() { noticeNeverDelivered = true }
     /// Called with each command before `check` runs it (a test reads the loop's phase from the store here).
     var probe: (@Sendable (String) async -> Void)?

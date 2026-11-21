@@ -531,12 +531,21 @@ actor WorkLoop {
     /// The Shepherd hears of a task the moment it ends, not only when the whole loop does.
     /// Never awaited: the line is typed into the Shepherd only once it is idle, and a loop that waited for that stood
     /// still while the Shepherd was in a turn (up to the inject's hold), with the next task's terminal never opening.
-    func reportEnd(_ work: UUID, _ task: String) async {
-        guard let w = try? await store.get(work), let t = w.tasks.first(where: { $0.id == task }) else { return }
-        // M3c.4: `--notify end` keeps a task done for the loop's end notice (a deferred one still goes now)
-        if w.loop?.notify == .end && t.state == .done { return }
-        let line = WorkStatusText.taskEnded(t), host = host
+    /// M3d.2: the line it sent (nil: none), decided before the `Task`, so a test reads the decision without a clock.
+    @discardableResult
+    func reportEnd(_ work: UUID, _ task: String) async -> String? {
+        guard let w = try? await store.get(work), let line = Self.endNotice(w, task) else { return nil }
+        let host = host
         Task { await host.taskEnded(line) }
+        return line
+    }
+
+    /// The notice for `task` as it ended in `w`; nil: none goes now.
+    /// M3c.4: `--notify end` keeps a task done for the loop's end notice (a deferred one still goes now).
+    static func endNotice(_ w: Work, _ task: String) -> String? {
+        guard let t = w.tasks.first(where: { $0.id == task }) else { return nil }
+        if w.loop?.notify == .end && t.state == .done { return nil }
+        return WorkStatusText.taskEnded(t)
     }
 
     /// Seconds of the budget left for this attempt (at least 1); no budget: a day. In a lane: `laneShare`.

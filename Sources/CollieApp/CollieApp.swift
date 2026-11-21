@@ -343,7 +343,7 @@ struct ContentView: View {
                      fit: { canvas.fitAll(viewport: viewport) }, openPalette: { paletteOpen = true },
                      herds: herds, openHerds: { sheet = .herds(nil, $0) },
                      focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: openPreferences,
-                     tour: tour, openTour: { sheet = .tour })
+                     tour: tour, openTour: { sheet = .tour }, openWork: { showPanel("work") })
     }
 
     /// The tour's button, once the tour sheet has closed: the same entries as the rail, the palette and the menus.

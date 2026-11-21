@@ -35,6 +35,8 @@ public struct HistoryEntry: Decodable, Sendable, Equatable {
     public private(set) var work: Work?
     public private(set) var history: [HistoryEntry] = []
     public nonisolated static let historyLimit = 20
+    /// What is asked and kept: one more than shown, so the panel knows older works exist ("mais antigos no Work").
+    public nonisolated static let historyFetch = historyLimit + 1
     /// The daemon's `work.wait` timeout (it answers `timedOut` and the feed waits again from the same version).
     static let waitSeconds = 600.0
 
@@ -96,7 +98,7 @@ public struct HistoryEntry: Decodable, Sendable, Equatable {
     }
 
     private func loadHistory(_ gen: Int, _ name: String) async {
-        let r = try? await ask("work.history", ["paddock": .string(name), "limit": .number(Double(Self.historyLimit))], 30)
+        let r = try? await ask("work.history", ["paddock": .string(name), "limit": .number(Double(Self.historyFetch))], 30)
         guard live(gen) else { return }
         history = Self.entries(r)
     }
@@ -109,7 +111,7 @@ public struct HistoryEntry: Decodable, Sendable, Equatable {
         case .object(let o)?: for k in ["history", "works"] { if case .array(let a)? = o[k] { list = a; break } }
         default: break
         }
-        return Array(list.compactMap { decode(HistoryEntry.self, $0) }.prefix(historyLimit))
+        return Array(list.compactMap { decode(HistoryEntry.self, $0) }.prefix(historyFetch))
     }
 
     private func ask(_ command: String, _ args: [String: JSONValue], _ timeout: Double) async throws -> JSONValue {

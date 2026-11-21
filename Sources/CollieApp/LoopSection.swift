@@ -90,9 +90,15 @@ struct HistoryRow: Equatable, Identifiable {
     var stopText: String
     /// "<1 min", "12 min", "1h54", "1d 3h".
     var durationText: String
+    /// How it ended: the colour of the row.
+    var outcome: Outcome
+    enum Outcome: Equatable { case complete, withDeferred, stopped }
+    /// The second line of the Trilho row: "21/11 02:02 · 4/6 feitas · 1h54".
+    var detailText: String { [whenText, resultText, durationText].joined(separator: " · ") }
 
     init(_ e: HistoryEntry, timeZone: TimeZone = .current) {
         id = e.id; title = e.title
+        outcome = !(e.stopReason ?? "").isEmpty ? .stopped : e.deferred > 0 ? .withDeferred : .complete
         let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = timeZone; f.dateFormat = "dd/MM HH:mm"
         whenText = f.string(from: e.closedAt)
         resultText = "\(e.done)/\(e.total) feitas" + (e.deferred > 0 ? " · \(e.deferred) " + (e.deferred == 1 ? "adiada" : "adiadas") : "")
@@ -125,5 +131,22 @@ struct HistoryRow: Equatable, Identifiable {
         if s < 3600 { return "\(s / 60) min" }
         if s < 86_400 { return "\(s / 3600)h" + String(format: "%02d", s % 3600 / 60) }
         return "\(s / 86_400)d \(s % 86_400 / 3600)h"
+    }
+}
+
+/// The Trilho HISTÓRICO section: the last works closed in the current paddock (`WorkFeed.history`, newest first).
+struct HistorySection: Equatable {
+    var rows: [HistoryRow]
+    /// Older works exist than the rows shown.
+    var hasMore: Bool
+    var visible: Bool { !rows.isEmpty }
+    /// "HISTÓRICO · 20".
+    var title: String { "HISTÓRICO · \(rows.count)" }
+    static let hidden = HistorySection(rows: [], hasMore: false)
+
+    /// At most `WorkFeed.historyLimit` rows, in the order given (the daemon sends the newest first); no entry: hidden.
+    static func make(_ entries: [HistoryEntry], timeZone: TimeZone = .current) -> HistorySection {
+        let shown = entries.prefix(WorkFeed.historyLimit)
+        return HistorySection(rows: shown.map { HistoryRow($0, timeZone: timeZone) }, hasMore: entries.count > shown.count)
     }
 }

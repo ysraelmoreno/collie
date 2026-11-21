@@ -25,6 +25,9 @@ enum AttemptMachine {
         case usageLimit(String)
         /// A new commit is there (its short hash, for the journal) / there is none.
         case commitSeen(String?), waitExpired
+        /// M10.2: the pre-check ran with the agent still there (`status` nil: timed out or could not run; a failure
+        /// either way). `tail`: the end of its output, what the agent is told when it failed.
+        case precheckDone(status: Int32?, tail: String)
         /// The daemon stops / the work closed / the Shepherd that started the loop is gone: no verdict.
         case cancelled, workClosed, starterGone
         /// nil: the attempt failed before its check (summon or ask), nothing was measured.
@@ -46,6 +49,11 @@ enum AttemptMachine {
         /// M2.1: the turn ended by hook with no new commit: the agent is told once to commit and end, in what is left
         /// of the turn. Answers like `ask`, or `waitExpired` when it does not go (no time left, the loop stopping).
         case nudge
+        /// M10.2: the pre-check failed (its output's tail): the agent is told once, in what is left of the turn. Answers
+        /// like `nudge`.
+        case precheckNudge(String)
+        /// M10.2: the work's `--precheck`, its own time limit: `precheckDone`.
+        case runPrecheck
         /// `waitForCommit` waits for a commit first (an `.idle` end); both then look once: `commitSeen` or `waitExpired`.
         case waitForCommit, lookForCommit
         case dismiss
@@ -77,7 +85,7 @@ enum AttemptMachine {
         /// Carrying it out answers with an event.
         var answers: Bool {
             switch self {
-            case .summon, .ask, .nudge, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .decide: true
+            case .summon, .ask, .nudge, .precheckNudge, .runPrecheck, .waitForCommit, .lookForCommit, .measureFacts, .runCheck, .guardGate, .runGate, .awaitOthers, .settle, .decide: true
             case .dismiss, .show, .discard, .markDone, .adoptionFailed, .markOpenOrDeferred, .uncount, .reopen, .note, .journal, .stopLoop, .fault: false
             }
         }
@@ -94,13 +102,16 @@ enum AttemptMachine {
         var facts: AttemptDecision.Facts
         /// M2.1: the last turn ended by hook and no nudge went yet / one went (at most one per attempt).
         var nudgeable = false, nudged = false
+        /// M10.2: the work has a `--precheck` / its failure was told to the agent (at most once per attempt).
+        let hasPrecheck: Bool
+        var prechecked = false
         /// M2b.1: the attempt judges a commit it did not see being made: when it fails, nothing is discarded.
         var adopted = false
         /// M3.8: the agent's name, for the journal (`AgentNaming`; the interpreter passes the one it summons with).
         let name: String
 
-        init(task: String, n: Int, tries: Int, hasGate: Bool, before: String, name: String? = nil) {
-            self.task = task; self.n = n; self.before = before; judged = before
+        init(task: String, n: Int, tries: Int, hasGate: Bool, before: String, name: String? = nil, precheck: Bool = false) {
+            self.task = task; self.n = n; self.before = before; judged = before; hasPrecheck = precheck
             self.name = name ?? AgentNaming.name(work: "", task: "", taskId: task, attempt: n, lane: nil)
             facts = .init(attempt: n, tries: tries, hasGate: hasGate)
         }
@@ -142,14 +153,25 @@ enum AttemptMachine {
             return (s, [.journal(.turnEnded, "limite de uso"), .dismiss, .journal(.agentDismissed, nil), .uncount, .stopLoop(.init(.usageLimit, detail: text))])
         case (.turn, .turnFailed(let message)):
             // a nudge that could not be asked fails nothing: the attempt is judged as if it had not gone
-            if !s.nudged { s.facts.failure = message }
+            if !s.nudged && !s.prechecked { s.facts.failure = message }
             s.phase = .waitingCommit
             return (s, [.journal(.turnEnded, "erro: \(message)"), .lookForCommit])
 
         // before the check: nothing edits the tree while it is judged (a turn past its timeout may still be working)
+        // M10.2: with a pre-check, it runs first, with the agent still there to be told
+        case (.waitingCommit, .commitSeen(let short)) where s.agent != nil && s.hasPrecheck:
+            return (s, [.journal(.commitSeen, short), .runPrecheck])
         case (.waitingCommit, .commitSeen(let short)) where s.agent != nil:
             s.agent = nil
             return (s, [.journal(.commitSeen, short), .dismiss, .journal(.agentDismissed, nil), .measureFacts])
+        case (.waitingCommit, .precheckDone(let status, let tail)) where s.agent != nil && s.hasPrecheck:
+            let ran = ran(status, nil)
+            if status == 0 || s.prechecked {   // passed, or failed after its one nudge: the check, as without it
+                s.agent = nil
+                return (s, [.journal(status == 0 ? .precheckPassed : .precheckFailed, ran), .dismiss, .journal(.agentDismissed, nil), .measureFacts])
+            }
+            s.prechecked = true; s.phase = .turn
+            return (s, [.journal(.precheckFailed, ran), .precheckNudge(tail)])
         // M2.1: a hook is a frail sign that the work is over (a question, a permission dialog, a compaction): with no
         // commit the agent is nudged once, in the same attempt; `.idle` already waits for the commit, a timeout has no
         // time left and a failed ask has no one to tell
@@ -157,7 +179,7 @@ enum AttemptMachine {
             s.nudgeable = false; s.nudged = true; s.phase = .turn
             return (s, [.nudge])
         // `.turn`: the nudge did not go
-        case (.waitingCommit, .waitExpired) where s.agent != nil, (.turn, .waitExpired) where s.agent != nil && s.nudged:
+        case (.waitingCommit, .waitExpired) where s.agent != nil, (.turn, .waitExpired) where s.agent != nil && (s.nudged || s.prechecked):
             s.agent = nil; s.phase = .waitingCommit
             return (s, [.dismiss, .journal(.agentDismissed, nil), .measureFacts])
 

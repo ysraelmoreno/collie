@@ -408,6 +408,7 @@ public enum Commands {
                              ParamSpec("timeout", .int, help: "Seconds an agent's turn may take (default 3600, at most 14400)"),
                              ParamSpec("budget", .int, help: "Seconds all turns and checks may take together (default 14400, at most 43200)"),
                              ParamSpec("gate", .string, help: "A command run after every task's check, same conditions; it must exit 0 too (what is common to all tasks: lint, build)"),
+                             ParamSpec("precheck", .string, help: "A quick command run at the end of each turn, before the check (at most 180 s); when it fails the same agent gets its output's tail once to fix it (e.g. swift build --build-tests)"),
                              ParamSpec("parallel", .int, help: "Tasks that may run at once, each in its own temporary worktree (default 1, at most 4); only tasks with a --scope that does not overlap run together"),
                              ParamSpec("notify", .string, help: "task|end (default end): end tells you only of a deferred task, a stop and the loop's end (fewer turns); task also of each task done. Notices within 60 s go as one line"),
                              ParamSpec("preset", .string, help: "The attempts' agent preset (default: yours, as summon)"),

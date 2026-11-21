@@ -824,7 +824,7 @@ dono aprovou a lista de tarefas e os checks.
   e uma nota do trabalho avisa). O painel Trabalho lista os arquivos da tarefa feita com a ação "Abrir". Vale o que está
   na worktree depois do veredito: o commit julgado, arquivos não rastreados que o agente deixou e arquivos ignorados; um
   arquivo não rastreado criado pelo check ou pelo portão já foi removido.
-- `collie work run --max <n> [--gate "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …]`: só um
+- `collie work run --max <n> [--gate "<comando>"] [--precheck "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …]`: só um
   Pastor com sandbox (ou o app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma
   tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo
   rastreado modificado. Volta na hora com `awaiting approval`: um cartão no app mostra ao dono o cercado, os limites e cada
@@ -832,6 +832,10 @@ dono aprovou a lista de tarefas e os checks.
   Ao fim, o Pastor recebe `[collie] Laço de "…" terminou: … · estado: collie work status`: o aviso digitado no terminal é
   só uma dica e pode não chegar; quem espera um laço usa `collie work wait` e lê o `collie work status`. As tarefas do laço são as abertas na hora do `run`: uma
   tarefa nova espera o próximo.
+- Pré-check (`--precheck`): um comando rápido (ex.: `swift build --build-tests`) que roda no fim de cada turno com commit,
+  antes do check e com o agente ainda aberto (até 180 s, ou o resto do orçamento). Se falhar, o mesmo agente recebe uma vez por
+  tentativa as últimas 40 linhas da saída (até 3 KB) e o laço espera o turno de novo; se falhar outra vez, segue para o check.
+  O diário registra `precheckFailed`/`precheckPassed`. Sem `--precheck`, nada muda.
 - Portão (`--gate`): um comando comum a todas as tarefas (build, lint, arquitetura), para o check de cada uma medir só a
   tarefa. Roda depois de cada check que passou, nas mesmas condições (worktree, sandbox, timeout, orçamento); o veredito
   só passa com os dois em exit 0 (`gate failed (exit n)`, `gate timed out`), e o cartão o mostra uma vez, depois dos limites.

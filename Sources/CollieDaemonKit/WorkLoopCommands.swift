@@ -71,6 +71,11 @@ extension CommandRouter {
         if let gate, gate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw invalid("--gate is empty: give the command that runs after every task's check, or leave --gate out")
         }
+        // M10.2: the same for the pre-check (absent: none, the loop as before)
+        let precheck = str(r, "precheck")
+        if let precheck, precheck.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw invalid("--precheck is empty: give the command that runs at the end of each turn, before the check, or leave --precheck out")
+        }
         // M3.5: absent is 1 (the loop as always); more runs tasks in lanes, which exist only sandboxed and are named by
         // the task's id
         let parallel = try num(r, "parallel", max: Double(TaskScheduler.maxParallel)).map { Int($0) }
@@ -86,7 +91,7 @@ extension CommandRouter {
                                                        preset: str(r, "preset"), command: str(r, "command"), shepherd: t),
                                  command: str(r, "command"),
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
-                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify)
+                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck)
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
@@ -223,6 +228,7 @@ extension CommandRouter {
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
             + (l.parallel.flatMap { $0 > 1 ? "até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). " : nil } ?? "")
             + (l.gate.map { "portão depois de cada check: \(quoted($0)). " } ?? "")
+            + (l.precheck.map { "pré-check no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)

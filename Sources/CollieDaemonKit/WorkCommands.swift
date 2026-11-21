@@ -484,6 +484,8 @@ extension CommandRouter {
         case "work.run": return try await workRun(r, caller: caller, starter: try target())
         case "work.stop": return try await workStop(try target())
 
+        case "work.config": return try workConfig(try target())   // M13.1: read only, runs nothing
+
         case "work.clear-history":   // the one way anything is deleted: the user's alone
             guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'work.clear-history' is admin-only") }
             try await work.clearHistory()

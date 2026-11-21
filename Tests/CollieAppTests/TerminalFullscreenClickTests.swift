@@ -15,12 +15,12 @@ import CollieCore
     /// The ⤢ in canvas pt: right padding 10, the "…" menu, spacing 8, then the button (found by scanning at zoom 1).
     static let button = CGPoint(x: size.width - 46, y: TerminalNodeView.titleHeight / 2)
 
-    final class Parent: NSView {
+    @MainActor final class Parent: NSView {
         var adds = 0
         override func didAddSubview(_ v: NSView) { super.didAddSubview(v); adds += 1 }
     }
 
-    struct Rig {
+    @MainActor struct Rig {
         let canvas: CanvasState, window: NSWindow, parent: Parent, node: TerminalNodeView, other: TerminalNodeView
         func at(_ p: CGPoint) -> NSPoint { node.convert(NSPoint(x: p.x, y: p.y), to: nil) }
         func send(_ type: NSEvent.EventType, _ p: CGPoint) {

@@ -5,7 +5,7 @@ import CollieClient
 import CollieProtocol
 
 /// A closed work's detail as one self-contained HTML page for the Prévia: inline CSS (light/dark by the system), no
-/// script, no external resource. Every text that came from the work goes through `esc` once and only lands in element
+/// script, no external resource (a CSP says so too: a missed escape one day still runs nothing). Every text that came from the work goes through `esc` once and only lands in element
 /// content, never in an attribute, `href`, `src` or `style`.
 enum HistoryPage {
     static func esc(_ s: String) -> String {
@@ -31,6 +31,7 @@ enum HistoryPage {
         if let o = a.openedAt, let c = a.closedAt { let s = max(0, Int(c.timeIntervalSince(o))); dur = s >= 3600 ? "\(s / 3600)h\(String(format: "%02d", s % 3600 / 60))" : "\(s / 60)min \(s % 60)s" }
         var h = """
         <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
         <title>\(esc(a.title))</title><style>
         :root{color-scheme:light dark;--bg:#faf9f7;--fg:#1f1d1a;--mute:#6b665f;--line:#ddd8d0;--warn:#fff3d6}
         @media (prefers-color-scheme:dark){:root{--bg:#1c1b19;--fg:#ece8e1;--mute:#9a948b;--line:#3a3733;--warn:#4a3d1c}}
@@ -62,54 +63,55 @@ enum HistoryPage {
         return h + "</body></html>"
     }
 
-    /// `<dir>/<id>.html` for a work id that is a UUID (lowercased); nil for anything else: no text of the work names a file.
-    static func fileURL(id: String, in dir: URL) -> URL? {
-        guard let u = UUID(uuidString: id) else { return nil }
-        return dir.appendingPathComponent(u.uuidString.lowercased() + ".html")
-    }
+    /// The artifact source of a work's detail, `history-<uuid>` (lowercased), stable per work: opening it again is that
+    /// artifact's next version, never a new one. nil for an id that is not a UUID.
+    static func source(id: String) -> String? { UUID(uuidString: id).map { "history-" + $0.uuidString.lowercased() } }
 }
 
-/// The HISTÓRICO click: asks `work.history --id`, writes the page (atomically) and opens it in a Prévia, once per work.
+/// The HISTÓRICO click: asks `work.history --id`, adds the page as an artifact (`artifact.add`, the work's stable
+/// source) and opens it in a Prévia by `artifact:`, once per work while that panel is open. Nothing is written by the app.
 @MainActor @Observable final class HistoryOpener {
     @ObservationIgnored var fetch: (String) async throws -> WorkArchive
-    /// Opens a Prévia on the file and returns its panel id.
-    @ObservationIgnored var open: (URL) async throws -> UUID
+    /// `artifact.add` of `(html, source, title)`; returns the artifact id.
+    @ObservationIgnored var add: (String, String, String) async throws -> String
+    /// Opens a Prévia on the artifact and returns its panel id.
+    @ObservationIgnored var open: (String) async throws -> UUID
     /// Is the panel still there? (a closed one is opened again.)
     @ObservationIgnored var isOpen: (UUID) -> Bool
     @ObservationIgnored var focus: (UUID) -> Void
-    /// A short notice for the section (the daemon failed); nil once a detail opens.
+    /// A short notice for the section (fixed text, never the protocol's message nor a path); nil once a detail opens.
     private(set) var message: String?
-    private func notice(_ m: String?) { message = m }
-    @ObservationIgnored let dir: URL
+    static let failure = "Não foi possível abrir o histórico"
     @ObservationIgnored private var panels: [String: UUID] = [:]
 
-    init(dir: URL, fetch: @escaping (String) async throws -> WorkArchive, open: @escaping (URL) async throws -> UUID,
-         isOpen: @escaping (UUID) -> Bool, focus: @escaping (UUID) -> Void) {
-        self.dir = dir; self.fetch = fetch; self.open = open; self.isOpen = isOpen; self.focus = focus
+    init(fetch: @escaping (String) async throws -> WorkArchive, add: @escaping (String, String, String) async throws -> String,
+         open: @escaping (String) async throws -> UUID, isOpen: @escaping (UUID) -> Bool, focus: @escaping (UUID) -> Void) {
+        self.fetch = fetch; self.add = add; self.open = open; self.isOpen = isOpen; self.focus = focus
     }
 
     func show(_ id: String) async {
-        guard let file = HistoryPage.fileURL(id: id, in: dir) else { return notice("Histórico: id inválido") }
-        if let p = panels[id], isOpen(p) { return focus(p) }
+        guard let source = HistoryPage.source(id: id) else { message = "Histórico: id inválido"; return }
+        if let p = panels[source], isOpen(p) { return focus(p) }
         do {
             let a = try await fetch(id)
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try Data(HistoryPage.html(for: a).utf8).write(to: file, options: .atomic)
-            panels[id] = try await open(file); notice(nil)
-        } catch { notice("Não foi possível abrir o histórico: \((error as? ProtocolError)?.message ?? "falha")") }
+            let art = try await add(HistoryPage.html(for: a), source, a.title)
+            panels[source] = try await open(art); message = nil
+        } catch { message = Self.failure }
     }
 }
 
 extension HistoryOpener {
-    /// The app's wiring: `work.history --id` over the admin socket, a Prévia through `panel.open`.
+    /// The app's wiring: `work.history --id` and `artifact.add` (inline page) over the admin socket, a Prévia through `panel.open`.
     static func live(client: DaemonClient, focus: @escaping (UUID) -> Void) -> HistoryOpener {
-        let cache = (FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory)
-            .appendingPathComponent("Collie/history")
-        return HistoryOpener(dir: cache, fetch: { id in
+        HistoryOpener(fetch: { id in
             let v = try await client.adminCall("work.history", ["id": .string(id)])
             let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
             return try d.decode(WorkArchive.self, from: JSONEncoder().encode(v))
-        }, open: { try await client.openPanel(plugin: "preview", name: nil, placement: .canvas, url: nil, storage: .isolated, file: $0.path) },
+        }, add: { html, source, title in
+            guard case .object(let o) = try await client.adminCall("artifact.add", ["html": .string(html), "source": .string(source), "title": .string(title)]),
+                  case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "malformed artifact.add reply") }
+            return id
+        }, open: { try await client.openPanel(plugin: "preview", name: nil, placement: .canvas, url: nil, storage: .isolated, artifact: $0) },
            isOpen: { id in client.panels.contains { $0.id == id } }, focus: focus)
     }
 }

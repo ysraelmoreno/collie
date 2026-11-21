@@ -34,7 +34,7 @@ private func archive(title: String = "Trabalho", events: Int = 0, reconstructed:
 
     @Test func selfContained() {
         let h = HistoryPage.html(for: archive(title: evil, events: 5), timeZone: utc)
-        #expect(!h.contains("http"))
+        #expect(!h.contains("http:") && !h.contains("https:"))   // "http-equiv" of the CSP is ours
         #expect(!h.contains("href"))
         #expect(!h.contains("<img") && !h.contains("<a ") && !h.contains("<link") && !h.contains("<iframe"))
         let plain = HistoryPage.html(for: archive(events: 5), timeZone: utc).replacingOccurrences(of: HistoryPage.esc(evil), with: "")   // only our own markup is left
@@ -62,14 +62,11 @@ private func archive(title: String = "Trabalho", events: Int = 0, reconstructed:
         #expect(HistoryPage.html(for: archive(reconstructed: true)).contains("reconstruído"))
     }
 
-    @Test func filePathIsOnlyAUUID() throws {
-        let dir = URL(fileURLWithPath: "/tmp/x/history")
+    @Test func sourceIsOnlyAUUID() {
         let id = UUID().uuidString
-        let u = try #require(HistoryPage.fileURL(id: id, in: dir))
-        #expect(u.deletingLastPathComponent().path == dir.path)
-        #expect(u.lastPathComponent.range(of: "^[0-9a-f-]{36}\\.html$", options: .regularExpression) != nil)
-        #expect(HistoryPage.fileURL(id: "../../etc/passwd", in: dir) == nil)
-        #expect(HistoryPage.fileURL(id: evil, in: dir) == nil)
+        #expect(HistoryPage.source(id: id) == "history-\(id.lowercased())")
+        #expect(HistoryPage.source(id: "../../etc/passwd") == nil)
+        #expect(HistoryPage.source(id: evil) == nil)
     }
 
     @Test func archiveDecodesToleratingBadFields() throws {
@@ -78,33 +75,31 @@ private func archive(title: String = "Trabalho", events: Int = 0, reconstructed:
         #expect(a.id == "x" && a.title == "" && a.tasks.isEmpty && a.timeline.count == 1)
     }
 
-    private func opener(fail: Bool = false, opened: Box, dir: URL) -> HistoryOpener {
-        HistoryOpener(dir: dir, fetch: { id in
+    private func opener(fail: Bool = false, opened: Box) -> HistoryOpener {
+        HistoryOpener(fetch: { id in
             if fail { throw ProtocolError(code: .internal, message: "x") }
             return WorkArchive(id: id, title: evil)
-        }, open: { url in opened.urls.append(url); return opened.panel }, isOpen: { opened.live.contains($0) }, focus: { opened.focused.append($0) })
+        }, add: { html, _, _ in opened.pages.append(html); return "a" }, open: { _ in opened.panel },
+           isOpen: { opened.live.contains($0) }, focus: { opened.focused.append($0) })
     }
-    final class Box { var urls: [URL] = []; var focused: [UUID] = []; var live: Set<UUID> = []; let panel = UUID() }
+    final class Box { var pages: [String] = []; var focused: [UUID] = []; var live: Set<UUID> = []; let panel = UUID() }
 
-    @Test func hookWritesAndOpensOnceThenReusesThePanel() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("hist-\(UUID())")
-        let box = Box(); let o = opener(opened: box, dir: dir)
+    @Test func hookAddsAndOpensOnceThenReusesThePanel() async throws {
+        let box = Box(); let o = opener(opened: box)
         let id = UUID().uuidString.lowercased()
         await o.show(id)
-        #expect(box.urls == [dir.appendingPathComponent("\(id).html")])
-        let text = try String(contentsOf: box.urls[0], encoding: .utf8)
-        #expect(text.contains("&lt;script&gt;") && !text.contains("<script"))
+        #expect(box.pages.count == 1)
+        #expect(box.pages[0].contains("&lt;script&gt;") && !box.pages[0].contains("<script"))
         box.live.insert(box.panel)
         await o.show(id)
-        #expect(box.urls.count == 1 && box.focused == [box.panel])
+        #expect(box.pages.count == 1 && box.focused == [box.panel])
     }
 
     @Test func daemonFailureIsAShortNoticeNotACrash() async {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("hist-\(UUID())")
-        let box = Box(); let o = opener(fail: true, opened: box, dir: dir)
+        let box = Box(); let o = opener(fail: true, opened: box)
         await o.show(UUID().uuidString.lowercased())
-        #expect(box.urls.isEmpty && o.message != nil)
+        #expect(box.pages.isEmpty && o.message == HistoryOpener.failure)
         await o.show("../x")
-        #expect(box.urls.isEmpty && o.message == "Histórico: id inválido")
+        #expect(box.pages.isEmpty && o.message == "Histórico: id inválido")
     }
 }

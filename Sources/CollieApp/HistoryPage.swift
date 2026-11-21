@@ -91,7 +91,7 @@ enum HistoryPage {
     @ObservationIgnored var focus: (UUID) -> Void
     /// A short notice for the section (fixed text, never the protocol's message nor a path); nil once a detail opens.
     private(set) var message: String?
-    static let failure = "Não foi possível abrir o histórico"
+    nonisolated static let failure = "Não foi possível abrir o histórico"
     @ObservationIgnored private var panels: [String: UUID] = [:]
 
     init(fetch: @escaping (String) async throws -> WorkArchive, add: @escaping (String, String, String) async throws -> String,
@@ -100,6 +100,7 @@ enum HistoryPage {
     }
 
     func show(_ id: String) async {
+        message = nil   // a notice is about the last try only
         guard let source = HistoryPage.source(id: id) else { message = "Histórico: id inválido"; return }
         if let p = panels[source], isOpen(p) { return focus(p) }
         do {

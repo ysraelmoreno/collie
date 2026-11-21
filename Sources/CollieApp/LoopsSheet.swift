@@ -11,8 +11,33 @@ enum LoopsModal {
     /// The tab asked for; Histórico when no loop of the paddock runs (Em andamento would be empty).
     static func initialTab(_ requested: LoopsTab, running: Running?) -> LoopsTab { running == nil ? .history : requested }
 
-    /// "Abrir no canvas": the Prévia artifact of before (`HistoryPage`, M7.1), through the old hook.
-    @MainActor static func openInCanvas(_ id: String, ctx: ShellContext) { ctx.onOpenHistory(id) }
+    /// "Abrir no canvas": the Prévia artifact of before (`HistoryPage`, M7.1), through the old hook. Returns the hook's
+    /// notice (`HistoryOpener.message`, fixed text) once it is done; nil means the Prévia opened (M9.1, B2).
+    @MainActor static func openInCanvas(_ id: String, ctx: ShellContext) async -> String? {
+        await ctx.onOpenHistory(id)
+        return ctx.historyNotice()
+    }
+
+    /// The Histórico tab's state: the detail shown, the id being fetched and the fixed error text (M9.1).
+    struct Load: Equatable {
+        var detail: Detail?
+        var loading: String?
+        var error: String?
+        /// A click on a row: the newest request wins.
+        mutating func begin(_ id: String) { loading = id; error = nil }
+        /// The fetch of `id` came back (`d` nil: it failed). An answer for an id no longer asked is dropped (B8).
+        mutating func end(_ id: String, _ d: Detail?) {
+            guard loading == id else { return }
+            if let d { detail = d } else { error = HistoryOpener.failure }
+            loading = nil
+        }
+        /// "Abrir no canvas" came back with the hook's notice; true when the modal may close (the Prévia opened, B2).
+        /// The notice stays in the modal until the next try.
+        mutating func canvas(_ notice: String?) -> Bool {
+            error = notice
+            return notice == nil
+        }
+    }
 
     struct TaskLine: Equatable, Identifiable {
         var row: LoopSection.TaskRow
@@ -106,9 +131,7 @@ struct LoopsSheet: View {
     let ctx: ShellContext
     @Environment(\.dismiss) private var dismiss
     @State private var tab: LoopsTab
-    @State private var detail: LoopsModal.Detail?
-    @State private var loading: String?
-    @State private var error: String?
+    @State private var load = LoopsModal.Load()
 
     init(ctx: ShellContext, initial: LoopsTab) {
         self.ctx = ctx
@@ -131,11 +154,11 @@ struct LoopsSheet: View {
             Group {
                 switch tab {
                 case .running: runningTab
-                case .history: if let detail { detailView(detail) } else { historyTab }
+                case .history: if let d = load.detail { detailView(d) } else { historyTab }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            if let error { Text(verbatim: error).foregroundStyle(Color.collieDanger).font(.collieUI(12)) }
+            if let error = load.error { Text(verbatim: error).foregroundStyle(Color.collieDanger).font(.collieUI(12)) }
             HStack {
                 Spacer()
                 Button("Fechar") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -213,7 +236,7 @@ struct LoopsSheet: View {
                     Text(verbatim: r.detailText).font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                 }
                 Spacer(minLength: 8)
-                if loading == r.id { ProgressView().controlSize(.small) }
+                if load.loading == r.id { ProgressView().controlSize(.small) }
                 Text(verbatim: r.stopText).font(.collieUI(12)).foregroundStyle(color(r.outcome))
             }
             .padding(.vertical, 6).contentShape(.rect)
@@ -229,10 +252,9 @@ struct LoopsSheet: View {
     }
 
     private func open(_ id: String) async {
-        loading = id; error = nil
-        do { detail = LoopsModal.Detail(try await ctx.fetchHistory(id)) }
-        catch { self.error = HistoryOpener.failure }
-        loading = nil
+        load.begin(id)
+        let d = try? await ctx.fetchHistory(id)
+        load.end(id, d.map { LoopsModal.Detail($0) })
     }
 
     // MARK: Detalhe
@@ -240,20 +262,23 @@ struct LoopsSheet: View {
     private func detailView(_ d: LoopsModal.Detail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Button("‹ Histórico") { detail = nil }.buttonStyle(.plain).foregroundStyle(Color.collieAccent)
+                Button("‹ Histórico") { load.detail = nil; load.error = nil }.buttonStyle(.plain).foregroundStyle(Color.collieAccent)
                 Spacer()
-                Button("Abrir no canvas") { dismiss(); LoopsModal.openInCanvas(d.id, ctx: ctx) }
+                Button("Abrir no canvas") {
+                    load.error = nil
+                    Task { if load.canvas(await LoopsModal.openInCanvas(d.id, ctx: ctx)) { dismiss() } }
+                }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(verbatim: d.title).font(.collieUI(15, .semibold)).foregroundStyle(Color.collieText)
-                    ForEach(d.notices, id: \.self) { n in
+                    ForEach(Array(d.notices.enumerated()), id: \.offset) { _, n in
                         Text(verbatim: n).font(.collieUI(12)).foregroundStyle(Color.collieText).padding(8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color.collieAttention.opacity(0.15), in: .rect(cornerRadius: 6))
                     }
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
-                        ForEach(d.facts, id: \.self) { f in
+                        ForEach(Array(d.facts.enumerated()), id: \.offset) { _, f in
                             GridRow {
                                 Text(verbatim: f.label).foregroundStyle(Color.collieMuted)
                                 Text(verbatim: f.value).foregroundStyle(Color.collieText).textSelection(.enabled)
@@ -271,7 +296,7 @@ struct LoopsSheet: View {
                             }
                             .font(.collieUI(12))
                             if !t.commits.isEmpty { Text(verbatim: t.commits.joined(separator: " ")).font(.collieMono(11)).foregroundStyle(Color.collieMuted) }
-                            ForEach(t.why, id: \.self) { Text(verbatim: $0).font(.collieUI(11)).foregroundStyle(Color.collieMuted) }
+                            ForEach(Array(t.why.enumerated()), id: \.offset) { Text(verbatim: $0.element).font(.collieUI(11)).foregroundStyle(Color.collieMuted) }
                         }
                         .padding(.vertical, 3)
                     }
@@ -288,7 +313,7 @@ struct LoopsSheet: View {
                     }
                     .font(.collieMono(11)).foregroundStyle(Color.collieMuted)
                     if !d.loopSummary.isEmpty { heading("RESUMO DO LAÇO"); Text(verbatim: d.loopSummary).font(.collieUI(12)) }
-                    if !d.notes.isEmpty { heading("NOTAS"); ForEach(d.notes, id: \.self) { Text(verbatim: $0).font(.collieUI(12)) } }
+                    if !d.notes.isEmpty { heading("NOTAS"); ForEach(Array(d.notes.enumerated()), id: \.offset) { Text(verbatim: $0.element).font(.collieUI(12)) } }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

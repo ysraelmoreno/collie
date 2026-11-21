@@ -33,6 +33,17 @@ private func work(_ state: WorkLoopState.State? = .running, paddock: UUID? = pad
         #expect(titles(work(), paddock: nil) == before)        // the Pasto
     }
 
+    /// M9.1 (B1): with no loop but with history, LAÇOS stays (header and "Ver tudo", no card); with neither, nothing.
+    @Test func sectionInTheThreeSituations() {
+        let l = LoopSection.make(work: work(), paddock: pad), idle = LoopSection.make(work: work(.finished), paddock: pad)
+        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: l) == before + ["LAÇOS"])
+        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: idle, hasHistory: true) == before + ["LAÇOS"])
+        #expect(ContextPanel.sectionTitles(agents: 2, panels: 1, loops: idle) == before)
+        #expect(ContextPanel.loopsHeader(running: true, hasHistory: true) == .card)
+        #expect(ContextPanel.loopsHeader(running: false, hasHistory: true) == .historyOnly)
+        #expect(ContextPanel.loopsHeader(running: false, hasHistory: false) == nil)
+    }
+
     /// M8.2: the bare header below Lotes; the count is in the card.
     @Test func sectionComesBelowLotesAsACard() {
         #expect(titles(work()) == before + ["LAÇOS"])

@@ -7,8 +7,9 @@ import CollieTheme
 
 /// Trilho's context panel (248 pt, right of `PaddockRail`): the current paddock's header and menu, Novo terminal /
 /// Abrir painel, the agent tree (`AgentTree`), the panels, then Rebanhos and Lotes.
-/// LAÇOS (below Lotes) exists only while a loop of this paddock runs (`LoopSection.visible`): otherwise no header, no gap.
-/// It is one card (`LoopCard`); "Ver tudo" and the card open the Laços modal. The history lives in that modal (M8.2).
+/// LAÇOS (below Lotes): one card (`LoopCard`) while a loop of this paddock runs; without one but with history, only the
+/// header and "Ver tudo" (M9.1, B1: the history stays reachable); neither, no header, no gap. "Ver tudo" and the card
+/// open the Laços modal. The history lives in that modal (M8.2).
 struct ContextPanel: View {
     let ctx: ShellContext
     /// Shepherds whose leashed terminals are hidden. Local: a relaunch expands everything again.
@@ -35,14 +36,16 @@ struct ContextPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     let titles = Self.sectionTitles(agents: client.terminals.filter { $0.paddockId == client.currentPaddock }.count,
-                                                    panels: panels.count, loops: loops)
+                                                    panels: panels.count, loops: loops, hasHistory: !client.workFeed.history.isEmpty)
                     section(titles[0])
                     VStack(alignment: .leading, spacing: 0) { ForEach(rows) { agentRow($0, order: order) } }
                     section(titles[1])
                     VStack(alignment: .leading, spacing: 0) { ForEach(panels) { panelRow($0, order: order) } }
                     HerdsSection(ctx: ctx)
                     LotsSection(client: client)
-                    if loops.visible, let card { loopsSection(loops.title, card) }
+                    if let h = Self.loopsHeader(running: loops.visible && card != nil, hasHistory: !client.workFeed.history.isEmpty) {
+                        loopsSection(loops.title, h == .card ? card : nil)
+                    }
                 }
             }
         }
@@ -53,23 +56,30 @@ struct ContextPanel: View {
         .overlay(alignment: .trailing) { Rectangle().fill(Color.collieBorder).frame(width: 1) }
     }
 
-    /// The section titles in the order drawn; LAÇOS only while a loop runs. HISTÓRICO is never here (M8.2: the modal has it).
-    static func sectionTitles(agents: Int, panels: Int, loops: LoopSection) -> [String] {
-        ["AGENTES · \(agents)", "PAINÉIS · \(panels)", "REBANHOS", "LOTES"] + (loops.visible ? [loops.title] : [])
+    /// The section titles in the order drawn; LAÇOS while a loop runs or the paddock has history. HISTÓRICO is never
+    /// here (M8.2: the modal has it).
+    static func sectionTitles(agents: Int, panels: Int, loops: LoopSection, hasHistory: Bool = false) -> [String] {
+        ["AGENTES · \(agents)", "PAINÉIS · \(panels)", "REBANHOS", "LOTES"] + (loops.visible || hasHistory ? [loops.title] : [])
     }
 
-    /// "Ver tudo" and a click on the card: the Laços modal on its running tab (M8.3 wires the hook).
-    static func openLoops(ctx: ShellContext) { ctx.onOpenLoops(.running) }
+    enum LoopsHeader: Equatable { case card, historyOnly }
+    /// What LAÇOS shows (M9.1, B1): the card while a loop runs; only header and "Ver tudo" with history; else nothing.
+    static func loopsHeader(running: Bool, hasHistory: Bool) -> LoopsHeader? {
+        running ? .card : hasHistory ? .historyOnly : nil
+    }
 
-    private func loopsSection(_ title: String, _ card: LoopCard) -> some View {
+    /// "Ver tudo" and a click on the card: the Laços modal on its running tab, or Histórico when no card (M8.3 wires the hook).
+    static func openLoops(ctx: ShellContext, tab: LoopsTab = .running) { ctx.onOpenLoops(tab) }
+
+    private func loopsSection(_ title: String, _ card: LoopCard?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 section(title)
                 Spacer(minLength: 0)
-                Button("Ver tudo") { Self.openLoops(ctx: ctx) }
+                Button("Ver tudo") { Self.openLoops(ctx: ctx, tab: card == nil ? .history : .running) }
                     .buttonStyle(.plain).font(.collieUI(11)).foregroundStyle(Color.collieAccent).accessibilityLabel("Ver tudo")
             }
-            Button { Self.openLoops(ctx: ctx) } label: {
+            if let card { Button { Self.openLoops(ctx: ctx) } label: {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Text(card.title).font(.collieUI(13, .semibold)).foregroundStyle(Color.collieText).lineLimit(1).truncationMode(.tail)
@@ -87,7 +97,7 @@ struct ContextPanel: View {
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(card.accessibilityLabel)
-            .accessibilityAddTraits(.isButton)
+            .accessibilityAddTraits(.isButton) }
         }
     }
 

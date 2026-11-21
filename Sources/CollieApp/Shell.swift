@@ -30,9 +30,9 @@ import CollieTheme
     var openTour: () -> Void = {}
     /// Brings the Work panel forward (opens it where it was not).
     var openWork: () -> Void = {}
-    /// A HISTÓRICO row was clicked (a closed work's id). Empty until T6.5 opens its detail.
-    var onOpenHistory: (String) -> Void = { _ in }
-    /// The short warning the HISTÓRICO section shows when a detail could not be opened.
+    /// "Abrir no canvas" of a closed work (its id): returns once the Prévia opened or failed (M9.1: the modal waits).
+    var onOpenHistory: @MainActor (String) async -> Void = { _ in }
+    /// The short warning the Laços modal shows when the Prévia could not be opened (nil: it opened).
     var historyNotice: () -> String? = { nil }
     /// M8.2: "Ver tudo" (or the card) of LAÇOS: the Laços modal (`LoopsSheet`, M8.3) on that tab.
     var onOpenLoops: (LoopsTab) -> Void = { _ in }

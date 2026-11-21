@@ -348,9 +348,9 @@ struct ContentView: View {
                      herds: herds, openHerds: { sheet = .herds(nil, $0) },
                      focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: openPreferences,
                      tour: tour, openTour: { sheet = .tour }, openWork: { showPanel("work") },
-                     onOpenHistory: { id in Task { @MainActor in
+                     onOpenHistory: { id in
                          if historyOpener == nil { historyOpener = .live(client: client, focus: { notifier.onFocus?($0) }) }
-                         await historyOpener?.show(id) } },
+                         await historyOpener?.show(id) },
                      historyNotice: { historyOpener?.message }, onOpenLoops: { sheet = .loops($0) },
                      fetchHistory: { [client] in try await HistoryOpener.archive($0, client: client) })
     }

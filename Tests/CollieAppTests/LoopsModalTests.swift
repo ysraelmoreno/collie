@@ -40,6 +40,8 @@ private struct FakeArchiveDaemon {
     }
 }
 
+@MainActor private final class Box { var ids: [String] = [] }
+
 @MainActor struct LoopsModalTests {
     @Test func initialTabFollowsTheRunningLoop() {
         let w = work(alive: UUID(), gone: UUID())
@@ -115,15 +117,15 @@ private struct FakeArchiveDaemon {
         #expect(d.timeline.count == WorkArchive.timelineMax && d.timeline.last?.detail == "599")
     }
 
-    @Test func openInCanvasCallsTheOldHookWithTheId() {
-        var got: [String] = []
+    @Test func openInCanvasCallsTheOldHookWithTheId() async {
+        let got = Box()
         let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-loops-\(UUID())")))
         var ctx = ShellContext(client: client, canvas: CanvasState(), paddocks: PaddockActions(client: client), usage: UsageFeed(),
                                usageOpen: .constant(false), newTerminal: {}, openPanel: {}, fit: {}, openPalette: {},
                                herds: HerdsModel(call: { _, _ in .null }, nodeName: { _ in nil }), openHerds: { _ in })
-        ctx.onOpenHistory = { got.append($0) }
-        LoopsModal.openInCanvas("abc", ctx: ctx)
-        #expect(got == ["abc"])
+        ctx.onOpenHistory = { got.ids.append($0) }
+        #expect(await LoopsModal.openInCanvas("abc", ctx: ctx) == nil)
+        #expect(got.ids == ["abc"])
     }
 
     @Test func textFromTheWorkStaysLiteral() throws {

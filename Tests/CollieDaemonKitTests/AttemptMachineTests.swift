@@ -168,7 +168,7 @@ private let paths: [Path] = [
         Step(.settled(moved: false, reset: false), .deciding, verdict("gate could not run: x", then: .awaitOthers)),
     ]),
     // M5.3: the agent sits in the usage-limit dialog: dismissed, not counted, nothing discarded, the loop stops
-    Path(name: "usage limit during the turn: no verdict, the loop stops", n: 3, steps: Array(turn.prefix(2)) + [
+    Path(name: "usage limit during the turn: no verdict, the loop stops", steps: Array(turn.prefix(2)) + [
         Step(.usageLimit("You've hit your limit · resets 3pm"), .finished, limited("You've hit your limit · resets 3pm")),
     ]),
     Path(name: "usage limit during the nudge's turn: the same", steps: Array(turn.prefix(3)) + [

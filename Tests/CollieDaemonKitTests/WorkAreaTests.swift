@@ -39,7 +39,7 @@ private let withSmoke = """
             let expected = "scripts/check-onda12.sh q12-1 && swift test --filter AskTests && scripts/smoke.sh"
             guard case .object(let o)? = r.result else { Issue.record("\(r)"); return }
             #expect(o["check"] == .string(expected), "\(o)")
-            if case .string(let out)? = o["output"] { #expect(out.contains(expected), out) } else { Issue.record("no output: \(o)") }
+            if case .string(let out)? = o["output"] { #expect(out.contains(expected), "\(out)") } else { Issue.record("no output: \(o)") }
             // the task keeps the built check (the loop runs task.check as always)
             let t = try #require(try await d.router.work.active(terminal: a.uuid)?.tasks.first)
             #expect(t.check == expected)

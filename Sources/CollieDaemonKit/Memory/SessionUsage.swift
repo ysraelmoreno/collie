@@ -44,7 +44,7 @@ enum SessionUsage {
         var t = r.byModel.values.reduce(TokenCount()) {
             $0 + TokenCount(input: $1.input, output: $1.output, cacheWrite: $1.cacheCreation, cacheRead: $1.cacheRead, messages: $1.messages)
         }
-        t.model = r.last
+        t.model = r.last.flatMap { CollieSettings.isLoopModel($0) ? $0 : nil }   // M6.5 (A7): a model id, or nothing
         return t
     }
 }

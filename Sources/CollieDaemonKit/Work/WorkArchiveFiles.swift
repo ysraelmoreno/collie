@@ -10,19 +10,20 @@ enum WorkArchiveFiles {
     /// The archive of `w` (closed) written under its next free name, its timeline following the work's last archive.
     /// Returns the file; nil: it could not be written (the close itself already is: a summary never fails it).
     @discardableResult
-    static func write(_ w: Work, paddock: String?, terminal: String?, loopSummary: String, dir: URL, keep: Int = keep) -> URL? {
+    static func write(_ w: Work, paddock: String?, terminal: String?, loopSummary: String, dir: URL, keep: Int = keep, now: Date = Date()) -> URL? {
         let id = w.id.uuidString.lowercased()
         let previous = files(of: id, in: dir).last.flatMap { (try? Data(contentsOf: $0.url)).flatMap(WorkArchive.decoded) }
         let a = WorkArchive.make(w, paddock: paddock, terminal: terminal, loopSummary: loopSummary, previous: previous?.timeline ?? [])
         guard let data = try? a.encoded(), data.count <= WorkArchive.maxBytes else { return nil }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        chmod(dir.path, 0o700)   // M6.5 (A9): a folder that already existed gets the mode too
         let tmp = dir.appendingPathComponent(".\(id).\(UUID().uuidString).tmp")
         guard FileManager.default.createFile(atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600]) else { return nil }
         defer { unlink(tmp.path) }
         var n = (files(of: id, in: dir).last?.n ?? 0) + 1
         while n < 10_000 {
             let url = dir.appendingPathComponent(n == 1 ? "\(id).json" : "\(id)-\(n).json")
-            if link(tmp.path, url.path) == 0 { prune(dir, keep: keep, sparing: url); return url }
+            if link(tmp.path, url.path) == 0 { prune(dir, keep: keep, sparing: url, now: now); return url }
             guard errno == EEXIST else { return nil }
             n += 1   // written meanwhile (never by this daemon: one disk queue): the next name
         }
@@ -60,8 +61,16 @@ enum WorkArchiveFiles {
         all(in: dir).filter { $0.id == id }.map { ($0.url, $0.n) }.sorted { $0.n < $1.n }
     }
 
-    /// Past `keep` files, the oldest (by modification time, then name) are deleted; never `sparing`.
-    static func prune(_ dir: URL, keep: Int, sparing: URL) {
+    /// M6.5 (A9): a temp file a crash left between `createFile` and its `unlink` is deleted past this age.
+    static let orphanAge: TimeInterval = 3600
+
+    /// Past `keep` files, the oldest (by modification time, then name) are deleted; never `sparing`. Also every
+    /// `.<…>.tmp` older than `orphanAge` at `now` (a younger one may be another write's, still being linked).
+    static func prune(_ dir: URL, keep: Int, sparing: URL, now: Date = Date()) {
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where name.hasPrefix(".") && name.hasSuffix(".tmp") {
+            let u = dir.appendingPathComponent(name)
+            if now.timeIntervalSince(mtime(u)) > orphanAge { unlink(u.path) }
+        }
         let files = all(in: dir).map(\.url)
         guard files.count > keep else { return }
         let old = files.filter { $0.lastPathComponent != sparing.lastPathComponent }

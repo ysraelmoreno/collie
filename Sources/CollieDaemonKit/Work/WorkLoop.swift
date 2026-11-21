@@ -85,21 +85,35 @@ extension LoopHost {
 /// counts. No timer and no sleep (the clock is the caller's `now`, the host's): what is held goes with the next notice
 /// past the window. The loop's end notice (the daemon's `WorkStatusText.loopEnded`) is never held and names every
 /// task of the loop, so what was still held when the loop ended goes with it.
-/// ponytail: held lines wait for the next notice or the loop's end; a timer, if a deferral must never wait that long.
+/// M6.5 (A5): under `end` a done task sends no line, so what is held also goes (`flush`) when a task is done past the
+/// window and when a new attempt starts past it: a deferral waits at most for the next task's end or attempt.
+/// ponytail: no timer; an attempt that runs for hours still holds a deferral that long (a timer, if that matters).
 actor LoopNotices {
     static let window: TimeInterval = 60
     let window: TimeInterval
     private var last: Date?
-    private var pending: [Bool] = []   // done (true) or deferred, one per notice held
+    private var pending: [(line: String, done: Bool)] = []   // one per notice held
     init(window: TimeInterval = LoopNotices.window) { self.window = window }
     var held: Int { pending.count }
 
     /// What goes now for `line` (a task's notice; `done`: it was done, not deferred) at `now`; nil: held.
     func offer(_ line: String, done: Bool, at now: Date) -> String? {
-        if let last, now.timeIntervalSince(last) < window { pending.append(done); return nil }
-        let all = pending + [done]
+        if let last, now.timeIntervalSince(last) < window { pending.append((line, done)); return nil }
+        pending.append((line, done))
+        return send(at: now)
+    }
+
+    /// What was held, if the window passed at `now`; nil: nothing held, or still inside the window.
+    func flush(at now: Date) -> String? {
+        guard !pending.isEmpty, let last, now.timeIntervalSince(last) >= window else { return nil }
+        return send(at: now)
+    }
+
+    private func send(at now: Date) -> String {
+        let all = pending
         pending = []; last = now
-        return all.count == 1 ? line : WorkStatusText.noticeBatch(done: all.filter { $0 }.count, deferred: all.filter { !$0 }.count)
+        return all.count == 1 ? all[0].line
+            : WorkStatusText.noticeBatch(done: all.filter(\.done).count, deferred: all.filter { !$0.done }.count)
     }
 }
 
@@ -192,6 +206,7 @@ actor WorkLoop {
     /// gone, or the tree holds changes that are not the attempt's; a verdict and no reset when another terminal works).
     /// After its first reads it only interprets `AttemptMachine`: the order of the effects and their conditions are there.
     func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
+        await flushNotices()   // M6.5 (A5): a deferral held in the window goes once a new attempt starts past it
         let n = (task.tries ?? 0) + 1, started = host.now()
         // M3.8: named after the work and the task (their titles are data: `AgentNaming` leaves only `[a-z0-9-]`), and
         // never as a live terminal. Nothing finds the agent by this name: its terminal's id goes on the job (`record`)
@@ -571,9 +586,20 @@ actor WorkLoop {
     /// M5.1: inside the window of the last one sent it is held (`LoopNotices`), and goes with the next one as counts.
     @discardableResult
     func reportEnd(_ work: UUID, _ task: String) async -> String? {
-        guard let w = try? await store.get(work), let one = Self.endNotice(w, task) else { return nil }
+        guard let w = try? await store.get(work) else { return nil }
+        // M6.5 (A5): a task with no line of its own (done under `end`) still lets what is held go past the window
+        guard let one = Self.endNotice(w, task) else { return await flushNotices() }
         let done = w.tasks.first { $0.id == task }?.state == .done
-        guard let line = await notices.offer(one, done: done, at: host.now()) else { return nil }
+        return sendNotice(await notices.offer(one, done: done, at: host.now()))
+    }
+
+    /// M6.5 (A5): what the window held, sent now if it passed (nil: nothing went).
+    @discardableResult
+    func flushNotices() async -> String? { sendNotice(await notices.flush(at: host.now())) }
+
+    /// Never awaited (`reportEnd`): the line goes to the Shepherd once it is idle.
+    private func sendNotice(_ line: String?) -> String? {
+        guard let line else { return nil }
         let host = host
         Task { await host.taskEnded(line) }
         return line

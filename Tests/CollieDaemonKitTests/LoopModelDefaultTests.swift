@@ -86,7 +86,8 @@ private let codex = TerminalRecord(id: UUID(), name: "S", preset: .codex, comman
     }
 
     @Test func theWaitAdviceIsInTheOrientationWithinTheCapAndInTheLoopCommand() {
-        #expect(CollieOrientation.loopNotify.contains("work wait --timeout 3600") && CollieOrientation.loopNotify.contains("don't reply"))
+        // M6.5 (A6): 540 s in the background, not 3600 in the foreground (the agent's shell tool kills it at 2 to 10 min)
+        #expect(CollieOrientation.loopNotify.contains("work wait --timeout 540") && CollieOrientation.loopNotify.contains("no reply"))
         #expect(LoopCommand.body.contains("one long wait beats several short ones") && LoopCommand.body.contains("read the state only when you need it"))
         let t = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: "codex")
         #expect(t.count <= 1500 && t.contains(CollieOrientation.loopNotify), "\(t.count)\n\(t)")

@@ -15,8 +15,10 @@ enum CollieOrientation {
     /// M3c.4: before `loopWait` where it fits (a form that would lose its place to it keeps today's line).
     /// M5.1: `end` is the default now: the line says per-task notices are off and the state is read with a long wait.
     /// M5.6: a notice is never answered with text (each reply is a turn) and one long wait beats several short ones.
-    /// ponytail: 62 characters, the room a codex Shepherd has before the wait sentence; the long form is in /collie:loop
-    static let loopNotify = "Notices off by default; don't reply; work wait --timeout 3600."
+    /// M6.5 (A6): an agent's shell tool kills a foreground command at 2 to 10 min, so the wait is 540 s and in the
+    /// background ("bg"); the MCP `work_wait` and the long form are in /collie:loop.
+    /// ponytail: 62 characters, the room a codex Shepherd has before the wait sentence
+    static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {

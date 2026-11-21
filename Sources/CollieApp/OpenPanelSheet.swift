@@ -28,6 +28,8 @@ struct OpenPanelTarget: Equatable {
     /// A failure as text for the user: never the raw protocol error.
     static func failureText(_ e: ProtocolError) -> String {
         if e.message.hasPrefix("Prévia:") { return "Escolha um artifact ou um arquivo HTML para abrir a Prévia." }
+        // M6.5 (A9): `PreviewFile.resolve`'s refusal, in a fixed text (the daemon's message carries paths)
+        if e.message.hasPrefix("a página precisa ficar dentro do projeto") { return "A página precisa ficar dentro do projeto." }
         switch e.code {
         case .notFound: return "Não encontrei o artifact ou o arquivo escolhido."
         case .unauthorized: return "O Collie não tem acesso a esse arquivo. Use um arquivo do projeto ou aprove o acesso."
@@ -196,6 +198,8 @@ struct OpenPanelSheet: View {
     private func pickFile() {
         let p = NSOpenPanel()
         p.allowedContentTypes = [.html]; p.allowsMultipleSelection = false; p.canChooseDirectories = false
+        // M6.5 (A9): it opens in the paddock's worktree, where the page has to be
+        if let path = client.paddocks.first(where: { $0.id == client.currentPaddock })?.path { p.directoryURL = URL(fileURLWithPath: path) }
         if p.runModal() == .OK, let u = p.url { pickedFile = u.path; artifactId = "" }
     }
 

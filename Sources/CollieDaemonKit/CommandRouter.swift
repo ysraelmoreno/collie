@@ -110,6 +110,8 @@ actor CommandRouter {
     var lastTurn: [UUID: String] = [:]
     /// Turns each terminal ended (`turn.completed`, not continued): `wait` sees one end. ponytail: never pruned (tiny).
     var turnEnds: [UUID: Int] = [:]
+    /// M5.5: when each terminal's Stop last gave the large-context advice. ponytail: never pruned (tiny).
+    var contextAdvisedAt: [UUID: Date] = [:]
     /// Files each Claude terminal wrote this turn, for the plug-ins' `stop` event (`pluginHook`; dropped with the terminal).
     var pluginTurn = PluginTurn()
     /// Turn notices waiting for each Shepherd to be idle, typed as one block (`noticeTurnEnded`).
@@ -524,6 +526,10 @@ actor CommandRouter {
                 for await _ in done {}
                 let ask = await stopAsk(tid)
                 if let hold { if ask == nil { await asks.releaseCapture(tid, hold) } else { await asks.captureBlocked(tid, hold) } }
+                // M5.5: never in the same Stop as the memory ask; shown to the user (systemMessage), it costs the agent no turn
+                if ask == nil, let advice = await contextAdvice(tid, transcript: str(req, "transcript"), memoryAsked: false) {
+                    return Response(id: req.id, ok: true, result: .object(["advice": .string(advice)]))
+                }
                 return Response(id: req.id, ok: true, result: .object(ask.map { ["ask": .string($0)] } ?? [:]))
             case "work.hook":
                 if str(req, "hook") == "tool" { toolCalled(tid) }   // M3d.1: a turn beyond any wait the terminal has open

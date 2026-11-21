@@ -23,7 +23,7 @@ public enum PluginHookClient {
     /// One block with the plug-in's reason first and the memory ask after it; a continued Stop never blocks.
     public static func stopOutput(stdin: Data, env: [String: String], timeout: Double = 5,
                                   onError: (String) -> Void = { _ in }) async -> String? {
-        let ask = await MemoryHookClient.stopAsk(stdin: stdin, env: env, onError: onError)
+        let (ask, advice) = await MemoryHookClient.stopReply(stdin: stdin, env: env, onError: onError)
         var reasons: [String] = []
         // the plug-in call still goes out on a continued Stop (the daemon clears the turn's files), but its answer is dropped
         if let creds = Creds(env), stdin.count <= PluginHooks.maxInput,
@@ -32,7 +32,10 @@ public enum PluginHookClient {
             reasons.append(block)
         }
         if let ask { reasons.append(ask) }
-        return reasons.isEmpty ? nil : HookPayload.claudeStopBlock(reason: reasons.joined(separator: "\n\n"))
+        // M5.5: the advice only when nothing blocks (one text per Stop). ponytail: a plug-in block that Stop drops it
+        // until the next 2 h window.
+        if reasons.isEmpty { return advice.flatMap(MemoryHookClient.systemMessage) }
+        return HookPayload.claudeStopBlock(reason: reasons.joined(separator: "\n\n"))
     }
 
     private struct Creds {

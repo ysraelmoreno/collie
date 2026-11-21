@@ -48,12 +48,15 @@ import CollieProtocol
         let dir = tmp(); defer { try? FileManager.default.removeItem(at: dir) }
         let s = WorkStore(dir: dir)
         let w = try await s.start(title: "L", terminal: UUID(), paddockId: nil, branch: nil)
-        try await s.update(w.id) { $0.loop = WorkLoopState(state: .running); $0.loop?.events = events(30) }
+        try await s.update(w.id) { $0.loop = WorkLoopState(state: .running); for e in events(30) { $0.record(e) } }
         try await s.close(w.id, by: "app")
         #expect(await files(s).isEmpty)
-        try await s.update(w.id) {
-            $0.loop?.events = events(150); $0.loop?.state = .stopped; $0.loop?.stopReason = .init(.requested)
+        // M6.4: the loop only adds events, one write at a time (assigning all 150 at once hid the cut to 20)
+        let all = events(150)
+        for chunk in stride(from: 30, to: 150, by: 10) {
+            try await s.update(w.id) { w in for e in all[chunk..<chunk + 10] { w.record(e) } }
         }
+        try await s.update(w.id) { $0.loop?.state = .stopped; $0.loop?.stopReason = .init(.requested) }
         #expect(await files(s).count == 1)
         let a = try #require(try await s.history { _ in true }.first)
         // the whole journal at the close, not the 20 a closed work keeps

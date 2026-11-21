@@ -325,7 +325,7 @@ extension WorkLoop {
         let e = entry(.integrated, task: p.task.id, attempt: p.n, detail: String(head.prefix(7)))
         try? await store.update(id) { x in
             Self.markDone(&x, p.task.id, n: p.n, at: p.at, evidence: p.evidence, job: p.name, head: p.head)
-            x.loop?.record(e)
+            x.record(e)
         }
         await reportEnd(id, p.task.id)
     }
@@ -349,7 +349,7 @@ extension WorkLoop {
             }
             x.notes.append(WorkNote(at: at, text: text))
             Self.endJob(&x, p.name, reason, at: at)
-            x.loop?.record(e)
+            x.record(e)
         }
         if last { await reportEnd(id, task.id) }
     }

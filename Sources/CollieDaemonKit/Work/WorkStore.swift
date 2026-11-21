@@ -248,8 +248,9 @@ actor WorkStore {
             list[i].tasks = w.tasks.enumerated().filter { !t.contains($0.offset) }.map(\.element)
             list[i].jobs = w.jobs.enumerated().filter { !j.contains($0.offset) }.map(\.element)
             list[i].notes = Array(w.notes.dropFirst(n))
-            // not archived: the journal only records, and a closed work's status shows 20 lines at most
-            if w.closedAt != nil, let ev = w.loop?.events, ev.count > maxClosedEvents { list[i].loop?.events = Array(ev.suffix(maxClosedEvents)) }
+            // not archived: the journal only records, and a closed work's status shows 20 lines at most. M6.4: not
+            // while its loop runs: the summary written when the loop ends (`closes`) takes the whole journal
+            if w.closedAt != nil, w.loop?.state != .running, let ev = w.loop?.events, ev.count > maxClosedEvents { list[i].loop?.events = Array(ev.suffix(maxClosedEvents)) }
         }
         // closed works: the newest 200 stay (ties by position)
         let closed = list.enumerated().filter { $0.element.closedAt != nil }

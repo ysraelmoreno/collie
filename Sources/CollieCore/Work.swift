@@ -219,8 +219,11 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// before the journal existed. A new `work run` is a new `WorkLoopState`: it starts empty.
     public var events: [LoopEvent]?
     public static let eventsMax = 100
-    /// Adds `e` to the journal; past `eventsMax`, the oldest go.
-    public mutating func record(_ e: LoopEvent) { events = Array(((events ?? []) + [e]).suffix(Self.eventsMax)) }
+    /// M6.4: the ring while the work is closed under its running loop: the summary written when the loop ends keeps
+    /// up to `WorkArchive.timelineMax` of them, and twice that lets it count what it cut (`truncated`).
+    public static let closedEventsMax = 2 * WorkArchive.timelineMax
+    /// Adds `e` to the journal; past `max`, the oldest go. A work's loop records through `Work.record`.
+    public mutating func record(_ e: LoopEvent, max: Int = eventsMax) { events = Array(((events ?? []) + [e]).suffix(max)) }
     /// M3.5, `work run --parallel N`: how many tasks may run at once, each in its lane. nil or 1: one at a time, in the
     /// paddock's worktree, as always.
     public var parallel: Int?
@@ -383,5 +386,13 @@ public struct Work: Codable, Sendable, Equatable {
         lotId = (try? c.decodeIfPresent(UUID.self, forKey: .lotId)) ?? nil
         loop = (try? c.decodeIfPresent(WorkLoopState.self, forKey: .loop)) ?? nil   // malformed = no loop
         version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? nil
+    }
+}
+
+extension Work {
+    /// M6.4: one event in the loop's journal: a ring of `eventsMax`, or of `closedEventsMax` once the work is closed
+    /// (its loop may still run: `WorkStore` keeps the journal whole until the loop ends and the summary is written).
+    public mutating func record(_ e: LoopEvent) {
+        loop?.record(e, max: closedAt != nil ? WorkLoopState.closedEventsMax : WorkLoopState.eventsMax)
     }
 }

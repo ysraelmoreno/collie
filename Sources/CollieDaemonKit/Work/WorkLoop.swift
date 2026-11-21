@@ -179,7 +179,7 @@ actor WorkLoop {
             // always one summary note, after the path's own longer one (if any)
             if outside == nil, let why {
                 w.notes.append(WorkNote(at: now, text: why.note))
-                w.loop!.record(LoopEvent(at: now, kind: .stopped, detail: Self.eventDetail(why.label)))
+                w.record(LoopEvent(at: now, kind: .stopped, detail: Self.eventDetail(why.label)))
             }
         }
         return end
@@ -234,7 +234,7 @@ actor WorkLoop {
             if let lane { x.loop?.showLane(lane, .agent, at: started) }
             else { x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(adopt ? nil : .agent, at: started) }
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
-            x.loop?.record(first)
+            x.record(first)
         }
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
@@ -331,7 +331,7 @@ actor WorkLoop {
             if let mark, let j = x.jobs.lastIndex(where: { $0.id == name && $0.kind == .loop && $0.state == .running }) { x.jobs[j].terminal = mark }
             if let phase { if let lane { x.loop?.showLane(lane, phase) } else { x.loop?.show(phase) } }
             for e in events {
-                x.loop?.record(e)
+                x.record(e)
                 // M5.4: the attempt's counts add to its task's (the journal is a ring: the task keeps the sum)
                 if let t = e.tokens, let i = x.tasks.firstIndex(where: { $0.id == e.task }) { x.tasks[i].tokens = (x.tasks[i].tokens ?? TokenCount()) + t }
             }
@@ -624,7 +624,7 @@ actor WorkLoop {
     /// reads it, and it never reaches an agent's prompt.
     private func event(_ id: UUID, _ kind: LoopEvent.Kind) async {
         let e = entry(kind)
-        try? await store.update(id) { $0.loop?.record(e) }
+        try? await store.update(id) { $0.record(e) }
     }
 
     /// The event as the journal keeps it, timed now.

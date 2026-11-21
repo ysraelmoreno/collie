@@ -156,6 +156,7 @@ import CollieProtocol
             }
             for title in ["Um", "Dois", "Três"] {
                 #expect(try await call(a, "work.start", ["title": .string(title)]).ok)
+                #expect(try await call(a, "work.task.add", ["title": .string("t")]).ok)   // M8.1: a work with no task is not listed
                 #expect(try await call(a, "work.done").ok)
             }
             // A's work in another paddock: B (the pasture) must never see it

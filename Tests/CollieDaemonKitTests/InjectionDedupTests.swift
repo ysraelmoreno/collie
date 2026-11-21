@@ -9,11 +9,12 @@ import CollieCore
     private static let subject = "escrita na worktree derruba a tentativa"
     /// Five pitfalls about the same thing (different ids and texts, one subject) and two about other things.
     private func fixture(age: (Int) -> TimeInterval = { Double($0) * 60 }) -> (group: [MemoryRecord], other: [MemoryRecord]) {
-        let titles = ["Escrita na worktree derruba a tentativa do laço", "Escrever na worktree derruba tentativa em curso",
-                      "Worktree escrita durante tentativa derruba o laço", "Não escreva na worktree: derruba a tentativa",
-                      "Tentativa derrubada por escrita na worktree"]
+        // one subject each (the store itself resolves two actives of one subject): the titles make them near
+        let titles = ["Escrita na worktree derruba a tentativa do laço", "Escrita na worktree derruba a tentativa do laço em curso",
+                      "Escrita na worktree derruba de novo a tentativa do laço", "Escrita na worktree derruba a tentativa do laço agora",
+                      "Escrita na worktree compartilhada derruba a tentativa do laço"]
         let group = titles.enumerated().map { i, t in
-            MemoryRecord(kind: .pitfall, subject: Self.subject, title: t, body: "worktree tentativa laço", hits: 1,
+            MemoryRecord(kind: .pitfall, subject: Self.subject + " \(i)", title: t, body: "worktree tentativa laço", hits: 1,
                          updatedAt: Date().addingTimeInterval(-age(i)))
         }
         let other = [MemoryRecord(kind: .pitfall, subject: "commit antes do check", title: "Laço sem commit perde a tentativa",

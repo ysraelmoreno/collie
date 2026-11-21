@@ -25,6 +25,15 @@
     </div>
   </header>
 
+  <div id="filters" class="filters">
+    <div id="type-filter" class="filter-group" role="group" aria-label="Filtrar por tipo">
+      <span class="filter-name" aria-hidden="true">Tipo</span>
+    </div>
+    <div id="priority-filter" class="filter-group" role="group" aria-label="Filtrar por prioridade">
+      <span class="filter-name" aria-hidden="true">Prioridade</span>
+    </div>
+  </div>
+
   <p id="error" class="error" role="alert" hidden></p>
   <p id="archived-banner" class="banner" hidden>Mostrando cartões arquivados.</p>
 
@@ -36,10 +45,14 @@
       <button id="panel-close" type="button" aria-label="Fechar painel">✕</button>
     </div>
     <p id="panel-meta" class="meta"></p>
+    <span id="panel-type-label" class="field-l">Tipo</span>
+    <div id="panel-type" class="seg" role="radiogroup" aria-labelledby="panel-type-label"></div>
+    <span id="panel-priority-label" class="field-l">Prioridade</span>
+    <div id="panel-priority" class="seg prio-seg" role="radiogroup" aria-labelledby="panel-priority-label"></div>
     <label class="stack">Título
       <input id="panel-title" type="text" maxlength="200" aria-label="Título do cartão">
     </label>
-    <label class="stack">Corpo
+    <label class="stack">Descrição
       <textarea id="panel-body" rows="6" maxlength="8000" aria-label="Corpo do cartão"></textarea>
     </label>
     <label class="stack">Rótulos (separados por vírgula)

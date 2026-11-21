@@ -136,5 +136,72 @@ class UIFilesTest(unittest.TestCase):
         self.assertNotRegex(css, r"@import|url\(")
 
 
+TYPES = ("impl", "bug", "refactor", "spike", "test", "docs", "chore")
+PRIORITIES = ("high", "medium", "low")
+
+
+def css_blocks(css):
+    """(light :root block, dark :root block inside prefers-color-scheme: dark)."""
+    light = re.search(r"^:root\s*\{([^}]*)\}", css, re.M)
+    dark = re.search(r"@media\s*\(\s*prefers-color-scheme\s*:\s*dark\s*\)\s*\{\s*:root\s*\{([^}]*)\}", css)
+    return (light.group(1) if light else ""), (dark.group(1) if dark else "")
+
+
+class TypesAndPriorityTest(unittest.TestCase):
+    def test_js_knows_types_and_priorities(self):
+        js = read("app.js")
+        for t in TYPES:
+            self.assertRegex(js, r"id:\s*\"%s\"" % t, t)
+            self.assertRegex(js, r"\b%s:\s*\[\[?\s*\[?\"(?:path|ellipse|circle)\"" % t, "glifo de " + t)
+        for p, name in zip(PRIORITIES, ("Alta", "Média", "Baixa")):
+            self.assertRegex(js, r"id:\s*\"%s\",\s*name:\s*\"%s\"" % (p, name))
+        self.assertIn('DEFAULT_TYPE = "impl"', js)
+        self.assertIn('DEFAULT_PRIORITY = "medium"', js)
+
+    def test_type_colors_in_both_themes(self):
+        css = read("style.css")
+        light, dark = css_blocks(css)
+        self.assertTrue(light and dark, "faltam os blocos :root claro e escuro")
+        for t in TYPES:
+            self.assertRegex(light, r"--t-%s\s*:\s*#[0-9A-Fa-f]{6}" % t, "claro: " + t)
+            self.assertRegex(dark, r"--t-%s\s*:\s*#[0-9A-Fa-f]{6}" % t, "escuro: " + t)
+            self.assertRegex(css, r"\.type-%s\s*\{\s*--c:\s*var\(--t-%s\)" % (t, t))
+        for p in PRIORITIES:
+            self.assertRegex(css, r"\.prio\.%s\b" % p)
+        self.assertRegex(css, r"\.chip\.type-chore\s*\{[^}]*dashed")
+        self.assertRegex(css, r"line-through")
+
+    def test_fonts_without_network(self):
+        css = read("style.css")
+        self.assertIn('"Space Grotesk"', css)
+        self.assertIn('"DM Mono"', css)
+        self.assertRegex(css, r"\"Space Grotesk\",\s*system-ui")
+        self.assertNotRegex(css, r"@font-face|@import|url\(")
+        self.assertNotIn("<link", re.sub(r'<link[^>]+href="style\.css"[^>]*>', "", read("index.html")))
+
+    def test_glyphs_built_as_svg_elements(self):
+        js = read("app.js")
+        self.assertIn("createElementNS", js)
+        self.assertIn('"http://www.w3.org/2000/svg"', js)
+        self.assertNotRegex(js, r"DOMParser|createContextualFragment")
+
+    def test_filters_and_selectors(self):
+        js = read("app.js")
+        html = read("index.html")
+        self.assertRegex(html, r'id="type-filter"[^>]*aria-label="Filtrar por tipo"')
+        self.assertRegex(html, r'id="priority-filter"[^>]*aria-label="Filtrar por prioridade"')
+        self.assertRegex(html, r'id="panel-type"[^>]*role="radiogroup"')
+        self.assertRegex(html, r'id="panel-priority"[^>]*role="radiogroup"')
+        self.assertIn('"aria-pressed"', js)
+        self.assertIn('"aria-checked"', js)
+        self.assertIn('"Prioridade "', js)  # aria-label / title of the bars: "Prioridade alta"
+        self.assertIn(".title = priorityLabel", js)
+        # create and update send both fields
+        create = js[js.index('post("api/card/create"'):]
+        self.assertRegex(create[:300], r"type:[\s\S]*priority:")
+        update = js[js.index('post("api/card/update"'):]
+        self.assertRegex(update[:400], r"type: state\.panelType[\s\S]*priority: state\.panelPriority")
+
+
 if __name__ == "__main__":
     unittest.main()

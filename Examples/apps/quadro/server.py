@@ -105,6 +105,20 @@ def _first(query, name):
     return values[0]
 
 
+def _labels_arg(value):
+    """Collie sends a string param as text: "a, b" becomes ["a", "b"]."""
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return value
+
+
+def _index_arg(value):
+    """Collie sends an int param as a JSON number, possibly 2.0."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _split_host(value):
     """'name:port' or '[v6]:port' -> (name, port or None)."""
     value = value.strip().lower()
@@ -247,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             return self._json(200, {"ok": True, "revision": store.revision})
         if path == "/api/board":
-            return self._json(200, store.board(include_archived=_first(query, "archived") == "1"))
+            return self._json(200, store.board(include_archived=_first(query, "archived") in ("1", "true")))
         if path == "/api/cards":
             return self._json(200, {"cards": store.cards(
                 column=_first(query, "column"), label=_first(query, "label"),
@@ -297,17 +311,19 @@ class Handler(BaseHTTPRequestHandler):
                 raise HttpError(400, "title is required")
             card = store.create_card(body["title"], body=body.get("body", ""),
                                      column=body.get("column", "todo"),
-                                     labels=body.get("labels", ()),
+                                     labels=_labels_arg(body.get("labels", ())),
                                      assignee=body.get("assignee", ""), by=by)
             status = 201
         elif path == "/api/card/update":
             fields = {k: body[k] for k in ("title", "body", "labels", "assignee") if k in body}
+            if "labels" in fields:
+                fields["labels"] = _labels_arg(fields["labels"])
             card = store.update_card(card_id, by=by, **fields)
             status = 200
         elif path == "/api/card/move":
             if "column" not in body:
                 raise HttpError(400, "column is required")
-            card = store.move_card(card_id, body["column"], index=body.get("index"), by=by)
+            card = store.move_card(card_id, body["column"], index=_index_arg(body.get("index")), by=by)
             status = 200
         elif path == "/api/card/comment":
             if "text" not in body:

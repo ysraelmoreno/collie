@@ -25,7 +25,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-from store import Invalid, NotFound, Store, StoreCorrupt, default_dir
+from store import (DEFAULT_PRIORITY, DEFAULT_TYPE, Invalid, NotFound, Store, StoreCorrupt,
+                   default_dir)
 
 HOST = "127.0.0.1"
 MAX_BODY = 64 * 1024
@@ -266,7 +267,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/cards":
             return self._json(200, {"cards": store.cards(
                 column=_first(query, "column"), label=_first(query, "label"),
-                assignee=_first(query, "assignee"), q=_first(query, "q"))})
+                assignee=_first(query, "assignee"), q=_first(query, "q"),
+                type=_first(query, "type"), priority=_first(query, "priority"))})
         if path == "/api/card":
             return self._json(200, store.card(_first(query, "id") or ""))
         if path == "/api/events":
@@ -313,10 +315,13 @@ class Handler(BaseHTTPRequestHandler):
             card = store.create_card(body["title"], body=body.get("body", ""),
                                      column=body.get("column", "todo"),
                                      labels=_labels_arg(body.get("labels", ())),
-                                     assignee=body.get("assignee", ""), by=by)
+                                     assignee=body.get("assignee", ""), by=by,
+                                     type=body.get("type", DEFAULT_TYPE),
+                                     priority=body.get("priority", DEFAULT_PRIORITY))
             status = 201
         elif path == "/api/card/update":
-            fields = {k: body[k] for k in ("title", "body", "labels", "assignee") if k in body}
+            fields = {k: body[k] for k in ("title", "body", "labels", "assignee", "type",
+                                           "priority") if k in body}
             if "labels" in fields:
                 fields["labels"] = _labels_arg(fields["labels"])
             card = store.update_card(card_id, by=by, **fields)

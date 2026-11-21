@@ -135,7 +135,8 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(await r.run() == .finished)
         let w = try await r.get()
         #expect(w.tasks[0].state == .done, "\(w.tasks)")
-        #expect(await r.host.commands == ["true"], "\(await r.host.commands)")   // only the second attempt's check ran
+        let ran = await r.host.commands
+        #expect(ran == ["true"], "\(ran)")   // only the second attempt's check ran
         #expect(!FileManager.default.fileExists(atPath: r.repo.appendingPathComponent(ProjectWorkConfig.fileName).path))
     }
 

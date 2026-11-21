@@ -44,6 +44,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var evidence: TaskEvidence?
     public var evidenceGlob: String?
     public var needs: [String]?; public var scope: [String]?
+    /// M5.4: the token counts of every attempt of the loop on this task, summed (nil: none read). Counts only.
+    public var tokens: TokenCount?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
     /// the attempt ends; a daemon that fell mid-attempt leaves them, and the next run may adopt the commit already made.
     /// Read back from the work's file: never trusted as a git argument before `WorkLoop.isSha`.
@@ -77,6 +79,42 @@ public struct WorkTask: Codable, Sendable, Equatable {
         resumeAt = (try? c.decodeIfPresent(Date.self, forKey: .resumeAt)) ?? nil
         needs = (try? c.decodeIfPresent([String].self, forKey: .needs)) ?? nil
         scope = (try? c.decodeIfPresent([String].self, forKey: .scope)) ?? nil
+        tokens = (try? c.decodeIfPresent(TokenCount.self, forKey: .tokens)) ?? nil   // M5.4: tolerant, like resume
+    }
+}
+
+/// M5.4: what one attempt's agent (or a sum of them) used, from its transcript's assistant messages: counts only, never
+/// content. `index` is a *relative* weight of the counts (`weights`), never a cost in money.
+public struct TokenCount: Codable, Sendable, Equatable {
+    public var input = 0, output = 0, cacheWrite = 0, cacheRead = 0, messages = 0
+    /// The model of the last counted message (a sum: the latest one's).
+    public var model: String?
+    /// The relative index's weights: input 1, cache write 1.25, output 5, cache read 0.1 (Claude's relative price per
+    /// token). ponytail: constants; change them here if the ratios change.
+    public static let inputWeight = 1.0, cacheWriteWeight = 1.25, outputWeight = 5.0, cacheReadWeight = 0.1
+    public init(input: Int = 0, output: Int = 0, cacheWrite: Int = 0, cacheRead: Int = 0, messages: Int = 0, model: String? = nil) {
+        self.input = input; self.output = output; self.cacheWrite = cacheWrite; self.cacheRead = cacheRead; self.messages = messages; self.model = model
+    }
+    /// Every field tolerant: one of the wrong type is 0 (nil for `model`).
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        func n(_ k: CodingKeys) -> Int { max(0, ((try? c.decodeIfPresent(Int.self, forKey: k)) ?? nil) ?? 0) }
+        input = n(.input); output = n(.output); cacheWrite = n(.cacheWrite); cacheRead = n(.cacheRead); messages = n(.messages)
+        model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
+    }
+    public var index: Double {
+        Double(input) * Self.inputWeight + Double(cacheWrite) * Self.cacheWriteWeight
+            + Double(output) * Self.outputWeight + Double(cacheRead) * Self.cacheReadWeight
+    }
+    public static func + (a: TokenCount, b: TokenCount) -> TokenCount {
+        TokenCount(input: a.input + b.input, output: a.output + b.output, cacheWrite: a.cacheWrite + b.cacheWrite,
+                   cacheRead: a.cacheRead + b.cacheRead, messages: a.messages + b.messages, model: b.model ?? a.model)
+    }
+    /// "1,2 M (índice relativo) · 14 msgs": decimal comma; "mil" and "M" past a thousand and a million.
+    public var label: String {
+        let i = index
+        let n = i >= 1e6 ? String(format: "%.1f M", i / 1e6) : i >= 1e3 ? String(format: "%.1f mil", i / 1e3) : String(Int(i.rounded()))
+        return n.replacingOccurrences(of: ".", with: ",") + " (índice relativo) · \(messages) " + (messages == 1 ? "msg" : "msgs")
     }
 }
 
@@ -102,8 +140,10 @@ public struct LoopEvent: Codable, Sendable, Equatable {
     public var at: Date; public var kind: Kind; public var task: String?; public var attempt: Int?; public var detail: String?
     /// M3.5: the lane the event happened in (its folder's name); nil: the paddock's worktree (always, without `--parallel`).
     public var lane: String?
-    public init(at: Date = Date(), kind: Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil, lane: String? = nil) {
-        self.at = at; self.kind = kind; self.task = task; self.attempt = attempt; self.lane = lane
+    /// M5.4: on `agentDismissed`, what that attempt's agent used (nil: not read: no transcript, refused or too big).
+    public var tokens: TokenCount?
+    public init(at: Date = Date(), kind: Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil, lane: String? = nil, tokens: TokenCount? = nil) {
+        self.at = at; self.kind = kind; self.task = task; self.attempt = attempt; self.lane = lane; self.tokens = tokens
         self.detail = detail.map { String($0.prefix(Self.detailMax)) }
     }
 }

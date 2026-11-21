@@ -16,6 +16,9 @@ protocol LoopHost: Sendable {
     /// the dialog's text, short. nil: not in it. Read only, never typed into.
     func usageLimit(_ terminal: UUID) async -> String?
     func dismiss(_ terminal: UUID) async
+    /// M5.4: what `terminal`'s agent used, from its own transcript, read just before it is dismissed: counts only. nil:
+    /// no number (no transcript, refused, gone, too big); never an error, never holds the loop.
+    func tokens(_ terminal: UUID) async -> TokenCount?
     /// A terminal of the work's paddock in a turn, other than the starter (the loop's agent is already gone): its name.
     func othersWorking() async -> String?
     /// M3b.2: any terminal of the paddock in a turn in this tree, the starter included: its name. What the integrator
@@ -58,6 +61,7 @@ extension LoopHost {
     func anyoneWorking() async -> String? { await othersWorking() }
     func resubmitted(_ terminal: UUID) async -> Bool { false }
     func usageLimit(_ terminal: UUID) async -> String? { nil }
+    func tokens(_ terminal: UUID) async -> TokenCount? { nil }
     func taskEnded(_ line: String) async {}
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
@@ -293,6 +297,8 @@ actor WorkLoop {
         var fault: String?
         /// `discard` wrote the attempt's patch (nil: nothing was discarded).
         var patched: Bool?
+        /// M5.4: the agent's counts, read at the dismiss: the `agentDismissed` event carries them.
+        var tokens: TokenCount?
         /// The journal's events not yet written, oldest first, and the phase to show (`.some(nil)`: none): `record`.
         var pending: [LoopEvent] = [], phase: WorkLoopState.Phase??
         var unwritten: Bool { !pending.isEmpty || phase != nil || mark != nil }
@@ -324,7 +330,11 @@ actor WorkLoop {
             // M3.8: the job knows its terminal: what the start sweep removes after a fall, whatever the agent is called
             if let mark, let j = x.jobs.lastIndex(where: { $0.id == name && $0.kind == .loop && $0.state == .running }) { x.jobs[j].terminal = mark }
             if let phase { if let lane { x.loop?.showLane(lane, phase) } else { x.loop?.show(phase) } }
-            for e in events { x.loop?.record(e) }
+            for e in events {
+                x.loop?.record(e)
+                // M5.4: the attempt's counts add to its task's (the journal is a ring: the task keeps the sum)
+                if let t = e.tokens, let i = x.tasks.firstIndex(where: { $0.id == e.task }) { x.tasks[i].tokens = (x.tasks[i].tokens ?? TokenCount()) + t }
+            }
             change(&x)
         }
     }
@@ -342,7 +352,9 @@ actor WorkLoop {
             // `discarded` names the patch only when one was written
             // `attemptStarted` went with the attempt's first write
             if kind != .attemptStarted {
-                r.pending.append(entry(kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail))
+                var e = entry(kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail)
+                if kind == .agentDismissed { e.tokens = r.tokens; r.tokens = nil }
+                r.pending.append(e)
             }
             if kind == .verdict { r.at = host.now() }   // the verdict's time: before any wait for another terminal
         case .note(let text):
@@ -392,7 +404,8 @@ actor WorkLoop {
             guard await committed(before: before, branch: branch, dir) else { return .waitExpired }
             return .commitSeen(await out(["rev-parse", "--short", "HEAD"], dir))
         case .dismiss:
-            if let agent = r.agent { await host.dismiss(agent) }
+            // M5.4: the transcript is read while its terminal still exists (the dismiss forgets it)
+            if let agent = r.agent { r.tokens = await host.tokens(agent); await host.dismiss(agent) }
         case .measureFacts:
             // cancelled (the daemon stops): no verdict, no discard, the attempt not counted
             if Task.isCancelled { return .cancelled }

@@ -993,6 +993,17 @@ Cada seção mostra até 40 itens ("… e mais N" no resto) e o resumo todo cabe
 - Chat do painel Trabalho: a frase exata `resumo` (também `resume` e `o que foi feito`, com as mesmas palavras de enchimento
   das perguntas de status; qualquer outra coisa vai ao agente). Sem trabalho selecionado: "Escolha um trabalho para ver o
   resumo.". Não gasta tokens.
+
+**Tokens por tentativa (M5.4)**
+Ao dispensar o agente de cada tentativa do laço, o daemon lê o transcript dele (só o caminho que o hook do próprio
+terminal deu, vetado como na captura de conversa: `.jsonl` regular sob `<config>/projects`, sem symlink nem FIFO; até
+64 MB lidos em streaming) e soma só as contagens do `usage` das respostas do assistente, uma vez por id: entrada, saída,
+escrita e leitura de cache, nº de respostas e o modelo. Nenhum texto é guardado. Ficam no evento `agentDismissed` do
+diário e, somadas, em `tokens` da tarefa; o `work status` e o resumo mostram `tokens: 1,2 M (índice relativo) · 14 msgs`.
+O índice é **relativo** (entrada 1, escrita de cache 1,25, saída 5, leitura de cache 0,1; constantes em `TokenCount`),
+nunca custo em dinheiro. Sem transcript, recusado, sumido ou grande demais: sem número, sem erro, o laço segue.
+- CLI: `collie work usage [--limit N] [--terminal <nome>]`: os N (padrão 10) trabalhos mais novos do cercado, abertos ou
+  fechados, com o índice total e por tarefa.
 - Painel: botão **Resumo** e a seção Resumo do trabalho selecionado. Com a reescrita do modelo local, o link **Ver dados**
   alterna para o resumo do registro (e **Ver resumo** volta). Sem reescrita, o painel mostra o registro e a linha cinza
   "Resumo sem reescrita: ‹motivo›".

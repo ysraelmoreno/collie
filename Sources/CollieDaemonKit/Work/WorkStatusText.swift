@@ -149,6 +149,24 @@ public enum WorkStatusText {
     /// The numbers of the tasks a loop ran (`LoopStats.line`). nil: no loop ran a task of this work.
     public static func statsLine(_ w: Work) -> String? { LoopStats(work: w)?.line }
 
+    /// M5.4: the sum of every task's counts (nil: no attempt's were read).
+    public static func tokens(_ w: Work) -> TokenCount? {
+        let ts = w.tasks.compactMap(\.tokens)
+        return ts.isEmpty ? nil : ts.reduce(TokenCount(), +)
+    }
+    /// M5.4: "tokens: 1,2 M (índice relativo) · 14 msgs". nil: no counts.
+    public static func tokensLine(_ w: Work) -> String? { tokens(w).map { "tokens: " + $0.label } }
+
+    /// M5.4, `work usage`: each work (newest first) with its total, then its tasks that have counts. Counts and titles only.
+    public static func usage(_ works: [Work]) -> String {
+        guard !works.isEmpty else { return "Nenhum trabalho neste cercado." }
+        return works.map { w in
+            ["\(RerailText.clean(w.title)) [\(w.id.uuidString.lowercased().prefix(8))] · \(w.closedAt == nil ? "ativo" : "fechado") · "
+                + (tokensLine(w) ?? "tokens: sem número")]
+                + w.tasks.compactMap { t in t.tokens.map { "  - \(RerailText.clean(t.title)) [\(RerailText.clean(t.id, max: 40))]: tokens: \($0.label)" } }
+        }.flatMap { $0 }.joined(separator: "\n")
+    }
+
     /// A done task the loop approved: "✓ <title> · tentativa n · k commits · <shortstat>". nil: it has no evidence.
     public static func doneLine(_ t: WorkTask) -> String? {
         t.evidence.map { "✓ \(RerailText.clean(t.title)) · \($0.summary)" }

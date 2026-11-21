@@ -106,6 +106,14 @@ actor LoopFakeHost: LoopHost {
     func usageLimit(_ terminal: UUID) async -> String? {
         (scripts[names[terminal] ?? ""]?.screen).flatMap { UsageLimit.detect($0, quiet: true) }
     }
+    /// M5.4: each agent's counts (by name), handed to the loop at its dismiss; `tokensRead`: who was asked, before its dismiss.
+    var tokenCounts: [String: TokenCount] = [:], tokensRead: [String] = []
+    func setTokens(_ n: String, _ t: TokenCount) { tokenCounts[n] = t }
+    func tokens(_ terminal: UUID) async -> TokenCount? {
+        let n = names[terminal] ?? "?"
+        if !dismissed.contains(n) { tokensRead.append(n) }
+        return tokenCounts[n]
+    }
     func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
     /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).
     var othersProbe: (@Sendable () async -> Void)?

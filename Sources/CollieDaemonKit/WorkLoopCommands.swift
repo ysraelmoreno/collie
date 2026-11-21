@@ -617,6 +617,7 @@ struct RouterLoopHost: LoopHost {
         guard let s = await router.asks.screen(terminal, quiet: .seconds(10)) else { return nil }
         return UsageLimit.detect(s.lines, quiet: s.quiet)
     }
+    func tokens(_ terminal: UUID) async -> TokenCount? { await router.attemptTokens(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }
     func anyoneWorking() async -> String? { await router.loopAnyoneWorking(paddock: paddock, starter: starter, work: work, dir: dir) }
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }

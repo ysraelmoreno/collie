@@ -393,6 +393,23 @@ extension CommandRouter {
         case "work.get":
             return try isoJSON(try await byId(try need(r, "id")))
 
+        case "work.usage":   // M5.4: the caller's paddock's newest works, open or closed, with their token counts only
+            let t = try target(), limit = Int(try num(r, "limit", max: 100) ?? 10)
+            let works = try await work.list(includeClosed: true).filter { visible($0) && $0.paddockId == t.paddockId }
+                .sorted { $0.openedAt > $1.openedAt }.prefix(limit)
+            func row(_ c: TokenCount?) -> [String: JSONValue] {
+                c.map { ["tokens": (try? isoJSON($0)) ?? .null, "index": .number($0.index)] } ?? [:]
+            }
+            return .object(["works": .array(works.map { w in
+                var o: [String: JSONValue] = ["id": .string(w.id.uuidString.lowercased()), "title": .string(RerailText.clean(w.title)),
+                                              "closed": .bool(w.closedAt != nil),
+                                              "tasks": .array(w.tasks.filter { $0.tokens != nil }.map { t in
+                                                  .object(["id": .string(t.id), "title": .string(RerailText.clean(t.title))].merging(row(t.tokens)) { a, _ in a })
+                                              })]
+                o.merge(row(WorkStatusText.tokens(w))) { a, _ in a }
+                return .object(o)
+            }), "output": .string(WorkStatusText.usage(Array(works)))])
+
         case "work.rerail":   // the app (any terminal) or a Shepherd (itself or one it reaches); never automatic
             guard caller?.isShepherd ?? true else { throw ProtocolError(code: .unauthorized, message: "'work.rerail' is for the app and Shepherds") }
             let t = try target()
@@ -456,6 +473,7 @@ extension CommandRouter {
         if let g = WorkStatusText.gateLine(w) { lines.append(g) }
         if let n = WorkStatusText.notifyLine(w) { lines.append(n) }
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
+        if let n = WorkStatusText.tokensLine(w) { lines.append(n) }   // M5.4
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),
                                              (.abandoned, "Dropped"), (.done, "Done")]
         for (state, label) in groups {

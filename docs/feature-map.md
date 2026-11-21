@@ -153,6 +153,10 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   em CollieCore, leitor estrito: ≤ 16 KB, `version` 1, comandos ≤ 1000 caracteres sem controle, até 50 áreas
   `a-z0-9-`). `collie work config [--terminal]` (só CLI) mostra de onde veio, avisos, `gate`/`precheck`/`smoke`/`full`
   e o check de cada área; arquivo por symlink, não regular ou grande é recusado. Só leitura: nunca executa nada.
+  M13.2: `collie work task add … --area a,b` grava na tarefa o check montado (`<área> && <área> && <smoke>`; não
+  com `--check`; sem arquivo, área inexistente ou arquivo inválido = erro). `collie work run` sem `--gate`/`--precheck`
+  usa os do arquivo do cercado (a flag vence; arquivo inválido = padrões de hoje e um `warning` no retorno); cartão e
+  aviso "Laço iniciado" dizem "portão (collie-work.json)".
 
 ### Plug-ins externos e apps (`WebPluginPanel`)
 

@@ -340,6 +340,7 @@ public enum Commands {
                     params: [ParamSpec("title", .rest, positional: true, required: true, help: "Task title"),
                              ParamSpec("spec", .string, help: "Markdown file with what to build and its acceptance criteria (for collie work run)"),
                              ParamSpec("check", .string, help: "Shell command run in the paddock's worktree; exit 0 = the task passes (for collie work run)"),
+                             ParamSpec("area", .string, help: "Areas of the project's collie-work.json, comma-separated: the task's check becomes '<area> && <area> && <smoke>' (not with --check); over MCP also an array of strings", repeatable: true),
                              ParamSpec("evidence", .string, help: "Glob relative to the paddock's worktree (no '..'): the png|gif|jpg|mp4|txt|md files the loop keeps as evidence when the task passes, 20 MB in all"),
                              ParamSpec("needs", .string, help: "Ids of tasks of this work, comma-separated, that must be done before this one starts (no cycle); over MCP also an array of strings", repeatable: true),
                              ParamSpec("scope", .string, help: "Globs relative to the paddock's worktree, comma-separated (at most 20, no '..', not absolute): the paths the task may touch. Tasks whose scopes do not overlap may run in parallel; without it the task runs alone; over MCP also an array of strings", repeatable: true),

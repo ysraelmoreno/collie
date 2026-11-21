@@ -233,7 +233,7 @@ private struct AgentStatusDot: View {
 }
 
 /// The LAÇOS card's thin bar (decorative: the card's label says the count). Animates its fill unless Reduzir movimento is on.
-private struct LoopProgressBar: View {
+struct LoopProgressBar: View {
     let fraction: Double
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -250,7 +250,7 @@ private struct LoopProgressBar: View {
 
 /// A loop task's state mark: ✓ done, ◐ running (turns, unless Reduzir movimento is on), – deferred, ○ open (decorative:
 /// the row's accessibility label says the state).
-private struct LoopStateIcon: View {
+struct LoopStateIcon: View {
     let state: LoopSection.State
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var turn = false

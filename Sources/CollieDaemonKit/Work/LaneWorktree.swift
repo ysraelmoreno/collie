@@ -23,7 +23,44 @@ struct Lane: Codable, Sendable, Equatable {
     var base: String
 }
 
+/// M3c.1: one worktree operation at a time per repository (`create`, `remove` and its `prune`). `git worktree add -b`
+/// reads every other worktree's `commondir`; one written halfway by a concurrent `add` kills it ("failed to read
+/// …/commondir"). The calls are short; a waiter takes the lock straight from the one releasing it (FIFO).
+/// ponytail: lanes only; the paddocks' own `PaddockManager` adds still run beside it (a daemon-wide queue if that bites).
+actor LaneGitQueue {
+    static let shared = LaneGitQueue()
+    private var busy: Set<String> = [], waiting: [String: [CheckedContinuation<Void, Never>]] = [:]
+    /// Not cancellable on purpose: `dropLane` removes a lane even from a cancelled task.
+    func acquire(_ key: String) async {
+        if busy.insert(key).inserted { return }
+        await withCheckedContinuation { waiting[key, default: []].append($0) }
+    }
+    func release(_ key: String) {
+        guard var q = waiting[key], !q.isEmpty else { busy.remove(key); return }
+        let next = q.removeFirst()
+        waiting[key] = q.isEmpty ? nil : q
+        next.resume()   // `busy` stays: the lock goes to `next`
+    }
+}
+
 enum LaneWorktree {
+    /// `body` with the repository's worktree lock held.
+    private static func serial<T>(_ repoRoot: URL, _ body: () async throws(ProtocolError) -> T) async throws(ProtocolError) -> T {
+        let key = SignedAppCheck.realPath(repoRoot)
+        await LaneGitQueue.shared.acquire(key)
+        do {
+            let v = try await body()
+            await LaneGitQueue.shared.release(key)
+            return v
+        } catch {
+            await LaneGitQueue.shared.release(key)
+            throw error
+        }
+    }
+
+    /// M3c.1: the error of an `add` that met another worktree halfway made (see `LaneGitQueue`).
+    static func isCommondirRace(_ e: ProtocolError) -> Bool { e.message.contains("failed to read") && e.message.contains("commondir") }
+
     /// Every lane's branch starts with this; nothing without it is ever removed here. A paddock's branch is
     /// `collie/<name>` with no second slash, so it never matches.
     static let branchPrefix = "collie/lane/"
@@ -85,6 +122,12 @@ enum LaneWorktree {
     /// A new worktree on the new branch `collie/lane/<work8>-<task>`, cut from the sha `base`. An existing branch or
     /// path is an error: nothing is ever overwritten.
     static func create(repoRoot: URL, base: String, work: UUID, task: String, host: some LoopHost) async throws(ProtocolError) -> Lane {
+        try await serial(repoRoot) { () async throws(ProtocolError) -> Lane in
+            try await createLocked(repoRoot: repoRoot, base: base, work: work, task: task, host: host)
+        }
+    }
+
+    private static func createLocked(repoRoot: URL, base: String, work: UUID, task: String, host: some LoopHost) async throws(ProtocolError) -> Lane {
         try validate(task: task)
         guard base.range(of: "^[0-9a-f]{7,64}$", options: .regularExpression) != nil else { throw fail("lane base '\(base)' is not a commit sha") }
         let name = "\(work8(work))-\(task)", dir = paddocksDir(repoRoot)
@@ -99,14 +142,20 @@ enum LaneWorktree {
         try GitRunner.exclude("\(LegacyOrq.repoDirName(repoRoot: repoRoot))/paddocks/", commonDir: common)
         let owner = await host.laneOwner()
         guard owner.range(of: "^[A-Za-z0-9._-]{1,64}$", options: .regularExpression) != nil else { throw fail("no daemon id to mark lane \(name) with") }
-        try await git(["worktree", "add", "-b", branch, path.path, base], in: repoRoot, host)
         let lane = Lane(repoRoot: repoRoot, path: path, branch: branch, base: base)
+        let add = ["worktree", "add", "-b", branch, path.path, base]
+        do { try await git(add, in: repoRoot, host) } catch where isCommondirRace(error) {
+            // M3c.1: once more, after undoing what the failed `add` left (its branch, folder, admin dir: none existed
+            // before it, checked above under the lock). Another error, or this one twice, is the caller's.
+            try? await removeLocked(lane, host: host)
+            try await git(add, in: repoRoot, host)
+        }
         // M3b.5: the daemon's mark, before anything runs in the lane: without it, no sweep ever removes the lane
         do {
             guard let admin = adminDir(of: path, common: common) else { throw fail("git made no worktree dir for \(path.path)") }
             try Data("\(owner) \(work.uuidString.lowercased())\n".utf8).write(to: admin.appendingPathComponent(markerName))
         } catch {
-            try? await remove(lane, host: host)
+            try? await removeLocked(lane, host: host)
             throw fail("cannot mark lane \(name): \(error)")
         }
         return lane
@@ -139,6 +188,10 @@ enum LaneWorktree {
     /// Removes the lane's worktree, its leftover directory and its branch. Idempotent: what is already gone is skipped.
     /// M3b.5: only for a lane the caller made (the loop's own `dropLane`) or found marked (`sweep`): it checks no mark.
     static func remove(_ lane: Lane, host: some LoopHost) async throws(ProtocolError) {
+        try await serial(lane.repoRoot) { () async throws(ProtocolError) in try await removeLocked(lane, host: host) }
+    }
+
+    private static func removeLocked(_ lane: Lane, host: some LoopHost) async throws(ProtocolError) {
         guard lane.branch.hasPrefix(branchPrefix) else { throw fail("'\(lane.branch)' is not a lane branch") }
         let root = lane.repoRoot
         // by branch, not by path: a worktree on any other branch is never this lane's

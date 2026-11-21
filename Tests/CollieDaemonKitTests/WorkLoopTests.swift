@@ -107,7 +107,18 @@ actor LoopFakeHost: LoopHost {
     func setStarterGone(after n: String) { starterGoneAfter = n }
     /// Every git command the loop ran, in order (M2.2a: what never becomes an argument).
     var gits: [[String]] = []
-    func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { gits.append(args); return try await GitRunner.run(args, in: dir) }
+    /// M3c.1: the most git commands seen running at once, and a fault: the next git whose arguments start with
+    /// `prefix` runs for real, then answers status 128 with `stderr` (a git that fails once).
+    var inFlight = 0, maxInFlight = 0
+    var fault: (prefix: [String], stderr: String)?
+    func setFault(_ prefix: [String], _ stderr: String) { fault = (prefix, stderr) }
+    func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        gits.append(args); inFlight += 1; maxInFlight = Swift.max(maxInFlight, inFlight)
+        defer { inFlight -= 1 }
+        let r = try await GitRunner.run(args, in: dir)
+        if let f = fault, args.starts(with: f.prefix) { fault = nil; return ProcessResult(status: 128, stdout: "", stderr: f.stderr, truncated: false) }
+        return r
+    }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1; events.append("check"); commands.append(command)
         await probe?(command)

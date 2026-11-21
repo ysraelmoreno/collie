@@ -373,7 +373,7 @@ public actor AskCoordinator {
     private let captureHoldMax: Duration
     private let submitConfirm: Duration
     /// Every time limit of this coordinator (M11.1): the daemon passes `AskLimits.production`, tests short ones.
-    let limits: AskLimits
+    nonisolated let limits: AskLimits
     public init(limits: AskLimits) {
         self.limits = limits
         idleQuiet = limits.idleQuiet; heldMax = limits.heldMax; captureHoldMax = limits.captureHold

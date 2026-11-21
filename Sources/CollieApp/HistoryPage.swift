@@ -1,0 +1,110 @@
+import Foundation
+import Observation
+import CollieCore
+import CollieClient
+import CollieProtocol
+
+/// A closed work's detail as one self-contained HTML page for the Prévia: inline CSS (light/dark by the system), no
+/// script, no external resource. Every text that came from the work goes through `esc` once and only lands in element
+/// content, never in an attribute, `href`, `src` or `style`.
+enum HistoryPage {
+    static func esc(_ s: String) -> String {
+        var o = ""; o.reserveCapacity(s.count)
+        for ch in s.unicodeScalars {
+            switch ch {
+            case "&": o += "&amp;"; case "<": o += "&lt;"; case ">": o += "&gt;"; case "\"": o += "&quot;"; case "'": o += "&#39;"
+            default: o.unicodeScalars.append(ch)
+            }
+        }
+        return o
+    }
+
+    static func html(for a: WorkArchive, timeZone: TimeZone = .current) -> String {
+        func when(_ d: Date?) -> String { d.map { $0.formatted(.dateTime.day().month().year().hour().minute().second().locale(Locale(identifier: "pt_BR")).timeZone(timeZone)) } ?? "—" }
+        func clock(_ d: Date?) -> String { d.map { $0.formatted(.dateTime.hour().minute().second().locale(Locale(identifier: "pt_BR")).timeZone(timeZone)) } ?? "—" }
+        var dur = "—"
+        if let o = a.openedAt, let c = a.closedAt { let s = max(0, Int(c.timeIntervalSince(o))); dur = s >= 3600 ? "\(s / 3600)h\(String(format: "%02d", s % 3600 / 60))" : "\(s / 60)min \(s % 60)s" }
+        var h = """
+        <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>\(esc(a.title))</title><style>
+        :root{color-scheme:light dark;--bg:#faf9f7;--fg:#1f1d1a;--mute:#6b665f;--line:#ddd8d0;--warn:#fff3d6}
+        @media (prefers-color-scheme:dark){:root{--bg:#1c1b19;--fg:#ece8e1;--mute:#9a948b;--line:#3a3733;--warn:#4a3d1c}}
+        body{background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,system-ui,sans-serif;margin:24px auto;max-width:960px;padding:0 16px}
+        h1{font-size:22px;margin:0 0 8px}h2{font-size:15px;margin:28px 0 8px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}
+        dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0}dt{color:var(--mute)}dd{margin:0;overflow-wrap:anywhere}
+        table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+        th{color:var(--mute);font-weight:600}code{font-family:ui-monospace,Menlo,monospace}.warn{background:var(--warn);padding:8px 12px;border-radius:6px;margin:12px 0}
+        </style></head><body>
+        <h1>\(esc(a.title))</h1>
+        """
+        if a.reconstructed { h += "<p class=\"warn\">Resumo reconstruído de um trabalho fechado antes do arquivo imutável: o diário é curto.</p>" }
+        if a.truncated { h += "<p class=\"warn\">A linha do tempo foi cortada nos 500 eventos mais recentes.</p>" }
+        let stop = a.stopReason.map { WorkLoopState.Stop(WorkLoopState.Stop.Code(rawValue: $0) ?? .unknown).label + " (\($0))" } ?? "—"
+        h += "<dl><dt>Cercado</dt><dd>\(esc(a.paddock))</dd><dt>Branch</dt><dd><code>\(esc(a.branch))</code></dd>"
+        h += "<dt>Abertura</dt><dd>\(esc(when(a.openedAt)))</dd><dt>Fechamento</dt><dd>\(esc(when(a.closedAt)))</dd>"
+        h += "<dt>Duração</dt><dd>\(esc(dur))</dd><dt>Motivo de parada</dt><dd>\(esc(stop))</dd></dl>"
+        h += "<h2>Tarefas</h2><table><tr><th>Tarefa</th><th>Estado</th><th>Tentativas</th><th>Commits</th><th>Razão / nota</th></tr>"
+        for t in a.tasks {
+            let commits = t.commits.map { "<code>\(esc(String($0.prefix(8))))</code>" }.joined(separator: " ")
+            let why = [t.failure, t.evidenceNote].compactMap { $0 }.map(esc).joined(separator: "<br>")
+            h += "<tr><td>\(esc(t.id)) \(esc(t.title))</td><td>\(esc(t.state))</td><td>\(t.tries)</td><td>\(commits)</td><td>\(why)</td></tr>"
+        }
+        h += "</table><h2>Linha do tempo</h2><table><tr><th>Hora</th><th>Tarefa</th><th>Tipo</th><th>Detalhe</th></tr>"
+        for e in a.timeline { h += "<tr><td>\(esc(clock(e.at)))</td><td>\(esc(e.task ?? ""))</td><td>\(esc(e.kind))</td><td>\(esc(e.detail))</td></tr>" }
+        h += "</table>"
+        if !a.loopSummary.isEmpty { h += "<h2>Resumo do laço</h2><p>\(esc(a.loopSummary))</p>" }
+        if !a.notes.isEmpty { h += "<h2>Notas</h2><ul>" + a.notes.map { "<li>\(esc($0))</li>" }.joined() + "</ul>" }
+        return h + "</body></html>"
+    }
+
+    /// `<dir>/<id>.html` for a work id that is a UUID (lowercased); nil for anything else: no text of the work names a file.
+    static func fileURL(id: String, in dir: URL) -> URL? {
+        guard let u = UUID(uuidString: id) else { return nil }
+        return dir.appendingPathComponent(u.uuidString.lowercased() + ".html")
+    }
+}
+
+/// The HISTÓRICO click: asks `work.history --id`, writes the page (atomically) and opens it in a Prévia, once per work.
+@MainActor @Observable final class HistoryOpener {
+    @ObservationIgnored var fetch: (String) async throws -> WorkArchive
+    /// Opens a Prévia on the file and returns its panel id.
+    @ObservationIgnored var open: (URL) async throws -> UUID
+    /// Is the panel still there? (a closed one is opened again.)
+    @ObservationIgnored var isOpen: (UUID) -> Bool
+    @ObservationIgnored var focus: (UUID) -> Void
+    /// A short notice for the section (the daemon failed); nil once a detail opens.
+    private(set) var message: String?
+    private func notice(_ m: String?) { message = m }
+    @ObservationIgnored let dir: URL
+    @ObservationIgnored private var panels: [String: UUID] = [:]
+
+    init(dir: URL, fetch: @escaping (String) async throws -> WorkArchive, open: @escaping (URL) async throws -> UUID,
+         isOpen: @escaping (UUID) -> Bool, focus: @escaping (UUID) -> Void) {
+        self.dir = dir; self.fetch = fetch; self.open = open; self.isOpen = isOpen; self.focus = focus
+    }
+
+    func show(_ id: String) async {
+        guard let file = HistoryPage.fileURL(id: id, in: dir) else { return notice("Histórico: id inválido") }
+        if let p = panels[id], isOpen(p) { return focus(p) }
+        do {
+            let a = try await fetch(id)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data(HistoryPage.html(for: a).utf8).write(to: file, options: .atomic)
+            panels[id] = try await open(file); notice(nil)
+        } catch { notice("Não foi possível abrir o histórico: \((error as? ProtocolError)?.message ?? "falha")") }
+    }
+}
+
+extension HistoryOpener {
+    /// The app's wiring: `work.history --id` over the admin socket, a Prévia through `panel.open`.
+    static func live(client: DaemonClient, focus: @escaping (UUID) -> Void) -> HistoryOpener {
+        let cache = (FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory)
+            .appendingPathComponent("Collie/history")
+        return HistoryOpener(dir: cache, fetch: { id in
+            let v = try await client.adminCall("work.history", ["id": .string(id)])
+            let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
+            return try d.decode(WorkArchive.self, from: JSONEncoder().encode(v))
+        }, open: { try await client.openPanel(plugin: "preview", name: nil, placement: .canvas, url: nil, storage: .isolated, file: $0.path) },
+           isOpen: { id in client.panels.contains { $0.id == id } }, focus: focus)
+    }
+}

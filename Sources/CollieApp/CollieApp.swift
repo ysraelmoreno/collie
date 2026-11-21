@@ -42,6 +42,7 @@ enum Config {
     @State private var canvas = CanvasState()
     @State private var consented: Bool
     @State private var error: String?
+    @State private var historyOpener: HistoryOpener?
     @State private var paletteOpen = false
     @State private var herdsOpen = false
     /// Canvas or Preferências in Completa's main area. Not persisted: the app always opens on the canvas. Here, not in
@@ -343,7 +344,11 @@ struct ContentView: View {
                      fit: { canvas.fitAll(viewport: viewport) }, openPalette: { paletteOpen = true },
                      herds: herds, openHerds: { sheet = .herds(nil, $0) },
                      focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: openPreferences,
-                     tour: tour, openTour: { sheet = .tour }, openWork: { showPanel("work") })
+                     tour: tour, openTour: { sheet = .tour }, openWork: { showPanel("work") },
+                     onOpenHistory: { id in Task { @MainActor in
+                         if historyOpener == nil { historyOpener = .live(client: client, focus: { notifier.onFocus?($0) }) }
+                         await historyOpener?.show(id) } },
+                     historyNotice: { historyOpener?.message })
     }
 
     /// The tour's button, once the tour sheet has closed: the same entries as the rail, the palette and the menus.

@@ -63,6 +63,7 @@ struct ContextPanel: View {
     private func historySection(_ s: HistorySection) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             section(s.title)
+            if let m = ctx.historyNotice() { Text(m).font(.collieMono(10)).foregroundStyle(Color.collieMuted).padding(.horizontal, 4) }
             ForEach(s.rows) { r in
                 Button { Self.open(r, ctx: ctx) } label: {
                     VStack(alignment: .leading, spacing: 1) {

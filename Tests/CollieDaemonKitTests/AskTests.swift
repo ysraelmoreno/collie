@@ -147,7 +147,11 @@ private func hook(_ d: Daemon, _ p: Paths, _ t: Term, _ message: String) async t
 private let quietAgent = "echo T=$COLLIE_TOKEN; exec cat >/dev/null"
 private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
 
-@Suite(.serialized) struct AskTests {
+/// M11.1: four serial tracks that run beside each other. Within a track the cases run one at a time, as the whole
+/// suite did before; the tracks share no daemon, so the suite's time is its longest track, not the sum.
+@Suite struct AskTests {
+    /// Spawn-to-answer basics, one at a time.
+    @Suite(.serialized) struct Spawn {
     @Test func askViaHook() async throws {
         try await withHookDaemon { d, p in
             let a = try await term(d, p, "A")
@@ -200,6 +204,10 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
         }
     }
 
+    }
+
+    /// The hook-vs-idle races (late hooks, lost hooks, held caps): the most timing-sensitive cases, one at a time.
+    @Suite(.serialized) struct Shift {
     /// Hook arrives 1.5 idle windows after the answer: turn 1 always completes by idle, and its
     /// late hook must not complete ask 2 (which would shift every later answer by one turn).
     /// 1.5×, not more: ask 2 is injected when idle fires (answer + idle) and its echo alone would idle-complete
@@ -330,6 +338,10 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
         }
     }
 
+    }
+
+    /// Delivery, timeouts and exits, one at a time.
+    @Suite(.serialized) struct Delivery {
     @Test func askViaIdleFallback() async throws {
         try await withFastIdleDaemon { d, p in
             let a = try await term(d, p, "A")
@@ -563,6 +575,7 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
             #expect(res.truncated == false)
         }
     }
+    }
 }
 
 @Suite struct PasteModeTrackerTests {
@@ -610,6 +623,8 @@ private let silentTarget = "echo T=$COLLIE_TOKEN; exec sleep 999"
 // MARK: - ask --no-wait (plan 2X)
 
 extension AskTests {
+/// `ask --no-wait`, one at a time.
+@Suite(.serialized) struct NoWait {
 
     @Test func noWaitReturnsImmediately() async throws {
         try await withDaemon { d, p in
@@ -833,6 +848,7 @@ extension AskTests {
         }
     }
 }
+}
 
 /// DX backlog 14: the inbox survives a daemon restart; an ask still pending then can't finish anymore.
 @Suite struct AskInboxPersistenceTests {
@@ -870,6 +886,8 @@ private func inFlight(_ asks: AskCoordinator, _ id: UUID) async -> Bool {
 }
 
 extension AskTests {
+/// `collie wait` in the deadlock graph, one at a time.
+@Suite(.serialized) struct WaitGraph {
     @Test func waitThenCrossedAskIsDeadlock() async throws {
         let asks = AskCoordinator(idleQuietSeconds: 1)
         let a = try await waitTarget(asks, "A"), b = try await waitTarget(asks, "B")
@@ -955,6 +973,7 @@ extension AskTests {
         }
     }
 }
+}
 
 // MARK: - collie reply (agent-comms Task 3)
 
@@ -967,6 +986,8 @@ private func cursorTarget(_ asks: AskCoordinator, _ name: String) async throws -
 }
 
 extension AskTests {
+/// `collie reply`, one at a time.
+@Suite(.serialized) struct Reply {
     @Test func replyCompletesInflightAsk() async throws {
         let asks = AskCoordinator(idleQuietSeconds: 15)
         let a = try await waitTarget(asks, "A"), b = try await cursorTarget(asks, "B")
@@ -1047,4 +1068,5 @@ extension AskTests {
             #expect(res.output == "feito" && res.source == "hook", "\(res)")
         }
     }
+}
 }

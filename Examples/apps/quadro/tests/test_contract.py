@@ -18,6 +18,10 @@ sys.path.insert(0, HERE)
 import server  # noqa: E402
 from store import Store  # noqa: E402
 
+TYPES = ("impl", "bug", "refactor", "spike", "test", "docs", "chore")
+PRIORITIES = ("high", "medium", "low")
+COMMANDS = ("board", "list-cards", "get-card", "create-card", "update-card", "move-card", "comment-card",
+            "archive-card", "restore-card", "events")
 WRITES = ("create-card", "update-card", "move-card", "comment-card", "archive-card", "restore-card")
 NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")  # PluginManifest's command and param names
 
@@ -49,6 +53,28 @@ class ContractShapeTests(unittest.TestCase):
         for w in WRITES:
             self.assertIn(w, names)
             self.assertEqual(names[w]["http"]["method"], "POST")
+
+    def test_still_the_ten_commands(self):
+        self.assertEqual(sorted(c["name"] for c in load()["commands"]), sorted(COMMANDS))
+
+    def test_type_and_priority_params(self):
+        names = {c["name"]: c for c in load()["commands"]}
+        for cmd in ("create-card", "update-card", "list-cards"):
+            params = {p["name"]: p for p in names[cmd]["params"]}
+            for key, values in (("type", TYPES), ("priority", PRIORITIES)):
+                self.assertIn(key, params, cmd)
+                p = params[key]
+                self.assertEqual(p["type"], "string", cmd)
+                self.assertFalse(p.get("required", False), cmd)
+                self.assertFalse(p.get("positional", False), cmd)
+                for v in values:
+                    self.assertRegex(p["help"], r"\b%s\b" % v, "%s --%s" % (cmd, key))
+        create = {p["name"]: p for p in names["create-card"]["params"]}
+        self.assertIn("padrão impl", create["type"]["help"])
+        self.assertIn("padrão medium", create["priority"]["help"])
+        for cmd in set(COMMANDS) - {"create-card", "update-card", "list-cards"}:
+            keys = {p["name"] for p in names[cmd].get("params", [])}
+            self.assertFalse(keys & {"type", "priority"}, cmd)
 
     def test_events(self):
         doc = load()
@@ -118,6 +144,65 @@ class ContractServerTests(unittest.TestCase):
         self.assertIn("columns", board)
 
 
+    def test_type_and_priority_through_commands(self):
+        cmds = {c["name"]: c for c in load()["commands"]}
+        status, plain = self.call(cmds["create-card"], {"title": "Defaults"})
+        self.assertEqual(status, 201, plain)
+        self.assertEqual((plain["type"], plain["priority"]), ("impl", "medium"))
+        made = {}
+        for i, kind in enumerate(TYPES):
+            level = PRIORITIES[i % len(PRIORITIES)]
+            status, card = self.call(cmds["create-card"], {"title": "T " + kind, "type": kind, "priority": level,
+                                                           "by": "agent-1"})
+            self.assertEqual(status, 201, card)
+            self.assertEqual((card["type"], card["priority"]), (kind, level))
+            made[card["id"]] = (kind, level)
+        for level in PRIORITIES:
+            status, card = self.call(cmds["update-card"], {"id": plain["id"], "priority": level, "by": "agent-1"})
+            self.assertEqual(status, 200, card)
+            self.assertEqual((card["type"], card["priority"]), ("impl", level))
+        for kind in TYPES:
+            status, card = self.call(cmds["update-card"], {"id": plain["id"], "type": kind})
+            self.assertEqual(status, 200, card)
+            self.assertEqual((card["type"], card["priority"]), (kind, "low"))
+        self.call(cmds["update-card"], {"id": plain["id"], "type": "impl", "priority": "medium"})
+        made[plain["id"]] = ("impl", "medium")
+        for kind in TYPES:
+            status, body = self.call(cmds["list-cards"], {"type": kind})
+            self.assertEqual(status, 200, body)
+            self.assertEqual({c["id"] for c in body["cards"]}, {i for i, v in made.items() if v[0] == kind}, kind)
+        for level in PRIORITIES:
+            status, body = self.call(cmds["list-cards"], {"priority": level})
+            self.assertEqual(status, 200, body)
+            self.assertEqual({c["id"] for c in body["cards"]}, {i for i, v in made.items() if v[1] == level}, level)
+        status, body = self.call(cmds["list-cards"], {"type": "bug", "priority": "medium"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual({c["id"] for c in body["cards"]}, {i for i, v in made.items() if v == ("bug", "medium")})
+        status, body = self.call(cmds["get-card"], {"id": plain["id"]})
+        self.assertEqual((status, body["type"], body["priority"]), (200, "impl", "medium"))
+        _, board = self.call(cmds["board"], {})
+        for card in board["cards"]:
+            self.assertIn(card["type"], TYPES)
+            self.assertIn(card["priority"], PRIORITIES)
+
+    def test_invalid_type_or_priority_is_400(self):
+        cmds = {c["name"]: c for c in load()["commands"]}
+        _, card = self.call(cmds["create-card"], {"title": "Ok"})
+        bad = [
+            ("create-card", {"title": "x", "type": "feature"}, "tipo inválido"),
+            ("create-card", {"title": "x", "priority": "urgent"}, "prioridade inválida"),
+            ("update-card", {"id": card["id"], "type": "IMPL"}, "tipo inválido"),
+            ("update-card", {"id": card["id"], "priority": ""}, "prioridade inválida"),
+        ]
+        for name, args, message in bad:
+            status, body = self.call(cmds[name], args)
+            self.assertEqual((status, body.get("error")), (400, message), "%s %s" % (name, args))
+        _, after = self.call(cmds["get-card"], {"id": card["id"]})
+        self.assertEqual((after["type"], after["priority"]), ("impl", "medium"))
+        _, listed = self.call(cmds["list-cards"], {})
+        self.assertEqual(len(listed["cards"]), 1)
+
+
 class RunScriptTests(unittest.TestCase):
     def test_executable_and_parses(self):
         path = os.path.join(HERE, "run.sh")
@@ -138,6 +223,17 @@ class ReadmeTests(unittest.TestCase):
             self.assertNotIn(bad, text)
         self.assertIn("collie app adopt quadro", text)
         self.assertIn("collie app attach quadro", text)
+        for word in ("Collie Main", "Pastor", "onda12", "Q12."):
+            self.assertNotIn(word, text)
+
+    def test_documents_types_priorities_and_migration(self):
+        with open(os.path.join(HERE, "README.md"), encoding="utf-8") as handle:
+            text = handle.read()
+        for v in TYPES + PRIORITIES:
+            self.assertIn("`%s`" % v, text)
+        self.assertIn("board.json.v1.bak", text)
+        self.assertIn("--type", text)
+        self.assertIn("--priority", text)
 
 
 if __name__ == "__main__":

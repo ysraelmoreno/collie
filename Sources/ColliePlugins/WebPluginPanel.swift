@@ -168,7 +168,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         let g = gen
         self.origin = origin
         isApp = app || origin != nil
-        page = nil; committed = false
+        self.page = nil; committed = false
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list and the CSP

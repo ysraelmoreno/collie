@@ -139,7 +139,8 @@ private let paths: [Path] = [
         await r.host.set("w-task-a-t1", LoopScript(act: { try await commit("a.txt", "x\n", in: $0) }))
         #expect(await r.run() == .finished)
         let kinds = (try await r.get().loop?.events ?? []).map(\.kind)
-        #expect(await r.host.commands == ["true"] && (await r.host.precheckNudges).isEmpty)
+        let cmds = await r.host.commands, nudges = await r.host.precheckNudges
+        #expect(cmds == ["true"] && nudges.isEmpty)
         #expect(!kinds.contains(.precheckFailed) && !kinds.contains(.precheckPassed))
     }
 }

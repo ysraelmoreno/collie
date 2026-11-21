@@ -10,20 +10,6 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
     return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// Counts arrivals; `wait(for:)` returns once `n` came. No clock: the order of the lanes comes from continuations.
-private actor Arrivals {
-    private var count = 0, waiters: [(n: Int, c: CheckedContinuation<Void, Never>)] = []
-    func hit() {
-        count += 1
-        for w in waiters where w.n <= count { w.c.resume() }
-        waiters.removeAll { $0.n <= count }
-    }
-    func wait(for n: Int) async {
-        if count >= n { return }
-        await withCheckedContinuation { waiters.append((n, $0)) }
-    }
-}
-
 /// A wait that only a cancelled task leaves: an agent that works until the loop stops it.
 private actor Forever {
     private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]

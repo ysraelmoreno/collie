@@ -12,6 +12,13 @@ enum CollieOrientation {
     /// M2.4, on the Loop line: a notice typed into the terminal is a hint that may never arrive; the state is read.
     /// The short form is for a text at the cap (a Cursor Shepherd has under 60 characters to spare).
     static let loopWait = "Wait for a loop: collie work wait, not a terminal notice.", loopWaitShort = "Wait: collie work wait."
+    /// M3c.4: before `loopWait` where it fits (a form that would lose its place to it keeps today's line).
+    /// M5.1: `end` is the default now: the line says per-task notices are off and the state is read with a long wait.
+    /// M5.6: a notice is never answered with text (each reply is a turn) and one long wait beats several short ones.
+    /// M6.5 (A6): an agent's shell tool kills a foreground command at 2 to 10 min, so the wait is 540 s and in the
+    /// background ("bg"); the MCP `work_wait` and the long form are in /collie:loop.
+    /// ponytail: 62 characters, the room a codex Shepherd has before the wait sentence
+    static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {
@@ -42,7 +49,7 @@ enum CollieOrientation {
         // the whole sentence with the name, then without it, then the short sentence, and only then the line as it was.
         // The short sentence is shorter than the name, so no text loses a form it had before.
         let loopCommands = agent == "claude" || agent == "cursor" ? [true, false] : [false]
-        let loopLines = loopCommands.map { ($0, loopWait) } + [(false, loopWaitShort), (false, "")]
+        let loopLines = loopCommands.flatMap { [($0, loopNotify + " " + loopWait), ($0, loopWait)] } + [(false, loopWaitShort), (false, "")]
         // the candidates line (PRD B3 req. 4, a Shepherd's) may cost the names their room, never the cap: every form is
         // tried with it first, then all of them again without it
         for cands in candidates > 0 && isShepherd ? [candidates, 0] : [0] {

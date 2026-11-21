@@ -214,6 +214,11 @@ struct CollieSettings: Codable {
     /// A string, not the enum: a value this build doesn't know must not fail the whole file (that would mean strict).
     var cursorMemory: String?
     var cursorMemoryMode: CursorMemoryMode { cursorMemory.flatMap(CursorMemoryMode.init(rawValue:)) ?? .full }
+    /// M5.6, Preferences › Laços › "Modelo dos agentes": what `work run` passes as `--model` when given none; nil: none
+    /// (the agents run on the Shepherd's model, as before). Set only by `admin.loop-model`.
+    var loopModel: String?
+    /// A model id and nothing else (`[A-Za-z0-9._:-]`, 1-64, first an alphanumeric: never read as a flag).
+    static func isLoopModel(_ m: String) -> Bool { m.range(of: #"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"#, options: .regularExpression) != nil }
     static func file(_ root: URL) -> URL { root.appendingPathComponent("preferences.json") }
     /// A missing file: nothing set; one that can't be read: strict (fail closed).
     static func load(_ root: URL) -> CollieSettings {

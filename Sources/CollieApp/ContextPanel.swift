@@ -7,8 +7,8 @@ import CollieTheme
 
 /// Trilho's context panel (248 pt, right of `PaddockRail`): the current paddock's header and menu, Novo terminal /
 /// Abrir painel, the agent tree (`AgentTree`), the panels, then Rebanhos and Lotes.
-/// No LAÇOS section: the app has no loop state today (it lives in the Work panel, which asks the daemon itself) and
-/// Trilho is UI only; the section comes with a loop feed in `DaemonClient`.
+/// HISTÓRICO (below LAÇOS, or Lotes) lists the paddock's last 20 closed works, only when there is one.
+/// LAÇOS (below Lotes) exists only while a loop of this paddock runs (`LoopSection.visible`): otherwise no header, no gap.
 struct ContextPanel: View {
     let ctx: ShellContext
     /// Shepherds whose leashed terminals are hidden. Local: a relaunch expands everything again.
@@ -22,6 +22,8 @@ struct ContextPanel: View {
                                   pending: AgentTree.pending(accessCards: client.accessCards, leashRequests: client.leashRequests, appCards: client.appCards),
                                   paddock: client.currentPaddock, collapsed: collapsed)
         let panels = visiblePanels(client.panels, paddock: client.currentPaddock)
+        let loops = LoopSection.make(work: client.workFeed.work, paddock: client.currentPaddock)
+        let history = HistorySection.make(client.workFeed.history)
         let order = rows.map(\.id) + panels.map(\.id)   // the rows as shown: what a ⇧-click ranges over
         VStack(alignment: .leading, spacing: 12) {
             header(paddock)
@@ -32,12 +34,16 @@ struct ContextPanel: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    section("AGENTES · \(client.terminals.filter { $0.paddockId == client.currentPaddock }.count)")
+                    let titles = Self.sectionTitles(agents: client.terminals.filter { $0.paddockId == client.currentPaddock }.count,
+                                                    panels: panels.count, loops: loops)
+                    section(titles[0])
                     VStack(alignment: .leading, spacing: 0) { ForEach(rows) { agentRow($0, order: order) } }
-                    section("PAINÉIS · \(panels.count)")
+                    section(titles[1])
                     VStack(alignment: .leading, spacing: 0) { ForEach(panels) { panelRow($0, order: order) } }
                     HerdsSection(ctx: ctx)
                     LotsSection(client: client)
+                    if loops.visible { loopsSection(loops, work: client.workFeed.work, alive: Set(client.terminals.map(\.id))) }
+                    if history.visible { historySection(history) }
                 }
             }
         }
@@ -46,6 +52,68 @@ struct ContextPanel: View {
         .frame(width: Self.width, alignment: .leading).frame(maxHeight: .infinity, alignment: .top)
         .background(Color.collieSidebar)
         .overlay(alignment: .trailing) { Rectangle().fill(Color.collieBorder).frame(width: 1) }
+    }
+
+    /// The section titles in the order drawn; LAÇOS only while a loop runs.
+    static func sectionTitles(agents: Int, panels: Int, loops: LoopSection, history: HistorySection = .hidden) -> [String] {
+        ["AGENTES · \(agents)", "PAINÉIS · \(panels)", "REBANHOS", "LOTES"] + (loops.visible ? [loops.title] : [])
+            + (history.visible ? [history.title] : [])
+    }
+
+    private func historySection(_ s: HistorySection) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            section(s.title)
+            if let m = ctx.historyNotice() { Text(m).font(.collieMono(10)).foregroundStyle(Color.collieMuted).padding(.horizontal, 4) }
+            ForEach(s.rows) { r in
+                Button { Self.open(r, ctx: ctx) } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(r.title).font(.collieUI(13)).foregroundStyle(Color.collieText).lineLimit(1).truncationMode(.tail)
+                        Text(r.detailText).font(.collieMono(10)).foregroundStyle(Self.color(r.outcome)).lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 3).padding(.horizontal, 4).contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(r.title), \(r.detailText), \(r.stopText)")
+            }
+            if s.hasMore {
+                Button(action: ctx.openWork) {
+                    Text("mais antigos no Work").font(.collieMono(10)).foregroundStyle(Color.collieMuted).padding(.horizontal, 4)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    /// A HISTÓRICO row's click: the hook T6.5 fills with the detail.
+    static func open(_ r: HistoryRow, ctx: ShellContext) { ctx.onOpenHistory(r.id) }
+
+    private static func color(_ o: HistoryRow.Outcome) -> Color {
+        switch o { case .complete: .collieSecondary; case .withDeferred: .collieAttention; case .stopped: .collieDanger }
+    }
+
+    private func loopsSection(_ s: LoopSection, work: Work?, alive: Set<UUID>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            section(s.title)
+            if let h = s.header {
+                Text([h.phase, h.since].compactMap { $0 }.joined(separator: " · "))
+                    .font(.collieMono(10)).foregroundStyle(Color.collieMuted).lineLimit(1)
+            }
+            ForEach(s.rows) { r in
+                let agent = LoopSection.agent(forTask: r.id, in: work, alive: alive)
+                Button { if let agent { ctx.focus(agent) } } label: {
+                    HStack(spacing: 6) {
+                        LoopStateIcon(state: r.state)
+                        Text(r.title).font(.collieUI(13)).foregroundStyle(Color.collieText).lineLimit(1).truncationMode(.tail)
+                        Spacer(minLength: 0)
+                        Text(r.triesText).font(.collieMono(10)).foregroundStyle(Color.collieMuted).lineLimit(1)
+                    }
+                    .padding(.vertical, 3).padding(.horizontal, 4).contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(r.accessibilityLabel)
+            }
+        }
     }
 
     private func header(_ paddock: Paddock?) -> some View {
@@ -186,5 +254,28 @@ private struct AgentStatusDot: View {
         case .attention: .collieAttention
         case .stopped: .collieDanger
         }
+    }
+}
+
+/// A loop task's state mark: ✓ done, ◐ running (turns, unless Reduzir movimento is on), – deferred, ○ open (decorative:
+/// the row's accessibility label says the state).
+private struct LoopStateIcon: View {
+    let state: LoopSection.State
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var turn = false
+
+    var body: some View {
+        let spins = state == .running && !reduceMotion
+        Image(systemName: symbol).font(.system(size: 10, weight: .bold)).foregroundStyle(color).frame(width: 14)
+            .rotationEffect(.degrees(spins && turn ? 360 : 0))
+            .animation(spins ? .linear(duration: 1.6).repeatForever(autoreverses: false) : nil, value: turn)
+            .onAppear { turn = true }
+            .accessibilityHidden(true)
+    }
+    private var symbol: String {
+        switch state { case .done: "checkmark"; case .running: "circle.lefthalf.filled"; case .deferred: "minus"; case .open: "circle" }
+    }
+    private var color: Color {
+        switch state { case .done: .collieSecondary; case .running: .collieAccent; case .deferred: .collieAttention; case .open: .collieMuted }
     }
 }

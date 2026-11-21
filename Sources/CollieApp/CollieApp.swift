@@ -230,6 +230,7 @@ struct ContentView: View {
     let client: DaemonClient
     let canvas: CanvasState
     @Binding var error: String?
+    @State private var historyOpener: HistoryOpener?
     @Binding var paletteOpen: Bool
     @Binding var herdsOpen: Bool
     @AppStorage(AppearanceKeys.structure) private var structureRaw = WindowStructure.compact.rawValue
@@ -343,7 +344,11 @@ struct ContentView: View {
                      fit: { canvas.fitAll(viewport: viewport) }, openPalette: { paletteOpen = true },
                      herds: herds, openHerds: { sheet = .herds(nil, $0) },
                      focus: { notifier.onFocus?($0) }, edit: { sheet = .edit($0) }, openPreferences: openPreferences,
-                     tour: tour, openTour: { sheet = .tour })
+                     tour: tour, openTour: { sheet = .tour }, openWork: { showPanel("work") },
+                     onOpenHistory: { id in Task { @MainActor in
+                         if historyOpener == nil { historyOpener = .live(client: client, focus: { notifier.onFocus?($0) }) }
+                         await historyOpener?.show(id) } },
+                     historyNotice: { historyOpener?.message })
     }
 
     /// The tour's button, once the tour sheet has closed: the same entries as the rail, the palette and the menus.

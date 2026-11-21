@@ -350,6 +350,7 @@ import CollieProtocol
         let loop = both.split(separator: "\n").first { $0.hasPrefix("- Loop") }.map(String.init) ?? ""
         #expect(both.contains("use design panel \"Home\" first") && loop == plain, "\(both.count)\n\(both)")   // no room for the wait either
         let codex = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: ["Bob"], panels: [], agent: "codex")
-        #expect(codex.split(separator: "\n").contains(Substring(plain + wait)) && !codex.contains("/collie:loop"), "\(codex)")
+        // M3c.4/M5.1: with room to spare (no command name), the line also says per-task notices are off, before the wait
+        #expect(codex.split(separator: "\n").contains(Substring(plain + " " + CollieOrientation.loopNotify + wait)) && !codex.contains("/collie:loop"), "\(codex)")
     }
 }

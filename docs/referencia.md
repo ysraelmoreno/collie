@@ -870,11 +870,13 @@ dono aprovou a lista de tarefas e os checks.
   de novo na árvore integrada**; só então a tarefa fica feita. Conflito ou portão quebrado depois do merge: o merge é
   desfeito, o que a tentativa fez vira patch, e a tarefa refaz a tentativa numa faixa nova, a partir do HEAD novo (gasta
   uma tentativa; na última, é adiada). Antes de desfazer, o integrador mede de novo: se alguém (o Shepherd que iniciou
-  o laço também) está num turno na worktree do cercado, ou se ela não está como o merge a deixou (arquivo rastreado
-  editado, arquivo novo não rastreado, do dono ou do próprio portão, que o integrador não distingue), **nada é
-  resetado nem apagado**: o laço para (`dirtyTree` ou `othersWorking`), a nota lista o que ficou e, se o portão
-  quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a tarefa volta a aberta sem gastar
-  tentativa. `--max`, `--budget` e `--tries` são do laço inteiro. O orçamento é a **soma do
+  o laço também, salvo quando tudo o que ele tem aberto no daemon é o `collie work wait`/`work status` deste trabalho)
+  está num turno na worktree do cercado, ou se um arquivo rastreado não está como o merge o deixou (do dono ou do
+  próprio portão, que o integrador não distingue), **nada é resetado**: o laço para (`dirtyTree` ou `othersWorking`), a
+  nota lista o que ficou e, se o portão quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a
+  tarefa volta a aberta sem gastar tentativa. Arquivo novo **não rastreado** (relatório, cobertura) nunca é apagado nem
+  impede o desfazer: fica na worktree e a nota o cita. Depois de um portão que passou, o laço só para se um arquivo
+  rastreado mudou. `--max`, `--budget` e `--tries` são do laço inteiro. O orçamento é a **soma do
   tempo das faixas**, não o relógio de parede: quatro faixas rodando 25 s gastam 100 s. O tempo de cada faixa vai do
   início dela até ela sair, e **o tempo na fila do integrador conta** (a espera pela vez, o merge e o portão). As
   faixas em curso já contam enquanto rodam: o que uma fase (turno, check, portão) pode levar é o que ninguém usou
@@ -991,6 +993,24 @@ Cada seção mostra até 40 itens ("… e mais N" no resto) e o resumo todo cabe
 - Chat do painel Trabalho: a frase exata `resumo` (também `resume` e `o que foi feito`, com as mesmas palavras de enchimento
   das perguntas de status; qualquer outra coisa vai ao agente). Sem trabalho selecionado: "Escolha um trabalho para ver o
   resumo.". Não gasta tokens.
+
+**Tokens por tentativa (M5.4)**
+Ao dispensar o agente de cada tentativa do laço, o daemon lê o transcript dele (só o caminho que o hook do próprio
+terminal deu, vetado como na captura de conversa: `.jsonl` regular sob `<config>/projects`, sem symlink nem FIFO; até
+64 MB lidos em streaming) e soma só as contagens do `usage` das respostas do assistente, uma vez por id: entrada, saída,
+escrita e leitura de cache, nº de respostas e o modelo. Nenhum texto é guardado. Ficam no evento `agentDismissed` do
+diário e, somadas, em `tokens` da tarefa; o `work status` e o resumo mostram `tokens: 1,2 M (índice relativo) · 14 msgs`.
+O índice é **relativo** (entrada 1, escrita de cache 1,25, saída 5, leitura de cache 0,1; constantes em `TokenCount`),
+nunca custo em dinheiro. Sem transcript, recusado, sumido ou grande demais: sem número, sem erro, o laço segue.
+- CLI: `collie work usage [--limit N] [--terminal <nome>]`: os N (padrão 10) trabalhos mais novos do cercado, abertos ou
+  fechados, com o índice total e por tarefa.
+- CLI: `collie work history [--limit N] [--id <trabalho>]` (MCP `work_history`): os N (padrão 20, no máximo 50)
+  trabalhos fechados do **seu** cercado, do mais novo ao mais velho (`id, title, openedAt, closedAt, stopReason, done,
+  total, deferred, durationSeconds`); `--id`: o resumo inteiro daquele. O resumo é gravado uma vez quando o trabalho
+  fecha (o fim do laço, se ele fechou com o laço rodando), em `work/work-archive/<id>.json` (`-2`… se reaberto e
+  fechado de novo), e nunca muda; o diário vai até 500 eventos (os mais velhos saem, com um evento `truncated`), o
+  arquivo até 1 MB, e ficam os 200 mais novos. Trabalho fechado antes disso aparece montado do registro
+  (`reconstructed: true`). O app pede o cercado com `--paddock`.
 - Painel: botão **Resumo** e a seção Resumo do trabalho selecionado. Com a reescrita do modelo local, o link **Ver dados**
   alterna para o resumo do registro (e **Ver resumo** volta). Sem reescrita, o painel mostra o registro e a linha cinza
   "Resumo sem reescrita: ‹motivo›".

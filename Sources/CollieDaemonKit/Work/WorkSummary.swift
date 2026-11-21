@@ -78,6 +78,8 @@ public struct WorkSummary: Codable, Sendable, Equatable {
     public var stoppedAt: String?
     /// The loop's numbers; nil (and absent from the JSON and the markdown) for a work no loop ran.
     public var loop: LoopStats?
+    /// M5.4: the work's token counts (all its tasks' attempts); nil for a work none were read for.
+    public var tokens: TokenCount?
 
     // ponytail: `terminalAlive` is accepted for the interface but unused: job liveness is already in the job states
     // (`gone`/`unknown`, set by the sweeps); use it if a live terminal should downgrade `running` jobs.
@@ -98,7 +100,7 @@ public struct WorkSummary: Codable, Sendable, Equatable {
         let stopped = w.tasks.filter { $0.state == .inProgress }.max { $0.updatedAt < $1.updatedAt }.map { c($0.title) }
             ?? w.notes.last.map { c($0.text) }
         return WorkSummary(title: c(w.title), active: w.closedAt == nil, closedBy: w.closedBy, done: done, later: later,
-                           notDone: notDone, stoppedAt: stopped, loop: LoopStats(work: w))
+                           notDone: notDone, stoppedAt: stopped, loop: LoopStats(work: w), tokens: WorkStatusText.tokens(w))
     }
 
     /// Inline markdown characters backslash-escaped: the panel and the chat render markdown, and a task title must not
@@ -123,6 +125,7 @@ public struct WorkSummary: Codable, Sendable, Equatable {
         // ponytail: k items a section; over the limit, retry with fewer (k = 0 keeps only the counts)
         for k in [Self.maxItems, 20, 10, 5, 2, 1, 0] {
             var lines = [boldTitle ? "**\(title)**" : "## " + title] + (loop.map { ["", $0.line] } ?? [])
+                + (tokens.map { ["tokens: " + $0.label] } ?? [])
             for (head, items) in sections where !items.isEmpty {
                 lines += ["", "**\(head)**"] + items.prefix(k).map { "- " + $0 }
                 if items.count > k { lines.append("- … e mais \(items.count - k)") }

@@ -21,13 +21,23 @@ Names in quotes are labels of the app, which is in Portuguese.
 - **Reopening a task:** `collie work task reopen <task> [--keep-tries]` puts a deferred or abandoned task back in the queue, in the same position.
 - **Parallel tasks:** `collie work run --parallel <n>` (default 1, at most 4) runs each task in a lane (a temporary worktree of the loop) and integrates them one at a time, running the gate again after each merge; `collie work task add --scope --needs` declares what each task touches and what it depends on (without `--scope` a task runs alone). Status, `work wait`, the journal and the card show the lanes. A lane writes only its own branch; `--budget` counts the lanes alive; the sweeper removes only lanes its own daemon made. `scripts/dev/lane-coldbuild.sh` measures a lane's cold build cost.
 - **Agents of the loop have names of their work:** `<work>-<task>-t<attempt>` instead of `loop-<random>`.
+- **Loops in the side panel ("Trilho"):** a "LAÇOS" section under "Lotes" lists the running loop's tasks with their state and attempt, and exists only while a loop is running; a "HISTÓRICO" section lists the last 20 closed works of the paddock (date, result, duration), and clicking one opens its audit page (tasks, attempts, full timeline) in the canvas.
+- **Immutable summary of a closed work:** when a work closes the daemon writes a summary that never changes (full timeline, up to 500 events), and `collie work history [--limit N] [--id <work>]` reads it for the caller's paddock.
+- **Token accounting for loops:** `collie work usage` and `collie work status` show, per attempt, the tokens the agent spent (counts only, never content).
+- **The loop stops when the model's usage limit is hit** instead of waiting an hour for the agent: a clear note and no attempt is spent.
+- **Default model for a loop's agents:** a preference in Preferences › "Laços" (`--model` still wins), so agents do not inherit a model that has hit its limit.
+- **`collie work run --notify task|end`:** with `end` (now the default for new loops) the Shepherd is told only when a task is deferred, a loop stops or ends; the state is read with `collie work wait`.
+- **Large-context advice:** the Shepherd's Stop hook says once, in one line, when its session has grown large and each turn re-reads it all.
+- **"Abrir painel" with the Prévia plug-in** now has a picker for an artifact or an HTML file.
 
 ### Changed
+- The Stop hook asks for memories at most every 20 minutes, never while a loop of the work is running, and only for work that is not the loop's own commits.
 - The loop resubmits the Enter of a prompt that was typed but not submitted, and nudges an agent that ends its turn early with no commit, instead of burning the attempt.
 - After a daemon crash, the loop resumes the commit the attempt had already made instead of restarting the task; stopping the daemon no longer spends the attempt in progress.
 - This changelog is written in English.
 
 ### Fixed
+- Loop gate leftovers are moved to a quarantine inside `.git` instead of being deleted, with literal paths; an orphaned `collie work wait` no longer hides a Shepherd that is editing; a work closed while its loop runs keeps the whole timeline in its summary.
 - Loop: a task no longer stays "in progress" because of an out-of-phase event; a malformed new field in the work record no longer breaks reading the work; the journal writes half as often per attempt.
 - **Deterministic CI:** the test step (`scripts/ci/run-tests.sh`) no longer trusts the exit code of `swift test`, which was green with 237 failures when the test process exited midway; it runs the suite in 3 serial parts and passes only with the final count of each. Tests the hosted runner does not run are listed in `scripts/ci/ci-skip.txt`, with the reason. Fixed outdated tests (Cursor's `--plugin-dir`, the page title on import) and a fatal error of the fake daemon in `MCPTests`.
 

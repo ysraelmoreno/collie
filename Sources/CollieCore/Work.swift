@@ -44,6 +44,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
     public var evidence: TaskEvidence?
     public var evidenceGlob: String?
     public var needs: [String]?; public var scope: [String]?
+    /// M5.4: the token counts of every attempt of the loop on this task, summed (nil: none read). Counts only.
+    public var tokens: TokenCount?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
     /// the attempt ends; a daemon that fell mid-attempt leaves them, and the next run may adopt the commit already made.
     /// Read back from the work's file: never trusted as a git argument before `WorkLoop.isSha`.
@@ -77,6 +79,42 @@ public struct WorkTask: Codable, Sendable, Equatable {
         resumeAt = (try? c.decodeIfPresent(Date.self, forKey: .resumeAt)) ?? nil
         needs = (try? c.decodeIfPresent([String].self, forKey: .needs)) ?? nil
         scope = (try? c.decodeIfPresent([String].self, forKey: .scope)) ?? nil
+        tokens = (try? c.decodeIfPresent(TokenCount.self, forKey: .tokens)) ?? nil   // M5.4: tolerant, like resume
+    }
+}
+
+/// M5.4: what one attempt's agent (or a sum of them) used, from its transcript's assistant messages: counts only, never
+/// content. `index` is a *relative* weight of the counts (`weights`), never a cost in money.
+public struct TokenCount: Codable, Sendable, Equatable {
+    public var input = 0, output = 0, cacheWrite = 0, cacheRead = 0, messages = 0
+    /// The model of the last counted message (a sum: the latest one's).
+    public var model: String?
+    /// The relative index's weights: input 1, cache write 1.25, output 5, cache read 0.1 (Claude's relative price per
+    /// token). ponytail: constants; change them here if the ratios change.
+    public static let inputWeight = 1.0, cacheWriteWeight = 1.25, outputWeight = 5.0, cacheReadWeight = 0.1
+    public init(input: Int = 0, output: Int = 0, cacheWrite: Int = 0, cacheRead: Int = 0, messages: Int = 0, model: String? = nil) {
+        self.input = input; self.output = output; self.cacheWrite = cacheWrite; self.cacheRead = cacheRead; self.messages = messages; self.model = model
+    }
+    /// Every field tolerant: one of the wrong type is 0 (nil for `model`).
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        func n(_ k: CodingKeys) -> Int { max(0, ((try? c.decodeIfPresent(Int.self, forKey: k)) ?? nil) ?? 0) }
+        input = n(.input); output = n(.output); cacheWrite = n(.cacheWrite); cacheRead = n(.cacheRead); messages = n(.messages)
+        model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
+    }
+    public var index: Double {
+        Double(input) * Self.inputWeight + Double(cacheWrite) * Self.cacheWriteWeight
+            + Double(output) * Self.outputWeight + Double(cacheRead) * Self.cacheReadWeight
+    }
+    public static func + (a: TokenCount, b: TokenCount) -> TokenCount {
+        TokenCount(input: a.input + b.input, output: a.output + b.output, cacheWrite: a.cacheWrite + b.cacheWrite,
+                   cacheRead: a.cacheRead + b.cacheRead, messages: a.messages + b.messages, model: b.model ?? a.model)
+    }
+    /// "1,2 M (índice relativo) · 14 msgs": decimal comma; "mil" and "M" past a thousand and a million.
+    public var label: String {
+        let i = index
+        let n = i >= 1e6 ? String(format: "%.1f M", i / 1e6) : i >= 1e3 ? String(format: "%.1f mil", i / 1e3) : String(Int(i.rounded()))
+        return n.replacingOccurrences(of: ".", with: ",") + " (índice relativo) · \(messages) " + (messages == 1 ? "msg" : "msgs")
     }
 }
 
@@ -102,8 +140,10 @@ public struct LoopEvent: Codable, Sendable, Equatable {
     public var at: Date; public var kind: Kind; public var task: String?; public var attempt: Int?; public var detail: String?
     /// M3.5: the lane the event happened in (its folder's name); nil: the paddock's worktree (always, without `--parallel`).
     public var lane: String?
-    public init(at: Date = Date(), kind: Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil, lane: String? = nil) {
-        self.at = at; self.kind = kind; self.task = task; self.attempt = attempt; self.lane = lane
+    /// M5.4: on `agentDismissed`, what that attempt's agent used (nil: not read: no transcript, refused or too big).
+    public var tokens: TokenCount?
+    public init(at: Date = Date(), kind: Kind, task: String? = nil, attempt: Int? = nil, detail: String? = nil, lane: String? = nil, tokens: TokenCount? = nil) {
+        self.at = at; self.kind = kind; self.task = task; self.attempt = attempt; self.lane = lane; self.tokens = tokens
         self.detail = detail.map { String($0.prefix(Self.detailMax)) }
     }
 }
@@ -145,6 +185,8 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case requested, workGone, starterGone, maxReached, budgetSpent, gitFailed, dirtyTree, othersWorking, cancelled, daemonRestart, `internal`, unknown
                 /// M2b.1: an adopted commit did not pass its check or the gate: nothing was reset, the owner decides.
                 case adoptionFailed
+                /// M5.3: the attempt's agent hit the model's usage limit (detail: the dialog's text, short): not counted.
+                case usageLimit
             public init(from d: Decoder) throws { self = Code(rawValue: try d.singleValueContainer().decode(String.self)) ?? .unknown }
         }
         public var code: Code; public var detail: String?
@@ -164,6 +206,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
             case .daemonRestart: "o daemon reiniciou durante o laço"
             case .internal: "estado inesperado do motor (bug); a tarefa foi reaberta"
             case .adoptionFailed: "a adoção do commit interrompido falhou; a árvore ficou intocada para você decidir"
+            case .usageLimit: "o agente atingiu o limite de uso do modelo (\(detail ?? "sem texto")); relance com work run --model <outro>"
             case .unknown: "motivo desconhecido"
             }
         }
@@ -176,11 +219,19 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// before the journal existed. A new `work run` is a new `WorkLoopState`: it starts empty.
     public var events: [LoopEvent]?
     public static let eventsMax = 100
-    /// Adds `e` to the journal; past `eventsMax`, the oldest go.
-    public mutating func record(_ e: LoopEvent) { events = Array(((events ?? []) + [e]).suffix(Self.eventsMax)) }
+    /// M6.4: the ring while the work is closed under its running loop: the summary written when the loop ends keeps
+    /// up to `WorkArchive.timelineMax` of them, and twice that lets it count what it cut (`truncated`).
+    public static let closedEventsMax = 2 * WorkArchive.timelineMax
+    /// Adds `e` to the journal; past `max`, the oldest go. A work's loop records through `Work.record`.
+    public mutating func record(_ e: LoopEvent, max: Int = eventsMax) { events = Array(((events ?? []) + [e]).suffix(max)) }
     /// M3.5, `work run --parallel N`: how many tasks may run at once, each in its lane. nil or 1: one at a time, in the
     /// paddock's worktree, as always.
     public var parallel: Int?
+    /// M3c.4, `work run --notify task|end`: `task` (or nil, a loop from before): the Shepherd hears of every task as
+    /// it ends, as always. `end`: not of a task done (each notice wakes a turn); a deferred task, a stop and the end
+    /// still reach it.
+    public enum Notify: String, Codable, Sendable, CaseIterable { case task, end }
+    public var notify: Notify?
     /// M3.5: one lane of a parallel loop: its folder's name, the `task` and `attempt` running in it, its `phase` (nil:
     /// between phases, or being integrated with no gate) and `since` when that phase holds.
     public struct LaneState: Codable, Sendable, Equatable {
@@ -218,15 +269,15 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     public init(state: State = .running, task: String? = nil, attempt: Int = 0, tries: Int = 3, timeout: Int = 3600,
                 preset: String? = nil, model: String? = nil, command: String? = nil, max: Int? = nil, used: Int = 0,
                 budget: Int? = nil, spent: Int? = nil, tasks: [String]? = nil, gate: String? = nil, phase: Phase? = nil,
-                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil) {
-        self.parallel = parallel
+                startedAt: Date = Date(), endedAt: Date? = nil, parallel: Int? = nil, notify: Notify? = nil) {
+        self.parallel = parallel; self.notify = notify
         self.state = state; self.task = task; self.attempt = attempt; self.tries = tries; self.timeout = timeout
         self.preset = preset; self.model = model; self.command = command; self.max = max; self.used = used
         self.budget = budget; self.spent = spent; self.tasks = tasks; self.gate = gate; self.phase = phase
         self.startedAt = startedAt; self.endedAt = endedAt
     }
     /// The older fields decode as always (a required one missing, or one of the wrong shape, is no loop). The newer
-    /// ones (`phase`, `phaseSince`, `stopReason`, `events`, `parallel`, `lanes`) only record: a malformed one is nil, a malformed event is dropped, and
+    /// ones (`phase`, `phaseSince`, `stopReason`, `events`, `parallel`, `lanes`, `notify`) only record: a malformed one is nil, a malformed event is dropped, and
     /// the loop survives. What is written (the synthesized `encode`) does not change.
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -245,6 +296,7 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
         events = ((try? c.decodeIfPresent([Lossy].self, forKey: .events)) ?? nil)?.compactMap(\.event)
         parallel = (try? c.decodeIfPresent(Int.self, forKey: .parallel)) ?? nil
         lanes = (try? c.decodeIfPresent([LaneState].self, forKey: .lanes)) ?? nil
+        notify = (try? c.decodeIfPresent(Notify.self, forKey: .notify)) ?? nil
     }
     /// One element of `events`: nil when malformed, so the list still decodes.
     private struct Lossy: Decodable {
@@ -291,12 +343,13 @@ public struct WorkNote: Codable, Sendable, Equatable {
 /// What a terminal's agent is doing: tasks, jobs, notes and commits. `closedBy`: "merge", "agent:<name>" or "app".
 /// `commits`: short sha and subject, at most 200. `capturedAt`/`capturedCommit`: when Claude's Stop last asked about its
 /// learnings (MemoryCapture) and the newest commit then; `proposedAt`/`proposedCommit`: the same for the proposals
-/// written from it. What came after each is that one's next chunk.
+/// written from it. What came after each is that one's next chunk. `askedAt` (M5.2): when the Stop last really asked
+/// (`capturedAt` also moves when it did not); nil: never, or a work from before.
 public struct Work: Codable, Sendable, Equatable {
     public var id: UUID; public var title: String; public var terminalId: UUID; public var paddockId: UUID?; public var branch: String?
     public var openedAt: Date; public var closedAt: Date?; public var closedBy: String?
     public var tasks: [WorkTask]; public var jobs: [WorkJob]; public var notes: [WorkNote]; public var commits: [String]
-    public var capturedAt: Date?; public var capturedCommit: String?
+    public var capturedAt: Date?; public var capturedCommit: String?; public var askedAt: Date?
     public var proposedAt: Date?; public var proposedCommit: String?
     /// The lot its terminal was in when it closed (nil: none, or unknown): a lot's works never feed project learning.
     public var lotId: UUID?
@@ -313,7 +366,7 @@ public struct Work: Codable, Sendable, Equatable {
         self.openedAt = openedAt; self.closedAt = closedAt; self.closedBy = closedBy
         self.tasks = tasks; self.jobs = jobs; self.notes = notes; self.commits = commits
     }
-    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, proposedAt, proposedCommit, lotId, loop, version }
+    private enum CodingKeys: String, CodingKey { case id, title, terminalId, paddockId, branch, openedAt, closedAt, closedBy, tasks, jobs, notes, commits, capturedAt, capturedCommit, askedAt, proposedAt, proposedCommit, lotId, loop, version }
     private enum Legacy: String, CodingKey { case floorId }   // before the herding vocabulary
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -327,10 +380,19 @@ public struct Work: Codable, Sendable, Equatable {
         // R2: a malformed capture mark only means "never captured"
         capturedAt = (try? c.decodeIfPresent(Date.self, forKey: .capturedAt)) ?? nil
         capturedCommit = (try? c.decodeIfPresent(String.self, forKey: .capturedCommit)) ?? nil
+        askedAt = (try? c.decodeIfPresent(Date.self, forKey: .askedAt)) ?? nil
         proposedAt = (try? c.decodeIfPresent(Date.self, forKey: .proposedAt)) ?? nil
         proposedCommit = (try? c.decodeIfPresent(String.self, forKey: .proposedCommit)) ?? nil
         lotId = (try? c.decodeIfPresent(UUID.self, forKey: .lotId)) ?? nil
         loop = (try? c.decodeIfPresent(WorkLoopState.self, forKey: .loop)) ?? nil   // malformed = no loop
         version = (try? c.decodeIfPresent(Int.self, forKey: .version)) ?? nil
+    }
+}
+
+extension Work {
+    /// M6.4: one event in the loop's journal: a ring of `eventsMax`, or of `closedEventsMax` once the work is closed
+    /// (its loop may still run: `WorkStore` keeps the journal whole until the loop ends and the summary is written).
+    public mutating func record(_ e: LoopEvent) {
+        loop?.record(e, max: closedAt != nil ? WorkLoopState.closedEventsMax : WorkLoopState.eventsMax)
     }
 }

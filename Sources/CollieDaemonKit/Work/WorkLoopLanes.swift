@@ -45,6 +45,7 @@ extension WorkLoop {
             return (.stopped, .init(.gitFailed))
         }
         let integrator = LaneIntegrator(host: host, dir: dir)
+        await integrator.clearQuarantine()   // M6.3: what the last loop's gates left goes now
         let (woken, signal) = AsyncStream<Wake>.makeStream()
         lanes[id] = Lanes(signal: signal)
         var alive: [String: Task<Void, Never>] = [:]   // by task: running in its lane, or with the integrator
@@ -104,6 +105,12 @@ extension WorkLoop {
         // stopping: every lane is cancelled; each dismisses its agent, reopens its task and removes itself
         for t in alive.values { t.cancel() }
         for t in alive.values { await t.value }
+        // M3d.3: what the last gate left goes with the loop, unless someone works in the tree now
+        if await host.othersWorking() == nil {
+            let swept = await integrator.sweep()
+            if let at = swept.at, !swept.moved.isEmpty { await note(id, Self.movedNote(swept.moved, at: at)) }
+            if !swept.spared.isEmpty { await note(id, Self.sparedNote(swept.spared)) }
+        }
         lanes[id] = nil
         signal.finish()
         try? await store.update(id) { $0.loop?.lanes = nil; $0.loop?.mirror() }
@@ -138,7 +145,7 @@ extension WorkLoop {
             var fresh = w.tasks.first { $0.id == task.id } ?? task
             fresh.forgetResume()
             let engine = WorkLoop(store: store, host: laneHost, poll: poll, checkTimeout: checkTimeout, othersWait: othersWait,
-                                  events: events, lane: name, slot: slot)
+                                  events: events, lane: name, slot: slot, notices: notices)
             if case .stop(let s) = await engine.attempt(w, loop, fresh, lane.path) { stop = s }
             if await engine.passed != nil {
                 // nothing is integrated once the loop is stopping
@@ -234,6 +241,10 @@ extension WorkLoop {
             await engine.refuse(id, "integração recusada: o branch não é de uma faixa", output: "", last: true)
             return nil
         }
+        // M3c.2: new untracked files never stop the loop nor a reset: they stay, and the note names them
+        if result.kept.isEmpty, !result.left.isEmpty { await note(id, Self.leftNote(result.left)) }
+        if let at = result.quarantine, !result.moved.isEmpty { await note(id, Self.movedNote(result.moved, at: at)) }
+        if !result.spared.isEmpty { await note(id, Self.sparedNote(result.spared)) }
         switch result.outcome {
         case .integrated, .noop:
             await engine.finish(id, head: result.head)
@@ -281,6 +292,30 @@ extension WorkLoop {
         return s + " Laço parado."
     }
 
+    /// M3c.2: the untracked files a merge's gate (or someone meanwhile) left in the paddock's worktree. M3d.3: removed
+    /// before the next merge (or at the loop's end) if still as the gate left them.
+    static func leftNote(_ left: [String]) -> String {
+        "[loop] arquivos não rastreados novos na worktree do cercado (do portão): " + fileList(left)
+            + ". Vão para a quarentena antes do próximo merge, ou no fim do laço, se ninguém mexer neles."
+    }
+
+    /// M6.3: the gate's files moved out of the tree: where they are (nothing removed).
+    static func movedNote(_ moved: [String], at: String) -> String {
+        "[loop] arquivos deixados pelo portão foram movidos para a quarentena \(at) (nada foi apagado; ela é esvaziada no começo do próximo laço): "
+            + fileList(moved) + "."
+    }
+
+    /// M3d.3: files a gate left that changed since: they are the owner's now, and stay.
+    static func sparedNote(_ spared: [String]) -> String {
+        "[loop] arquivos deixados pelo portão ficaram na worktree do cercado (mudaram depois dele, têm nome que o laço não toca ou a quarentena estava cheia; nada foi apagado): "
+            + fileList(spared) + "."
+    }
+
+    private static func fileList(_ files: [String]) -> String {
+        let more = files.count > 10 ? " e mais \(files.count - 10)" : ""
+        return eventDetail(files.prefix(10).joined(separator: ", ")) + more
+    }
+
     // MARK: on a lane's engine: what becomes of the attempt that passed
 
     /// Integrated: the task is done as the loop's own `markDone` leaves it, and the Shepherd hears of it.
@@ -290,7 +325,7 @@ extension WorkLoop {
         let e = entry(.integrated, task: p.task.id, attempt: p.n, detail: String(head.prefix(7)))
         try? await store.update(id) { x in
             Self.markDone(&x, p.task.id, n: p.n, at: p.at, evidence: p.evidence, job: p.name, head: p.head)
-            x.loop?.record(e)
+            x.record(e)
         }
         await reportEnd(id, p.task.id)
     }
@@ -314,7 +349,7 @@ extension WorkLoop {
             }
             x.notes.append(WorkNote(at: at, text: text))
             Self.endJob(&x, p.name, reason, at: at)
-            x.loop?.record(e)
+            x.record(e)
         }
         if last { await reportEnd(id, task.id) }
     }

@@ -320,8 +320,13 @@ extension CommandRouter {
             return .object([:])
 
         case "work.status":
-            let works = flag(r, "all") ? try await work.list(includeClosed: false).filter(visible)
-                : try await work.active(terminal: try target().id).map { [$0] } ?? []
+            let all = flag(r, "all"), t = all ? nil : try target()
+            let works = if let t { try await work.active(terminal: t.id).map { [$0] } ?? [] }
+                else { try await work.list(includeClosed: false).filter(visible) }
+            // M3c.2: a status of its own work is a wait too (the loop's integrator does not count the starter for it)
+            let own = t.flatMap { t in caller?.id == t.id ? works.first.map { (t.id, $0.id) } : nil }
+            let token = own.map { ownWaitBegan($0.0, on: $0.1, pid: peer) }
+            defer { if let own, let token { ownWaitEnded(own.0, token) } }
             // `--events [N]`: each loop's journal after its work's status, and in `events` (by work id) for the panel and MCP
             // (MCP/JSON: `events: true` is the bare flag, `events: false` is no journal, as if absent)
             let last: Int? = if case .bool(false)? = r.args["events"] { nil }
@@ -330,6 +335,11 @@ extension CommandRouter {
 
         case "work.wait":   // the caller's active work (or a leashed terminal's): answers when it changed past --since
             let t = try target(), w = try await active(t)
+            // M3c.2: the caller blocked on its own work's change is not working in its worktree (`loopAnyoneWorking`)
+            let own = caller?.id == t.id
+            // M3d.1: the socket cancels this request when its client goes (UnixSocket `cancelsOnHangup`)
+            let token = own ? ownWaitBegan(t.id, on: w.id, pid: peer) : nil
+            defer { if let token { ownWaitEnded(t.id, token) } }
             let timeout = try num(r, "timeout", max: Self.workWaitMax) ?? Self.workWaitDefault
             let since: Int?
             switch r.args["since"] {   // a version: 0 is one (a work no counting store wrote yet), so not `num` (1...)
@@ -383,6 +393,55 @@ extension CommandRouter {
         case "work.get":
             return try isoJSON(try await byId(try need(r, "id")))
 
+        case "work.history":   // T6.1: the caller's paddock's closed works only (the app: the paddock it names; none: the pasture)
+            let limit = Int(try num(r, "limit", max: Double(Self.historyMax)) ?? Double(Self.historyDefault))
+            let scope: String?
+            if let caller { scope = caller.paddockId?.uuidString.lowercased() }
+            else if let name = str(r, "paddock"), !name.isEmpty {
+                guard let p = ws.paddocks.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame || $0.id.uuidString.lowercased() == name.lowercased() })
+                else { throw missing("Paddock '\(name)' not found") }
+                scope = p.id.uuidString.lowercased()
+            } else { scope = nil }
+            let anyPaddock = caller == nil && str(r, "paddock") == nil && str(r, "id") != nil   // the app reading one by id
+            let all = try await work.history { anyPaddock || $0.paddockId == scope }
+            if let id = str(r, "id") {
+                guard let a = all.first(where: { $0.id == id.lowercased() }) else { throw missing("no closed work \(id)") }
+                return try isoJSON(a)
+            }
+            let rows = all.prefix(limit)
+            let iso = ISO8601DateFormatter()
+            return .object(["history": .array(rows.map { a in
+                var o: [String: JSONValue] = ["id": .string(a.id), "title": .string(a.title), "done": .number(Double(a.done)),
+                                              "total": .number(Double(a.tasks.count)), "deferred": .number(Double(a.deferred)),
+                                              "durationSeconds": .number(Double(a.durationSeconds))]
+                if let d = a.openedAt { o["openedAt"] = .string(iso.string(from: d)) }
+                if let d = a.closedAt { o["closedAt"] = .string(iso.string(from: d)) }
+                if let s = a.stopReason { o["stopReason"] = .string(s) }
+                if a.reconstructed { o["reconstructed"] = .bool(true) }
+                return .object(o)
+            }), "output": .string(rows.isEmpty ? "Nenhum trabalho fechado neste cercado." : rows.map { a in
+                "\(RerailText.clean(a.title)) [\(a.id)] · \(a.done)/\(a.tasks.count) feitas · \(a.deferred) "
+                    + (a.deferred == 1 ? "adiada" : "adiadas") + (a.stopReason.map { " · parou: \($0)" } ?? "")
+                    + (a.reconstructed ? " · reconstruído" : "")
+            }.joined(separator: "\n"))])
+
+        case "work.usage":   // M5.4: the caller's paddock's newest works, open or closed, with their token counts only
+            let t = try target(), limit = Int(try num(r, "limit", max: 100) ?? 10)
+            let works = try await work.list(includeClosed: true).filter { visible($0) && $0.paddockId == t.paddockId }
+                .sorted { $0.openedAt > $1.openedAt }.prefix(limit)
+            func row(_ c: TokenCount?) -> [String: JSONValue] {
+                c.map { ["tokens": (try? isoJSON($0)) ?? .null, "index": .number($0.index)] } ?? [:]
+            }
+            return .object(["works": .array(works.map { w in
+                var o: [String: JSONValue] = ["id": .string(w.id.uuidString.lowercased()), "title": .string(RerailText.clean(w.title)),
+                                              "closed": .bool(w.closedAt != nil),
+                                              "tasks": .array(w.tasks.filter { $0.tokens != nil }.map { t in
+                                                  .object(["id": .string(t.id), "title": .string(RerailText.clean(t.title))].merging(row(t.tokens)) { a, _ in a })
+                                              })]
+                o.merge(row(WorkStatusText.tokens(w))) { a, _ in a }
+                return .object(o)
+            }), "output": .string(WorkStatusText.usage(Array(works)))])
+
         case "work.rerail":   // the app (any terminal) or a Shepherd (itself or one it reaches); never automatic
             guard caller?.isShepherd ?? true else { throw ProtocolError(code: .unauthorized, message: "'work.rerail' is for the app and Shepherds") }
             let t = try target()
@@ -400,6 +459,14 @@ extension CommandRouter {
         default:
             throw invalid("Unknown command '\(r.command)'")
         }
+    }
+
+    /// `work history --limit`: its default and the most it takes.
+    static let historyDefault = 20, historyMax = 50
+
+    /// T6.1: what a work's summary names: its paddock and its terminal (nil: gone, or none).
+    func archiveNames(_ w: Work) -> (paddock: String?, terminal: String?) {
+        (ws.paddocks.first { $0.id == w.paddockId }?.name, ws.terminals.first { $0.id == w.terminalId }?.name)
     }
 
     /// `work status --events` with no number.
@@ -444,7 +511,10 @@ extension CommandRouter {
         if let l = WorkStatusText.loopLine(w, now: now) { lines.append(l) }
         lines += WorkStatusText.laneLines(w, now: now)   // M3.6: none without lanes
         if let g = WorkStatusText.gateLine(w) { lines.append(g) }
+        if let n = WorkStatusText.notifyLine(w) { lines.append(n) }
+        if let n = WorkStatusText.modelLine(w) { lines.append(n) }   // M5.6
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
+        if let n = WorkStatusText.tokensLine(w) { lines.append(n) }   // M5.4
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),
                                              (.abandoned, "Dropped"), (.done, "Done")]
         for (state, label) in groups {

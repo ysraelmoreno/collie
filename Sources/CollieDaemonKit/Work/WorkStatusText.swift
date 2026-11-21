@@ -131,6 +131,11 @@ public enum WorkStatusText {
         w.loop?.gate.map { "portão: " + RerailText.clean($0, max: CommandRouter.loopCardMax) }
     }
 
+    /// M3c.4: a loop run with `--notify end`: "avisos: só no fim". nil: no loop, or one that notifies every task.
+    /// M5.6: the model the loop's agents run on, when it has one (`--model` or the daemon's `loopModel`).
+    public static func modelLine(_ w: Work) -> String? { w.loop?.model.map { "modelo dos agentes: " + RerailText.clean($0, max: 64) } }
+    public static func notifyLine(_ w: Work) -> String? { w.loop?.notify == .end ? "avisos: só no fim" : nil }
+
     /// The last `last` events of a loop's journal, oldest first, one per line: `HH:mm:ss <kind> T<task>#<attempt> [<lane>] <detail>`
     /// (the daemon's local time; a loop-wide event has no `T…`; `[<lane>]`, M3.6: only an event of a lane). Empty: no journal.
     public static func events(_ loop: WorkLoopState, last: Int, timeZone: TimeZone = .current) -> String {
@@ -145,6 +150,24 @@ public enum WorkStatusText {
 
     /// The numbers of the tasks a loop ran (`LoopStats.line`). nil: no loop ran a task of this work.
     public static func statsLine(_ w: Work) -> String? { LoopStats(work: w)?.line }
+
+    /// M5.4: the sum of every task's counts (nil: no attempt's were read).
+    public static func tokens(_ w: Work) -> TokenCount? {
+        let ts = w.tasks.compactMap(\.tokens)
+        return ts.isEmpty ? nil : ts.reduce(TokenCount(), +)
+    }
+    /// M5.4: "tokens: 1,2 M (índice relativo) · 14 msgs". nil: no counts.
+    public static func tokensLine(_ w: Work) -> String? { tokens(w).map { "tokens: " + $0.label } }
+
+    /// M5.4, `work usage`: each work (newest first) with its total, then its tasks that have counts. Counts and titles only.
+    public static func usage(_ works: [Work]) -> String {
+        guard !works.isEmpty else { return "Nenhum trabalho neste cercado." }
+        return works.map { w in
+            ["\(RerailText.clean(w.title)) [\(w.id.uuidString.lowercased().prefix(8))] · \(w.closedAt == nil ? "ativo" : "fechado") · "
+                + (tokensLine(w) ?? "tokens: sem número")]
+                + w.tasks.compactMap { t in t.tokens.map { "  - \(RerailText.clean(t.title)) [\(RerailText.clean(t.id, max: 40))]: tokens: \($0.label)" } }
+        }.flatMap { $0 }.joined(separator: "\n")
+    }
 
     /// A done task the loop approved: "✓ <title> · tentativa n · k commits · <shortstat>". nil: it has no evidence.
     public static func doneLine(_ t: WorkTask) -> String? {
@@ -161,6 +184,14 @@ public enum WorkStatusText {
             ? "– \(RerailText.clean(t.title)) · adiada: \(RerailText.clean(t.reason ?? t.lastFailure ?? "sem razão registrada", max: 200))"
             : doneLine(t) ?? "✓ \(RerailText.clean(t.title)) · marcada à mão, sem check"
         return "[collie] Laço, tarefa terminada: \(line)" + stateHint
+    }
+
+    /// M5.1: the one line for the notices held inside the window (`LoopNotices`): "3 tarefas feitas · 1 adiada".
+    static func noticeBatch(done: Int, deferred: Int) -> String {
+        var parts: [String] = []
+        if done > 0 { parts.append("\(done) \(done == 1 ? "tarefa feita" : "tarefas feitas")") }
+        if deferred > 0 { parts.append("\(deferred) " + (done > 0 ? "" : deferred == 1 ? "tarefa " : "tarefas ") + (deferred == 1 ? "adiada" : "adiadas")) }
+        return "[collie] Laço: " + parts.joined(separator: " · ") + stateHint
     }
 
     /// The line the starter gets when its loop ends (a stopped one: "parou (<why>)"; it ends with `stateHint`), then one line per task of the loop: a done one with its evidence
@@ -182,7 +213,7 @@ public enum WorkStatusText {
     static func loopTrusted(paddock: String, _ tasks: [WorkTask], _ l: WorkLoopState) -> String {
         var lines = ["[collie] Laço iniciado sem cartão (cercado «\(RerailText.clean(paddock))» é confiável): "
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), --max \(l.max ?? 0), "
-            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s. Parar: collie work stop."]
+            + (l.parallel.flatMap { $0 > 1 ? "--parallel \($0), " : nil } ?? "") + "orçamento \(l.budget ?? 0) s" + (l.notify == .end ? ", avisos: só no fim" : "") + ". Parar: collie work stop."]
         lines += tasks.enumerated().map { "#\($0 + 1) «\(RerailText.clean($1.title))» check «\(RerailText.clean($1.check ?? "", max: 200))»" }
         return bounded(lines, limit: RerailText.limit)
     }

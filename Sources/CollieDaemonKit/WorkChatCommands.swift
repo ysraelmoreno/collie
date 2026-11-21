@@ -268,6 +268,7 @@ extension CommandRouter {
     /// The work store wrote work `id` (`WorkStore.onChange`).
     func workChanged(_ id: UUID) async {
         await emitToWorkPanels("work.changed", .object(["workId": .string(id.uuidString.lowercased())]))
+        await hub.emit(.work(id, paddock: (try? await work.get(id))?.paddockId))   // the app's Trilho re-reads work.status
         await keepSummary(id)
         // every close (done, removed, merge/land) passes here: its injected memories get the outcome
         // a work gone from the store drops its injections too

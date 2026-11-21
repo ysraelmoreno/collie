@@ -29,7 +29,9 @@ extension CommandRouter {
             return .object(try await artifactRows([a], files: try await design.list())[0].1)
         case "artifact.add":
             var origin: String?
-            if let v = str(r, "source"), !v.isEmpty {
+            if let v = str(r, "source"), !v.isEmpty, caller == nil, v.hasPrefix("history-"), let u = UUID(uuidString: String(v.dropFirst(8))) {
+                origin = "history-" + u.uuidString.lowercased()   // the app's HISTÓRICO detail: one artifact per work
+            } else if let v = str(r, "source"), !v.isEmpty {
                 let l = try ClaudeImport.links([v])
                 guard l.count == 1 else { throw invalid("--source: um link só") }
                 origin = l[0]
@@ -210,6 +212,14 @@ extension CommandRouter {
     /// link; the same link again is that artifact's next version (its folder kept unless `--folder`).
     private func addPage(_ r: Request, caller: TerminalRecord?, origin: String?, nonce: String?) async throws -> JSONValue {
         @Sendable func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        // the app's history detail (`origin` history-<uuid> only for the admin): the page inline, no file anywhere
+        // ponytail: no design-file import nor Artifacts-panel event, a history page is only read in a Prévia
+        if let origin, origin.hasPrefix("history-") {
+            guard let html = str(r, "html"), !html.isEmpty, html.utf8.count <= 8 << 20 else { throw invalid("histórico: falta a página (html) ou passa de 8 MiB") }
+            let t = ClaudeImport.clean(str(r, "title") ?? "")
+            let a = try await artifacts.addAgent(page: Data(html.utf8), title: t.isEmpty ? "Histórico" : t, paddockId: nil, by: Self.origin(caller), origin: origin)
+            return .object(["id": .string(a.id.uuidString.lowercased()), "version": .number(Double(a.version))])
+        }
         let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? "/", isDirectory: true)
         let src = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
         let known = try await artifacts.continued(origin: origin, byId: caller?.id)

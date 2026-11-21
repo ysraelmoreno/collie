@@ -12,7 +12,13 @@ protocol LoopHost: Sendable {
     func resubmitted(_ terminal: UUID) async -> Bool
     /// True while the terminal's agent is in a turn (the daemon's own badge/turn state).
     func working(_ terminal: UUID) async -> Bool
+    /// M5.3: the terminal sits in the model's usage-limit dialog, printing nothing (`UsageLimit.detect` on its screen):
+    /// the dialog's text, short. nil: not in it. Read only, never typed into.
+    func usageLimit(_ terminal: UUID) async -> String?
     func dismiss(_ terminal: UUID) async
+    /// M5.4: what `terminal`'s agent used, from its own transcript, read just before it is dismissed: counts only. nil:
+    /// no number (no transcript, refused, gone, too big); never an error, never holds the loop.
+    func tokens(_ terminal: UUID) async -> TokenCount?
     /// A terminal of the work's paddock in a turn, other than the starter (the loop's agent is already gone): its name.
     func othersWorking() async -> String?
     /// M3b.2: any terminal of the paddock in a turn in this tree, the starter included: its name. What the integrator
@@ -54,6 +60,8 @@ extension LoopHost {
     /// A host that cannot tell the starter apart (the tests' fakes).
     func anyoneWorking() async -> String? { await othersWorking() }
     func resubmitted(_ terminal: UUID) async -> Bool { false }
+    func usageLimit(_ terminal: UUID) async -> String? { nil }
+    func tokens(_ terminal: UUID) async -> TokenCount? { nil }
     func taskEnded(_ line: String) async {}
     func laneHost(_ lane: Lane) async throws(ProtocolError) -> any LoopHost {
         throw ProtocolError(code: .unavailable, message: "this host runs no lanes")
@@ -73,6 +81,42 @@ extension LoopHost {
 /// attempts. A task passes only when its check exits 0, the loop's gate (if any) exits 0 too, there is a new commit on
 /// the same branch, no tracked file is left dirty and neither the check nor the gate moved HEAD. The gate judges the
 /// tree of the commit the check judged, and not one whose commit changed a script the gate's text names. The loop never pushes, lands or creates a paddock.
+/// M5.1: the notices a loop sends to its Shepherd inside `window` seconds of the last one sent go as one line with the
+/// counts. No timer and no sleep (the clock is the caller's `now`, the host's): what is held goes with the next notice
+/// past the window. The loop's end notice (the daemon's `WorkStatusText.loopEnded`) is never held and names every
+/// task of the loop, so what was still held when the loop ended goes with it.
+/// M6.5 (A5): under `end` a done task sends no line, so what is held also goes (`flush`) when a task is done past the
+/// window and when a new attempt starts past it: a deferral waits at most for the next task's end or attempt.
+/// ponytail: no timer; an attempt that runs for hours still holds a deferral that long (a timer, if that matters).
+actor LoopNotices {
+    static let window: TimeInterval = 60
+    let window: TimeInterval
+    private var last: Date?
+    private var pending: [(line: String, done: Bool)] = []   // one per notice held
+    init(window: TimeInterval = LoopNotices.window) { self.window = window }
+    var held: Int { pending.count }
+
+    /// What goes now for `line` (a task's notice; `done`: it was done, not deferred) at `now`; nil: held.
+    func offer(_ line: String, done: Bool, at now: Date) -> String? {
+        if let last, now.timeIntervalSince(last) < window { pending.append((line, done)); return nil }
+        pending.append((line, done))
+        return send(at: now)
+    }
+
+    /// What was held, if the window passed at `now`; nil: nothing held, or still inside the window.
+    func flush(at now: Date) -> String? {
+        guard !pending.isEmpty, let last, now.timeIntervalSince(last) >= window else { return nil }
+        return send(at: now)
+    }
+
+    private func send(at now: Date) -> String {
+        let all = pending
+        pending = []; last = now
+        return all.count == 1 ? all[0].line
+            : WorkStatusText.noticeBatch(done: all.filter(\.done).count, deferred: all.filter { !$0.done }.count)
+    }
+}
+
 actor WorkLoop {
     static let noteLines = 40, noteChars = 4000
     /// Where a project keeps its feature map, in order of preference.
@@ -94,12 +138,14 @@ actor WorkLoop {
     var passed: Passed?
     /// M3.5: the parallel runs of this engine, by work (`WorkLoopLanes`); empty without `--parallel`.
     var lanes: [UUID: Lanes] = [:]
+    /// M5.1: the Shepherd's notice window, one per loop: a lane's engine shares its loop's.
+    let notices: LoopNotices
 
     init(store: WorkStore, host: any LoopHost, poll: Duration = .seconds(15), checkTimeout: Duration = .seconds(1800),
          othersWait: Duration = .seconds(300), events: (@Sendable (AttemptMachine.Effect) -> AttemptMachine.Event?)? = nil,
-         lane: String? = nil, slot: Int? = nil) {
+         lane: String? = nil, slot: Int? = nil, notices: LoopNotices = LoopNotices()) {
         self.store = store; self.host = host; self.poll = poll; self.checkTimeout = checkTimeout; self.othersWait = othersWait
-        self.events = events; self.lane = lane; self.slot = slot
+        self.events = events; self.lane = lane; self.slot = slot; self.notices = notices
     }
 
     /// Ends the loop after the current attempt's verdict.
@@ -147,7 +193,7 @@ actor WorkLoop {
             // always one summary note, after the path's own longer one (if any)
             if outside == nil, let why {
                 w.notes.append(WorkNote(at: now, text: why.note))
-                w.loop!.record(LoopEvent(at: now, kind: .stopped, detail: Self.eventDetail(why.label)))
+                w.record(LoopEvent(at: now, kind: .stopped, detail: Self.eventDetail(why.label)))
             }
         }
         return end
@@ -160,6 +206,7 @@ actor WorkLoop {
     /// gone, or the tree holds changes that are not the attempt's; a verdict and no reset when another terminal works).
     /// After its first reads it only interprets `AttemptMachine`: the order of the effects and their conditions are there.
     func attempt(_ w: Work, _ loop: WorkLoopState, _ task: WorkTask, _ dir: URL) async -> AttemptEnd {
+        await flushNotices()   // M6.5 (A5): a deferral held in the window goes once a new attempt starts past it
         let n = (task.tries ?? 0) + 1, started = host.now()
         // M3.8: named after the work and the task (their titles are data: `AgentNaming` leaves only `[a-z0-9-]`), and
         // never as a live terminal. Nothing finds the agent by this name: its terminal's id goes on the job (`record`)
@@ -202,7 +249,7 @@ actor WorkLoop {
             if let lane { x.loop?.showLane(lane, .agent, at: started) }
             else { x.loop?.task = task.id; x.loop?.attempt = n; x.loop?.used += 1; x.loop?.show(adopt ? nil : .agent, at: started) }
             x.jobs.append(WorkJob(id: name, kind: .loop, label: task.title, startedAt: started))
-            x.loop?.record(first)
+            x.record(first)
         }
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
@@ -265,6 +312,8 @@ actor WorkLoop {
         var fault: String?
         /// `discard` wrote the attempt's patch (nil: nothing was discarded).
         var patched: Bool?
+        /// M5.4: the agent's counts, read at the dismiss: the `agentDismissed` event carries them.
+        var tokens: TokenCount?
         /// The journal's events not yet written, oldest first, and the phase to show (`.some(nil)`: none): `record`.
         var pending: [LoopEvent] = [], phase: WorkLoopState.Phase??
         var unwritten: Bool { !pending.isEmpty || phase != nil || mark != nil }
@@ -296,7 +345,11 @@ actor WorkLoop {
             // M3.8: the job knows its terminal: what the start sweep removes after a fall, whatever the agent is called
             if let mark, let j = x.jobs.lastIndex(where: { $0.id == name && $0.kind == .loop && $0.state == .running }) { x.jobs[j].terminal = mark }
             if let phase { if let lane { x.loop?.showLane(lane, phase) } else { x.loop?.show(phase) } }
-            for e in events { x.loop?.record(e) }
+            for e in events {
+                x.record(e)
+                // M5.4: the attempt's counts add to its task's (the journal is a ring: the task keeps the sum)
+                if let t = e.tokens, let i = x.tasks.firstIndex(where: { $0.id == e.task }) { x.tasks[i].tokens = (x.tasks[i].tokens ?? TokenCount()) + t }
+            }
             change(&x)
         }
     }
@@ -314,7 +367,9 @@ actor WorkLoop {
             // `discarded` names the patch only when one was written
             // `attemptStarted` went with the attempt's first write
             if kind != .attemptStarted {
-                r.pending.append(entry(kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail))
+                var e = entry(kind, task: task.id, attempt: n, detail: kind == .discarded && r.patched == false ? Self.noPatch : detail)
+                if kind == .agentDismissed { e.tokens = r.tokens; r.tokens = nil }
+                r.pending.append(e)
             }
             if kind == .verdict { r.at = host.now() }   // the verdict's time: before any wait for another terminal
         case .note(let text):
@@ -343,10 +398,7 @@ actor WorkLoop {
             let prompt = Self.prompt(task: task, spec: spec, attempt: n, tries: r.loop.tries, dir: dir, notes: notes, gate: r.loop.gate, map: map)
             let turn = Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started))   // the budget bounds the turn too
             r.deadline = r.started + Double(turn)
-            let ended: AttemptMachine.Event
-            do { ended = .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: .seconds(turn))) }
-            catch where error.code == .timeout { ended = .turnTimedOut }
-            catch { ended = .turnFailed(error.message) }
+            let ended = await talk(agent, prompt, .seconds(turn))
             // M2.0: it only records (the turn's end, good or bad, is journaled right after)
             if await host.resubmitted(agent) { r.pending.append(entry(.resubmitted, task: task.id, attempt: n, detail: name)) }
             return ended
@@ -358,9 +410,7 @@ actor WorkLoop {
             // part of the same attempt (no `used`, no try); written now, with the turn's end: the nudge's turn may be long
             r.pending.append(entry(.nudged, task: task.id, attempt: n, detail: AskResult.Source.hook.rawValue))
             await record(id, &r)
-            do { return .turnEnded(source: try await host.ask(agent, prompt: Self.nudgePrompt, timeout: .seconds(rest))) }
-            catch where error.code == .timeout { return .turnTimedOut }
-            catch { return .turnFailed(error.message) }
+            return await talk(agent, Self.nudgePrompt, .seconds(rest))
         case .waitForCommit, .lookForCommit:
             if effect == .waitForCommit, let agent = r.agent, let deadline = r.deadline {
                 await waitForCommit(agent, before: before, branch: branch, dir: dir, until: deadline)
@@ -369,7 +419,8 @@ actor WorkLoop {
             guard await committed(before: before, branch: branch, dir) else { return .waitExpired }
             return .commitSeen(await out(["rev-parse", "--short", "HEAD"], dir))
         case .dismiss:
-            if let agent = r.agent { await host.dismiss(agent) }
+            // M5.4: the transcript is read while its terminal still exists (the dismiss forgets it)
+            if let agent = r.agent { r.tokens = await host.tokens(agent); await host.dismiss(agent) }
         case .measureFacts:
             // cancelled (the daemon stops): no verdict, no discard, the attempt not counted
             if Task.isCancelled { return .cancelled }
@@ -522,7 +573,7 @@ actor WorkLoop {
         var who: String? = first
         let end = ContinuousClock.now + othersWait
         while who != nil, ContinuousClock.now < end, !Task.isCancelled {
-            try? await Task.sleep(for: Swift.min(poll, .seconds(5)))
+            await Self.nap(Swift.min(poll, .seconds(5)))
             who = await host.othersWorking()
         }
         return who
@@ -531,10 +582,35 @@ actor WorkLoop {
     /// The Shepherd hears of a task the moment it ends, not only when the whole loop does.
     /// Never awaited: the line is typed into the Shepherd only once it is idle, and a loop that waited for that stood
     /// still while the Shepherd was in a turn (up to the inject's hold), with the next task's terminal never opening.
-    func reportEnd(_ work: UUID, _ task: String) async {
-        guard let t = try? await store.get(work)?.tasks.first(where: { $0.id == task }) else { return }
-        let line = WorkStatusText.taskEnded(t), host = host
+    /// M3d.2: the line it sent (nil: none), decided before the `Task`, so a test reads the decision without a clock.
+    /// M5.1: inside the window of the last one sent it is held (`LoopNotices`), and goes with the next one as counts.
+    @discardableResult
+    func reportEnd(_ work: UUID, _ task: String) async -> String? {
+        guard let w = try? await store.get(work) else { return nil }
+        // M6.5 (A5): a task with no line of its own (done under `end`) still lets what is held go past the window
+        guard let one = Self.endNotice(w, task) else { return await flushNotices() }
+        let done = w.tasks.first { $0.id == task }?.state == .done
+        return sendNotice(await notices.offer(one, done: done, at: host.now()))
+    }
+
+    /// M6.5 (A5): what the window held, sent now if it passed (nil: nothing went).
+    @discardableResult
+    func flushNotices() async -> String? { sendNotice(await notices.flush(at: host.now())) }
+
+    /// Never awaited (`reportEnd`): the line goes to the Shepherd once it is idle.
+    private func sendNotice(_ line: String?) -> String? {
+        guard let line else { return nil }
+        let host = host
         Task { await host.taskEnded(line) }
+        return line
+    }
+
+    /// The notice for `task` as it ended in `w`; nil: none goes now.
+    /// M3c.4: `--notify end` keeps a task done for the loop's end notice (a deferred one still goes now).
+    static func endNotice(_ w: Work, _ task: String) -> String? {
+        guard let t = w.tasks.first(where: { $0.id == task }) else { return nil }
+        if w.loop?.notify == .end && t.state == .done { return nil }
+        return WorkStatusText.taskEnded(t)
     }
 
     /// Seconds of the budget left for this attempt (at least 1); no budget: a day. In a lane: `laneShare`.
@@ -574,7 +650,7 @@ actor WorkLoop {
     /// reads it, and it never reaches an agent's prompt.
     private func event(_ id: UUID, _ kind: LoopEvent.Kind) async {
         let e = entry(kind)
-        try? await store.update(id) { $0.loop?.record(e) }
+        try? await store.update(id) { $0.record(e) }
     }
 
     /// The event as the journal keeps it, timed now.
@@ -598,7 +674,32 @@ actor WorkLoop {
         if await committed(before: before, branch: branch, dir) { return }
         while host.now() < deadline, !Task.isCancelled {
             if !(await host.working(agent)), await committed(before: before, branch: branch, dir) { return }
-            try? await Task.sleep(for: poll)
+            await Self.nap(poll)
+        }
+    }
+
+    /// The loop's one wait on the clock: its polls (a commit, another terminal, the agent's screen) have no event.
+    private static func nap(_ d: Duration) async { try? await Task.sleep(for: d) }
+
+    /// `host.ask` as the machine's event. M5.3: every `poll` meanwhile the agent's screen is read; one stuck in the
+    /// usage-limit dialog ends the turn now (the ask is dropped, nothing is typed) instead of at its timeout.
+    private func talk(_ agent: UUID, _ prompt: String, _ timeout: Duration) async -> AttemptMachine.Event {
+        let host = host, poll = poll
+        return await withTaskGroup(of: AttemptMachine.Event?.self) { g in
+            g.addTask {
+                do throws(ProtocolError) { return .turnEnded(source: try await host.ask(agent, prompt: prompt, timeout: timeout)) }
+                catch where error.code == .timeout { return .turnTimedOut }
+                catch { return .turnFailed(error.message) }
+            }
+            g.addTask {
+                while !Task.isCancelled {
+                    await Self.nap(poll)
+                    if !Task.isCancelled, let text = await host.usageLimit(agent) { return .usageLimit(UsageLimit.excerpt(text)) }
+                }
+                return nil
+            }
+            for await e in g { if let e { g.cancelAll(); return e } }
+            return .turnFailed("no turn")
         }
     }
 

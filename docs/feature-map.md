@@ -138,6 +138,11 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   `próximo limite: turno vence em N min`), `collie work wait [--since N] [--timeout S]` (espera o trabalho mudar, sem
   terminal; devolve a versão), `collie work list`, `collie work task reopen <tarefa> [--keep-tries]` (uma tarefa adiada
   ou abandonada volta à fila, na mesma posição, com `spec` e `check`); o painel, à mão.
+- **Tokens por tentativa:** `collie work status` mostra `tokens: <índice relativo> · N msgs` do trabalho (só contagens
+  do transcript de cada agente do laço); `collie work usage [--limit N]` lista os trabalhos do cercado com o total e por tarefa.
+- **Resumo imutável (T6.1):** ao fechar (`work done`, ou o fim do laço de um trabalho já fechado) o daemon grava uma vez
+  `<raiz>/work/work-archive/<id>.json` (`-2`, `-3`… a cada novo fechamento; diário até 500 eventos; ≤ 1 MB; os 200 mais
+  novos ficam). `collie work history [--limit N] [--id <trabalho>]` (MCP `work_history`) lista só os do seu cercado.
 
 ### Plug-ins externos e apps (`WebPluginPanel`)
 

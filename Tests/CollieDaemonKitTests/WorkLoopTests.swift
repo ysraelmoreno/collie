@@ -19,6 +19,8 @@ struct LoopScript: Sendable {
     /// How the nudge's turn ends (nil: like `source`); `nudgeError`: its ask throws.
     var nudgedSource: AskResult.Source?
     var nudgeError: ProtocolError?
+    /// M5.3: what the agent's screen shows while its attempt's turn hangs (it never ends by itself): `usageLimit` reads it.
+    var screen: [String]?
 }
 
 /// A host without PTYs: scripted agents, real git and a real (unsandboxed) check in a temp repo.
@@ -35,7 +37,10 @@ actor LoopFakeHost: LoopHost {
     func taskEnded(_ line: String) async {
         if noticeNeverDelivered { try? await Task.sleep(for: .seconds(3600)); return }
         ended.append(line)
+        await endedArrivals.hit()
     }
+    /// M3d.2: one hit per line in `ended` (a test awaits the count, no clock).
+    nonisolated let endedArrivals = Arrivals()
     func neverDeliverNotices() { noticeNeverDelivered = true }
     /// Called with each command before `check` runs it (a test reads the loop's phase from the store here).
     var probe: (@Sendable (String) async -> Void)?
@@ -77,6 +82,10 @@ actor LoopFakeHost: LoopHost {
         }
         prompts[name] = prompt
         do { try await s.act(dir) } catch { Issue.record("agent \(name): \(error)") }
+        if s.screen != nil {   // M5.3: stuck in a dialog until the loop gives up on the turn
+            try? await Task.sleep(for: .seconds(3600))
+            throw ProtocolError(code: .internal, message: "ask cancelled")
+        }
         if name == starterGoneAfter { starterGone = true }
         if let e = s.askError { throw e }
         return s.source
@@ -93,6 +102,18 @@ actor LoopFakeHost: LoopHost {
         if n == after { do { try await s.late(dir) } catch { Issue.record("late \(name): \(error)") }; return false }
         return n < after
     }
+    /// M5.3: the screen is quiet (the agent prints nothing while it sits in a dialog).
+    func usageLimit(_ terminal: UUID) async -> String? {
+        (scripts[names[terminal] ?? ""]?.screen).flatMap { UsageLimit.detect($0, quiet: true) }
+    }
+    /// M5.4: each agent's counts (by name), handed to the loop at its dismiss; `tokensRead`: who was asked, before its dismiss.
+    var tokenCounts: [String: TokenCount] = [:], tokensRead: [String] = []
+    func setTokens(_ n: String, _ t: TokenCount) { tokenCounts[n] = t }
+    func tokens(_ terminal: UUID) async -> TokenCount? {
+        let n = names[terminal] ?? "?"
+        if !dismissed.contains(n) { tokensRead.append(n) }
+        return tokenCounts[n]
+    }
     func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
     /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).
     var othersProbe: (@Sendable () async -> Void)?
@@ -107,7 +128,18 @@ actor LoopFakeHost: LoopHost {
     func setStarterGone(after n: String) { starterGoneAfter = n }
     /// Every git command the loop ran, in order (M2.2a: what never becomes an argument).
     var gits: [[String]] = []
-    func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { gits.append(args); return try await GitRunner.run(args, in: dir) }
+    /// M3c.1: the most git commands seen running at once, and a fault: the next git whose arguments start with
+    /// `prefix` runs for real, then answers status 128 with `stderr` (a git that fails once).
+    var inFlight = 0, maxInFlight = 0
+    var fault: (prefix: [String], stderr: String)?
+    func setFault(_ prefix: [String], _ stderr: String) { fault = (prefix, stderr) }
+    func git(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        gits.append(args); inFlight += 1; maxInFlight = Swift.max(maxInFlight, inFlight)
+        defer { inFlight -= 1 }
+        let r = try await GitRunner.run(args, in: dir)
+        if let f = fault, args.starts(with: f.prefix) { fault = nil; return ProcessResult(status: 128, stdout: "", stderr: f.stderr, truncated: false) }
+        return r
+    }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1; events.append("check"); commands.append(command)
         await probe?(command)
@@ -117,7 +149,16 @@ actor LoopFakeHost: LoopHost {
     func readSpec(_ path: String) async -> String? { try? String(contentsOfFile: path, encoding: .utf8) }
     func exists(_ path: String, in dir: URL) async -> Bool { FileManager.default.fileExists(atPath: dir.appendingPathComponent(path).path) }
     nonisolated func patchDir(_ work: UUID) -> URL { patches.appendingPathComponent(work.uuidString.lowercased()) }
-    nonisolated func now() -> Date { Date() }
+    /// M5.1: the fake clock, `Date()` moved on by `advance` (seconds).
+    nonisolated func now() -> Date { Date() + skew.seconds }
+    nonisolated let skew = Skew()
+    nonisolated func advance(_ s: TimeInterval) { skew.seconds += s }
+}
+
+/// M5.1: `LoopFakeHost`'s clock offset (read by the nonisolated `now`).
+final class Skew: @unchecked Sendable {
+    private let lock = NSLock(); private var s: TimeInterval = 0
+    var seconds: TimeInterval { get { lock.withLock { s } } set { lock.withLock { s = newValue } } }
 }
 
 private actor PhaseLog {
@@ -136,7 +177,7 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
 struct LoopRig {
     let repo: URL, storeDir: URL, store: WorkStore, host: LoopFakeHost, loop: WorkLoop, work: UUID
     init(_ tasks: [WorkTask], tries: Int = 3, max: Int? = nil, budget: Int? = nil, gate: String? = nil,
-         checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50)) async throws {
+         checkTimeout: Duration = .seconds(30), othersWait: Duration = .milliseconds(50), noticeWindow: TimeInterval = 0) async throws {
         repo = try await makeRepo()
         storeDir = URL(fileURLWithPath: "/tmp/collie-loop-\(UUID().uuidString.prefix(8))")
         store = WorkStore(dir: storeDir)
@@ -147,7 +188,9 @@ struct LoopRig {
         }
         work = w.id
         host = LoopFakeHost(dir: repo)
-        loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait)
+        // M5.1: no window by default (every notice goes as it did before grouping); a test of the grouping passes 60
+        loop = WorkLoop(store: store, host: host, poll: .milliseconds(10), checkTimeout: checkTimeout, othersWait: othersWait,
+                        notices: LoopNotices(window: noticeWindow))
     }
     func run() async -> WorkLoopState.State { await loop.run(work: work, dir: repo) }
     func get() async throws -> Work { try #require(try await store.get(work)) }

@@ -28,6 +28,12 @@ import CollieTheme
     /// The cards of "O que o Collie faz" the user has seen (the info icon's dot) and the modal that shows them.
     var tour = FeatureTourSeen()
     var openTour: () -> Void = {}
+    /// Brings the Work panel forward (opens it where it was not).
+    var openWork: () -> Void = {}
+    /// A HISTÓRICO row was clicked (a closed work's id). Empty until T6.5 opens its detail.
+    var onOpenHistory: (String) -> Void = { _ in }
+    /// The short warning the HISTÓRICO section shows when a detail could not be opened.
+    var historyNotice: () -> String? = { nil }
 }
 
 /// The window frame around `content` (docks + canvas). Compacta adds nothing here (its bar floats over the canvas,

@@ -38,7 +38,9 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// The default workspace's id (for plugin storage), read once connected.
     public private(set) var workspaceId: UUID?
     /// The paddock the canvas shows (nil = pasture). View state; the app persists it.
-    public var currentPaddock: UUID?
+    public var currentPaddock: UUID? { didSet { if oldValue != currentPaddock { followWork() } } }
+    /// The current paddock's active work (loop included) and last closed works, kept by `work.wait`.
+    @ObservationIgnored public let workFeed = WorkFeed()
 
     /// Called (main actor) when a terminal starts waiting for the user: id and reason.
     @ObservationIgnored public var onAttention: ((UUID, String) -> Void)?
@@ -70,7 +72,14 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     @ObservationIgnored private var generation = 0
     @ObservationIgnored var openEventStreams = 0   // diagnostics/tests
 
-    public init(paths: Paths = Paths()) { self.paths = paths }
+    public init(paths: Paths = Paths()) {
+        self.paths = paths
+        workFeed.call = { [weak self] command, args, timeout in
+            guard let self else { throw ProtocolError(code: .daemonUnavailable, message: "no client") }
+            return try await self.adminCall(command, args, timeout: timeout)
+        }
+    }
+    private func followWork() { workFeed.follow(paddock: currentPaddock, name: currentPaddockName) }
 
     /// Connects, mirrors `ui.events`, and reconnects with backoff 0.25 s → 2 s (each attempt re-reads admin.token).
     public func start() {
@@ -156,6 +165,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
             if let c = currentPaddock, !paddocks.contains(where: { $0.id == c }) { currentPaddock = nil }   // deleted while away
             badges = Dictionary(uniqueKeysWithValues: snap.badges.compactMap { k, v in UUID(uuidString: k).map { ($0, v) } })
             state = .connected
+            followWork()
             onConnected()
             await refreshAccess()
             for await f in Self.frames(of: ev) {
@@ -227,6 +237,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .appCardRemoved(let id): appCards.removeAll { $0.id == id }
         case .remotePairing(let r): remotePairing = r
         case .remoteReveal(let t, let a, _): onRemoteReveal?(t, a)
+        case .work(_, let paddock): workFeed.workChanged(paddock: paddock)
         }
     }
     private func setPlugins(_ ms: [PluginManifest]) { guard ms != plugins else { return }; plugins = ms; PluginManifest.register(ms) }   // unchanged: the registry stays
@@ -379,13 +390,14 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// Returns the new panel's id.
     @discardableResult
     public func openPanel(plugin: String, name: String?, placement: PanelPlacement, url: String?, storage: StorageScope,
-                          serial: String? = nil, file: String? = nil) async throws -> UUID {
+                          serial: String? = nil, file: String? = nil, artifact: String? = nil) async throws -> UUID {
         var args: [String: JSONValue] = ["plugin": .string(plugin), "placement": .string(placement.rawValue), "storage": .string(storage.rawValue)]
         if let name, !name.isEmpty { args["name"] = .string(name) }
         if let url, !url.isEmpty { args["url"] = .string(url) }
         if placement == .canvas, let f = currentPaddockName { args["paddock"] = .string(f) }
         if let serial, !serial.isEmpty { args["serial"] = .string(serial) }
         if let file, !file.isEmpty { args["file"] = .string(file) }
+        if let artifact, !artifact.isEmpty { args["artifact"] = .string(artifact) }
         // a design file's first open can start the design engine
         guard case .object(let o)? = try await admin("panel.open", args, timeout: serial != nil ? 190 : file != nil ? 60 : 10),
               case .string(let s)? = o["id"], let id = UUID(uuidString: s) else {

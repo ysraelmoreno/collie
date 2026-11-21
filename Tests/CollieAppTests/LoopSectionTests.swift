@@ -15,8 +15,8 @@ private func work(_ state: WorkLoopState.State? = .running, phase: WorkLoopState
         WorkTask(id: "c", title: "C", state: .deferred, tries: 3), WorkTask(id: "d", title: "D")])
     if closed { w.closedAt = Date() }
     if let state {
-        var l = WorkLoopState(state: state, task: "b", attempt: 2, tries: 3, timeout: 60, used: 0)
-        l.show(phase, at: Date(timeIntervalSince1970: 1_700_000_000 + 2 * 3600 + 120))   // 2023-11-14 22:13:20 UTC + 2h2m
+        var l = WorkLoopState(state: state, task: "b", attempt: 2, tries: 3)
+        l.show(phase, at: Date(timeIntervalSince1970: 1_700_000_000 + 2 * 3600 + 120))   // 2023-11-15 00:15:20 UTC
         w.loop = l
     }
     return w
@@ -55,7 +55,7 @@ struct LoopSectionTests {
     @Test func headerPhaseAndSince() {
         func h(_ p: WorkLoopState.Phase?) -> LoopSection.Header? { LoopSection.make(work: work(phase: p), paddock: pad, timeZone: utc).header }
         #expect(h(.agent)?.phase == "agente" && h(.check)?.phase == "check" && h(.gate)?.phase == "portão")
-        #expect(h(.agent)?.since == "desde 00:15")   // 1_700_000_000 + 7320 s = 2023-11-14 00:15:20 UTC... see below
+        #expect(h(.agent)?.since == "desde 00:15") 
         #expect(h(nil)?.phase == "preparando" && h(nil)?.since == nil)
     }
 }

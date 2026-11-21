@@ -34,7 +34,7 @@ public struct HistoryEntry: Decodable, Sendable, Equatable {
 @MainActor @Observable public final class WorkFeed {
     public private(set) var work: Work?
     public private(set) var history: [HistoryEntry] = []
-    public static let historyLimit = 20
+    public nonisolated static let historyLimit = 20
     /// The daemon's `work.wait` timeout (it answers `timedOut` and the feed waits again from the same version).
     static let waitSeconds = 600.0
 

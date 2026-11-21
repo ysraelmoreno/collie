@@ -158,8 +158,9 @@ import CollieCore
                 fired = 0
                 let ev = { (t: NSEvent.EventType) in NSEvent.mouseEvent(with: t, location: NSPoint(x: wx, y: wy), modifierFlags: [], timestamp: 0,
                                                   windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)! }
+                NSApplication.shared.postEvent(ev(.leftMouseUp), atStart: false)
                 w.sendEvent(ev(.leftMouseDown))
-                w.sendEvent(ev(.leftMouseUp))
+                if let up = NSApp.nextEvent(matching: .leftMouseUp, until: .distantPast, inMode: .default, dequeue: true) { w.sendEvent(up) }
                 if fired > 0 { hits.append("\(Int(wx)),\(Int(wy))") }
             }
         }

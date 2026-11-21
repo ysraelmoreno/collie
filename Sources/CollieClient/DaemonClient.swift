@@ -390,13 +390,14 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
     /// Returns the new panel's id.
     @discardableResult
     public func openPanel(plugin: String, name: String?, placement: PanelPlacement, url: String?, storage: StorageScope,
-                          serial: String? = nil, file: String? = nil) async throws -> UUID {
+                          serial: String? = nil, file: String? = nil, artifact: String? = nil) async throws -> UUID {
         var args: [String: JSONValue] = ["plugin": .string(plugin), "placement": .string(placement.rawValue), "storage": .string(storage.rawValue)]
         if let name, !name.isEmpty { args["name"] = .string(name) }
         if let url, !url.isEmpty { args["url"] = .string(url) }
         if placement == .canvas, let f = currentPaddockName { args["paddock"] = .string(f) }
         if let serial, !serial.isEmpty { args["serial"] = .string(serial) }
         if let file, !file.isEmpty { args["file"] = .string(file) }
+        if let artifact, !artifact.isEmpty { args["artifact"] = .string(artifact) }
         // a design file's first open can start the design engine
         guard case .object(let o)? = try await admin("panel.open", args, timeout: serial != nil ? 190 : file != nil ? 60 : 10),
               case .string(let s)? = o["id"], let id = UUID(uuidString: s) else {

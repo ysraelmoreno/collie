@@ -449,7 +449,7 @@ extension CommandRouter {
         case "work.usage":   // M5.4: the caller's paddock's newest works with their token counts only; M10.3: a closed
             // one from its summary (`work.history`'s files, the same paddock scope), an open one from the registry
             let t = try target(), limit = Int(try num(r, "limit", max: 100) ?? 10)
-            let scope = t.paddockId?.uuidString.lowercased(), only = str(r, "id")?.lowercased()
+            let scope = (caller?.paddockId ?? t.paddockId)?.uuidString.lowercased(), only = str(r, "id")?.lowercased()   // closed: the caller's own paddock, as work.history
             let open = try await work.list(includeClosed: false).filter { visible($0) && $0.paddockId == t.paddockId }.map { w in
                 var a = WorkArchive.make(w, paddock: nil, terminal: nil, loopSummary: ""); a.closedAt = nil; return a
             }

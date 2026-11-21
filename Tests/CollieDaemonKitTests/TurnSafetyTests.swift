@@ -75,7 +75,7 @@ private let paths: [Path] = [
 
     @Test func thePromptHasTheTurnRulesAndFits() {
         let t = WorkTask(id: "m10-2", title: "M10.2 Regra de turno e pré-check", check: "scripts/laco-check.sh M10.2")
-        let dir = URL(fileURLWithPath: "/Users/someone/Documents/codes/my-orchestrator-memory/.collie/paddocks/collie")
+        let dir = URL(fileURLWithPath: "/Users/dev/Documents/codes/projeto-exemplo-12345/.collie/paddocks/collie")
         let p = WorkLoop.prompt(task: t, spec: nil, attempt: 1, tries: 3, dir: dir, notes: [],
                                 gate: "scripts/ci/lint.sh && scripts/ci/check-architecture.sh", map: "docs/feature-map.md")
         #expect(p.contains("Rode build e testes em primeiro plano; não encerre o turno com comando em segundo plano nem monitor pendente."))

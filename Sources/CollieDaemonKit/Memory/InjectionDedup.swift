@@ -6,7 +6,7 @@ import CollieCore
 /// session (they don't come back) and as `collapsed` in `memory stats`. Selection only: nothing in the store changes
 /// (the consolidation is what really merges).
 enum InjectionDedup {
-    /// Two memories are near when they have the same normalized `subject`, or their title terms
+    /// Two memories of the same kind and scope are near when they have the same normalized `subject`, or their title terms
     /// (`MemoryService.significantTerms`, lowercased) have a Jaccard ≥ `titleMin` (the consolidation's `clusterMin`), or —
     /// both with a stored vector of the same language and size — a cosine ≥ `vectorMin`. No vector: subject and title only.
     static let titleMin = 0.5, vectorMin = 0.92
@@ -16,9 +16,10 @@ enum InjectionDedup {
     static func titleTerms(_ r: MemoryRecord) -> Set<String> { Set(MemoryService.significantTerms(r.title).map { $0.lowercased() }) }
 
     static func near(_ a: MemoryRecord, _ b: MemoryRecord, vectors: Vectors = [:]) -> Bool {
+        guard a.kind == b.kind, a.scope == b.scope else { return false }   // a decision and a pitfall on one subject are not copies
         if a.subject == b.subject { return true }
         let ta = titleTerms(a), tb = titleTerms(b), u = ta.union(tb).count
-        if u > 0, Double(ta.intersection(tb).count) / Double(u) >= titleMin { return true }
+        if u > 0, ta.intersection(tb).count >= 3, Double(ta.intersection(tb).count) / Double(u) >= titleMin { return true }   // short titles share 2 terms by chance
         guard let x = vectors[a.id], let y = vectors[b.id], x.lang == y.lang, x.vector.count == y.vector.count else { return false }
         var dot = 0.0, nx = 0.0, ny = 0.0
         for i in x.vector.indices {

@@ -137,4 +137,16 @@ import CollieCore
                                             verified: { _ in true }, scores: [:], openDigest: [], curator: nil)
         #expect(r.usage.collapsed == 4)
     }
+
+    /// Review A1: a decision and a pitfall that share a subject, and short titles that share two terms, are not copies.
+    @Test func distinctMemoriesAreNotNear() {
+        let d = MemoryRecord(kind: .decision, subject: "usar filter", title: "Usar --filter nos testes", body: "x")
+        let p = MemoryRecord(kind: .pitfall, subject: "usar filter", title: "Filtro casa demais com cifrão", body: "x")
+        #expect(!InjectionDedup.near(d, p))
+        let a = MemoryRecord(kind: .pitfall, subject: "a", title: "Build compartilhado quebrado", body: "x")
+        let b = MemoryRecord(kind: .pitfall, subject: "b", title: "Build compartilhado lento", body: "x")
+        #expect(!InjectionDedup.near(a, b))
+        let c = MemoryRecord(kind: .pitfall, subject: "usar filter", title: "Outro assunto qualquer", body: "x")
+        #expect(InjectionDedup.near(p, c), "same kind and scope with one subject is still near")
+    }
 }

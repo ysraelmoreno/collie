@@ -79,7 +79,8 @@ private func ids(_ r: Response) -> [String] {
                 #expect(r["version"] == .number(1), "\(r)")
             }
             let a = try await d.router.artifacts.get(try #require(UUID(uuidString: aid)))
-            #expect(a.version == 1 && try await d.router.artifacts.list().filter { $0.origin == "history-\(wid)" }.count == 1)
+            let same = try await d.router.artifacts.list().filter { $0.origin == "history-\(wid)" }
+            #expect(a.version == 1 && same.count == 1)
             let root = await d.router.artifacts.dir
             let names = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent(aid).path)
             #expect(!names.contains { $0.wholeMatch(of: /r[0-9]+/) != nil }, "\(names)")   // no r<N> versions kept

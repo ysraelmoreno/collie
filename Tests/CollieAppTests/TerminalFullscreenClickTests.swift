@@ -127,8 +127,9 @@ import CollieCore
 
 @MainActor @Suite struct TerminalFullscreenUpProbe {
     final class Flipped: NSView { override var isFlipped: Bool { true } }
+    final class KeyWindow: NSWindow { override var isKeyWindow: Bool { true }; override var canBecomeKey: Bool { true } }
     @Test(arguments: [(0.7, 100.0), (1.0, 100.0), (0.7, 200.0), (1.0, 200.0)]) func up(zoom: Double, x: Double) {
-        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
+        let w = KeyWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
         node.setBoundsSize(CGSize(width: 600, height: 300))

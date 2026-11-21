@@ -13,6 +13,8 @@ Names in quotes are labels of the app, which is in Portuguese.
 - **Tokens in the immutable summary:** each task keeps its attempts' token counts (counts and model name only); `collie work usage` also reads closed works of the caller's paddock, and the loops modal shows the totals.
 
 ### Changed
+- **Faster checks:** `AskTests` went from about 173 s to 30 s (every ask time limit is one injectable value, production defaults unchanged); an attempt's agent reuses one build folder per loop instead of compiling cold on each attempt (`scripts/dev/prune-builds.sh` lists, and with `--apply` removes, the old ones); `scripts/laco-check.sh` validates every filter against real suites, runs a task's declared area plus a fixed smoke set, and runs the whole list only with `--full`.
+- **CI:** the build caches `.build`, each test shard has a timeout and prints the last test it started, and a shard that hangs fails instead of being cancelled an hour later.
 - Near-duplicate memories of the same kind and scope (same subject, three or more shared title terms, or close vectors) no longer enter one injection block together; only the best of each group is injected. Nothing in the memory store changes.
 
 ### Fixed

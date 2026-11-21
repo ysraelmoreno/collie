@@ -3,6 +3,7 @@ import json
 import os
 import queue
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -40,6 +41,7 @@ class SSEReader(object):
     def __init__(self, port, headers=None):
         self.conn = http.client.HTTPConnection("127.0.0.1", port, timeout=WAIT)
         self.conn.request("GET", "/api/stream", headers=headers or {})
+        self.sock = self.conn.sock
         self.response = self.conn.getresponse()
         self.items = queue.Queue()
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -82,6 +84,13 @@ class SSEReader(object):
                 return doc
 
     def close(self):
+        # Unblock the reader thread first: closing the response while it
+        # sits in readline() would wait for the read timeout.
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self.thread.join(WAIT)
         try:
             self.response.close()
         finally:

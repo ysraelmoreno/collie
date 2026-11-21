@@ -25,8 +25,11 @@ build="$root/.build"
 [ -d "$build" ] || { echo "prune-builds: no $build"; exit 0; }
 
 # a live terminal's folder: its sanitized name, and for an attempt (`…-t<n>`) the loop's `laco-…` (AgentNaming.buildDir)
-live=()
-if command -v collie >/dev/null 2>&1; then
+live=() listed=0
+# the folder of the terminal running this script is live too (`collie list --all` leaves the caller out)
+[ -z "${COLLIE_TERMINAL_NAME:-}" ] || live+=("$(printf '%s' "${COLLIE_TERMINAL_NAME:0:40}" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')")
+if command -v collie >/dev/null 2>&1 && names=$(collie list --all 2>/dev/null); then
+  listed=1
   while IFS=$'\t' read -r name _; do
     [ -n "$name" ] || continue
     plain=$(printf '%s' "${name:0:40}" | LC_ALL=C sed 's/[^A-Za-z0-9]/-/g')
@@ -38,8 +41,10 @@ if command -v collie >/dev/null 2>&1; then
       while [ "${head%-}" != "$head" ]; do head=${head%-}; done
       live+=("$head$lane")
     fi
-  done < <(collie list --all 2>/dev/null || true)
+  done <<<"$names"
 fi
+# without the list of live terminals nothing may be removed (outside a Collie terminal `collie list` fails)
+if [ "$apply" -eq 1 ] && [ "$listed" -eq 0 ]; then echo "prune-builds: cannot list live terminals (run inside a Collie terminal); --apply refused" >&2; exit 2; fi
 is_live() { local l; for l in "${live[@]+"${live[@]}"}"; do [ "$1" = "$l" ] && return 0; done; return 1; }
 
 now=$(date +%s) kept=0 removed=0

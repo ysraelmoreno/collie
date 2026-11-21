@@ -239,6 +239,15 @@ class RevisionTests(StoreTestCase):
 
 
 class PersistenceTests(StoreTestCase):
+    def test_existing_folder_keeps_its_mode(self):
+        # review Q1: QUADRO_DIR may name a folder the user already had; only a folder the store made becomes 0700
+        shared = os.path.join(self._tmp.name, "shared")
+        os.mkdir(shared)
+        os.chmod(shared, 0o755)
+        Store(shared)
+        self.assertEqual(os.stat(shared).st_mode & 0o777, 0o755)
+        self.assertEqual(os.stat(self.dir).st_mode & 0o777, 0o700)
+
     def test_reopen_returns_same_board(self):
         a = self.store.create_card("a", labels=["l"])["id"]
         self.store.create_card("b", column="review")
@@ -391,12 +400,14 @@ class PermissionTests(StoreTestCase):
                 mode = os.stat(os.path.join(self.dir, name)).st_mode
                 self.assertEqual(stat.S_IMODE(mode), 0o600)
 
-    def test_existing_loose_dir_is_tightened(self):
+    def test_existing_loose_dir_is_left_alone(self):
+        # review Q1: a folder that was already there keeps its mode (the files inside stay 0600)
         loose = os.path.join(self._tmp.name, "loose")
         os.mkdir(loose)
         os.chmod(loose, 0o755)
-        Store(loose)
-        self.assertEqual(stat.S_IMODE(os.stat(loose).st_mode), 0o700)
+        Store(loose).create_card("x")
+        self.assertEqual(stat.S_IMODE(os.stat(loose).st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(os.stat(os.path.join(loose, "board.json")).st_mode), 0o600)
 
     def test_default_dir_uses_env(self):
         with mock.patch.dict(os.environ, {"QUADRO_DIR": self.dir}):

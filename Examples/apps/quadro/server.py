@@ -138,6 +138,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "quadro"
     sys_version = ""
     protocol_version = "HTTP/1.0"
+    timeout = 30   # a socket that stalls (a short body, a client that never reads) frees its thread
 
     # ---- plumbing ------------------------------------------------------
 

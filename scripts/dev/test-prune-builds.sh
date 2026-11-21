@@ -26,6 +26,11 @@ out=$(run --apply --older-than 7)
 [ -f "$T/outside/keep" ] && [ -L "$B/evil" ] || fail "followed a path outside .build/"
 echo "$out" | grep -q "skip   evil" || fail "symlink out not refused: $out"
 
+# a `collie` that fails (outside a terminal): the dry run still lists, --apply is refused and removes nothing
+mkdir -p "$T/badbin"; printf '#!/bin/sh\nexit 1\n' > "$T/badbin/collie"; chmod +x "$T/badbin/collie"
+touch -t "$old" "$B/new-agent"
+PATH="$T/badbin:$PATH" PRUNE_ROOT="$T/repo" "$here/prune-builds.sh" --apply --older-than 7 2>/dev/null && fail "--apply ran without the live list"
+[ -d "$B/new-agent" ] || fail "removed without the live list"
 run --bogus 2>/dev/null && fail "odd argument accepted"
 run --apply 2>/dev/null && fail "--apply without --older-than accepted"
 run --apply --older-than x 2>/dev/null && fail "non-numeric days accepted"

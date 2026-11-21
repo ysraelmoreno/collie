@@ -145,8 +145,10 @@ class Store(object):
         self._rlock = threading.RLock()
         self._depth = 0
         self._lock_fd = None
+        fresh = not os.path.isdir(self.dir)
         os.makedirs(self.dir, mode=0o700, exist_ok=True)
-        os.chmod(self.dir, 0o700)
+        if fresh:   # a folder that was already there keeps its mode (QUADRO_DIR may name a folder of the user's)
+            os.chmod(self.dir, 0o700)
         self.board_path = os.path.join(self.dir, "board.json")
         self.mirror_path = os.path.join(self.dir, "BOARD.md")
         self.journal_path = os.path.join(self.dir, "events.jsonl")

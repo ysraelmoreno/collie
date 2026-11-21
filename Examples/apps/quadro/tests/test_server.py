@@ -277,6 +277,22 @@ class RouteTests(ServerTestCase):
 
 
 class SecurityTests(ServerTestCase):
+    def test_stalled_body_frees_its_thread(self):
+        # review Q2: Content-Length promises 100 bytes, one arrives: the handler gives up at its socket timeout
+        self.assertGreater(server.Handler.timeout, 0)
+        old = server.Handler.timeout
+        server.Handler.timeout = 0.3
+        try:
+            s = socket.create_connection(("127.0.0.1", self.srv.port), timeout=WAIT)
+            s.sendall(("POST /api/card/create HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nContent-Type: application/json\r\n"
+                       "Content-Length: 100\r\n\r\n{" % self.srv.port).encode())
+            s.settimeout(WAIT)
+            data = s.recv(4096)            # the server closes (maybe after an error line): never hangs forever
+            self.assertIsNotNone(data)
+            s.close()
+        finally:
+            server.Handler.timeout = old
+
     def test_bad_host(self):
         msg = self.assertError(self.call("GET", "/api/health", headers={"Host": "evil.example"}), 403)
         self.assertNotIn("evil", msg)

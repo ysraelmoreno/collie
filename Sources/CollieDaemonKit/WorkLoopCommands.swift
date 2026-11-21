@@ -396,26 +396,58 @@ extension CommandRouter {
     /// M3c.2: who is in a turn in `dir`, the starter included, unless all the starter has open in the daemon is its
     /// `work.wait`/`work.status` of `work` (the recommended flow: the Shepherd blocked in `collie work wait`). Any other
     /// request of the starter's (an `ask`, another command) counts it, as do the paddock's other terminals.
-    /// ponytail: what the starter does outside the daemon (an edit beside a backgrounded wait) is not seen here; the
+    /// M3d.1: a wait counts only while its client lives (`work.wait` is cancelled when its client closes the socket; a
+    /// pid gone is not a wait) and no tool call of the terminal came after it began (a wait in the background).
+    /// ponytail: an edit beside a background wait is seen through Claude's PostToolUse only (no hook, no stamp); the
     /// integrator's diff of the tracked files still keeps such an edit.
     func loopAnyoneWorking(paddock: UUID, starter: UUID, work: UUID, dir: URL) async -> String? {
-        let waits = Self.loopStarterWaits(open: openRequests[starter] ?? 0, waitsOnWork: ownWorkWaits[starter]?[work] ?? 0)
-        return await loopOthersWorking(paddock: paddock, starter: waits ? starter : nil, dir: dir)
+        await loopOthersWorking(paddock: paddock, starter: loopStarterOnlyWaits(starter, work: work) ? starter : nil, dir: dir)
+    }
+
+    /// M3d.1: the starter's open requests are all live waits on `work` (and there is one).
+    func loopStarterOnlyWaits(_ starter: UUID, work: UUID) -> Bool {
+        let live = Self.liveWaits(ownWaits[starter]?.values.map { $0 } ?? [], on: work, lastToolCall: lastToolCall[starter])
+        return Self.loopStarterWaits(open: openRequests[starter] ?? 0, waitsOnWork: live)
     }
 
     /// M3c.2: every request the starter has open is a wait on the loop's work (and there is one).
     static func loopStarterWaits(open: Int, waitsOnWork: Int) -> Bool { waitsOnWork > 0 && open == waitsOnWork }
+
+    /// One `work.wait`/`work.status` of a terminal on its own work: `pid` its client, `seq` when it began.
+    struct OwnWait: Sendable { let work: UUID, pid: pid_t, seq: Int }
+
+    /// M3d.1: the waits on `work` that still stand for a terminal only waiting: the client alive, no tool call since.
+    static func liveWaits(_ waits: [OwnWait], on work: UUID, lastToolCall: Int?, alive: (pid_t) -> Bool = clientAlive) -> Int {
+        waits.filter { $0.work == work && (lastToolCall ?? -1) < $0.seq && alive($0.pid) }.count
+    }
+    /// ponytail: a pid reused by another process reads as alive; the socket's EOF (the handler cancelled) covers a closed client.
+    static func clientAlive(_ pid: pid_t) -> Bool { pid > 0 && (kill(pid, 0) == 0 || errno == EPERM) }
+
+    /// The waits counted by work (what M3c.2 kept): diagnostics and tests.
+    var ownWorkWaits: [UUID: [UUID: Int]] {
+        ownWaits.mapValues { Dictionary($0.values.map { ($0.work, 1) }, uniquingKeysWith: +) }
+    }
 
     func requestBegan(_ t: UUID) { openRequests[t, default: 0] += 1 }
     func requestEnded(_ t: UUID) {
         openRequests[t, default: 1] -= 1
         if openRequests[t] ?? 0 <= 0 { openRequests[t] = nil }
     }
-    func ownWaitBegan(_ t: UUID, on work: UUID) { ownWorkWaits[t, default: [:]][work, default: 0] += 1 }
-    func ownWaitEnded(_ t: UUID, on work: UUID) {
-        ownWorkWaits[t]?[work, default: 1] -= 1
-        if ownWorkWaits[t]?[work] ?? 0 <= 0 { ownWorkWaits[t]?[work] = nil }
-        if ownWorkWaits[t]?.isEmpty == true { ownWorkWaits[t] = nil }
+    /// A wait began: its token, for `ownWaitEnded`.
+    func ownWaitBegan(_ t: UUID, on work: UUID, pid: pid_t) -> UUID {
+        let token = UUID()
+        activitySeq += 1
+        ownWaits[t, default: [:]][token] = OwnWait(work: work, pid: pid, seq: activitySeq)
+        return token
+    }
+    func ownWaitEnded(_ t: UUID, _ token: UUID) {
+        ownWaits[t]?[token] = nil
+        if ownWaits[t]?.isEmpty == true { ownWaits[t] = nil }
+    }
+    /// Claude's PostToolUse of `t`: a turn of its own, beside any wait it began before.
+    func toolCalled(_ t: UUID) {
+        activitySeq += 1
+        lastToolCall[t] = activitySeq   // ponytail: one Int per terminal ever seen, not dropped with the terminal
     }
 
     /// The paddock's terminals, but the starter, that can edit the tree `dir` (the paddock's worktree, or one lane).

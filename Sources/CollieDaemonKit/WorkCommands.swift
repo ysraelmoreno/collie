@@ -325,8 +325,8 @@ extension CommandRouter {
                 else { try await work.list(includeClosed: false).filter(visible) }
             // M3c.2: a status of its own work is a wait too (the loop's integrator does not count the starter for it)
             let own = t.flatMap { t in caller?.id == t.id ? works.first.map { (t.id, $0.id) } : nil }
-            if let own { ownWaitBegan(own.0, on: own.1) }
-            defer { if let own { ownWaitEnded(own.0, on: own.1) } }
+            let token = own.map { ownWaitBegan($0.0, on: $0.1, pid: peer) }
+            defer { if let own, let token { ownWaitEnded(own.0, token) } }
             // `--events [N]`: each loop's journal after its work's status, and in `events` (by work id) for the panel and MCP
             // (MCP/JSON: `events: true` is the bare flag, `events: false` is no journal, as if absent)
             let last: Int? = if case .bool(false)? = r.args["events"] { nil }
@@ -337,8 +337,9 @@ extension CommandRouter {
             let t = try target(), w = try await active(t)
             // M3c.2: the caller blocked on its own work's change is not working in its worktree (`loopAnyoneWorking`)
             let own = caller?.id == t.id
-            if own { ownWaitBegan(t.id, on: w.id) }
-            defer { if own { ownWaitEnded(t.id, on: w.id) } }
+            // M3d.1: the socket cancels this request when its client goes (UnixSocket `cancelsOnHangup`)
+            let token = own ? ownWaitBegan(t.id, on: w.id, pid: peer) : nil
+            defer { if let token { ownWaitEnded(t.id, token) } }
             let timeout = try num(r, "timeout", max: Self.workWaitMax) ?? Self.workWaitDefault
             let since: Int?
             switch r.args["since"] {   // a version: 0 is one (a work no counting store wrote yet), so not `num` (1...)

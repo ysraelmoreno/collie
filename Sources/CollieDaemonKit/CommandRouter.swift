@@ -34,7 +34,9 @@ actor CommandRouter {
     var eventSeq = 0
     /// M3c.2: the requests each terminal has open in the daemon (by the id it sent: a forged id only adds), and, by work,
     /// its `work.wait`/`work.status` on its own active work (counted after the caller is checked).
-    var openRequests: [UUID: Int] = [:], ownWorkWaits: [UUID: [UUID: Int]] = [:]
+    /// M3d.1: each wait keeps its client's pid and when it began (`activitySeq`), against the terminal's last tool call.
+    var openRequests: [UUID: Int] = [:], ownWaits: [UUID: [UUID: OwnWait]] = [:]
+    var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
     nonisolated let devices: DeviceService
@@ -524,6 +526,7 @@ actor CommandRouter {
                 if let hold { if ask == nil { await asks.releaseCapture(tid, hold) } else { await asks.captureBlocked(tid, hold) } }
                 return Response(id: req.id, ok: true, result: .object(ask.map { ["ask": .string($0)] } ?? [:]))
             case "work.hook":
+                if str(req, "hook") == "tool" { toolCalled(tid) }   // M3d.1: a turn beyond any wait the terminal has open
                 if str(req, "hook") == "notification", let m = HookPayload.claudePermissionMessage(stdinJSON: Data((str(req, "payload") ?? "").utf8)) {
                     await asks.hookPermission(tid, message: String(m.prefix(500)))
                 }

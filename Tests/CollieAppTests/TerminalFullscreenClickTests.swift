@@ -128,3 +128,42 @@ import CollieCore
         w.close()
     }
 }
+
+/// Probe 4: the same map with an AppKit-backed (borderless) button; events go through the app queue (NSButton tracks).
+@MainActor @Suite struct TerminalFullscreenBorderlessProbe {
+    final class Flipped: NSView { override var isFlipped: Bool { true } }
+    struct B: View {
+        let action: () -> Void
+        var body: some View { Button(action: action) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.buttonStyle(.borderless) }
+    }
+    @Test(arguments: [1.0, 0.5, 0.7, 2.0]) func map(zoom: Double) async {
+        _ = NSApplication.shared
+        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        let node = Flipped(frame: CGRect(x: 100, y: 100, width: 600 * zoom, height: 300 * zoom))
+        node.setBoundsSize(CGSize(width: 600, height: 300))
+        var fired = 0
+        let host = TitleHost(rootView: B(action: { fired += 1 }))
+        host.frame = CGRect(x: 200, y: 0, width: 40, height: 32)
+        node.addSubview(host)
+        w.contentView!.addSubview(node)
+        w.makeKeyAndOrderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        let hf = host.convert(host.bounds, to: nil)
+        var hits: [String] = []
+        for wx in stride(from: hf.minX - 8, to: hf.maxX + 8, by: 2) {
+            for wy in stride(from: hf.minY - 8, to: hf.maxY + 8, by: 2) {
+                fired = 0
+                for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    NSApp.postEvent(NSEvent.mouseEvent(with: t, location: NSPoint(x: wx, y: wy), modifierFlags: [], timestamp: 0,
+                                                       windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!, atStart: false)
+                }
+                while let e = NSApp.nextEvent(matching: .any, until: .distantPast, inMode: .default, dequeue: true) { NSApp.sendEvent(e) }
+                for _ in 0..<3 { await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in DispatchQueue.main.async { c.resume() } } }
+                if fired > 0 { hits.append("\(Int(wx)),\(Int(wy))") }
+            }
+        }
+        print("PROBE4 zoom=\(zoom) hostInWindow=\(hf) subviews=\(host.subviews.map { type(of: $0) }) hits=\(hits.count) first=\(hits.first ?? "-") last=\(hits.last ?? "-")")
+        w.close()
+    }
+}

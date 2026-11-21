@@ -17,6 +17,8 @@ Rodam em paralelo (`--parallel 3`, escopos que não se sobrepõem). Quem toca `s
 
 Fora desta onda: a convenção genérica de check por projeto (o dono quer ver depois), P8 (lint de spec), P9, P10, P11. Depois do laço: o Pastor faz `collie app adopt quadro` (cartão de aprovação do dono) e roda o cumulativo completo uma vez.
 
+Check de cada tarefa: `scripts/check-onda11.sh <m11-1..q11-4>` (os comandos das seções "Check" das tarefas são o que ele roda).
+
 ## Regras de todas as tarefas
 As de `README.md` desta pasta. Mais:
 - Repositório público: nenhum nome interno, caminho pessoal, token ou dado de usuário em código, teste, fixture ou doc.

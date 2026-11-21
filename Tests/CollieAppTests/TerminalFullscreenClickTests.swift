@@ -51,3 +51,47 @@ import Testing
         w.close()
     }
 }
+
+import CollieCanvas
+import CollieClient
+import CollieCore
+
+/// Probe 2: the real terminal node, its real title bar, with and without another node in front.
+@MainActor @Suite struct TerminalFullscreenRealProbe {
+    @Test(arguments: [false, true]) func probe(behind: Bool) async throws {
+        let canvas = CanvasState()
+        let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-fsc-\(UUID())")))
+        let id = UUID()
+        let v = TerminalNodeView(id: id, client: client, canvas: canvas, node: NodeController(id: id, client: client))
+        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1200, height: 800), styleMask: [.titled], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        let parent = NSView(frame: w.contentView!.bounds)
+        w.contentView!.addSubview(parent)
+        parent.addSubview(v)
+        let size = CGSize(width: 640, height: 400)
+        v.place(CGRect(origin: CGPoint(x: 20, y: 20), size: size), canvasSize: size)
+        v.setInteractive(true)
+        let other = NSView(frame: CGRect(x: 900, y: 600, width: 100, height: 100))
+        if behind { parent.addSubview(other) }
+        let mini = Minimap(canvas: canvas); parent.addSubview(mini)
+        w.makeKeyAndOrderFront(nil)
+        v.layoutSubtreeIfNeeded()
+        var hitX: CGFloat?
+        for x in stride(from: size.width - 64, to: size.width - 10, by: 2) {
+            canvas.fullscreen = nil
+            if behind, parent.subviews.firstIndex(of: v)! > parent.subviews.firstIndex(of: other)! {
+                parent.addSubview(other, positioned: .below, relativeTo: mini)
+            }
+            let at = v.convert(NSPoint(x: x, y: 16), to: nil)
+            for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                w.sendEvent(NSEvent.mouseEvent(with: t, location: at, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+            }
+            for _ in 0..<5 { await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in DispatchQueue.main.async { c.resume() } } }
+            print("PROBE2 behind=\(behind) x=\(x) hit=\(String(describing: w.contentView!.hitTest(at))) fs=\(canvas.fullscreen != nil)")
+            if canvas.fullscreen != nil { hitX = x; break }
+        }
+        print("PROBE2 behind=\(behind) hitX=\(String(describing: hitX))")
+        v.unmount(); w.close()
+    }
+}

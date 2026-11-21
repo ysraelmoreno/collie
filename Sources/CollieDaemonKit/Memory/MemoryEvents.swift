@@ -53,6 +53,8 @@ struct MemoryEvent: Codable, Sendable, Equatable {
     var verdict: String? = nil
     /// `used` (item 2 phase 1): the ids of `ids` that also had evidence, and parallel to it the kind (cite|get|flag).
     var evidenced: [UUID]? = nil, evidence: [String]? = nil
+    /// `injected` (M10.4): near-duplicates of `ids` the block left out (`InjectionDedup`): seen by the session, not injected.
+    var collapsed: [UUID]? = nil
 
     static func estimate(bytes: Int) -> Int { (bytes + 3) / 4 }
 

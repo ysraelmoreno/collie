@@ -32,6 +32,8 @@ enum MemoryObservability {
         /// (`MapDrift.shownPath`: "caminho recusado" when not plain) and the short id. They are injected again.
         var enforcedGone: [String] = []
         var searches = 0, searchHits = 0
+        /// M10.4: near-duplicate memories left out of an injection block (`InjectionDedup`), summed over the period.
+        var collapsed = 0
         /// Beside `coverage` (prompts with a memory), how often an injected memory was used (Leva 1).
         var precision = Precision()
         /// Item 2 phase 1, beside `precision`: how many of its candidates also had evidence.
@@ -173,6 +175,7 @@ enum MemoryObservability {
         r.usage.deadShare = old.isEmpty ? nil : Double(dead.count) / Double(old.count)
         let searched = inPeriod.filter { $0.type == .searched }
         r.usage.searches = searched.count; r.usage.searchHits = searched.reduce(0) { $0 + ($1.hits ?? 0) }
+        r.usage.collapsed = injected.reduce(0) { $0 + ($1.collapsed?.count ?? 0) }
         r.usage.precision = precision(inPeriod)
         // the path again through `shownPath`: an older log line may carry a raw one
         r.usage.enforcedGone = inPeriod.filter { $0.type == .enforced && $0.mode == "gone" }.sorted { $0.at > $1.at }.map {

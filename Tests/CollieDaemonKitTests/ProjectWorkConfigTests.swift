@@ -37,13 +37,15 @@ private func project(_ body: (URL) async throws -> Void) async throws {
 private func output(_ r: Response) -> String {
     if case .object(let o)? = r.result, case .string(let s)? = o["output"] { s } else { "<\(r)>" }
 }
-private func workConfig(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> Response {
+/// A shell terminal in `cwd`; each call of what it returns is one `work.config` from it.
+private func terminal(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> () async throws -> Response {
     let r = try await send(p, Request(id: "s", token: d.adminToken, command: "admin.spawn",
                                       args: ["name": .string("T"), "preset": .string("shell"), "cwd": .string(cwd.path)]))
     guard case .object(let o)? = r.result, case .string(let id)? = o["id"] else { throw ProtocolError(code: .internal, message: "\(r)") }
     let token = try await tokenOf(d, id)
-    return try await send(p, Request(id: "c", terminalId: id, token: token, command: "work.config"))
+    return { try await send(p, Request(id: "c", terminalId: id, token: token, command: "work.config")) }
 }
+private func workConfig(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> Response { try await terminal(d, p, cwd: cwd)() }
 
 @Suite struct ProjectWorkConfigTests {
     // MARK: parse
@@ -179,15 +181,16 @@ private func workConfig(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> Respo
             let file = dir.appendingPathComponent("collie-work.json")
             try FileManager.default.createSymbolicLink(at: file, withDestinationURL: outside)
             try await withDaemon { d, p in
-                let r = try await workConfig(d, p, cwd: dir)
+                let call = try await terminal(d, p, cwd: dir)
+                let r = try await call()
                 #expect(!r.ok && r.error?.message.contains("link simbólico") == true, "\(r)")
                 try FileManager.default.removeItem(at: file)
                 try Data(("{\"gate\": \"" + String(repeating: "a", count: 17 * 1024) + "\"}").utf8).write(to: file)
-                let big = try await workConfig(d, p, cwd: dir)
+                let big = try await call()
                 #expect(!big.ok && big.error?.message.contains("16 KB") == true, "\(big)")
                 try FileManager.default.removeItem(at: file)
                 try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
-                let notFile = try await workConfig(d, p, cwd: dir)
+                let notFile = try await call()
                 #expect(!notFile.ok && notFile.error?.message.contains("arquivo regular") == true, "\(notFile)")
             }
         }

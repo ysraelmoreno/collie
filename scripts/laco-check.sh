@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check de cada tarefa do laço "estado do laço" (Ondas 1, 1b, 2 e 3): scripts/laco-check.sh M1.1 .. M3.8, M3b.1 .. M3b.6, M3c.1 .. M3c.4 (e M2.0)
+# Check de cada tarefa do laço "estado do laço" (Ondas 1, 1b, 2 e 3): scripts/laco-check.sh M1.1 .. M3.8, M3b.1 .. M3b.6, M3c.1 .. M3c.4, M5.1 .. M5.6, T6.1 (e M2.0)
 # Cada tarefa exige o seu arquivo de testes novo e roda TODAS as suítes da família (cumulativo: nada pode regredir).
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -7,11 +7,11 @@ t() { swift test --disable-sandbox --skip MemoryEventEmissionTests "$@"; }
 suites=(WorkLoopTests WorkStatusTextTests WorkStoreTests LoopStopReasonTests LoopJournalTests AttemptDecisionTests AttemptMachineTests
         LoopRobustnessTests LoopJournalWritesTests LoopNitsTests LoopNudgeTests LoopResumeTests LoopCancelTests LoopResumeSafetyTests LoopResumeNitsTests LoopCancelWaitTests WorkWaitTests LoopOrientationTests
         WorkTaskReopenTests TaskSchedulerTests LaneWorktreeTests LaneHostTests LaneIntegrationTests LoopParallelTests
-        LoopLaneLifecycleTests LoopParallelE2ETests AgentNamingTests LaneProfileIntentTests LaneIntegratorRaceTests LaneRefsProfileTests LoopParallelBudgetTests LaneSweepScopeTests LoopLaneNitsTests LaneCreateSerialTests LaneIntegratorWaitTests LaneHardeningTests LoopNotifyTests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
+        LoopLaneLifecycleTests LoopParallelE2ETests AgentNamingTests LaneProfileIntentTests LaneIntegratorRaceTests LaneRefsProfileTests LoopParallelBudgetTests LaneSweepScopeTests LoopLaneNitsTests LaneCreateSerialTests LaneIntegratorWaitTests LaneHardeningTests LoopNotifyTests LoopNoticePolicyTests StopHookThrottleTests UsageLimitDetectionTests TokenUsageTests ContextAdviceTests LoopModelDefaultTests WorkArchiveTests AskSubmitRetryTests AskTests WorkCommandTests CommandsTests WorkPanelTests)
 filters=(); for s in "${suites[@]}"; do filters+=(--filter "$s"); done
 need() { test -f "$1" || { echo "falta $1" >&2; exit 1; }; }
 D=Tests/CollieDaemonKitTests
-case "${1:?M1.1..M3c.4}" in
+case "${1:?M1.1..M5.6}" in
   M1.1)  grep -q stopReason Sources/CollieCore/Work.swift; need $D/LoopStopReasonTests.swift ;;
   M1.2)  grep -q 'struct LoopEvent' Sources/CollieCore/Work.swift; need $D/LoopJournalTests.swift ;;
   M1.3)  need Sources/CollieDaemonKit/Work/AttemptDecision.swift; need $D/AttemptDecisionTests.swift ;;
@@ -47,6 +47,13 @@ case "${1:?M1.1..M3c.4}" in
   M3c.2) need $D/LaneIntegratorWaitTests.swift ;;
   M3c.3) need $D/LaneHardeningTests.swift ;;
   M3c.4) need $D/LoopNotifyTests.swift ;;
+  M5.1)  need $D/LoopNoticePolicyTests.swift ;;
+  M5.2)  need $D/StopHookThrottleTests.swift ;;
+  M5.3)  need $D/UsageLimitDetectionTests.swift ;;
+  M5.4)  need $D/TokenUsageTests.swift ;;
+  M5.5)  need $D/ContextAdviceTests.swift ;;
+  M5.6)  need $D/LoopModelDefaultTests.swift ;;
+  T6.1)  need $D/WorkArchiveTests.swift ;;
   M3.8)  need Sources/CollieDaemonKit/Work/AgentNaming.swift; need $D/AgentNamingTests.swift ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;
 esac

@@ -102,3 +102,25 @@ import CollieCore
         #expect(r.window.firstResponder === t)
     }
 }
+
+@MainActor @Suite struct TerminalFullscreenHitProbe {
+    @Test(arguments: [0.5, 0.7, 1.0, 1.5]) func hit(zoom: Double) {
+        let canvas = CanvasState(); canvas.zoom = zoom
+        let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-fsh-\(UUID())")))
+        let id = UUID()
+        let v = TerminalNodeView(id: id, client: client, canvas: canvas, node: NodeController(id: id, client: client))
+        let w = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1600, height: 1000), styleMask: [.titled], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        w.contentView!.addSubview(v)
+        let s = CGSize(width: 640, height: 400)
+        v.place(CGRect(origin: CGPoint(x: 20, y: 20), size: CGSize(width: s.width * zoom, height: s.height * zoom)), canvasSize: s)
+        v.setInteractive(true); v.layoutSubtreeIfNeeded()
+        var line = ""
+        for x in stride(from: 20.0, to: 640, by: 60) {
+            let at = v.convert(NSPoint(x: x, y: 16), to: nil)
+            line += " \(Int(x)):\(w.contentView!.hitTest(at).map { "\(type(of: $0))".prefix(12) } ?? "nil")"
+        }
+        print("PROBE5 zoom=\(zoom)\(line)")
+        v.unmount(); w.close()
+    }
+}

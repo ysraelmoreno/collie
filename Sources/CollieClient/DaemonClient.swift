@@ -237,7 +237,7 @@ public enum ConnectionState: Sendable, Equatable { case connected, disconnected(
         case .appCardRemoved(let id): appCards.removeAll { $0.id == id }
         case .remotePairing(let r): remotePairing = r
         case .remoteReveal(let t, let a, _): onRemoteReveal?(t, a)
-        case .work(_, let paddock): workFeed.workChanged(paddock: paddock)
+        case .work(let id, let paddock): workFeed.workChanged(paddock: paddock, work: id)
         }
     }
     private func setPlugins(_ ms: [PluginManifest]) { guard ms != plugins else { return }; plugins = ms; PluginManifest.register(ms) }   // unchanged: the registry stays

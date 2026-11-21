@@ -178,9 +178,9 @@ private let withSmoke = """
     @Test func cardLimitCountsTheBuiltCheck() {
         // the card's 1500 characters see the check the area became, not the area's name
         let w = Work(title: "W", terminalId: UUID())
-        let long = String(repeating: "x", count: 1400)
+        let long = String(repeating: "x", count: 1200)
         #expect(CommandRouter.loopCardText(w, [WorkTask(id: "a", title: "A", check: long)], WorkLoopState(max: 3), paddock: "p") != nil)
-        #expect(CommandRouter.loopCardText(w, [WorkTask(id: "a", title: "A", check: long + String(repeating: "y", count: 200))],
+        #expect(CommandRouter.loopCardText(w, [WorkTask(id: "a", title: "A", check: long + String(repeating: "y", count: 400))],
                                            WorkLoopState(max: 3), paddock: "p") == nil)
     }
 }

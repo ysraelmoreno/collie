@@ -144,7 +144,8 @@ import CollieCore
         host.layoutSubtreeIfNeeded()
         let at = host.convert(NSPoint(x: x, y: 16), to: nil)
         for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            w.sendEvent(NSEvent.mouseEvent(with: t, location: at, modifierFlags: [], timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+            let e = NSEvent.mouseEvent(with: t, location: at, modifierFlags: [], timestamp: 0, windowNumber: w.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            if t == .leftMouseDown { host.mouseDown(with: e) } else { host.mouseUp(with: e) }
         }
         print("PROBE6 zoom=\(zoom) x=\(x) key=\(w.isKeyWindow) \(log) hit=\(String(describing: w.contentView!.hitTest(at).map { type(of: $0) }))")
         w.close()

@@ -234,7 +234,8 @@ private func runLoop(gate: String, starter: String? = nil, disturb: @escaping @S
         defer { try? FileManager.default.removeItem(at: repo) }
         #expect(w.tasks.first?.state == .done)
         #expect(w.loop?.stopReason?.code != .dirtyTree, "\(String(describing: w.loop?.stopReason))")
-        #expect(read("report.txt", in: repo) == "report\n", "never removed")
+        // M3d.3: the gate's own file, unchanged, goes with the loop (it no longer blocks a later lane that adds it)
+        #expect(read("report.txt", in: repo) == nil, "the gate's, removed at the loop's end")
         let note = w.notes.map(\.text).joined(separator: "\n")
         #expect(note.contains("report.txt") && note.contains("não rastreados"), "\(note)")
     }

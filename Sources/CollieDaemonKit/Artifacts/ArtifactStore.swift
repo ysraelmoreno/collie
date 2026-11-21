@@ -203,6 +203,42 @@ actor ArtifactStore {
         return a
     }
 
+    /// M7.1, the app's history detail: `page` kept as the one artifact from `origin`, its page **replaced** in place
+    /// (`<id>/source.html`, renamed over) instead of a new `r<N>` version; older `r<N>` folders of it are removed.
+    /// The record gets `paddockId` and `inFolder` (the folder appears with it) every time.
+    func replaceAgentPage(page: Data, title: String, paddockId: UUID?, by: String, inFolder: String, origin: String) async throws -> Artifact {
+        guard let known = try await continued(origin: origin, byId: nil) else {
+            return try await addAgent(page: page, title: title, paddockId: paddockId, by: by, inFolder: inFolder, origin: origin)
+        }
+        let folder = dir.appendingPathComponent(Self.name(known.id))
+        try await onIO {
+            try Self.mkdir(folder)
+            let tmp = folder.appendingPathComponent(".source-\(UUID().uuidString).html"), dst = folder.appendingPathComponent("source.html")
+            guard FileManager.default.createFile(atPath: tmp.path, contents: page, attributes: [.posixPermissions: 0o444]) else {
+                throw ProtocolError(code: .internal, message: "artifacts: cannot write \(tmp.path)")
+            }
+            guard rename(tmp.path, dst.path) == 0 else {
+                try? FileManager.default.removeItem(at: tmp)
+                throw ProtocolError(code: .internal, message: "artifacts: cannot replace \(dst.path)")
+            }
+            for n in (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [] where n.wholeMatch(of: /r[0-9]+/) != nil {
+                Self.purge(folder.appendingPathComponent(n))   // versions kept before M7.1
+            }
+        }
+        var a = known
+        a.title = title; a.paddockId = paddockId; a.by = by; a.at = Date(); a.inFolder = inFolder
+        a.folder = Self.name(known.id); a.source = "\(a.folder)/source.html"; a.warnings = []
+        let made = a
+        try await edit { list, fl in
+            guard !removed.contains(made.id), let i = list.firstIndex(where: { $0.id == made.id }) else {
+                throw ProtocolError(code: .notFound, message: "the artifact was removed meanwhile")
+            }
+            list[i] = made
+            list[i].inFolder = ArtifactFolder.canonical(inFolder, known: Self.known(list, fl))
+        }
+        return try await get(made.id)
+    }
+
     /// The folder `root` kept as a new agent artifact (`<id>/source/`), `page` (inside it) its page. Only regular files of
     /// the allowed kinds are copied (never a link; hidden names skipped), up to `maxFiles` and `maxBytes`: past them
     /// (or `page` outside `root`, or not copied) nothing is created. Read and written on the io queue.

@@ -39,7 +39,8 @@ import CollieCore
         for u in urls where u.pathExtension == "md" { out[u.lastPathComponent] = try Data(contentsOf: u) }
         return out
     }
-    private let prompt = "escrita worktree derruba tentativa laço commit compilação"
+    /// Only terms every fixture has: a term one memory alone has dominates bm25 and the relative cut drops the rest.
+    private let prompt = "worktree tentativa laço"
 
     @Test func fiveOfOneSubjectAndTwoOthersInjectOnePlusTwo() async throws {
         let f = fixture()
@@ -76,13 +77,13 @@ import CollieCore
     }
 
     @Test func withoutEmbedderTitleTermsGroupDifferentSubjects() async throws {
-        let a = MemoryRecord(kind: .pitfall, subject: "um", title: "Escrita na worktree derruba a tentativa", body: "x")
-        let b = MemoryRecord(kind: .pitfall, subject: "dois", title: "Escrita worktree derruba tentativa laço", body: "y")
-        let c = MemoryRecord(kind: .pitfall, subject: "três", title: "Laço sem commit perde a tentativa", body: "z")
+        let a = MemoryRecord(kind: .pitfall, subject: "um", title: "Escrita na worktree derruba a tentativa", body: "worktree tentativa")
+        let b = MemoryRecord(kind: .pitfall, subject: "dois", title: "Escrita worktree derruba tentativa laço", body: "worktree tentativa")
+        let c = MemoryRecord(kind: .pitfall, subject: "três", title: "Laço sem commit perde a tentativa", body: "worktree tentativa")
         #expect(InjectionDedup.near(a, b) && !InjectionDedup.near(a, c))
         let (mem, root, dir) = try await service([a, b, c])
         defer { try? FileManager.default.removeItem(at: root) }
-        let text = await mem.relevant(for: UUID(), cwd: dir, prompt: "escrita worktree derruba tentativa laço commit", limit: 4096, max: 5)
+        let text = await mem.relevant(for: UUID(), cwd: dir, prompt: "worktree tentativa", limit: 4096, max: 5)
         #expect(count(text, [a, b]) == 1 && text.contains(c.title), "\(text)")
     }
 

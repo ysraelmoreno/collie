@@ -261,7 +261,29 @@ extension CommandRouter {
 
         case "work.task.add":
             let t = try target(), title = try text("title")
-            let check = str(r, "check") == nil ? nil : try text("check")
+            var check = str(r, "check") == nil ? nil : try text("check")
+            // M13.2: --area builds the check from the project's collie-work.json; the task keeps the built command
+            let areas = try strings("area")
+            if let areas {
+                guard check == nil else { throw invalid("--area e --check não andam juntos: --area monta o check a partir do collie-work.json; use um ou outro") }
+                if let empty = areas.firstIndex(where: \.isEmpty) { throw invalid("--area: o nome #\(empty + 1) está vazio") }
+                let root = ProjectRoot.resolve(cwd: t.cwd, paddock: ws.paddocks.first { $0.id == t.paddockId })
+                let built: String
+                switch WorkConfigFile.config(root: root) {
+                case .failure(let e): throw invalid("--area: " + e.message)
+                case .success(nil):
+                    throw invalid("--area precisa de um \(ProjectWorkConfig.fileName) na raiz do projeto (\(RerailText.clean(root.path, max: 300))); não há nenhum")
+                case .success(let c?):
+                    switch c.composeCheck(areas: areas) {
+                    case .failure(let e): throw invalid("--area: " + RerailText.clean(e.message, max: 1500))
+                    case .success(let s): built = s
+                    }
+                }
+                guard built.count <= Self.maxWorkText else {
+                    throw invalid("o check montado por --area tem \(built.count) caracteres; o limite de um check é \(Self.maxWorkText)")
+                }
+                check = built
+            }
             let evidence = str(r, "evidence")
             if let evidence, let why = EvidenceFiles.refusal(evidence) { throw invalid("--evidence \(why)") }
             var spec: String?
@@ -284,7 +306,10 @@ extension CommandRouter {
             let w = try await implicitWork(t, now: now)
             let task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope)
             try await work.update(w.id) { $0.tasks.append(task) }
-            return try isoJSON(task)
+            guard let areas, let check, case .object(var o) = try isoJSON(task) else { return try isoJSON(task) }
+            o["output"] = .string("Tarefa \"\(RerailText.clean(title))\" [\(id)] adicionada; check montado pelas áreas "
+                                  + "\(RerailText.clean(areas.joined(separator: ", "))): \(RerailText.clean(check, max: Self.maxWorkText + 10))")
+            return .object(o)
 
         case "work.task.done", "work.task.defer", "work.task.drop", "work.task.reopen":
             let t = try target()
@@ -483,6 +508,8 @@ extension CommandRouter {
 
         case "work.run": return try await workRun(r, caller: caller, starter: try target())
         case "work.stop": return try await workStop(try target())
+
+        case "work.config": return try workConfig(try target())   // M13.1: read only, runs nothing
 
         case "work.clear-history":   // the one way anything is deleted: the user's alone
             guard caller == nil else { throw ProtocolError(code: .unauthorized, message: "'work.clear-history' is admin-only") }

@@ -457,6 +457,12 @@ actor WorkLoop {
             r.loose = Set(await untracked(dir))   // untracked before the check: the owner's (`keep`) and the agent's
             return .measured(.init(committed: committed, dirty: dirty, judged: judged))
         case .runCheck:
+            // M13.3: an attempt that changed collie-work.json (committed or left in the tree) is not judged: the file
+            // picks the loop's gate and pre-check, so the check does not run and the attempt fails, discarded as any other
+            if let why = await configTampered(spec: task.spec, before: before, keep: r.keep, dir) {
+                r.output = ""; r.checkOutput = ""
+                return .checkDone(status: nil, broken: why)
+            }
             do {
                 let budgeted = Duration.seconds(await left(id, r.loop, since: r.started))
                 let res = try await host.check(task.check ?? "false", in: dir, timeout: Swift.min(checkTimeout, budgeted))
@@ -769,11 +775,7 @@ actor WorkLoop {
     // ponytail: substring match on the command text, no shell parsing; a script the gate reaches indirectly
     // (sourced by another script, a directory argument) is not seen. Parse the command if that gap is ever used.
     private func tampered(_ gate: String, spec: String?, before: String, judged: String, _ dir: URL) async -> String? {
-        var named = ""   // the spec's text at `before`; empty: no spec, outside the repo or not committed there
-        if let spec {
-            let rel = spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
-            if !rel.hasPrefix("/"), !rel.contains(".."), let r = try? await host.git(["show", "\(before):\(rel)"], in: dir), r.status == 0 { named = r.stdout }
-        }
+        let named = await specText(spec, at: before, dir)
         // M7.2 (A5): `-z`, read untrimmed: a name with a newline or a space at an end is that name
         guard let d = try? await host.git(["diff", "--name-only", "-z", "--no-renames", before, judged], in: dir), d.status == 0 else {
             return "gate did not run (could not list what the attempt changed)"
@@ -784,6 +786,31 @@ actor WorkLoop {
             }
         }
         return nil
+    }
+
+    /// The spec's text at `before`; empty: no spec, outside the repo or not committed there.
+    private func specText(_ spec: String?, at before: String, _ dir: URL) async -> String {
+        guard let spec else { return "" }
+        let rel = spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
+        guard !rel.hasPrefix("/"), !rel.contains(".."), let r = try? await host.git(["show", "\(before):\(rel)"], in: dir), r.status == 0 else { return "" }
+        return r.stdout
+    }
+
+    static let configTampered = "alterou \(ProjectWorkConfig.fileName)"
+
+    /// M13.3: the attempt changed `collie-work.json` from `before` to what it left (its commits and its tree: edited,
+    /// deleted, or created untracked; an untracked one that was there before the attempt, `keep`, is the owner's).
+    /// A spec that names the file at `before` lets the task change it, as `tampered` does for the gate's scripts. A git
+    /// that cannot answer fails the attempt too: the check never runs on a tree it could not look at.
+    private func configTampered(spec: String?, before: String, keep: [String], _ dir: URL) async -> String? {
+        let name = ProjectWorkConfig.fileName
+        guard !(await specText(spec, at: before, dir)).contains(name) else { return nil }
+        guard let d = try? await host.git(["--literal-pathspecs", "diff", "--name-only", "-z", "--no-renames", before, "--", name], in: dir), d.status == 0,
+              let u = try? await host.git(["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", "--", name], in: dir), u.status == 0 else {
+            return Self.configTampered + " (não foi possível ver o que a tentativa mudou)"
+        }
+        let changed = !d.stdout.isEmpty || u.stdout.split(separator: "\0").contains { !keep.contains(String($0)) }
+        return changed ? Self.configTampered : nil
     }
 
     /// After the check or the gate ran: `moved` when it moved HEAD off `judged` (a commit, a branch switch). With `reset`,

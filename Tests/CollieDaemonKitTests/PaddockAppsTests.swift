@@ -515,16 +515,23 @@ private func freePort() -> UInt16 {
     return UInt16(bigEndian: a.sin_port)
 }
 
-/// A service for the daemon to run: /healthz answers 200, anything else its path as JSON.
+/// A service for the daemon to run: /healthz answers 200, anything else its path as JSON. Its bind skips
+/// HTTPServer's `socket.getfqdn` (a reverse DNS lookup that a CI runner can stall past the 30 s start wait), and
+/// "listening" is printed once the socket is bound, not before.
 private let serve = #"""
-import http.server, json, sys
+import http.server, json, socketserver, sys
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         b = json.dumps({"path": self.path}).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
     def log_message(self, *a): pass
+class S(http.server.HTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+s = S(("127.0.0.1", int(sys.argv[1])), H)
 print("listening", flush=True)
-http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+s.serve_forever()
 """#
 
 private func alive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }

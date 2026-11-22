@@ -61,13 +61,21 @@ pids=()
 for ((i = 0; i < SHARDS; i++)); do
     [ -s "$OUT/suites-$i.txt" ] || continue
     args=()
-    while IFS= read -r s; do args+=(--filter "^${s//./\\.}/"); done < "$OUT/suites-$i.txt"
+    # a suite filters as "^Mod\.Suite/"; a @Test outside any suite is its own group ("Mod.f()", no "/"), filtered by
+    # its whole id with the regex characters escaped: "^Mod\.f()/" would match nothing and drop it from every shard
+    while IFS= read -r s; do
+        e=$(sed 's/[][\.*^$()+?{}|]/\\&/g' <<< "$s")
+        [[ "$s" == *"("* ]] && args+=(--filter "^$e") || args+=(--filter "^$e/")
+    done < "$OUT/suites-$i.txt"
     for p in ${patterns[@]+"${patterns[@]}"}; do args+=(--skip "$p"); done
     rm -f "$OUT/exit-$i" "$OUT/exit-$i.tmp"
     # --ignore-lock: the shards only read the built .build (--skip-build); without it they would wait for each other
     # ponytail: --no-parallel stays until the hang (P2/P3 of aval-suite-report.md) is found; then try parallel shards
     ( start=$SECONDS; set +e; set -m
-      ( "$SWIFT" test --skip-build --ignore-lock --disable-sandbox --no-parallel "${args[@]}" > "$OUT/shard-$i.log" 2>&1
+      # the event stream (one JSON line per event) survives a KILL; the console log is block-buffered to the file and
+      # lost its last 4 KB in run 44969188276, so on a timeout the test named comes from the stream
+      ( "$SWIFT" test --skip-build --ignore-lock --disable-sandbox --no-parallel "${args[@]}" \
+            --event-stream-output-path "$OUT/shard-$i.jsonl" --event-stream-version 0 > "$OUT/shard-$i.log" 2>&1
         echo $? > "$OUT/exit-$i.tmp"; mv "$OUT/exit-$i.tmp" "$OUT/exit-$i" ) &
       g=$!
       while [ ! -e "$OUT/exit-$i" ] && [ $((SECONDS - start)) -lt "$TO" ]; do sleep 0.2; done
@@ -90,7 +98,10 @@ for ((i = 0; i < SHARDS; i++)); do
     got=$(sed -E 's/^(✔|✘) Test run with ([0-9]+) .*/\2/' <<< "$last")
     why=()
     if [ "$timedout" = 1 ]; then
-        started=$(grep -E '◇ (Suite|Test) .* started|Test (Case|Suite) .* started' "$log" | grep -v '◇ Test run started' | tail -1 || true)
+        started=$(grep '"kind":"testStarted"' "$OUT/shard-$i.jsonl" 2>/dev/null | tail -1 \
+            | sed -nE 's/.*"testID":"([^"]*)".*/\1/p' | sed 's#\\/#/#g' || true)
+        [ -z "$started" ] || started="$started (event stream)"
+        [ -n "$started" ] || started=$(grep -E '◇ (Suite|Test) .* started|Test (Case|Suite) .* started' "$log" | grep -v '◇ Test run started' | tail -1 || true)
         [ -n "$started" ] || started=$(grep -E 'started' "$log" | tail -1 || true)
         why+=("timeout after ${TO}s (CI_SHARD_TIMEOUT); last started: ${started:-nothing}")
     else

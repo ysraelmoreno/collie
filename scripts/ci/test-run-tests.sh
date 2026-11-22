@@ -13,6 +13,8 @@ cat > "$T/swift" <<'EOF'
 echo "$*" >> "$FAKE/args"
 f=$(sed -E 's/.*--filter \^([^ /]*)\/.*/\1/; s/\\//g' <<< "$*")
 cat "$FAKE/out-$f"
+ev=$(sed -nE 's/.*--event-stream-output-path ([^ ]*).*/\1/p' <<< "$*")
+[ -n "$ev" ] && [ -e "$FAKE/events-$f" ] && cp "$FAKE/events-$f" "$ev"
 # a hang: leaves a child in its group and an adb in a session of its own (as adb start-server does), then never ends
 if [ -e "$FAKE/hang-$f" ]; then
     sleep 300 & echo $! > "$FAKE/child-pid"
@@ -47,6 +49,13 @@ grep -q "last 40 lines" "$T/stdout" || fail "prints the log tail"
 sleep 0.5; ! alive child-pid || fail "child of the hung shard still alive"
 ! alive adb-pid || fail "orphan adb still alive"
 grep -q -- '--no-parallel' "$T/args" || fail "shards run serially"
+grep -q -- '--event-stream-output-path [^ ]*/shard-0.jsonl' "$T/args" || fail "each shard writes an event stream"
+
+# the console log lost its last block (buffered, then KILL): the test named on a timeout comes from the event stream
+printf '{"kind":"testStarted","payload":{"testID":"A.S1\\/a()\\/x.swift:1:1"}}\n{"kind":"testStarted","payload":{"testID":"A.S1\\/c()\\/x.swift:9:1"}}\n' > "$T/events-A.S1"
+CI_SHARD_TIMEOUT=2 run; rm -f "$T/events-A.S1" "$T/hang-A.S1"
+[ "$rc" = 1 ] || fail "a hung shard must fail"
+grep -qF "last started: A.S1/c()/x.swift:9:1 (event stream)" "$T/err" || fail "names the test from the event stream: $(cat "$T/err")"
 grep -qF -- '--filter ^A\.S1/' "$T/args" && grep -qF -- '--filter ^A\.S2/' "$T/args" || fail "suites filtered anchored: $(cat "$T/args")"
 grep -qF -- '--skip ^A\.S2/e\(\)' "$T/args" || fail "skip pattern passed on"
 [ "$(wc -l < "$T/args")" -eq 2 ] || fail "one process per shard"
@@ -83,6 +92,12 @@ printf '^A\\.S2/e\\(\\)$  # anchored\n' > "$T/skip"
 run; [ "$rc" = 1 ] || fail "trailing \$ must fail"; grep -q 'no trailing' "$T/err" || fail "says no trailing \$"
 printf '^A\\.S9/x\\(\\)  # gone\n' > "$T/skip"
 run; [ "$rc" = 1 ] || fail "stale pattern must fail"; grep -q "matches no test" "$T/err" || fail "says stale"
+
+# a @Test outside any suite (id "A.f()", no "/") runs: filtered by its escaped id, not "^A\.f()/" (matches nothing)
+printf '' > "$T/skip"; printf 'A.S1/a()\nA.S1/b()\nA.S1/c()\nA.f()\n' > "$T/list"; ok; pass 4 > "$T/out-A.S1"
+SHARDS=1 run; [ "$rc" = 0 ] || fail "a free test function must run: $(cat "$T/err")"
+grep -qF -- '--filter ^A\.f\(\)' "$T/args" || fail "free function filtered by its escaped id: $(cat "$T/args")"
+! grep -qF -- 'A\.f\(\)/' "$T/args" || fail "no trailing / on a free function: $(cat "$T/args")"
 
 # an empty list (the build or discovery broke) fails
 printf '' > "$T/skip"; : > "$T/list"

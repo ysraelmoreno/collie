@@ -134,8 +134,53 @@ actor DeviceService {
         guard let panel, case .string(let serial)? = panel.state["serial"] else {
             throw ProtocolError(code: .invalidArgs, message: "'\(command)' needs a device panel")
         }
-        if panel.state["platform"] == .string("ios") { return try await runIOS(command, panel: panel, udid: serial, args: args, cwd: cwd) }
-        return try await runAndroid(command, panel: panel, serial: serial, args: args, cwd: cwd)
+        func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
+            if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
+            return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
+        }
+        let settle = try Self.then(args)   // checked before the action: a bad --then must not tap
+        var args = args
+        if command == "device.tap", let pick = try Self.tapPick(args) {
+            _ = try await act("device.ui", [:])   // always a fresh dump: cached refs may be stale
+            args["ref"] = .string(try UITree.target(refs[panel.id] ?? [], text: pick.text, id: pick.id, nth: pick.nth).ref)
+        }
+        let r = try await act(command, args)
+        guard let settle, Self.thenCommands.contains(command) else { return r }
+        // ponytail: fixed settle, may catch an animation midway; the agent can run device.ui again
+        await Self.nap(.milliseconds(settle))
+        let ui = try await act("device.ui", [:])   // the same path as device.ui: refs updated
+        guard case .object(var o) = r else { return r }
+        o["ui"] = ui
+        return .object(o)
+    }
+
+    /// `device.tap --text/--id` (with `--nth`): what to look for; nil when tapping by x y or --ref. Exactly one of
+    /// x y, --ref, --text/--id: otherwise invalidArgs.
+    static func tapPick(_ a: [String: JSONValue]) throws(ProtocolError) -> (text: String?, id: String?, nth: Int?)? {
+        func str(_ k: String) -> String? { if case .string(let s)? = a[k], !s.isEmpty { s } else { nil } }
+        func has(_ k: String) -> Bool { a[k] != nil && a[k] != .null }
+        let text = str("text"), id = str("id")
+        let ways = [has("x") || has("y"), has("ref"), text != nil || id != nil].filter { $0 }.count
+        guard ways == 1 else {
+            throw ProtocolError(code: .invalidArgs, message: "device.tap needs exactly one of: x y, --ref, --text/--id")
+        }
+        guard text != nil || id != nil else { return nil }
+        return (text, id, try int(a, "nth", 1...10_000))
+    }
+
+    /// A plain timed wait (cancellation ends it early), for the waits that are about time, not an event.
+    static func nap(_ d: Duration) async { try? await Task.sleep(for: d) }
+
+    /// The actions that take `--then ui` (and `--settle`).
+    static let thenCommands: Set<String> = ["device.tap", "device.swipe", "device.text", "device.key", "device.launch"]
+
+    /// `--then ui`: the settle wait in ms (default 400, at most 3000); no `--then`: nil. Any value but `ui`: invalidArgs.
+    static func then(_ a: [String: JSONValue]) throws(ProtocolError) -> Int? {
+        switch a["then"] {
+        case nil, .null?: return nil
+        case .string("ui")?: return try int(a, "settle", 0...3000) ?? 400
+        default: throw ProtocolError(code: .invalidArgs, message: "--then only takes 'ui'")
+        }
     }
 
     /// Checked after every await that precedes a write: a panel closed meanwhile gets nothing written for it.
@@ -346,7 +391,7 @@ actor DeviceService {
         crash[serial]?.lineGen += 1
         let gen = crash[serial]?.lineGen
         Task {   // a Java crash ends with the next unrelated line; when none comes, 300 ms of quiet ends it
-            try? await Task.sleep(for: .milliseconds(300))
+            await Self.nap(.milliseconds(300))
             await self.crashQuiet(serial, id, gen)
         }
         await emitCrashes(serial, events)

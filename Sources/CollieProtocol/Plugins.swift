@@ -165,6 +165,11 @@ extension PluginRegistry {
     private static func coord(_ n: String, _ positional: Bool = true, required: Bool = false) -> ParamSpec {
         ParamSpec(n, .int, positional: positional, required: required, help: "Android pixels or iOS points, 0-100000")
     }
+    /// `--then ui` on the actions: after it, wait `settle` ms and return the device.ui tree too (one call per step).
+    private static let then = [
+        ParamSpec("then", .string, help: "ui: also return the UI tree after the action ({ui:{tree,truncated,nodes,total}}, refs updated)"),
+        ParamSpec("settle", .int, help: "With --then ui: ms to wait before reading the tree (0-3000, default 400)"),
+    ]
 
     /// An Android device or emulator through adb, or an iOS Simulator through simctl + AXe; the daemon runs these
     /// commands (no app round trip).
@@ -175,23 +180,27 @@ extension PluginRegistry {
             dcmd("list", "Android devices and iOS Simulators [{serial,state,model,product,platform,panels}]; Android AVDs that are off: state off, serial avd:<name> (panel open boots it) (ignores --panel)", timeout: 15, panelFree: true),
             dcmd("lite.create", "Create the collie-lite Android emulator (admin only; writes ~/.android/avd, needs the Android SDK cmdline-tools and a system image); returns {name,path,image,created}", timeout: 90, panelFree: true, exposedToMCP: false),
             dcmd("lite.remove", "Delete the collie-lite Android emulator (admin only; removes it from ~/.android/avd); returns {}", timeout: 90, panelFree: true, exposedToMCP: false),
-            dcmd("screenshot", "Screenshot to a PNG file; returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", [out], timeout: 30),
-            dcmd("ui", "Compact UI tree with element refs (e1, e2, ...); returns {tree,truncated}", timeout: 30),
-            dcmd("tap", "Tap at x y (Android (pixels) or iOS Simulator (points)), or on an element from device.ui",
-                 [coord("x"), coord("y"), ParamSpec("ref", .string, help: "Element ref from device.ui")], timeout: 15),
+            dcmd("screenshot", "Screenshot to a PNG file, for you to look at, not to parse (use device.ui to find elements); returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", [out], timeout: 30),
+            dcmd("ui", "UI tree with element refs: only labelled or clickable nodes (refs keep the full tree's numbering, so gaps); returns {tree,truncated,nodes,total}. Read this tree to find elements and tap --ref them, not the screenshot PNG",
+                 [ParamSpec("all", .flag, help: "Every node, as before (to debug); same refs")], timeout: 30),
+            dcmd("tap", "Tap at x y (Android (pixels) or iOS Simulator (points)), on an element from device.ui (--ref), or on the element with a label or id (--text/--id: a fresh UI dump, no device.ui needed)",
+                 [coord("x"), coord("y"), ParamSpec("ref", .string, help: "Element ref from device.ui"),
+                  ParamSpec("text", .string, help: "Tap the element whose text or desc is this (any case; equal first, then containing); a non-clickable match taps its clickable ancestor"),
+                  ParamSpec("id", .string, help: "Tap the element with this exact resource id"),
+                  ParamSpec("nth", .int, help: "With --text/--id and several matches: take the nth (from 1)")] + then, timeout: 30),
             dcmd("swipe", "Swipe from x1 y1 to x2 y2 (Android (pixels) or iOS Simulator (points))",
                  [coord("x1", required: true), coord("y1", required: true), coord("x2", required: true), coord("y2", required: true),
-                  ParamSpec("ms", .int, help: "Duration in ms (1-10000, default 300)")], timeout: 20),
-            dcmd("text", "Type ASCII text into the focused field", [ParamSpec("text", .rest, positional: true, required: true, help: "Text")], timeout: 15),
+                  ParamSpec("ms", .int, help: "Duration in ms (1-10000, default 300)")] + then, timeout: 20),
+            dcmd("text", "Type ASCII text into the focused field", [ParamSpec("text", .rest, positional: true, required: true, help: "Text")] + then, timeout: 15),
             dcmd("key", "Press a key (Android, or iOS Simulator: Enter, Escape, Backspace, Tab, Space, arrows, Home, Lock or a HID usage)",
-                 [ParamSpec("key", .string, positional: true, required: true, help: "Enter, Back, Home, ... or a keycode (iOS: HID usage)")], timeout: 15),
+                 [ParamSpec("key", .string, positional: true, required: true, help: "Enter, Back, Home, ... or a keycode (iOS: HID usage)")] + then, timeout: 15),
             dcmd("logcat", "Recent log lines",
                  [ParamSpec("lines", .int, help: "Lines (1-2000, default 200)"), ParamSpec("grep", .string, help: "Keep lines containing this text")], timeout: 20),
             dcmd("install", "Install an app: a .apk on Android, a .app bundle on the iOS Simulator (path relative to the current directory)",
                  [ParamSpec("path", .string, positional: true, required: true, help: "Path to a .apk (Android) or .app (iOS Simulator)")], timeout: 300),
             dcmd("launch", "Launch an app",
                  [ParamSpec("package", .string, positional: true, required: true, help: "Package id (Android) or bundle id (iOS)"),
-                  ParamSpec("activity", .string, help: "Activity (default: the launcher one; Android only)")], timeout: 30),
+                  ParamSpec("activity", .string, help: "Activity (default: the launcher one; Android only)")] + then, timeout: 30),
         ],
         events: ["device.connected", "device.disconnected", "device.crash", "device.app_launched"],
         runsInDaemon: true)

@@ -106,6 +106,24 @@ import Foundation
         #expect(try ArgvParser.parse(["events", "--since", "4"]).args == ["since": .number(4)])
     }
 
+    @Test func deviceActionsTakeThenAndSettle() throws {
+        let t = try ArgvParser.parse(["device", "tap", "1", "2", "--then", "ui", "--settle", "100"])
+        #expect(t.command == "device.tap" && t.args == ["x": .string("1"), "y": .string("2"), "then": .string("ui"), "settle": .number(100)])
+        #expect(try ArgvParser.parse(["device", "text", "hi", "there", "--then", "ui"]).args == ["text": .string("hi there"), "then": .string("ui")])
+        for c in ["tap", "swipe", "text", "key", "launch"] {
+            let names = Commands.spec("device.\(c)")?.params.map(\.name) ?? []
+            #expect(names.contains("then") && names.contains("settle"), "\(c)")
+        }
+        #expect(Commands.spec("device.ui")?.params.contains { $0.name == "then" } == false)
+    }
+
+    @Test func deviceTapTakesTextIdAndNth() throws {
+        let t = try ArgvParser.parse(["device", "tap", "--text", "Open Deals", "--nth", "2"])
+        #expect(t.command == "device.tap" && t.args == ["text": .string("Open Deals"), "nth": .number(2)])
+        let names = Commands.spec("device.tap")?.params.map(\.name) ?? []
+        #expect(["text", "id", "nth", "ref", "then"].allSatisfy(names.contains), "\(names)")
+    }
+
     @Test func rejectsBadDottedSubcommands() {
         for argv in [["panel"], ["panel", "bogus"], ["browser", "bogus"], ["browser"], ["panel", "close"]] {
             let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(argv) }

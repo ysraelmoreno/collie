@@ -33,7 +33,8 @@ public actor TerminalRegistry {
             } else if let sandbox {
                 spec.executable = "/usr/bin/sandbox-exec"; spec.arguments = ["-f", sandbox.path, launch.executable] + launch.arguments
             }
-            let p = try PTYProcess(spec: spec, scrollback: sb, writeStall: writeStall)
+            let stall = writeStall
+            let p = try Self.retryingTransientPTY { try PTYProcess(spec: spec, scrollback: sb, writeStall: stall) }
             do { try OrphanReaper.record(pid: p.pid, terminal: rec.id, in: runDir) } catch {
                 p.terminate()
                 throw ProtocolError(code: .internal, message: "cannot record terminal pid: \(error)")
@@ -43,6 +44,16 @@ public actor TerminalRegistry {
             p.onExit = { _ in OrphanReaper.forget(terminal: id, in: dir, ifPid: pid) }
             return p
         } catch { sb.closeSpill(deleting: true); throw error }
+    }
+    /// ENXIO/EAGAIN from the PTY layer means no pty slot was free at that instant (the kernel's ptmx table under
+    /// concurrent spawns: CI run 45059804734 failed a spawn with errno 6 while another shard churned PTYs); the slot
+    /// frees within milliseconds, so the spawn is retried instead of failing the terminal.
+    // ponytail: fixed 5 tries x 50 ms blocking the actor only on failure; make it async if spawns ever queue behind it
+    static func retryingTransientPTY<T>(tries: Int = 5, pause: useconds_t = 50_000, _ body: () throws -> T) throws -> T {
+        for _ in 1..<tries {
+            do { return try body() } catch PTYError.spawnFailed(let e) where e == ENXIO || e == EAGAIN { usleep(pause) }
+        }
+        return try body()
     }
     public func process(_ id: UUID) -> PTYProcess? { procs[id] }
     public func scrollback(_ id: UUID) -> ScrollbackBuffer? { buffers[id] }

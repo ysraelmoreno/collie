@@ -20,7 +20,7 @@ EOF
 case "${1:-}" in -h|--help) usage; exit 0 ;; "") usage >&2; exit 2 ;; esac
 SER="$1"; ROUNDS="${2:-6}"
 [[ "$ROUNDS" =~ ^[1-9][0-9]*$ ]] || { echo "rodadas inválidas: $ROUNDS" >&2; exit 2; }
-SVC="com.collie.helper/.HelperService"
+SVC="com.collie.helper/com.collie.helper.HelperService"   # the long form Android stores; the short form (.HelperService) is the same service
 PROBE="${PROBE:-python3 $(cd "$(dirname "$0")" && pwd)/helper-probe.py}"
 ADB="${ADB:-$(command -v adb || echo "$HOME/Library/Android/sdk/platform-tools/adb")}"
 [ -x "$ADB" ] || { echo "adb não encontrado (defina ADB ou ponha o adb no PATH)" >&2; exit 2; }
@@ -38,8 +38,8 @@ restore() {
 }
 trap restore EXIT; trap 'exit 130' INT TERM
 # Others: the original list without the helper (null/empty: none).
-OTHERS="$(tr ':' '\n' <<<"$ORIG" | grep -vx -e "$SVC" -e null -e '' | paste -sd: - || true)"
-off() { put enabled_accessibility_services "$OTHERS"; sleep 1; }
+OTHERS="$(tr ':' '\n' <<<"$ORIG" | grep -v -e '^com\.collie\.helper/' -e '^null$' -e '^$' | paste -sd: - || true)"
+off() { put enabled_accessibility_services "$OTHERS"; put accessibility_enabled 0; sleep 2; }   # accessibility_enabled 0 and 2 s: what reproduced the blindness by hand (1 s with it left on did not)
 on() { put enabled_accessibility_services "${OTHERS:+$OTHERS:}$SVC"; put accessibility_enabled 1; }
 PORT="$(a forward tcp:0 localabstract:collie-helper | tr -d '\r')"   # adb picks a free port and prints it
 

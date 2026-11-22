@@ -57,3 +57,8 @@ voltam ao sair, também em erro ou Ctrl-C) e mede os nós do `dump` com `helper-
 Rodar com o helper instalado e o aparelho na tela inicial: `Helpers/android-device/stress-toggle.sh emulator-5554 6`. Uma
 linha por rodada e o resumo (`A cega em N/6 rodadas · B mediana X ms`). B cega ou acima de 1 s é regressão: o daemon
 depende dela. Sem adb ou sem aparelho sai com 2. Teste sem aparelho (adb falso): `scripts/test-stress-toggle.sh`.
+
+Measured 2026-11-22 with `stress-toggle.sh emulator-5554 6` (emulator API 37, helper v3, installed daemon): A (one late probe, 3 s after enabling) blind
+in 6 of 6 rounds; B (probing every 300 ms from the moment of enabling) healthy in 14 to 26 ms in all 6. The first version of the script compared the
+short service name (`.HelperService`) with the long one Android stores, so it never took the helper out of the list and always read "healthy": a script
+check that cannot reach the device (the loop's) cannot catch that; run it by hand after changing it.

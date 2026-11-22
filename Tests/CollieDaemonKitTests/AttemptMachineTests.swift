@@ -48,9 +48,11 @@ private let gating: [Step] = checked() + [
 private struct Path: Sendable, CustomTestStringConvertible {
     let name: String
     var gate = true, n = 1
+    /// F2 R3: the review on, and the refusals in a row before this attempt.
+    var review = false, inRow = 0
     let steps: [Step]
     var testDescription: String { name }
-    var start: M.State { M.State(task: "a", n: n, tries: 3, hasGate: gate, before: "c0") }
+    var start: M.State { M.State(task: "a", n: n, tries: 3, hasGate: gate, before: "c0", reviewer: review, reviewRejectsInRow: inRow) }
 }
 
 private let happy = Path(name: "happy path: idle turn, check and gate pass", steps: [
@@ -181,16 +183,75 @@ private func limited(_ text: String) -> [M.Effect] {
     [.journal(.turnEnded, "limite de uso"), .dismiss, .journal(.agentDismissed, nil), .uncount, .stopLoop(.init(.usageLimit, detail: text))]
 }
 
-/// The happy path's state after each of its events (and before the first): every phase but `finished`.
-private func alongTheHappyPath() -> [M.State] {
-    var s = happy.start, all = [s]
-    for step in happy.steps.dropLast() { s = M.reduce(s, step.on).0; all.append(s) }
+/// F2 R3: through a gate that passed, the tree put back: with the review on, the personas judge.
+private let reviewing: [Step] = gating + [
+    Step(.gateDone(status: 0, broken: nil), .gating, [.journal(.gateFinished, "exit 0"), .awaitOthers]),
+    Step(.blocked(nil), .gating, [.settle(reset: true)]),
+    Step(.settled(moved: false, reset: true), .reviewing, [.journal(.treeReset, nil), .show(.review), .runReview]),
+]
+private let refusal = "revisor recusou: [testes] Tests/X.swift:3 sem teste (fix: escreva um)"
+private func refused(_ reason: String = refusal) -> M.Event { .reviewDone(.init(approved: false, reason: reason, notes: [])) }
+private let twice = "\(AttemptDecision.twiceRefused); \(refusal)"
+
+private let reviewed = Path(name: "review approves: its notes go to the attempt's note", review: true, steps: reviewing + [
+    Step(.reviewDone(.init(approved: true, reason: nil, notes: ["[testes] a nit"])), .deciding, verdict("passou", then: .decide)),
+    Step(.decided(.pass), .finished, [.markDone, .note("[loop a] revisão aprovou, com notas: [testes] a nit")]),
+])
+
+private let reviewPaths: [Path] = [
+    reviewed,
+    Path(name: "review, no gate: after the check alone; approved with no notes", gate: false, review: true, steps: checked() + [
+        Step(.settled(moved: false, reset: false), .reviewing, [.show(.review), .runReview]),
+        Step(.reviewDone(.init(approved: true, reason: nil, notes: [])), .deciding, verdict("passou", then: .decide)),
+        Step(.decided(.pass), .finished, [.markDone]),
+    ]),
+    Path(name: "review refuses with tries left: a failure as any other, retry", review: true, steps: reviewing + [
+        Step(refused(), .deciding, verdict(refusal, then: .awaitOthers)),
+        Step(.blocked(nil), .deciding, [.decide]),
+        Step(retry(refusal), .finished, retried(refusal)),
+    ]),
+    Path(name: "review refuses on the last try: deferred", n: 3, review: true, steps: reviewing + [
+        Step(refused(), .deciding, verdict(refusal, then: .awaitOthers)),
+        Step(.blocked(nil), .deciding, [.decide]),
+        Step(.decided(.defer(reason: refusal, discard: true)), .finished,
+             [.discard, .journal(.discarded, "a-3.patch"), .markOpenOrDeferred(reason: refusal, last: true)]),
+    ]),
+    Path(name: "review refuses twice in a row: deferred with tries left", review: true, inRow: 1, steps: reviewing + [
+        Step(refused(), .deciding, verdict(refusal, then: .awaitOthers)),
+        Step(.blocked(nil), .deciding, [.decide]),
+        Step(.decided(.defer(reason: twice, discard: true)), .finished,
+             [.discard, .journal(.discarded, "a-1.patch"), .markOpenOrDeferred(reason: twice, last: true)]),
+    ]),
+    Path(name: "review, blocked after a check that passed: reviewed, done, then the loop stops", gate: false, review: true, steps: Array(checked().dropLast()) + [
+        Step(.blocked("Rex"), .checking, [.settle(reset: false)]),
+        Step(.settled(moved: false, reset: false), .reviewing, [.show(.review), .runReview]),
+        Step(.reviewDone(.init(approved: true, reason: nil, notes: [])), .deciding, verdict("passou", then: .decide)),
+        Step(.decided(.pass), .finished, [.markDone, .note(WorkLoop.blockedNote("Rex")), .stopLoop(rex)]),
+    ]),
+    Path(name: "cancelled during the review: no verdict, not counted", review: true, steps: reviewing + [
+        Step(.cancelled, .finished, [.uncount, .stopLoop(.init(.cancelled))]),
+    ]),
+    Path(name: "work closed during the review", review: true, steps: reviewing + [
+        Step(.workClosed, .finished, [.reopen(job: "work closed"), .stopLoop(.init(.workGone))]),
+    ]),
+    Path(name: "starter gone during the review", review: true, steps: reviewing + [
+        Step(.starterGone, .finished, [.reopen(job: "starter gone"), .stopLoop(.init(.starterGone))]),
+    ]),
+]
+
+/// `path`'s state after each of its events but the last (and before the first).
+private func along(_ path: Path) -> [M.State] {
+    var s = path.start, all = [s]
+    for step in path.steps.dropLast() { s = M.reduce(s, step.on).0; all.append(s) }
     return all
 }
 
+/// The happy path's state after each of its events (and before the first): every phase but `finished` and `reviewing`.
+private func alongTheHappyPath() -> [M.State] { along(happy) }
+
 /// M1.4: the attempt's phases are a pure state machine (no host, git or time): (state, event) → (state, effects).
 @Suite struct AttemptMachineTests {
-    @Test(arguments: paths) fileprivate func transitions(_ path: Path) {
+    @Test(arguments: paths + reviewPaths) fileprivate func transitions(_ path: Path) {
         var s = path.start
         for (i, step) in path.steps.enumerated() {
             let (next, fx) = M.reduce(s, step.on)
@@ -227,7 +288,8 @@ private func alongTheHappyPath() -> [M.State] {
 
     /// Cancelled, work closed, starter gone: in each phase, out with no verdict, nothing discarded, no facts changed.
     @Test func leavesWithNoVerdictInEachPhase() {
-        let states = alongTheHappyPath()
+        // F2 R3: `reviewing` is only on the reviewed path
+        let states = alongTheHappyPath() + along(reviewed)
         #expect(Set(states.map(\.phase)) == Set(M.Phase.allCases).subtracting([.finished]))
         let ways: [(M.Event, [M.Effect])] = [
             (.cancelled, [.uncount, .stopLoop(.init(.cancelled))]),
@@ -243,6 +305,39 @@ private func alongTheHappyPath() -> [M.State] {
                 #expect(next.phase == .finished && next.agent == nil && next.facts == s.facts, "\(s.phase), \(event)")
             }
         }
+    }
+
+    /// F2 R3: every phase is on a path: the happy one, or the reviewed one for `reviewing`.
+    @Test func everyPhaseIsReached() {
+        #expect(Set(along(happy).map(\.phase)) == Set(M.Phase.allCases).subtracting([.finished, .reviewing]))
+        #expect(Set(along(reviewed).map(\.phase)).contains(.reviewing))
+        #expect(M.Phase.allCases.count == 8)
+    }
+
+    /// F2 R3: with the review on, an attempt that fails before it is judged exactly as today (no review).
+    @Test(arguments: paths) fileprivate func aFailingAttemptIsNotReviewed(_ path: Path) {
+        guard !path.steps.contains(where: { $0.fx.contains(.journal(.verdict, "passou")) }) else { return }
+        var on = M.State(task: "a", n: path.n, tries: 3, hasGate: path.gate, before: "c0", reviewer: true), off = path.start
+        for step in path.steps {
+            let (a, fa) = M.reduce(on, step.on), (b, fb) = M.reduce(off, step.on)
+            #expect(fa == fb && a.phase == b.phase, "\(step.on)")
+            on = a; off = b
+        }
+    }
+
+    /// F2 R3: what `decide` makes of a refusal, by try and by refusals in a row; an approval with notes passes.
+    @Test func whatTheDecisionMakesOfTheReview() {
+        func decision(n: Int, inRow: Int, _ last: M.Event) -> AttemptDecision.Outcome {
+            var s = M.State(task: "a", n: n, tries: 3, hasGate: true, before: "c0", reviewer: true, reviewRejectsInRow: inRow)
+            for step in reviewing { s = M.reduce(s, step.on).0 }
+            s = M.reduce(s, last).0
+            #expect(s.phase == .deciding)
+            return AttemptDecision.decide(s.facts)
+        }
+        #expect(decision(n: 1, inRow: 0, refused()) == retry(refusal).decidedOutcome)
+        #expect(decision(n: 3, inRow: 0, refused()) == .defer(reason: refusal, discard: true))
+        #expect(decision(n: 1, inRow: 1, refused()) == .defer(reason: twice, discard: true))
+        #expect(decision(n: 1, inRow: 1, .reviewDone(.init(approved: true, reason: nil, notes: ["x"]))) == .pass)
     }
 
     @Test func finishedTakesNoEvent() {
@@ -266,4 +361,8 @@ private func alongTheHappyPath() -> [M.State] {
             }
         }
     }
+}
+
+private extension M.Event {
+    var decidedOutcome: AttemptDecision.Outcome? { if case .decided(let o) = self { o } else { nil } }
 }

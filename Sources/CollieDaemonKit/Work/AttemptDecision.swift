@@ -22,6 +22,12 @@ enum AttemptDecision {
         var tries: Int
         /// The loop has a gate. No rule reads it today (a gate that did not run is in `gate`); here for the machine (M1.4).
         var hasGate = false
+        /// F2 R3: the review refused (`revisor recusou: ...`); nil when it approved, did not run or there is none.
+        var review: String?
+        /// F2 R3: minor/nit of an approving review, for the attempt's note.
+        var reviewNotes: [String] = []
+        /// F2 R3: refusals by the review of this task in a row BEFORE this attempt (the caller keeps it between attempts).
+        var reviewRejectsInRow = 0
     }
 
     enum Outcome: Sendable, Equatable {
@@ -43,13 +49,17 @@ enum AttemptDecision {
     static func reason(_ f: Facts) -> String? {
         if let failure = f.failure { return failure }
         let v = WorkLoop.verdict(checkStatus: f.broken == nil ? f.checkStatus : 0, gate: f.gate, committed: f.committed, dirty: f.dirty)
-        let reasons = [f.broken, v].compactMap { $0 } + f.moves
+        let reasons = [f.broken, v].compactMap { $0 } + f.moves + [f.review].compactMap { $0 }
         return reasons.isEmpty ? nil : reasons.joined(separator: "; ")
     }
+
+    static let twiceRefused = "recusada duas vezes pela revisão: chame o dono"
 
     static func decide(_ f: Facts) -> Outcome {
         guard let reason = reason(f) else { return .pass }
         if let who = f.blockedBy { return .stopLoop(.init(.othersWorking, detail: who), reason: reason) }
+        // F2 R3: the second refusal in a row is the owner's call, whatever tries are left
+        if f.review != nil, f.reviewRejectsInRow >= 1 { return .defer(reason: "\(twiceRefused); \(reason)", discard: true) }
         return f.attempt >= f.tries ? .defer(reason: reason, discard: true) : .retry(reason: reason, discard: true)
     }
 }

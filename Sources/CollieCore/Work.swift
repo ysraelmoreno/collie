@@ -180,8 +180,9 @@ public struct WorkLoopState: Codable, Sendable, Equatable {
     /// What a running loop is doing right now: its terminal is only open during `agent`, so without this a loop in its
     /// check or gate looks idle (no terminal, no signal).
     public enum Phase: String, Codable, Sendable {
-        case agent, check, gate
-        public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão" } }
+        /// F2 R3: `review`, the personas judging the attempt.
+        case agent, check, gate, review
+        public var label: String { switch self { case .agent: "agente trabalhando"; case .check: "rodando o check"; case .gate: "rodando o portão"; case .review: "revisão" } }
     }
     public var phase: Phase?
     /// When `phase` last changed (`show`); nil: no phase, or a loop written before this existed.

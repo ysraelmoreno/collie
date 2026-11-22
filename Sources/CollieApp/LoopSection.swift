@@ -80,7 +80,7 @@ struct LoopSection: Equatable {
         }
     }
     private static func shortPhase(_ p: WorkLoopState.Phase) -> String {
-        switch p { case .agent: "agente"; case .check: "check"; case .gate: "portão" }
+        switch p { case .agent: "agente"; case .check: "check"; case .gate: "portão"; case .review: "revisão" }
     }
     private static func hourMinute(_ d: Date, _ tz: TimeZone) -> String {
         let f = DateFormatter(); f.locale = Locale(identifier: "pt_BR"); f.timeZone = tz; f.dateFormat = "HH:mm"
@@ -119,6 +119,7 @@ struct LoopCard: Equatable {
         case .agent?: "agente trabalhando"
         case .check?: "check rodando"
         case .gate?: "portão rodando"
+        case .review?: "revisão rodando"
         case nil: "preparando"
         }
         return LoopCard(title: w.title, done: s.rows.filter { $0.state == .done }.count, total: s.rows.count,

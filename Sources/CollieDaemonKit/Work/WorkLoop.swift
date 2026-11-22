@@ -499,6 +499,10 @@ actor WorkLoop {
                 r.output = ""
                 return .gateDone(status: nil, broken: "gate could not run: \(error.message)")
             }
+        case .runReview:
+            // ponytail: R4 runs the personas here; `attempt()` does not turn the review on yet, so this never runs.
+            // Fail closed if it ever does: a review that did not run never approves
+            return .reviewDone(.init(approved: false, reason: "revisor recusou: revisão ainda não ligada no laço", notes: []))
         case .decide:
             return .decided(AttemptDecision.decide(state.facts))
         case .discard:

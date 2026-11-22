@@ -146,7 +146,7 @@ private let withSmoke = """
     @Test func flagsWinOverTheFile() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            try writeConfig(x.dir, withSmoke)
+            try await commit(ProjectWorkConfig.fileName, withSmoke, in: x.dir)   // committed: the loop reads HEAD, so the flags win over a file that is really read
             let (_, card) = try await runCard(d, p, x, ["gate": .string("echo flag-gate"), "precheck": .string("echo flag-pre")])
             #expect(card.contains("portão depois de cada check: «echo flag-gate»"), "\(card)")
             #expect(card.contains("pré-check no fim de cada turno: «echo flag-pre»"), "\(card)")

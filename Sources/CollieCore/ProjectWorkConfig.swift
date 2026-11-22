@@ -24,6 +24,8 @@ public struct ProjectWorkConfig: Sendable, Equatable {
         case commandTooLong(key: String, length: Int)
         case controlCharacter(key: String)
         case emptyCommand(key: String)
+        /// A command of an area or of `smoke` is chained with `&&`: `;`, `||`, `#` or a lone `&` would change what the chain means.
+        case notChainable(key: String, token: String)
         case badAreaName(String)
         case tooManyAreas(Int)
         case unknownArea(String, available: [String])
@@ -40,6 +42,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
             case .commandTooLong(let k, let n): "o comando '\(k)' tem \(n) caracteres; o limite é \(maxCommand)"
             case .controlCharacter(let k): "o comando '\(k)' tem caractere de controle (quebra de linha, tab, NUL...)"
             case .emptyCommand(let k): "o comando '\(k)' está vazio"
+            case .notChainable(let k, let t): "o comando '\(k)' tem '\(t)', que muda o sentido do check montado (área && smoke); ponha isso num script do projeto e chame o script"
             case .badAreaName(let n): "nome de área inválido '\(n)': use a-z, 0-9 e '-', de 1 a \(maxAreaName) caracteres"
             case .tooManyAreas(let n): "collie-work.json tem \(n) áreas; o limite é \(maxAreas)"
             case .unknownArea(let n, let all):
@@ -68,7 +71,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
                 switch k {
                 case "gate": c.gate = cmd
                 case "precheck": c.precheck = cmd
-                case "smoke": c.smoke = cmd
+                case "smoke": try Self.requireChainable(cmd, key: k); c.smoke = cmd
                 default: c.full = cmd
                 }
             }
@@ -77,7 +80,9 @@ public struct ProjectWorkConfig: Sendable, Equatable {
                 guard a.count <= maxAreas else { throw ConfigError.tooManyAreas(a.count) }
                 for name in a.keys.sorted() {
                     guard validAreaName(name) else { throw ConfigError.badAreaName(name) }
-                    c.areas[name] = try command(a[name] as Any, key: "areas.\(name)")
+                    let cmd = try command(a[name] as Any, key: "areas.\(name)")
+                    try Self.requireChainable(cmd, key: "areas.\(name)")
+                    c.areas[name] = cmd
                 }
             }
         } catch let e as ConfigError { return .failure(e) }
@@ -85,6 +90,21 @@ public struct ProjectWorkConfig: Sendable, Equatable {
         let known = Set(commandKeys + ["version", "areas"])
         warnings = o.keys.filter { !known.contains($0) }.sorted().map { "chave desconhecida ignorada: \($0)" }
         return .success((c, warnings))
+    }
+
+    /// `;`, `||`, `#` or a lone `&` in a command that is joined with `&&` would let a failure pass or hide the rest of the chain.
+    static func requireChainable(_ cmd: String, key: String) throws(ConfigError) {
+        let chars = Array(cmd)
+        for (i, ch) in chars.enumerated() {
+            let token: String? = switch ch {
+            case ";": ";"
+            case "#": "#"
+            case "|": (i + 1 < chars.count && chars[i + 1] == "|") || (i > 0 && chars[i - 1] == "|") ? "||" : nil
+            case "&": (i + 1 < chars.count && chars[i + 1] == "&") || (i > 0 && chars[i - 1] == "&") ? nil : "&"
+            default: nil
+            }
+            if let token { throw .notChainable(key: key, token: token) }
+        }
     }
 
     /// `<area 1> && <area 2> && <smoke>`, areas in the order asked (a repeated one once); no `smoke`: nothing added.

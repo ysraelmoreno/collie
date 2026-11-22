@@ -138,4 +138,21 @@ private final class RouteServer: @unchecked Sendable {
             #expect(retryShown(p))
         }
     }
+
+    /// Review A3: the daemon says `running` but nothing answers (wrong port, a process that does not listen): the line
+    /// says "não está respondendo em <endereço>", never "Iniciando" again.
+    @Test func runningButNotAnsweringSaysNotResponding() async throws {
+        try await PluginRegistry.exclusively { () async throws in
+            let probe = try await RouteServer(Self.routes)
+            let port = probe.port
+            await probe.stop()
+            let calls = Calls()
+            let (p, w) = try open("http://127.0.0.1:\(port)", calls: calls)
+            defer { p.close(); w.close(); PluginRegistry.setExternal([]) }
+            #expect(await pollUntil(10) { label(p) == "Iniciando Quadro…" }, "\(label(p) ?? "nil")")
+            p.receive(event: "collie.service", payload: .object(["state": .string("running")]))
+            #expect(await pollUntil(10) { label(p) == "Quadro não está respondendo em 127.0.0.1:\(port)" }, "\(label(p) ?? "nil")")
+            #expect(retryShown(p))
+        }
+    }
 }

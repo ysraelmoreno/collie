@@ -139,8 +139,12 @@ extension CommandRouter {
         guard needed else { return (nil, nil) }
         let base = (try? await GitRunner.run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], in: dir, timeout: .seconds(30)))?
             .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // review A2: the loop reads the commit, so an edit or a new file the owner has not committed is not what runs
+        let dirty = (try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", ProjectWorkConfig.fileName],
+                                              in: dir, timeout: .seconds(30)))?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let uncommitted = dirty.isEmpty ? nil : "aviso: \(ProjectWorkConfig.fileName) tem mudanças não commitadas; o laço usa a versão do commit (HEAD), sem elas"
         switch await WorkConfigFile.config(base: base, dir: dir) {
-        case .success(let c): return (c, nil)
+        case .success(let c): return (c, uncommitted)
         case .failure(let e):
             return (nil, "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão nem pré-check vindos do arquivo): "
                     + e.message.replacingOccurrences(of: "\n", with: " "))

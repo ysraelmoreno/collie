@@ -160,6 +160,8 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
     /// loads while no document of it has committed (M13.4: a `reload()` of a web view whose only load failed does nothing).
     private var page: URL?
     private var committed = false
+    /// The daemon said `running` and the page still failed: from then on the service is not answering, not starting (review A3).
+    private var sawRunning = false
 
     /// `folder`: an installed plug-in's, served by `PluginSchemeHandler`; `origin`: an app's loopback service, the only
     /// origin its rule list lets through and the only one that gets the bridge.
@@ -168,7 +170,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         let g = gen
         self.origin = origin
         isApp = app || origin != nil
-        self.page = nil; committed = false
+        self.page = nil; committed = false; sawRunning = false
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         WebLockdown.harden(config)   // WebRTC off: ICE gets past the rule list and the CSP
@@ -204,7 +206,7 @@ final class PluginSchemeHandler: NSObject, WKURLSchemeHandler {
         gen += 1
         for (_, c) in pending { c.resume(returning: .failure(ProtocolError(code: .unavailable, message: why))) }
         pending = [:]
-        ready = false; version = nil; origin = nil; isApp = false; outputs = [:]; page = nil; committed = false   // files stay (plugins-out keeps the newest `outputsKept`)
+        ready = false; version = nil; origin = nil; isApp = false; outputs = [:]; page = nil; committed = false; sawRunning = false   // files stay (plugins-out keeps the newest `outputsKept`)
         guard let web = webView else { return }
         web.stopLoading()
         web.navigationDelegate = nil; web.uiDelegate = nil
@@ -609,6 +611,7 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
             box.placeholder("\(title): iniciando o serviço…")   // the web view stays the panel's; running shows it again
         case "running":
             guard let web = webView else { return }
+            sawRunning = true
             web.isHidden = false
             box.show(web)
             reloadPage(web)
@@ -631,7 +634,7 @@ extension WebPluginPanel: WKNavigationDelegate, WKUIDelegate {
         webView.isHidden = true
         // nothing of the page shown yet: the service is still coming up (attach returns while it is `starting`); its
         // `running` event loads the page
-        box.placeholder(committed ? "\(title) não está respondendo em \(at)" : "Iniciando \(title)…", retry: { [weak self, weak webView] in
+        box.placeholder(committed || sawRunning ? "\(title) não está respondendo em \(at)" : "Iniciando \(title)…", retry: { [weak self, weak webView] in
             guard let self, self.gen == g, let webView, webView === self.webView else { return }
             webView.isHidden = false
             self.box.show(webView)

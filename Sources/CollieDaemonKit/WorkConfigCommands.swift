@@ -87,6 +87,7 @@ extension CommandRouter {
         let path = root.appendingPathComponent(ProjectWorkConfig.fileName).path
         func v(_ s: String) -> String { RerailText.clean(s, max: 2 * ProjectWorkConfig.maxCommand + 10) }
         var lines = ["\(ProjectWorkConfig.fileName): \(v(path)) (árvore de trabalho)"]
+        lines.append("o laço lê a versão commitada em HEAD, não a da árvore: o que não estiver commitado não vale (git status mostra se diferem)")
         lines += warnings.map { "aviso: \(v($0))" }
         let fields: [(String, String?)] = [("gate", c.gate), ("precheck", c.precheck), ("smoke", c.smoke), ("full", c.full)]
         for (k, s) in fields { lines.append("\(k): " + (s.map(v) ?? "(não definido)")) }

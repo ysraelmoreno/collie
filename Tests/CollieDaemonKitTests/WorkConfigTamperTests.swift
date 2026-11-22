@@ -80,14 +80,23 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         #expect(try await work(d, p, s, "work.task.add", ["title": .string("A"), "check": .string("true")]).ok)
         return Pad(dir: repo.appendingPathComponent(".collie/paddocks/feat"), s: s)
     }
-    private func card(_ d: Daemon, _ p: Paths, _ x: Pad) async throws -> String {
-        #expect(try await work(d, p, x.s, "work.run", ["max": .number(3)]).ok)
+    private func card(_ d: Daemon, _ p: Paths, _ x: Pad) async throws -> String { try await cardAndReply(d, p, x).1 }
+
+    /// The `work.run` reply (its `warning`) and the approval card's text.
+    private func cardAndReply(_ d: Daemon, _ p: Paths, _ x: Pad) async throws -> (Response, String) {
+        let r = try await work(d, p, x.s, "work.run", ["max": .number(3)])
+        #expect(r.ok)
         var text = ""
         if await waitFor(20, { await d.router.appCards.contains { $0.app == "work-loop" } }) {
             text = await d.router.appCards.first { $0.app == "work-loop" }?.call ?? ""
         }
         #expect(try await work(d, p, x.s, "work.stop").ok)
-        return text
+        return (r, text)
+    }
+
+    private func warningOf(_ r: Response) -> String? {
+        if case .object(let o)? = r.result, case .string(let w)? = o["warning"] { return w }
+        return nil
     }
 
     @Test func runReadsTheCommittedFile() async throws {
@@ -103,8 +112,10 @@ private func task(_ id: String, _ check: String) -> WorkTask { WorkTask(id: id, 
         try await withDaemon { d, p in
             let x = try await pad(d, p)
             try write(x.dir, fileB)   // in the tree, not in the base
-            let text = try await card(d, p, x)
+            let (r, text) = try await cardAndReply(d, p, x)
             #expect(!text.contains("GATE-B") && !text.contains("portão") && !text.contains("pré-check"), "\(text)")
+            // review A2: it says so (an uncommitted file is not what runs)
+            #expect(warningOf(r)?.contains("não commitadas") == true, "\(r)")
         }
     }
 

@@ -207,4 +207,21 @@ private func workConfig(_ d: Daemon, _ p: Paths, cwd: URL) async throws -> Respo
         #expect(WorkConfigFile.read(root: dir.appendingPathComponent("..").appendingPathComponent(dir.lastPathComponent))
                 == .refused("o caminho do projeto contém '..'"))
     }
+
+    /// Review A1: a command chained with `&&` must not change what the chain means.
+    @Test func commandsThatBreakTheChainAreRefused() {
+        func parse(_ area: String, smoke: String? = nil) -> Result<(config: ProjectWorkConfig, warnings: [String]), ProjectWorkConfig.ConfigError> {
+            var o: [String: Any] = ["version": 1, "areas": ["a": area]]
+            if let smoke { o["smoke"] = smoke }
+            return ProjectWorkConfig.parse(try! JSONSerialization.data(withJSONObject: o))
+        }
+        for bad in ["scripts/q.sh || true", "scripts/q.sh; true", "swift test --filter A # rápido", "scripts/q.sh &"] {
+            guard case .failure(.notChainable(let key, _)) = parse(bad) else { Issue.record("accepted: \(bad)"); continue }
+            #expect(key == "areas.a")
+        }
+        guard case .failure(.notChainable(let key, let token)) = parse("true", smoke: "scripts/smoke.sh || true") else { Issue.record("smoke accepted"); return }
+        #expect(key == "smoke" && token == "||")
+        // allowed: `&&`, a pipe, flags
+        if case .failure(let e) = parse("swift test --filter A && scripts/b.sh | tee x", smoke: "scripts/smoke.sh && true") { Issue.record("refused: \(e)") }
+    }
 }

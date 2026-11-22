@@ -105,6 +105,10 @@ novas; F2 é `AttemptMachine`/`WorkLoop`).
 
 ### F5 Entrada
 
+- **O daemon só conhece o PRD aprovado** (um arquivo no repo do projeto), nunca a origem dele (decisão do dono,
+  2026-11-22). Quadro, issues do GitHub, Linear, Jira são fontes de projetos específicos: ficam fora do daemon, num
+  plug-in ou skill do projeto que transforma o card em rascunho de PRD. O dono aprova o PRD; daí para a frente o
+  caminho é o mesmo para qualquer projeto.
 - A partir de um PRD aprovado (formato destes roadmaps), o Pastor gera o rascunho de `waves.md` e `tasks/*.md` com
   `--check`, `--gate` e `--accept`, dentro do limite do cartão (≤ 1500 caracteres).
 - O dono aprova o pacote uma vez; os cartões por onda passam a ser aprovados pela política (F4) em vez de clique.
@@ -137,7 +141,5 @@ novas; F2 é `AttemptMachine`/`WorkLoop`).
 1. Agente e modelo (de quem trabalha e de quem revisa) escolhidos pelo Pastor por tarefa, preferindo os mais baratos.
 2. Land automático só em cercados marcados como fábrica.
 3. F1 corre em paralelo com F2.
-
-## Perguntas abertas
-
-1. Na F5, o Pastor pode propor PRD a partir de um card do Quadro, ou o PRD continua sempre escrito pelo dono?
+4. A entrada da F5 é genérica: o daemon recebe só o PRD aprovado; a origem (Quadro ou outra) mora num plug-in ou
+   skill do projeto, fora do daemon.

@@ -586,7 +586,7 @@ private struct LiteFx {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
             let m = try await shepherdWithPanel(d, p)
-            for a in [[:], ["gone": "true"], ["text": "x", "timeout": "61"], ["stable": "true", "timeout": "0"], ["text": "x", "timeout": "30sec"]] {
+            for a in [[:], ["gone": "true"], ["text": "x", "timeout": "-1"], ["stable": "true", "timeout": "0"], ["text": "x", "timeout": "30sec"]] {
                 #expect(try await call(p, m, "device.wait", a).error?.code == .invalidArgs, "\(a)")
             }
             #expect(!fx.lines.contains { $0.contains("uiautomator dump") })

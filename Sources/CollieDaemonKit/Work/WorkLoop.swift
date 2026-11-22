@@ -54,6 +54,12 @@ protocol LoopHost: Sendable {
     func laneGone(_ lane: Lane) async
     /// M3.8: the names an attempt's agent may not take: every live terminal's and panel's (a summon refuses them).
     func namesTaken() async -> Set<String>
+    /// F2 R4: a reviewer's terminal: `summon` as the starter's (never leashed to the agent that worked; `loop.model` is
+    /// the persona's), and marked so that `othersWorking`/`anyoneWorking` never count it (the loop's own reviewer is
+    /// no one working in the paddock). Dismissed with `dismiss`.
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID
+    /// F2 R4: `ask`, returning the text the terminal answered.
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
 }
 
 extension LoopHost {
@@ -70,6 +76,13 @@ extension LoopHost {
     /// A host with one git (the tests' fakes, which have no profile).
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await git(args, in: dir) }
     func namesTaken() async -> Set<String> { [] }
+    /// A host with no reviewers: the review fails closed (every persona 'sem resposta').
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
+        throw ProtocolError(code: .unavailable, message: "this host runs no reviewers")
+    }
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
+        throw ProtocolError(code: .unavailable, message: "this host runs no reviewers")
+    }
     /// The tests' fakes: one daemon.
     func laneOwner() async -> String { "collie-test" }
     func copyEvidence(_ glob: String, from dir: URL, work: UUID, task: String) async -> EvidenceFiles.Copied {
@@ -259,7 +272,10 @@ actor WorkLoop {
         // from here the attempt is `AttemptMachine`'s: it says what to do, this carries it out and tells it what happened
         var run = Run(work: w, loop: loop, task: task, dir: dir, n: n, name: name, started: started, before: before,
                       branch: branch, keep: keep, on: branch, at: started)
-        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name, precheck: loop.precheck != nil), adopt ? .adopted : .started)
+        // F2 R4: without `--review` the machine never reaches `reviewing` (the loop as before)
+        var (state, todo) = AttemptMachine.reduce(.init(task: task.id, n: n, tries: loop.tries, hasGate: loop.gate != nil, before: before, name: name,
+                                                        precheck: loop.precheck != nil, reviewer: loop.review == true,
+                                                        reviewRejectsInRow: task.reviewRejects ?? 0), adopt ? .adopted : .started)
         while !todo.isEmpty {
             let effect = todo.removeFirst()
             // the journal and the phase wait for the attempt's next write, but never through a long wait: `work status`
@@ -327,7 +343,7 @@ actor WorkLoop {
     /// Effects that may take long: what is pending is written before them.
     private static func waits(_ e: AttemptMachine.Effect) -> Bool {
         switch e {
-        case .ask, .waitForCommit, .runCheck, .runGate, .runPrecheck: true   // the nudges write by themselves, when they go
+        case .ask, .waitForCommit, .runCheck, .runGate, .runPrecheck, .runReview: true   // the nudges write by themselves, when they go
         default: false
         }
     }
@@ -500,9 +516,19 @@ actor WorkLoop {
                 return .gateDone(status: nil, broken: "gate could not run: \(error.message)")
             }
         case .runReview:
-            // ponytail: R4 runs the personas here; `attempt()` does not turn the review on yet, so this never runs.
-            // Fail closed if it ever does: a review that did not run never approves
-            return .reviewDone(.init(approved: false, reason: "revisor recusou: revisão ainda não ligada no laço", notes: []))
+            // F2 R4: the personas judge `judged` against `before`, every reviewer gone before this returns
+            let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkOutput, gate: r.loop.gate == nil ? nil : r.output, dir)
+            let ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
+                                   evidence: evidence, turn: Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started)), dir)
+            let at = host.now(), line = ran.line, approved = ran.outcome.approved, note = ran.note
+            await record(id, &r) { x in
+                if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
+                    x.tasks[i].review = line
+                    x.tasks[i].reviewRejects = approved ? 0 : (x.tasks[i].reviewRejects ?? 0) + 1
+                }
+                x.notes.append(WorkNote(at: at, text: note))
+            }
+            return .reviewDone(ran.outcome)
         case .decide:
             return .decided(AttemptDecision.decide(state.facts))
         case .discard:
@@ -793,7 +819,7 @@ actor WorkLoop {
     }
 
     /// The spec's text at `before`; empty: no spec, outside the repo or not committed there.
-    private func specText(_ spec: String?, at before: String, _ dir: URL) async -> String {
+    func specText(_ spec: String?, at before: String, _ dir: URL) async -> String {
         guard let spec else { return "" }
         let rel = spec.hasPrefix(dir.path + "/") ? String(spec.dropFirst(dir.path.count + 1)) : spec
         guard !rel.hasPrefix("/"), !rel.contains(".."), let r = try? await host.git(["show", "\(before):\(rel)"], in: dir), r.status == 0 else { return "" }

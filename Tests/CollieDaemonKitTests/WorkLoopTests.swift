@@ -71,7 +71,28 @@ actor LoopFakeHost: LoopHost {
     func setOwner(_ o: String) { owner = o }
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        let id = UUID(); names[id] = name; summoned.append(name); return id
+        let id = UUID(); names[id] = name; summoned.append(name); agentIds.append(id); return id
+    }
+    /// F2 R4 (WorkLoopReviewTests): reviewers. `reviewAnswers[<reviewer's name> or <persona>]`: the text it answers (absent: approves;
+    /// `.some(nil)`: mute, its ask throws). A reviewer not yet dismissed is a terminal of the paddock in a turn: the fake's
+    /// `othersWorking` names it (as the router would without `loopReviewers`), and `othersSawReviewer` says it did.
+    var agentIds: [UUID] = [], reviewerIds: [UUID] = [], reviewers: [String] = [], liveReviewers: [UUID] = []
+    var reviewerPrompts: [String: String] = [:], reviewerModels: [String: String] = [:]
+    var reviewAnswers: [String: String?] = [:], othersSawReviewer = false
+    func setReviewAnswer(_ persona: String, _ text: String?) { reviewAnswers[persona] = .some(text) }
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
+        let id = UUID(); names[id] = name; reviewers.append(name); reviewerIds.append(id); liveReviewers.append(id)
+        reviewerModels[name] = loop.model ?? "-"
+        return id
+    }
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
+        let name = names[terminal] ?? "?"
+        reviewerPrompts[name] = prompt
+        // the persona is the prompt's own first line: "Você é o revisor '<persona>'."
+        let persona = prompt.split(separator: "'").dropFirst().first.map(String.init) ?? "?"
+        guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else { return #"{"persona":"\#(persona)","verdict":"approve","findings":[]}"# }
+        guard let answer else { throw ProtocolError(code: .notRunning, message: "reviewer gone") }
+        return answer
     }
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         let name = names[terminal]!, s = scripts[name] ?? LoopScript()
@@ -123,11 +144,18 @@ actor LoopFakeHost: LoopHost {
         if !dismissed.contains(n) { tokensRead.append(n) }
         return tokenCounts[n]
     }
-    func dismiss(_ terminal: UUID) async { dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")") }
+    func dismiss(_ terminal: UUID) async {
+        dismissed.append(names[terminal] ?? "?"); events.append("dismiss \(names[terminal] ?? "?")")
+        liveReviewers.removeAll { $0 == terminal }
+    }
     /// M2.2b: called each time the loop asks about other terminals, before the answer (a test holds the wait here).
     var othersProbe: (@Sendable () async -> Void)?
     func setOthersProbe(_ p: @escaping @Sendable () async -> Void) { othersProbe = p }
-    func othersWorking() async -> String? { await othersProbe?(); return busyOther }
+    func othersWorking() async -> String? {
+        await othersProbe?()
+        if let r = liveReviewers.first { othersSawReviewer = true; return busyOther ?? names[r] }
+        return busyOther
+    }
     /// M3b.2: the starter in a turn (only `anyoneWorking` counts it).
     var busyStarter: String?
     func setStarterBusy(_ n: String?) { busyStarter = n }

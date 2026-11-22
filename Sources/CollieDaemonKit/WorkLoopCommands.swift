@@ -501,7 +501,7 @@ extension CommandRouter {
     /// M3.3: `dir` is the host's own tree: a lane's host counts only what reaches its lane.
     /// M3b.2: `starter` nil counts the starter too (`anyoneWorking`).
     func loopOthersWorking(paddock: UUID, starter: UUID?, dir: URL) async -> String? {
-        for t in Self.loopReaching(ws.terminals, paddock: paddock, starter: starter, dir: dir) {
+        for t in Self.loopReaching(ws.terminals, paddock: paddock, starter: starter, dir: dir, reviewers: loopReviewers) {
             if await targetBusy(t.id) { return t.name }
         }
         return nil
@@ -566,8 +566,9 @@ extension CommandRouter {
 
     /// The paddock's terminals, but the starter, that can edit the tree `dir` (the paddock's worktree, or one lane).
     /// For a lane: not the other lanes' agents, nor a terminal in the paddock's worktree (that tree is the integrator's, M3.4).
-    static func loopReaching(_ terminals: [TerminalRecord], paddock: UUID, starter: UUID?, dir: URL) -> [TerminalRecord] {
-        terminals.filter { $0.paddockId == paddock && $0.id != starter && loopSharesWorktree($0, dir) }
+    /// F2 R4: a loop's reviewer (`reviewers`) only reads the text it was given: it never reaches the tree.
+    static func loopReaching(_ terminals: [TerminalRecord], paddock: UUID, starter: UUID?, dir: URL, reviewers: Set<UUID> = []) -> [TerminalRecord] {
+        terminals.filter { $0.paddockId == paddock && $0.id != starter && !reviewers.contains($0.id) && loopSharesWorktree($0, dir) }
     }
 
     /// A terminal can edit the loop's worktree only when its folder is inside it (or cannot be told): one working
@@ -594,10 +595,13 @@ extension CommandRouter {
         Set(ws.terminals.map { $0.name.lowercased() } + ws.panels.map { $0.name.lowercased() }).union(launching)
     }
 
+    func loopReviewerBorn(_ id: UUID) { loopReviewers.insert(id) }
+
     func loopTerminalExists(_ id: UUID) -> Bool { ws.terminals.contains { $0.id == id } }
 
     func loopDismiss(_ id: UUID) async {
         if let t = ws.terminals.first(where: { $0.id == id }) { try? await remove(t) }
+        loopReviewers.remove(id)
     }
 
     /// The loop's sandbox: the paddock's profile, as an app service gets (strict whatever the workspace's mode: never
@@ -720,6 +724,16 @@ struct RouterLoopHost: LoopHost {
 
     func ask(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> AskResult.Source {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).source
+    }
+    /// F2 R4: marked right after its summon, before it is asked anything (a terminal not yet in a turn is no one working).
+    // ponytail: a daemon that falls mid-review leaves the reviewer terminals; the start sweep does not know them
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
+        let id = try await summon(name: name, for: work, loop: loop)
+        await router.loopReviewerBorn(id)
+        return id
+    }
+    func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
+        try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).output
     }
     func resubmitted(_ terminal: UUID) async -> Bool { await router.asks.submitRetried(terminal) }
 

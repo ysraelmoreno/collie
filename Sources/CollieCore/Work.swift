@@ -49,6 +49,9 @@ public struct WorkTask: Codable, Sendable, Equatable {
     /// F2 R1, `work task add --agent --model`: the agent (claude|cursor|codex) and model of WHO WORKS on the task (nil:
     /// the loop's). Only recorded and shown for now; R4 uses them.
     public var agent: String?; public var model: String?
+    /// F2 R4: the last review of the task, as the summary shows it ("revisão: aprovada (personas: a, b; 2 achados)"),
+    /// and the review's refusals in a row (between attempts; an approval zeroes it). nil: no review ran.
+    public var review: String?; public var reviewRejects: Int?
     /// M2.2a: set while an attempt of the loop runs: the HEAD sha it started from and the branch it ran on. Cleared when
     /// the attempt ends; a daemon that fell mid-attempt leaves them, and the next run may adopt the commit already made.
     /// Read back from the work's file: never trusted as a git argument before `WorkLoop.isSha`.
@@ -85,6 +88,8 @@ public struct WorkTask: Codable, Sendable, Equatable {
         tokens = (try? c.decodeIfPresent(TokenCount.self, forKey: .tokens)) ?? nil   // M5.4: tolerant, like resume
         agent = (try? c.decodeIfPresent(String.self, forKey: .agent)) ?? nil   // F2 R1: tolerant too
         model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
+        review = (try? c.decodeIfPresent(String.self, forKey: .review)) ?? nil   // F2 R4: tolerant too
+        reviewRejects = (try? c.decodeIfPresent(Int.self, forKey: .reviewRejects)) ?? nil
     }
 }
 

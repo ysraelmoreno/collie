@@ -36,6 +36,8 @@ actor CommandRouter {
     /// its `work.wait`/`work.status` on its own active work (counted after the caller is checked).
     /// M3d.1: each wait keeps its client's pid and when it began (`activitySeq`), against the terminal's last tool call.
     var openRequests: [UUID: Int] = [:], ownWaits: [UUID: [UUID: OwnWait]] = [:]
+    /// F2 R4: the loops' reviewer terminals, alive: never counted as someone working in the paddock (`loopOthersWorking`).
+    var loopReviewers: Set<UUID> = []
     var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService

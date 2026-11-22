@@ -2,6 +2,22 @@
 
 `helper/`: the accessibility service the daemon talks to (spec: `docs/superpowers/specs/2026-11-22-device-helper-design.md`).
 Build: `scripts/build-device-helper.sh` writes the committed `Resources/collie-helper.apk` (needs the Android SDK and a JDK).
+## Assinatura
+
+`helper.jks` (senha `android`) é uma chave DEBUG pública, commitada: sem `COLLIE_HELPER_KEYSTORE` o build usa ela e avisa em
+stderr. Para distribuir, use uma chave privada fora do repositório:
+
+1. `scripts/build-device-helper.sh --genkey ~/.collie/collie-helper.p12` (RSA 4096, 36500 dias, permissão 0600; recusa
+   caminho dentro do repo e não sobrescreve um existente). A senha vem de `COLLIE_HELPER_STOREPASS` ou é digitada no keytool.
+2. Guarde a senha no Keychain: `security add-generic-password -s collie-helper-keystore -a "$USER" -w` (pede a senha).
+3. `COLLIE_HELPER_KEYSTORE=~/.collie/collie-helper.p12 scripts/build-device-helper.sh --release` (alias em
+   `COLLIE_HELPER_KEY_ALIAS`, padrão `collie-helper`; senha de `COLLIE_HELPER_STOREPASS` ou do Keychain). `--release` recusa a
+   chave debug. A senha nunca vai por argumento nem para o log.
+
+Atenção: trocar a chave quebra o `install -r` em aparelhos que já têm o helper assinado com a debug
+(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`); é preciso desinstalar antes. A K1b trata isso no daemon.
+Teste sem SDK: `scripts/test-build-device-helper.sh`.
+
 `fixture/`: a test app with screens whose accessibility tree is poor (for the OCR fallback corpus).
 `helper-probe.py`: forwards `localabstract:collie-helper` and measures `dump`; a manual check on an emulator.
 

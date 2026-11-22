@@ -20,7 +20,11 @@ Operational notes for the daemon (H2):
   with `root:false` (0 nodes) forever. The owner is now closed on unbind and replaced on connect (`onServiceConnected`).
 - v3 (2026-11-22): each instance closes only its own socket and connections (Android can deliver the old instance's `onUnbind` after the
   new one's `onServiceConnected`, which used to close the NEW socket: `Connection refused`); `dump` falls back to the application windows
-  when the active window has no root. OPEN: after toggling the service off and on by `settings put secure` the helper answers blind
-  (`getWindows()` empty, 0 nodes) on every other toggle (the answering instance is the previous one, disconnected from the system);
-  `setServiceInfo` did not wake it. A manual toggle or `install -r` heals it; the daemon's retry (H7) does not rebind with a pause.
+  when the active window has no root.
+- Blindness after toggling the service (investigated 2026-11-22, emulator API 37): toggling by `settings put secure` and probing once,
+  late (3 s), alternates healthy/blind (`getWindows()` empty, the answering instance is the previous one). A client that queries
+  EARLY (every 250-300 ms from the moment of enabling) always finds the service healthy in 270-660 ms; from verified blind states the
+  daemon-style rebind (delete + put, no pause), `am force-stop com.collie.helper` + enable, and `install -r` + enable all healed 12/12
+  when polling started at once. An in-process warm-up (`getWindows()` at 0, 150, 400, 900 ms) did NOT help, `setServiceInfo` neither.
+  So: poll `dump` right after enabling instead of waiting first; escalate rebind, then force-stop, then install -r, then fall back.
 - A path from `dump` goes stale when the screen changes: `click`/`scroll` answer `node gone`; re-read and retry.

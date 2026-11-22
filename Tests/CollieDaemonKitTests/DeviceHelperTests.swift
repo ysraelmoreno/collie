@@ -144,7 +144,7 @@ private actor FakeAdb {
     var removedForward: Bool { calls.contains { $0 == ["forward", "--remove", "tcp:\(helper.port)"] } }
 }
 
-/// A clock the test moves by hand (`recover`'s 30 s without sleeping).
+/// A clock the test moves by hand (`recover`'s `retrySchedule` without sleeping).
 private final class TestClock: @unchecked Sendable {
     private let lock = NSLock()
     private var t = ContinuousClock.now
@@ -333,7 +333,11 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         #expect(await adb.installs == 1, "only the first bring-up reached the reinstall")
     }
 
-    @Test func fallbackIsRetriedAfterThirtySeconds() async throws {
+    @Test func retryScheduleIs2_5_15ThenThirtyForGood() {
+        #expect(DeviceHelper.retrySchedule == [.seconds(2), .seconds(5), .seconds(15), .seconds(30)])
+    }
+
+    @Test func fallbackIsRetriedAlongTheScheduleAndRestartsOnReady() async throws {
         let srv = try FakeHelper(installed: false); defer { srv.stop() }
         let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
         let clock = TestClock()
@@ -341,24 +345,38 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         await h.start(install: false)
         #expect(await h.state == .fallback)
         let forwards = { await adb.calls.filter { $0.prefix(2) == ["forward", "tcp:0"] }.count }
-        #expect(await forwards() == 1)
-        clock.advance(.seconds(29))
-        await h.recover()
-        #expect(await forwards() == 1, "not before 30 s")
-        clock.advance(.seconds(1))
-        await h.recover()   // still not there: the fallback and its reason stay, the next try 30 s later
-        #expect(await forwards() == 2)
-        let (state, reason) = (await h.state, await h.reason)
-        #expect(state == .fallback && reason?.contains("not answering") == true, "\(reason ?? "")")
+        var tries = 1
+        // each wait counts from the fall or the last failed try: 2, 5, 15, then 30 s (twice: the last value repeats)
+        for wait in [2, 5, 15, 30, 30] {
+            clock.advance(.seconds(wait - 1))
+            await h.recover()
+            #expect(await forwards() == tries, "not before \(wait) s")
+            clock.advance(.seconds(1))
+            await h.recover()   // still not there: the fallback and its reason stay
+            tries += 1
+            #expect(await forwards() == tries, "tried at \(wait) s")
+            let (state, reason) = (await h.state, await h.reason)
+            #expect(state == .fallback && reason?.contains("not answering") == true, "\(reason ?? "")")
+        }
         srv.installed()
-        await h.recover()
-        #expect(await forwards() == 2, "the failed try restarts the 30 s")
         clock.advance(.seconds(30))
         await h.recover()
         #expect(await h.state == .ready)
         let s = await h.status
         #expect(field(s, "source") == .string("helper") && field(s, "reason") == .null)
         #expect(await adb.installs == 0)
+        // back at ready the count restarts: a new fall is retried 2 s later, not 30 s
+        srv.set(emptyDumps: 1)
+        #expect(await h.dump() == nil)
+        #expect(await h.state == .fallback)
+        tries = await forwards()
+        clock.advance(.seconds(1))
+        await h.recover()
+        #expect(await forwards() == tries, "not before 2 s")
+        clock.advance(.seconds(1))
+        await h.recover()
+        #expect(await forwards() == tries + 1)
+        #expect(await h.state == .ready)
     }
 
     @Test func removeOfTheOnlyServiceDeletesTheSetting() async throws {

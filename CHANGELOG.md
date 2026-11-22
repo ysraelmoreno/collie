@@ -23,6 +23,7 @@ Names in quotes are labels of the app, which is in Portuguese.
 - **Agents of the loop have names of their work:** `<work>-<task>-t<attempt>` instead of `loop-<random>`.
 
 ### Changed
+- **Device panel:** the screen sits inside a frame drawn for the kind of device (phone, foldable, tablet, modern iPhone, iPhone with a home button, iPad), picked automatically; the buttons are icon pills and the link state ("ao vivo", "conectando", "offline") moved to the footer with a colored dot. Small panels and physical devices show no frame.
 - The loop resubmits the Enter of a prompt that was typed but not submitted, and nudges an agent that ends its turn early with no commit, instead of burning the attempt.
 - After a daemon crash, the loop resumes the commit the attempt had already made instead of restarting the task; stopping the daemon no longer spends the attempt in progress.
 - This changelog is written in English.

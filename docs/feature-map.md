@@ -91,9 +91,19 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 
 - **Nome na UI:** "Dispositivo". Botões: "Início", "Bloquear" (iOS); "Voltar", "Início", "Recentes" (Android);
   "Reconectar".
-- **Para que serve:** a tela de um emulador Android, simulador iOS ou aparelho, com toque e teclado.
-- **Arquivos:** `Sources/ColliePlugins/DevicePanel.swift`, `Sources/CollieDevice/`.
-- **Como verificar:** `collie device list`; o painel, à mão ("Abrir painel" → "Dispositivo" → "Aparelho").
+- **Para que serve:** a tela de um emulador Android, simulador iOS ou aparelho, com toque e teclado, dentro de uma
+  moldura do tipo de aparelho (telefone, dobrável, tablet, iPhone moderno, iPhone com Início, iPad), escolhida
+  sozinha. O rodapé tem os botões em pílula (ícones) e o estado da conexão ("ao vivo", "conectando", "offline")
+  com o transporte (`adb`/`simctl`).
+- **Moldura:** o tipo vem do daemon em `state["frame"]` (`DeviceFrame.Kind`: Android pelo `hw.device.name` do
+  `config.ini` do AVD; iOS pelo `deviceTypeIdentifier` do `simctl`). Aparelho físico, tipo desconhecido, painel
+  antigo sem o campo ou tela com menos de 200 pt → sem moldura (`bare`). Só a tela recebe toque; o botão Início
+  redondo do iPhone com Início também é clicável.
+- **Arquivos:** `Sources/ColliePlugins/DevicePanel.swift`, `Sources/ColliePlugins/DeviceBezel.swift` (geometria e
+  desenho da moldura), `Sources/CollieDevice/` (`DeviceFrame.swift`).
+- **Como verificar:** `collie device list`; o painel, à mão ("Abrir painel" → "Dispositivo" → "Aparelho"): a
+  moldura certa para Pixel, Pixel Fold, Pixel Tablet, iPhone 16 Pro, iPhone SE e iPad, nos dois temas; encolher o
+  painel até a moldura sumir. Testes: `swift test --disable-sandbox --filter DeviceBezelTests`.
 
 ### Diagrama (`DiagramPanel`)
 

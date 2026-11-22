@@ -25,3 +25,4 @@ vendor/
 
 # generated and local-only video sources/renders (HyperFrames)
 docs/videos/
+Resources/*.idsig

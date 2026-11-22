@@ -251,6 +251,62 @@ struct OCRTests {
         #expect(OCR.nodes(named, tree: poorFixture()).map(\.ref) == ["o1", "o2", "o3", "o4"])
     }
 
+    // MARK: iOS containers and scroll bars (dl10 I1, fixture com.collie.fixture.ios on an iPhone 17 Pro, 402 × 874)
+
+    private static let iphone = CGRect(x: 0, y: 0, width: 402, height: 874)
+    private func iosApp() -> UINode { node("e1", cls: "Application", text: "Collie OCR Fixture", Self.iphone, depth: 0) }
+    /// `canvas`: the tree is the labelled `Application` root alone.
+    private func iosCanvas() -> [UINode] { UITree.linkParents([iosApp()]) }
+    /// `webcanvas`: Application > ScrollArea > 4 scroll-bar sliders (the WKWebView draws its text in a <canvas>).
+    private func iosWebCanvas() -> [UINode] {
+        let v = CGRect(x: 396, y: 0, width: 6, height: 874), h = CGRect(x: 0, y: 868, width: 402, height: 6)
+        return UITree.linkParents([
+            iosApp(),
+            node("e2", cls: "ScrollArea", Self.iphone, depth: 1),
+            node("e3", cls: "Slider", text: "Vertical scroll bar, 2 pages", v, depth: 2),
+            node("e4", cls: "Slider", text: "Horizontal scroll bar, 1 page", h, depth: 2),
+            node("e5", cls: "Slider", text: "Vertical scroll bar, 2 pages", v, depth: 2),
+            node("e6", cls: "Slider", text: "Horizontal scroll bar, 1 page", h, depth: 2),
+        ])
+    }
+    private let canvasRead = [OCRItem(text: "Vendas do mês", confidence: 0.95, box: CGRect(x: 40, y: 300, width: 200, height: 30)),
+                              OCRItem(text: "R$ 9.876,00", confidence: 0.9, box: CGRect(x: 40, y: 340, width: 160, height: 30))]
+
+    @Test func iOSCanvasAndWebCanvasFireOpaqueAndKeepTheirOCRItems() {
+        for (name, tree) in [("canvas", iosCanvas()), ("webcanvas", iosWebCanvas())] {
+            #expect(OCR.trigger(tree) == .opaqueView, "\(name)")
+            #expect(OCR.trigger(tree, size: Self.iphone.size) == .opaqueView, "\(name)")
+            #expect(OCR.contentLabels(tree, screen: Self.iphone) == 0, "\(name)")
+            #expect(OCR.nodes(canvasRead, tree: tree).map(\.text) == ["Vendas do mês", "R$ 9.876,00"], "\(name)")
+        }
+    }
+
+    @Test func containersAndScrollBars() {
+        let s = Self.iphone, title: String? = "Collie OCR Fixture"
+        #expect(OCR.container(iosApp(), screen: s, appTitle: title))
+        // by area: 40% of the screen is a container, just under is not
+        let w = s.width, hMin = (s.height * 0.4).rounded(.up)
+        #expect(OCR.container(node("b", text: "Bloco", CGRect(x: 0, y: 0, width: w, height: hMin), depth: 1), screen: s, appTitle: title))
+        #expect(!OCR.container(node("b", text: "Bloco", CGRect(x: 0, y: 0, width: w, height: hMin - 2), depth: 1), screen: s, appTitle: title))
+        // by type: a small Other/Window with no text of its own, or only the app title; with its own text it is content
+        #expect(OCR.container(node("o", cls: "Other", CGRect(x: 0, y: 0, width: 50, height: 50), depth: 1), screen: s, appTitle: title))
+        #expect(OCR.container(node("o", cls: "Window", text: "Collie OCR Fixture", CGRect(x: 0, y: 0, width: 50, height: 50), depth: 1), screen: s, appTitle: title))
+        #expect(!OCR.container(node("o", cls: "Other", text: "Promoção", CGRect(x: 0, y: 0, width: 50, height: 50), depth: 1), screen: s, appTitle: title))
+        // scroll bars: Slider, or the label in English or Portuguese
+        #expect(OCR.scrollBar(node("s", cls: "Slider", CGRect(x: 0, y: 0, width: 6, height: 80), depth: 1)))
+        #expect(OCR.scrollBar(node("s", cls: "Other", text: "Barra de rolagem vertical, 2 páginas", CGRect(x: 0, y: 0, width: 6, height: 80), depth: 1)))
+        #expect(!OCR.scrollBar(node("s", cls: "StaticText", text: "Rolar", CGRect(x: 0, y: 0, width: 60, height: 20), depth: 1)))
+    }
+
+    @Test func iOSNormalTreeIsUnchanged() {
+        let tree = iosNormal(), screen = CGSize(width: 390, height: 844)
+        #expect(OCR.trigger(tree) == nil && OCR.trigger(tree, size: screen) == nil)
+        #expect(ScreenModel.text(ScreenModel.build(tree, size: screen)) == ScreenModel.text(ScreenModel.build(tree + OCR.nodes([], tree: tree), size: screen)))
+        // with --ocr the labelled leaves still win, but the Application root no longer swallows the rest
+        let read = [item("Painel de Vendas", 30, 75), item("Gráfico", 40, 500)]
+        #expect(OCR.nodes(read, tree: tree).map(\.text) == ["Gráfico"])
+    }
+
     // MARK: ScreenModel
 
     @Test func screenShowsOcrItemsInContentWithMark() {

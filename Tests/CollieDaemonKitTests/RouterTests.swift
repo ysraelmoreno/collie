@@ -34,8 +34,14 @@ private func makeDaemon(_ configure: (inout DaemonConfig) -> Void = { _ in }) th
 func withDaemon(configure: (inout DaemonConfig) -> Void = { _ in }, _ body: (Daemon, Paths) async throws -> Void) async throws {
     let (d, p) = try makeDaemon(configure)
     defer { try? FileManager.default.removeItem(at: p.root) }
-    do { try await d.start(); try await body(d, p) } catch { await d.stop(); throw error }
-    await d.stop()
+    do { try await d.start(); try await body(d, p) } catch { await stopBounded(d); throw error }
+    await stopBounded(d)
+}
+/// `d.stop()` awaits the router: a wedged router (D4: a test whose kill timed out) hung the shard for 900 s here.
+/// Past 30 s it is one recorded issue and the daemon is left behind (its root is still removed).
+private func stopBounded(_ d: Daemon) async {
+    do { try await bounded(30, "Daemon.stop() (router wedged?)") { await d.stop() } }
+    catch { Issue.record("\(error)") }
 }
 func send(_ p: Paths, _ r: Request, timeoutSeconds: Double = 10) async throws -> Response {
     try await UnixSocketClient.send(r, to: p.socket, timeoutSeconds: timeoutSeconds)
@@ -185,7 +191,8 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
             let a = try await spawn(d, p, "A", preset: "custom", command: "exit 0")
             let b = try await spawn(d, p, "B")
             #expect(try await admin(d, p, "leash", ["a": "A", "b": "B"]).ok)
-            #expect(await waitFor(3) { await d.process(UUID(uuidString: a.id)!)?.isRunning == false })
+            let ua = try terminalUUID(a.id)
+            #expect(await waitFor(3) { await d.process(ua)?.isRunning == false })
             let a2 = try await spawn(d, p, "a")
             #expect(a2.resp.ok && a2.id == a.id)
             #expect(try await names(d, p, from: b.id) == ["a"])
@@ -257,8 +264,8 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
 /// Test helper: reads a terminal's token out of its own environment via the scrollback.
 /// `echo`: types the echo into the shell, resending every second (a fresh login shell may drop typeahead).
 func tokenOf(_ d: Daemon, _ id: String, echo: Bool = true) async throws -> String {
-    let u = UUID(uuidString: id)!
-    let pty = await d.process(u)!
+    let u = try terminalUUID(id)
+    let pty = try await liveProcess(d, u)
     for i in 0..<200 {   // 20 s: a fresh shell under full-suite load can take seconds to print
         if echo && i % 10 == 0 { try pty.write(Data("echo T=$COLLIE_TOKEN\n".utf8)) }
         try await Task.sleep(for: .milliseconds(100))
@@ -268,10 +275,52 @@ func tokenOf(_ d: Daemon, _ id: String, echo: Bool = true) async throws -> Strin
     throw ProtocolError(code: .internal, message: "no token; running=\(pty.isRunning) scrollback=\(String(reflecting: await d.scrollbackText(u)))")
 }
 
+/// Test helper: a terminal's id as a UUID; an empty/bad id (the spawn response failed) is one test failure, not a crash.
+func terminalUUID(_ id: String) throws -> UUID {
+    guard let u = UUID(uuidString: id) else {
+        throw ProtocolError(code: .internal, message: "terminal id '\(id)' is not a UUID: did the spawn fail? (check the spawn response)")
+    }
+    return u
+}
+
+/// Test helper: the terminal's PTY, or a thrown error naming the terminal and why there is none
+/// (spawn failed on this machine, or the process already exited), so a failed spawn fails one test, not the process.
+func liveProcess(_ d: Daemon, _ u: UUID) async throws -> PTYProcess {
+    guard let p = await d.process(u) else {
+        throw ProtocolError(code: .internal, message: "terminal \(u): no process in the registry (spawn failed or the process exited); "
+                            + "scrollback=\(String(reflecting: await d.scrollbackText(u)))")
+    }
+    return p
+}
+
 /// Waits for a positive condition. `seconds` is floored at 20 s: every caller waits for something that must
 /// happen, so a generous deadline costs nothing when it passes and absorbs a loaded machine running all suites at once.
 func waitFor(_ seconds: Double, _ cond: () async -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + .seconds(max(seconds, 20))
     while ContinuousClock.now < deadline { if await cond() { return true }; try? await Task.sleep(for: .milliseconds(50)) }
     return await cond()
+}
+
+/// Runs `op` for at most `seconds`; past that it throws a timeout naming `what` and leaves `op` running (cancelled).
+/// Not a task group: a group waits for its children, so an op stuck on a wedged actor would still hang the test
+/// (D4, C7). Use it around actor reads in `waitFor` conditions, whose deadline is only checked between calls.
+func bounded<T: Sendable>(_ seconds: Double, _ what: String, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+    let once = Once()
+    return try await withCheckedThrowingContinuation { c in
+        let work = Task {
+            do { let v = try await op(); if once.claim() { c.resume(returning: v) } }
+            catch { if once.claim() { c.resume(throwing: error) } }
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            if once.claim() {
+                work.cancel()
+                c.resume(throwing: ProtocolError(code: .timeout, message: "timed out after \(Int(seconds)) s: \(what)"))
+            }
+        }
+    }
+}
+private final class Once: @unchecked Sendable {
+    private let lock = NSLock(); private var done = false
+    func claim() -> Bool { lock.withLock { defer { done = true }; return !done } }
 }

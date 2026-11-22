@@ -376,21 +376,20 @@ actor DeviceHelper {
             defer { Darwin.close(fd) }
             let sent = line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
             guard sent == line.count else { throw ProtocolError(code: .unavailable, message: "helper: write failed") }
-            var got = Data(), buf = [UInt8](repeating: 0, count: 4096), acked = false
-            var start = Date(), last = start
-            let quiet = Double(quietMs) / 1000, total = Double(timeoutMs) / 1000
+            var got = Data(), buf = [UInt8](repeating: 0, count: 4096)
+            let asked = ContinuousClock.now
+            var count: Silence?
             while true {
-                let now = Date()
-                let left: Double
-                if acked {
-                    if now.timeIntervalSince(last) >= quiet { return true }
-                    if now.timeIntervalSince(start) >= total { return false }
-                    left = min(quiet - now.timeIntervalSince(last), total - now.timeIntervalSince(start))
+                let now = ContinuousClock.now
+                let left: Duration
+                if let c = count {
+                    if let done = c.verdict(at: now) { return done }
+                    left = c.left(at: now)
                 } else {
-                    left = secs - now.timeIntervalSince(start)
-                    guard left > 0 else { throw ProtocolError(code: .timeout, message: "helper did not answer subscribe in \(Int(secs * 1000)) ms") }
+                    left = answer - (now - asked)
+                    guard left > .zero else { throw ProtocolError(code: .timeout, message: "helper did not answer subscribe in \(Int(secs * 1000)) ms") }
                 }
-                DeviceSession.setTimeout(fd, max(left, 0.001))   // 0 would mean no timeout
+                DeviceSession.setTimeout(fd, max(Double(left / .microseconds(1)) / 1_000_000, 0.001))   // 0 would mean no timeout
                 let n = Darwin.read(fd, &buf, buf.count)
                 if n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) { continue }
                 guard n > 0 else { throw ProtocolError(code: .unavailable, message: "helper closed the subscription") }
@@ -399,16 +398,39 @@ actor DeviceHelper {
                     let one = got[got.startIndex..<nl]
                     got = Data(got[got.index(after: nl)...])
                     switch try HelperProtocol.message(Data(one)) {
-                    case .event: last = Date()
+                    case .event: count?.event(at: ContinuousClock.now)
                     case .reply(let r):
                         guard r.ok else { throw ProtocolError(code: .unavailable, message: "helper refused subscribe: \(r.error ?? "failed")") }
-                        if !acked { acked = true; start = Date(); last = start }
+                        if count == nil { count = Silence(ack: ContinuousClock.now, quiet: .milliseconds(quietMs), total: .milliseconds(timeoutMs)) }
                     }
                 }
                 guard got.count < 1 << 20 else { throw ProtocolError(code: .internal, message: "helper line over 1 MiB") }
             }
         }
     }
+}
+
+/// `silence`'s count, apart from the socket so a test feeds it instants instead of waiting: from the `subscribe` ack,
+/// each event restarts the `quiet` count; quiet reached is true, `total` since the ack reached first is false.
+struct Silence: Equatable {
+    let ack: ContinuousClock.Instant, quiet: Duration, total: Duration
+    private(set) var last: ContinuousClock.Instant
+
+    init(ack: ContinuousClock.Instant, quiet: Duration, total: Duration) {
+        self.ack = ack; self.quiet = quiet; self.total = total; last = ack
+    }
+
+    mutating func event(at t: ContinuousClock.Instant) { last = max(last, t) }
+
+    /// true once `quiet` passed since the last event (or the ack), false once `total` passed since the ack, else nil.
+    func verdict(at t: ContinuousClock.Instant) -> Bool? {
+        if t - last >= quiet { return true }
+        if t - ack >= total { return false }
+        return nil
+    }
+
+    /// How long to wait for the next event before `verdict` can change.
+    func left(at t: ContinuousClock.Instant) -> Duration { min(quiet - (t - last), total - (t - ack)) }
 }
 
 /// The helpers of the Android panels' devices.

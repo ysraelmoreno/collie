@@ -6,6 +6,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # run the suite on any branch on demand (gh workflow run ci.yml --ref <branch>), without opening a pull request
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -54,6 +56,11 @@ jobs:
 
       - name: Build
         run: swift build --build-tests
+
+      # VizinhoPluginTests runs the real plug-in binary: .build/plugins/vizinho/bin/vizinho (never committed; a release build
+      # of one small product). Without this step that test skips itself ("plug-in do Vizinho não construído")
+      - name: Plug-in do Vizinho
+        run: scripts/build-vizinho-plugin.sh
 
       # not a bare `swift test`: its exit code is the test process's, which went green after exiting 0 mid-run, and
       # all tests at once starve a 3-core runner. run-tests.sh: serial shards, each checked by its final test count and

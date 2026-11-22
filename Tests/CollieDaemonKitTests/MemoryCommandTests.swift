@@ -595,7 +595,7 @@ private func commitAll(_ repo: URL) async throws {
             let prompt = "postgres pool"
             #expect(await mem.relevant(for: id, cwd: repo.path, prompt: prompt).contains("Postgres pool"))
             #expect(await mem.relevant(for: id, cwd: repo.path, prompt: prompt).isEmpty)
-            try await d.process(id)!.write(Data("exit\n".utf8))
+            try await liveProcess(d, id).write(Data("exit\n".utf8))
             #expect(await waitFor(10) { await d.process(id)?.isRunning == false })
             #expect(await waitFor(10) { await !mem.relevant(for: id, cwd: repo.path, prompt: prompt).isEmpty })
         }

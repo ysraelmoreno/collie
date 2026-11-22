@@ -149,14 +149,33 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
 
     /// The injected prompt's turn holds the FIFO: an ask sent right after gets its own output, not the inject's.
     @Test func injectedTurnHoldsQueue() async throws {
-        // idle window injected at 5 s (production 2 s): a loaded machine can stretch `sleep 1` plus its spawn past 2 s
-        try await withDaemon(configure: { $0.idleQuietSeconds = 5 }) { d, p in
+        // Each turn ends by its hook, not the idle clock: the shell prints a stop marker last and the watcher below
+        // reports it as `turn.completed` (what an agent's Stop hook does). The idle window is out of reach (600 s), so
+        // a loaded runner stretching `sleep 1` can no longer end the injected turn early (the old 5 s idle race).
+        try await withDaemon(configure: { $0.idleQuietSeconds = 600 }) { d, p in
             let m = try await shepherd(d, p, "M")
-            // sleep 1 < idleQuiet (5 s): the injected turn isn't over until INJ-DONE has printed and gone quiet
-            #expect(try await call(p, m, "summon", ["name": "w", "preset": "shell", "prompt": "sleep 1; echo INJ-DONE"]).ok)
-            let r = try await call(p, m, "ask", ["target": "w", "prompt": "echo ASK-OUT"])
+            // the marker is assembled by printf: the typed line's own echo never matches it
+            let stop = #"printf '<<COLLIE_%s>>\n' STOP"#
+            let r0 = try await call(p, m, "summon", ["name": "w", "preset": "shell", "prompt": "sleep 1; echo INJ-DONE; \(stop)"])
+            guard case .object(let o0)? = r0.result, case .string(let wid)? = o0["id"], let w = UUID(uuidString: wid) else {
+                Issue.record("\(r0)"); return
+            }
+            let hooks = Task {
+                var seen = 0
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(20))
+                    let n = await d.scrollbackText(w).components(separatedBy: "<<COLLIE_STOP>>").count - 1
+                    for _ in seen..<max(seen, n) { await d.router.asks.turnCompleted(terminal: w, message: nil) }
+                    seen = max(seen, n)
+                }
+            }
+            defer { hooks.cancel() }
+            // queued behind the injected turn: typed only after its hook, so its output starts after INJ-DONE. The ask's line
+            // carries the marker as is: its echo ends the turn (sh never runs it: the "[collie] pedido de M (ask …):" sender
+            // prefix is a syntax error), and that echo is where ASK-OUT shows, as it always was
+            let r = try await call(p, m, "ask", ["target": "w", "prompt": "echo ASK-OUT <<COLLIE_STOP>>"])
             guard case .object(let o)? = r.result, case .string(let out)? = o["output"] else { Issue.record("\(r)"); return }
-            #expect(out.contains("ASK-OUT") && !out.contains("INJ-DONE"), "\(out)")
+            #expect(out.contains("ASK-OUT") && !out.contains("INJ-DONE"), "ask output should hold ASK-OUT and not the injected turn's INJ-DONE: \(out)")
         }
     }
 

@@ -85,9 +85,14 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
         let fx = try FakeAgents(); defer { fx.cleanup() }
         let repo = try await makeRepo()
         try await withDaemon(configure: fx.configure) { d, p in
-            _ = try await term(d, p, "x-testes")
             #expect(try await send(p, Request(id: "f", token: d.adminToken, command: "paddock.create",
                                               args: ["name": .string("y"), "repo": .string(repo.path)]), timeoutSeconds: 60).ok)
+            // the spawn's terminal event recomputes y's status (working → idle, async, git under load): settle it first,
+            // or the flip lands between `before` and a later snapshot
+            _ = try await term(d, p, "x-testes")
+            let settled = await waitFor(60) { (try? await state(d, p))?.paddocks.first?.status == .idle }
+            let shown = (try? await state(d, p).paddocks.map(\.status)) ?? []
+            #expect(settled, "paddock y did not turn idle after the spawn: \(shown)")
             #expect(try await GitRunner.run(["branch", "collie/w"], in: repo).status == 0)   // a stale paddock branch
             let before = try await state(d, p)
             let cases: [([String: JSONValue], String)] = [

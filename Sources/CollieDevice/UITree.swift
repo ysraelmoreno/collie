@@ -12,14 +12,14 @@ public struct UINode: Equatable, Sendable {
     /// The device helper's child-index path to this node (`click`/`scroll`); nil when read by uiautomator or AXe.
     public var path: [Int]?
     /// Read from the screenshot by OCR (`OCR.nodes`), not from the tree: no role, no click.
-    public var ocr: Bool
+    public var ocr = false
     public var center: (x: Int, y: Int) { (Int(bounds.midX), Int(bounds.midY)) }
     public init(ref: String, cls: String, text: String, desc: String, id: String, bounds: CGRect, clickable: Bool, depth: Int,
                 parent: Int? = nil, selected: Bool = false, checked: Bool = false, enabled: Bool = true, focused: Bool = false, scrollable: Bool = false,
-                password: Bool = false, path: [Int]? = nil, ocr: Bool = false) {
+                password: Bool = false, path: [Int]? = nil) {
         self.ref = ref; self.cls = cls; self.text = text; self.desc = desc; self.id = id; self.bounds = bounds; self.clickable = clickable; self.depth = depth
         self.parent = parent; self.selected = selected; self.checked = checked; self.enabled = enabled; self.focused = focused; self.scrollable = scrollable
-        self.password = password; self.path = path; self.ocr = ocr
+        self.password = password; self.path = path
     }
 }
 

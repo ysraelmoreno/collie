@@ -73,7 +73,9 @@ public enum OCR {
             kept.append(OCRItem(text: t, confidence: it.confidence, box: it.box))
         }
         return kept.enumerated().map { i, it in
-            UINode(ref: "o\(i + 1)", cls: "ocr", text: it.text, desc: "", id: "", bounds: it.box, clickable: false, depth: 0, ocr: true)
+            var n = UINode(ref: "o\(i + 1)", cls: "ocr", text: it.text, desc: "", id: "", bounds: it.box, clickable: false, depth: 0)
+            n.ocr = true
+            return n
         }
     }
 

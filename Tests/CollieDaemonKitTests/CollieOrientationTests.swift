@@ -360,6 +360,7 @@ import CollieProtocol
         let one = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [("Pixel", "device")])
         #expect(one.count <= 1500 && one.contains("- Device \"Pixel\": " + CollieOrientation.deviceLoop), "\(one.count)\n\(one)")
         #expect(one.contains("device screen") && one.contains("--then screen") && one.contains("wait --text") && !one.contains("(screenshot, tap, logs)"))
+        #expect(one.contains("collie device helper status"))   // H5: the slow-read hint
         let ps = (1...20).map { (name: "device-" + String(repeating: "x", count: 60) + "\($0)", pluginId: "device") }
         for agent in ["claude", "cursor"] {
             let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: (1...20).map { "peer\($0)" }, panels: ps, agent: agent)

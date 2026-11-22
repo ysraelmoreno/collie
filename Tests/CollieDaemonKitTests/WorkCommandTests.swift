@@ -444,3 +444,66 @@ extension WorkCommandTests {
         }
     }
 }
+
+/// F2 R1: `work task add --agent --model` and `work run --review --personas --reviewer-model`: recorded, shown, validated.
+extension WorkCommandTests {
+    @Test func taskAddKeepsItsWorkerAndShowsIt() async throws {
+        try await withDaemon { d, p in
+            let a = try await spawnIn(d, p, "A", cwd: URL(fileURLWithPath: "/tmp"))
+            #expect(try await work(d, p, a, "work.task.add", ["title": "T1", "agent": "codex", "model": "gpt-5"]).ok)
+            #expect(try await work(d, p, a, "work.task.add", ["title": "T2"]).ok)
+            let w = try #require(try await d.router.work.active(terminal: a.uuid))
+            #expect(w.tasks.map(\.agent) == ["codex", nil] && w.tasks.map(\.model) == ["gpt-5", nil])
+            guard case .object(let g)? = try await work(d, p, a, "work.get", ["id": w.id.uuidString]).result,
+                  case .array(let ts)? = g["tasks"], case .object(let t1)? = ts.first else { Issue.record("get"); return }
+            #expect(t1["agent"] == .string("codex") && t1["model"] == .string("gpt-5"))
+            guard case .object(let s)? = try await work(d, p, a, "work.status").result, case .string(let out)? = s["output"] else { Issue.record("status"); return }
+            #expect(out.contains("T1 (agente codex, modelo gpt-5) [") && out.contains("  - T2 ["), "\(out)")
+            // unknown agent or model: invalidArgs, nothing added
+            #expect(try await work(d, p, a, "work.task.add", ["title": "T3", "agent": "gemini"]).error?.code == .invalidArgs)
+            #expect(try await work(d, p, a, "work.task.add", ["title": "T3", "model": "no model; rm"]).error?.code == .invalidArgs)
+            #expect(try await d.router.work.active(terminal: a.uuid)?.tasks.count == 2)
+        }
+    }
+
+    @Test func runReviewFlagsAreValidatedAgainstTheCommittedPersonas() async throws {
+        let repo = try await makeRepo()
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("docs/fabrica/personas"), withIntermediateDirectories: true)
+        try await commit("docs/fabrica/personas/correcao.md", "# Correção\n", in: repo)
+        try "# Fake\n".write(to: repo.appendingPathComponent("docs/fabrica/personas/fake.md"), atomically: true, encoding: .utf8)   // not committed
+        // pure: without --review, off; with it, auto or the names; the worktree's persona is no persona
+        #expect(try await CommandRouter.loopReview(review: false, personas: nil, reviewerModel: nil, dir: repo) == (false, nil, nil))
+        #expect(try await CommandRouter.loopReview(review: true, personas: nil, reviewerModel: nil, dir: repo) == (true, nil, nil))
+        #expect(try await CommandRouter.loopReview(review: true, personas: "auto", reviewerModel: "opus", dir: repo) == (true, nil, "opus"))
+        #expect(try await CommandRouter.loopReview(review: true, personas: "correcao", reviewerModel: nil, dir: repo) == (true, ["correcao"], nil))
+        for (review, personas, model) in [(false, "auto", nil), (false, nil, "opus"), (true, "fake", nil), (true, "correcao,nope", nil),
+                                          (true, "../x", nil), (true, "", nil), (true, nil, "bad model")] as [(Bool, String?, String?)] {
+            await #expect(throws: ProtocolError.self, "\(review) \(String(describing: personas)) \(String(describing: model))") {
+                _ = try await CommandRouter.loopReview(review: review, personas: personas, reviewerModel: model, dir: repo)
+            }
+        }
+        try await withDaemon { d, p in
+            let m = try await spawnIn(d, p, "M", cwd: repo, shepherd: true)
+            #expect(try await work(d, p, m, "paddock.create", ["name": "feat"]).ok)
+            let s = try await spawnIn(d, p, "S", cwd: repo, shepherd: true, paddock: "feat")
+            #expect(try await work(d, p, s, "work.start", ["title": "Loop work"]).ok)
+            #expect(try await work(d, p, s, "work.task.add", ["title": "A", "check": "true"]).ok)
+            let base = ["max": "3", "command": "true"]
+            #expect(try await work(d, p, s, "work.run", base.merging(["personas": "correcao"]) { $1 }).error?.code == .invalidArgs)
+            #expect(try await work(d, p, s, "work.run", base.merging(["reviewer-model": "opus"]) { $1 }).error?.code == .invalidArgs)
+            #expect(try await work(d, p, s, "work.run", base.merging(["personas": "nope"]) { $1 }, flags: ["review"]).error?.code == .invalidArgs)
+            let ok = try await work(d, p, s, "work.run", base.merging(["personas": "correcao", "reviewer-model": "opus"]) { $1 }, flags: ["review"])
+            #expect(ok.ok, "\(ok)")
+            let c = try #require(await d.router.appCards.first { $0.app == "work-loop" })
+            #expect(c.call?.contains("revisão por personas: «correcao», revisor «opus».") == true, "\(String(describing: c.call))")
+            // what the loop's state holds is what status shows
+            let id = try #require(try await d.router.work.active(terminal: s.uuid)).id
+            try await d.router.work.update(id) { $0.loop = WorkLoopState(state: .stopped, tasks: [], review: true, reviewerModel: "opus") }
+            guard case .object(let o)? = try await work(d, p, s, "work.status").result, case .string(let out)? = o["output"] else { Issue.record("status"); return }
+            #expect(out.contains("revisão: ligada, personas auto, revisor opus"), "\(out)")
+            try await d.router.work.update(id) { $0.loop?.personas = ["correcao", "testes"]; $0.loop?.reviewerModel = nil }
+            guard case .object(let o2)? = try await work(d, p, s, "work.status").result, case .string(let out2)? = o2["output"] else { Issue.record("status"); return }
+            #expect(out2.contains("revisão: ligada, personas correcao, testes\n"), "\(out2)")
+        }
+    }
+}

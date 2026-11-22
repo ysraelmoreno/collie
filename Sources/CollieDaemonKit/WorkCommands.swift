@@ -168,6 +168,8 @@ extension CommandRouter {
 /// exactly like a missing one, so existence never leaks.
 extension CommandRouter {
     static let maxWorkText = 2000
+    /// F2 R1: the agents `work task add --agent` takes (who works on the task).
+    static let taskAgents = ["claude", "cursor", "codex"]
 
     func workCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin (the user / app)
@@ -303,8 +305,12 @@ extension CommandRouter {
             if let needs, let why = TaskScheduler.needsRefusal(id: id, needs: needs, tasks: try await work.active(terminal: t.id)?.tasks ?? []) {
                 throw invalid("--needs: \(why)")
             }
+            let agent = str(r, "agent"), model = str(r, "model")
+            if let agent, !Self.taskAgents.contains(agent) { throw invalid("--agent must be \(Self.taskAgents.joined(separator: "|"))") }
+            if let model { try ClaudeModel.validate(model) }
             let w = try await implicitWork(t, now: now)
-            let task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope)
+            var task = WorkTask(id: id, title: title, updatedAt: now, spec: spec, check: check, evidenceGlob: evidence, needs: needs, scope: scope)
+            task.agent = agent; task.model = model
             try await work.update(w.id) { $0.tasks.append(task) }
             guard let areas, let check, case .object(var o) = try isoJSON(task) else { return try isoJSON(task) }
             o["output"] = .string("Tarefa \"\(RerailText.clean(title))\" [\(id)] adicionada; check montado pelas áreas "
@@ -573,6 +579,7 @@ extension CommandRouter {
         if let g = WorkStatusText.gateLine(w) { lines.append(g) }
         if let n = WorkStatusText.notifyLine(w) { lines.append(n) }
         if let n = WorkStatusText.modelLine(w) { lines.append(n) }   // M5.6
+        if let n = WorkStatusText.reviewLine(w) { lines.append(n) }   // F2 R1
         if let n = WorkStatusText.statsLine(w) { lines.append(n) }
         if let n = WorkStatusText.tokensLine(w) { lines.append(n) }   // M5.4
         let groups: [(TaskState, String)] = [(.inProgress, "In progress"), (.open, "Open"), (.deferred, "Deferred"),
@@ -581,7 +588,7 @@ extension CommandRouter {
             let ts = w.tasks.filter { $0.state == state }
             guard !ts.isEmpty else { continue }
             lines.append("\(label) (\(ts.count)):")
-            lines += ts.suffix(state == .done ? 5 : 50).map { "  - " + (WorkStatusText.doneLine($0) ?? $0.title + ($0.reason.map { " — \($0)" } ?? "")) + " [\($0.id)]" }
+            lines += ts.suffix(state == .done ? 5 : 50).map { "  - " + (WorkStatusText.doneLine($0) ?? $0.title + ($0.reason.map { " — \($0)" } ?? "")) + WorkStatusText.workerLabel($0) + " [\($0.id)]" }
         }
         let jobs = w.jobs.filter { $0.state == .running || $0.state == .unknown }
         if !jobs.isEmpty { lines.append("Jobs:"); lines += jobs.map { "  - \($0.kind.rawValue) \($0.label) (\($0.state.rawValue))" } }

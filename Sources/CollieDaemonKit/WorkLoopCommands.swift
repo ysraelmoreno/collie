@@ -90,6 +90,7 @@ extension CommandRouter {
             for t in open { try LaneWorktree.validate(task: t.id) }
         }
         let notify = try Self.loopNotify(str(r, "notify"))
+        let review = try await Self.loopReview(review: flag(r, "review"), personas: str(r, "personas"), reviewerModel: str(r, "reviewer-model"), dir: dir)
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"),
@@ -97,7 +98,8 @@ extension CommandRouter {
                                                        preset: str(r, "preset"), command: str(r, "command"), shepherd: t),
                                  command: str(r, "command"),
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
-                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck)
+                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck,
+                                 review: review.on ? true : nil, personas: review.personas, reviewerModel: review.reviewerModel)
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
         guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
@@ -189,6 +191,36 @@ extension CommandRouter {
         return n
     }
 
+    /// F2 R1: `--review` with `--personas auto|a,b,c` and `--reviewer-model`. Either without `--review`, a persona whose
+    /// name is no file in `docs/fabrica/personas/` AS COMMITTED AT HEAD (the loop's base: the worktree's edits never pick
+    /// who judges), or a model that is no model name: invalidArgs. `personas` nil: auto.
+    static func loopReview(review: Bool, personas: String?, reviewerModel: String?, dir: URL) async throws(ProtocolError)
+        -> (on: Bool, personas: [String]?, reviewerModel: String?) {
+        func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        guard review else {
+            if personas != nil || reviewerModel != nil { throw invalid("--personas and --reviewer-model go with --review only") }
+            return (false, nil, nil)
+        }
+        if let reviewerModel { try ClaudeModel.validate(reviewerModel) }
+        guard let personas, personas != "auto" else { return (true, nil, reviewerModel) }
+        let names = TaskScheduler.list(personas)
+        let known = await committedPersonas(dir)
+        if let bad = names.first(where: { !known.contains($0) }) {
+            throw invalid("unknown persona '\(RerailText.clean(bad, max: 60))'; known (\(personasDir), at HEAD): " + known.sorted().joined(separator: ", "))
+        }
+        return (true, names, reviewerModel)
+    }
+    static let personasDir = "docs/fabrica/personas/"
+    /// The persona names (`<name>.md`) in `personasDir` at HEAD; none: no such folder, or no git.
+    static func committedPersonas(_ dir: URL) async -> Set<String> {
+        let out = (try? await GitRunner.run(["ls-tree", "--name-only", "HEAD", "--", personasDir], in: dir, timeout: .seconds(30)))
+        guard let out, out.status == 0 else { return [] }
+        return Set(out.stdout.split(separator: "\n").compactMap { line in
+            let name = (line as Substring).split(separator: "/").last.map(String.init) ?? ""
+            return name.hasSuffix(".md") ? String(name.dropLast(3)) : nil
+        })
+    }
+
     /// The card was answered or expired: forget it. True when `work.stop` had withdrawn it first.
     private func takeLoopCard(_ work: UUID) -> Bool { loopCards.removeValue(forKey: work) == nil }
 
@@ -264,6 +296,8 @@ extension CommandRouter {
             + (l.gate.map { "portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). " } ?? "")
             + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
             + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
+            + (l.review == true ? "revisão por personas: \(l.personas.map { $0.map(quoted).joined(separator: " ") } ?? "auto")"
+               + (l.reviewerModel.map { ", revisor \(quoted($0))" } ?? "") + ". " : "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
         func list(_ label: String, _ xs: [String]?) -> String {

@@ -122,3 +122,24 @@ private let xml = """
     #expect(c["nodes"] == .number(3) && c["total"] == .number(5) && a["nodes"] == .number(5) && a["total"] == .number(5))
     #expect(c["tree"] == .string(UITree.lines(compact)) && a["tree"] == .string(UITree.lines(nodes)))
 }
+
+@Test func humanizeIdCases() {
+    #expect(humanizeId("configuration_fab") == "configuration fab")
+    #expect(humanizeId("topBarMenu") == "top bar menu")
+    #expect(humanizeId("ICON-btn") == "icon btn")
+    #expect(humanizeId("") == "")
+}
+
+/// The BEES Offers dump (2026-11-21): configuration_fab is a clickable Button with no text or desc.
+@Test func findByHumanizedId() throws {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/offers-ui.xml")
+    let nodes = UITree.parse(try Data(contentsOf: url)).nodes
+    let fab = try UITree.target(nodes, text: "configuration fab", id: nil, nth: 1)   // what `device find` runs
+    #expect(fab.id == "configuration_fab")
+    #expect(try UITree.target(nodes, text: "Configuration", id: nil, nth: nil).id == "configuration_fab")   // contains
+    #expect(throws: ProtocolError.self) { try UITree.target(nodes, text: "toolbar", id: nil, nth: nil) }   // not clickable: no id match
+    do { _ = try UITree.target(nodes, text: "+", id: nil, nth: 1); Issue.record("found") } catch {
+        #expect(error.code == .notFound && error.message.contains("unlabeled: \(fab.ref) id=configuration_fab"), "\(error.message)")
+    }
+}

@@ -166,7 +166,7 @@ public enum ScreenModel {
     }
 
     /// "configuration_fab" → "configuration fab"
-    static func humanize(_ id: String) -> String { words(id).joined(separator: " ") }
+    static func humanize(_ id: String) -> String { humanizeId(id) }
     static func words(_ id: String) -> [String] {
         id.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
     }

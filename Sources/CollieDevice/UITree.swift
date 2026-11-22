@@ -16,6 +16,17 @@ public struct UINode: Equatable, Sendable {
     }
 }
 
+/// "configuration_fab" → "configuration fab", "topBarMenu" → "top bar menu", "ICON-btn" → "icon btn":
+/// `_`/`-` (any non-alphanumeric) become spaces, camelCase splits, lowercased.
+public func humanizeId(_ id: String) -> String {
+    var s = "", prev: Character?
+    for c in id {
+        if c.isUppercase, let p = prev, p.isLowercase || p.isNumber { s.append(" ") }
+        s.append(c); prev = c
+    }
+    return s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
+}
+
 /// Compacts a `uiautomator dump` XML into the few nodes an agent needs.
 public enum UITree {
     public static func parse(_ xml: Data, cap: Int = 2000) -> (nodes: [UINode], truncated: Bool) {
@@ -50,10 +61,10 @@ public enum UITree {
                         "nodes": .number(Double(shown.count)), "total": .number(Double(nodes.count))])
     }
 
-    /// `device.tap --text/--id`: the node to tap. `text` matches `text` or `desc` ignoring case, equal first, then
-    /// containing; `id` matches exactly (both given: both must match). A node that isn't clickable gives way to its
+    /// `device.tap --text/--id`: the node to tap. `text` matches ignoring case: `text`/`desc` equal, then the humanized
+    /// `id` equal (`humanizeId`, clickable nodes only), then containing in any of the three; `id` matches exactly (both given: both must match). A node that isn't clickable gives way to its
     /// nearest clickable ancestor (none: the node itself); candidates landing on the same node count once. Several:
-    /// `nth` (from 1) picks one, else invalidArgs listing up to 5. None: notFound with up to 5 similar labels.
+    /// `nth` (from 1) picks one, else invalidArgs listing up to 5. None: notFound with up to 5 similar labels and unlabeled clickable ids.
     /// `keep` drops candidates after the climb (`device.find --role`).
     public static func target(_ nodes: [UINode], text: String?, id: String?, nth: Int?,
                               keep: (UINode) -> Bool = { _ in true }) throws(ProtocolError) -> UINode {
@@ -65,8 +76,11 @@ public enum UITree {
         if let id { idx = idx.filter { nodes[$0].id == id } }
         if let t = text?.lowercased() {
             let labels = { (i: Int) in [nodes[i].text.lowercased(), nodes[i].desc.lowercased()] }
+            let hid = { (i: Int) in nodes[i].clickable ? humanizeId(nodes[i].id) : "" }   // an id only counts on a clickable node
             let equal = idx.filter { labels($0).contains(t) }
-            idx = equal.isEmpty ? idx.filter { labels($0).contains { $0.contains(t) } } : equal
+            let idEqual = idx.filter { !hid($0).isEmpty && hid($0) == t }
+            idx = !equal.isEmpty ? equal : !idEqual.isEmpty ? idEqual
+                : idx.filter { labels($0).contains { $0.contains(t) } } + idx.filter { i in !hid(i).isEmpty && hid(i).contains(t) && !labels(i).contains { $0.contains(t) } }
         }
         var hits: [UINode] = []
         for i in idx {
@@ -81,9 +95,12 @@ public enum UITree {
         guard !hits.isEmpty else {
             // ponytail: "similar" = shares a word with the query; first labels when none does
             let words = Set((text ?? id ?? "").lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }))
-            let named = nodes.filter { !label($0).isEmpty || !$0.id.isEmpty }
+            let unlabeled = nodes.filter { $0.clickable && label($0).isEmpty && !$0.id.isEmpty }   // e.g. a floating action button
+            let named = nodes.filter { (!label($0).isEmpty || !$0.id.isEmpty) && !unlabeled.contains($0) }
             let near = named.filter { n in !words.isDisjoint(with: (label(n) + " " + n.id).lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })) }
-            throw ProtocolError(code: .notFound, message: "No element with \(what)" + (named.isEmpty ? "" : "; similar: \(show(near.isEmpty ? named : near))"))
+            let u = Array(unlabeled.prefix(2)), similar = Array((near.isEmpty ? named : near).prefix(5 - u.count))
+            throw ProtocolError(code: .notFound, message: "No element with \(what)" + (similar.isEmpty ? "" : "; similar: \(show(similar))")
+                                + (u.isEmpty ? "" : "; unlabeled: \(show(u))"))
         }
         if let nth {
             guard (1...hits.count).contains(nth) else {

@@ -479,7 +479,8 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         let srv = try FakeHelper(installed: false); defer { srv.stop() }
         let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
         let clock = TestClock()
-        let h = make(adb, serial: "R5CT1234", clock: clock)
+        let apk = try bundled("official"); defer { try? FileManager.default.removeItem(at: apk) }
+        let h = make(adb, serial: "R5CT1234", apk: apk, clock: clock)
         await h.start(install: false)
         #expect(await h.state == .fallback)
         let forwards = { await adb.calls.filter { $0.prefix(2) == ["forward", "tcp:0"] }.count }
@@ -496,7 +497,7 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
             let (state, reason) = (await h.state, await h.reason)
             #expect(state == .fallback && reason?.contains("not answering") == true, "\(reason ?? "")")
         }
-        srv.installed()
+        srv.installed(); await adb.set(deviceApk: Data("official".utf8))   // the bundled one (S1: verified, no note)
         clock.advance(.seconds(30))
         await h.recover()
         #expect(await h.state == .ready)

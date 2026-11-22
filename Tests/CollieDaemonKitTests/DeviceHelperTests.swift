@@ -46,7 +46,9 @@ private final class FakeHelper: @unchecked Sendable {
     func installed() { lock.withLock { state.installed = true; state.version = HelperProtocol.version } }
     /// The helper goes away (the app killed): each connection is closed at once, as a forward with nobody behind it.
     func die() { lock.withLock { state.installed = false } }
-    func set(nodes: String? = nil, goneClicks: Int = 0) { lock.withLock { dumpNodes = nodes; gone = goneClicks } }
+    func set(nodes: String? = nil, goneClicks: Int = 0) {
+        lock.withLock { dumpNodes = nodes?.replacingOccurrences(of: "\n", with: ""); gone = goneClicks }   // one answer, one line
+    }
 
     private func serve(_ c: Int32) {
         let s = lock.withLock { state }

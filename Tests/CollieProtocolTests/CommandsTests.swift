@@ -116,7 +116,7 @@ import Foundation
         #expect(try ArgvParser.parse(["device", "wait", "--stable", "--timeout", "500ms", "--then", "screen"]).args
                 == ["stable": .bool(true), "timeout": .string("500ms"), "then": .string("screen")])
         let bad = #expect(throws: ProtocolError.self) { try ArgvParser.parse(["device", "wait", "--text", "x", "--for", "3"]) }
-        #expect(bad?.message == "unknown flag --for; device wait takes --text --gone --stable --timeout --then", "\(String(describing: bad))")
+        #expect(bad?.message == "unknown flag --for; device wait takes --text --gone --stable --timeout --then --panel", "\(String(describing: bad))")
         #expect(try ArgvParser.parse(["device", "text", "hi", "there", "--then", "ui"]).args == ["text": .string("hi there"), "then": .string("ui")])
         for c in ["tap", "swipe", "text", "key", "launch"] {
             let names = Commands.spec("device.\(c)")?.params.map(\.name) ?? []

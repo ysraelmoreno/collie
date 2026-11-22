@@ -6,6 +6,9 @@ public struct UINode: Equatable, Sendable {
     public var ref: String; public var cls: String; public var text: String; public var desc: String
     public var id: String; public var bounds: CGRect; public var clickable: Bool; public var depth: Int
     public var center: (x: Int, y: Int) { (Int(bounds.midX), Int(bounds.midY)) }
+    public init(ref: String, cls: String, text: String, desc: String, id: String, bounds: CGRect, clickable: Bool, depth: Int) {
+        self.ref = ref; self.cls = cls; self.text = text; self.desc = desc; self.id = id; self.bounds = bounds; self.clickable = clickable; self.depth = depth
+    }
 }
 
 /// Compacts a `uiautomator dump` XML into the few nodes an agent needs.

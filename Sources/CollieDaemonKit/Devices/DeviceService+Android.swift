@@ -177,11 +177,27 @@ extension DeviceService {
                 return s
             }
             guard let pkg = try word("package") else { throw ProtocolError(code: .invalidArgs, message: "Missing argument 'package'") }
-            let out = try await adb(try word("activity").map { ["shell", "am", "start", "-n", "\(pkg)/\($0)"] }
+            // No --activity: an app may have several LAUNCHER activities (e.g. leakcanary's), and monkey then opens none (exit 251).
+            // So list them and start the first; monkey only when the list is unavailable or empty.
+            var activity = try word("activity")
+            if activity == nil, let list = try? await adb(["shell", "cmd", "package", "query-activities", "--brief",
+                                                            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", pkg]).stdout {
+                let comp = ident.union(CharacterSet(charactersIn: "/"))
+                activity = list.split(whereSeparator: \.isWhitespace).lazy
+                    .filter { $0.hasPrefix("\(pkg)/") && $0.unicodeScalars.allSatisfy(comp.contains) }
+                    .map { String($0.dropFirst(pkg.count + 1)) }.first { !$0.isEmpty }
+            }
+            let out: String
+            do {
+                out = try await adb(activity.map { ["shell", "am", "start", "-n", "\(pkg)/\($0)"] }
                                     ?? ["shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"]).stdout
-            guard !out.contains("Error") else { throw ProtocolError(code: .internal, message: "launch failed: \(out.prefix(500))") }
+            } catch { out = "Error" }
+            guard !out.contains("Error"), !out.contains("monkey aborted") else {
+                throw ProtocolError(code: .internal, message: activity.map { "could not start \(pkg)/\($0); check the activity name with --activity" }
+                                    ?? "could not launch \(pkg): no launcher activity found; is it installed? Pass --activity to pick one")
+            }
             await emit(panel.id, "device.app_launched", .object(["serial": .string(serial), "package": .string(pkg)]))
-            return .object([:])
+            return .object(activity.map { ["activity": .string($0)] } ?? [:])
         default:
             throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(command)'")
         }

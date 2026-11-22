@@ -390,6 +390,49 @@ private struct LiteFx {
         }
     }
 
+    /// `query-activities --brief` output for `com.example`, one component per launcher.
+    private func launchers(_ fx: Fx, _ comps: [String]) throws {
+        let f = fx.dir.appendingPathComponent("launchers")
+        try comps.enumerated().map { "  Activity #\($0.offset):\n    priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false\n    \($0.element)" }
+            .joined(separator: "\n").write(to: f, atomically: true, encoding: .utf8)
+        setenv("COLLIE_FAKE_ADB_LAUNCHERS", f.path, 1)
+    }
+
+    @Test func launchWithTwoLauncherActivitiesStartsTheFirst() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_LAUNCHERS") }
+        try launchers(fx, ["com.example/.BrowseActivity", "com.example/leakcanary.internal.activity.LeakLauncherActivity"])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.launch", ["package": "com.example"])
+            #expect(r.ok && field(r, "activity") == .string(".BrowseActivity"), "\(r)")
+            #expect(fx.lines.contains("-s emulator-5554 shell am start -n com.example/.BrowseActivity"))
+            #expect(!fx.lines.contains { $0.contains("monkey") || $0.contains("LeakLauncherActivity") })
+        }
+    }
+
+    @Test func launchWithOneLauncherActivityStartsIt() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_LAUNCHERS") }
+        try launchers(fx, ["com.example/com.example.MainActivity"])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.launch", ["package": "com.example"])
+            #expect(r.ok && field(r, "activity") == .string("com.example.MainActivity"), "\(r)")
+            #expect(fx.lines.contains("-s emulator-5554 shell am start -n com.example/com.example.MainActivity"))
+        }
+    }
+
+    @Test func launchWithNoLauncherListFallsBackToMonkey() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_LAUNCHERS") }
+        try launchers(fx, [])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.launch", ["package": "com.example"])
+            #expect(r.ok && field(r, "activity") == nil, "\(r)")
+            #expect(fx.lines.contains { $0.contains("query-activities") })
+            #expect(fx.lines.contains("-s emulator-5554 shell monkey -p com.example -c android.intent.category.LAUNCHER 1"))
+        }
+    }
+
     @Test func closingPanelDeletesScreenshots() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in

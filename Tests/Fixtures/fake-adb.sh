@@ -5,6 +5,7 @@
 # `shell date +%s` prints 1700000000; `logcat -b crash` appends $$ to $COLLIE_FAKE_ADB_PIDS, prints $COLLIE_FAKE_ADB_CRASH
 # (when set) and sleeps 600 s (the watcher must kill the group).
 # `emu avd name` prints the name for the serial from $COLLIE_FAKE_ADB_AVDNAMES (lines `<serial> <name>`) then OK (OK first with $COLLIE_FAKE_ADB_OK_FIRST), else exits 1;
+# `shell cmd package query-activities …` cats $COLLIE_FAKE_ADB_LAUNCHERS when set (else prints nothing).
 # `shell getprop sys.boot_completed` prints ${COLLIE_FAKE_ADB_BOOTED:-1}.
 # scrcpy: `push` and `forward --remove` are only logged; `forward tcp:0 …` prints $COLLIE_FAKE_ADB_PORT; `shell CLASSPATH=…`
 # (the server) appends "scrcpy $$" to $COLLIE_FAKE_ADB_PIDS (apart from the crash watchers' bare pids) and becomes `sleep 600`.
@@ -21,6 +22,7 @@ case "$1 $2 $3" in
   "logcat -d -t") cat "$COLLIE_FAKE_ADB_LOGCAT" ;;
   "install -r "*) echo Success ;;
   "shell monkey -p") echo "Events injected: 1" ;;
+  "shell cmd package") [ -n "$COLLIE_FAKE_ADB_LAUNCHERS" ] && cat "$COLLIE_FAKE_ADB_LAUNCHERS" ;;
   "emu avd name") n=$(grep "^$SERIAL " "$COLLIE_FAKE_ADB_AVDNAMES" 2>/dev/null | head -1 | cut -d' ' -f2-); [ -n "$n" ] || exit 1; [ -n "$COLLIE_FAKE_ADB_OK_FIRST" ] && echo OK; echo "$n"; [ -z "$COLLIE_FAKE_ADB_OK_FIRST" ] && echo OK; exit 0 ;;
   "shell getprop sys.boot_completed") echo "${COLLIE_FAKE_ADB_BOOTED:-1}" ;;
   "shell date +%s") echo 1700000000 ;;

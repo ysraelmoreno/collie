@@ -135,7 +135,7 @@ private let withSmoke = """
     @Test func runTakesGateAndPrecheckFromTheFile() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            try writeConfig(x.dir, withSmoke)   // untracked: the tree stays clean for the loop
+            try await commit(ProjectWorkConfig.fileName, withSmoke, in: x.dir)   // M13.3: the loop reads the committed file
             let (r, card) = try await runCard(d, p, x)
             #expect(warning(r) == nil, "\(r)")
             #expect(card.contains("portão (collie-work.json) depois de cada check: «scripts/ci/lint.sh»"), "\(card)")
@@ -157,7 +157,7 @@ private let withSmoke = """
     @Test func invalidFileNeverStopsTheRun() async throws {
         try await withDaemon { d, p in
             let x = try await pad(d, p)
-            try writeConfig(x.dir, #"{ "gate": 3 }"#)
+            try await commit(ProjectWorkConfig.fileName, #"{ "gate": 3 }"#, in: x.dir)
             let (r, card) = try await runCard(d, p, x)
             let w = try #require(warning(r), "\(r)")
             #expect(!w.contains("\n") && w.contains("collie-work.json"), "\(w)")

@@ -77,8 +77,9 @@ extension CommandRouter {
             throw invalid("--precheck is empty: give the command that runs at the end of each turn, before the check, or leave --precheck out")
         }
         // M13.2: a flag left out takes the paddock's collie-work.json; no file or an invalid one: today's defaults (none),
-        // and an invalid one a one-line warning in the reply, never a refusal
-        let (fileConfig, fileWarning) = Self.loopFileDefaults(dir, needed: gateFlag == nil || precheckFlag == nil)
+        // and an invalid one a one-line warning in the reply, never a refusal. M13.3: the file as committed at HEAD now
+        // (the loop's base), never the tree's: an agent's edit, committed or not, never picks the gate
+        let (fileConfig, fileWarning) = await Self.loopFileDefaults(dir, needed: gateFlag == nil || precheckFlag == nil)
         let gate = gateFlag ?? fileConfig?.gate, precheck = precheckFlag ?? fileConfig?.precheck
         let from = (gate: gateFlag == nil && gate != nil, precheck: precheckFlag == nil && precheck != nil)
         // M3.5: absent is 1 (the loop as always); more runs tasks in lanes, which exist only sandboxed and are named by
@@ -132,10 +133,13 @@ extension CommandRouter {
     }
 
     /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults, read only when a flag is left out. Never fails:
-    /// an absent file is nil with no warning, a refused or invalid one nil with its one-line warning.
-    static func loopFileDefaults(_ dir: URL, needed: Bool) -> (ProjectWorkConfig?, String?) {
+    /// an absent file is nil with no warning, a refused or invalid one nil with its one-line warning. M13.3: read from
+    /// the commit at HEAD (`git show HEAD:collie-work.json`, by its sha), never from the working tree.
+    static func loopFileDefaults(_ dir: URL, needed: Bool) async -> (ProjectWorkConfig?, String?) {
         guard needed else { return (nil, nil) }
-        switch WorkConfigFile.config(root: dir) {
+        let base = (try? await GitRunner.run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], in: dir, timeout: .seconds(30)))?
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch await WorkConfigFile.config(base: base, dir: dir) {
         case .success(let c): return (c, nil)
         case .failure(let e):
             return (nil, "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão nem pré-check vindos do arquivo): "

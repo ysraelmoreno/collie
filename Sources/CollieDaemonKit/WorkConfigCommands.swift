@@ -24,10 +24,37 @@ enum WorkConfigFile: Equatable {
         return .loaded(data)
     }
 
+    /// M13.3: the file as committed in `base` (a sha), never the working tree's: a regular blob (never a link or a
+    /// submodule) of at most 16 KB at the repository's root. Not in `base`: `.absent`.
+    static func read(base: String, dir: URL) async -> WorkConfigFile {
+        guard base.count == 40 || base.count == 64, base.allSatisfy(\.isHexDigit) else { return .refused("a base do laço não é um commit") }
+        let name = ProjectWorkConfig.fileName
+        guard let ls = try? await GitRunner.run(["--literal-pathspecs", "ls-tree", "-z", "-l", base, "--", name], in: dir, timeout: .seconds(30)),
+              ls.status == 0 else { return .refused("\(name) não pôde ser lido do commit \(base.prefix(7))") }
+        // "<mode> <type> <oid> <size>\t<name>\0"
+        guard let entry = ls.stdout.split(separator: "\0").first, let tab = entry.firstIndex(of: "\t") else { return .absent }
+        let meta = entry[..<tab].split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        guard String(entry[entry.index(after: tab)...]) == name, meta.count == 4 else { return .absent }
+        guard meta[1] == "blob", meta[0] == "100644" || meta[0] == "100755" else { return .refused("\(name) no commit \(base.prefix(7)) não é um arquivo regular") }
+        guard let size = Int(meta[3]), size <= ProjectWorkConfig.maxBytes else {
+            return .refused(ProjectWorkConfig.ConfigError.tooLarge(Int(meta[3]) ?? ProjectWorkConfig.maxBytes + 1).message)
+        }
+        guard let blob = try? await GitRunner.run(["cat-file", "blob", meta[2]], in: dir, timeout: .seconds(30)), blob.status == 0,
+              blob.stdoutData.count <= ProjectWorkConfig.maxBytes else { return .refused("\(name) não pôde ser lido do commit \(base.prefix(7))") }
+        return .loaded(blob.stdoutData)
+    }
+
+    /// M13.3: `config(root:)`'s result for the file committed in `base`.
+    static func config(base: String, dir: URL) async -> Result<ProjectWorkConfig?, ProtocolError> {
+        parsed(await read(base: base, dir: dir))
+    }
+
     /// M13.2: the file read and parsed. `.success(nil)`: no file; `.failure`: one line, cleaned, saying why it is not used.
-    static func config(root: URL) -> Result<ProjectWorkConfig?, ProtocolError> {
+    static func config(root: URL) -> Result<ProjectWorkConfig?, ProtocolError> { parsed(read(root: root)) }
+
+    private static func parsed(_ file: WorkConfigFile) -> Result<ProjectWorkConfig?, ProtocolError> {
         func bad(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: RerailText.clean(m, max: 300)) }
-        switch read(root: root) {
+        switch file {
         case .absent: return .success(nil)
         case .refused(let m): return .failure(bad(m))
         case .loaded(let d):

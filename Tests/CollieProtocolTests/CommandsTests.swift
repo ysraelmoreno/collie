@@ -117,6 +117,13 @@ import Foundation
         #expect(Commands.spec("device.ui")?.params.contains { $0.name == "then" } == false)
     }
 
+    @Test func deviceTapTakesTextIdAndNth() throws {
+        let t = try ArgvParser.parse(["device", "tap", "--text", "Open Deals", "--nth", "2"])
+        #expect(t.command == "device.tap" && t.args == ["text": .string("Open Deals"), "nth": .number(2)])
+        let names = Commands.spec("device.tap")?.params.map(\.name) ?? []
+        #expect(["text", "id", "nth", "ref", "then"].allSatisfy(names.contains), "\(names)")
+    }
+
     @Test func rejectsBadDottedSubcommands() {
         for argv in [["panel"], ["panel", "bogus"], ["browser", "bogus"], ["browser"], ["panel", "close"]] {
             let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(argv) }

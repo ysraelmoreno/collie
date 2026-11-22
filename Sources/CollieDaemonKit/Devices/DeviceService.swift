@@ -139,6 +139,11 @@ actor DeviceService {
             return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
         }
         let settle = try Self.then(args)   // checked before the action: a bad --then must not tap
+        var args = args
+        if command == "device.tap", let pick = try Self.tapPick(args) {
+            _ = try await act("device.ui", [:])   // always a fresh dump: cached refs may be stale
+            args["ref"] = .string(try UITree.target(refs[panel.id] ?? [], text: pick.text, id: pick.id, nth: pick.nth).ref)
+        }
         let r = try await act(command, args)
         guard let settle, Self.thenCommands.contains(command) else { return r }
         // ponytail: fixed settle, may catch an animation midway; the agent can run device.ui again
@@ -147,6 +152,20 @@ actor DeviceService {
         guard case .object(var o) = r else { return r }
         o["ui"] = ui
         return .object(o)
+    }
+
+    /// `device.tap --text/--id` (with `--nth`): what to look for; nil when tapping by x y or --ref. Exactly one of
+    /// x y, --ref, --text/--id: otherwise invalidArgs.
+    static func tapPick(_ a: [String: JSONValue]) throws(ProtocolError) -> (text: String?, id: String?, nth: Int?)? {
+        func str(_ k: String) -> String? { if case .string(let s)? = a[k], !s.isEmpty { s } else { nil } }
+        func has(_ k: String) -> Bool { a[k] != nil && a[k] != .null }
+        let text = str("text"), id = str("id")
+        let ways = [has("x") || has("y"), has("ref"), text != nil || id != nil].filter { $0 }.count
+        guard ways == 1 else {
+            throw ProtocolError(code: .invalidArgs, message: "device.tap needs exactly one of: x y, --ref, --text/--id")
+        }
+        guard text != nil || id != nil else { return nil }
+        return (text, id, try int(a, "nth", 1...10_000))
     }
 
     /// A plain timed wait (cancellation ends it early), for the waits that are about time, not an event.

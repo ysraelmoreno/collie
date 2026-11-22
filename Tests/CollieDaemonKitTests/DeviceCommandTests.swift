@@ -254,6 +254,67 @@ private struct LiteFx {
         }
     }
 
+    // tap --text/--id resolution (UITree.target), on a hand-made tree
+    private func node(_ ref: String, _ text: String = "", desc: String = "", id: String = "", clickable: Bool = false, depth: Int) -> UINode {
+        UINode(ref: ref, cls: "android.widget.View", text: text, desc: desc, id: id, bounds: .zero, clickable: clickable, depth: depth)
+    }
+    private var tree: [UINode] {
+        [node("e1", depth: 0),
+         node("e2", id: "configuration_fab", clickable: true, depth: 1),
+         node("e3", clickable: true, depth: 1),
+         node("e4", "Open Deals", depth: 2),
+         node("e5", "Open Deals later", clickable: true, depth: 1),
+         node("e6", desc: "Settings", clickable: true, depth: 1),
+         node("e7", "Settings", clickable: true, depth: 1)]
+    }
+
+    @Test func tapTextUniqueMatchIgnoresCaseAndPrefersEqual() throws {
+        #expect(try UITree.target(tree, text: "open deals", id: nil, nth: nil).ref == "e3")   // equal beats "Open Deals later"
+        #expect(try UITree.target(tree, text: "later", id: nil, nth: nil).ref == "e5")   // contains
+        #expect(try UITree.target(tree, text: nil, id: "configuration_fab", nth: nil).ref == "e2")
+    }
+
+    @Test func tapTextClimbsToClickableAncestor() throws {
+        #expect(try UITree.target(tree, text: "Open Deals", id: nil, nth: nil).ref == "e3")   // e4 isn't clickable, e3 holds it
+        let lone = [node("e1", depth: 0), node("e2", "Plain", depth: 1)]
+        #expect(try UITree.target(lone, text: "plain", id: nil, nth: nil).ref == "e2")   // no clickable ancestor: the node itself
+    }
+
+    @Test func tapTextAmbiguousListsCandidates() {
+        #expect(throws: ProtocolError.self) { try UITree.target(tree, text: "settings", id: nil, nth: nil) }
+        do { _ = try UITree.target(tree, text: "settings", id: nil, nth: nil) } catch {
+            #expect(error.code == .invalidArgs && error.message.contains("e6 \"Settings\"") && error.message.contains("e7 \"Settings\"")
+                    && error.message.contains("--nth"), "\(error.message)")
+        }
+    }
+
+    @Test func tapTextNthPicksOne() throws {
+        #expect(try UITree.target(tree, text: "settings", id: nil, nth: 2).ref == "e7")
+        do { _ = try UITree.target(tree, text: "settings", id: nil, nth: 3); Issue.record("nth 3 of 2") } catch {
+            #expect(error.code == .invalidArgs)
+        }
+    }
+
+    @Test func tapTextNotFoundSuggestsSimilar() {
+        do { _ = try UITree.target(tree, text: "Close Deals", id: nil, nth: nil); Issue.record("found") } catch {
+            #expect(error.code == .notFound && error.message.contains("Open Deals") && !error.message.contains("Settings"), "\(error.message)")
+        }
+    }
+
+    @Test func tapTextDumpsFreshAndTaps() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            #expect(try await call(p, m, "device.tap", ["text": "login"]).result == .object([:]))   // no device.ui before
+            #expect(fx.lines.contains { $0.contains("uiautomator dump") } && fx.lines.contains("-s emulator-5554 shell input tap 540 1210"))
+            #expect(try await call(p, m, "device.tap", ["id": "login", "then": "ui", "settle": "0"]).ok)
+            #expect(try await call(p, m, "device.tap", ["text": "Nope"]).error?.code == .notFound)
+            #expect(try await call(p, m, "device.tap", ["text": "Login", "x": "1", "y": "2"]).error?.code == .invalidArgs)
+            #expect(try await call(p, m, "device.tap", ["text": "Login", "ref": "e1"]).error?.code == .invalidArgs)
+            #expect(try await call(p, m, "device.tap").error?.code == .invalidArgs)
+        }
+    }
+
     @Test func thenRejectsOtherValuesBeforeActing() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in

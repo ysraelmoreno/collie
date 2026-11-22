@@ -147,6 +147,7 @@ collie device ui                       # nós com rótulo ou clicáveis, com ref
 collie device ui --all                 # árvore inteira (depurar); mesmos refs
 collie device tap 540 1200             # ou: collie device tap --ref e3
 collie device tap --ref e3 --then ui   # tap, espera 400 ms (--settle 0-3000) e devolve {ui:{tree,…}}; refs atualizados
+collie device tap --text "Open Deals" --then ui   # acha pelo rótulo (ou --id <resource-id>) num dump novo; vários: lista, escolha com --nth N
 collie device swipe 540 1800 540 600
 collie device text "ola mundo"
 collie device key Back                 # Enter, Home, ... ou um keycode

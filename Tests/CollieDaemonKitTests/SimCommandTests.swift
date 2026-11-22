@@ -191,6 +191,18 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         }
     }
 
+    @Test func iosTapTextDumpsFreshAndTaps() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let nodes = AXeTree.parse(try Data(contentsOf: fixtures.appendingPathComponent("ios/describe-ui.json"))).nodes
+            let n = try UITree.target(nodes, text: "mapas", id: nil, nth: 1)
+            #expect(try await call(p, m, "device.tap", ["text": "mapas", "nth": "1"]).ok)   // no device.ui before
+            #expect(fx.axe.contains("describe-ui --udid \(booted)") && fx.axe.contains("tap -x \(n.center.x) -y \(n.center.y) --udid \(booted)"), "\(fx.axe)")
+            #expect(try await call(p, m, "device.tap", ["text": "no such label"]).error?.code == .notFound)
+        }
+    }
+
     @Test func iosLogcatRetriesShorterWhenCapped() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         let big = (0..<20).map { "old line \($0)" }.joined(separator: "\n") + "\n"

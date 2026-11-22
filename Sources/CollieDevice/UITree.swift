@@ -31,6 +31,51 @@ public enum UITree {
                         "nodes": .number(Double(shown.count)), "total": .number(Double(nodes.count))])
     }
 
+    /// `device.tap --text/--id`: the node to tap. `text` matches `text` or `desc` ignoring case, equal first, then
+    /// containing; `id` matches exactly (both given: both must match). A node that isn't clickable gives way to its
+    /// nearest clickable ancestor (none: the node itself); candidates landing on the same node count once. Several:
+    /// `nth` (from 1) picks one, else invalidArgs listing up to 5. None: notFound with up to 5 similar labels.
+    public static func target(_ nodes: [UINode], text: String?, id: String?, nth: Int?) throws(ProtocolError) -> UINode {
+        func label(_ n: UINode) -> String { n.text.isEmpty ? n.desc : n.text }
+        func show(_ ns: [UINode]) -> String {
+            ns.prefix(5).map { n in "\(n.ref) " + (label(n).isEmpty ? "id=\(n.id)" : "\"\(label(n))\"") }.joined(separator: ", ")
+        }
+        var idx = Array(nodes.indices)
+        if let id { idx = idx.filter { nodes[$0].id == id } }
+        if let t = text?.lowercased() {
+            let labels = { (i: Int) in [nodes[i].text.lowercased(), nodes[i].desc.lowercased()] }
+            let equal = idx.filter { labels($0).contains(t) }
+            idx = equal.isEmpty ? idx.filter { labels($0).contains { $0.contains(t) } } : equal
+        }
+        var hits: [UINode] = []
+        for i in idx {
+            var hit = nodes[i], d = hit.depth
+            for p in nodes[..<i].reversed() where !nodes[i].clickable && p.depth < d {   // pre-order: each shallower node before is an ancestor
+                if p.clickable { hit = p; break }
+                d = p.depth
+            }
+            if !hits.contains(where: { $0.ref == hit.ref }) { hits.append(hit) }
+        }
+        let what = [text.map { "text \"\($0)\"" }, id.map { "id \($0)" }].compactMap { $0 }.joined(separator: " and ")
+        guard !hits.isEmpty else {
+            // ponytail: "similar" = shares a word with the query; first labels when none does
+            let words = Set((text ?? id ?? "").lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }))
+            let named = nodes.filter { !label($0).isEmpty || !$0.id.isEmpty }
+            let near = named.filter { n in !words.isDisjoint(with: (label(n) + " " + n.id).lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })) }
+            throw ProtocolError(code: .notFound, message: "No element with \(what)" + (named.isEmpty ? "" : "; similar: \(show(near.isEmpty ? named : near))"))
+        }
+        if let nth {
+            guard (1...hits.count).contains(nth) else {
+                throw ProtocolError(code: .invalidArgs, message: "--nth \(nth): only \(hits.count) element(s) with \(what): \(show(hits))")
+            }
+            return hits[nth - 1]
+        }
+        guard hits.count == 1 else {
+            throw ProtocolError(code: .invalidArgs, message: "\(hits.count) elements with \(what): \(show(hits)); pick one with --ref or --nth")
+        }
+        return hits[0]
+    }
+
     public static func lines(_ nodes: [UINode]) -> String {
         nodes.map { n in
             var s = String(repeating: "  ", count: n.depth) + "[\(n.ref)] \(n.cls.split(separator: ".").last.map(String.init) ?? n.cls)"

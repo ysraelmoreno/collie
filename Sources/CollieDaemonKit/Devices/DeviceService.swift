@@ -158,7 +158,7 @@ actor DeviceService {
         }
         if panel.state["platform"] != .string("ios") {
             kickHelper(panel: panel.id, serial: serial)
-            await helpers[serial]?.recover()   // H7: a fallback is retried at most every 30 s
+            await helpers[serial]?.recover()   // H7/A1: a fallback is retried along DeviceHelper.retrySchedule (2, 5, 15, then 30 s)
         }
         func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
             if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }

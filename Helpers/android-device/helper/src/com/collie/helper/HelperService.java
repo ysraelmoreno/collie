@@ -29,35 +29,54 @@ import java.util.concurrent.TimeUnit;
  * what arrives through adbd. Text of password fields is masked, never sent.
  */
 public class HelperService extends AccessibilityService {
-    static final int VERSION = 1;
+    static final int VERSION = 2;
     static final String SOCKET = "collie-helper";
 
     private final List<Client> subscribers = new CopyOnWriteArrayList<>();
     private volatile long lastEvent;
+    // The socket name is process-wide: a service that was unbound (toggled off and on, or rebound) must not keep answering
+    // for a connection to the accessibility system it no longer has, so the owner is replaced on every connect.
+    private static LocalServerSocket owner;
+    private static final List<LocalSocket> conns = new CopyOnWriteArrayList<>();
 
     @Override protected void onServiceConnected() {
+        closeOwner();
         Thread t = new Thread(this::serve, "collie-helper-accept");
         t.setDaemon(true);
         t.start();
     }
 
+    private static synchronized void closeOwner() {
+        if (owner != null) { try { owner.close(); } catch (IOException ignored) { } owner = null; }
+        for (LocalSocket c : conns) { try { c.close(); } catch (IOException ignored) { } }
+        conns.clear();
+    }
+
+    private static synchronized boolean claim(LocalServerSocket s) { owner = s; return true; }
+
     private void serve() {
-        try (LocalServerSocket server = new LocalServerSocket(SOCKET)) {
+        LocalServerSocket server;
+        try { server = new LocalServerSocket(SOCKET); } catch (IOException e) { return; }
+        claim(server);
+        try {
             while (true) {
                 LocalSocket s = server.accept();
                 int uid = -1;
                 try { uid = s.getPeerCredentials().getUid(); } catch (IOException ignored) { }
                 if (uid != 2000 && uid != 0) { try { s.close(); } catch (IOException ignored) { } continue; }
+                conns.add(s);
                 Thread c = new Thread(() -> new Client(s).run(), "collie-helper-client");
                 c.setDaemon(true);
                 c.start();
             }
         } catch (IOException e) {
-            // another instance already owns the name, or the service is stopping
+            // closed by a newer instance or the service is stopping
+        } finally {
+            try { server.close(); } catch (IOException ignored) { }
         }
     }
 
-    @Override public boolean onUnbind(android.content.Intent i) { return super.onUnbind(i); }
+    @Override public boolean onUnbind(android.content.Intent i) { closeOwner(); return super.onUnbind(i); }
     @Override public void onInterrupt() { }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent e) {

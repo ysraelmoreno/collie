@@ -16,4 +16,6 @@ Operational notes for the daemon (H2):
 - After `install` the service restarts; enable it (`settings put secure enabled_accessibility_services`, appending, plus
   `accessibility_enabled 1`) and confirm with a `dump` that returns `root: true` and nodes before trusting it. Right after
   a fresh install and enable the first `dump` can come back with no nodes.
+- v2 (2026-11-22): the socket name is process-wide, so a service toggled off and on used to leave the OLD instance answering
+  with `root:false` (0 nodes) forever. The owner is now closed on unbind and replaced on connect (`onServiceConnected`).
 - A path from `dump` goes stale when the screen changes: `click`/`scroll` answer `node gone`; re-read and retry.

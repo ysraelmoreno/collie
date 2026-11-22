@@ -50,6 +50,20 @@ public enum ScreenModel {
             if consume { used.insert(d) }
             return own(nodes[d])
         }
+        // I2: decoration. A node (any type, OCR aside) whose only label is a symbol name ("chevron") and that sits on
+        // the row of a labelled clickable (centre within half its height) or inside it leaves every group; `--all`
+        // and `ui` keep it. With no such neighbour (FAB, a lone "plus") it stays as before.
+        // ponytail: O(n²) scan, fine for a screen's few hundred nodes
+        for i in nodes.indices where !nodes[i].ocr {
+            let l = (nodes[i].text.isEmpty ? nodes[i].desc : nodes[i].text).trimmingCharacters(in: .whitespaces)
+            guard !l.isEmpty, symbolNameNoise(l) else { continue }
+            let b = nodes[i].bounds
+            if nodes.indices.contains(where: { j in
+                guard j != i, nodes[j].clickable else { return false }
+                let lj = label(j, consume: false), bj = nodes[j].bounds
+                return !lj.isEmpty && !symbolNameNoise(lj) && (bj.contains(b) || abs(bj.midY - b.midY) < bj.height / 2)
+            }) { used.insert(i) }
+        }
         func item(_ i: Int, _ role: String, _ text: String? = nil) -> ScreenItem {
             let n = nodes[i]
             let state = [(n.selected || descendants(i).contains { nodes[$0].selected }) ? "selected" : nil,

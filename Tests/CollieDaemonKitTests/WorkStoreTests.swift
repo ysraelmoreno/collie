@@ -191,7 +191,7 @@ import CollieProtocol
         let s = WorkStore(dir: dir)
         let n = try await s.start(title: "A", terminal: UUID(), paddockId: UUID(), branch: "b")
         var task = WorkTask(id: "1", title: "t"); task.agent = "cursor"; task.model = "sonnet"
-        let loop = WorkLoopState(tasks: ["1"], review: true, personas: ["correcao"], reviewerModel: "opus")
+        let loop = WorkLoopState(tasks: ["1"], startedAt: Date(timeIntervalSince1970: 1_800_000_000), review: true, personas: ["correcao"], reviewerModel: "opus")
         try await s.update(n.id) { $0.loop = loop; $0.tasks = [task] }
         let r = try #require(try await WorkStore(dir: dir).get(n.id))
         #expect(r.loop == loop && r.tasks == [task])

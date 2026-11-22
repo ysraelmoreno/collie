@@ -25,7 +25,10 @@ public enum ArgvParser {
             if t == "--" { words.append(contentsOf: rest[i...]); break }
             guard t.hasPrefix("--"), t.count > 2 else { words.append(t); continue }
             let key = String(t.dropFirst(2))
-            guard let p = spec.params.first(where: { $0.name == key && $0.kind != .rest && $0.kind != .list }) else { throw bad("unknown flag --\(key)") }
+            guard let p = spec.params.first(where: { $0.name == key && $0.kind != .rest && $0.kind != .list }) else {
+                let flags = spec.params.filter { !$0.positional }.map { "--\($0.name)" }
+                throw bad("unknown flag --\(key)" + (flags.isEmpty ? "" : "; \(spec.name.replacingOccurrences(of: ".", with: " ")) takes \(flags.joined(separator: " "))"))
+            }
             if p.kind == .flag { args[key] = .bool(true); continue }
             // `--events` alone: the next word is not its number
             if let d = p.bare, i >= rest.count || Int(rest[i]) == nil { args[key] = .number(Double(d)); continue }

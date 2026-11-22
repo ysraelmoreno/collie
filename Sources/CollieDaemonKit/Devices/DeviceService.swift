@@ -169,14 +169,22 @@ actor DeviceService {
             return o
         }
         if command == "device.screen" { return .object(try await screen(all: args["all"] == .bool(true), timing: Self.timing(args))) }
+        /// `--then ui|screen`: the tree (`ui`) or the groups (`screen`) added to `o`.
+        func shown(_ then: (screen: Bool, settleMs: Int?), _ o: inout [String: JSONValue]) async throws(ProtocolError) {
+            if then.screen { o["screen"] = .object(try await screen(all: false)) } else { o["ui"] = try await act("device.ui", [:]) }
+        }
         if command == "device.wait" {
             let w = try Self.waitSpec(args)
+            let then = try Self.then(args)   // checked before the first dump
             let r = try await poll(w, dump: dump)
             guard r.ok else {
-                throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(w.timeoutMs / 1000) s. Last screen:\n"
+                let limit = w.timeoutMs % 1000 == 0 ? "\(w.timeoutMs / 1000) s" : "\(w.timeoutMs) ms"
+                throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(limit). Last screen:\n"
                                     + ScreenModel.text(ScreenModel.build(r.last)))
             }
-            return .object(["ok": .bool(true), "waitedMs": .number(Double(r.waitedMs))])
+            var o: [String: JSONValue] = ["ok": .bool(true), "waitedMs": .number(Double(r.waitedMs))]
+            if let then { try await shown(then, &o) }   // ponytail: one more dump, the wait's last one is not reused
+            return .object(o)
         }
         if command == "device.find" {
             let q = try Self.findSpec(args)
@@ -206,7 +214,7 @@ actor DeviceService {
             // the action already ran: a screen that never settles returns its last tree anyway, with settled false
             o["settled"] = .bool(try await poll(Wait(text: nil, gone: false, stable: true, timeoutMs: Self.stableSettleMs), dump: dump).ok)
         }
-        if then.screen { o["screen"] = .object(try await screen(all: false)) } else { o["ui"] = try await act("device.ui", [:]) }
+        try await shown(then, &o)
         return .object(o)
     }
 
@@ -307,14 +315,34 @@ actor DeviceService {
                 "center": .object(["x": .number(Double(n.center.x)), "y": .number(Double(n.center.y))])]
     }
 
-    /// `device.wait` args: --text and/or --stable (--gone needs --text), --timeout seconds (1-60, default 10).
+    /// `device.wait` args: --text and/or --stable (--gone needs --text), --timeout (`waitTimeoutMs`, default 10 s).
     static func waitSpec(_ a: [String: JSONValue]) throws(ProtocolError) -> Wait {
         let text: String? = if case .string(let s)? = a["text"], !s.isEmpty { s } else { nil }
         func flag(_ k: String) -> Bool { a[k] == .bool(true) || a[k] == .string("true") }
         let gone = flag("gone"), stable = flag("stable")
         guard text != nil || stable else { throw ProtocolError(code: .invalidArgs, message: "device.wait needs --text or --stable") }
         guard !gone || text != nil else { throw ProtocolError(code: .invalidArgs, message: "--gone needs --text") }
-        return Wait(text: text, gone: gone, stable: stable, timeoutMs: (try int(a, "timeout", 1...60) ?? 10) * 1000)
+        return Wait(text: text, gone: gone, stable: stable, timeoutMs: try waitTimeoutMs(a["timeout"]) ?? 10_000)
+    }
+
+    /// `device.wait --timeout`: `30` or `30s` (seconds, 1-60) or `500ms` (1-60000), in ms; nil when absent.
+    static func waitTimeoutMs(_ v: JSONValue?) throws(ProtocolError) -> Int? {
+        let ms: Int?
+        switch v {
+        case nil, .null?: return nil
+        case .number(let n)?: ms = Int(exactly: n).flatMap { (1...60).contains($0) ? $0 * 1000 : nil }
+        case .string(let s)?:
+            let t = s.trimmingCharacters(in: .whitespaces).lowercased()
+            if t.hasSuffix("ms") { ms = Int(String(t.dropLast(2))) } else {
+                ms = Int(t.hasSuffix("s") ? String(t.dropLast()) : t).flatMap { (1...60).contains($0) ? $0 * 1000 : nil }
+            }
+        default: ms = nil
+        }
+        guard let ms, (1...60_000).contains(ms) else {
+            let raw = switch v { case .string(let s)?: "'\(s)'"; case .number(let n)?: "\(n)"; default: "a non-number" }
+            throw ProtocolError(code: .invalidArgs, message: "--timeout takes 30, 30s or 500ms (at most 60 s), got \(raw)")
+        }
+        return ms
     }
 
     /// Dumps until `w` holds or its timeout passes (checked after each dump: one dump may overrun it).

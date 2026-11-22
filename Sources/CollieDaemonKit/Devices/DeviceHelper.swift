@@ -107,6 +107,22 @@ actor DeviceHelper {
         state = .off; version = nil; reason = nil
     }
 
+    /// One request of a `device` command (H3): its answer line, or nil when the helper is not `ready` (the command then
+    /// uses uiautomator / `input`). A helper that stops answering (connection refused or closed, timeout) goes to
+    /// `fallback` for the session with the reason, and this call gives nil too; an answer with `ok: false` is returned
+    /// as is (the caller decodes it).
+    func send(_ r: HelperProtocol.Request) async -> Data? {
+        guard state == .ready, let p = port else { return nil }
+        do throws(ProtocolError) {
+            return try await Self.request(p, r, timeout: answer)
+        } catch {
+            guard state == .ready else { return nil }
+            state = .fallback; reason = "helper stopped answering (\(error.message)); using uiautomator"
+            await unforward()
+            return nil
+        }
+    }
+
     // MARK: steps
 
     private func forward() async throws(ProtocolError) -> UInt16 {

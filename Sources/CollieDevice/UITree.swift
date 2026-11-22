@@ -8,11 +8,16 @@ public struct UINode: Equatable, Sendable {
     /// Index (in the node list) of the nearest kept ancestor; set by `UITree.linkParents`.
     public var parent: Int?
     public var selected: Bool; public var checked: Bool; public var enabled: Bool; public var focused: Bool; public var scrollable: Bool
+    public var password: Bool
+    /// The device helper's child-index path to this node (`click`/`scroll`); nil when read by uiautomator or AXe.
+    public var path: [Int]?
     public var center: (x: Int, y: Int) { (Int(bounds.midX), Int(bounds.midY)) }
     public init(ref: String, cls: String, text: String, desc: String, id: String, bounds: CGRect, clickable: Bool, depth: Int,
-                parent: Int? = nil, selected: Bool = false, checked: Bool = false, enabled: Bool = true, focused: Bool = false, scrollable: Bool = false) {
+                parent: Int? = nil, selected: Bool = false, checked: Bool = false, enabled: Bool = true, focused: Bool = false, scrollable: Bool = false,
+                password: Bool = false, path: [Int]? = nil) {
         self.ref = ref; self.cls = cls; self.text = text; self.desc = desc; self.id = id; self.bounds = bounds; self.clickable = clickable; self.depth = depth
         self.parent = parent; self.selected = selected; self.checked = checked; self.enabled = enabled; self.focused = focused; self.scrollable = scrollable
+        self.password = password; self.path = path
     }
 }
 
@@ -35,6 +40,21 @@ public enum UITree {
         p.delegate = h
         p.parse()
         return (linkParents(h.nodes), h.truncated)
+    }
+
+    /// The nodes of a device helper `dump`, kept and numbered as `parse` keeps a uiautomator XML (same refs, same tree),
+    /// with each node's `path` for `click`. Depth is the path's length (the root's path is empty, as uiautomator's depth 0).
+    public static func nodes(_ d: HelperProtocol.Dump, cap: Int = 2000) -> (nodes: [UINode], truncated: Bool) {
+        var out: [UINode] = []
+        for n in d.nodes where !n.text.isEmpty || !n.desc.isEmpty || !n.id.isEmpty || n.clickable || n.scrollable {
+            guard out.count < cap else { return (linkParents(out), true) }
+            let b = n.bounds.count == 4 ? CGRect(x: n.bounds[0], y: n.bounds[1], width: n.bounds[2] - n.bounds[0], height: n.bounds[3] - n.bounds[1]) : .zero
+            out.append(UINode(ref: "e\(out.count + 1)", cls: n.cls, text: n.text, desc: n.desc,
+                              id: n.id.split(separator: "/").last.map(String.init) ?? n.id, bounds: b, clickable: n.clickable,
+                              depth: n.path.count, selected: n.selected, checked: n.checked, enabled: n.enabled, focused: n.focused,
+                              scrollable: n.scrollable, password: n.password, path: n.path))
+        }
+        return (linkParents(out), false)
     }
 
     /// Sets each node's `parent`: the nearest earlier node with a smaller depth (the list is pre-order).
@@ -144,7 +164,7 @@ public enum UITree {
                                 id: rid.split(separator: "/").last.map(String.init) ?? rid,
                                 bounds: Self.rect(a["bounds"] ?? ""), clickable: clickable, depth: depth,
                                 selected: a["selected"] == "true", checked: a["checked"] == "true", enabled: a["enabled"] != "false",
-                                focused: a["focused"] == "true", scrollable: scrollable))
+                                focused: a["focused"] == "true", scrollable: scrollable, password: a["password"] == "true"))
         }
 
         func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {

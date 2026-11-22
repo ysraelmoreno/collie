@@ -184,7 +184,7 @@ actor DeviceService {
 
     /// What `device.wait` waits for: `text` to show (or go, `gone`), and/or two equal dumps in a row (`stable`).
     struct Wait {
-        var text: String?, gone: Bool, stable: Bool, timeoutMs: Int
+        let text: String?; let gone: Bool; let stable: Bool; let timeoutMs: Int
         var what: String { [text.map { "text '\($0)' " + (gone ? "gone" : "shown") }, stable ? "stable screen" : nil].compactMap { $0 }.joined(separator: " + ") }
         /// `text` (any case, in a node's text or desc, containing) shows or, with `gone`, is absent.
         func textMet(_ nodes: [UINode]) -> Bool {

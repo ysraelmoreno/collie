@@ -170,8 +170,10 @@ private func snapshot(_ d: Daemon, _ p: Paths) async throws -> WorkspaceSnapshot
                 }
             }
             defer { hooks.cancel() }
-            // queued behind the injected turn: typed only after its hook, so its output starts after INJ-DONE
-            let r = try await call(p, m, "ask", ["target": "w", "prompt": "echo ASK-OUT; \(stop)"])
+            // queued behind the injected turn: typed only after its hook, so its output starts after INJ-DONE. The ask's line
+            // carries the marker as is: its echo ends the turn (sh never runs it: the "[collie] pedido de M (ask …):" sender
+            // prefix is a syntax error), and that echo is where ASK-OUT shows, as it always was
+            let r = try await call(p, m, "ask", ["target": "w", "prompt": "echo ASK-OUT <<COLLIE_STOP>>"])
             guard case .object(let o)? = r.result, case .string(let out)? = o["output"] else { Issue.record("\(r)"); return }
             #expect(out.contains("ASK-OUT") && !out.contains("INJ-DONE"), "ask output should hold ASK-OUT and not the injected turn's INJ-DONE: \(out)")
         }

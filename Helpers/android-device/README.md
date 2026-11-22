@@ -75,3 +75,11 @@ Measured 2026-11-22 with `stress-toggle.sh emulator-5554 6` (emulator API 37, he
 in 6 of 6 rounds; B (probing every 300 ms from the moment of enabling) healthy in 14 to 26 ms in all 6. The first version of the script compared the
 short service name (`.HelperService`) with the long one Android stores, so it never took the helper out of the list and always read "healthy": a script
 check that cannot reach the device (the loop's) cannot catch that; run it by hand after changing it.
+
+## Assinatura (estado em 2026-11-22)
+`Resources/collie-helper.apk` está assinado com a chave PRIVADA do publicador (`~/.collie/helper-release.jks`, senha no Keychain, item `collie-helper-keystore`);
+`Resources/collie-helper.cert.sha256` guarda o SHA-256 do certificado (público): `69b740dcdaa9dab1a1d67c8e29885330310f62a69feb112ed04feab69ed207b9`.
+`scripts/release.sh` roda `scripts/verify-device-helper.sh` e recusa um APK assinado com outra chave (inclusive a debug, que é pública). O daemon troca o helper
+instalado quando os bytes diferem do embutido (S1) e desinstala e reinstala quando a assinatura mudou (K1b). Para refazer o APK de release:
+`COLLIE_HELPER_KEYSTORE=~/.collie/helper-release.jks scripts/build-device-helper.sh --release`, depois `scripts/verify-device-helper.sh --print` e gravar o resultado no
+arquivo de pino SE a chave tiver mudado. Backup do keystore fora do Mac: perder o arquivo obriga todos a reinstalar o helper. O APK de release tem ~25 KB (a assinatura RSA 4096).

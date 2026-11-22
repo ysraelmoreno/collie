@@ -172,6 +172,15 @@ private func decisions(_ d: Daemon, _ n: Int = 1) async -> [String] {
         }
     }
 
+    /// D4: the helper the reads above go through gives up on an op that ignores cancellation (a blocked thread).
+    @Test func boundedGivesUpOnStuckOp() async throws {
+        let start = ContinuousClock.now
+        await #expect(throws: ProtocolError.self) {
+            try await bounded(0.3, "stuck op") { _ = DispatchSemaphore(value: 0).wait(timeout: .now() + 5) }
+        }
+        #expect(ContinuousClock.now - start < .seconds(3))
+    }
+
     @Test func memoryBodyHasNoEscapes() async throws {
         let repo = try await makeRepo()
         try await withDaemon { d, p in

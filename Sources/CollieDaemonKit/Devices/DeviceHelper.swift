@@ -202,10 +202,33 @@ actor DeviceHelper {
         _ = try? await adb(["forward", "--remove", "tcp:\(p)"])
     }
 
+    /// K1b: `install -r` refusals that only an uninstall clears (the helper on the device signed with another key, or a
+    /// newer versionCode).
+    static let clashes = ["INSTALL_FAILED_UPDATE_INCOMPATIBLE", "INSTALL_FAILED_VERSION_DOWNGRADE"]
+
+    /// `install -r` of the bundled APK. A signature or version clash (`clashes`) uninstalls `com.collie.helper` and
+    /// installs once more (Android drops its service from the list with the app; the caller's `enable` puts it back,
+    /// the others kept); the swap goes in `reason`, which `status` shows. A second failure throws with both.
     private func installAPK() async throws(ProtocolError) {
         guard let apk = apk() else { throw Self.fail("collie-helper.apk is not bundled") }
-        let out = try await adb(["install", "-r", apk.path])
-        guard out.contains("Success") else { throw Self.fail("install failed: \(out.prefix(300))") }
+        guard let first = await installOnce(apk) else { return }
+        guard let clash = Self.clashes.first(where: first.contains) else { throw Self.fail("install failed: \(first.prefix(300))") }
+        _ = try? await adb(["uninstall", HelperProtocol.package])   // not there after all: the install below says so
+        if let again = await installOnce(apk) {
+            throw Self.fail("install failed with \(clash); uninstalled \(HelperProtocol.package) and installed again, "
+                            + "which failed too: \(again.prefix(300)); using uiautomator")
+        }
+        reason = "reinstalled: install -r failed with \(clash) (helper signed with another key or newer), uninstalled and installed again"
+    }
+
+    /// One `adb install -r`: nil on `Success`, else what adb said (modern adb exits non-zero, older ones print `Failure`).
+    private func installOnce(_ apk: URL) async -> String? {
+        do throws(ProtocolError) {
+            let out = try await adb(["install", "-r", apk.path])
+            return out.contains("Success") ? nil : out
+        } catch {
+            return error.message
+        }
     }
 
     /// Appends the service to `enabled_accessibility_services` (others kept) and sets `accessibility_enabled 1`.

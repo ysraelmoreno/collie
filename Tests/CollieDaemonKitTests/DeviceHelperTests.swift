@@ -120,11 +120,23 @@ private actor FakeAdb {
     var calls: [[String]] = []
     var services: String
     var accessibilityEnabled = "0"
+    /// What the next installs fail with (adb exits non-zero), one per install, before they succeed.
+    var installFailures: [String] = []
     let helper: FakeHelper
     init(services: String = "null", helper: FakeHelper) { self.services = services; self.helper = helper }
+    func failInstalls(_ f: [String]) { installFailures = f }
 
-    func run(_ a: [String]) -> String {
+    func run(_ a: [String]) throws(ProtocolError) -> String {
         calls.append(a)
+        if a.first == "install", !installFailures.isEmpty {
+            throw ProtocolError(code: .internal, message: "adb install failed: adb: failed to install \(a.last ?? ""): Failure [\(installFailures.removeFirst())]")
+        }
+        if a == ["uninstall", HelperProtocol.package] {   // Android drops the app's service from the list with it
+            helper.die()
+            let left = services.split(separator: ":").filter { $0 != HelperProtocol.service }.joined(separator: ":")
+            services = left.isEmpty ? "null" : left
+            return "Success\n"
+        }
         switch a {
         case ["forward", "tcp:0", "localabstract:collie-helper"]: return "\(helper.port)\n"
         case ["shell", "settings", "get", "secure", "enabled_accessibility_services"]: return services + "\n"
@@ -154,7 +166,7 @@ private final class TestClock: @unchecked Sendable {
 
 private func make(_ adb: FakeAdb, serial: String = "emulator-5554", apk: URL? = URL(fileURLWithPath: "/bundle/collie-helper.apk"),
                   clock: TestClock = TestClock()) -> DeviceHelper {
-    DeviceHelper(serial: serial, adb: { args in await adb.run(args) }, apk: { apk }, answer: .milliseconds(300), gap: .milliseconds(10),
+    DeviceHelper(serial: serial, adb: { args throws(ProtocolError) in try await adb.run(args) }, apk: { apk }, answer: .milliseconds(300), gap: .milliseconds(10),
                  now: { clock.now })
 }
 private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(let o) = v { o[k] } else { nil } }
@@ -244,6 +256,52 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         #expect(await adb.removedForward)
         #expect(await h.state == .off)
         #expect(await h.port == nil)
+    }
+
+    // K1b: a helper signed with another key (or newer) refuses `install -r`: uninstalled and installed once more.
+    @Test(arguments: ["INSTALL_FAILED_UPDATE_INCOMPATIBLE: Package com.collie.helper signatures do not match previously installed version; ignoring!",
+                      "INSTALL_FAILED_VERSION_DOWNGRADE: Downgrade detected"])
+    func signatureClashUninstallsAndInstallsOnce(_ failure: String) async throws {
+        let srv = try FakeHelper(installed: true, version: 1); defer { srv.stop() }   // old: reinstalled
+        let adb = FakeAdb(services: "com.a/.X:\(HelperProtocol.service):com.b/.Y", helper: srv)
+        await adb.failInstalls([failure])
+        let h = make(adb)
+        await h.start(install: true)
+        let (up, why) = (await h.state, await h.reason)
+        #expect(up == .ready, "\(why ?? "")")
+        #expect(await adb.installs == 2)
+        #expect(await adb.calls.filter { $0 == ["uninstall", HelperProtocol.package] }.count == 1)
+        #expect(await adb.services == "com.a/.X:com.b/.Y:\(HelperProtocol.service)")   // the others kept, the helper back
+        #expect(why?.contains(String(failure.prefix { $0 != ":" })) == true)
+        #expect(field(await h.status, "reason") == why.map { .string($0) })
+        #expect(field(await h.status, "source") == .string("helper"))
+    }
+
+    @Test func secondInstallFailureFallsBackWithTheReason() async throws {
+        let srv = try FakeHelper(installed: true, version: 1); defer { srv.stop() }
+        let adb = FakeAdb(services: "com.a/.X:\(HelperProtocol.service)", helper: srv)
+        await adb.failInstalls(["INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match", "INSTALL_FAILED_INSUFFICIENT_STORAGE"])
+        let h = make(adb)
+        await h.start(install: true)
+        #expect(await h.state == .fallback)
+        let why = await h.reason ?? ""
+        #expect(why.contains("UPDATE_INCOMPATIBLE") && why.contains("uninstalled") && why.contains("INSUFFICIENT_STORAGE"), "\(why)")
+        #expect(await adb.installs == 2)   // once more, not a loop
+        #expect(await adb.calls.filter { $0 == ["uninstall", HelperProtocol.package] }.count == 1)
+        #expect(await adb.services == "com.a/.X")   // the other service kept
+        #expect(field(await h.status, "source") == .string("uiautomator"))
+    }
+
+    @Test func otherInstallFailureDoesNotUninstall() async throws {
+        let srv = try FakeHelper(installed: true, version: 1); defer { srv.stop() }
+        let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
+        await adb.failInstalls(["INSTALL_FAILED_INSUFFICIENT_STORAGE"])
+        let h = make(adb)
+        await h.start(install: true)
+        #expect(await h.state == .fallback)
+        #expect(await h.reason?.contains("INSUFFICIENT_STORAGE") == true)
+        #expect(await adb.installs == 1)
+        #expect(!(await adb.calls.contains(["uninstall", HelperProtocol.package])))
     }
 
     @Test func removeKeepsTheOtherServices() async throws {

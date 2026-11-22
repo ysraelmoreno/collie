@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 import CollieCore
 import CollieDevice
 import CollieProtocol
@@ -96,12 +97,26 @@ actor DeviceHelper {
             guard !install || apk() != nil else { throw Self.fail("collie-helper.apk is not bundled") }
             let p = try await forward()
             var hello = try? await hello(p)
-            if hello.map({ $0.version < HelperProtocol.version }) ?? true {
+            let stale = hello.map({ $0.version < HelperProtocol.version }) ?? true
+            // S1: a current helper is trusted only when its base.apk has the bundled APK's sha256 (same key, same bytes)
+            var differs = false
+            if !stale {
+                switch await sameAsBundled() {
+                case true?: break
+                case false?: differs = true
+                case nil: reason = "could not verify the installed helper (sha256 of its APK unavailable); using it as is"
+                }
+            }
+            if stale || differs {
                 guard install else {
-                    throw Self.fail(hello.map { "helper v\($0.version) is older than v\(HelperProtocol.version)" } ?? "helper not answering"
+                    throw Self.fail((differs ? "installed helper differs from the bundled one"
+                                     : hello.map { "helper v\($0.version) is older than v\(HelperProtocol.version)" } ?? "helper not answering")
                                     + "; install it with `collie device helper install --serial \(serial)`")
                 }
                 try await installAPK()
+                if differs {
+                    reason = "installed helper differs from the bundled one (sha256); reinstalled it" + (reason.map { "; \($0)" } ?? "")
+                }
                 try await enable()
                 let h = try await retry("hello") { () async throws(ProtocolError) -> HelperProtocol.Hello? in try await self.hello(p) }
                 guard h.version >= HelperProtocol.version else {
@@ -229,6 +244,20 @@ actor DeviceHelper {
         } catch {
             return error.message
         }
+    }
+
+    /// S1: whether the installed `base.apk` (`pm path`, then the device's toybox `sha256sum`) has the bundled APK's
+    /// SHA-256 (CryptoKit on the host). nil: could not tell (APK unreadable, not listed, `sha256sum` missing or failing).
+    private func sameAsBundled() async -> Bool? {
+        guard let url = apk(), let bytes = try? Data(contentsOf: url),
+              let listed = try? await adb(["shell", "pm", "path", HelperProtocol.package]) else { return nil }
+        let paths = listed.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("package:") }.map { String($0.dropFirst("package:".count)) }
+        guard let path = paths.first(where: { $0.hasSuffix("/base.apk") }) ?? paths.first, let arg = try? Self.quoted(path),
+              let out = try? await adb(["shell", "sha256sum", arg]),
+              let got = out.split(whereSeparator: \.isWhitespace).first, got.count == 64,
+              got.allSatisfy(\.isHexDigit) else { return nil }
+        return got.lowercased() == SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Appends the service to `enabled_accessibility_services` (others kept) and sets `accessibility_enabled 1`.

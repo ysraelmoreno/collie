@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Darwin
+import CryptoKit
 import CollieCore
 import CollieDevice
 import CollieProtocol
@@ -125,9 +126,27 @@ private actor FakeAdb {
     let helper: FakeHelper
     init(services: String = "null", helper: FakeHelper) { self.services = services; self.helper = helper }
     func failInstalls(_ f: [String]) { installFailures = f }
+    /// S1: the bytes of the installed base.apk (nil: `pm path` lists nothing); `install` puts the bundled file's there.
+    /// `noSha256sum`: the device's toybox has no `sha256sum` (exit 127).
+    var deviceApk: Data?
+    var noSha256sum = false
+    func set(deviceApk: Data?, noSha256sum: Bool = false) { self.deviceApk = deviceApk; self.noSha256sum = noSha256sum }
+    static let basePath = "/data/app/~~x==/com.collie.helper-y==/base.apk"
 
     func run(_ a: [String]) throws(ProtocolError) -> String {
         calls.append(a)
+        if a == ["shell", "pm", "path", HelperProtocol.package] {
+            return deviceApk == nil ? "" : "package:\(Self.basePath)\n"
+        }
+        if a == ["shell", "sha256sum", "'\(Self.basePath)'"] {
+            guard !noSha256sum, let d = deviceApk else {
+                throw ProtocolError(code: .internal, message: "adb shell failed: /system/bin/sh: sha256sum: not found")
+            }
+            return SHA256.hash(data: d).map { String(format: "%02x", $0) }.joined() + "  \(Self.basePath)\n"
+        }
+        if a.first == "install", installFailures.isEmpty, let f = a.last, let d = try? Data(contentsOf: URL(fileURLWithPath: f)) {
+            deviceApk = d
+        }
         if a.first == "install", !installFailures.isEmpty {
             throw ProtocolError(code: .internal, message: "adb install failed: adb: failed to install \(a.last ?? ""): Failure [\(installFailures.removeFirst())]")
         }
@@ -194,6 +213,67 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         await h.start(install: true)
         #expect(await h.state == .ready)
         #expect(await adb.installs == 0)
+    }
+
+    /// S1: a bundled APK on disk with `bytes`.
+    private func bundled(_ bytes: String) throws -> URL {
+        let u = FileManager.default.temporaryDirectory.appendingPathComponent("collie-helper-\(UUID().uuidString).apk")
+        try Data(bytes.utf8).write(to: u)
+        return u
+    }
+
+    @Test func sameBytesAreNotReinstalled() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        let adb = FakeAdb(services: "com.other/.Talk:\(HelperProtocol.service)", helper: srv)
+        let apk = try bundled("official"); defer { try? FileManager.default.removeItem(at: apk) }
+        await adb.set(deviceApk: Data("official".utf8))
+        let h = make(adb, apk: apk)
+        await h.start(install: true)
+        #expect(await h.state == .ready)
+        #expect(await adb.installs == 0)
+        #expect(await h.reason == nil)
+        #expect(await adb.calls.contains(["shell", "sha256sum", "'\(FakeAdb.basePath)'"]))
+    }
+
+    @Test func differentBytesAreReinstalledOnceWithTheReason() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        let adb = FakeAdb(services: "com.a/.X:\(HelperProtocol.service):com.b/.Y", helper: srv)
+        let apk = try bundled("official"); defer { try? FileManager.default.removeItem(at: apk) }
+        await adb.set(deviceApk: Data("debug-signed".utf8))
+        let h = make(adb, apk: apk)
+        await h.start(install: true)
+        let (up, why) = (await h.state, await h.reason)
+        #expect(up == .ready, "\(why ?? "")")
+        #expect(await adb.installs == 1)
+        #expect(why?.contains("installed helper differs from the bundled one") == true, "\(why ?? "")")
+        #expect(field(await h.status, "reason") == why.map { .string($0) })
+        #expect(await adb.services == "com.a/.X:\(HelperProtocol.service):com.b/.Y")   // the others kept
+        #expect(await adb.deviceApk == Data("official".utf8))
+    }
+
+    @Test func differentBytesOnAPhysicalDeviceWithoutOptInFallBack() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
+        let apk = try bundled("official"); defer { try? FileManager.default.removeItem(at: apk) }
+        await adb.set(deviceApk: Data("other".utf8))
+        let h = make(adb, serial: "R5CT1234", apk: apk)
+        await h.start(install: false)
+        #expect(await h.state == .fallback)
+        #expect(await h.reason?.contains("installed helper differs from the bundled one") == true)
+        #expect(await adb.installs == 0)
+    }
+
+    @Test func missingSha256sumDoesNotBlock() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        let adb = FakeAdb(services: "com.other/.Talk:\(HelperProtocol.service)", helper: srv)
+        let apk = try bundled("official"); defer { try? FileManager.default.removeItem(at: apk) }
+        await adb.set(deviceApk: Data("other".utf8), noSha256sum: true)
+        let h = make(adb, apk: apk)
+        await h.start(install: true)
+        #expect(await h.state == .ready)
+        #expect(await adb.installs == 0)
+        #expect(field(await h.status, "reason").map { "\($0)".contains("could not verify the installed helper") } == true)
+        #expect(await adb.services == "com.other/.Talk:\(HelperProtocol.service)")
     }
 
     @Test func versionIsThree() { #expect(HelperProtocol.version == 3) }

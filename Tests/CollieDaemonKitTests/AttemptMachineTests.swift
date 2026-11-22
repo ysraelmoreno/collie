@@ -210,7 +210,9 @@ private let reviewPaths: [Path] = [
         Step(.blocked(nil), .deciding, [.decide]),
         Step(retry(refusal), .finished, retried(refusal)),
     ]),
-    Path(name: "review refuses on the last try: deferred", n: 3, review: true, steps: reviewing + [
+    // attempt 3: its agent is t3
+    Path(name: "review refuses on the last try: deferred", n: 3, review: true, steps: [reviewing[0],
+        Step(.summoned(agent), .turn, [.journal(.agentSummoned, "trabalho-a-t3"), .ask])] + reviewing.dropFirst(2) + [
         Step(refused(), .deciding, verdict(refusal, then: .awaitOthers)),
         Step(.blocked(nil), .deciding, [.decide]),
         Step(.decided(.defer(reason: refusal, discard: true)), .finished,

@@ -5,9 +5,14 @@ import CollieProtocol
 public struct UINode: Equatable, Sendable {
     public var ref: String; public var cls: String; public var text: String; public var desc: String
     public var id: String; public var bounds: CGRect; public var clickable: Bool; public var depth: Int
+    /// Index (in the node list) of the nearest kept ancestor; set by `UITree.linkParents`.
+    public var parent: Int?
+    public var selected: Bool; public var checked: Bool; public var enabled: Bool; public var focused: Bool; public var scrollable: Bool
     public var center: (x: Int, y: Int) { (Int(bounds.midX), Int(bounds.midY)) }
-    public init(ref: String, cls: String, text: String, desc: String, id: String, bounds: CGRect, clickable: Bool, depth: Int) {
+    public init(ref: String, cls: String, text: String, desc: String, id: String, bounds: CGRect, clickable: Bool, depth: Int,
+                parent: Int? = nil, selected: Bool = false, checked: Bool = false, enabled: Bool = true, focused: Bool = false, scrollable: Bool = false) {
         self.ref = ref; self.cls = cls; self.text = text; self.desc = desc; self.id = id; self.bounds = bounds; self.clickable = clickable; self.depth = depth
+        self.parent = parent; self.selected = selected; self.checked = checked; self.enabled = enabled; self.focused = focused; self.scrollable = scrollable
     }
 }
 
@@ -18,7 +23,18 @@ public enum UITree {
         let h = Handler(cap: cap)
         p.delegate = h
         p.parse()
-        return (h.nodes, h.truncated)
+        return (linkParents(h.nodes), h.truncated)
+    }
+
+    /// Sets each node's `parent`: the nearest earlier node with a smaller depth (the list is pre-order).
+    public static func linkParents(_ nodes: [UINode]) -> [UINode] {
+        var out = nodes, stack: [Int] = []
+        for i in out.indices {
+            while let top = stack.last, out[top].depth >= out[i].depth { stack.removeLast() }
+            out[i].parent = stack.last
+            stack.append(i)
+        }
+        return out
     }
 
     /// The nodes an agent acts on: a label (`text`/`desc`) or `clickable`. A node with only an `id` drops out.
@@ -102,12 +118,14 @@ public enum UITree {
             guard name == "node" else { return }
             defer { depth += 1 }
             let text = a["text"] ?? "", desc = a["content-desc"] ?? "", rid = a["resource-id"] ?? ""
-            let clickable = a["clickable"] == "true"
-            guard !text.isEmpty || !desc.isEmpty || !rid.isEmpty || clickable else { return }
+            let clickable = a["clickable"] == "true", scrollable = a["scrollable"] == "true"
+            guard !text.isEmpty || !desc.isEmpty || !rid.isEmpty || clickable || scrollable else { return }
             if nodes.count >= cap { truncated = true; parser.abortParsing(); return }
             nodes.append(UINode(ref: "e\(nodes.count + 1)", cls: a["class"] ?? "", text: text, desc: desc,
                                 id: rid.split(separator: "/").last.map(String.init) ?? rid,
-                                bounds: Self.rect(a["bounds"] ?? ""), clickable: clickable, depth: depth))
+                                bounds: Self.rect(a["bounds"] ?? ""), clickable: clickable, depth: depth,
+                                selected: a["selected"] == "true", checked: a["checked"] == "true", enabled: a["enabled"] != "false",
+                                focused: a["focused"] == "true", scrollable: scrollable))
         }
 
         func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {

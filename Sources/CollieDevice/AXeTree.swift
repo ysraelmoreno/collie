@@ -6,6 +6,8 @@ import CoreGraphics
 public enum AXeTree {
     private static let clickableTypes: Set<String> = ["Button", "Link", "Switch", "TextField", "SecureTextField",
                                                       "SearchField", "Cell", "Tab", "Slider", "Stepper", "Toggle"]
+    private static let scrollTypes: Set<String> = ["ScrollView", "ScrollArea", "Table", "CollectionView"]
+    private static let toggleTypes: Set<String> = ["Switch", "Toggle", "CheckBox"]
 
     public static func parse(_ json: Data, cap: Int = 2000) -> (nodes: [UINode], truncated: Bool, screen: CGSize?) {
         guard let any = try? JSONSerialization.jsonObject(with: json) else { return ([], false, nil) }
@@ -18,18 +20,23 @@ public enum AXeTree {
             let value = (e["AXValue"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             let id = e["AXUniqueId"] as? String ?? ""
             let type = e["type"] as? String ?? ""
-            let clickable = e["enabled"] as? Bool != false && clickableTypes.contains(type)
-            if !label.isEmpty || !value.isEmpty || !id.isEmpty || clickable {
+            let enabled = e["enabled"] as? Bool != false
+            let clickable = enabled && clickableTypes.contains(type)
+            let scrollable = scrollTypes.contains(type)
+            let traits = (e["traits"] as? [String] ?? []).map { $0.lowercased() }
+            if !label.isEmpty || !value.isEmpty || !id.isEmpty || clickable || scrollable {
                 if nodes.count >= cap { truncated = true; return }
                 // ponytail: label goes in `text` (UITree.lines prefers it); AXValue (slider %, field content) in `desc`.
                 nodes.append(UINode(ref: "e\(nodes.count + 1)", cls: type, text: label, desc: value, id: id,
-                                    bounds: rect(e["frame"]), clickable: clickable, depth: depth))
+                                    bounds: rect(e["frame"]), clickable: clickable, depth: depth,
+                                    selected: traits.contains("selected"), checked: toggleTypes.contains(type) && value == "1",
+                                    enabled: enabled, focused: traits.contains("focused"), scrollable: scrollable))
             }
             for c in e["children"] as? [[String: Any]] ?? [] { walk(c, depth + 1) }
         }
         for r in roots { walk(r, 0) }
         let f = roots.first.map { rect($0["frame"]) }
-        return (nodes, truncated, f.map { CGSize(width: $0.width, height: $0.height) })
+        return (UITree.linkParents(nodes), truncated, f.map { CGSize(width: $0.width, height: $0.height) })
     }
 
     private static func rect(_ v: Any?) -> CGRect {

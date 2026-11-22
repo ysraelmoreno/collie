@@ -301,6 +301,27 @@ private struct LiteFx {
         }
     }
 
+    @Test func screenGroupsTheTreeAndReportsWhatChanged() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.screen")
+            guard case .string(let text)? = field(r, "text") else { Issue.record("\(r)"); return }
+            #expect(text.hasPrefix("Tela: Offers   [voltar]\nAbas: [Points*] [Combos]") && !text.contains("Mudou"), "\(text)")
+            #expect(field(r, "changed") == .array([]) && field(r, "tree") == nil)
+            guard case .array(let fab)? = field(r, "floating"), case .object(let f)? = fab.first, case .string(let ref)? = f["ref"] else { Issue.record("\(r)"); return }
+            #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // screen refs are device.ui refs
+            #expect(fx.lines.contains("-s emulator-5554 shell input tap 632 136"))
+            setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("ui-dump.xml").path, 1)
+            let next = try await call(p, m, "device.screen", ["all": "true"])
+            guard case .array(let changed)? = field(next, "changed") else { Issue.record("\(next)"); return }
+            #expect(changed.first == .string("título Offers → -"), "\(changed)")
+            guard case .string(let tree)? = field(next, "tree") else { Issue.record("\(next)"); return }
+            #expect(tree.contains("Login"))   // ui-dump.xml: Welcome sits below the top 15% of the nodes' extent, so no title
+        }
+    }
+
     @Test func tapTextDumpsFreshAndTaps() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in

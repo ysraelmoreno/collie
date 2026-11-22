@@ -26,6 +26,8 @@ actor DeviceService {
     var boots: [String: Task<String, Error>] = [:]
     let emit: @Sendable (UUID, String, JSONValue) async -> Void
     var refs: [UUID: [UINode]] = [:]
+    /// The last `device.screen` per panel, for its `changed`.
+    var lastScreen: [UUID: Screen] = [:]
     /// Panels closed so far: a command that was awaiting adb when its panel closed must not write anything afterwards.
     /// ponytail: grows by one UUID per closed device panel for the daemon's life; fine at this scale.
     var closed: Set<UUID> = []
@@ -137,6 +139,16 @@ actor DeviceService {
         func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
             if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
             return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
+        }
+        if command == "device.screen" {
+            let all = args["all"] == .bool(true)
+            let ui = try await act("device.ui", ["all": .bool(all)])   // the device.ui path: refs updated
+            var screen = ScreenModel.build(refs[panel.id] ?? [])
+            screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
+            if !closed.contains(panel.id) { lastScreen[panel.id] = screen }
+            var o = ScreenModel.json(screen)
+            if all, case .object(let u) = ui { o["tree"] = u["tree"] }
+            return .object(o)
         }
         let settle = try Self.then(args)   // checked before the action: a bad --then must not tap
         var args = args
@@ -262,6 +274,7 @@ actor DeviceService {
     func panelClosed(_ id: UUID) async {
         closed.insert(id)
         refs[id] = nil
+        lastScreen[id] = nil
         idle.removeValue(forKey: id)?.cancel()
         sessions.removeValue(forKey: id)?.end("ended", "Panel closed")
         let prefix = id.uuidString + "-"

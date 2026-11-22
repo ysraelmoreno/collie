@@ -99,6 +99,26 @@ public enum ScreenModel {
             else if nodes[i].clickable { let l = label(i, consume: true); if !l.isEmpty { content.append(item(i, "button", l)) } }
             else if !own(nodes[i]).isEmpty { content.append(item(i, "text", own(nodes[i]))) }
         }
+        // P2: one item per thing within a group (iOS: a cell and its button carry the same label)
+        let at = Dictionary(nodes.indices.map { (nodes[$0].ref, $0) }, uniquingKeysWith: { a, _ in a })
+        func same(_ a: UINode, _ b: UINode) -> Bool {
+            hypot(a.bounds.midX - b.bounds.midX, a.bounds.midY - b.bounds.midY) < 24
+                || a.bounds.contains(b.bounds) || b.bounds.contains(a.bounds)
+        }
+        /// Kept: the clickable, then the shallower; it takes the first one's place, with its own ref.
+        func dedup(_ items: [ScreenItem]) -> [ScreenItem] {
+            var out: [ScreenItem] = []
+            for it in items {
+                guard let a = at[it.ref], !it.label.isEmpty,
+                      let k = out.firstIndex(where: { o in o.label == it.label && at[o.ref].map { same(nodes[$0], nodes[a]) } == true })
+                else { out.append(it); continue }
+                let n = nodes[a], o = nodes[at[out[k].ref]!]
+                if (n.clickable && !o.clickable) || (n.clickable == o.clickable && n.depth < o.depth) { out[k] = it }
+            }
+            return out
+        }
+        s.tabs = dedup(s.tabs); s.actions = dedup(s.actions); s.fields = dedup(s.fields); s.floating = dedup(s.floating)
+        content = dedup(content)
         s.content = Array(content.prefix(cap)); s.more = max(0, content.count - cap)
         return s
     }

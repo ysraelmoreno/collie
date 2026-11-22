@@ -138,6 +138,20 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         }
     }
 
+    /// P2: `device screen --ocr` on iOS: a note, no OCR, no error (OCR is Android-only in this cut).
+    @Test func iosScreenOcrSaysUnsupported() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let r = try await call(p, m, "device.screen", ["ocr": "true", "timing": "true"])
+            guard case .string(let text)? = field(r, "text"), case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
+            #expect(r.ok && text.hasSuffix("\nocr: unsupported on iOS") && field(r, "ocr") == .string("unsupported"))
+            #expect(t["ocr"] == .string("unsupported") && t["ocrMs"] == nil)
+            let off = try await call(p, m, "device.screen", ["no-ocr": "true"])
+            #expect(off.ok && field(off, "ocr") == nil)
+        }
+    }
+
     @Test func iosCommandsMapToTools() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim { d, p in

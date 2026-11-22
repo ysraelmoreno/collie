@@ -70,4 +70,31 @@ struct ScreenModelTests {
         #expect(o["title"] == .string("Offers") && o["changed"] == .array([]))
         for k in ["back", "actions", "fields", "lists", "floating", "text", "more"] { #expect(o[k] != nil) }
     }
+
+    /// P2 (iPhone 17 Pro, Ajustes > Geral, 2026-11-22): the cell and its button carry the same label; one item each,
+    /// the shallower (the cell), with its ref.
+    @Test func iosSettingsCellAndButtonWithTheSameLabelBecomeOneItem() {
+        var nodes = [UINode(ref: "e1", cls: "Application", text: "", desc: "", id: "", bounds: CGRect(x: 0, y: 0, width: 390, height: 844), clickable: false, depth: 0),
+                     UINode(ref: "e2", cls: "StaticText", text: "Geral", desc: "", id: "", bounds: CGRect(x: 150, y: 60, width: 90, height: 30), clickable: false, depth: 1)]
+        for (k, label) in ["Teclado", "Fontes", "Sobre"].enumerated() {
+            let y = 300 + k * 60
+            nodes.append(UINode(ref: "e\(nodes.count + 1)", cls: "Cell", text: label, desc: "", id: "",
+                                bounds: CGRect(x: 0, y: y, width: 390, height: 44), clickable: true, depth: 1))
+            nodes.append(UINode(ref: "e\(nodes.count + 1)", cls: "Button", text: label, desc: "", id: "",
+                                bounds: CGRect(x: 16, y: y + 4, width: 358, height: 36), clickable: true, depth: 2))
+        }
+        let s = ScreenModel.build(nodes, size: CGSize(width: 390, height: 844))
+        #expect(ScreenModel.text(s) == "Tela: Geral\nAções: [Teclado] [Fontes] [Sobre]")
+        #expect(s.actions.map(\.ref) == ["e3", "e5", "e7"])
+    }
+
+    /// Near twins (centres < 24 px) merge into the shallower; the same label far apart stays two items. The Android
+    /// Offers tree has no twins: `offersScreenGroupsTitleTabsActionsContentAndFloating` keeps today's exact text.
+    @Test func dedupMergesOnlyNearTwinsIntoTheShallower() {
+        let nodes = [UINode(ref: "e1", cls: "android.widget.TextView", text: "Item", desc: "", id: "", bounds: CGRect(x: 0, y: 400, width: 720, height: 60), clickable: false, depth: 1),
+                     UINode(ref: "e2", cls: "android.widget.TextView", text: "Item", desc: "", id: "", bounds: CGRect(x: 0, y: 410, width: 720, height: 60), clickable: false, depth: 2),
+                     UINode(ref: "e3", cls: "android.widget.TextView", text: "Item", desc: "", id: "", bounds: CGRect(x: 0, y: 900, width: 720, height: 60), clickable: false, depth: 1)]
+        let s = ScreenModel.build(nodes, size: CGSize(width: 720, height: 1600))
+        #expect(s.content.map(\.ref) == ["e1", "e3"])
+    }
 }

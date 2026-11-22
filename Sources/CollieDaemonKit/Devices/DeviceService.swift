@@ -174,7 +174,9 @@ actor DeviceService {
             var nodes = refs[panel.id] ?? []
             // O2: the OCR runs only when the trigger fires (Android); the screenshot, the OCR and the merge stay in memory
             var read: OCRRead?
-            if panel.state["platform"] != .string("ios"), let trigger = ocrMode.trigger(nodes) {
+            // P2: OCR is Android-only in this cut; on iOS a firing trigger (--ocr or auto) answers with a note, no error
+            let trigger = ocrMode.trigger(nodes), ios = panel.state["platform"] == .string("ios")
+            if !ios, let trigger {
                 read = await ocrRead(serial: serial, tree: nodes, trigger: trigger, region: ocrMode.region)
                 if let found = read?.nodes, !found.isEmpty, !closed.contains(panel.id) { nodes += found; refs[panel.id] = nodes }
             }
@@ -186,6 +188,11 @@ actor DeviceService {
                 o["ocr"] = .string("unavailable")
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
             }
+            let unsupported = ios && trigger != nil
+            if unsupported {
+                o["ocr"] = .string("unsupported")
+                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unsupported on iOS") }
+            }
             guard case .object(let u) = ui else { return o }
             if all { o["tree"] = u["tree"] }
             if timing, case .object(var t)? = u["timingMs"] {
@@ -193,6 +200,7 @@ actor DeviceService {
                 if let read {
                     t["ocrMs"] = Self.ms(read.took); t["ocrLevel"] = .string(OCRLevel.accurate.rawValue); t["trigger"] = .string(read.trigger)
                 }
+                if unsupported { t["ocr"] = .string("unsupported") }
                 o["timingMs"] = .object(t)
             }
             return o

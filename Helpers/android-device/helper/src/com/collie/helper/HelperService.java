@@ -29,54 +29,67 @@ import java.util.concurrent.TimeUnit;
  * what arrives through adbd. Text of password fields is masked, never sent.
  */
 public class HelperService extends AccessibilityService {
-    static final int VERSION = 2;
+    static final int VERSION = 3;
     static final String SOCKET = "collie-helper";
 
     private final List<Client> subscribers = new CopyOnWriteArrayList<>();
     private volatile long lastEvent;
-    // The socket name is process-wide: a service that was unbound (toggled off and on, or rebound) must not keep answering
-    // for a connection to the accessibility system it no longer has, so the owner is replaced on every connect.
-    private static LocalServerSocket owner;
-    private static final List<LocalSocket> conns = new CopyOnWriteArrayList<>();
+    // The socket name is process-wide, and Android may deliver the OLD instance's onUnbind after the NEW instance's
+    // onServiceConnected: each instance closes only what it owns (v3). The newest instance takes the name over.
+    private static HelperService owner;
+    private LocalServerSocket mine;
+    private final List<LocalSocket> myConns = new CopyOnWriteArrayList<>();
 
     @Override protected void onServiceConnected() {
-        closeOwner();
+        HelperService old;
+        synchronized (HelperService.class) { old = owner; owner = this; }
+        if (old != null && old != this) old.shutdown();
         Thread t = new Thread(this::serve, "collie-helper-accept");
         t.setDaemon(true);
         t.start();
     }
 
-    private static synchronized void closeOwner() {
-        if (owner != null) { try { owner.close(); } catch (IOException ignored) { } owner = null; }
-        for (LocalSocket c : conns) { try { c.close(); } catch (IOException ignored) { } }
-        conns.clear();
+    private void shutdown() {
+        LocalServerSocket m = mine; mine = null;
+        if (m != null) { try { m.close(); } catch (IOException ignored) { } }
+        for (LocalSocket c : myConns) { try { c.close(); } catch (IOException ignored) { } }
+        myConns.clear();
     }
-
-    private static synchronized boolean claim(LocalServerSocket s) { owner = s; return true; }
 
     private void serve() {
         LocalServerSocket server;
-        try { server = new LocalServerSocket(SOCKET); } catch (IOException e) { return; }
-        claim(server);
+        // the previous owner may take a moment to release the name
+        for (int i = 0; ; i++) {
+            try { server = new LocalServerSocket(SOCKET); break; }
+            catch (IOException e) {
+                if (i >= 20 || owner != this) return;
+                try { Thread.sleep(100); } catch (InterruptedException ie) { return; }
+            }
+        }
+        mine = server;
         try {
             while (true) {
                 LocalSocket s = server.accept();
                 int uid = -1;
                 try { uid = s.getPeerCredentials().getUid(); } catch (IOException ignored) { }
                 if (uid != 2000 && uid != 0) { try { s.close(); } catch (IOException ignored) { } continue; }
-                conns.add(s);
+                myConns.add(s);
                 Thread c = new Thread(() -> new Client(s).run(), "collie-helper-client");
                 c.setDaemon(true);
                 c.start();
             }
         } catch (IOException e) {
-            // closed by a newer instance or the service is stopping
+            // closed by shutdown() or the service is stopping
         } finally {
             try { server.close(); } catch (IOException ignored) { }
         }
     }
 
-    @Override public boolean onUnbind(android.content.Intent i) { closeOwner(); return super.onUnbind(i); }
+    @Override public boolean onUnbind(android.content.Intent i) {
+        synchronized (HelperService.class) { if (owner == this) owner = null; }
+        shutdown();
+        return super.onUnbind(i);
+    }
     @Override public void onInterrupt() { }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent e) {
@@ -140,9 +153,22 @@ public class HelperService extends AccessibilityService {
 
     JSONObject dump() throws Exception {
         JSONArray nodes = new JSONArray();
-        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo root = appRoot();
         if (root != null) walk(root, new int[64], 0, nodes);
         return ok().put("nodes", nodes).put("root", root != null);
+    }
+
+    /** The active window's root; right after a rebind that can be null for a while, so fall back to the application windows. */
+    private AccessibilityNodeInfo appRoot() {
+        AccessibilityNodeInfo r = getRootInActiveWindow();
+        if (r != null) return r;
+        List<android.view.accessibility.AccessibilityWindowInfo> ws = getWindows();
+        android.view.accessibility.AccessibilityWindowInfo best = null;
+        for (android.view.accessibility.AccessibilityWindowInfo w : ws) {
+            if (w.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+            if (best == null || w.isFocused() || (w.isActive() && !best.isFocused())) best = w;
+        }
+        return best == null ? null : best.getRoot();
     }
 
     private void walk(AccessibilityNodeInfo n, int[] path, int depth, JSONArray out) throws Exception {
@@ -168,7 +194,7 @@ public class HelperService extends AccessibilityService {
     private static String s(CharSequence c) { return c == null ? "" : c.toString(); }
 
     private AccessibilityNodeInfo at(JSONArray path) throws Exception {
-        AccessibilityNodeInfo n = getRootInActiveWindow();
+        AccessibilityNodeInfo n = appRoot();
         try {
             for (int i = 0; n != null && i < path.length(); i++) n = n.getChild(path.getInt(i));
         } catch (IndexOutOfBoundsException e) { n = null; }   // the screen changed since the dump: the daemon re-reads and retries

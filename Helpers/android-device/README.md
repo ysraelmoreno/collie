@@ -18,4 +18,9 @@ Operational notes for the daemon (H2):
   a fresh install and enable the first `dump` can come back with no nodes.
 - v2 (2026-11-22): the socket name is process-wide, so a service toggled off and on used to leave the OLD instance answering
   with `root:false` (0 nodes) forever. The owner is now closed on unbind and replaced on connect (`onServiceConnected`).
+- v3 (2026-11-22): each instance closes only its own socket and connections (Android can deliver the old instance's `onUnbind` after the
+  new one's `onServiceConnected`, which used to close the NEW socket: `Connection refused`); `dump` falls back to the application windows
+  when the active window has no root. OPEN: after toggling the service off and on by `settings put secure` the helper answers blind
+  (`getWindows()` empty, 0 nodes) on every other toggle (the answering instance is the previous one, disconnected from the system);
+  `setServiceInfo` did not wake it. A manual toggle or `install -r` heals it; the daemon's retry (H7) does not rebind with a pause.
 - A path from `dump` goes stale when the screen changes: `click`/`scroll` answer `node gone`; re-read and retry.

@@ -102,8 +102,12 @@ actor DeviceService {
 
     /// `s`: an adb serial, `avd:<name>` (booted when off) or a simulator UDID (a simulator not booted yet is booted first); nil: the only Android device
     /// in state `device` or simulator `booted`. adb or simctl failing hides only its own devices; both failing: adb's error.
-    func resolveSerial(_ s: String?) async throws(ProtocolError) -> (serial: String, platform: String) {
-        if let s, s.hasPrefix("avd:") { return (try await bootAvd(String(s.dropFirst(4))), "android") }
+    /// `frame`: the panel's device frame (`DeviceFrame`); reading the type never fails the call, it falls back to `bare`.
+    func resolveSerial(_ s: String?) async throws(ProtocolError) -> (serial: String, platform: String, frame: DeviceFrame.Kind) {
+        if let s, s.hasPrefix("avd:") {
+            let name = String(s.dropFirst(4))
+            return (try await bootAvd(name), "android", avdFrame(name))
+        }
         var adbError: ProtocolError?, simError: ProtocolError?, all: [AdbDevice] = [], sims: [SimDevice]?
         async let adbR = Self.attempt { () async throws(ProtocolError) in try await self.devices() }   // concurrent: a cold CoreSimulator must not slow Android
         async let simR = Self.attempt { () async throws(ProtocolError) in try await self.simulators() }
@@ -111,18 +115,23 @@ actor DeviceService {
         switch await simR { case .success(let v): sims = v; case .failure(let e): simError = e }
         if let adbError, sims == nil { throw adbError }
         if let s, !s.isEmpty {
-            if all.contains(where: { $0.serial == s }) { return (s, "android") }
-            if let sim = sims?.first(where: { $0.udid == s }) { try await boot(sim); return (s, "ios") }
+            if all.contains(where: { $0.serial == s }) { return (s, "android", await androidFrame(serial: s)) }
+            if let sim = sims?.first(where: { $0.udid == s }) {
+                try await boot(sim); return (s, "ios", DeviceFrame.ios(deviceTypeIdentifier: sim.deviceType))
+            }
             if let simError, UUID(uuidString: s) != nil { throw simError }   // a UDID, but simctl is gone
             if let adbError { throw adbError }   // likely an Android serial, but adb is gone
             let known = all.map(\.serial) + (sims ?? []).map(\.udid)
             throw ProtocolError(code: .invalidArgs, message: "Unknown device '\(s)' (\(known.isEmpty ? "none connected" : known.joined(separator: ", ")))")
         }
         // (serial, platform, how the error lists it)
-        let online = all.filter { $0.state == "device" }.map { ($0.serial, "android", $0.serial) }
-            + (sims ?? []).filter { $0.state == "booted" }.map { ($0.udid, "ios", "\($0.udid) (\($0.name))") }
+        let online = all.filter { $0.state == "device" }.map { ($0.serial, "android", $0.serial, nil as SimDevice?) }
+            + (sims ?? []).filter { $0.state == "booted" }.map { ($0.udid, "ios", "\($0.udid) (\($0.name))", Optional($0)) }
         switch online.count {
-        case 1: return (online[0].0, online[0].1)
+        case 1:
+            let (serial, platform, _, sim) = online[0]
+            let frame = if let sim { DeviceFrame.ios(deviceTypeIdentifier: sim.deviceType) } else { await androidFrame(serial: serial) }
+            return (serial, platform, frame)
         case 0:
             let others = all.map { "\($0.serial) \($0.state)" } + (sims ?? []).map { "\($0.udid) (\($0.name)) \($0.state)" }
             throw ProtocolError(code: .invalidArgs, message: "No device online" + (others.isEmpty ? "" : " (" + others.joined(separator: ", ") + ")"))

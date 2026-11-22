@@ -34,6 +34,19 @@ public func humanizeId(_ id: String) -> String {
     return s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
 }
 
+/// `tap/find --text "+"`: the words a symbol stands for in an unlabeled button's id or desc ("+" → add, plus, fab...);
+/// nil when `symbol` isn't one. `UITree.target` tries them only when no text/desc or humanized id is equal.
+public func symbolAliases(_ symbol: String) -> [String]? {
+    switch symbol.trimmingCharacters(in: .whitespaces).lowercased() {
+    case "+": ["add", "plus", "fab", "new", "create"]
+    case "x", "×": ["close", "dismiss", "cancel"]
+    case "☰", "≡": ["menu", "hamburger", "drawer"]
+    case "<": ["back", "voltar", "navigate up"]
+    case ">": ["next", "forward", "chevron"]
+    default: nil
+    }
+}
+
 /// Compacts a `uiautomator dump` XML into the few nodes an agent needs.
 public enum UITree {
     public static func parse(_ xml: Data, cap: Int = 2000) -> (nodes: [UINode], truncated: Bool) {
@@ -101,7 +114,8 @@ public enum UITree {
             let hid = { (i: Int) in nodes[i].clickable ? humanizeId(nodes[i].id) : "" }   // an id only counts on a clickable node
             let equal = idx.filter { labels($0).contains(t) }
             let idEqual = idx.filter { !hid($0).isEmpty && hid($0) == t }
-            idx = !equal.isEmpty ? equal : !idEqual.isEmpty ? idEqual
+            let alias = equal.isEmpty && idEqual.isEmpty ? symbolMatches(nodes, idx, t) : []
+            idx = !equal.isEmpty ? equal : !idEqual.isEmpty ? idEqual : !alias.isEmpty ? alias
                 : idx.filter { labels($0).contains { $0.contains(t) } } + idx.filter { i in !hid(i).isEmpty && hid(i).contains(t) && !labels(i).contains { $0.contains(t) } }
         }
         var hits: [UINode] = []
@@ -134,6 +148,18 @@ public enum UITree {
             throw ProtocolError(code: .invalidArgs, message: "\(hits.count) elements with \(what): \(show(hits)); pick one with --ref or --nth")
         }
         return hits[0]
+    }
+
+    /// The clickable nodes among `idx` whose humanized id or desc contains one of `symbolAliases(t)`; for "+", floating
+    /// ones (fab/floating in id or class) first when any. ponytail: substring match ("new" also hits "news").
+    static func symbolMatches(_ nodes: [UINode], _ idx: [Int], _ t: String) -> [Int] {
+        guard let words = symbolAliases(t) else { return [] }
+        let hits = idx.filter { i in
+            let hay = humanizeId(nodes[i].id) + " " + nodes[i].desc.lowercased()
+            return nodes[i].clickable && words.contains { hay.contains($0) }
+        }
+        let floating = hits.filter { i in ["fab", "floating"].contains { (nodes[i].id + nodes[i].cls).lowercased().contains($0) } }
+        return t == "+" && !floating.isEmpty ? floating : hits
     }
 
     public static func lines(_ nodes: [UINode]) -> String {

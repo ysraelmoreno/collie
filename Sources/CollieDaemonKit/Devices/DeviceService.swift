@@ -241,10 +241,11 @@ actor DeviceService {
             let r = try await wait(w)
             guard r.ok else {
                 let limit = w.timeoutMs % 1000 == 0 ? "\(w.timeoutMs / 1000) s" : "\(w.timeoutMs) ms"
-                throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(limit). Last screen:\n"
+                throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(limit)\(w.clamped ? " (" + Self.clampNote + ")" : ""). Last screen:\n"
                                     + ScreenModel.text(ScreenModel.build(r.last)))
             }
             var o: [String: JSONValue] = ["ok": .bool(true), "waitedMs": .number(Double(r.waitedMs))]
+            if w.clamped { o["clamped"] = .bool(true); o["warning"] = .string(Self.clampNote) }
             if let then { try await shown(then, &o) }   // ponytail: one more dump, the wait's last one is not reused
             return .object(o)
         }
@@ -314,6 +315,8 @@ actor DeviceService {
     /// What `device.wait` waits for: `text` to show (or go, `gone`), and/or two equal dumps in a row (`stable`).
     struct Wait {
         let text: String?; let gone: Bool; let stable: Bool; let timeoutMs: Int
+        /// `--timeout` asked for more than 60 s and got 60 s (`waitTimeoutMs`).
+        var clamped = false
         /// With the helper: `stable` holds once no screen event came for this long.
         var quietMs = DeviceService.stableQuietMs
         var what: String { [text.map { "text '\($0)' " + (gone ? "gone" : "shown") }, stable ? "stable screen" : nil].compactMap { $0 }.joined(separator: " + ") }
@@ -430,28 +433,33 @@ actor DeviceService {
         let gone = flag("gone"), stable = flag("stable")
         guard text != nil || stable else { throw ProtocolError(code: .invalidArgs, message: "device.wait needs --text or --stable") }
         guard !gone || text != nil else { throw ProtocolError(code: .invalidArgs, message: "--gone needs --text") }
-        return Wait(text: text, gone: gone, stable: stable, timeoutMs: try waitTimeoutMs(a["timeout"]) ?? 10_000, quietMs: try quietMs(a))
+        let t = try waitTimeoutMs(a["timeout"])
+        var w = Wait(text: text, gone: gone, stable: stable, timeoutMs: t?.ms ?? 10_000, quietMs: try quietMs(a))
+        w.clamped = t?.clamped ?? false
+        return w
     }
 
-    /// `device.wait --timeout`: `30` or `30s` (seconds, 1-60) or `500ms` (1-60000), in ms; nil when absent.
-    static func waitTimeoutMs(_ v: JSONValue?) throws(ProtocolError) -> Int? {
+    /// `device.wait --timeout`: `30` or `30s` (seconds) or `500ms`, in ms; above 60 s (`120000ms`, `120000`) it is 60 s
+    /// with `clamped` (P3: an agent asked for 120000 and got an error). nil when absent; not a positive integer: invalidArgs.
+    static func waitTimeoutMs(_ v: JSONValue?) throws(ProtocolError) -> (ms: Int, clamped: Bool)? {
         let ms: Int?
         switch v {
         case nil, .null?: return nil
-        case .number(let n)?: ms = Int(exactly: n).flatMap { (1...60).contains($0) ? $0 * 1000 : nil }
+        case .number(let n)?: ms = Int(exactly: n).map { min($0, 61) * 1000 }
         case .string(let s)?:
             let t = s.trimmingCharacters(in: .whitespaces).lowercased()
             if t.hasSuffix("ms") { ms = Int(String(t.dropLast(2))) } else {
-                ms = Int(t.hasSuffix("s") ? String(t.dropLast()) : t).flatMap { (1...60).contains($0) ? $0 * 1000 : nil }
+                ms = Int(t.hasSuffix("s") ? String(t.dropLast()) : t).map { min($0, 61) * 1000 }
             }
         default: ms = nil
         }
-        guard let ms, (1...60_000).contains(ms) else {
+        guard let ms, ms >= 1 else {
             let raw = switch v { case .string(let s)?: "'\(s)'"; case .number(let n)?: "\(n)"; default: "a non-number" }
             throw ProtocolError(code: .invalidArgs, message: "--timeout takes 30, 30s or 500ms (at most 60 s), got \(raw)")
         }
-        return ms
+        return ms > 60_000 ? (60_000, true) : (ms, false)
     }
+    static let clampNote = "--timeout above 60 s: waited at most 60 s"
 
     /// Dumps until `w` holds or its timeout passes (checked after each dump: one dump may overrun it).
     func poll(_ w: Wait, dump: () async throws(ProtocolError) -> [UINode]) async throws(ProtocolError) -> (ok: Bool, waitedMs: Int, last: [UINode]) {

@@ -139,7 +139,28 @@ private let xml = """
     #expect(fab.id == "configuration_fab")
     #expect(try UITree.target(nodes, text: "Configuration", id: nil, nth: nil).id == "configuration_fab")   // contains
     #expect(throws: ProtocolError.self) { try UITree.target(nodes, text: "toolbar", id: nil, nth: nil) }   // not clickable: no id match
-    do { _ = try UITree.target(nodes, text: "+", id: nil, nth: 1); Issue.record("found") } catch {
+    do { _ = try UITree.target(nodes, text: "nope", id: nil, nth: 1); Issue.record("found") } catch {
         #expect(error.code == .notFound && error.message.contains("; unlabeled: ") && error.message.contains("\(fab.ref) id=configuration_fab"), "\(error.message)")
+    }
+}
+
+/// P3 (2026-11-22): `find "+"` on the BEES Offers dump missed the unlabeled configuration_fab.
+@Test func symbolAliasesFindUnlabeledButtons() throws {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/offers-ui.xml")
+    let nodes = UITree.parse(try Data(contentsOf: url)).nodes
+    #expect(symbolAliases("+")?.contains("fab") == true && symbolAliases("×") == symbolAliases("x") && symbolAliases("a") == nil)
+    #expect(try UITree.target(nodes, text: "+", id: nil, nth: 1).id == "configuration_fab")
+    #expect(try UITree.target(nodes, text: "<", id: nil, nth: nil).desc == "Navigate up")
+    do { let n = try UITree.target(nodes, text: "x", id: nil, nth: 1); Issue.record("found \(n)") } catch {
+        #expect(error.code == .notFound, "\(error.message)")
+    }
+    // a node whose text is "+" wins over the alias
+    var plus = nodes[0]; plus.ref = "e99"; plus.text = "+"; plus.id = ""; plus.clickable = true; plus.depth = 1
+    #expect(try UITree.target(nodes + [plus], text: "+", id: nil, nth: nil).ref == "e99")
+    // several alias hits: listed as today
+    var add = plus; add.ref = "e98"; add.text = ""; add.id = "add_fab"
+    do { _ = try UITree.target(nodes + [add], text: "+", id: nil, nth: nil); Issue.record("one") } catch {
+        #expect(error.code == .invalidArgs && error.message.contains("2 elements") && error.message.contains("id=add_fab"), "\(error.message)")
     }
 }

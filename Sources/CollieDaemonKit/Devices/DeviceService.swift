@@ -66,6 +66,9 @@ actor DeviceService {
     var helpers: [String: DeviceHelper] = [:]
     var helperPanels: [UUID: String] = [:]
     private var idle: [UUID: Task<Void, Never>] = [:]
+    /// The OCR fallback of `device screen` (`VisionOCR` in collied); nil: none, poor trees say `ocr: unavailable`.
+    let ocr: (any OCRProvider)?
+    let ocrLanguages: [String]
 
     init(root: URL, runDir: URL, pollInterval: Duration = .seconds(2), scrcpyServer: URL? = nil, grace: Duration = .seconds(5),
          adb: @escaping @Sendable () -> URL?, emulator: @escaping @Sendable () -> URL? = { nil }, emulatorBoot: Duration = .seconds(180),
@@ -74,11 +77,13 @@ actor DeviceService {
          xcrun: URL = URL(fileURLWithPath: "/usr/bin/xcrun"),
          axe: @escaping @Sendable () -> URL? = { nil }, crashReports: URL = Simulator.defaultCrashReports, logCap: Int = 8 << 20,
          helperApk: @escaping @Sendable () -> URL? = { nil },
+         ocr: (any OCRProvider)? = nil, ocrLanguages: [String] = VisionOCR.defaultLanguages,
          emit: @escaping @Sendable (UUID, String, JSONValue) async -> Void) {
         self.root = root; self.runDir = runDir; self.pollInterval = pollInterval; self.adb = adb; self.emulator = emulator; self.emulatorBoot = emulatorBoot; self.emit = emit; self.avdManager = avdManager
         self.emulatorEnv = emulatorEnv ?? ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") }
         self.xcrun = xcrun; self.axe = axe; self.crashReports = crashReports; self.logCap = logCap
         self.scrcpyServer = scrcpyServer; self.grace = grace; self.helperApk = helperApk
+        self.ocr = ocr; self.ocrLanguages = ocrLanguages
     }
 
     var screens: URL { root.appendingPathComponent("screens") }
@@ -160,22 +165,38 @@ actor DeviceService {
             _ = try await act("device.ui", [:])   // the device.ui path: refs updated
             return refs[panel.id] ?? []
         }
-        func screen(all: Bool, timing: Bool = false) async throws(ProtocolError) -> [String: JSONValue] {
+        func screen(all: Bool, timing: Bool = false, ocrMode: OCRMode = .auto) async throws(ProtocolError) -> [String: JSONValue] {
             let ui = try await act("device.ui", ["all": .bool(all), "timing": .bool(timing)])
             let start = ContinuousClock.now
-            var screen = ScreenModel.build(refs[panel.id] ?? [])
+            var nodes = refs[panel.id] ?? []
+            // O2: the OCR runs only when the trigger fires (Android); the screenshot, the OCR and the merge stay in memory
+            var read: OCRRead?
+            if panel.state["platform"] != .string("ios"), let trigger = ocrMode.trigger(nodes) {
+                read = await ocrRead(serial: serial, tree: nodes, trigger: trigger, region: ocrMode.region)
+                if let found = read?.nodes, !found.isEmpty, !closed.contains(panel.id) { nodes += found; refs[panel.id] = nodes }
+            }
+            var screen = ScreenModel.build(nodes)
             screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
             if !closed.contains(panel.id) { lastScreen[panel.id] = screen }
             var o = ScreenModel.json(screen)
+            if let read, read.nodes == nil {
+                o["ocr"] = .string("unavailable")
+                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
+            }
             guard case .object(let u) = ui else { return o }
             if all { o["tree"] = u["tree"] }
             if timing, case .object(var t)? = u["timingMs"] {
-                t["group"] = Self.ms(ContinuousClock.now - start)
+                t["group"] = Self.ms(ContinuousClock.now - start - (read?.took ?? .zero))
+                if let read {
+                    t["ocrMs"] = Self.ms(read.took); t["ocrLevel"] = .string(OCRLevel.accurate.rawValue); t["trigger"] = .string(read.trigger)
+                }
                 o["timingMs"] = .object(t)
             }
             return o
         }
-        if command == "device.screen" { return .object(try await screen(all: args["all"] == .bool(true), timing: Self.timing(args))) }
+        if command == "device.screen" {
+            return .object(try await screen(all: args["all"] == .bool(true), timing: Self.timing(args), ocrMode: try Self.ocrMode(args)))
+        }
         /// `--then ui|screen`: the tree (`ui`) or the groups (`screen`) added to `o`.
         func shown(_ then: (screen: Bool, settleMs: Int?), _ o: inout [String: JSONValue]) async throws(ProtocolError) {
             if then.screen { o["screen"] = .object(try await screen(all: false)) } else { o["ui"] = try await act("device.ui", [:]) }

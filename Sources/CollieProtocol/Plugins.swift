@@ -175,7 +175,7 @@ extension PluginRegistry {
     private static let quiet = ParamSpec("quiet", .int, help: "With the Android helper: ms without a screen event for the screen to count as stable (50-5000, default 300)")
 
     /// `--timing` on device.ui|screen: ms per step, to measure without timing from outside.
-    private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group)")
+    private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group, and with the OCR ocrMs, ocrLevel, trigger: labels|coverage|opaque|explicit)")
 
     /// An Android device or emulator through adb, or an iOS Simulator through simctl + AXe; the daemon runs these
     /// commands (no app round trip).
@@ -193,7 +193,10 @@ extension PluginRegistry {
             dcmd("ui", "UI tree with element refs: only labelled or clickable nodes (refs keep the full tree's numbering, so gaps); returns {tree,truncated,nodes,total}. Read this tree to find elements and tap --ref them, not the screenshot PNG",
                  [ParamSpec("all", .flag, help: "Every node, as before (to debug); same refs"), timing], timeout: 30),
             dcmd("screen", "The screen in groups: title, back, tabs (* = selected), actions, fields, content, floating buttons, and what changed since the last screen; text in {text}, items {ref,label,role,state} in {title,back,tabs,actions,fields,lists,floating,changed,more}. Tap items by --ref or --text; use device.ui when something is missing",
-                 [ParamSpec("all", .flag, help: "Also return the raw device.ui --all tree in {tree} (to debug the grouping)"), timing], timeout: 30),
+                 [ParamSpec("all", .flag, help: "Also return the raw device.ui --all tree in {tree} (to debug the grouping)"), timing,
+                  ParamSpec("ocr", .flag, help: "Android: also read the screenshot's text (OCR), even on a good tree; it runs by itself when the tree is poor. OCR items land in content marked (ocr), source ocr in JSON, refs o1...; {ocr: unavailable} when it cannot run"),
+                  ParamSpec("no-ocr", .flag, help: "Never run the OCR, the tree only"),
+                  ParamSpec("region", .string, help: "x1,y1,x2,y2 in screen pixels: OCR only this rectangle (implies --ocr; faster and more precise)")], timeout: 30),
             dcmd("wait", "Wait for --text to show (or go, with --gone) and/or the screen to settle (--stable: two equal UI dumps in a row), instead of sleep + device.ui; returns {ok,waitedMs} (refs updated); on timeout a timeout error with the last screen",
                  [ParamSpec("text", .string, help: "Text or desc to wait for (any case, containing)"),
                   ParamSpec("gone", .flag, help: "With --text: wait for it to disappear"),

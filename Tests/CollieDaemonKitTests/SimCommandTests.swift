@@ -191,6 +191,16 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         }
     }
 
+    @Test func waitThenScreen() async throws {   // iOS shares device.wait --then with Android
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let r = try await call(p, m, "device.wait", ["text": "mapas", "timeout": "500ms", "then": "screen"])
+            guard case .object(let screen)? = field(r, "screen"), screen["text"] != nil else { Issue.record("\(r)"); return }
+            #expect(field(r, "ok") == .bool(true) && field(r, "waitedMs") != nil, "\(r)")
+        }
+    }
+
     @Test func iosTapTextDumpsFreshAndTaps() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withSim { d, p in

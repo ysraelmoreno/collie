@@ -59,6 +59,8 @@ public struct DaemonConfig: Sendable {
     public var devicePollInterval: Duration = .seconds(2)
     /// The scrcpy-server jar pushed to devices for video; nil/missing: device panels report it is not bundled.
     public var scrcpyServer: URL?
+    /// The device helper APK (`Resources/collie-helper.apk`) installed on Android devices; nil: not bundled (uiautomator only).
+    public var helperApk: URL?
     /// `collie-ctty` (next to collied): terminals start through it so the PTY is their controlling terminal
     /// (resizes reach them as SIGWINCH); nil: started directly (tests).
     public var cttyHelper: URL?

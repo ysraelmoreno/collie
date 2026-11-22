@@ -287,8 +287,11 @@ extension DeviceCommandTests { @Suite struct SimSessionTests {
         try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
         let tools = Simulator(xcrun: fixtures.appendingPathComponent("fake-xcrun.sh"), axe: fixtures.appendingPathComponent("fake-axe.sh"))
         await s.start(sim: tools, runDir: run)
-        let leader = try #require(s.pid)
+        // the watch replaces the stream at once (200 MB > 100): `pid` is nil between the old one and the new one
         let stop = Date().addingTimeInterval(10)
+        var seen = s.pid
+        while seen == nil, !s.isEnded, Date() < stop { try await Task.sleep(for: .milliseconds(5)); seen = s.pid }
+        let leader = try #require(seen, "a stream must have started")
         while !(ended.withLock { $0 } && kill(-leader, 0) != 0), Date() < stop { try await Task.sleep(for: .milliseconds(50)) }
         #expect(ended.withLock { $0 })
         #expect(s.isEnded)

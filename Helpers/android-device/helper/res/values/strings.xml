@@ -1,0 +1,1 @@
+<resources><string name="desc">Collie device helper: lets the Collie daemon read the screen and tap for agents (local socket, adb only).</string></resources>

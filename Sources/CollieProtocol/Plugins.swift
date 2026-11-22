@@ -168,8 +168,11 @@ extension PluginRegistry {
     /// `--then ui` on the actions: after it, wait `settle` ms and return the device.ui tree too (one call per step).
     private static let then = [
         ParamSpec("then", .string, help: "ui: also return the UI tree after the action ({ui:{tree,truncated,nodes,total}}, refs updated); screen: the device.screen groups instead ({screen})"),
-        ParamSpec("settle", .string, help: "With --then: ms to wait before reading (0-3000, default 400), or stable: wait (up to 5 s) for two equal UI dumps in a row, {settled} says if it did"),
+        ParamSpec("settle", .string, help: "With --then: ms to wait before reading (0-3000, default 400), or stable: wait (up to 5 s) for the screen to settle (with the Android helper: no screen event for --quiet ms; else two equal UI dumps in a row), {settled} says if it did"),
+        quiet,
     ]
+    /// `--quiet` of `wait --stable` and `--settle stable` with the Android helper.
+    private static let quiet = ParamSpec("quiet", .int, help: "With the Android helper: ms without a screen event for the screen to count as stable (50-5000, default 300)")
 
     /// `--timing` on device.ui|screen: ms per step, to measure without timing from outside.
     private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group)")
@@ -183,6 +186,9 @@ extension PluginRegistry {
             dcmd("list", "Android devices and iOS Simulators [{serial,state,model,product,platform,panels}]; Android AVDs that are off: state off, serial avd:<name> (panel open boots it) (ignores --panel)", timeout: 15, panelFree: true),
             dcmd("lite.create", "Create the collie-lite Android emulator (admin only; writes ~/.android/avd, needs the Android SDK cmdline-tools and a system image); returns {name,path,image,created}", timeout: 90, panelFree: true, exposedToMCP: false),
             dcmd("lite.remove", "Delete the collie-lite Android emulator (admin only; removes it from ~/.android/avd); returns {}", timeout: 90, panelFree: true, exposedToMCP: false),
+            dcmd("helper", "The Android accessibility helper that makes screen reads fast: status (default; {serial,state: ready|starting|fallback|off,source: helper|uiautomator,version,reason,emulator}), install (installs and enables it: an emulator gets it by itself on its panel's first device command, a physical device only this way), remove (disables it, keeping other accessibility services, uninstalls it, closes the forward); install and remove are admin only; any failure leaves the commands on uiautomator and status says why",
+                 [ParamSpec("action", .string, positional: true, help: "status (default), install or remove"),
+                  ParamSpec("serial", .string, help: "Android serial (default: the only device online)")], timeout: 120, panelFree: true, exposedToMCP: false),
             dcmd("screenshot", "Screenshot to a PNG file, for you to look at, not to parse (use device.ui to find elements); returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", [out], timeout: 30),
             dcmd("ui", "UI tree with element refs: only labelled or clickable nodes (refs keep the full tree's numbering, so gaps); returns {tree,truncated,nodes,total}. Read this tree to find elements and tap --ref them, not the screenshot PNG",
                  [ParamSpec("all", .flag, help: "Every node, as before (to debug); same refs"), timing], timeout: 30),
@@ -191,8 +197,10 @@ extension PluginRegistry {
             dcmd("wait", "Wait for --text to show (or go, with --gone) and/or the screen to settle (--stable: two equal UI dumps in a row), instead of sleep + device.ui; returns {ok,waitedMs} (refs updated); on timeout a timeout error with the last screen",
                  [ParamSpec("text", .string, help: "Text or desc to wait for (any case, containing)"),
                   ParamSpec("gone", .flag, help: "With --text: wait for it to disappear"),
-                  ParamSpec("stable", .flag, help: "Wait for two equal UI dumps in a row"),
-                  ParamSpec("timeout", .int, help: "Seconds (1-60, default 10)")], timeout: 75),
+                  ParamSpec("stable", .flag, help: "Wait for the screen to settle: with the Android helper no screen event for --quiet ms, else two equal UI dumps in a row"),
+                  quiet,
+                  ParamSpec("timeout", .string, help: "30, 30s or 500ms (1 ms to 60 s in all; a bare number is seconds, 1-60; default 10 s)"),
+                  ParamSpec("then", .string, help: "ui: also return the UI tree once the wait holds ({ui}); screen: the device.screen groups instead ({screen})")], timeout: 75),
             dcmd("find", "Find the element with this text or desc on the current screen (one fresh UI dump; the tap --text match: any case, equal first, then containing; several: the first); returns {found,ref,label,role,center,clickable} (refs updated: tap --ref works next), or notFound with up to 5 similar labels. --scroll: swipe and dump again until found, the list end (the tree no longer changes) or --max swipes; adds {scrolls,endReached} (notFound says both)",
                  [ParamSpec("text", .rest, positional: true, required: true, help: "Text or desc to find"),
                   ParamSpec("role", .string, help: "Only an element of this device.screen role: tab, button or field"),

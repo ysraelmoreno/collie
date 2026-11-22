@@ -8,12 +8,28 @@ public struct UINode: Equatable, Sendable {
     /// Index (in the node list) of the nearest kept ancestor; set by `UITree.linkParents`.
     public var parent: Int?
     public var selected: Bool; public var checked: Bool; public var enabled: Bool; public var focused: Bool; public var scrollable: Bool
+    public var password: Bool
+    /// The device helper's child-index path to this node (`click`/`scroll`); nil when read by uiautomator or AXe.
+    public var path: [Int]?
     public var center: (x: Int, y: Int) { (Int(bounds.midX), Int(bounds.midY)) }
     public init(ref: String, cls: String, text: String, desc: String, id: String, bounds: CGRect, clickable: Bool, depth: Int,
-                parent: Int? = nil, selected: Bool = false, checked: Bool = false, enabled: Bool = true, focused: Bool = false, scrollable: Bool = false) {
+                parent: Int? = nil, selected: Bool = false, checked: Bool = false, enabled: Bool = true, focused: Bool = false, scrollable: Bool = false,
+                password: Bool = false, path: [Int]? = nil) {
         self.ref = ref; self.cls = cls; self.text = text; self.desc = desc; self.id = id; self.bounds = bounds; self.clickable = clickable; self.depth = depth
         self.parent = parent; self.selected = selected; self.checked = checked; self.enabled = enabled; self.focused = focused; self.scrollable = scrollable
+        self.password = password; self.path = path
     }
+}
+
+/// "configuration_fab" → "configuration fab", "topBarMenu" → "top bar menu", "ICON-btn" → "icon btn":
+/// `_`/`-` (any non-alphanumeric) become spaces, camelCase splits, lowercased.
+public func humanizeId(_ id: String) -> String {
+    var s = "", prev: Character?
+    for c in id {
+        if c.isUppercase, let p = prev, p.isLowercase || p.isNumber { s.append(" ") }
+        s.append(c); prev = c
+    }
+    return s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
 }
 
 /// Compacts a `uiautomator dump` XML into the few nodes an agent needs.
@@ -24,6 +40,21 @@ public enum UITree {
         p.delegate = h
         p.parse()
         return (linkParents(h.nodes), h.truncated)
+    }
+
+    /// The nodes of a device helper `dump`, kept and numbered as `parse` keeps a uiautomator XML (same refs, same tree),
+    /// with each node's `path` for `click`. Depth is the path's length (the root's path is empty, as uiautomator's depth 0).
+    public static func nodes(_ d: HelperProtocol.Dump, cap: Int = 2000) -> (nodes: [UINode], truncated: Bool) {
+        var out: [UINode] = []
+        for n in d.nodes where !n.text.isEmpty || !n.desc.isEmpty || !n.id.isEmpty || n.clickable || n.scrollable {
+            guard out.count < cap else { return (linkParents(out), true) }
+            let b = n.bounds.count == 4 ? CGRect(x: n.bounds[0], y: n.bounds[1], width: n.bounds[2] - n.bounds[0], height: n.bounds[3] - n.bounds[1]) : .zero
+            out.append(UINode(ref: "e\(out.count + 1)", cls: n.cls, text: n.text, desc: n.desc,
+                              id: n.id.split(separator: "/").last.map(String.init) ?? n.id, bounds: b, clickable: n.clickable,
+                              depth: n.path.count, selected: n.selected, checked: n.checked, enabled: n.enabled, focused: n.focused,
+                              scrollable: n.scrollable, password: n.password, path: n.path))
+        }
+        return (linkParents(out), false)
     }
 
     /// Sets each node's `parent`: the nearest earlier node with a smaller depth (the list is pre-order).
@@ -50,10 +81,10 @@ public enum UITree {
                         "nodes": .number(Double(shown.count)), "total": .number(Double(nodes.count))])
     }
 
-    /// `device.tap --text/--id`: the node to tap. `text` matches `text` or `desc` ignoring case, equal first, then
-    /// containing; `id` matches exactly (both given: both must match). A node that isn't clickable gives way to its
+    /// `device.tap --text/--id`: the node to tap. `text` matches ignoring case: `text`/`desc` equal, then the humanized
+    /// `id` equal (`humanizeId`, clickable nodes only), then containing in any of the three; `id` matches exactly (both given: both must match). A node that isn't clickable gives way to its
     /// nearest clickable ancestor (none: the node itself); candidates landing on the same node count once. Several:
-    /// `nth` (from 1) picks one, else invalidArgs listing up to 5. None: notFound with up to 5 similar labels.
+    /// `nth` (from 1) picks one, else invalidArgs listing up to 5. None: notFound with up to 5 similar labels and unlabeled clickable ids.
     /// `keep` drops candidates after the climb (`device.find --role`).
     public static func target(_ nodes: [UINode], text: String?, id: String?, nth: Int?,
                               keep: (UINode) -> Bool = { _ in true }) throws(ProtocolError) -> UINode {
@@ -65,8 +96,11 @@ public enum UITree {
         if let id { idx = idx.filter { nodes[$0].id == id } }
         if let t = text?.lowercased() {
             let labels = { (i: Int) in [nodes[i].text.lowercased(), nodes[i].desc.lowercased()] }
+            let hid = { (i: Int) in nodes[i].clickable ? humanizeId(nodes[i].id) : "" }   // an id only counts on a clickable node
             let equal = idx.filter { labels($0).contains(t) }
-            idx = equal.isEmpty ? idx.filter { labels($0).contains { $0.contains(t) } } : equal
+            let idEqual = idx.filter { !hid($0).isEmpty && hid($0) == t }
+            idx = !equal.isEmpty ? equal : !idEqual.isEmpty ? idEqual
+                : idx.filter { labels($0).contains { $0.contains(t) } } + idx.filter { i in !hid(i).isEmpty && hid(i).contains(t) && !labels(i).contains { $0.contains(t) } }
         }
         var hits: [UINode] = []
         for i in idx {
@@ -81,9 +115,12 @@ public enum UITree {
         guard !hits.isEmpty else {
             // ponytail: "similar" = shares a word with the query; first labels when none does
             let words = Set((text ?? id ?? "").lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }))
-            let named = nodes.filter { !label($0).isEmpty || !$0.id.isEmpty }
+            let unlabeled = nodes.filter { $0.clickable && label($0).isEmpty && !$0.id.isEmpty }   // e.g. a floating action button
+            let named = nodes.filter { (!label($0).isEmpty || !$0.id.isEmpty) && !unlabeled.contains($0) }
             let near = named.filter { n in !words.isDisjoint(with: (label(n) + " " + n.id).lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })) }
-            throw ProtocolError(code: .notFound, message: "No element with \(what)" + (named.isEmpty ? "" : "; similar: \(show(near.isEmpty ? named : near))"))
+            let u = Array(unlabeled.prefix(2)), similar = Array((near.isEmpty ? named : near).prefix(5 - u.count))
+            throw ProtocolError(code: .notFound, message: "No element with \(what)" + (similar.isEmpty ? "" : "; similar: \(show(similar))")
+                                + (u.isEmpty ? "" : "; unlabeled: \(show(u))"))
         }
         if let nth {
             guard (1...hits.count).contains(nth) else {
@@ -127,7 +164,7 @@ public enum UITree {
                                 id: rid.split(separator: "/").last.map(String.init) ?? rid,
                                 bounds: Self.rect(a["bounds"] ?? ""), clickable: clickable, depth: depth,
                                 selected: a["selected"] == "true", checked: a["checked"] == "true", enabled: a["enabled"] != "false",
-                                focused: a["focused"] == "true", scrollable: scrollable))
+                                focused: a["focused"] == "true", scrollable: scrollable, password: a["password"] == "true"))
         }
 
         func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {

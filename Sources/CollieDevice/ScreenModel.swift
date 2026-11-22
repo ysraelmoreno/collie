@@ -3,7 +3,7 @@ import CoreGraphics
 import CollieProtocol
 
 /// One element of a `Screen` group: `ref` taps it (`device tap --ref`), `state` is any of selected, checked,
-/// disabled, focused. `position` is set on floating items only ("topo direito").
+/// disabled, focused, scrollable, password. `position` is set on floating items only ("topo direito").
 public struct ScreenItem: Equatable, Sendable {
     public var ref: String, label: String, role: String, state: [String], id: String, position: String?
 }
@@ -46,7 +46,8 @@ public enum ScreenModel {
         func item(_ i: Int, _ role: String, _ text: String? = nil) -> ScreenItem {
             let n = nodes[i]
             let state = [(n.selected || descendants(i).contains { nodes[$0].selected }) ? "selected" : nil,
-                         n.checked ? "checked" : nil, n.enabled ? nil : "disabled", n.focused ? "focused" : nil].compactMap { $0 }
+                         n.checked ? "checked" : nil, n.enabled ? nil : "disabled", n.focused ? "focused" : nil,
+                         n.scrollable ? "scrollable" : nil, n.password ? "password" : nil].compactMap { $0 }
             used.insert(i)
             return ScreenItem(ref: n.ref, label: text ?? label(i, consume: true), role: role, state: state, id: n.id, position: nil)
         }
@@ -166,7 +167,7 @@ public enum ScreenModel {
     }
 
     /// "configuration_fab" → "configuration fab"
-    static func humanize(_ id: String) -> String { words(id).joined(separator: " ") }
+    static func humanize(_ id: String) -> String { humanizeId(id) }
     static func words(_ id: String) -> [String] {
         id.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
     }

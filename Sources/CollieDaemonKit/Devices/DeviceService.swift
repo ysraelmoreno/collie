@@ -60,6 +60,11 @@ actor DeviceService {
     /// How long a session outlives its last viewer.
     private let grace: Duration
     private var sessions: [UUID: any ViewerSession] = [:]
+    /// The accessibility helper APK to install (`DeviceHelper`); nil: not bundled.
+    let helperApk: @Sendable () -> URL?
+    /// One helper per Android serial, and the panels that started theirs (panel → serial).
+    var helpers: [String: DeviceHelper] = [:]
+    var helperPanels: [UUID: String] = [:]
     private var idle: [UUID: Task<Void, Never>] = [:]
 
     init(root: URL, runDir: URL, pollInterval: Duration = .seconds(2), scrcpyServer: URL? = nil, grace: Duration = .seconds(5),
@@ -68,11 +73,12 @@ actor DeviceService {
          avdManager: @escaping @Sendable () -> AvdManager? = { AvdManager.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
          xcrun: URL = URL(fileURLWithPath: "/usr/bin/xcrun"),
          axe: @escaping @Sendable () -> URL? = { nil }, crashReports: URL = Simulator.defaultCrashReports, logCap: Int = 8 << 20,
+         helperApk: @escaping @Sendable () -> URL? = { nil },
          emit: @escaping @Sendable (UUID, String, JSONValue) async -> Void) {
         self.root = root; self.runDir = runDir; self.pollInterval = pollInterval; self.adb = adb; self.emulator = emulator; self.emulatorBoot = emulatorBoot; self.emit = emit; self.avdManager = avdManager
         self.emulatorEnv = emulatorEnv ?? ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") }
         self.xcrun = xcrun; self.axe = axe; self.crashReports = crashReports; self.logCap = logCap
-        self.scrcpyServer = scrcpyServer; self.grace = grace
+        self.scrcpyServer = scrcpyServer; self.grace = grace; self.helperApk = helperApk
     }
 
     var screens: URL { root.appendingPathComponent("screens") }
@@ -145,6 +151,7 @@ actor DeviceService {
         guard let panel, case .string(let serial)? = panel.state["serial"] else {
             throw ProtocolError(code: .invalidArgs, message: "'\(command)' needs a device panel")
         }
+        if panel.state["platform"] != .string("ios") { kickHelper(panel: panel.id, serial: serial) }
         func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
             if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
             return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
@@ -169,14 +176,45 @@ actor DeviceService {
             return o
         }
         if command == "device.screen" { return .object(try await screen(all: args["all"] == .bool(true), timing: Self.timing(args))) }
+        /// `--then ui|screen`: the tree (`ui`) or the groups (`screen`) added to `o`.
+        func shown(_ then: (screen: Bool, settleMs: Int?), _ o: inout [String: JSONValue]) async throws(ProtocolError) {
+            if then.screen { o["screen"] = .object(try await screen(all: false)) } else { o["ui"] = try await act("device.ui", [:]) }
+        }
+        /// `--stable` (H4): with the helper ready, the text by dumps and then the stability by its `subscribe` events (none
+        /// for `quietMs`); without it, or when it drops midway, two equal dumps in a row (`poll`).
+        func wait(_ w: Wait) async throws(ProtocolError) -> (ok: Bool, waitedMs: Int, last: [UINode]) {
+            guard w.stable, panel.state["platform"] != .string("ios"), let h = helpers[serial], await h.state == .ready else {
+                return try await poll(w, dump: dump)
+            }
+            let start = ContinuousClock.now
+            func waited() -> Int { Int((ContinuousClock.now - start) / .milliseconds(1)) }
+            func left() -> Int { max(1, w.timeoutMs - waited()) }
+            var last: [UINode] = []
+            if w.text != nil {
+                let r = try await poll(Wait(text: w.text, gone: w.gone, stable: false, timeoutMs: w.timeoutMs), dump: dump)
+                guard r.ok else { return r }
+                last = r.last
+            }
+            switch await h.quiet(w.quietMs, timeoutMs: left()) {
+            case true?: return (true, waited(), last)
+            case false?: return (false, waited(), try await dump())
+            case nil:
+                let r = try await poll(Wait(text: w.text, gone: w.gone, stable: true, timeoutMs: left()), dump: dump)
+                return (r.ok, waited(), r.last)
+            }
+        }
         if command == "device.wait" {
             let w = try Self.waitSpec(args)
-            let r = try await poll(w, dump: dump)
+            let then = try Self.then(args)   // checked before the first dump
+            let r = try await wait(w)
             guard r.ok else {
-                throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(w.timeoutMs / 1000) s. Last screen:\n"
+                let limit = w.timeoutMs % 1000 == 0 ? "\(w.timeoutMs / 1000) s" : "\(w.timeoutMs) ms"
+                throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(limit). Last screen:\n"
                                     + ScreenModel.text(ScreenModel.build(r.last)))
             }
-            return .object(["ok": .bool(true), "waitedMs": .number(Double(r.waitedMs))])
+            var o: [String: JSONValue] = ["ok": .bool(true), "waitedMs": .number(Double(r.waitedMs))]
+            if let then { try await shown(then, &o) }   // ponytail: one more dump, the wait's last one is not reused
+            return .object(o)
         }
         if command == "device.find" {
             let q = try Self.findSpec(args)
@@ -192,6 +230,7 @@ actor DeviceService {
             return .object(o)
         }
         let then = try Self.then(args)   // checked before the action: a bad --then must not tap
+        let quiet = try Self.quietMs(args)
         var args = args
         if command == "device.tap", let pick = try Self.tapPick(args) {
             _ = try await act("device.ui", [:])   // always a fresh dump: cached refs may be stale
@@ -204,15 +243,17 @@ actor DeviceService {
             await Self.nap(.milliseconds(ms))
         } else {
             // the action already ran: a screen that never settles returns its last tree anyway, with settled false
-            o["settled"] = .bool(try await poll(Wait(text: nil, gone: false, stable: true, timeoutMs: Self.stableSettleMs), dump: dump).ok)
+            o["settled"] = .bool(try await wait(Wait(text: nil, gone: false, stable: true, timeoutMs: Self.stableSettleMs, quietMs: quiet)).ok)
         }
-        if then.screen { o["screen"] = .object(try await screen(all: false)) } else { o["ui"] = try await act("device.ui", [:]) }
+        try await shown(then, &o)
         return .object(o)
     }
 
     /// What `device.wait` waits for: `text` to show (or go, `gone`), and/or two equal dumps in a row (`stable`).
     struct Wait {
         let text: String?; let gone: Bool; let stable: Bool; let timeoutMs: Int
+        /// With the helper: `stable` holds once no screen event came for this long.
+        var quietMs = DeviceService.stableQuietMs
         var what: String { [text.map { "text '\($0)' " + (gone ? "gone" : "shown") }, stable ? "stable screen" : nil].compactMap { $0 }.joined(separator: " + ") }
         /// `text` (any case, in a node's text or desc, containing) shows or, with `gone`, is absent.
         func textMet(_ nodes: [UINode]) -> Bool {
@@ -223,6 +264,10 @@ actor DeviceService {
 
     /// `--settle stable` after an action: at most this long for two equal dumps.
     static let stableSettleMs = 5000
+    /// `--quiet` default: ms without a helper event for a screen to count as stable.
+    static let stableQuietMs = 300
+    /// `--quiet <ms>` (50-5000) of `wait --stable` and `--settle stable`; the default when absent.
+    static func quietMs(_ a: [String: JSONValue]) throws(ProtocolError) -> Int { try int(a, "quiet", 50...5000) ?? stableQuietMs }
     /// Pause between two dumps of a wait (a dump itself takes 2-3 s on Android).
     static let pollGapMs = 200
 
@@ -307,14 +352,34 @@ actor DeviceService {
                 "center": .object(["x": .number(Double(n.center.x)), "y": .number(Double(n.center.y))])]
     }
 
-    /// `device.wait` args: --text and/or --stable (--gone needs --text), --timeout seconds (1-60, default 10).
+    /// `device.wait` args: --text and/or --stable (--gone needs --text), --timeout (`waitTimeoutMs`, default 10 s).
     static func waitSpec(_ a: [String: JSONValue]) throws(ProtocolError) -> Wait {
         let text: String? = if case .string(let s)? = a["text"], !s.isEmpty { s } else { nil }
         func flag(_ k: String) -> Bool { a[k] == .bool(true) || a[k] == .string("true") }
         let gone = flag("gone"), stable = flag("stable")
         guard text != nil || stable else { throw ProtocolError(code: .invalidArgs, message: "device.wait needs --text or --stable") }
         guard !gone || text != nil else { throw ProtocolError(code: .invalidArgs, message: "--gone needs --text") }
-        return Wait(text: text, gone: gone, stable: stable, timeoutMs: (try int(a, "timeout", 1...60) ?? 10) * 1000)
+        return Wait(text: text, gone: gone, stable: stable, timeoutMs: try waitTimeoutMs(a["timeout"]) ?? 10_000, quietMs: try quietMs(a))
+    }
+
+    /// `device.wait --timeout`: `30` or `30s` (seconds, 1-60) or `500ms` (1-60000), in ms; nil when absent.
+    static func waitTimeoutMs(_ v: JSONValue?) throws(ProtocolError) -> Int? {
+        let ms: Int?
+        switch v {
+        case nil, .null?: return nil
+        case .number(let n)?: ms = Int(exactly: n).flatMap { (1...60).contains($0) ? $0 * 1000 : nil }
+        case .string(let s)?:
+            let t = s.trimmingCharacters(in: .whitespaces).lowercased()
+            if t.hasSuffix("ms") { ms = Int(String(t.dropLast(2))) } else {
+                ms = Int(t.hasSuffix("s") ? String(t.dropLast()) : t).flatMap { (1...60).contains($0) ? $0 * 1000 : nil }
+            }
+        default: ms = nil
+        }
+        guard let ms, (1...60_000).contains(ms) else {
+            let raw = switch v { case .string(let s)?: "'\(s)'"; case .number(let n)?: "\(n)"; default: "a non-number" }
+            throw ProtocolError(code: .invalidArgs, message: "--timeout takes 30, 30s or 500ms (at most 60 s), got \(raw)")
+        }
+        return ms
     }
 
     /// Dumps until `w` holds or its timeout passes (checked after each dump: one dump may overrun it).
@@ -452,6 +517,7 @@ actor DeviceService {
         lastScreen[id] = nil
         idle.removeValue(forKey: id)?.cancel()
         sessions.removeValue(forKey: id)?.end("ended", "Panel closed")
+        await helperPanelClosed(id)
         let prefix = id.uuidString + "-"
         for f in (try? FileManager.default.contentsOfDirectory(at: screens, includingPropertiesForKeys: nil)) ?? []
         where f.lastPathComponent.hasPrefix(prefix) { try? FileManager.default.removeItem(at: f) }
@@ -628,6 +694,8 @@ actor DeviceService {
         idle.values.forEach { $0.cancel() }; idle = [:]
         for s in live { s.end("ended", "Collie is shutting down") }
         for s in live { await s.cleanup?.value }
+        for h in helpers.values { await h.close() }   // their forwards
+        helperPanels = [:]
         let pids = crash.values.compactMap { $0.proc?.pid } + live.compactMap(\.pid)
         for s in Array(crash.keys) { endCrash(s) }
         let deadline = ContinuousClock.now + .milliseconds(1500)

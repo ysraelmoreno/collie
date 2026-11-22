@@ -112,7 +112,11 @@ import Foundation
         #expect(try ArgvParser.parse(["device", "key", "Enter", "--then", "screen", "--settle", "stable"]).args
                 == ["key": .string("Enter"), "then": .string("screen"), "settle": .string("stable")])
         let w = try ArgvParser.parse(["device", "wait", "--text", "Signing in", "--gone", "--timeout", "20"])
-        #expect(w.command == "device.wait" && w.args == ["text": .string("Signing in"), "gone": .bool(true), "timeout": .number(20)])
+        #expect(w.command == "device.wait" && w.args == ["text": .string("Signing in"), "gone": .bool(true), "timeout": .string("20")])   // 20, 20s or 500ms: the daemon parses
+        #expect(try ArgvParser.parse(["device", "wait", "--stable", "--timeout", "500ms", "--then", "screen"]).args
+                == ["stable": .bool(true), "timeout": .string("500ms"), "then": .string("screen")])
+        let bad = #expect(throws: ProtocolError.self) { try ArgvParser.parse(["device", "wait", "--text", "x", "--for", "3"]) }
+        #expect(bad?.message == "unknown flag --for; device wait takes --text --gone --stable --quiet --timeout --then --panel", "\(String(describing: bad))")
         #expect(try ArgvParser.parse(["device", "text", "hi", "there", "--then", "ui"]).args == ["text": .string("hi there"), "then": .string("ui")])
         for c in ["tap", "swipe", "text", "key", "launch"] {
             let names = Commands.spec("device.\(c)")?.params.map(\.name) ?? []
@@ -228,7 +232,7 @@ import Foundation
     @Test func outRejectedForOtherCommands() {
         for argv in [["design", "inspect", "--out", "x"], ["memory", "get", "--out", "x"]] {
             let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(argv) }
-            #expect(e?.message == "unknown flag --out", "\(argv)")
+            #expect(e?.message.hasPrefix("unknown flag --out; ") == true && e?.message.contains("\n") == false, "\(argv)")
         }
         #expect(Commands.all.filter { $0.params.contains { $0.name == "out" } }.map(\.name).filter { !Commands.outputFile.contains($0) }
                 == ["admin.data.export", "artifact.export"])   // their own --out: the daemon writes the backup / the deck

@@ -21,7 +21,9 @@ enum CollieOrientation {
     /// M4 (2026-11-21 device loop spec): read the tree, act and re-read in one call; the PNG only as a last resort.
     /// S5 (2026-11-22 device screen spec): `device screen` to see, `--then screen`, `wait` instead of sleep. ponytail: no
     /// `find` until E3 lands (teaching a missing command only earns errors); add `find "X" --scroll` here then.
-    static let deviceLoop = "collie device screen (grouped; ui = raw tree), then tap --text|--ref … --then screen; wait --text X, not sleep; screenshot only if screen and ui lack it."
+    /// H5 (2026-11-22 device helper spec): one sentence so a slow read (uiautomator fallback) is diagnosed, not retried;
+    /// ponytail: normal form only, the short form has no room under the 1500 cap.
+    static let deviceLoop = "collie device screen (grouped; ui = raw tree), then tap --text|--ref … --then screen; wait --text X, not sleep; screenshot only if screen and ui lack it. Reads slow (~2 s)? collie device helper status says why."
     static let deviceShort = "collie device screen; tap --text … --then screen."
     static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
 

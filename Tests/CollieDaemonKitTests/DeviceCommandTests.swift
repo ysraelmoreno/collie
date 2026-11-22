@@ -109,6 +109,20 @@ private struct LiteFx {
             #expect(!FileManager.default.fileExists(atPath: fx.avdHome.appendingPathComponent("collie-lite.avd").path))
         }
     }
+    @Test func helperInstallIsAdminOnlyAndStatusSaysWhy() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            let r = try await call(p, m, "device.helper", ["action": "install"])
+            #expect(!r.ok && r.error?.code == .unauthorized, "\(r)")
+            let i = try await admin(d, p, "device.helper", ["action": "install"])   // the test daemon bundles no APK
+            #expect(i.ok, "\(i)")
+            #expect(field(i, "state") == .string("fallback") && field(i, "reason") == .string("collie-helper.apk is not bundled"))
+            let s = try await call(p, m, "device.helper")
+            #expect(s.ok && field(s, "source") == .string("uiautomator") && field(s, "serial") == .string("emulator-5554"), "\(s)")
+            #expect(!(try await call(p, m, "device.helper", ["action": "nuke"])).ok)
+        }
+    }
     @Test func liteCreateReturnsTheRow() async throws {
         let fx = try LiteFx(); defer { try? FileManager.default.removeItem(at: fx.dir) }
         try await fx.daemon { d, p in
@@ -533,11 +547,39 @@ private struct LiteFx {
         }
     }
 
+    @Test func waitTimeoutParses() throws {
+        for (v, ms) in [(JSONValue.string("30"), 30_000), (.string("30s"), 30_000), (.string("500ms"), 500), (.number(60), 60_000), (.string("60000ms"), 60_000)] {
+            #expect(try DeviceService.waitTimeoutMs(v) == ms, "\(v)")
+        }
+        #expect(try DeviceService.waitTimeoutMs(nil) == nil)
+        for v in [JSONValue.string("30sec"), .string("0"), .string("61s"), .string("60001ms"), .string("0ms"), .string("abc"), .number(1.5)] {
+            let e = #expect(throws: ProtocolError.self) { try DeviceService.waitTimeoutMs(v) }
+            #expect(e?.code == .invalidArgs && e?.message.hasPrefix("--timeout takes 30, 30s or 500ms") == true && e?.message.contains("\n") == false, "\(v)")
+        }
+    }
+
+    @Test func waitThenScreen() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.wait", ["text": "Combos", "timeout": "2s", "then": "screen"])
+            guard case .object(let screen)? = field(r, "screen"), case .string(let text)? = screen["text"] else { Issue.record("\(r)"); return }
+            #expect(field(r, "ok") == .bool(true) && field(r, "waitedMs") != nil && text.hasPrefix("Tela: Offers"), "\(r)")
+            let u = try await call(p, m, "device.wait", ["stable": "true", "timeout": "500ms", "then": "ui"])
+            guard case .object(let ui)? = field(u, "ui") else { Issue.record("\(u)"); return }
+            #expect(ui["tree"] != nil && field(u, "screen") == nil, "\(u)")
+            let before = fx.lines.filter { $0.contains("uiautomator dump") }.count
+            #expect(try await call(p, m, "device.wait", ["text": "Combos", "then": "screenshot"]).error?.code == .invalidArgs)
+            #expect(fx.lines.filter { $0.contains("uiautomator dump") }.count == before)   // bad --then: no dump
+        }
+    }
+
     @Test func waitRejectsBadArgsBeforeDumping() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
             let m = try await shepherdWithPanel(d, p)
-            for a in [[:], ["gone": "true"], ["text": "x", "timeout": "61"], ["stable": "true", "timeout": "0"]] {
+            for a in [[:], ["gone": "true"], ["text": "x", "timeout": "61"], ["stable": "true", "timeout": "0"], ["text": "x", "timeout": "30sec"]] {
                 #expect(try await call(p, m, "device.wait", a).error?.code == .invalidArgs, "\(a)")
             }
             #expect(!fx.lines.contains { $0.contains("uiautomator dump") })

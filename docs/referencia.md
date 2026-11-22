@@ -148,7 +148,9 @@ collie device ui --all                 # árvore inteira (depurar); mesmos refs
 collie device screen                   # a tela em grupos (título, abas com * na selecionada, ações, campos, conteúdo, flutuantes, o que mudou): {text} e itens {ref,label,role,state}
 collie device screen --all             # também a árvore crua de ui --all em {tree} (depurar o agrupamento)
 collie device wait --text "Combos"     # espera o texto aparecer (--gone: sumir; --stable: dois dumps iguais); --timeout 1-60 s (10); {ok,waitedMs}
-collie device ui --timing              # também em screen: {timingMs} por etapa (adb, parse, agrupamento)
+collie device ui --timing              # também em screen: {timingMs} por etapa (adb, parse, agrupamento) e source: helper|uiautomator
+collie device helper status            # helper de acessibilidade: {state: ready|starting|fallback|off, source, version, reason}
+collie device helper install --serial <id>   # instala e habilita (aparelho físico só assim; admin); remove: desabilita e desinstala
 collie device tap 540 1200             # ou: collie device tap --ref e3
 collie device tap --ref e3 --then ui   # tap, espera 400 ms (--settle 0-3000) e devolve {ui:{tree,…}}; refs atualizados
 collie device tap --text "Open Deals" --then ui   # acha pelo rótulo (ou --id <resource-id>) num dump novo; vários: lista, escolha com --nth N
@@ -162,6 +164,15 @@ collie device launch com.example.app
 
 `--then ui` (ou `--then screen`) vale em `tap`, `swipe`, `text`, `key` e `launch`: um passo ver → agir numa chamada só. `--settle stable` espera (até 5 s) dois dumps iguais em vez de um tempo fixo.
 Comece por `device screen`; `device ui` é a árvore crua, para quando o agrupamento esconder algo; `screenshot` só se nenhum dos dois mostrar o elemento. `device find "X"` acha o elemento na tela (`{found,ref,label,role,center,clickable}`; o `ref` vale para `tap --ref`); com `--scroll [--dir down|up] [--max <n>]` (padrão 8) desliza de 75% a 35% da altura e procura de novo até achar, até a árvore não mudar mais (fim da lista) ou até `--max`, e a resposta traz `scrolls` e `endReached` (o `notFound` também). Sem `--then` a resposta continua `{}`; outro valor que não `ui` dá `invalidArgs`.
+
+**Device helper** (Android): um app pequeno (`collie-helper.apk`, no bundle) que roda como serviço de acessibilidade e
+lê a tela em dezenas de ms em vez dos ~2 s do `uiautomator dump`; `tap --text|--id|--ref` vira clique semântico e
+`wait --stable` espera por eventos. O emulador recebe o helper sozinho na primeira ação `device` do painel; **aparelho
+físico só com opt-in**: `collie device helper install --serial <id>`. Privacidade: um serviço de acessibilidade lê todo o
+conteúdo da tela enquanto está ligado; o helper só aceita o `adb forward` (socket abstrato, uid shell/root), mascara
+senhas, não tem permissão de internet e nada sai do aparelho. `collie device helper remove` tira o serviço da lista
+(preservando os outros), desinstala e fecha o forward. Qualquer falha (OEM bloqueia `settings`, helper não responde)
+deixa os comandos no `uiautomator`, e `status` diz por quê.
 
 Limitações: sem áudio; `device.text` só ASCII e não digita `%s` literal (é o
 `input text` do Android; acentos e `%s`, digite pelo painel); um ANR não vira evento (só crashes do buffer de crash do logcat).

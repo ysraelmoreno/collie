@@ -189,14 +189,14 @@ actor CommandRouter {
         let events = memory.events
         asks.askEvents.set { events.emit($0) }   // ask delivery/end in the memory event log (memory_task obedience)
         let me = WeakRouter()   // the service's events go through this router, which exists only once init is done
-        let adbPath = config.adbPath, axePath = config.axePath, emulatorPath = config.emulatorPath
+        let adbPath = config.adbPath, axePath = config.axePath, emulatorPath = config.emulatorPath, helperApk = config.helperApk
         self.devices = DeviceService(root: config.paths.root, runDir: config.paths.runDir, pollInterval: config.devicePollInterval,
             scrcpyServer: config.scrcpyServer, grace: config.deviceGrace,
             adb: { adbPath ?? Adb.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
             emulator: { emulatorPath ?? Emulator.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) }, emulatorBoot: config.emulatorBoot, emulatorEnv: config.emulatorEnv,
             avdManager: config.avdManager ?? { AvdManager.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
             xcrun: config.xcrunPath, axe: { axePath ?? Simulator.locateAXe(env: ProcessInfo.processInfo.environment) },
-            crashReports: config.crashReportsDir, logCap: config.deviceLogCap,
+            crashReports: config.crashReportsDir, logCap: config.deviceLogCap, helperApk: { helperApk },
             emit: { p, n, pl in await me.router?.pluginEmitted(panel: p, name: n, payload: pl) })
         self.android = config.androidInstaller ?? AndroidInstaller(root: config.paths.root, env: ProcessInfo.processInfo.environment,
                                                                    home: NSHomeDirectory(), runDir: config.paths.runDir)

@@ -60,6 +60,11 @@ actor DeviceService {
     /// How long a session outlives its last viewer.
     private let grace: Duration
     private var sessions: [UUID: any ViewerSession] = [:]
+    /// The accessibility helper APK to install (`DeviceHelper`); nil: not bundled.
+    let helperApk: @Sendable () -> URL?
+    /// One helper per Android serial, and the panels that started theirs (panel → serial).
+    var helpers: [String: DeviceHelper] = [:]
+    var helperPanels: [UUID: String] = [:]
     private var idle: [UUID: Task<Void, Never>] = [:]
 
     init(root: URL, runDir: URL, pollInterval: Duration = .seconds(2), scrcpyServer: URL? = nil, grace: Duration = .seconds(5),
@@ -68,11 +73,12 @@ actor DeviceService {
          avdManager: @escaping @Sendable () -> AvdManager? = { AvdManager.locate(env: ProcessInfo.processInfo.environment, home: NSHomeDirectory()) },
          xcrun: URL = URL(fileURLWithPath: "/usr/bin/xcrun"),
          axe: @escaping @Sendable () -> URL? = { nil }, crashReports: URL = Simulator.defaultCrashReports, logCap: Int = 8 << 20,
+         helperApk: @escaping @Sendable () -> URL? = { nil },
          emit: @escaping @Sendable (UUID, String, JSONValue) async -> Void) {
         self.root = root; self.runDir = runDir; self.pollInterval = pollInterval; self.adb = adb; self.emulator = emulator; self.emulatorBoot = emulatorBoot; self.emit = emit; self.avdManager = avdManager
         self.emulatorEnv = emulatorEnv ?? ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("COLLIE_") }
         self.xcrun = xcrun; self.axe = axe; self.crashReports = crashReports; self.logCap = logCap
-        self.scrcpyServer = scrcpyServer; self.grace = grace
+        self.scrcpyServer = scrcpyServer; self.grace = grace; self.helperApk = helperApk
     }
 
     var screens: URL { root.appendingPathComponent("screens") }
@@ -145,6 +151,7 @@ actor DeviceService {
         guard let panel, case .string(let serial)? = panel.state["serial"] else {
             throw ProtocolError(code: .invalidArgs, message: "'\(command)' needs a device panel")
         }
+        if panel.state["platform"] != .string("ios") { kickHelper(panel: panel.id, serial: serial) }
         func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
             if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
             return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
@@ -480,6 +487,7 @@ actor DeviceService {
         lastScreen[id] = nil
         idle.removeValue(forKey: id)?.cancel()
         sessions.removeValue(forKey: id)?.end("ended", "Panel closed")
+        await helperPanelClosed(id)
         let prefix = id.uuidString + "-"
         for f in (try? FileManager.default.contentsOfDirectory(at: screens, includingPropertiesForKeys: nil)) ?? []
         where f.lastPathComponent.hasPrefix(prefix) { try? FileManager.default.removeItem(at: f) }
@@ -656,6 +664,8 @@ actor DeviceService {
         idle.values.forEach { $0.cancel() }; idle = [:]
         for s in live { s.end("ended", "Collie is shutting down") }
         for s in live { await s.cleanup?.value }
+        for h in helpers.values { await h.close() }   // their forwards
+        helperPanels = [:]
         let pids = crash.values.compactMap { $0.proc?.pid } + live.compactMap(\.pid)
         for s in Array(crash.keys) { endCrash(s) }
         let deadline = ContinuousClock.now + .milliseconds(1500)

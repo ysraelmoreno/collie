@@ -280,7 +280,7 @@ final class DeviceSession: @unchecked Sendable {   // state under `lock`; contro
     // MARK: sockets
 
     /// A blocking TCP socket to 127.0.0.1:`port` (-1 on failure). `dummy`: valid only once one byte was read.
-    private static func connect(_ port: UInt16, dummy: Bool, deadline: Date) -> Int32 {
+    static func connect(_ port: UInt16, dummy: Bool, deadline: Date) -> Int32 {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return -1 }
         var one: Int32 = 1
@@ -311,7 +311,7 @@ final class DeviceSession: @unchecked Sendable {   // state under `lock`; contro
     }
 
     /// SO_RCVTIMEO (0: none).
-    private static func setTimeout(_ fd: Int32, _ seconds: Double) {
+    static func setTimeout(_ fd: Int32, _ seconds: Double) {
         var tv = timeval(tv_sec: Int(seconds), tv_usec: Int32((seconds - Double(Int(seconds))) * 1_000_000))
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
     }

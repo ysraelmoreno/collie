@@ -109,6 +109,20 @@ private struct LiteFx {
             #expect(!FileManager.default.fileExists(atPath: fx.avdHome.appendingPathComponent("collie-lite.avd").path))
         }
     }
+    @Test func helperInstallIsAdminOnlyAndStatusSaysWhy() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await term(d, p, "M", shepherd: true)
+            let r = try await call(p, m, "device.helper", ["action": "install"])
+            #expect(!r.ok && r.error?.code == .unauthorized, "\(r)")
+            let i = try await admin(d, p, "device.helper", ["action": "install"])   // the test daemon bundles no APK
+            #expect(i.ok, "\(i)")
+            #expect(field(i, "state") == .string("fallback") && field(i, "reason") == .string("collie-helper.apk is not bundled"))
+            let s = try await call(p, m, "device.helper")
+            #expect(s.ok && field(s, "source") == .string("uiautomator") && field(s, "serial") == .string("emulator-5554"), "\(s)")
+            #expect(!(try await call(p, m, "device.helper", ["action": "nuke"])).ok)
+        }
+    }
     @Test func liteCreateReturnsTheRow() async throws {
         let fx = try LiteFx(); defer { try? FileManager.default.removeItem(at: fx.dir) }
         try await fx.daemon { d, p in

@@ -55,7 +55,22 @@ private final class Session: @unchecked Sendable {
         try p.run()
     }
     func send(_ line: String) { i.fileHandleForWriting.write(Data((line + "\n").utf8)) }
-    func close() { try? i.fileHandleForWriting.close(); p.waitUntilExit(); o.fileHandleForReading.readabilityHandler = nil }
+    /// Closes stdin and waits at most `seconds` for `collie mcp` to exit; returns its exit status, or nil after
+    /// SIGKILLing a child that didn't exit. Not `waitUntilExit()`: in an async test it waits on the run loop of the
+    /// thread that called `run()` and never returns (C7: mcpListChangedAfterInstall hung shard 1 for 900 s).
+    func close(within seconds: Int = 20) async -> Int32? {
+        try? i.fileHandleForWriting.close()
+        defer { o.fileHandleForReading.readabilityHandler = nil }
+        let pid = p.processIdentifier, deadline = ContinuousClock.now + .seconds(seconds)
+        while ContinuousClock.now < deadline {
+            if !p.isRunning { return p.terminationStatus }   // Foundation reaped it
+            var s: Int32 = 0
+            if waitpid(pid, &s, WNOHANG) == pid { return s & 0x7f == 0 ? (s >> 8) & 0xff : 128 + (s & 0x7f) }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        kill(pid, SIGKILL); reap(p)
+        return nil
+    }
 }
 
 /// The notas example's manifest, as `plugin.specs` carries it.
@@ -170,8 +185,8 @@ private func lines(_ s: String) -> [[String: Any]] {
         #expect(await waitFor(5) { toolNames(s.messages.first { $0["id"] as? Int == 3 }).contains("browser_navigate") })
         try await Task.sleep(for: .milliseconds(500))
         #expect(changed() == 1)
-        s.close()
-        #expect(s.p.terminationStatus == 0)
+        let status = await s.close()
+        #expect(status == 0, "collie mcp must exit 0 within 20 s of stdin closing (nil: still running, killed)")
     }
     /// Review Focus 4: an external plug-in's panel-bound tools follow reach like a built-in's.
     @Test func mcpListsExternalOnlyWhenReached() async throws {
@@ -215,7 +230,8 @@ private func lines(_ s: String) -> [[String: Any]] {
         s.send(#"{"jsonrpc":"2.0","id":4,"method":"tools/list"}"#)
         #expect(await waitFor(5) { s.messages.contains { $0["id"] as? Int == 4 } })
         #expect(!toolNames(s.messages.first { $0["id"] as? Int == 4 }).contains("notas_add"))
-        s.close()
+        let status = await s.close()
+        #expect(status == 0, "collie mcp must exit 0 within 20 s of stdin closing (nil: still running, killed)")
     }
     @Test func cliResolvesExternalAfterFetch() async throws {
         let d = try FakeDaemon([], specs: [notas])

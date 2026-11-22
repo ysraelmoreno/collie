@@ -44,3 +44,16 @@ Operational notes for the daemon (H2):
   when polling started at once. An in-process warm-up (`getWindows()` at 0, 150, 400, 900 ms) did NOT help, `setServiceInfo` neither.
   So: poll `dump` right after enabling instead of waiting first; escalate rebind, then force-stop, then install -r, then fall back.
 - A path from `dump` goes stale when the screen changes: `click`/`scroll` answer `node gone`; re-read and retry.
+
+## Regressão da cegueira
+
+`stress-toggle.sh <serial> [rodadas=6]` reproduz a cegueira descrita acima: em cada rodada desliga e liga o serviço por
+`settings put secure enabled_accessibility_services` (acrescenta e tira só o helper; a lista original e `accessibility_enabled`
+voltam ao sair, também em erro ou Ctrl-C) e mede os nós do `dump` com `helper-probe.py` num `adb forward` de porta livre:
+
+- A) sonda tardia, 3 s depois de ligar: **esperado alternar** saudável/cega (é o defeito do Android, não do helper);
+- B) sondagem a cada 300 ms desde o instante de ligar: **esperado sempre saudável, em < 1 s** (270-660 ms no emulador API 37).
+
+Rodar com o helper instalado e o aparelho na tela inicial: `Helpers/android-device/stress-toggle.sh emulator-5554 6`. Uma
+linha por rodada e o resumo (`A cega em N/6 rodadas · B mediana X ms`). B cega ou acima de 1 s é regressão: o daemon
+depende dela. Sem adb ou sem aparelho sai com 2. Teste sem aparelho (adb falso): `scripts/test-stress-toggle.sh`.

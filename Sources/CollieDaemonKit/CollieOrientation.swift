@@ -23,7 +23,7 @@ enum CollieOrientation {
     /// `find` until E3 lands (teaching a missing command only earns errors); add `find "X" --scroll` here then.
     /// H5 (2026-11-22 device helper spec): one sentence so a slow read (uiautomator fallback) is diagnosed, not retried;
     /// ponytail: normal form only, the short form has no room under the 1500 cap.
-    static let deviceLoop = "collie device screen (grouped; ui = raw tree), then tap --text|--ref … --then screen; wait --text X, not sleep; screenshot only if screen and ui lack it. Reads slow (~2 s)? collie device helper status says why."
+    static let deviceLoop = "collie device screen (grouped; ui = raw tree), then tap --text|--ref … --then screen; wait --text X, not sleep; screenshot only if screen and ui lack it. Reads slow (~2 s)? collie device helper status says why. No tree match: find and tap --text read the screen by OCR (via ocr, no click proof: --then screen)."
     static let deviceShort = "collie device screen; tap --text … --then screen."
     static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
 

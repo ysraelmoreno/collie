@@ -237,27 +237,57 @@ actor DeviceService {
             if let then { try await shown(then, &o) }   // ponytail: one more dump, the wait's last one is not reused
             return .object(o)
         }
+        /// O4 (O2 rule 4): `find`/`tap --text` with no tree match read the screenshot once (`--region`: that rectangle);
+        /// the OCR items join the refs. nil: iOS, `--no-ocr`, the tree already has OCR items, or nothing read.
+        func ocrFallback(_ nodes: [UINode], _ mode: OCRMode) async -> (nodes: [UINode], read: OCRRead)? {
+            guard panel.state["platform"] != .string("ios"), !mode.off, !nodes.contains(where: \.ocr) else { return nil }
+            let read = await ocrRead(serial: serial, tree: nodes, trigger: "find", region: mode.region)
+            guard let found = read.nodes, !found.isEmpty else { return nil }
+            if !closed.contains(panel.id) { refs[panel.id] = nodes + found }
+            return (nodes + found, read)
+        }
+        let ocrMode = command == "device.find" || command == "device.tap" ? try Self.ocrMode(args) : .auto
         if command == "device.find" {
             let q = try Self.findSpec(args)
+            /// The tree match, else (no --role: OCR items have none) the OCR fallback's.
+            func found(_ nodes: [UINode]) async throws(ProtocolError) -> [String: JSONValue] {
+                do { return try Self.find(nodes, text: q.text, role: q.role) } catch where error.code == .notFound {
+                    guard q.role == nil, let f = await ocrFallback(nodes, ocrMode) else { throw error }
+                    var o = try Self.find(f.nodes, text: q.text, role: nil)
+                    if Self.timing(args) { o["timingMs"] = Self.ocrTiming(f.read) }
+                    return o
+                }
+            }
             if let scroll = q.scroll {
                 var o = try await findScrolling(q.text, role: q.role, scroll, dump: dump, swipe: { a throws(ProtocolError) in _ = try await act("device.swipe", a) })
                 if q.screen { o["screen"] = .object(try await screen(all: false)) }   // ponytail: one more dump for the groups
                 return .object(o)
             }
-            guard q.screen else { return .object(try Self.find(try await dump(), text: q.text, role: q.role)) }
+            guard q.screen else { return .object(try await found(try await dump())) }
             let shown = try await screen(all: false)   // one dump serves both (refs updated)
-            var o = try Self.find(refs[panel.id] ?? [], text: q.text, role: q.role)
+            var o = try await found(refs[panel.id] ?? [])
             o["screen"] = .object(shown)
             return .object(o)
         }
         let then = try Self.then(args)   // checked before the action: a bad --then must not tap
         let quiet = try Self.quietMs(args)
         var args = args
+        var viaOCR: OCRRead?
         if command == "device.tap", let pick = try Self.tapPick(args) {
             _ = try await act("device.ui", [:])   // always a fresh dump: cached refs may be stale
-            args["ref"] = .string(try UITree.target(refs[panel.id] ?? [], text: pick.text, id: pick.id, nth: pick.nth).ref)
+            let nodes = refs[panel.id] ?? []
+            do { args["ref"] = .string(try UITree.target(nodes, text: pick.text, id: pick.id, nth: pick.nth).ref) } catch where error.code == .notFound {
+                guard pick.id == nil, let f = await ocrFallback(nodes, ocrMode) else { throw error }
+                args["ref"] = .string(try UITree.target(f.nodes, text: pick.text, id: nil, nth: pick.nth).ref)   // an OCR ref: its box centre
+                viaOCR = f.read
+            }
         }
-        let r = try await act(command, args)
+        var r = try await act(command, args)
+        if let read = viaOCR, case .object(var o) = r {
+            o.merge(Self.ocrNote, uniquingKeysWith: { _, b in b })
+            if Self.timing(args) { o["timingMs"] = Self.ocrTiming(read) }
+            r = .object(o)
+        }
         guard let then, Self.thenCommands.contains(command), case .object(var o) = r else { return r }
         if let ms = then.settleMs {
             // ponytail: fixed settle, may catch an animation midway; --settle stable waits for it
@@ -366,11 +396,20 @@ actor DeviceService {
         let s = ScreenModel.build(nodes, cap: .max)
         let groups = [s.back].compactMap { $0 } + s.tabs + s.actions + s.fields + s.content + s.floating
         let items = Dictionary(groups.map { ($0.ref, $0) }, uniquingKeysWith: { a, _ in a })
-        let n = try UITree.target(nodes, text: text, id: nil, nth: 1, keep: { role == nil || items[$0.ref]?.role == role })
+        let n = try UITree.target(nodes, text: text, id: nil, nth: 1, keep: { role == nil || (!$0.ocr && items[$0.ref]?.role == role) })
         let it = items[n.ref]
-        return ["found": .bool(true), "ref": .string(n.ref), "label": .string(it?.label ?? (n.text.isEmpty ? n.desc : n.text)),
+        let o: [String: JSONValue] = ["found": .bool(true), "ref": .string(n.ref), "label": .string(it?.label ?? (n.text.isEmpty ? n.desc : n.text)),
                 "role": .string(it?.role ?? "text"), "clickable": .bool(n.clickable),
                 "center": .object(["x": .number(Double(n.center.x)), "y": .number(Double(n.center.y))])]
+        return n.ocr ? o.merging(ocrNote, uniquingKeysWith: { _, b in b }) : o
+    }
+
+    /// O4: what a `find`/`tap` answer carries when the element came from the OCR (text with a box, no role, no click info).
+    static let ocrNote: [String: JSONValue] = ["via": .string("ocr"),
+        "warning": .string("found by OCR: no click confirmation, check with --then screen")]
+    /// `--timing` of the OCR fallback (O5): `ocrMs`, `ocrLevel`, `trigger` (find).
+    static func ocrTiming(_ read: OCRRead) -> JSONValue {
+        .object(["ocrMs": ms(read.took), "ocrLevel": .string(OCRLevel.accurate.rawValue), "trigger": .string(read.trigger)])
     }
 
     /// `device.wait` args: --text and/or --stable (--gone needs --text), --timeout (`waitTimeoutMs`, default 10 s).

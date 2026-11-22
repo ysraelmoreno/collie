@@ -73,6 +73,61 @@ import CollieProtocol
         await expectInvalid(try await fx.run("device.screen", ["region": .string("300,200,100,400")]))
         await fx.cleanup()
     }
+
+    // H6c (O4): find and tap --text fall back to the OCR when the tree has no match.
+
+    @Test func findFallsBackToTheOCRWithViaAndTiming() async throws {
+        let ocr = FakeOCR([OCRItem(text: "Iniciar partida", confidence: 0.9, box: CGRect(x: 100, y: 1000, width: 400, height: 80))])
+        let fx = try OCRSvc(tree: poorTree, png: textPNG, ocr: ocr)
+        let o = obj(try await fx.run("device.find", ["text": .string("iniciar"), "timing": .bool(true)]))
+        #expect(o["found"] == .bool(true) && o["via"] == .string("ocr") && o["role"] == .string("text") && o["clickable"] == .bool(false), "\(o)")
+        #expect(obj(o["center"]) == ["x": .number(300), "y": .number(1040)], "\(o)")
+        guard case .string(let w)? = o["warning"] else { Issue.record("\(o)"); await fx.cleanup(); return }
+        #expect(w.contains("no click confirmation"))
+        #expect(obj(o["timingMs"])["trigger"] == .string("find") && obj(o["timingMs"])["ocrMs"] != nil, "\(o)")
+        #expect(await ocr.sizes.count == 1)
+        guard case .string(let ref)? = o["ref"] else { Issue.record("\(o)"); await fx.cleanup(); return }
+        _ = try await fx.run("device.tap", ["ref": .string(ref)])   // refs updated: the OCR ref taps next
+        #expect(fx.adb.contains { $0.hasSuffix("shell input tap 300 1040") }, "\(fx.adb)")
+        await fx.cleanup()
+    }
+
+    @Test func tapTextFallsBackToTheOCRAndTapsTheBoxCentre() async throws {
+        let ocr = FakeOCR([OCRItem(text: "Iniciar partida", confidence: 0.9, box: CGRect(x: 100, y: 1000, width: 400, height: 80))])
+        let fx = try OCRSvc(tree: poorTree, png: textPNG, ocr: ocr)
+        let o = obj(try await fx.run("device.tap", ["text": .string("Iniciar partida")]))
+        #expect(o["via"] == .string("ocr") && o["warning"] != nil, "\(o)")
+        #expect(fx.adb.contains { $0.hasSuffix("shell input tap 300 1040") }, "\(fx.adb)")
+        await fx.cleanup()
+    }
+
+    @Test func roleAndNoOcrIgnoreTheOCR() async throws {
+        let ocr = FakeOCR([OCRItem(text: "Iniciar partida", confidence: 0.9, box: CGRect(x: 100, y: 1000, width: 400, height: 80))])
+        let fx = try OCRSvc(tree: poorTree, png: textPNG, ocr: ocr)
+        await expectNotFound(try await fx.run("device.find", ["text": .string("iniciar"), "role": .string("button")]))
+        await expectNotFound(try await fx.run("device.find", ["text": .string("iniciar"), "no-ocr": .bool(true)]))
+        await expectNotFound(try await fx.run("device.tap", ["text": .string("iniciar"), "no-ocr": .bool(true)]))
+        #expect(await ocr.sizes.isEmpty)
+        #expect(!fx.adb.contains { $0.contains("screencap") || $0.contains("input tap") }, "\(fx.adb)")
+        await fx.cleanup()
+    }
+
+    @Test func aTreeMatchNeverCallsTheProvider() async throws {
+        let ocr = FakeOCR([OCRItem(text: "Item 1", confidence: 0.9, box: CGRect(x: 0, y: 0, width: 50, height: 20))])
+        let fx = try OCRSvc(tree: goodTree, png: textPNG, ocr: ocr)
+        let o = obj(try await fx.run("device.find", ["text": .string("Item 1")]))
+        #expect(o["found"] == .bool(true) && o["via"] == nil && o["warning"] == nil, "\(o)")
+        let t = obj(try await fx.run("device.tap", ["text": .string("Item 2")]))
+        #expect(t["via"] == nil, "\(t)")
+        #expect(fx.adb.contains { $0.hasSuffix("shell input tap 540 1600") }, "\(fx.adb)")   // [0,1400][1080,1800]
+        #expect(await ocr.sizes.isEmpty)
+        #expect(!fx.adb.contains { $0.contains("screencap") })
+        await fx.cleanup()
+    }
+}
+
+private func expectNotFound(_ f: @autoclosure () async throws -> JSONValue) async {
+    do { _ = try await f(); Issue.record("expected notFound") } catch let e as ProtocolError { #expect(e.code == .notFound, "\(e)") } catch { Issue.record("\(error)") }
 }
 
 private func expectInvalid(_ f: @autoclosure () async throws -> JSONValue) async {

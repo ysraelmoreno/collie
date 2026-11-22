@@ -175,6 +175,11 @@ extension PluginRegistry {
     private static let quiet = ParamSpec("quiet", .int, help: "With the Android helper: ms without a screen event for the screen to count as stable (50-5000, default 300)")
 
     /// `--timing` on device.ui|screen: ms per step, to measure without timing from outside.
+    /// H6c (O4): `find`/`tap --text` with no tree match read the screenshot once (Android OCR).
+    private static let textOCR = [
+        ParamSpec("no-ocr", .flag, help: "Android: no OCR fallback when the tree has no match"),
+        ParamSpec("region", .string, help: "x1,y1,x2,y2 in screen pixels: the OCR fallback reads only this rectangle"),
+        ParamSpec("timing", .flag, help: "With the OCR fallback: also return {timingMs: ocrMs, ocrLevel, trigger: find}")]
     private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group, and with the OCR ocrMs, ocrLevel, trigger: labels|coverage|opaque|explicit)")
 
     /// An Android device or emulator through adb, or an iOS Simulator through simctl + AXe; the daemon runs these
@@ -204,18 +209,18 @@ extension PluginRegistry {
                   quiet,
                   ParamSpec("timeout", .string, help: "30, 30s or 500ms (1 ms to 60 s in all; a bare number is seconds, 1-60; default 10 s)"),
                   ParamSpec("then", .string, help: "ui: also return the UI tree once the wait holds ({ui}); screen: the device.screen groups instead ({screen})")], timeout: 75),
-            dcmd("find", "Find the element with this text or desc on the current screen (one fresh UI dump; the tap --text match: any case, equal first, then containing; several: the first); returns {found,ref,label,role,center,clickable} (refs updated: tap --ref works next), or notFound with up to 5 similar labels. --scroll: swipe and dump again until found, the list end (the tree no longer changes) or --max swipes; adds {scrolls,endReached} (notFound says both)",
+            dcmd("find", "Find the element with this text or desc on the current screen (one fresh UI dump; the tap --text match: any case, equal first, then containing; several: the first); returns {found,ref,label,role,center,clickable} (refs updated: tap --ref works next), or notFound with up to 5 similar labels. --scroll: swipe and dump again until found, the list end (the tree no longer changes) or --max swipes; adds {scrolls,endReached} (notFound says both). Android, no tree match: one OCR read of the screenshot (no --role, no --scroll); a hit adds {via: ocr, warning} (no click confirmation: --then screen)",
                  [ParamSpec("text", .rest, positional: true, required: true, help: "Text or desc to find"),
                   ParamSpec("role", .string, help: "Only an element of this device.screen role: tab, button or field"),
                   ParamSpec("then", .string, help: "screen: also return the device.screen groups ({screen}), from the same dump"),
                   ParamSpec("scroll", .flag, help: "Not on screen: swipe 75% to 35% of the height and look again"),
                   ParamSpec("dir", .string, help: "With --scroll: down (default) or up"),
-                  ParamSpec("max", .int, help: "With --scroll: at most this many swipes (1-30, default 8)")], timeout: 150),
-            dcmd("tap", "Tap at x y (Android (pixels) or iOS Simulator (points)), on an element from device.ui (--ref), or on the element with a label or id (--text/--id: a fresh UI dump, no device.ui needed)",
+                  ParamSpec("max", .int, help: "With --scroll: at most this many swipes (1-30, default 8)")] + textOCR, timeout: 150),
+            dcmd("tap", "Tap at x y (Android (pixels) or iOS Simulator (points)), on an element from device.ui (--ref), or on the element with a label or id (--text/--id: a fresh UI dump, no device.ui needed; Android, --text with no tree match: one OCR read, the tap goes to the text box's centre and the answer says {via: ocr, warning}: no click confirmation, check with --then screen)",
                  [coord("x"), coord("y"), ParamSpec("ref", .string, help: "Element ref from device.ui"),
                   ParamSpec("text", .string, help: "Tap the element whose text or desc is this (any case; equal first, then containing); a non-clickable match taps its clickable ancestor"),
                   ParamSpec("id", .string, help: "Tap the element with this exact resource id"),
-                  ParamSpec("nth", .int, help: "With --text/--id and several matches: take the nth (from 1)")] + then, timeout: 30),
+                  ParamSpec("nth", .int, help: "With --text/--id and several matches: take the nth (from 1)")] + then + textOCR, timeout: 30),
             dcmd("swipe", "Swipe from x1 y1 to x2 y2 (Android (pixels) or iOS Simulator (points))",
                  [coord("x1", required: true), coord("y1", required: true), coord("x2", required: true), coord("y2", required: true),
                   ParamSpec("ms", .int, help: "Duration in ms (1-10000, default 300)")] + then, timeout: 20),

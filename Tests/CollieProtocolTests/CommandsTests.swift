@@ -108,7 +108,11 @@ import Foundation
 
     @Test func deviceActionsTakeThenAndSettle() throws {
         let t = try ArgvParser.parse(["device", "tap", "1", "2", "--then", "ui", "--settle", "100"])
-        #expect(t.command == "device.tap" && t.args == ["x": .string("1"), "y": .string("2"), "then": .string("ui"), "settle": .number(100)])
+        #expect(t.command == "device.tap" && t.args == ["x": .string("1"), "y": .string("2"), "then": .string("ui"), "settle": .string("100")])   // ms or stable: a string
+        #expect(try ArgvParser.parse(["device", "key", "Enter", "--then", "screen", "--settle", "stable"]).args
+                == ["key": .string("Enter"), "then": .string("screen"), "settle": .string("stable")])
+        let w = try ArgvParser.parse(["device", "wait", "--text", "Signing in", "--gone", "--timeout", "20"])
+        #expect(w.command == "device.wait" && w.args == ["text": .string("Signing in"), "gone": .bool(true), "timeout": .number(20)])
         #expect(try ArgvParser.parse(["device", "text", "hi", "there", "--then", "ui"]).args == ["text": .string("hi there"), "then": .string("ui")])
         for c in ["tap", "swipe", "text", "key", "launch"] {
             let names = Commands.spec("device.\(c)")?.params.map(\.name) ?? []

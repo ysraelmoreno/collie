@@ -154,7 +154,14 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
             #expect(path.hasPrefix(p.root.appendingPathComponent("screens").path) && FileManager.default.fileExists(atPath: path))
             let ui = try await call(p, m, "device.ui")
             guard case .string(let tree)? = field(ui, "tree") else { Issue.record("\(ui)"); return }
-            #expect(tree.contains("[e1]") && field(ui, "truncated") == .bool(false))
+            // compact: the root (e1, only an id) is left out; --all lists it, and tap --ref e1 still works
+            #expect(!tree.contains("[e1]") && tree.contains("Button \"Mapas\"") && field(ui, "truncated") == .bool(false))
+            guard case .number(let shown)? = field(ui, "nodes"), case .number(let total)? = field(ui, "total") else { Issue.record("\(ui)"); return }
+            #expect(shown < total)
+            let all = try await UnixSocketClient.send(Request(id: "m", terminalId: m.id, token: m.token, command: "device.ui",
+                                                              args: ["all": .bool(true)]), to: p.socket, timeoutSeconds: 60)
+            guard case .string(let full)? = field(all, "tree") else { Issue.record("\(all)"); return }
+            #expect(full.contains("[e1]") && field(all, "nodes") == .number(total))
             #expect(try await call(p, m, "device.tap", ["ref": "e1"]).ok)
             let n = AXeTree.parse(try Data(contentsOf: fixtures.appendingPathComponent("ios/describe-ui.json"))).nodes[0]
             let g = try await call(p, m, "device.logcat", ["grep": "boom"])

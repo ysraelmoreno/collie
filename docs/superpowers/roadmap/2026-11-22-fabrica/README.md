@@ -96,6 +96,10 @@ novas; F2 é `AttemptMachine`/`WorkLoop`).
 - **Só em cercado marcado como fábrica** (decisão do dono, 2026-11-22): marca persistente no cercado
   (`paddock create --factory` / `paddock factory <nome> on|off`), que só o dono liga; o agente não consegue ligar.
   Fora desses cercados, `--auto-land` é recusado.
+- **Na interface:** caixa "Cercado fábrica" na folha de Novo cercado (desmarcada por padrão, com uma linha explicando
+  "land automático quando portão, revisor e aceite passam; nunca faz push") e o mesmo liga/desliga no menu do cercado
+  no trilho. O cercado fábrica tem um selo no trilho (forma e texto, não só cor). A marca só muda pela UI ou pela CLI
+  do dono, nunca por MCP nem por terminal de agente.
 - `work run --auto-land` (opt-in por trabalho, dentro do cercado fábrica): quando todas as tarefas estão `done` com portão, revisor e aceite
   verdes e o CI local (`scripts/ci/run-tests.sh` dos alvos afetados) passa, o laço faz o `paddock land` e, se houver,
   inicia o próximo trabalho da fila.

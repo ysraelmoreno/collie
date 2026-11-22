@@ -353,4 +353,17 @@ import CollieProtocol
         // M3c.4/M5.1: with room to spare (no command name), the line also says per-task notices are off, before the wait
         #expect(codex.split(separator: "\n").contains(Substring(plain + " " + CollieOrientation.loopNotify + wait)) && !codex.contains("/collie:loop"), "\(codex)")
     }
+
+    /// M4 (device loop spec): the Device line teaches `device ui` + `tap … --then ui`, and fits the 1500 cap in the
+    /// normal form (one panel) and the short form (worst case: many long names, Shepherd, Cursor).
+    @Test func deviceLineTeachesTreeLoopWithinCap() {
+        let one = text(panels: [("Pixel", "device")])
+        #expect(one.count <= 1500 && one.contains("- Device \"Pixel\": " + CollieOrientation.deviceLoop), "\(one.count)\n\(one)")
+        #expect(one.contains("device ui") && one.contains("--then ui") && !one.contains("(screenshot, tap, logs)"))
+        let ps = (1...20).map { (name: "device-" + String(repeating: "x", count: 60) + "\($0)", pluginId: "device") }
+        for agent in ["claude", "cursor"] {
+            let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: (1...20).map { "peer\($0)" }, panels: ps, agent: agent)
+            #expect(tight.count <= 1500 && tight.contains(CollieOrientation.deviceShort), "\(agent) \(tight.count)\n\(tight)")
+        }
+    }
 }

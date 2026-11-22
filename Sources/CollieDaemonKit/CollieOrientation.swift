@@ -18,6 +18,9 @@ enum CollieOrientation {
     /// M6.5 (A6): an agent's shell tool kills a foreground command at 2 to 10 min, so the wait is 540 s and in the
     /// background ("bg"); the MCP `work_wait` and the long form are in /collie:loop.
     /// ponytail: 62 characters, the room a codex Shepherd has before the wait sentence
+    /// M4 (2026-11-21 device loop spec): read the tree, act and re-read in one call; the PNG only as a last resort.
+    static let deviceLoop = "collie device ui (the tree; don't parse the PNG), then tap --text|--ref … --then ui; screenshot only if the tree lacks it."
+    static let deviceShort = "collie device ui; tap --text … --then ui."
     static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
@@ -100,7 +103,8 @@ enum CollieOrientation {
         // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
         lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs." + (claude ? " Slides: artifact export <id> --format pptx|pdf. claude.ai links: artifact import-claude." : "")
             : "- Artifacts: collie artifact … (new <kind>: Prévia; --folder).")
-        if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
+        // M4 (device loop spec): teach the tree loop, not the PNG; compact forms keep only the commands (today's length)
+        if !v.isEmpty { lines.append("- Device \(names(v)): " + (compact ? deviceShort : deviceLoop)) }
         if isShepherd {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             // built-ins only: external plug-ins are user-installed text, kept out of the agent's context (one fixed line below)

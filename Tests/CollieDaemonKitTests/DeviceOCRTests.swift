@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import CoreGraphics
 import ImageIO
+import CollieCore
 import CollieDevice
 import CollieProtocol
 @testable import CollieDaemonKit

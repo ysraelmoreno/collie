@@ -143,7 +143,8 @@ Comandos (um terminal precisa de uma guia até o painel do canvas; painel na doc
 ```sh
 collie device list                     # aparelhos {serial,state,model,product,panels}
 collie device screenshot               # PNG; devolve {path,width,height}
-collie device ui                       # árvore de UI com refs (e1, e2, …)
+collie device ui                       # nós com rótulo ou clicáveis, com refs; {tree,truncated,nodes,total}
+collie device ui --all                 # árvore inteira (depurar); mesmos refs
 collie device tap 540 1200             # ou: collie device tap --ref e3
 collie device swipe 540 1800 540 600
 collie device text "ola mundo"

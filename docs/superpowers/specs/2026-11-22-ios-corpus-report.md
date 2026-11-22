@@ -73,3 +73,41 @@ Nenhum critério está declarado cumprido aqui. O único número firme é o reca
 
 Com um painel de device aberto pelo Shepherd: `scripts/ios-corpus-eval.py --panel <nome> --out iosres.json`.
 Isso preenche nós rotulados, recall da árvore, gatilho 1 (<3 rótulos; cobertura e classes opacas ainda não implementados no script) e as 5 latências.
+
+## Adendo: árvore e latências medidas com painel (Shepherd, 2026-11-22)
+
+`scripts/ios-corpus-eval.py --panel device-3 --runs 3` (iPhone 17 Pro, iOS 26.3, bundle com o daemon da onda helper/OCR; iOS não usa helper:
+`axe describe-ui` por chamada). Dados brutos: `2026-11-22-ios-corpus-results.json`. As 16 telas rodaram; o parser da árvore funcionou na saída real.
+
+| Medida | Resultado (16 telas, mediana de 3) |
+|---|---|
+| `ui` | mediana 432 ms (265 a 1.389 ms) |
+| `screen` | mediana 420 ms (306 a 3.395 ms) |
+| `find` | mediana 475 ms (360 a 942 ms, n=8) |
+| `tap --text` | mediana 894 ms (754 a 1.024 ms, n=6) |
+| `wait --stable` | mediana 1.006 ms (755 a 2.006 ms) |
+| Recall da árvore, telas boas (n=6) | 100% (6, 28 e 13 nós) |
+| Recall da árvore, telas ditas pobres (n=10) | 20%; nós 1, 5 ou 6 |
+| Gatilho (< 3 nós rotulados) nas boas | **0 de 6** disparos (critério < 5%: cumprido) |
+| Gatilho nas ditas pobres | 6 de 10 |
+
+Leitura honesta do gatilho: das 10 telas rotuladas "pobres", **`game` (SpriteKit, 2 telas) tem a árvore completa** (5 nós, recall 100%): o SpriteKit expõe os rótulos
+do HUD à acessibilidade, então ela não é pobre e não disparar está certo. Das 8 realmente pobres (canvas, webcanvas, hidden, photo; claro e escuro), o gatilho
+disparou em 6 (**75%**, abaixo dos 90% do critério 1). Os 2 que escapam são `webcanvas`: o WKWebView expõe 6 nós (a página), mas não o texto do `<canvas>`,
+então a regra "< 3 rótulos" não pega. É o caso para as regras 2 e 3 da spec (cobertura e classe opaca dominante, WKWebView/WebView), que este script não implementa.
+A tela `hidden` com `accessibilityElementsHidden` ficou de fato pobre também no iOS (1 nó), diferente do Android com helper, que enxerga o que o app esconde.
+
+Latência: o `ui` do iOS é bem mais curto aqui (432 ms) do que no app Ajustes (0,7 a 2,6 s medidos antes) porque as telas do fixture têm poucos nós; o custo do
+`axe describe-ui` cresce com o tamanho da árvore. Continua uma ordem de grandeza acima do helper do Android (26 a 100 ms).
+
+Critérios do Android, com o que agora tem número no iOS:
+
+| # | Critério | iOS |
+|---|---|---|
+| 1 | Gatilho | falsos disparos 0/6 (ok); detecção nas realmente pobres 6/8 = 75% (abaixo de 90%); corpus ainda 16 telas de 1 app, fora do alvo de 30 telas de 5 apps |
+| 5 | Latência da tela | `screen` mediana 420 ms (<= 500 ms), mas com OCR somaria ~160 a 360 ms mais: ~600 a 800 ms, acima da meta de 500 ms; OCR ainda não ligado ao iOS |
+| 6 | Sem regressão | árvore boa não disparou (0/6); custo do gatilho não medido |
+| 2, 3, 4, 7, 8 | demais | seguem não medidos no daemon (o OCR não existe no iOS) |
+
+Próximos passos para igualar o Android: ligar o OCR ao iOS no daemon (`simctl io screenshot` + `VisionOCR` existente, que já roda no `collied`), implementar as regras 2 e 3
+do gatilho (WKWebView e cobertura), e ampliar o corpus com mais apps (Safari com canvas, apps de terceiros).

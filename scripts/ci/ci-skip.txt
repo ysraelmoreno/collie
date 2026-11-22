@@ -25,3 +25,9 @@
 ^ColliePluginsTests\.DesignPanelTests/  # runner: WebKit headless, o processo de teste morre
 ^ColliePluginsTests\.WebPluginPanelTests/  # runner: WebKit headless, o processo de teste morre
 ^ColliePluginsTests\.AppPanelBlankTests/  # runner: WebKit headless, o processo de teste morre
+
+# The ⤢ fullscreen button of a terminal panel: on the runner its locator returns (0,0) (no real screen), so
+# dragAcrossTheBarNeitherFiresNorReaddsMidDrag, clickWithoutANodeInFrontStillFires and clickKeepsTheTerminalFocused fail
+# (run 45073169794). C6 tried two ways to find it (accessibility, then clicking along the title bar); neither held.
+# Run it on a dev Mac with --filter TerminalFullscreenClickTests.
+^CollieAppTests\.TerminalFullscreenClickTests/  # runner: sem tela, o botão não é localizável (duas correções tentadas)

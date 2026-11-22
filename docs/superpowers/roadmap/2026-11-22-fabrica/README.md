@@ -105,11 +105,12 @@ novas; F2 é `AttemptMachine`/`WorkLoop`).
 
 ### F5 Entrada
 
-- **O daemon só conhece o PRD aprovado** (um arquivo no repo do projeto), nunca a origem dele (decisão do dono,
-  2026-11-22). Quadro, issues do GitHub, Linear, Jira são fontes de projetos específicos: ficam fora do daemon, num
-  plug-in ou skill do projeto que transforma o card em rascunho de PRD. O dono aprova o PRD; daí para a frente o
-  caminho é o mesmo para qualquer projeto.
-- A partir de um PRD aprovado (formato destes roadmaps), o Pastor gera o rascunho de `waves.md` e `tasks/*.md` com
+- **A origem do PRD não importa** (decisões do dono, 2026-11-22). Cada desenvolvedor escolhe onde escreve o PRD:
+  Jira, Linear, issue do GitHub, arquivo no repo, um card de projeto. O daemon não conhece nenhuma dessas fontes.
+  Recebe o PRD já em texto (markdown), com a referência de origem como dado opaco (ex.: `jira:ABC-123`, uma URL),
+  e grava uma cópia imutável no trabalho para a auditoria. Buscar o PRD na fonte e devolver o estado para lá
+  (comentário, transição) é papel de plug-in, skill ou MCP do lado do desenvolvedor.
+- A partir do PRD aprovado, o Pastor gera o rascunho de `waves.md` e `tasks/*.md` com
   `--check`, `--gate` e `--accept`, dentro do limite do cartão (≤ 1500 caracteres).
 - O dono aprova o pacote uma vez; os cartões por onda passam a ser aprovados pela política (F4) em vez de clique.
 - Um linter de spec recusa tarefa sem check executável ou com check que só faz `grep` no próprio arquivo criado.
@@ -141,5 +142,6 @@ novas; F2 é `AttemptMachine`/`WorkLoop`).
 1. Agente e modelo (de quem trabalha e de quem revisa) escolhidos pelo Pastor por tarefa, preferindo os mais baratos.
 2. Land automático só em cercados marcados como fábrica.
 3. F1 corre em paralelo com F2.
-4. A entrada da F5 é genérica: o daemon recebe só o PRD aprovado; a origem (Quadro ou outra) mora num plug-in ou
-   skill do projeto, fora do daemon.
+4. A entrada da F5 é genérica: a origem do PRD (Jira, Linear, issue do GitHub, arquivo, card) é escolha de quem
+   trabalha. O daemon recebe só o texto do PRD e a referência de origem como dado opaco; integrações com cada fonte
+   ficam em plug-in, skill ou MCP, fora do daemon.

@@ -2,8 +2,10 @@ import Foundation
 
 public struct SimDevice: Equatable, Sendable, Codable {
     public var udid: String; public var name: String; public var state: String; public var runtime: String
-    public init(udid: String, name: String, state: String, runtime: String) {
-        self.udid = udid; self.name = name; self.state = state; self.runtime = runtime
+    /// simctl's `deviceTypeIdentifier` (`…SimDeviceType.iPhone-16-Pro`); nil when absent (older JSON decodes without it).
+    public var deviceType: String?
+    public init(udid: String, name: String, state: String, runtime: String, deviceType: String? = nil) {
+        self.udid = udid; self.name = name; self.state = state; self.runtime = runtime; self.deviceType = deviceType
     }
 }
 
@@ -19,7 +21,8 @@ public enum SimCtl {
             guard rt.hasPrefix("iOS") else { continue }   // watchOS/tvOS/visionOS sims are not AXe targets
             for d in list where d["isAvailable"] as? Bool == true {
                 guard let udid = d["udid"] as? String, let name = d["name"] as? String else { continue }
-                out.append(SimDevice(udid: udid, name: name, state: (d["state"] as? String ?? "").lowercased(), runtime: rt))
+                out.append(SimDevice(udid: udid, name: name, state: (d["state"] as? String ?? "").lowercased(), runtime: rt,
+                                     deviceType: d["deviceTypeIdentifier"] as? String))
             }
         }
         // ponytail: JSON dictionaries are unordered; sort so callers get a stable list.

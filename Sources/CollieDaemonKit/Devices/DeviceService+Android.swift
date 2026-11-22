@@ -190,9 +190,27 @@ extension DeviceService {
 
 /// The lightweight `collie-lite` AVD (pure pieces in `LiteAvd`).
 extension DeviceService {
-    private var liteAvdDir: URL {
+    private var liteAvdDir: URL { avdDir(LiteAvd.name) }
+
+    /// `<ANDROID_AVD_HOME or ~/.android/avd>/<name>.avd`.
+    func avdDir(_ name: String) -> URL {
         let base = emulatorEnv["ANDROID_AVD_HOME"] ?? NSHomeDirectory() + "/.android/avd"
-        return URL(fileURLWithPath: base).appendingPathComponent("\(LiteAvd.name).avd")
+        return URL(fileURLWithPath: base).appendingPathComponent("\(name).avd")
+    }
+
+    /// The panel frame of an emulator running AVD `name`, from `hw.device.name` in its config.ini; an unreadable file is `phone`.
+    func avdFrame(_ name: String) -> DeviceFrame.Kind {
+        let ini = try? String(contentsOf: avdDir(name).appendingPathComponent("config.ini"), encoding: .utf8)
+        return DeviceFrame.android(hwDeviceName: ini.flatMap(DeviceFrame.hwDeviceName(configIni:)), emulator: true)
+    }
+
+    /// Frame of an adb serial: an emulator's AVD name comes from `runningAvds` (unnamed: `phone`); anything else is `bare`.
+    func androidFrame(serial: String) async -> DeviceFrame.Kind {
+        guard serial.hasPrefix("emulator-") else { return .bare }
+        var known: [String: String] = [:]
+        let byName = await runningAvds(known: &known, deadline: .now + .seconds(5)) ?? [:]
+        guard let name = byName.first(where: { $0.value.serial == serial })?.key else { return .phone }
+        return avdFrame(name)
     }
 
     /// Creates `collie-lite` with the best installed arm64 image, then applies `LiteAvd.overrides` to its config.ini.

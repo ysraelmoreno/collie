@@ -25,6 +25,15 @@ private func fixture(_ name: String) throws -> Data {
         #expect(SimCtl.devices(Data("nope".utf8)).isEmpty)
     }
 
+    @Test func simctlReadsDeviceType() throws {
+        let j = #"{"devices":{"com.apple.CoreSimulator.SimRuntime.iOS-18-0":[{"udid":"A","name":"P","state":"Booted","isAvailable":true,"deviceTypeIdentifier":"com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"},{"udid":"B","name":"Old","state":"Shutdown","isAvailable":true}]}}"#
+        let ds = SimCtl.devices(Data(j.utf8))
+        #expect(ds.first { $0.udid == "A" }?.deviceType == "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro")
+        #expect(ds.first { $0.udid == "B" }.map { $0.deviceType == nil } == true)
+        let old = try JSONDecoder().decode(SimDevice.self, from: Data(#"{"udid":"A","name":"P","state":"booted","runtime":"iOS 18.0"}"#.utf8))
+        #expect(old.deviceType == nil)   // Codable still reads JSON from before the field
+    }
+
     @Test func axeTreeCompacts() throws {
         let r = AXeTree.parse(try fixture("describe-ui.json"))
         #expect(r.screen == CGSize(width: 390, height: 844) && !r.truncated)

@@ -1,5 +1,6 @@
 import Foundation
 import CollieCore
+import CollieDevice
 import CollieProtocol
 
 /// One plugin event kept in a panel's ring.
@@ -73,7 +74,10 @@ extension CommandRouter {
             if let u = str(r, "url") { state["url"] = .string(u) }
             if pluginId == "diagram" || pluginId == "preview", let f = str(r, "file") { state["file"] = .string(f) }
             if pluginId == "preview", let a = str(r, "artifact") { state["artifact"] = .string(a) }
-            if let device { state["serial"] = .string(device.serial); state["platform"] = .string(device.platform) }
+            if let device {   // frame: DeviceFrame, `bare` when the type could not be read
+                state["serial"] = .string(device.serial); state["platform"] = .string(device.platform)
+                state["frame"] = .string(device.frame.rawValue)
+            }
             let (p, designWarning, _) = try await openPanel(name: name, pluginId: pluginId, placement: placement, state: state,
                                                          file: pluginId == "design" ? try need(r, "file") : nil,
                                                          paddock: placement == .canvas || pluginId == "design"

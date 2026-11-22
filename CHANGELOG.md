@@ -6,6 +6,8 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-11-21
+
 ### Added
 - **Per-project loop config (`collie-work.json`):** a versioned file at the project root can declare the loop's `gate` and `precheck` (defaults for `work run`; the flag always wins), named `areas` (`collie work task add --area ask,quadro` builds the check as `area && area && smoke`), a `smoke` command and a `full` gate. `collie work config` shows what it resolves to and runs nothing. The loop reads the committed version (HEAD), never the working tree, and fails an attempt that edits the file; commands that would change what the `&&` chain means (`;`, `||`, `#`, `&`) are refused, and `work run` warns when the file has uncommitted changes. Projects without the file behave exactly as before.
 - **Shepherd context lifecycle:** the large-context advice now reads the real context size in tokens (150k and 250k levels, numbers only, never conversation text), and at the end of a loop the daemon writes a short handoff for the next turn (`collie work handoff`).

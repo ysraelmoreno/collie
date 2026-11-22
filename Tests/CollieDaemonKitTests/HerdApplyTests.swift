@@ -91,7 +91,8 @@ private let fullstack = Herd.factory.first { $0.id == "feature-fullstack" }!
             // or the flip lands between `before` and a later snapshot
             _ = try await term(d, p, "x-testes")
             let settled = await waitFor(60) { (try? await state(d, p))?.paddocks.first?.status == .idle }
-            #expect(settled, "paddock y did not turn idle after the spawn: \(String(describing: try? await state(d, p).paddocks))")
+            let shown = (try? await state(d, p).paddocks.map(\.status)) ?? []
+            #expect(settled, "paddock y did not turn idle after the spawn: \(shown)")
             #expect(try await GitRunner.run(["branch", "collie/w"], in: repo).status == 0)   // a stale paddock branch
             let before = try await state(d, p)
             let cases: [([String: JSONValue], String)] = [

@@ -280,7 +280,7 @@ private let tabsAndPassword = #"""
 private func obj(_ v: JSONValue?) -> [String: JSONValue] { if case .object(let o)? = v { o } else { [:] } }
 
 /// H3: the `device` commands through the helper, the same answers, and uiautomator / `input` when it is not there.
-@Suite struct DeviceHelperCommandTests {
+extension DeviceHelperTests {
     @Test func uiAndScreenReadThroughTheHelperWithItsStates() async throws {
         let srv = try FakeHelper(installed: true); defer { srv.stop() }
         srv.set(nodes: tabsAndPassword)

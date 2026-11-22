@@ -176,9 +176,9 @@ private func decisions(_ d: Daemon, _ n: Int = 1) async -> [String] {
     @Test func boundedGivesUpOnStuckOp() async throws {
         let start = ContinuousClock.now
         await #expect(throws: ProtocolError.self) {
-            try await bounded(0.3, "stuck op") { _ = DispatchSemaphore(value: 0).wait(timeout: .now() + 5) }
+            try await bounded(0.2, "stuck op") { usleep(2_000_000) }   // ignores cancellation
         }
-        #expect(ContinuousClock.now - start < .seconds(3))
+        #expect(ContinuousClock.now - start < .seconds(1.5))
     }
 
     @Test func memoryBodyHasNoEscapes() async throws {

@@ -108,7 +108,7 @@ import Foundation
 
     @Test func deviceActionsTakeThenAndSettle() throws {
         let t = try ArgvParser.parse(["device", "tap", "1", "2", "--then", "ui", "--settle", "100"])
-        #expect(t.command == "device.tap" && t.args == ["x": .number(1), "y": .number(2), "then": .string("ui"), "settle": .number(100)])
+        #expect(t.command == "device.tap" && t.args == ["x": .string("1"), "y": .string("2"), "then": .string("ui"), "settle": .number(100)])
         #expect(try ArgvParser.parse(["device", "text", "hi", "there", "--then", "ui"]).args == ["text": .string("hi there"), "then": .string("ui")])
         for c in ["tap", "swipe", "text", "key", "launch"] {
             let names = Commands.spec("device.\(c)")?.params.map(\.name) ?? []

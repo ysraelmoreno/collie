@@ -24,6 +24,7 @@ private struct Fx {
         setenv("COLLIE_FAKE_ADB_LOGCAT", dir.appendingPathComponent("logcat").path, 1)
         setenv("COLLIE_FAKE_ADB_PNG", fixtures.appendingPathComponent("screen.png").path, 1)
         setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("ui-dump.xml").path, 1)
+        unsetenv("COLLIE_FAKE_ADB_TTY")   // default: /dev/tty prints nothing, so device.ui falls back to the file dump
     }
     /// Logged adb invocations, tab-joined args shown space-joined.
     var lines: [String] {
@@ -298,6 +299,47 @@ private struct LiteFx {
     @Test func tapTextNotFoundSuggestsSimilar() {
         do { _ = try UITree.target(tree, text: "Close Deals", id: nil, nth: nil); Issue.record("found") } catch {
             #expect(error.code == .notFound && error.message.contains("Open Deals") && !error.message.contains("Settings"), "\(error.message)")
+        }
+    }
+
+    @Test func uiDumpsThroughDevTtyInOneAdbCall() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_TTY", "1", 1)
+        defer { unsetenv("COLLIE_FAKE_ADB_TTY") }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.ui")
+            guard case .string(let tree)? = field(r, "tree") else { Issue.record("\(r)"); return }
+            #expect(tree.contains("[e1]") && tree.contains("Login") && field(r, "timingMs") == nil)
+            #expect(fx.lines.contains("-s emulator-5554 exec-out uiautomator dump /dev/tty"))
+            #expect(!fx.lines.contains { $0.contains("/sdcard/collie-ui.xml") })   // no file dump, no cat
+        }
+    }
+
+    @Test func uiFallsBackToTheFileDumpWhenDevTtyGivesNoXml() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.ui", ["timing": "true"])
+            guard case .string(let tree)? = field(r, "tree") else { Issue.record("\(r)"); return }
+            #expect(tree.contains("[e1]") && tree.contains("Login"))
+            #expect(fx.lines.contains("-s emulator-5554 shell uiautomator dump /sdcard/collie-ui.xml"))
+            guard case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
+            #expect(t["dump"] == .string("file"))
+            if case .number(let a)? = t["adb"], case .number(let b)? = t["parse"] { #expect(a >= 0 && b >= 0) } else { Issue.record("\(t)") }
+        }
+    }
+
+    @Test func screenTimingAddsTheGroupStep() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_TTY", "1", 1)
+        defer { unsetenv("COLLIE_FAKE_ADB_TTY") }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.screen", ["timing": "true"])
+            guard case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
+            #expect(t["dump"] == .string("tty") && t["adb"] != nil && t["parse"] != nil && t["group"] != nil, "\(t)")
+            #expect(field(try await call(p, m, "device.screen"), "timingMs") == nil)
         }
     }
 

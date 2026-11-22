@@ -1,7 +1,7 @@
 #!/bin/sh
 # Fake adb for tests. Logs each invocation (args joined by tab) to $COLLIE_FAKE_ADB_LOG.
 # `devices -l` prints the file $COLLIE_FAKE_ADB_DEVICES; screencap cats $COLLIE_FAKE_ADB_PNG; `cat /sdcard/collie-ui.xml`
-# cats $COLLIE_FAKE_ADB_UI; screencap first sleeps $COLLIE_FAKE_ADB_SLEEP seconds when set; `logcat -d` cats $COLLIE_FAKE_ADB_LOGCAT; install prints Success; monkey prints Events injected.
+# cats $COLLIE_FAKE_ADB_UI (so does `exec-out uiautomator dump /dev/tty` when $COLLIE_FAKE_ADB_TTY is set, else it prints nothing); screencap first sleeps $COLLIE_FAKE_ADB_SLEEP seconds when set; `logcat -d` cats $COLLIE_FAKE_ADB_LOGCAT; install prints Success; monkey prints Events injected.
 # `shell date +%s` prints 1700000000; `logcat -b crash` appends $$ to $COLLIE_FAKE_ADB_PIDS, prints $COLLIE_FAKE_ADB_CRASH
 # (when set) and sleeps 600 s (the watcher must kill the group).
 # `emu avd name` prints the name for the serial from $COLLIE_FAKE_ADB_AVDNAMES (lines `<serial> <name>`) then OK (OK first with $COLLIE_FAKE_ADB_OK_FIRST), else exits 1;
@@ -19,6 +19,7 @@ case "$1 $2 $3" in
   "devices -l "*) cat "$COLLIE_FAKE_ADB_DEVICES" ;;
   "exec-out screencap -p") [ -n "$COLLIE_FAKE_ADB_SLEEP" ] && sleep "$COLLIE_FAKE_ADB_SLEEP"; cat "$COLLIE_FAKE_ADB_PNG" ;;
   "exec-out cat /sdcard/collie-ui.xml") cat "$COLLIE_FAKE_ADB_UI" ;;
+  "exec-out uiautomator dump") [ -n "$COLLIE_FAKE_ADB_TTY" ] && cat "$COLLIE_FAKE_ADB_UI" && echo "UI hierchary dumped to: /dev/tty" ;;
   "logcat -d -t") cat "$COLLIE_FAKE_ADB_LOGCAT" ;;
   "install -r "*) echo Success ;;
   "shell monkey -p") echo "Events injected: 1" ;;

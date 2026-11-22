@@ -144,16 +144,22 @@ actor DeviceService {
             _ = try await act("device.ui", [:])   // the device.ui path: refs updated
             return refs[panel.id] ?? []
         }
-        func screen(all: Bool) async throws(ProtocolError) -> [String: JSONValue] {
-            let ui = try await act("device.ui", ["all": .bool(all)])
+        func screen(all: Bool, timing: Bool = false) async throws(ProtocolError) -> [String: JSONValue] {
+            let ui = try await act("device.ui", ["all": .bool(all), "timing": .bool(timing)])
+            let start = ContinuousClock.now
             var screen = ScreenModel.build(refs[panel.id] ?? [])
             screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
             if !closed.contains(panel.id) { lastScreen[panel.id] = screen }
             var o = ScreenModel.json(screen)
-            if all, case .object(let u) = ui { o["tree"] = u["tree"] }
+            guard case .object(let u) = ui else { return o }
+            if all { o["tree"] = u["tree"] }
+            if timing, case .object(var t)? = u["timingMs"] {
+                t["group"] = Self.ms(ContinuousClock.now - start)
+                o["timingMs"] = .object(t)
+            }
             return o
         }
-        if command == "device.screen" { return .object(try await screen(all: args["all"] == .bool(true))) }
+        if command == "device.screen" { return .object(try await screen(all: args["all"] == .bool(true), timing: Self.timing(args))) }
         if command == "device.wait" {
             let w = try Self.waitSpec(args)
             let r = try await poll(w, dump: dump)
@@ -235,6 +241,11 @@ actor DeviceService {
         guard text != nil || id != nil else { return nil }
         return (text, id, try int(a, "nth", 1...10_000))
     }
+
+    /// A duration in whole ms, for `--timing`'s `timingMs`.
+    static func ms(_ d: Duration) -> JSONValue { .number((d / .milliseconds(1)).rounded()) }
+    /// `--timing` set (a flag arrives as true or "true").
+    static func timing(_ a: [String: JSONValue]) -> Bool { a["timing"] == .bool(true) || a["timing"] == .string("true") }
 
     /// A plain timed wait (cancellation ends it early), for the waits that are about time, not an event.
     static func nap(_ d: Duration) async { try? await Task.sleep(for: d) }

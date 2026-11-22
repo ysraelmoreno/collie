@@ -171,6 +171,9 @@ extension PluginRegistry {
         ParamSpec("settle", .string, help: "With --then: ms to wait before reading (0-3000, default 400), or stable: wait (up to 5 s) for two equal UI dumps in a row, {settled} says if it did"),
     ]
 
+    /// `--timing` on device.ui|screen: ms per step, to measure without timing from outside.
+    private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group)")
+
     /// An Android device or emulator through adb, or an iOS Simulator through simctl + AXe; the daemon runs these
     /// commands (no app round trip).
     static let device = PluginSpec(
@@ -182,9 +185,9 @@ extension PluginRegistry {
             dcmd("lite.remove", "Delete the collie-lite Android emulator (admin only; removes it from ~/.android/avd); returns {}", timeout: 90, panelFree: true, exposedToMCP: false),
             dcmd("screenshot", "Screenshot to a PNG file, for you to look at, not to parse (use device.ui to find elements); returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", [out], timeout: 30),
             dcmd("ui", "UI tree with element refs: only labelled or clickable nodes (refs keep the full tree's numbering, so gaps); returns {tree,truncated,nodes,total}. Read this tree to find elements and tap --ref them, not the screenshot PNG",
-                 [ParamSpec("all", .flag, help: "Every node, as before (to debug); same refs")], timeout: 30),
+                 [ParamSpec("all", .flag, help: "Every node, as before (to debug); same refs"), timing], timeout: 30),
             dcmd("screen", "The screen in groups: title, back, tabs (* = selected), actions, fields, content, floating buttons, and what changed since the last screen; text in {text}, items {ref,label,role,state} in {title,back,tabs,actions,fields,lists,floating,changed,more}. Tap items by --ref or --text; use device.ui when something is missing",
-                 [ParamSpec("all", .flag, help: "Also return the raw device.ui --all tree in {tree} (to debug the grouping)")], timeout: 30),
+                 [ParamSpec("all", .flag, help: "Also return the raw device.ui --all tree in {tree} (to debug the grouping)"), timing], timeout: 30),
             dcmd("wait", "Wait for --text to show (or go, with --gone) and/or the screen to settle (--stable: two equal UI dumps in a row), instead of sleep + device.ui; returns {ok,waitedMs} (refs updated); on timeout a timeout error with the last screen",
                  [ParamSpec("text", .string, help: "Text or desc to wait for (any case, containing)"),
                   ParamSpec("gone", .flag, help: "With --text: wait for it to disappear"),

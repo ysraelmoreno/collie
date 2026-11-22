@@ -39,6 +39,8 @@ private final class FakeHelper: @unchecked Sendable {
         Thread { [self] in
             while true {
                 let c = accept(lfd, nil, nil)
+                // under load accept can be interrupted or see an aborted connection: only a closed listener ends it
+                if c < 0 && (errno == EINTR || errno == ECONNABORTED) { continue }
                 guard c >= 0 else { return }
                 Thread { [self] in serve(c) }.start()
             }
@@ -377,12 +379,15 @@ extension DeviceHelperTests {
         let srv = try FakeHelper(installed: true); defer { srv.stop() }
         srv.set(pushes: [])
         let fx = try Svc(srv)
-        _ = await fx.ready()
+        let h = await fx.ready()
+        let (up, why) = (await h.state, await h.reason)
+        #expect(up == .ready, "\(why ?? "")")
         let dumps = srv.ops.filter { $0.contains(#""op":"dump""#) }.count   // the ready check's
         let r = obj(try await fx.run("device.wait", ["stable": .bool(true)]))
         guard case .number(let ms)? = r["waitedMs"] else { Issue.record("\(r)"); await fx.cleanup(); return }
         #expect(r["ok"] == .bool(true) && ms >= 300 && ms < 2000, "\(r)")
-        #expect(srv.ops.filter { $0.contains(#""op":"subscribe""#) }.count == 1, "\(srv.ops)")
+        let after = await h.reason
+        #expect(srv.ops.filter { $0.contains(#""op":"subscribe""#) }.count == 1, "\(srv.ops) \(after ?? "")")
         #expect(srv.ops.filter { $0.contains(#""op":"dump""#) }.count == dumps, "no dump polling: \(srv.ops)")
         let t = obj(try await fx.run("device.tap", ["x": .number(3), "y": .number(4), "then": .string("ui"), "settle": .string("stable"), "quiet": .number(100)]))
         #expect(t["settled"] == .bool(true), "\(t)")

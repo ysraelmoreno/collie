@@ -357,7 +357,7 @@ import CollieProtocol
     /// M4 (device loop spec): the Device line teaches `device ui` + `tap … --then ui`, and fits the 1500 cap in the
     /// normal form (one panel) and the short form (worst case: many long names, Shepherd, Cursor).
     @Test func deviceLineTeachesTreeLoopWithinCap() {
-        let one = text(panels: [("Pixel", "device")])
+        let one = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [("Pixel", "device")])
         #expect(one.count <= 1500 && one.contains("- Device \"Pixel\": " + CollieOrientation.deviceLoop), "\(one.count)\n\(one)")
         #expect(one.contains("device ui") && one.contains("--then ui") && !one.contains("(screenshot, tap, logs)"))
         let ps = (1...20).map { (name: "device-" + String(repeating: "x", count: 60) + "\($0)", pluginId: "device") }

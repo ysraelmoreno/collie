@@ -177,6 +177,20 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         }
     }
 
+    @Test func iosThenUiReturnsTreeAndUpdatesRefs() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            #expect(try await call(p, m, "device.tap", ["x": "10", "y": "20"]).result == .object([:]))
+            let r = try await call(p, m, "device.tap", ["x": "10", "y": "20", "then": "ui", "settle": "0"])
+            guard case .object(let ui)? = field(r, "ui"), case .string(let tree)? = ui["tree"] else { Issue.record("\(r)"); return }
+            #expect(tree.contains("Button \"Mapas\"") && ui["nodes"] != nil && ui["total"] != nil)
+            #expect(fx.axe.contains("describe-ui --udid \(booted)"))
+            #expect(try await call(p, m, "device.tap", ["ref": "e1"]).ok)
+            #expect(try await call(p, m, "device.tap", ["x": "1", "y": "1", "then": "nope"]).error?.code == .invalidArgs)
+        }
+    }
+
     @Test func iosLogcatRetriesShorterWhenCapped() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         let big = (0..<20).map { "old line \($0)" }.joined(separator: "\n") + "\n"

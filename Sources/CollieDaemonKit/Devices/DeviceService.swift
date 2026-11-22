@@ -134,8 +134,31 @@ actor DeviceService {
         guard let panel, case .string(let serial)? = panel.state["serial"] else {
             throw ProtocolError(code: .invalidArgs, message: "'\(command)' needs a device panel")
         }
-        if panel.state["platform"] == .string("ios") { return try await runIOS(command, panel: panel, udid: serial, args: args, cwd: cwd) }
-        return try await runAndroid(command, panel: panel, serial: serial, args: args, cwd: cwd)
+        func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
+            if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
+            return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
+        }
+        let settle = try Self.then(args)   // checked before the action: a bad --then must not tap
+        let r = try await act(command, args)
+        guard let settle, Self.thenCommands.contains(command) else { return r }
+        // ponytail: fixed settle, may catch an animation midway; the agent can run device.ui again
+        try? await Task.sleep(for: .milliseconds(settle))
+        let ui = try await act("device.ui", [:])   // the same path as device.ui: refs updated
+        guard case .object(var o) = r else { return r }
+        o["ui"] = ui
+        return .object(o)
+    }
+
+    /// The actions that take `--then ui` (and `--settle`).
+    static let thenCommands: Set<String> = ["device.tap", "device.swipe", "device.text", "device.key", "device.launch"]
+
+    /// `--then ui`: the settle wait in ms (default 400, at most 3000); no `--then`: nil. Any value but `ui`: invalidArgs.
+    static func then(_ a: [String: JSONValue]) throws(ProtocolError) -> Int? {
+        switch a["then"] {
+        case nil, .null?: return nil
+        case .string("ui")?: return try int(a, "settle", 0...3000) ?? 400
+        default: throw ProtocolError(code: .invalidArgs, message: "--then only takes 'ui'")
+        }
     }
 
     /// Checked after every await that precedes a write: a panel closed meanwhile gets nothing written for it.

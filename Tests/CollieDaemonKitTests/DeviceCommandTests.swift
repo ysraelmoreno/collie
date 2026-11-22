@@ -240,6 +240,30 @@ private struct LiteFx {
         }
     }
 
+    @Test func thenUiReturnsTreeAndUpdatesRefs() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            #expect(try await call(p, m, "device.tap", ["x": "1", "y": "2"]).result == .object([:]))   // no --then: {} as before
+            let r = try await call(p, m, "device.tap", ["x": "3", "y": "4", "then": "ui", "settle": "0"])
+            guard case .object(let ui)? = field(r, "ui"), case .string(let tree)? = ui["tree"] else { Issue.record("\(r)"); return }
+            #expect(tree.contains("[e1]") && tree.contains("Login") && ui["truncated"] == .bool(false) && ui["nodes"] != nil && ui["total"] != nil)
+            #expect(fx.lines.contains("-s emulator-5554 shell input tap 3 4") && fx.lines.contains { $0.contains("uiautomator dump") })
+            #expect(try await call(p, m, "device.tap", ["ref": "e1"]).ok)   // refs came from --then ui, no device.ui call
+            #expect(field(try await call(p, m, "device.key", ["key": "Enter", "then": "ui", "settle": "0"]), "ui") != nil)
+        }
+    }
+
+    @Test func thenRejectsOtherValuesBeforeActing() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            #expect(try await call(p, m, "device.tap", ["x": "5", "y": "6", "then": "screenshot"]).error?.code == .invalidArgs)
+            #expect(try await call(p, m, "device.tap", ["x": "5", "y": "6", "then": "ui", "settle": "3001"]).error?.code == .invalidArgs)
+            #expect(!fx.lines.contains("-s emulator-5554 shell input tap 5 6"))
+        }
+    }
+
     @Test func swipeKeyTextLogcat() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in

@@ -61,7 +61,7 @@ extension DeviceService {
             guard tree.screen != nil else { throw ProtocolError(code: .internal, message: "axe describe-ui returned no UI tree") }
             try alive(panel)
             refs[panel.id] = tree.nodes
-            return .object(["tree": .string(UITree.lines(tree.nodes)), "truncated": .bool(tree.truncated)])
+            return UITree.result(tree.nodes, truncated: tree.truncated, all: args["all"] == .bool(true))
         case "device.tap":
             if let ref = args["ref"].flatMap({ if case .string(let s) = $0 { s } else { nil } }) {
                 guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {

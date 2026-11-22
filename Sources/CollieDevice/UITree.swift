@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import CollieProtocol
 
 public struct UINode: Equatable, Sendable {
     public var ref: String; public var cls: String; public var text: String; public var desc: String
@@ -15,6 +16,19 @@ public enum UITree {
         p.delegate = h
         p.parse()
         return (h.nodes, h.truncated)
+    }
+
+    /// The nodes an agent acts on: a label (`text`/`desc`) or `clickable`. A node with only an `id` drops out.
+    /// Refs stay those of the full tree (`--all`), so the compact numbering has gaps.
+    public static func compact(_ nodes: [UINode]) -> [UINode] {
+        nodes.filter { !$0.text.isEmpty || !$0.desc.isEmpty || $0.clickable }
+    }
+
+    /// The `device.ui` result: compact unless `all`; `nodes` is how many were listed, `total` the full tree's count.
+    public static func result(_ nodes: [UINode], truncated: Bool, all: Bool) -> JSONValue {
+        let shown = all ? nodes : compact(nodes)
+        return .object(["tree": .string(lines(shown)), "truncated": .bool(truncated),
+                        "nodes": .number(Double(shown.count)), "total": .number(Double(nodes.count))])
     }
 
     public static func lines(_ nodes: [UINode]) -> String {

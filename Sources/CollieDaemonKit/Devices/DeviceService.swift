@@ -28,6 +28,8 @@ actor DeviceService {
     var refs: [UUID: [UINode]] = [:]
     /// The last `device.screen` per panel, for its `changed`.
     var lastScreen: [UUID: Screen] = [:]
+    /// iOS: the screen in points of the last `device.ui` per panel (AXe), to map the OCR's pixels back to points (A3).
+    var simPoints: [UUID: CGSize] = [:]
     /// Panels closed so far: a command that was awaiting adb when its panel closed must not write anything afterwards.
     /// ponytail: grows by one UUID per closed device panel for the daemon's life; fine at this scale.
     var closed: Set<UUID> = []
@@ -172,12 +174,10 @@ actor DeviceService {
             let ui = try await act("device.ui", ["all": .bool(all), "timing": .bool(timing)])
             let start = ContinuousClock.now
             var nodes = refs[panel.id] ?? []
-            // O2: the OCR runs only when the trigger fires (Android); the screenshot, the OCR and the merge stay in memory
+            // O2: the OCR runs only when the trigger fires (Android and, A3, iOS); the screenshot, the OCR and the merge stay in memory
             var read: OCRRead?
-            // P2: OCR is Android-only in this cut; on iOS a firing trigger (--ocr or auto) answers with a note, no error
-            let trigger = ocrMode.trigger(nodes), ios = panel.state["platform"] == .string("ios")
-            if !ios, let trigger {
-                read = await ocrRead(serial: serial, tree: nodes, trigger: trigger, region: ocrMode.region)
+            if let trigger = ocrMode.trigger(nodes) {
+                read = await ocrRead(panel: panel, serial: serial, tree: nodes, trigger: trigger, region: ocrMode.region)
                 if let found = read?.nodes, !found.isEmpty, !closed.contains(panel.id) { nodes += found; refs[panel.id] = nodes }
             }
             var screen = ScreenModel.build(nodes)
@@ -188,11 +188,6 @@ actor DeviceService {
                 o["ocr"] = .string("unavailable")
                 if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unavailable") }
             }
-            let unsupported = ios && trigger != nil
-            if unsupported {
-                o["ocr"] = .string("unsupported")
-                if case .string(let text)? = o["text"] { o["text"] = .string(text + "\nocr: unsupported on iOS") }
-            }
             guard case .object(let u) = ui else { return o }
             if all { o["tree"] = u["tree"] }
             if timing, case .object(var t)? = u["timingMs"] {
@@ -200,7 +195,6 @@ actor DeviceService {
                 if let read {
                     t["ocrMs"] = Self.ms(read.took); t["ocrLevel"] = .string(OCRLevel.accurate.rawValue); t["trigger"] = .string(read.trigger)
                 }
-                if unsupported { t["ocr"] = .string("unsupported") }
                 o["timingMs"] = .object(t)
             }
             return o
@@ -250,10 +244,10 @@ actor DeviceService {
             return .object(o)
         }
         /// O4 (O2 rule 4): `find`/`tap --text` with no tree match read the screenshot once (`--region`: that rectangle);
-        /// the OCR items join the refs. nil: iOS, `--no-ocr`, the tree already has OCR items, or nothing read.
+        /// the OCR items join the refs. nil: `--no-ocr`, the tree already has OCR items, or nothing read.
         func ocrFallback(_ nodes: [UINode], _ mode: OCRMode) async -> (nodes: [UINode], read: OCRRead)? {
-            guard panel.state["platform"] != .string("ios"), !mode.off, !nodes.contains(where: \.ocr) else { return nil }
-            let read = await ocrRead(serial: serial, tree: nodes, trigger: "find", region: mode.region)
+            guard !mode.off, !nodes.contains(where: \.ocr) else { return nil }
+            let read = await ocrRead(panel: panel, serial: serial, tree: nodes, trigger: "find", region: mode.region)
             guard let found = read.nodes, !found.isEmpty else { return nil }
             if !closed.contains(panel.id) { refs[panel.id] = nodes + found }
             return (nodes + found, read)
@@ -594,6 +588,7 @@ actor DeviceService {
         closed.insert(id)
         refs[id] = nil
         lastScreen[id] = nil
+        simPoints[id] = nil
         idle.removeValue(forKey: id)?.cancel()
         sessions.removeValue(forKey: id)?.end("ended", "Panel closed")
         await helperPanelClosed(id)

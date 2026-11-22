@@ -359,7 +359,7 @@ extension DeviceService {
         case .string(let s)?:
             let v = s.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             guard v.count == 4, v[0] >= 0, v[1] >= 0, v[2] > v[0], v[3] > v[1] else {
-                throw ProtocolError(code: .invalidArgs, message: "--region takes x1,y1,x2,y2 (pixels, x2 > x1, y2 > y1)")
+                throw ProtocolError(code: .invalidArgs, message: "--region takes x1,y1,x2,y2 (Android pixels, iOS points, x2 > x1, y2 > y1)")
             }
             m.region = CGRect(x: v[0], y: v[1], width: v[2] - v[0], height: v[3] - v[1]); m.forced = true
         default: throw ProtocolError(code: .invalidArgs, message: "--region takes x1,y1,x2,y2")
@@ -377,17 +377,23 @@ extension DeviceService {
 
     /// O1/O3/O5: screenshot, black check, `--region` crop, OCR (accurate), merge with `tree`. Never throws: the screen
     /// falls back to the tree. ponytail: always `accurate` (the fallback's default); a `--ocr fast` when someone needs it.
-    func ocrRead(serial: String, tree: [UINode], trigger: String, region: CGRect?) async -> OCRRead {
+    /// A3: on iOS the tree, `region` and taps are points and the screenshot pixels (`simShot`'s scale): the region is
+    /// scaled up for the crop and the boxes down before they become nodes. Android: scale 1.
+    func ocrRead(panel: Panel, serial: String, tree: [UINode], trigger: String, region: CGRect?) async -> OCRRead {
         let start = ContinuousClock.now
         func done(_ n: [UINode]?) -> OCRRead { OCRRead(nodes: n, took: ContinuousClock.now - start, trigger: trigger) }
-        guard let ocr, var png = try? await screencap(serial) else { return done(nil) }
+        guard let ocr else { return done(nil) }
+        let shot = panel.state["platform"] == .string("ios") ? await simShot(serial, points: simPoints[panel.id])
+            : (try? await screencap(serial)).map { ($0, CGFloat(1)) }
+        guard var (png, scale) = shot else { return done(nil) }
         if OCRImage.uniform(png) { return done([]) }   // black (FLAG_SECURE) or flat: nothing to read
         var origin = CGPoint.zero
         if let region {
-            guard let cut = OCRImage.crop(png, to: region) else { return done([]) }
+            guard let cut = OCRImage.crop(png, to: region.applying(CGAffineTransform(scaleX: scale, y: scale))) else { return done([]) }
             png = cut.png; origin = cut.rect.origin
         }
         guard let items = try? await ocr.recognize(png: png, level: .accurate, languages: ocrLanguages) else { return done(nil) }
-        return done(OCR.nodes(items.map { var i = $0; i.box = i.box.offsetBy(dx: origin.x, dy: origin.y); return i }, tree: tree))
+        let toPoints = CGAffineTransform(scaleX: 1 / scale, y: 1 / scale)
+        return done(OCR.nodes(items.map { var i = $0; i.box = i.box.offsetBy(dx: origin.x, dy: origin.y).applying(toPoints); return i }, tree: tree))
     }
 }

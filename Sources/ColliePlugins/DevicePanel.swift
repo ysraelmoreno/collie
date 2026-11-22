@@ -48,15 +48,15 @@ struct VideoFormat {
     }
 }
 
-/// Where a `video`-sized picture lands in `view` (aspect fit, centered).
-func videoRect(view: CGSize, video: CGSize) -> CGRect {
-    guard video.width > 0, video.height > 0 else { return .zero }
-    return AVMakeRect(aspectRatio: video, insideRect: CGRect(origin: .zero, size: view))
+/// Where a `video`-sized picture lands in `screen` (the frame's screen, `DeviceBezel.layout`; aspect fit, centered).
+func videoRect(screen: CGRect, video: CGSize) -> CGRect {
+    guard video.width > 0, video.height > 0, screen.width > 0, screen.height > 0 else { return .zero }
+    return AVMakeRect(aspectRatio: video, insideRect: screen)
 }
 
-/// A view point (top-left origin) in video pixels; nil outside the picture.
-func devicePoint(_ p: CGPoint, view: CGSize, video: CGSize) -> (x: Int32, y: Int32)? {
-    let r = videoRect(view: view, video: video)
+/// A view point (top-left origin) in video pixels; nil outside the picture (on the frame or the stage).
+func devicePoint(_ p: CGPoint, screen: CGRect, video: CGSize) -> (x: Int32, y: Int32)? {
+    let r = videoRect(screen: screen, video: video)
     guard r.width > 0, r.contains(p) else { return nil }
     return (Int32((p.x - r.minX) / r.width * video.width), Int32((p.y - r.minY) / r.height * video.height))
 }
@@ -99,13 +99,15 @@ private final class FrameSlot: @unchecked Sendable {
     let panel: Panel
     let host: PanelHostContext
     let ios: Bool
+    /// From the daemon (`state["frame"]`); missing or unknown → `bare`.
+    let frameKind: DeviceFrame.Kind
     private let screen: Screen
     private var stream: StreamClient?
     private var gen = 0            // bumped per connect/disconnect: a stale reader or open never touches state
     private var closed = false
     private var retried = false    // one silent reconnect when the session ended as we joined
     private var format: CMVideoFormatDescription?
-    private var videoSize = CGSize.zero
+    private var videoSize = CGSize.zero { didSet { if videoSize != oldValue { screen.needsLayout = true } } }
     private var needKey = false
     private var touching = false
     private let sendQueue = DispatchQueue(label: "collie.device.send")
@@ -114,15 +116,15 @@ private final class FrameSlot: @unchecked Sendable {
     private var scrollTick = 0
 
     public var view: NSView { screen }
-    /// The footer under the video (buttons row 52 + device/transport line ~26 + borders, with room): fixed, so the
-    /// video area and the touch mapping never depend on font metrics.
-    static let footerHeight: CGFloat = 86
+    /// The footer under the stage (icon row 32 + padding, then the state/transport line, with room): fixed, so the
+    /// stage and the touch mapping never depend on font metrics.
+    static let footerHeight: CGFloat = 72
 
     public required init(panel: Panel, host: PanelHostContext) {
         self.panel = panel; self.host = host
         ios = panel.state["platform"] == .string("ios")
-        let serial: String = if case .string(let v)? = panel.state["serial"] { v } else { "" }
-        screen = Screen(ios: ios, serial: serial)
+        frameKind = if case .string(let v)? = panel.state["frame"], let k = DeviceFrame.Kind(rawValue: v) { k } else { .bare }
+        screen = Screen(ios: ios)
         screen.owner = self
     }
 
@@ -245,18 +247,21 @@ private final class FrameSlot: @unchecked Sendable {
 
     private func send(_ input: SimInput) { if let d = try? JSONEncoder().encode(input) { send(d) } }
 
+    /// The frame's screen in the view (top-left origin): the touch mapping's rectangle.
+    fileprivate var geometry: DeviceBezel.Geometry { DeviceBezel.resolve(kind: frameKind, area: screen.stage, video: videoSize) }
+
     func mouse(_ a: Scrcpy.Action, at p: CGPoint) {
-        let area = screen.videoArea.size
+        let area = geometry.screen
         var p = p
         if a != .down {   // a drag that leaves the picture stays on its edge
             guard touching else { return }
-            let r = videoRect(view: area, video: videoSize)
+            let r = videoRect(screen: area, video: videoSize)
             p = CGPoint(x: min(max(p.x, r.minX), r.maxX - 0.5), y: min(max(p.y, r.minY), r.maxY - 0.5))
         }
-        guard let d = devicePoint(p, view: area, video: videoSize) else { return }
+        guard let d = devicePoint(p, screen: area, video: videoSize) else { return }   // on the frame or the stage: nothing
         touching = a != .up
         guard ios else { return send(Scrcpy.touch(a, x: d.x, y: d.y, width: size.w, height: size.h)) }
-        let r = videoRect(view: area, video: videoSize)   // points: round (devicePoint truncates to a pixel index)
+        let r = videoRect(screen: area, video: videoSize)   // points: round (devicePoint truncates to a pixel index)
         let pt = CGPoint(x: min(max(((p.x - r.minX) / r.width * videoSize.width).rounded(), 0), videoSize.width - 1),
                        y: min(max(((p.y - r.minY) / r.height * videoSize.height).rounded(), 0), videoSize.height - 1))   // not past the last point
         // no move events: a drag is one swipe on release
@@ -282,7 +287,7 @@ private final class FrameSlot: @unchecked Sendable {
             }
             return
         }
-        guard let d = devicePoint(p, view: screen.videoArea.size, video: videoSize) else { return }
+        guard let d = devicePoint(p, screen: geometry.screen, video: videoSize) else { return }
         send(Scrcpy.scroll(x: d.x, y: d.y, width: size.w, height: size.h, h: Float(e.scrollingDeltaX / 10), v: Float(e.scrollingDeltaY / 10)))
     }
 
@@ -303,68 +308,109 @@ private final class FrameSlot: @unchecked Sendable {
     fileprivate func lock() { send(.button("lock")) }
 }
 
-/// `sunken` screen + video layer (iOS: an image layer), a status overlay with **Reconectar**, and a footer: the buttons
-/// (Voltar / Início / Recentes; iOS: Início / Bloquear), then the device and its transport (adb / simctl).
+/// The stage (theme gradient) with the device frame (`DeviceBezelLayers`) around the video layer (iOS: an image
+/// layer), a blurred status overlay with **Reconectar** over the frame's screen, and a footer: icon pills
+/// (Voltar / Início / Recentes; iOS: Início / Bloquear), then the link state and the transport (adb / simctl).
 /// Typing goes through the input system (`NSTextInputClient`) so dead keys compose accents; mapped keys go as keycodes.
 @MainActor private final class Screen: NSView, @preconcurrency NSTextInputClient {
     weak var owner: DevicePanel?
     let display = AVSampleBufferDisplayLayer()
     let image = CALayer()
+    private let ios: Bool
+    private let backdrop = CAGradientLayer()
+    private let bezel = DeviceBezelLayers()
     private let label = NSTextField(wrappingLabelWithString: "")
     private let retry = NSButton(title: "Reconectar", target: nil, action: nil)
-    private let overlay = NSStackView()
-    private var bar: NSView!
+    private let overlay = NSVisualEffectView()
+    private let stack = NSStackView()
+    private let homeKey = NSButton(title: "", target: nil, action: nil)   // the `classic` frame's round home button
+    private var bar: NSHostingView<DeviceFooter>!
+    private var buttons: [DeviceFooter.Action] = []
+    private var link = DeviceFooter.Link.connecting
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     private var barHeight: CGFloat { DevicePanel.footerHeight }
-    /// Top-left, above the footer: the touch mapping takes its origin as (0, 0).
-    var videoArea: CGRect { CGRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - barHeight)) }
+    /// Top-left, above the footer: where the frame is centered (`DeviceBezel.layout`'s `area`).
+    var stage: CGRect { CGRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - barHeight)) }
     var hasStatus: Bool { !overlay.isHidden }
 
-    init(ios: Bool, serial: String) {
+    init(ios: Bool) {
+        self.ios = ios
         super.init(frame: .zero)
         wantsLayer = true
         display.videoGravity = .resizeAspect
         image.contentsGravity = .resizeAspect
-        layer?.addSublayer(ios ? image : display)
-        applyChrome()
+        backdrop.type = .radial   // the prototype's radial-gradient(120% 80% at 50% 0%, surface-2, bg)
+        backdrop.startPoint = CGPoint(x: 0.5, y: 0); backdrop.endPoint = CGPoint(x: 1.7, y: 0.8)
+        for l in [backdrop, bezel.back, ios ? image : display, bezel.front] { layer?.addSublayer(l) }
         label.textColor = CollieColor.text; label.alignment = .center
         retry.target = self; retry.action = #selector(reconnect)
-        overlay.orientation = .vertical; overlay.alignment = .centerX
-        overlay.addArrangedSubview(label); overlay.addArrangedSubview(retry)
+        stack.orientation = .vertical; stack.alignment = .centerX
+        stack.addArrangedSubview(label); stack.addArrangedSubview(retry)
+        overlay.material = .hudWindow; overlay.blendingMode = .withinWindow; overlay.state = .active
+        overlay.wantsLayer = true; overlay.layer?.masksToBounds = true
+        overlay.addSubview(stack)
+        homeKey.isBordered = false; homeKey.wantsLayer = true; homeKey.toolTip = "Início"
+        homeKey.setAccessibilityLabel("Início"); homeKey.target = self; homeKey.action = #selector(home)
+        homeKey.layer?.borderWidth = 1.5
+        homeKey.layer?.borderColor = CGColor(srgbRed: 0x2F / 255, green: 0x33 / 255, blue: 0x3D / 255, alpha: 1)
+        homeKey.isHidden = true
+        addSubview(homeKey)
         addSubview(overlay)
-        let buttons: [DeviceFooter.Action] = ios
-            ? [.init(title: "Início") { [weak self] in self?.home() }, .init(title: "Bloquear") { [weak self] in self?.lock() }]
-            : [.init(title: "Voltar") { [weak self] in self?.back() }, .init(title: "Início") { [weak self] in self?.home() },
-               .init(title: "Recentes") { [weak self] in self?.recents() }]
-        bar = NSHostingView(rootView: DeviceFooter(buttons: buttons, serial: serial, transport: ios ? "simctl" : "adb"))
+        buttons = ios
+            ? [.init(title: "Início", symbol: "circle") { [weak self] in self?.home() },
+               .init(title: "Bloquear", symbol: "lock") { [weak self] in self?.lock() }]
+            : [.init(title: "Voltar", symbol: "chevron.left") { [weak self] in self?.back() },
+               .init(title: "Início", symbol: "circle") { [weak self] in self?.home() },
+               .init(title: "Recentes", symbol: "square") { [weak self] in self?.recents() }]
+        bar = NSHostingView(rootView: footer())
         addSubview(bar)
+        applyChrome()
         status("Conectando…", retry: false)
     }
 
+    private func footer() -> DeviceFooter { DeviceFooter(buttons: buttons, transport: ios ? "simctl" : "adb", link: link) }
+
     /// `cgColor` resolves under the view's appearance, again on theme change (as the canvas nodes).
     private func applyChrome() {
-        effectiveAppearance.performAsCurrentDrawingAppearance { layer?.backgroundColor = CollieColor.sunken.cgColor }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            backdrop.colors = [CollieColor.raised.cgColor, CollieColor.background.cgColor]
+            layer?.backgroundColor = CollieColor.background.cgColor
+        }
+        needsLayout = true   // the frameless outline takes the theme's border
     }
     override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); applyChrome() }
     required init?(coder: NSCoder) { fatalError() }
 
+    /// nil = streaming; with **Reconectar** = offline; anything else = connecting.
     func status(_ text: String?, retry showRetry: Bool) {
         overlay.isHidden = text == nil
         label.stringValue = text ?? ""
         retry.isHidden = !showRetry
+        let l: DeviceFooter.Link = text == nil ? .live : showRetry ? .off : .connecting
+        if l != link { link = l; bar.rootView = footer() }
         needsLayout = true
     }
 
     override func layout() {
         super.layout()
+        let g = owner?.geometry ?? DeviceBezel.resolve(kind: .bare, area: stage, video: .zero)
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        display.frame = videoArea; image.frame = videoArea
+        backdrop.frame = stage
+        var border = CGColor(gray: 0.5, alpha: 1)
+        effectiveAppearance.performAsCurrentDrawingAppearance { border = CollieColor.border.cgColor }
+        bezel.apply(g, video: ios ? image : display, bareBorder: border)
         CATransaction.commit()
+        if let h = DeviceBezel.homeButton(g) {
+            homeKey.frame = h; homeKey.layer?.cornerRadius = h.width / 2; homeKey.isHidden = false
+        } else { homeKey.isHidden = true }
         bar.frame = CGRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
-        let w = min(bounds.width - 24, 320), h = overlay.fittingSize.height
-        overlay.frame = CGRect(x: (bounds.width - w) / 2, y: (videoArea.height - h) / 2, width: max(0, w), height: h)
+        // the overlay covers only the frame's screen (before the first frame: the stage)
+        let cover = g.screen.width > 0 ? g.screen : stage
+        overlay.frame = cover; overlay.layer?.cornerRadius = g.screen.width > 0 ? g.screenRadius : 0
+        let w = max(0, min(cover.width - 24, 320)), h = stack.fittingSize.height
+        stack.frame = CGRect(x: (cover.width - w) / 2, y: (cover.height - h) / 2, width: w, height: h)
     }
 
     override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); owner?.windowChanged() }
@@ -415,26 +461,76 @@ private final class FrameSlot: @unchecked Sendable {
     func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
     func characterIndex(for point: NSPoint) -> Int { NSNotFound }
     func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
-        window?.convertToScreen(convert(videoArea, to: nil)) ?? .zero
+        window?.convertToScreen(convert(owner?.geometry.screen ?? stage, to: nil)) ?? .zero
     }
 }
 
-/// The Device panel's footer: its buttons (`secondary`), then the device and the transport.
+/// The Device panel's footer (`DeviceFooter`): icon pills, centered, then the link state (a colored dot) and the transport.
+/// The serial is in the panel's header already.
 private struct DeviceFooter: View {
-    struct Action { let title: String; let run: @MainActor () -> Void }
+    enum Link { case live, connecting, off }
+    struct Action { let title: String; let symbol: String; let run: @MainActor () -> Void }
     let buttons: [Action]
-    let serial: String, transport: String
+    let transport: String
+    let link: Link
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         VStack(spacing: 0) {
-            Rectangle().fill(Color.collieBorder).frame(height: 1)
-            HStack(spacing: 6) {
-                ForEach(buttons.indices, id: \.self) { i in Button(buttons[i].title, action: buttons[i].run) }
+            HStack(spacing: 18) {
+                ForEach(buttons.indices, id: \.self) { i in Pill(action: buttons[i]) }
             }
-            .buttonStyle(CollieButtonStyle(.secondary)).padding(.horizontal, 16).padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            PanelFooter(serial, trailing: transport)
+            .padding(.top, 8).padding(.bottom, 4)
+            .opacity(link == .off ? 0.4 : 1).disabled(link == .off)
+            HStack {
+                HStack(spacing: 7) {
+                    StatusDot(color: color, pulse: link == .connecting && !reduceMotion).id(link)
+                    Text(label)
+                }
+                Spacer()
+                Text(transport)
+            }
+            .font(.collieMono(11)).foregroundStyle(Color.collieTextSecondary)
+            .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 8)
         }
-        .frame(height: DevicePanel.footerHeight, alignment: .top).clipped()
-        .background(Color.collieSurface)
+        .frame(maxWidth: .infinity).frame(height: DevicePanel.footerHeight, alignment: .top).clipped()
+        .background(Color.collieBackground)
+    }
+
+    private var label: String { switch link { case .live: "ao vivo"; case .connecting: "conectando"; case .off: "offline" } }
+    private var color: Color {
+        switch link {
+        case .live: Color(nsColor: .systemGreen)
+        case .connecting: Color(nsColor: CollieColor.attention)
+        case .off: Color.collieMuted
+        }
+    }
+
+    private struct Pill: View {
+        let action: Action
+        @State private var hover = false
+        var body: some View {
+            Button(action: action.run) {
+                Image(systemName: action.symbol).font(.system(size: 15, weight: .medium))
+                    .frame(width: 44, height: 32)
+                    .background(Capsule().fill(hover ? Color.collieRaised : Color.clear))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain).foregroundStyle(Color.collieText)
+            .help(action.title).accessibilityLabel(action.title)
+            .onHover { hover = $0 }
+        }
+    }
+
+    private struct StatusDot: View {
+        let color: Color, pulse: Bool
+        @State private var dim = false
+        var body: some View {
+            Circle().fill(color).frame(width: 7, height: 7)
+                .background(Circle().fill(color.opacity(0.22)).frame(width: 13, height: 13))
+                .opacity(pulse && dim ? 0.35 : 1)
+                .animation(pulse ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true) : nil, value: dim)
+                .onAppear { dim = true }
+        }
     }
 }

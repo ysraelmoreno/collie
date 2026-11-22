@@ -43,12 +43,12 @@ private let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent(
 }
 
 @Test func letterboxMapping() {
-    let view = CGSize(width: 400, height: 400), video = CGSize(width: 1080, height: 2400)
-    let r = videoRect(view: view, video: video)
+    let view = CGRect(x: 0, y: 0, width: 400, height: 400), video = CGSize(width: 1080, height: 2400)
+    let r = videoRect(screen: view, video: video)
     #expect(abs(r.minX - 110) < 0.5 && abs(r.width - 180) < 0.5 && abs(r.height - 400) < 0.5)
-    let c = devicePoint(CGPoint(x: 200, y: 200), view: view, video: video)
+    let c = devicePoint(CGPoint(x: 200, y: 200), screen: view, video: video)
     #expect(c?.x == 540 && c?.y == 1200)
-    #expect(devicePoint(CGPoint(x: 10, y: 200), view: view, video: video) == nil)
+    #expect(devicePoint(CGPoint(x: 10, y: 200), screen: view, video: video) == nil)
 }
 
 @MainActor @Test func panelRegistersAndRefusesCommands() async throws {

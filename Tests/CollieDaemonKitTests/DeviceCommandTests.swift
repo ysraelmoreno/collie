@@ -365,6 +365,38 @@ private struct LiteFx {
         }
     }
 
+    @Test func findReturnsTheMatchAndItsRefStaysValid() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.find", ["text": "combos"])
+            guard case .string(let ref)? = field(r, "ref"), case .object(let c)? = field(r, "center") else { Issue.record("\(r)"); return }
+            #expect(field(r, "found") == .bool(true) && field(r, "label") == .string("Combos") && field(r, "role") == .string("tab"), "\(r)")
+            #expect(field(r, "clickable") == .bool(true) && c["x"] != nil && c["y"] != nil, "\(r)")
+            let dumps = fx.lines.filter { $0.contains("uiautomator dump") }.count
+            #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // no device.ui between
+            #expect(fx.lines.filter { $0.contains("uiautomator dump") }.count == dumps)
+            let s = try await call(p, m, "device.find", ["text": "Filter", "then": "screen"])
+            guard case .object(let screen)? = field(s, "screen"), case .string(let text)? = screen["text"] else { Issue.record("\(s)"); return }
+            #expect(text.hasPrefix("Tela: Offers") && field(s, "role") == .string("button"), "\(s)")
+        }
+    }
+
+    @Test func findNotFoundAndRoleFilter() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let none = try await call(p, m, "device.find", ["text": "Nope"])
+            #expect(none.error?.code == .notFound && none.error?.message.contains("similar:") == true, "\(none)")
+            #expect(field(try await call(p, m, "device.find", ["text": "Combos", "role": "tab"]), "role") == .string("tab"))
+            #expect(try await call(p, m, "device.find", ["text": "Combos", "role": "button"]).error?.code == .notFound)
+            #expect(try await call(p, m, "device.find", ["text": "Combos", "role": "list"]).error?.code == .invalidArgs)
+            #expect(try await call(p, m, "device.find", ["text": "Combos", "then": "ui"]).error?.code == .invalidArgs)
+        }
+    }
+
     @Test func tapTextDumpsFreshAndTaps() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in

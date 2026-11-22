@@ -203,6 +203,20 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         }
     }
 
+    @Test func iosFindFoundNotFoundAndRole() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let r = try await call(p, m, "device.find", ["text": "mapas"])
+            guard case .string(let ref)? = field(r, "ref") else { Issue.record("\(r)"); return }
+            #expect(field(r, "found") == .bool(true) && field(r, "label") == .string("Mapas") && field(r, "center") != nil, "\(r)")
+            #expect(fx.axe.contains("describe-ui --udid \(booted)"))
+            #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // the find's dump set the refs
+            #expect(try await call(p, m, "device.find", ["text": "no such label"]).error?.code == .notFound)
+            #expect(try await call(p, m, "device.find", ["text": "mapas", "role": "field"]).error?.code == .notFound)
+        }
+    }
+
     @Test func iosLogcatRetriesShorterWhenCapped() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         let big = (0..<20).map { "old line \($0)" }.joined(separator: "\n") + "\n"

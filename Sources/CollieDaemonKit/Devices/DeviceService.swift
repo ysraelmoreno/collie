@@ -169,6 +169,14 @@ actor DeviceService {
             }
             return .object(["ok": .bool(true), "waitedMs": .number(Double(r.waitedMs))])
         }
+        if command == "device.find" {
+            let q = try Self.findSpec(args)
+            guard q.screen else { return .object(try Self.find(try await dump(), text: q.text, role: q.role)) }
+            let shown = try await screen(all: false)   // one dump serves both (refs updated)
+            var o = try Self.find(refs[panel.id] ?? [], text: q.text, role: q.role)
+            o["screen"] = .object(shown)
+            return .object(o)
+        }
         let then = try Self.then(args)   // checked before the action: a bad --then must not tap
         var args = args
         if command == "device.tap", let pick = try Self.tapPick(args) {
@@ -203,6 +211,35 @@ actor DeviceService {
     static let stableSettleMs = 5000
     /// Pause between two dumps of a wait (a dump itself takes 2-3 s on Android).
     static let pollGapMs = 200
+
+    /// `device.find` args: the text (required), --role tab|button|field, --then screen (nothing else).
+    static func findSpec(_ a: [String: JSONValue]) throws(ProtocolError) -> (text: String, role: String?, screen: Bool) {
+        guard case .string(let text)? = a["text"], !text.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "device.find needs a text") }
+        var role: String?
+        switch a["role"] {
+        case nil, .null?: role = nil
+        case .string(let r)? where ["tab", "button", "field"].contains(r): role = r
+        default: throw ProtocolError(code: .invalidArgs, message: "--role takes tab, button or field")
+        }
+        switch a["then"] {
+        case nil, .null?: return (text, role, false)
+        case .string("screen")?: return (text, role, true)
+        default: throw ProtocolError(code: .invalidArgs, message: "device.find --then only takes 'screen'")
+        }
+    }
+
+    /// `device.find`: the `tap --text` match (UITree.target) on one dump, its role and label from the ScreenModel
+    /// groups. Several matches: the first in tree order. None (or none with `role`): notFound with similar labels.
+    static func find(_ nodes: [UINode], text: String, role: String?) throws(ProtocolError) -> [String: JSONValue] {
+        let s = ScreenModel.build(nodes, cap: .max)
+        let groups = [s.back].compactMap { $0 } + s.tabs + s.actions + s.fields + s.content + s.floating
+        let items = Dictionary(groups.map { ($0.ref, $0) }, uniquingKeysWith: { a, _ in a })
+        let n = try UITree.target(nodes, text: text, id: nil, nth: 1, keep: { role == nil || items[$0.ref]?.role == role })
+        let it = items[n.ref]
+        return ["found": .bool(true), "ref": .string(n.ref), "label": .string(it?.label ?? (n.text.isEmpty ? n.desc : n.text)),
+                "role": .string(it?.role ?? "text"), "clickable": .bool(n.clickable),
+                "center": .object(["x": .number(Double(n.center.x)), "y": .number(Double(n.center.y))])]
+    }
 
     /// `device.wait` args: --text and/or --stable (--gone needs --text), --timeout seconds (1-60, default 10).
     static func waitSpec(_ a: [String: JSONValue]) throws(ProtocolError) -> Wait {

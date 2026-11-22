@@ -94,7 +94,7 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Para que serve:** a tela de um emulador Android, simulador iOS ou aparelho, com toque e teclado.
 - **Arquivos:** `Sources/ColliePlugins/DevicePanel.swift`, `Sources/CollieDevice/`.
 - **Comandos do agente:** `collie device screen` (a tela em grupos), `device ui` (a árvore), `device wait --text|--stable`,
-  `tap --text|--ref … --then screen`, `--timing` em `ui`/`screen`. `device find` ainda não existe (E3).
+  `tap --text|--ref … --then screen`, `--timing` em `ui`/`screen`, `device find <texto> [--role tab|button|field] [--then screen]` (E3a; `--scroll` é a E3b).
 - **Como verificar:** `collie device list`; o painel, à mão ("Abrir painel" → "Dispositivo" → "Aparelho").
 
 ### Diagrama (`DiagramPanel`)

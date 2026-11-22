@@ -54,7 +54,9 @@ public enum UITree {
     /// containing; `id` matches exactly (both given: both must match). A node that isn't clickable gives way to its
     /// nearest clickable ancestor (none: the node itself); candidates landing on the same node count once. Several:
     /// `nth` (from 1) picks one, else invalidArgs listing up to 5. None: notFound with up to 5 similar labels.
-    public static func target(_ nodes: [UINode], text: String?, id: String?, nth: Int?) throws(ProtocolError) -> UINode {
+    /// `keep` drops candidates after the climb (`device.find --role`).
+    public static func target(_ nodes: [UINode], text: String?, id: String?, nth: Int?,
+                              keep: (UINode) -> Bool = { _ in true }) throws(ProtocolError) -> UINode {
         func label(_ n: UINode) -> String { n.text.isEmpty ? n.desc : n.text }
         func show(_ ns: [UINode]) -> String {
             ns.prefix(5).map { n in "\(n.ref) " + (label(n).isEmpty ? "id=\(n.id)" : "\"\(label(n))\"") }.joined(separator: ", ")
@@ -73,7 +75,7 @@ public enum UITree {
                 if p.clickable { hit = p; break }
                 d = p.depth
             }
-            if !hits.contains(where: { $0.ref == hit.ref }) { hits.append(hit) }
+            if keep(hit), !hits.contains(where: { $0.ref == hit.ref }) { hits.append(hit) }
         }
         let what = [text.map { "text \"\($0)\"" }, id.map { "id \($0)" }].compactMap { $0 }.joined(separator: " and ")
         guard !hits.isEmpty else {

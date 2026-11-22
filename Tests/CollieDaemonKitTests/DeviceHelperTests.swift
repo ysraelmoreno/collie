@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import Darwin
+import CollieCore
 import CollieDevice
 import CollieProtocol
 @testable import CollieDaemonKit
@@ -339,7 +340,8 @@ private func obj(_ v: JSONValue?) -> [String: JSONValue] { if case .object(let o
         let ui = obj(try await fx.run("device.ui", ["timing": .bool(true)]))
         guard case .string(let tree)? = ui["tree"] else { Issue.record("\(ui)"); await fx.cleanup(); return }
         #expect(tree.contains("Login") && obj(ui["timingMs"])["source"] == .string("uiautomator"))
-        #expect(await h.state == .fallback && (await h.reason)?.contains("stopped answering") == true)
+        let (state, reason) = (await h.state, await h.reason)
+        #expect(state == .fallback && reason?.contains("stopped answering") == true, "\(reason ?? "")")
         #expect(try await fx.run("device.tap", ["x": .number(3), "y": .number(4)]) == .object([:]))
         #expect(fx.adb.contains("-s emulator-5554 shell input tap 3 4"), "\(fx.adb)")
         await fx.cleanup()

@@ -113,8 +113,9 @@ private struct Rig {
     func get() async throws -> Work { try #require(try await store.get(work)) }
     func has(_ file: String) -> Bool { FileManager.default.fileExists(atPath: repo.appendingPathComponent(file).path) }
     func read(_ file: String) -> String { (try? String(contentsOf: repo.appendingPathComponent(file), encoding: .utf8)) ?? "?" }
-    /// The subjects of the paddock's branch, newest first.
-    func subjects() async throws -> [String] { try await git(repo, "log", "--format=%s").split(separator: "\n").map(String.init) }
+    /// The subjects of the paddock's branch, newest first. Topological: commits made in the same second (a fast
+    /// runner) have no date order, and plain `git log` showed "init" before its child "edit a.txt" in run 44969188276.
+    func subjects() async throws -> [String] { try await git(repo, "log", "--topo-order", "--format=%s").split(separator: "\n").map(String.init) }
     func merges() async throws -> [String] { try await git(repo, "log", "--merges", "--format=%s").split(separator: "\n").map(String.init) }
     /// What the gate judged, in order.
     func gated() -> [String] {

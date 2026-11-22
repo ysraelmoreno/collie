@@ -184,7 +184,7 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         #expect(await adb.installs == 0)
     }
 
-    @Test func versionIsTwo() { #expect(HelperProtocol.version == 2) }
+    @Test func versionIsThree() { #expect(HelperProtocol.version == 3) }
 
     @Test func oldVersionIsReinstalled() async throws {
         let srv = try FakeHelper(installed: true, version: 1); defer { srv.stop() }   // v1: the one that kept the socket
@@ -273,15 +273,64 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         #expect(await adb.installs == 0)
     }
 
-    @Test func dumpsStillEmptyAfterTheRebindFallBack() async throws {
+    @Test func blindHelperClimbsTheLadderInOrderThenFallsBack() async throws {
         let srv = try FakeHelper(installed: true, emptyDumps: 1000); defer { srv.stop() }
-        let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
+        let adb = FakeAdb(services: "com.a/.X:\(HelperProtocol.service):com.b/.Y", helper: srv)
         let h = make(adb)
         await h.start(install: true)
         let (state, reason) = (await h.state, await h.reason)
-        #expect(state == .fallback && reason?.contains("after re-enabling") == true, "\(reason ?? "")")
-        #expect(await adb.calls.filter { $0 == ["shell", "settings", "delete", "secure", "enabled_accessibility_services"] }.count == 1, "one rebind")
+        #expect(state == .fallback, "\(reason ?? "")")
+        #expect(reason?.contains("re-enabling the service, force-stopping the app, reinstalling the app; using uiautomator") == true, "\(reason ?? "")")
+        #expect(field(await h.status, "source") == .string("uiautomator"))
+        let calls = await adb.calls
+        let off = calls.firstIndex { $0 == ["shell", "settings", "put", "secure", "enabled_accessibility_services", "'com.a/.X:com.b/.Y'"] }
+        let stop = calls.firstIndex { $0 == ["shell", "am", "force-stop", HelperProtocol.package] }
+        let inst = calls.firstIndex { $0.first == "install" }
+        #expect(off != nil && stop != nil && inst != nil && off! < stop! && stop! < inst!, "\(calls)")
+        #expect(calls.filter { $0.first == "install" }.count == 1 && calls.filter { $0.contains("force-stop") }.count == 1)
+        #expect(await adb.services == "com.a/.X:com.b/.Y:\(HelperProtocol.service)", "the others kept by every step")
+        // each step probes at once: its tries of dump follow it, nothing else first
+        let dumps = srv.ops.filter { $0.contains(#""op":"dump""#) }.count
+        #expect(dumps == 4 * DeviceHelper.tries, "\(dumps)")
+    }
+
+    @Test func ladderStopsAtTheFirstStepWithNodes() async throws {
+        let srv = try FakeHelper(installed: true, emptyDumps: 2 * DeviceHelper.tries + 1); defer { srv.stop() }
+        let adb = FakeAdb(services: "com.a/.X:\(HelperProtocol.service)", helper: srv)
+        let h = make(adb)
+        await h.start(install: true)
+        let (state, reason) = (await h.state, await h.reason)
+        #expect(state == .ready, "\(reason ?? "")")
+        #expect(await adb.calls.filter { $0.contains("force-stop") }.count == 1)
+        #expect(await adb.installs == 0, "cured by the force-stop: no reinstall")
+        #expect(await adb.services == "com.a/.X:\(HelperProtocol.service)")
+    }
+
+    @Test func physicalDeviceLadderSkipsTheReinstall() async throws {
+        let srv = try FakeHelper(installed: true, emptyDumps: 1000); defer { srv.stop() }
+        let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
+        let h = make(adb, serial: "R5CT1234")
+        await h.start(install: false)
+        let (state, reason) = (await h.state, await h.reason)
+        #expect(state == .fallback && reason?.contains("force-stopping the app; using uiautomator") == true, "\(reason ?? "")")
+        #expect(await adb.installs == 0)
         #expect(await adb.services == HelperProtocol.service)
+    }
+
+    @Test func recoverClimbsTheSameLadder() async throws {
+        let srv = try FakeHelper(installed: true, emptyDumps: 1000); defer { srv.stop() }
+        let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
+        let clock = TestClock()
+        let h = make(adb, clock: clock)
+        await h.start(install: true)
+        #expect(await h.state == .fallback)
+        srv.set(emptyDumps: 2 * DeviceHelper.tries + 1)   // the next bring-up: blind until the force-stop
+        clock.advance(.seconds(30))
+        await h.recover()
+        let (state, reason) = (await h.state, await h.reason)
+        #expect(state == .ready, "\(reason ?? "")")
+        #expect(await adb.calls.filter { $0.contains("force-stop") }.count == 2)
+        #expect(await adb.installs == 1, "only the first bring-up reached the reinstall")
     }
 
     @Test func fallbackIsRetriedAfterThirtySeconds() async throws {

@@ -549,10 +549,17 @@ private struct LiteFx {
 
     @Test func waitTimeoutParses() throws {
         for (v, ms) in [(JSONValue.string("30"), 30_000), (.string("30s"), 30_000), (.string("500ms"), 500), (.number(60), 60_000), (.string("60000ms"), 60_000)] {
-            #expect(try DeviceService.waitTimeoutMs(v) == ms, "\(v)")
+            #expect(try DeviceService.waitTimeoutMs(v).map { [$0.ms] } == [ms] && DeviceService.waitTimeoutMs(v)?.clamped == false, "\(v)")
         }
         #expect(try DeviceService.waitTimeoutMs(nil) == nil)
-        for v in [JSONValue.string("30sec"), .string("0"), .string("61s"), .string("60001ms"), .string("0ms"), .string("abc"), .number(1.5)] {
+        // P3: above 60 s (the agent's 120000ms, a bare 120000) waits 60 s with clamped, not invalidArgs
+        for v in [JSONValue.string("120000ms"), .string("120000"), .number(120_000), .string("61s"), .string("60001ms"), .string("99999999999999")] {
+            let t = try DeviceService.waitTimeoutMs(v)
+            #expect(t?.ms == 60_000 && t?.clamped == true, "\(v)")
+        }
+        let w = try DeviceService.waitSpec(["stable": .bool(true), "timeout": .string("120000ms")])
+        #expect(w.timeoutMs == 60_000 && w.clamped)
+        for v in [JSONValue.string("30sec"), .string("0"), .string("-5"), .string("0ms"), .string("abc"), .number(1.5)] {
             let e = #expect(throws: ProtocolError.self) { try DeviceService.waitTimeoutMs(v) }
             #expect(e?.code == .invalidArgs && e?.message.hasPrefix("--timeout takes 30, 30s or 500ms") == true && e?.message.contains("\n") == false, "\(v)")
         }
@@ -579,7 +586,7 @@ private struct LiteFx {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in
             let m = try await shepherdWithPanel(d, p)
-            for a in [[:], ["gone": "true"], ["text": "x", "timeout": "61"], ["stable": "true", "timeout": "0"], ["text": "x", "timeout": "30sec"]] {
+            for a in [[:], ["gone": "true"], ["text": "x", "timeout": "-1"], ["stable": "true", "timeout": "0"], ["text": "x", "timeout": "30sec"]] {
                 #expect(try await call(p, m, "device.wait", a).error?.code == .invalidArgs, "\(a)")
             }
             #expect(!fx.lines.contains { $0.contains("uiautomator dump") })

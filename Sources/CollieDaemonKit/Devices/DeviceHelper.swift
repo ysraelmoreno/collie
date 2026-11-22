@@ -9,9 +9,10 @@ import CollieProtocol
 /// `adb forward tcp:<free> localabstract:collie-helper`, checks `hello`'s version (older: reinstalled) and confirms with a
 /// `dump` that has a root and nodes before it is `ready`. Any failure leaves it in `fallback` with the reason: the
 /// `device` commands keep using uiautomator and never fail because of the helper.
-/// H7: dumps that keep coming back without nodes re-bind the service once (off and on in the list); a helper in
-/// `fallback` is retried at most every `retryEvery` on a device call (`recover`), and a ready one whose dump comes back
-/// empty goes to `fallback`, so `status` always says what the commands read the screen with.
+/// H7/P1: dumps that keep coming back without nodes climb `ladder` (re-bind, force-stop, reinstall, each probed at once);
+/// a helper in `fallback` is retried at most every `retryEvery` on a device call (`recover`, the same bring-up and ladder),
+/// and a ready one whose dump comes back empty goes to `fallback`, so `status` always says what the commands read the
+/// screen with.
 actor DeviceHelper {
     /// `adb -s <serial> args` → stdout (non-zero exit throws).
     typealias Adb = @Sendable ([String]) async throws(ProtocolError) -> String
@@ -110,10 +111,8 @@ actor DeviceHelper {
             do throws(ProtocolError) {
                 _ = try await retry("dump", dump)
             } catch {
-                // the service bound but blind (the list edited by someone else): off and on once, then the same tries
                 guard error.code != .timeout else { throw error }
-                try await rebind()
-                _ = try await retry("dump after re-enabling the service", dump)
+                try await ladder(install: install, dump)
             }
             state = .ready; version = hello?.version
         } catch {
@@ -224,6 +223,37 @@ actor DeviceHelper {
                                           : ["shell", "settings", "put", "secure", "enabled_accessibility_services", try Self.quoted(off)])
         }
         try await enable()
+    }
+
+    /// A recovery step of a helper bound but blind (dumps without nodes); the text goes in the fallback reason.
+    enum Step: String, CaseIterable, Sendable {
+        case rebind = "re-enabling the service", forceStop = "force-stopping the app", reinstall = "reinstalling the app"
+    }
+
+    /// P1 (measured on v3: blindness cures in 270-660 ms when probed from the enable on): each step in order, then the
+    /// dump probed at once and every `gap`, `tries` times (~3 s), stopping at the first dump with nodes. The other
+    /// services in the list are kept by every step (`enable`). Without `install` (a physical device not opted in) the
+    /// reinstall is skipped. All blind: thrown with the steps tried, and the caller falls back to uiautomator.
+    private func ladder(install: Bool, _ dump: () async throws(ProtocolError) -> HelperProtocol.Dump?) async throws(ProtocolError) {
+        let steps = Step.allCases.filter { install || $0 != .reinstall }
+        for step in steps {
+            switch step {
+            case .rebind: try await rebind()
+            case .forceStop:
+                _ = try await adb(["shell", "am", "force-stop", HelperProtocol.package])
+                try await enable()
+            case .reinstall:
+                try await installAPK()
+                try await enable()
+            }
+            do throws(ProtocolError) {
+                _ = try await retry("dump after \(step.rawValue)", dump)
+                return
+            } catch {
+                if error.code == .timeout { throw error }
+            }
+        }
+        throw Self.fail("helper dump came back without nodes after \(steps.map(\.rawValue).joined(separator: ", ")); using uiautomator")
     }
 
     private func hello(_ p: UInt16) async throws(ProtocolError) -> HelperProtocol.Hello {

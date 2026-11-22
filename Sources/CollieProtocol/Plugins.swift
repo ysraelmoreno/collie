@@ -207,7 +207,7 @@ extension PluginRegistry {
                   ParamSpec("gone", .flag, help: "With --text: wait for it to disappear"),
                   ParamSpec("stable", .flag, help: "Wait for the screen to settle: with the Android helper no screen event for --quiet ms, else two equal UI dumps in a row"),
                   quiet,
-                  ParamSpec("timeout", .string, help: "30, 30s or 500ms (1 ms to 60 s in all; a bare number is seconds, 1-60; default 10 s)"),
+                  ParamSpec("timeout", .string, help: "30, 30s or 500ms (a bare number is seconds; above 60 s waits 60 s with clamped: true; default 10 s)"),
                   ParamSpec("then", .string, help: "ui: also return the UI tree once the wait holds ({ui}); screen: the device.screen groups instead ({screen})")], timeout: 75),
             dcmd("find", "Find the element with this text or desc on the current screen (one fresh UI dump; the tap --text match: any case, equal first, then containing; several: the first); returns {found,ref,label,role,center,clickable} (refs updated: tap --ref works next), or notFound with up to 5 similar labels. --scroll: swipe and dump again until found, the list end (the tree no longer changes) or --max swipes; adds {scrolls,endReached} (notFound says both). Android, no tree match: one OCR read of the screenshot (no --role, no --scroll); a hit adds {via: ocr, warning} (no click confirmation: --then screen)",
                  [ParamSpec("text", .rest, positional: true, required: true, help: "Text or desc to find"),

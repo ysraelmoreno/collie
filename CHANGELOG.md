@@ -7,6 +7,7 @@ Names in quotes are labels of the app, which is in Portuguese.
 ## [Unreleased]
 
 ### Added
+- **Per-project loop config (`collie-work.json`):** a versioned file at the project root can declare the loop's `gate` and `precheck` (defaults for `work run`; the flag always wins), named `areas` (`collie work task add --area ask,quadro` builds the check as `area && area && smoke`), a `smoke` command and a `full` gate. `collie work config` shows what it resolves to and runs nothing. The loop reads the committed version (HEAD), never the working tree, and fails an attempt that edits the file; commands that would change what the `&&` chain means (`;`, `||`, `#`, `&`) are refused, and `work run` warns when the file has uncommitted changes. Projects without the file behave exactly as before.
 - **Shepherd context lifecycle:** the large-context advice now reads the real context size in tokens (150k and 250k levels, numbers only, never conversation text), and at the end of a loop the daemon writes a short handoff for the next turn (`collie work handoff`).
 - **Turn safety for loops:** the attempt prompt carries two fixed rules (run build and tests in the foreground; `swift build` does not compile tests), and `collie work run --precheck <cmd>` runs a fast check in the agent's own session before the full check, so a compile error costs a nudge instead of an attempt.
 - **Quadro example app** (`Examples/apps/quadro`): a local kanban board (Python 3.9, standard library only) with a `collie.json` contract, so `collie app adopt quadro` gives agents commands to create, move, comment on, archive and restore cards while the owner watches the board in a panel. Data stays in `$QUADRO_DIR` (default `~/.collie/quadro`), with a readable `BOARD.md` mirror. Cards have a type (impl, bug, refactor, spike, test, docs, chore) and a priority (high, medium, low), with filters in the UI and in `list-cards`; a board from the first version migrates to `schema` 2 on first open, keeping a `board.json.v1.bak` copy.
@@ -18,6 +19,7 @@ Names in quotes are labels of the app, which is in Portuguese.
 - Near-duplicate memories of the same kind and scope (same subject, three or more shared title terms, or close vectors) no longer enter one injection block together; only the best of each group is injected. Nothing in the memory store changes.
 
 ### Fixed
+- An app panel opened right after `collie app attach` (the service still starting) stayed blank: it now shows "Iniciando <app>…", loads the page by itself when the service comes up, and says "não está respondendo em <address>" if the service reports running but never answers.
 - The full-screen button (and the other controls of a terminal's title bar) did nothing on the canvas at any zoom other than 100%.
 - Parallel loop lanes no longer raise sandbox access cards (granting one restarted the lane's agent mid-attempt); the denials stay, they are just not asked about.
 

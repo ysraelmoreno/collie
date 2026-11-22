@@ -264,7 +264,7 @@ extension CommandRouter {
         try await withDaemon { d, p in
             let a = try await term(d, p, "A", command: "echo T=$COLLIE_TOKEN; read l; echo working; sleep 0.5; printf 'Apply the change? (y/n) '; read ans; echo \"GOT:$ans\"; exec cat")
             try await Task.sleep(for: .seconds(1))   // ready
-            try await d.process(a.uuid)!.write(Data("go\n".utf8))   // the agent starts a turn of its own
+            try await liveProcess(d, a.uuid).write(Data("go\n".utf8))   // the agent starts a turn of its own
             let s = try await chat(d, p, "@A hello")
             #expect(s.queued)
             #expect(await waitFor(15) { (try? await replyTo(d, s.id)) != nil })
@@ -281,7 +281,7 @@ extension CommandRouter {
             let a = try await term(d, p, "A", command: "echo T=$COLLIE_TOKEN; COLLIE_FAKE_HOOK=1 exec sh '\(fixture)'")
             let watcher = hookWatcher(d, p, a); defer { watcher.cancel() }
             try await Task.sleep(for: .seconds(1))   // ready
-            try await d.process(a.uuid)!.write(Data("typed\n".utf8))   // a turn the chat does not own
+            try await liveProcess(d, a.uuid).write(Data("typed\n".utf8))   // a turn the chat does not own
             let s = try await chat(d, p, "@A hello")
             #expect(s.queued)
             #expect(await waitFor(15) { (try? await replyTo(d, s.id))?.role == .agent })

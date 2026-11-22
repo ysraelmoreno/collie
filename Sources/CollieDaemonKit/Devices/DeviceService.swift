@@ -142,12 +142,15 @@ actor DeviceService {
         let r = try await act(command, args)
         guard let settle, Self.thenCommands.contains(command) else { return r }
         // ponytail: fixed settle, may catch an animation midway; the agent can run device.ui again
-        try? await Task.sleep(for: .milliseconds(settle))
+        await Self.nap(.milliseconds(settle))
         let ui = try await act("device.ui", [:])   // the same path as device.ui: refs updated
         guard case .object(var o) = r else { return r }
         o["ui"] = ui
         return .object(o)
     }
+
+    /// A plain timed wait (cancellation ends it early), for the waits that are about time, not an event.
+    static func nap(_ d: Duration) async { try? await Task.sleep(for: d) }
 
     /// The actions that take `--then ui` (and `--settle`).
     static let thenCommands: Set<String> = ["device.tap", "device.swipe", "device.text", "device.key", "device.launch"]
@@ -369,7 +372,7 @@ actor DeviceService {
         crash[serial]?.lineGen += 1
         let gen = crash[serial]?.lineGen
         Task {   // a Java crash ends with the next unrelated line; when none comes, 300 ms of quiet ends it
-            try? await Task.sleep(for: .milliseconds(300))
+            await Self.nap(.milliseconds(300))
             await self.crashQuiet(serial, id, gen)
         }
         await emitCrashes(serial, events)

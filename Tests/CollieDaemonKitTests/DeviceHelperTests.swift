@@ -9,7 +9,9 @@ import CollieProtocol
 /// Helper stand-in on 127.0.0.1 (what `adb forward` reaches): not installed closes each connection at once (as a forward
 /// with nobody on the abstract socket), `mute` accepts and never answers, else it answers `hello` with `version` and
 /// `dump` with one node (or `dumpNodes`) after `emptyDumps` empty ones; `tap`/`swipe`/`click`/`text`/`global` are
-/// acknowledged, `click` answering `node gone` while `goneClicks` lasts. `ops` logs each request line.
+/// acknowledged, `click` answering `node gone` while `goneClicks` lasts. `subscribe` is acknowledged and the connection
+/// kept: an event is pushed at each of `pushes` (ms after the ack), then it is closed with `drop`, else held open.
+/// `ops` logs each request line.
 private final class FakeHelper: @unchecked Sendable {
     let port: UInt16
     private let lfd: Int32
@@ -20,6 +22,7 @@ private final class FakeHelper: @unchecked Sendable {
     private var gone = 0
     /// The `nodes` array `dump` answers with (JSON), when set.
     private var dumpNodes: String?
+    private var pushes: [Int] = [], drop = false
     var ops: [String] { lock.withLock { log } }
 
     init(installed: Bool, version: Int = HelperProtocol.version, mute: Bool = false, emptyDumps: Int = 0) throws {
@@ -48,6 +51,21 @@ private final class FakeHelper: @unchecked Sendable {
     func die() { lock.withLock { state.installed = false } }
     func set(nodes: String? = nil, goneClicks: Int = 0) {
         lock.withLock { dumpNodes = nodes?.replacingOccurrences(of: "\n", with: ""); gone = goneClicks }   // one answer, one line
+    }
+
+    func set(pushes: [Int], drop: Bool = false) { lock.withLock { self.pushes = pushes; self.drop = drop } }
+
+    private func subscribed(_ c: Int32) {
+        let (at, drop) = lock.withLock { (pushes, self.drop) }
+        let ack = Array(#"{"ok":true,"id":1}\#n"#.utf8)
+        _ = write(c, ack, ack.count)
+        let start = Date()
+        for ms in at {
+            Thread.sleep(until: start.addingTimeInterval(Double(ms) / 1000))
+            let ev = Array(#"{"ev":"content","t":1}\#n"#.utf8)
+            guard write(c, ev, ev.count) == ev.count else { close(c); return }
+        }
+        if drop { close(c) } else { lock.withLock { held.append(c) } }
     }
 
     private func serve(_ c: Int32) {
@@ -79,6 +97,7 @@ private final class FakeHelper: @unchecked Sendable {
                 gone -= 1; return true
             }
             reply = stale ? #"{"ok":false,"error":"node gone","id":1}"# : #"{"ok":true,"via":"action","id":1}"#
+        case "subscribe": subscribed(c); return
         case "tap", "swipe", "text", "global": reply = #"{"ok":true,"id":1}"#
         default: reply = #"{"ok":false,"error":"unknown op"}"#
         }
@@ -346,6 +365,66 @@ extension DeviceHelperTests {
         #expect(state == .fallback && reason?.contains("stopped answering") == true, "\(reason ?? "")")
         #expect(try await fx.run("device.tap", ["x": .number(3), "y": .number(4)]) == .object([:]))
         #expect(fx.adb.contains("-s emulator-5554 shell input tap 3 4"), "\(fx.adb)")
+        await fx.cleanup()
+    }
+}
+
+/// H4: `wait --stable` and `--settle stable` by the helper's `subscribe` events, the polling when it is not there.
+extension DeviceHelperTests {
+    @Test func stableAfterSilenceWithoutDumpPolling() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        srv.set(pushes: [])
+        let fx = try Svc(srv)
+        _ = await fx.ready()
+        let dumps = srv.ops.filter { $0.contains(#""op":"dump""#) }.count   // the ready check's
+        let r = obj(try await fx.run("device.wait", ["stable": .bool(true)]))
+        guard case .number(let ms)? = r["waitedMs"] else { Issue.record("\(r)"); await fx.cleanup(); return }
+        #expect(r["ok"] == .bool(true) && ms >= 300 && ms < 2000, "\(r)")
+        #expect(srv.ops.filter { $0.contains(#""op":"subscribe""#) }.count == 1, "\(srv.ops)")
+        #expect(srv.ops.filter { $0.contains(#""op":"dump""#) }.count == dumps, "no dump polling: \(srv.ops)")
+        let t = obj(try await fx.run("device.tap", ["x": .number(3), "y": .number(4), "then": .string("ui"), "settle": .string("stable"), "quiet": .number(100)]))
+        #expect(t["settled"] == .bool(true), "\(t)")
+        #expect(srv.ops.filter { $0.contains(#""op":"subscribe""#) }.count == 2)
+        #expect(!fx.adb.contains { $0.contains("uiautomator") }, "\(fx.adb)")
+        await fx.cleanup()
+    }
+
+    @Test func eventRestartsTheQuietCount() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        srv.set(pushes: [200, 400])
+        let fx = try Svc(srv)
+        _ = await fx.ready()
+        let r = obj(try await fx.run("device.wait", ["stable": .bool(true), "quiet": .number(300)]))
+        guard case .number(let ms)? = r["waitedMs"] else { Issue.record("\(r)"); await fx.cleanup(); return }
+        #expect(ms >= 700 && ms < 3000, "the last event at 400 ms + 300 quiet: \(r)")
+        await fx.cleanup()
+    }
+
+    @Test func eventsUntilTheTimeoutFailTheWait() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        srv.set(pushes: Array(stride(from: 100, through: 3000, by: 100)))
+        let fx = try Svc(srv)
+        _ = await fx.ready()
+        do {
+            _ = try await fx.run("device.wait", ["stable": .bool(true), "timeout": .string("800ms")])
+            Issue.record("a screen that keeps changing must time out")
+        } catch let e as ProtocolError {
+            #expect(e.code == .timeout && e.message.contains("stable screen not reached in 800 ms") && e.message.contains("Combos"), "\(e.message)")
+        }
+        #expect(!fx.adb.contains { $0.contains("uiautomator") }, "the last screen read through the helper: \(fx.adb)")
+        await fx.cleanup()
+    }
+
+    @Test func helperDropMidwayFallsBackToPolling() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        srv.set(pushes: [100], drop: true)
+        let fx = try Svc(srv)
+        let h = await fx.ready()
+        let r = obj(try await fx.run("device.wait", ["stable": .bool(true)]))
+        #expect(r["ok"] == .bool(true), "\(r)")
+        let (state, reason) = (await h.state, await h.reason)
+        #expect(state == .fallback && reason?.contains("subscription") == true, "\(reason ?? "")")
+        #expect(fx.adb.filter { $0.contains("uiautomator") }.count >= 2, "two equal dumps: \(fx.adb)")
         await fx.cleanup()
     }
 }

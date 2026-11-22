@@ -180,10 +180,33 @@ actor DeviceService {
         func shown(_ then: (screen: Bool, settleMs: Int?), _ o: inout [String: JSONValue]) async throws(ProtocolError) {
             if then.screen { o["screen"] = .object(try await screen(all: false)) } else { o["ui"] = try await act("device.ui", [:]) }
         }
+        /// `--stable` (H4): with the helper ready, the text by dumps and then the stability by its `subscribe` events (none
+        /// for `quietMs`); without it, or when it drops midway, two equal dumps in a row (`poll`).
+        func wait(_ w: Wait) async throws(ProtocolError) -> (ok: Bool, waitedMs: Int, last: [UINode]) {
+            guard w.stable, panel.state["platform"] != .string("ios"), let h = helpers[serial], await h.state == .ready else {
+                return try await poll(w, dump: dump)
+            }
+            let start = ContinuousClock.now
+            func waited() -> Int { Int((ContinuousClock.now - start) / .milliseconds(1)) }
+            func left() -> Int { max(1, w.timeoutMs - waited()) }
+            var last: [UINode] = []
+            if w.text != nil {
+                let r = try await poll(Wait(text: w.text, gone: w.gone, stable: false, timeoutMs: w.timeoutMs), dump: dump)
+                guard r.ok else { return r }
+                last = r.last
+            }
+            switch await h.quiet(w.quietMs, timeoutMs: left()) {
+            case true?: return (true, waited(), last)
+            case false?: return (false, waited(), try await dump())
+            case nil:
+                let r = try await poll(Wait(text: w.text, gone: w.gone, stable: true, timeoutMs: left()), dump: dump)
+                return (r.ok, waited(), r.last)
+            }
+        }
         if command == "device.wait" {
             let w = try Self.waitSpec(args)
             let then = try Self.then(args)   // checked before the first dump
-            let r = try await poll(w, dump: dump)
+            let r = try await wait(w)
             guard r.ok else {
                 let limit = w.timeoutMs % 1000 == 0 ? "\(w.timeoutMs / 1000) s" : "\(w.timeoutMs) ms"
                 throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(limit). Last screen:\n"
@@ -207,6 +230,7 @@ actor DeviceService {
             return .object(o)
         }
         let then = try Self.then(args)   // checked before the action: a bad --then must not tap
+        let quiet = try Self.quietMs(args)
         var args = args
         if command == "device.tap", let pick = try Self.tapPick(args) {
             _ = try await act("device.ui", [:])   // always a fresh dump: cached refs may be stale
@@ -219,7 +243,7 @@ actor DeviceService {
             await Self.nap(.milliseconds(ms))
         } else {
             // the action already ran: a screen that never settles returns its last tree anyway, with settled false
-            o["settled"] = .bool(try await poll(Wait(text: nil, gone: false, stable: true, timeoutMs: Self.stableSettleMs), dump: dump).ok)
+            o["settled"] = .bool(try await wait(Wait(text: nil, gone: false, stable: true, timeoutMs: Self.stableSettleMs, quietMs: quiet)).ok)
         }
         try await shown(then, &o)
         return .object(o)
@@ -228,6 +252,8 @@ actor DeviceService {
     /// What `device.wait` waits for: `text` to show (or go, `gone`), and/or two equal dumps in a row (`stable`).
     struct Wait {
         let text: String?; let gone: Bool; let stable: Bool; let timeoutMs: Int
+        /// With the helper: `stable` holds once no screen event came for this long.
+        var quietMs = DeviceService.stableQuietMs
         var what: String { [text.map { "text '\($0)' " + (gone ? "gone" : "shown") }, stable ? "stable screen" : nil].compactMap { $0 }.joined(separator: " + ") }
         /// `text` (any case, in a node's text or desc, containing) shows or, with `gone`, is absent.
         func textMet(_ nodes: [UINode]) -> Bool {
@@ -238,6 +264,10 @@ actor DeviceService {
 
     /// `--settle stable` after an action: at most this long for two equal dumps.
     static let stableSettleMs = 5000
+    /// `--quiet` default: ms without a helper event for a screen to count as stable.
+    static let stableQuietMs = 300
+    /// `--quiet <ms>` (50-5000) of `wait --stable` and `--settle stable`; the default when absent.
+    static func quietMs(_ a: [String: JSONValue]) throws(ProtocolError) -> Int { try int(a, "quiet", 50...5000) ?? stableQuietMs }
     /// Pause between two dumps of a wait (a dump itself takes 2-3 s on Android).
     static let pollGapMs = 200
 
@@ -329,7 +359,7 @@ actor DeviceService {
         let gone = flag("gone"), stable = flag("stable")
         guard text != nil || stable else { throw ProtocolError(code: .invalidArgs, message: "device.wait needs --text or --stable") }
         guard !gone || text != nil else { throw ProtocolError(code: .invalidArgs, message: "--gone needs --text") }
-        return Wait(text: text, gone: gone, stable: stable, timeoutMs: try waitTimeoutMs(a["timeout"]) ?? 10_000)
+        return Wait(text: text, gone: gone, stable: stable, timeoutMs: try waitTimeoutMs(a["timeout"]) ?? 10_000, quietMs: try quietMs(a))
     }
 
     /// `device.wait --timeout`: `30` or `30s` (seconds, 1-60) or `500ms` (1-60000), in ms; nil when absent.

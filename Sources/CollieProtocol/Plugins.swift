@@ -168,8 +168,11 @@ extension PluginRegistry {
     /// `--then ui` on the actions: after it, wait `settle` ms and return the device.ui tree too (one call per step).
     private static let then = [
         ParamSpec("then", .string, help: "ui: also return the UI tree after the action ({ui:{tree,truncated,nodes,total}}, refs updated); screen: the device.screen groups instead ({screen})"),
-        ParamSpec("settle", .string, help: "With --then: ms to wait before reading (0-3000, default 400), or stable: wait (up to 5 s) for two equal UI dumps in a row, {settled} says if it did"),
+        ParamSpec("settle", .string, help: "With --then: ms to wait before reading (0-3000, default 400), or stable: wait (up to 5 s) for the screen to settle (with the Android helper: no screen event for --quiet ms; else two equal UI dumps in a row), {settled} says if it did"),
+        quiet,
     ]
+    /// `--quiet` of `wait --stable` and `--settle stable` with the Android helper.
+    private static let quiet = ParamSpec("quiet", .int, help: "With the Android helper: ms without a screen event for the screen to count as stable (50-5000, default 300)")
 
     /// `--timing` on device.ui|screen: ms per step, to measure without timing from outside.
     private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group)")
@@ -194,7 +197,8 @@ extension PluginRegistry {
             dcmd("wait", "Wait for --text to show (or go, with --gone) and/or the screen to settle (--stable: two equal UI dumps in a row), instead of sleep + device.ui; returns {ok,waitedMs} (refs updated); on timeout a timeout error with the last screen",
                  [ParamSpec("text", .string, help: "Text or desc to wait for (any case, containing)"),
                   ParamSpec("gone", .flag, help: "With --text: wait for it to disappear"),
-                  ParamSpec("stable", .flag, help: "Wait for two equal UI dumps in a row"),
+                  ParamSpec("stable", .flag, help: "Wait for the screen to settle: with the Android helper no screen event for --quiet ms, else two equal UI dumps in a row"),
+                  quiet,
                   ParamSpec("timeout", .string, help: "30, 30s or 500ms (1 ms to 60 s in all; a bare number is seconds, 1-60; default 10 s)"),
                   ParamSpec("then", .string, help: "ui: also return the UI tree once the wait holds ({ui}); screen: the device.screen groups instead ({screen})")], timeout: 75),
             dcmd("find", "Find the element with this text or desc on the current screen (one fresh UI dump; the tap --text match: any case, equal first, then containing; several: the first); returns {found,ref,label,role,center,clickable} (refs updated: tap --ref works next), or notFound with up to 5 similar labels. --scroll: swipe and dump again until found, the list end (the tree no longer changes) or --max swipes; adds {scrolls,endReached} (notFound says both)",

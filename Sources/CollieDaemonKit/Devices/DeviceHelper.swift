@@ -123,6 +123,21 @@ actor DeviceHelper {
         }
     }
 
+    /// H4, `wait --stable` and `--settle stable`: `subscribe` on a connection of its own, then true once no event came for
+    /// `quietMs`, false when events kept coming until `timeoutMs`; nil when the helper is not `ready` or the subscription
+    /// drops (the helper then goes to `fallback`, as in `send`): the caller polls dumps as without a helper.
+    func quiet(_ quietMs: Int, timeoutMs: Int) async -> Bool? {
+        guard state == .ready, let p = port else { return nil }
+        do throws(ProtocolError) {
+            return try await Self.silence(p, quietMs: quietMs, timeoutMs: timeoutMs, answer: answer)
+        } catch {
+            guard state == .ready else { return nil }
+            state = .fallback; reason = "helper stopped answering (\(error.message)); using uiautomator"
+            await unforward()
+            return nil
+        }
+    }
+
     // MARK: steps
 
     private func forward() async throws(ProtocolError) -> UInt16 {
@@ -183,7 +198,7 @@ actor DeviceHelper {
     }
 
     /// One request to the helper on 127.0.0.1:`port` (the forward), its one answer line.
-    /// ponytail: one connection per request; H4's `subscribe` keeps its own open.
+    /// ponytail: one connection per request; `subscribe` keeps its own open (`silence`).
     static func request(_ port: UInt16, _ r: HelperProtocol.Request, timeout: Duration) async throws(ProtocolError) -> Data {
         let secs = Double(timeout / .milliseconds(1)) / 1000, line = HelperProtocol.encode(r, id: 1)
         return try await UnixSocketClient.offPool { () throws -> Data in
@@ -204,6 +219,50 @@ actor DeviceHelper {
                 got.append(contentsOf: buf[0..<n])
                 if let nl = got.firstIndex(of: 0x0A) { return got[..<nl] }
                 guard got.count < 32 << 20 else { throw ProtocolError(code: .internal, message: "helper answer over 32 MiB") }
+            }
+        }
+    }
+
+    /// `subscribe` on 127.0.0.1:`port`: its answer within `answer`, then events until `quietMs` pass without one (true)
+    /// or `timeoutMs` pass since the answer (false). The connection closing or a refused subscribe throws.
+    static func silence(_ port: UInt16, quietMs: Int, timeoutMs: Int, answer: Duration) async throws(ProtocolError) -> Bool {
+        let secs = Double(answer / .milliseconds(1)) / 1000, line = HelperProtocol.encode(.subscribe, id: 1)
+        return try await UnixSocketClient.offPool { () throws -> Bool in
+            let fd = DeviceSession.connect(port, dummy: false, deadline: Date().addingTimeInterval(secs))
+            guard fd >= 0 else { throw ProtocolError(code: .unavailable, message: "helper: cannot connect to port \(port)") }
+            defer { Darwin.close(fd) }
+            let sent = line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+            guard sent == line.count else { throw ProtocolError(code: .unavailable, message: "helper: write failed") }
+            var got = Data(), buf = [UInt8](repeating: 0, count: 4096), acked = false
+            var start = Date(), last = start
+            let quiet = Double(quietMs) / 1000, total = Double(timeoutMs) / 1000
+            while true {
+                let now = Date()
+                let left: Double
+                if acked {
+                    if now.timeIntervalSince(last) >= quiet { return true }
+                    if now.timeIntervalSince(start) >= total { return false }
+                    left = min(quiet - now.timeIntervalSince(last), total - now.timeIntervalSince(start))
+                } else {
+                    left = secs - now.timeIntervalSince(start)
+                    guard left > 0 else { throw ProtocolError(code: .timeout, message: "helper did not answer subscribe in \(Int(secs * 1000)) ms") }
+                }
+                DeviceSession.setTimeout(fd, max(left, 0.001))   // 0 would mean no timeout
+                let n = Darwin.read(fd, &buf, buf.count)
+                if n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) { continue }
+                guard n > 0 else { throw ProtocolError(code: .unavailable, message: "helper closed the subscription") }
+                got.append(contentsOf: buf[0..<n])
+                while let nl = got.firstIndex(of: 0x0A) {
+                    let one = got[got.startIndex..<nl]
+                    got = Data(got[got.index(after: nl)...])
+                    switch try HelperProtocol.message(Data(one)) {
+                    case .event: last = Date()
+                    case .reply(let r):
+                        guard r.ok else { throw ProtocolError(code: .unavailable, message: "helper refused subscribe: \(r.error ?? "failed")") }
+                        if !acked { acked = true; start = Date(); last = start }
+                    }
+                }
+                guard got.count < 1 << 20 else { throw ProtocolError(code: .internal, message: "helper line over 1 MiB") }
             }
         }
     }

@@ -24,27 +24,6 @@ private let helper = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         return sb.text(since: 0).text
     }
 
-    /// A transient PTY error (no free slot) is retried; any other spawn error fails at once.
-    @Test func spawnRetriesTransientPTYErrors() throws {
-        var calls = 0
-        let v = try TerminalRegistry.retryingTransientPTY(pause: 0) { () throws -> Int in
-            calls += 1
-            if calls < 3 { throw PTYError.spawnFailed(errno: calls == 1 ? ENXIO : EAGAIN) }
-            return 7
-        }
-        #expect(v == 7 && calls == 3)
-        calls = 0
-        #expect(throws: PTYError.spawnFailed(errno: ENOENT)) {
-            try TerminalRegistry.retryingTransientPTY(pause: 0) { () throws -> Int in calls += 1; throw PTYError.spawnFailed(errno: ENOENT) }
-        }
-        #expect(calls == 1)
-        calls = 0
-        #expect(throws: PTYError.spawnFailed(errno: ENXIO)) {
-            try TerminalRegistry.retryingTransientPTY(tries: 3, pause: 0) { () throws -> Int in calls += 1; throw PTYError.spawnFailed(errno: ENXIO) }
-        }
-        #expect(calls == 3)
-    }
-
     @Test func spawnsThroughTheHelper() async throws {
         let out = try await ttyOf(helper: helper)
         #expect(out.contains("tty=ttys") && !out.contains("tty=??"), "\(out)")

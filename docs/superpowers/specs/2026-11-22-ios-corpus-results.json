@@ -1,0 +1,398 @@
+[
+ {
+  "screen": "normal",
+  "theme": "light",
+  "poor": false,
+  "gt": 4,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 5,
+  "ocr_precision": 1.0,
+  "ocr_ms": 212,
+  "tree_nodes": 6,
+  "tree_recall": 1.0,
+  "tree_missed": [],
+  "trigger": false,
+  "ms": {
+   "ui": 434,
+   "screen": 510,
+   "find": 576,
+   "tap_text": 910,
+   "wait_stable": 1407
+  }
+ },
+ {
+  "screen": "canvas",
+  "theme": "light",
+  "poor": true,
+  "gt": 5,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 6,
+  "ocr_precision": 1.0,
+  "ocr_ms": 157,
+  "tree_nodes": 1,
+  "tree_recall": 0.0,
+  "tree_missed": [
+   "Relatório Anual",
+   "Receita: R$ 1.234,56 · 42 pedidos",
+   "Exportar dados",
+   "Configurações",
+   "Rodapé: atualizado às 14:35"
+  ],
+  "trigger": true,
+  "ms": {
+   "ui": 375,
+   "screen": 364,
+   "find": null,
+   "tap_text": null,
+   "wait_stable": 903
+  }
+ },
+ {
+  "screen": "game",
+  "theme": "light",
+  "poor": true,
+  "gt": 4,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 5,
+  "ocr_precision": 1.0,
+  "ocr_ms": 129,
+  "tree_nodes": 5,
+  "tree_recall": 1.0,
+  "tree_missed": [],
+  "trigger": false,
+  "ms": {
+   "ui": 382,
+   "screen": 400,
+   "find": 411,
+   "tap_text": 768,
+   "wait_stable": 1000
+  }
+ },
+ {
+  "screen": "webcanvas",
+  "theme": "light",
+  "poor": true,
+  "gt": 5,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 6,
+  "ocr_precision": 1.0,
+  "ocr_ms": 158,
+  "tree_nodes": 6,
+  "tree_recall": 0.0,
+  "tree_missed": [
+   "Gráfico de Vendas",
+   "Total: R$ 1.234,56",
+   "Região Sul · 42 pedidos",
+   "Baixar relatório",
+   "Rodapé: atualizado às 14:35"
+  ],
+  "trigger": false,
+  "ms": {
+   "ui": 523,
+   "screen": 649,
+   "find": null,
+   "tap_text": null,
+   "wait_stable": 1048
+  }
+ },
+ {
+  "screen": "hidden",
+  "theme": "light",
+  "poor": true,
+  "gt": 4,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 5,
+  "ocr_precision": 1.0,
+  "ocr_ms": 127,
+  "tree_nodes": 1,
+  "tree_recall": 0.0,
+  "tree_missed": [
+   "Área Restrita",
+   "Saldo: R$ 1.234,56",
+   "Entrar agora",
+   "Termos de uso, versão 3"
+  ],
+  "trigger": true,
+  "ms": {
+   "ui": 343,
+   "screen": 361,
+   "find": null,
+   "tap_text": null,
+   "wait_stable": 999
+  }
+ },
+ {
+  "screen": "photo",
+  "theme": "light",
+  "poor": true,
+  "gt": 4,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 5,
+  "ocr_precision": 1.0,
+  "ocr_ms": 361,
+  "tree_nodes": 1,
+  "tree_recall": 0.0,
+  "tree_missed": [
+   "Férias em Floripa",
+   "A partir de R$ 1.234,56 por pessoa",
+   "Reserve até 30/12 e ganhe desconto",
+   "Condições sujeitas a alteração"
+  ],
+  "trigger": true,
+  "ms": {
+   "ui": 455,
+   "screen": 403,
+   "find": null,
+   "tap_text": null,
+   "wait_stable": 872
+  }
+ },
+ {
+  "screen": "list",
+  "theme": "light",
+  "poor": false,
+  "gt": 14,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 18,
+  "ocr_precision": 1.0,
+  "ocr_ms": 281,
+  "tree_nodes": 28,
+  "tree_recall": 1.0,
+  "tree_missed": [],
+  "trigger": false,
+  "ms": {
+   "ui": 924,
+   "screen": 1146,
+   "find": 942,
+   "tap_text": null,
+   "wait_stable": 2006
+  }
+ },
+ {
+  "screen": "form",
+  "theme": "light",
+  "poor": false,
+  "gt": 9,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 10,
+  "ocr_precision": 1.0,
+  "ocr_ms": 164,
+  "tree_nodes": 13,
+  "tree_recall": 1.0,
+  "tree_missed": [],
+  "trigger": false,
+  "ms": {
+   "ui": 555,
+   "screen": 438,
+   "find": 508,
+   "tap_text": 891,
+   "wait_stable": 1053
+  }
+ },
+ {
+  "screen": "normal",
+  "theme": "dark",
+  "poor": false,
+  "gt": 4,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 5,
+  "ocr_precision": 1.0,
+  "ocr_ms": 166,
+  "tree_nodes": 6,
+  "tree_recall": 1.0,
+  "tree_missed": [],
+  "trigger": false,
+  "ms": {
+   "ui": 398,
+   "screen": 412,
+   "find": 382,
+   "tap_text": 896,
+   "wait_stable": 942
+  }
+ },
+ {
+  "screen": "canvas",
+  "theme": "dark",
+  "poor": true,
+  "gt": 5,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 6,
+  "ocr_precision": 1.0,
+  "ocr_ms": 234,
+  "tree_nodes": 1,
+  "tree_recall": 0.0,
+  "tree_missed": [
+   "Relatório Anual",
+   "Receita: R$ 1.234,56 · 42 pedidos",
+   "Exportar dados",
+   "Configurações",
+   "Rodapé: atualizado às 14:35"
+  ],
+  "trigger": true,
+  "ms": {
+   "ui": 843,
+   "screen": 622,
+   "find": null,
+   "tap_text": null,
+   "wait_stable": 1011
+  }
+ },
+ {
+  "screen": "game",
+  "theme": "dark",
+  "poor": true,
+  "gt": 4,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 5,
+  "ocr_precision": 1.0,
+  "ocr_ms": 145,
+  "tree_nodes": 5,
+  "tree_recall": 1.0,
+  "tree_missed": [],
+  "trigger": false,
+  "ms": {
+   "ui": 365,
+   "screen": 427,
+   "find": 442,
+   "tap_text": 1024,
+   "wait_stable": 1064
+  }
+ },
+ {
+  "screen": "webcanvas",
+  "theme": "dark",
+  "poor": true,
+  "gt": 5,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 6,
+  "ocr_precision": 1.0,
+  "ocr_ms": 169,
+  "tree_nodes": 6,
+  "tree_recall": 0.0,
+  "tree_missed": [
+   "Gráfico de Vendas",
+   "Total: R$ 1.234,56",
+   "Região Sul · 42 pedidos",
+   "Baixar relatório",
+   "Rodapé: atualizado às 14:35"
+  ],
+  "trigger": false,
+  "ms": {
+   "ui": 392,
+   "screen": 409,
+   "find": null,
+   "tap_text": null,
+   "wait_stable": 1024
+  }
+ },
+ {
+  "screen": "hidden",
+  "theme": "dark",
+  "poor": true,
+  "gt": 4,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 5,
+  "ocr_precision": 1.0,
+  "ocr_ms": 551,
+  "tree_nodes": 1,
+  "tree_recall": 0.0,
+  "tree_missed": [
+   "Área Restrita",
+   "Saldo: R$ 1.234,56",
+   "Entrar agora",
+   "Termos de uso, versão 3"
+  ],
+  "trigger": true,
+  "ms": {
+   "ui": 1389,
+   "screen": 3395,
+   "find": null,
+   "tap_text": null,
+   "wait_stable": 901
+  }
+ },
+ {
+  "screen": "photo",
+  "theme": "dark",
+  "poor": true,
+  "gt": 4,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 5,
+  "ocr_precision": 1.0,
+  "ocr_ms": 176,
+  "tree_nodes": 1,
+  "tree_recall": 0.0,
+  "tree_missed": [
+   "Férias em Floripa",
+   "A partir de R$ 1.234,56 por pessoa",
+   "Reserve até 30/12 e ganhe desconto",
+   "Condições sujeitas a alteração"
+  ],
+  "trigger": true,
+  "ms": {
+   "ui": 265,
+   "screen": 306,
+   "find": null,
+   "tap_text": null,
+   "wait_stable": 755
+  }
+ },
+ {
+  "screen": "list",
+  "theme": "dark",
+  "poor": false,
+  "gt": 14,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 18,
+  "ocr_precision": 1.0,
+  "ocr_ms": 193,
+  "tree_nodes": 28,
+  "tree_recall": 1.0,
+  "tree_missed": [],
+  "trigger": false,
+  "ms": {
+   "ui": 726,
+   "screen": 699,
+   "find": 659,
+   "tap_text": null,
+   "wait_stable": 1553
+  }
+ },
+ {
+  "screen": "form",
+  "theme": "dark",
+  "poor": false,
+  "gt": 9,
+  "ocr_recall": 1.0,
+  "ocr_missed": [],
+  "ocr_items": 10,
+  "ocr_precision": 1.0,
+  "ocr_ms": 132,
+  "tree_nodes": 13,
+  "tree_recall": 1.0,
+  "tree_missed": [],
+  "trigger": false,
+  "ms": {
+   "ui": 431,
+   "screen": 355,
+   "find": 360,
+   "tap_text": 754,
+   "wait_stable": 879
+  }
+ }
+]

@@ -37,13 +37,32 @@ public enum ScreenModel {
             for j in (i + 1)..<nodes.count { if nodes[j].depth <= nodes[i].depth { break }; out.append(j) }
             return out
         }
-        func own(_ n: UINode) -> String { (n.text.isEmpty ? n.desc : n.text).trimmingCharacters(in: .whitespaces) }
+        /// The node's label; "" for an image named like a symbol ("chevron", "apple.id"): not text for people.
+        /// `device ui` and `--all` keep the raw tree, label included.
+        func own(_ n: UINode) -> String {
+            let l = (n.text.isEmpty ? n.desc : n.text).trimmingCharacters(in: .whitespaces)
+            return isImage(n) && symbolNameNoise(l) ? "" : l
+        }
         /// The node's label, else its first labelled non-clickable descendant's (that descendant is then used).
         func label(_ i: Int, consume: Bool) -> String {
             if !own(nodes[i]).isEmpty { return own(nodes[i]) }
             guard let d = descendants(i).first(where: { !nodes[$0].clickable && !own(nodes[$0]).isEmpty }) else { return "" }
             if consume { used.insert(d) }
             return own(nodes[d])
+        }
+        // I2: decoration. A node (any type, OCR aside) whose only label is a symbol name ("chevron") and that sits on
+        // the row of a labelled clickable (centre within half its height) or inside it leaves every group; `--all`
+        // and `ui` keep it. With no such neighbour (FAB, a lone "plus") it stays as before.
+        // ponytail: O(n²) scan, fine for a screen's few hundred nodes
+        for i in nodes.indices where !nodes[i].ocr {
+            let l = (nodes[i].text.isEmpty ? nodes[i].desc : nodes[i].text).trimmingCharacters(in: .whitespaces)
+            guard !l.isEmpty, symbolNameNoise(l) else { continue }
+            let b = nodes[i].bounds
+            if nodes.indices.contains(where: { j in
+                guard j != i, nodes[j].clickable else { return false }
+                let lj = label(j, consume: false), bj = nodes[j].bounds
+                return !lj.isEmpty && !symbolNameNoise(lj) && (bj.contains(b) || abs(bj.midY - b.midY) < bj.height / 2)
+            }) { used.insert(i) }
         }
         func item(_ i: Int, _ role: String, _ text: String? = nil) -> ScreenItem {
             let n = nodes[i]
@@ -189,6 +208,15 @@ public enum ScreenModel {
         if w.contains("tab") { return "tab" }
         if n.scrollable { return "list" }
         return n.clickable ? "button" : nil
+    }
+
+    /// iOS `Image`; Android `ImageView`/`ImageButton` without text (its label is the content description).
+    static func isImage(_ n: UINode) -> Bool {
+        switch short(n.cls) {
+        case "Image": true
+        case "ImageView", "ImageButton": n.text.isEmpty
+        default: false
+        }
     }
 
     /// "configuration_fab" → "configuration fab"

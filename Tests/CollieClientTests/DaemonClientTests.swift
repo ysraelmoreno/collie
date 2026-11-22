@@ -219,16 +219,15 @@ let colliedURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().del
             if case .replay(let data, _) = f { text = String(decoding: data, as: UTF8.self) }
             if case .out(let data) = f { text += String(decoding: data, as: UTF8.self) }
         }
-        // 40 ms apart: each lands inside the previous one's 100 ms window, but far enough apart that undebounced
-        // resizes would reach the shell (trap runs within ~10 ms) as separate SIGWINCHes
-        s.resize(cols: 81, rows: 21)
-        try await Task.sleep(for: .milliseconds(40)); s.resize(cols: 82, rows: 22)
-        try await Task.sleep(for: .milliseconds(40)); s.resize(cols: 83, rows: 23)
+        // the debounce window is held open (no wall clock: under CI load 40 ms sleeps stretched past 100 ms and
+        // each resize went out on its own); three resizes inside one window, then the window closes once
+        s._holdResizeDebounce()
+        s.resize(cols: 81, rows: 21); s.resize(cols: 82, rows: 22); s.resize(cols: 83, rows: 23)
+        s._fireResizeDebounce()
         text = ""
         while !text.contains("winch 23 83"), let f = await it.next() {
             if case .out(let data) = f { text += String(decoding: data, as: UTF8.self) }
         }
-        try await Task.sleep(for: .milliseconds(300))   // any extra resize would show up as another winch line
         s._simulateDrop()   // a fresh replay holds the whole output: count the winch lines there
         var replay = ""
         while let f = await it.next() { if case .replay(let data, _) = f { replay = String(decoding: data, as: UTF8.self); break } }

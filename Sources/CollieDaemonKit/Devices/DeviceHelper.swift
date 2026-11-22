@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 import CollieCore
 import CollieDevice
 import CollieProtocol
@@ -10,7 +11,7 @@ import CollieProtocol
 /// `dump` that has a root and nodes before it is `ready`. Any failure leaves it in `fallback` with the reason: the
 /// `device` commands keep using uiautomator and never fail because of the helper.
 /// H7/P1: dumps that keep coming back without nodes climb `ladder` (re-bind, force-stop, reinstall, each probed at once);
-/// a helper in `fallback` is retried at most every `retryEvery` on a device call (`recover`, the same bring-up and ladder),
+/// a helper in `fallback` is retried on a device call along `retrySchedule` (`recover`, the same bring-up and ladder),
 /// and a ready one whose dump comes back empty goes to `fallback`, so `status` always says what the commands read the
 /// screen with.
 actor DeviceHelper {
@@ -27,8 +28,9 @@ actor DeviceHelper {
     /// Tries of `hello` after an install, and of `dump` until it has a root and nodes (the first one after an enable
     /// can come back empty).
     static let tries = 10
-    /// The least time between two tries of a helper in `fallback` (`recover`).
-    static let retryEvery = Duration.seconds(30)
+    /// A1: the wait before each try of a helper in `fallback` (`recover`), counted from the fall or the last failed try:
+    /// 2 s, 5 s, 15 s, then 30 s for good (the last value repeats); the count restarts when it is `ready` again.
+    static let retrySchedule: [Duration] = [.seconds(2), .seconds(5), .seconds(15), .seconds(30)]
 
     private(set) var state = State.off
     private(set) var reason: String?
@@ -38,6 +40,8 @@ actor DeviceHelper {
     /// The last bring-up's `install`, which `recover` reuses; when a `fallback` may be retried.
     private var install = false
     private var retryAt: ContinuousClock.Instant?
+    /// Falls since the last `ready` (or a fresh `start`): the index in `retrySchedule`.
+    private var misses = 0
     private let now: @Sendable () -> ContinuousClock.Instant
 
     init(serial: String, adb: @escaping Adb, apk: @escaping @Sendable () -> URL?,
@@ -59,11 +63,12 @@ actor DeviceHelper {
     func start(install: Bool, again: Bool = false) async {
         if let r = run { await r.value }
         guard state == .off || (again && state == .fallback) else { return }
+        misses = 0
         await up(install: install)
     }
 
-    /// A device call with the helper in `fallback`: reopens it (hello, a dump with nodes, as `start`) once `retryEvery`
-    /// passed since it fell back or last failed; success is `ready` again, a failure keeps `fallback` with the new reason.
+    /// A device call with the helper in `fallback`: reopens it (hello, a dump with nodes, as `start`) once the
+    /// `retrySchedule` wait passed since it fell back or last failed; success is `ready` again, a failure keeps `fallback` with the new reason.
     /// A bring-up already running is not waited for (the call goes on with uiautomator).
     func recover() async {
         guard run == nil, state == .fallback, let at = retryAt, now() >= at else { return }
@@ -78,7 +83,8 @@ actor DeviceHelper {
     }
 
     private func fallBack(_ why: String) async {
-        state = .fallback; reason = why; retryAt = now() + Self.retryEvery
+        state = .fallback; reason = why
+        retryAt = now() + Self.retrySchedule[min(misses, Self.retrySchedule.count - 1)]; misses += 1
         await unforward()
     }
 
@@ -91,12 +97,26 @@ actor DeviceHelper {
             guard !install || apk() != nil else { throw Self.fail("collie-helper.apk is not bundled") }
             let p = try await forward()
             var hello = try? await hello(p)
-            if hello.map({ $0.version < HelperProtocol.version }) ?? true {
+            let stale = hello.map({ $0.version < HelperProtocol.version }) ?? true
+            // S1: a current helper is trusted only when its base.apk has the bundled APK's sha256 (same key, same bytes)
+            var differs = false
+            if !stale {
+                switch await sameAsBundled() {
+                case true?: break
+                case false?: differs = true
+                case nil: reason = "could not verify the installed helper (sha256 of its APK unavailable); using it as is"
+                }
+            }
+            if stale || differs {
                 guard install else {
-                    throw Self.fail(hello.map { "helper v\($0.version) is older than v\(HelperProtocol.version)" } ?? "helper not answering"
+                    throw Self.fail((differs ? "installed helper differs from the bundled one"
+                                     : hello.map { "helper v\($0.version) is older than v\(HelperProtocol.version)" } ?? "helper not answering")
                                     + "; install it with `collie device helper install --serial \(serial)`")
                 }
                 try await installAPK()
+                if differs {
+                    reason = "installed helper differs from the bundled one (sha256); reinstalled it" + (reason.map { "; \($0)" } ?? "")
+                }
                 try await enable()
                 let h = try await retry("hello") { () async throws(ProtocolError) -> HelperProtocol.Hello? in try await self.hello(p) }
                 guard h.version >= HelperProtocol.version else {
@@ -114,7 +134,7 @@ actor DeviceHelper {
                 guard error.code != .timeout else { throw error }
                 try await ladder(install: install, dump)
             }
-            state = .ready; version = hello?.version
+            state = .ready; version = hello?.version; misses = 0
         } catch {
             await fallBack(error.message)
         }
@@ -197,10 +217,47 @@ actor DeviceHelper {
         _ = try? await adb(["forward", "--remove", "tcp:\(p)"])
     }
 
+    /// K1b: `install -r` refusals that only an uninstall clears (the helper on the device signed with another key, or a
+    /// newer versionCode).
+    static let clashes = ["INSTALL_FAILED_UPDATE_INCOMPATIBLE", "INSTALL_FAILED_VERSION_DOWNGRADE"]
+
+    /// `install -r` of the bundled APK. A signature or version clash (`clashes`) uninstalls `com.collie.helper` and
+    /// installs once more (Android drops its service from the list with the app; the caller's `enable` puts it back,
+    /// the others kept); the swap goes in `reason`, which `status` shows. A second failure throws with both.
     private func installAPK() async throws(ProtocolError) {
         guard let apk = apk() else { throw Self.fail("collie-helper.apk is not bundled") }
-        let out = try await adb(["install", "-r", apk.path])
-        guard out.contains("Success") else { throw Self.fail("install failed: \(out.prefix(300))") }
+        guard let first = await installOnce(apk) else { return }
+        guard let clash = Self.clashes.first(where: first.contains) else { throw Self.fail("install failed: \(first.prefix(300))") }
+        _ = try? await adb(["uninstall", HelperProtocol.package])   // not there after all: the install below says so
+        if let again = await installOnce(apk) {
+            throw Self.fail("install failed with \(clash); uninstalled \(HelperProtocol.package) and installed again, "
+                            + "which failed too: \(again.prefix(300)); using uiautomator")
+        }
+        reason = "reinstalled: install -r failed with \(clash) (helper signed with another key or newer), uninstalled and installed again"
+    }
+
+    /// One `adb install -r`: nil on `Success`, else what adb said (modern adb exits non-zero, older ones print `Failure`).
+    private func installOnce(_ apk: URL) async -> String? {
+        do throws(ProtocolError) {
+            let out = try await adb(["install", "-r", apk.path])
+            return out.contains("Success") ? nil : out
+        } catch {
+            return error.message
+        }
+    }
+
+    /// S1: whether the installed `base.apk` (`pm path`, then the device's toybox `sha256sum`) has the bundled APK's
+    /// SHA-256 (CryptoKit on the host). nil: could not tell (APK unreadable, not listed, `sha256sum` missing or failing).
+    private func sameAsBundled() async -> Bool? {
+        guard let url = apk(), let bytes = try? Data(contentsOf: url),
+              let listed = try? await adb(["shell", "pm", "path", HelperProtocol.package]) else { return nil }
+        let paths = listed.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("package:") }.map { String($0.dropFirst("package:".count)) }
+        guard let path = paths.first(where: { $0.hasSuffix("/base.apk") }) ?? paths.first, let arg = try? Self.quoted(path),
+              let out = try? await adb(["shell", "sha256sum", arg]),
+              let got = out.split(whereSeparator: \.isWhitespace).first, got.count == 64,
+              got.allSatisfy(\.isHexDigit) else { return nil }
+        return got.lowercased() == SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Appends the service to `enabled_accessibility_services` (others kept) and sets `accessibility_enabled 1`.
@@ -319,21 +376,20 @@ actor DeviceHelper {
             defer { Darwin.close(fd) }
             let sent = line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
             guard sent == line.count else { throw ProtocolError(code: .unavailable, message: "helper: write failed") }
-            var got = Data(), buf = [UInt8](repeating: 0, count: 4096), acked = false
-            var start = Date(), last = start
-            let quiet = Double(quietMs) / 1000, total = Double(timeoutMs) / 1000
+            var got = Data(), buf = [UInt8](repeating: 0, count: 4096)
+            let asked = ContinuousClock.now
+            var count: Silence?
             while true {
-                let now = Date()
-                let left: Double
-                if acked {
-                    if now.timeIntervalSince(last) >= quiet { return true }
-                    if now.timeIntervalSince(start) >= total { return false }
-                    left = min(quiet - now.timeIntervalSince(last), total - now.timeIntervalSince(start))
+                let now = ContinuousClock.now
+                let left: Duration
+                if let c = count {
+                    if let done = c.verdict(at: now) { return done }
+                    left = c.left(at: now)
                 } else {
-                    left = secs - now.timeIntervalSince(start)
-                    guard left > 0 else { throw ProtocolError(code: .timeout, message: "helper did not answer subscribe in \(Int(secs * 1000)) ms") }
+                    left = answer - (now - asked)
+                    guard left > .zero else { throw ProtocolError(code: .timeout, message: "helper did not answer subscribe in \(Int(secs * 1000)) ms") }
                 }
-                DeviceSession.setTimeout(fd, max(left, 0.001))   // 0 would mean no timeout
+                DeviceSession.setTimeout(fd, max(Double(left / .microseconds(1)) / 1_000_000, 0.001))   // 0 would mean no timeout
                 let n = Darwin.read(fd, &buf, buf.count)
                 if n < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) { continue }
                 guard n > 0 else { throw ProtocolError(code: .unavailable, message: "helper closed the subscription") }
@@ -342,16 +398,39 @@ actor DeviceHelper {
                     let one = got[got.startIndex..<nl]
                     got = Data(got[got.index(after: nl)...])
                     switch try HelperProtocol.message(Data(one)) {
-                    case .event: last = Date()
+                    case .event: count?.event(at: ContinuousClock.now)
                     case .reply(let r):
                         guard r.ok else { throw ProtocolError(code: .unavailable, message: "helper refused subscribe: \(r.error ?? "failed")") }
-                        if !acked { acked = true; start = Date(); last = start }
+                        if count == nil { count = Silence(ack: ContinuousClock.now, quiet: .milliseconds(quietMs), total: .milliseconds(timeoutMs)) }
                     }
                 }
                 guard got.count < 1 << 20 else { throw ProtocolError(code: .internal, message: "helper line over 1 MiB") }
             }
         }
     }
+}
+
+/// `silence`'s count, apart from the socket so a test feeds it instants instead of waiting: from the `subscribe` ack,
+/// each event restarts the `quiet` count; quiet reached is true, `total` since the ack reached first is false.
+struct Silence: Equatable {
+    let ack: ContinuousClock.Instant, quiet: Duration, total: Duration
+    private(set) var last: ContinuousClock.Instant
+
+    init(ack: ContinuousClock.Instant, quiet: Duration, total: Duration) {
+        self.ack = ack; self.quiet = quiet; self.total = total; last = ack
+    }
+
+    mutating func event(at t: ContinuousClock.Instant) { last = max(last, t) }
+
+    /// true once `quiet` passed since the last event (or the ack), false once `total` passed since the ack, else nil.
+    func verdict(at t: ContinuousClock.Instant) -> Bool? {
+        if t - last >= quiet { return true }
+        if t - ack >= total { return false }
+        return nil
+    }
+
+    /// How long to wait for the next event before `verdict` can change.
+    func left(at t: ContinuousClock.Instant) -> Duration { min(quiet - (t - last), total - (t - ack)) }
 }
 
 /// The helpers of the Android panels' devices.

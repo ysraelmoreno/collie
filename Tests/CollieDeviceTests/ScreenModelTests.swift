@@ -97,4 +97,67 @@ struct ScreenModelTests {
         let s = ScreenModel.build(nodes, size: CGSize(width: 720, height: 1600))
         #expect(s.content.map(\.ref) == ["e1", "e3"])
     }
+
+    @Test func symbolNameNoiseMatchesOnlySymbolNames() {
+        for l in ["chevron", "chevron.right", "apple.id", "xmark.circle.fill", "wifi", "square.and.arrow.up"] { #expect(symbolNameNoise(l), "\(l)") }
+        for l in ["", "Wi-Fi", "2.4.1", "Versão 2.4.1", "Conta Apple", "ação", "Chevron", "a b", ".hidden"] { #expect(!symbolNameNoise(l), "\(l)") }
+    }
+
+    /// A2 (iPhone, Ajustes, 2026-11-22): Image "apple.id" and "chevron" left Conteúdo noisy; real text with a dot stays.
+    @Test func iosSettingsImageSymbolNamesLeaveContent() {
+        func n(_ cls: String, _ text: String, _ y: Int, _ h: Int, _ depth: Int, click: Bool = false, scroll: Bool = false) -> UINode {
+            UINode(ref: "", cls: cls, text: text, desc: "", id: "", bounds: CGRect(x: 0, y: y, width: 390, height: h),
+                   clickable: click, depth: depth, scrollable: scroll)
+        }
+        var nodes = [n("Application", "", 0, 844, 0), n("StaticText", "Ajustes", 60, 30, 1), n("Table", "", 150, 694, 1, scroll: true),
+                     n("Cell", "", 200, 60, 2, click: true), n("Image", "apple.id", 205, 50, 3), n("StaticText", "Conta Apple", 210, 20, 3),
+                     n("Image", "chevron", 215, 20, 3),
+                     n("Cell", "Wi-Fi", 300, 44, 2, click: true), n("Image", "wifi", 305, 30, 3), n("Image", "chevron", 310, 20, 3),
+                     n("StaticText", "Versão 2.4.1", 400, 20, 2)]
+        for i in nodes.indices { nodes[i].ref = "e\(i + 1)" }
+        let tree = UITree.linkParents(nodes)
+        let s = ScreenModel.build(tree, size: CGSize(width: 390, height: 844))
+        #expect(s.content.map(\.label) == ["Conta Apple", "Wi-Fi", "Versão 2.4.1"])
+        let text = ScreenModel.text(s)
+        for noise in ["chevron", "apple.id", "wifi"] { #expect(!text.contains(noise), "\(text)") }
+        #expect(tree.contains { $0.text == "chevron" })   // the raw tree (device ui, --all) keeps it
+    }
+
+    /// A button whose only label is a symbol stays in Ações, named by its id (as the floating button is).
+    @Test func buttonLabelledOnlyBySymbolStaysInActionsWithItsId() {
+        let nodes = UITree.linkParents([
+            UINode(ref: "e1", cls: "Application", text: "", desc: "", id: "", bounds: CGRect(x: 0, y: 0, width: 390, height: 844), clickable: false, depth: 0),
+            UINode(ref: "e2", cls: "StaticText", text: "Fotos", desc: "", id: "", bounds: CGRect(x: 150, y: 60, width: 90, height: 30), clickable: false, depth: 1),
+            UINode(ref: "e3", cls: "Button", text: "", desc: "", id: "share_button", bounds: CGRect(x: 150, y: 400, width: 90, height: 44), clickable: true, depth: 1),
+            UINode(ref: "e4", cls: "Image", text: "square.and.arrow.up", desc: "", id: "", bounds: CGRect(x: 170, y: 405, width: 30, height: 30), clickable: false, depth: 2),
+            UINode(ref: "e5", cls: "android.widget.ImageButton", text: "", desc: "xmark", id: "close", bounds: CGRect(x: 150, y: 600, width: 90, height: 44), clickable: true, depth: 1)])
+        let s = ScreenModel.build(nodes, size: CGSize(width: 390, height: 844))
+        #expect(s.actions.map(\.label) == ["share button", "close"])
+        #expect(s.actions.map(\.id) == ["share_button", "close"])
+        #expect(s.content.isEmpty)
+    }
+
+    /// I2 (iOS 26, Ajustes > Geral, 2026-11-22): each row is Button "Sobre" + Button "chevron" on the same row; the
+    /// chevron is decoration. A lone symbol button (FAB) stays; real text with a dot stays.
+    @Test func iosGeneralRowChevronButtonsAreDecoration() {
+        func n(_ cls: String, _ text: String, x: Int = 0, _ y: Int, w: Int = 390, _ h: Int, _ depth: Int, click: Bool = false, scroll: Bool = false) -> UINode {
+            UINode(ref: "", cls: cls, text: text, desc: "", id: "", bounds: CGRect(x: x, y: y, width: w, height: h),
+                   clickable: click, depth: depth, scrollable: scroll)
+        }
+        var nodes = [n("Application", "", 0, 844, 0), n("StaticText", "Geral", 60, 30, 1), n("Table", "", 150, 600, 1, scroll: true)]
+        for (k, label) in ["Sobre", "Atualização de Software", "Wi-Fi"].enumerated() {
+            let y = 200 + k * 50
+            nodes += [n("Button", label, y, 44, 2, click: true), n("Button", "chevron", x: 360, y + 12, w: 20, 20, 2, click: true)]
+        }
+        nodes += [n("StaticText", "Versão 2.4.1", 400, 20, 2),
+                  n("Button", "plus", x: 320, 760, w: 56, 56, 1, click: true)]   // FAB: no labelled neighbour on its row
+        for i in nodes.indices { nodes[i].ref = "e\(i + 1)" }
+        let tree = UITree.linkParents(nodes)
+        let s = ScreenModel.build(tree, size: CGSize(width: 390, height: 844))
+        let text = ScreenModel.text(s)
+        #expect(!text.contains("chevron"), "\(text)")
+        #expect(s.content.map(\.label) == ["Sobre", "Atualização de Software", "Wi-Fi", "Versão 2.4.1"], "\(text)")
+        #expect((s.actions + s.floating).map(\.label).contains("plus"), "\(text)")
+        #expect(tree.filter { $0.text == "chevron" }.count == 3)   // raw tree (device ui, --all) keeps them
+    }
 }

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.collie.fixture.ios</string>
+<key>CFBundleName</key><string>Collie OCR Fixture</string>
+<key>CFBundleDisplayName</key><string>Collie OCR Fixture</string>
+<key>CFBundleExecutable</key><string>Fixture</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>MinimumOSVersion</key><string>17.0</string>
+<key>UILaunchScreen</key><dict/>
+<key>UIDeviceFamily</key><array><integer>1</integer></array>
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
+</dict></plist>

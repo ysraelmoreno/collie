@@ -10,3 +10,9 @@
 # Unverified whether this is the runner image or the profiles: run them unsandboxed on a Mac before removing.
 ^CollieDaemonKitTests\.CuratorRunnerTests/(fakeClaudeRunsSandboxed|inputViaStdin|perCallFile|creditErrorRunIsExhausted|timeoutKills)\(\)  # runner: Seatbelt profile of the curator denies /private/var/select/sh
 ^CollieTerminalTests\.ControllingTerminalTests/cttyAcceptsSandboxLine\(\)  # runner: collie-ctty --sandbox output differs (both runs)
+
+# WKWebView on the runner (run 45059804734, 2ee02ba; .collie/briefs/ci-main-report.md, shard 2). All five pass on a
+# dev Mac with --filter (iframeTyping in 9.7 s): the runner's headless WebKit doesn't apply media/CSS emulation and the
+# iframe doesn't get the 300 keys within 10 s. The rest of BrowserEmulateTests/BrowserInputTests passes there: not skipped.
+^ColliePluginsTests\.BrowserEmulateTests/(reducedMotionMatchMedia|reducedMotionCSSRule|combosNestedImportAdoptedShadowAndRuntimeSheets|emulationBeforeShadowRootAndAdoptedSheet)\(\)  # runner: WebKit headless
+^ColliePluginsTests\.BrowserInputTests/iframeTypingNeverRefusedNorLeaks\(\)  # runner: WebKit headless

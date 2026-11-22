@@ -1,0 +1,349 @@
+[
+ {
+  "name": "canvas",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "canvas"
+  ],
+  "gt": [
+   "Configurações",
+   "Olá, Ysrael! Bem-vindo de volta",
+   "Texto pequeno de apoio, versão 2.4.1 (build 318)",
+   "Entrar",
+   "Criar conta",
+   "Esqueci a senha",
+   "Total: R$ 1.234,56"
+  ],
+  "dark": false
+ },
+ {
+  "name": "surface",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "surface"
+  ],
+  "gt": [
+   "SCORE 001240",
+   "Vidas: 3",
+   "Nível 7",
+   "JOGAR",
+   "Toque para continuar"
+  ],
+  "dark": false
+ },
+ {
+  "name": "webcanvas",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "webcanvas"
+  ],
+  "gt": [
+   "Resumo do pedido",
+   "Cerveja Pilsen 350ml x12",
+   "Refrigerante Cola 2L x6",
+   "Subtotal: R$ 189,90",
+   "Finalizar pedido"
+  ],
+  "dark": false
+ },
+ {
+  "name": "hidden",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "hidden"
+  ],
+  "gt": [
+   "Meus pedidos",
+   "Pedido #48213 - Entregue",
+   "Pedido #48210 - Em transporte",
+   "Ver detalhes",
+   "Atualizado há 3 minutos"
+  ],
+  "dark": false
+ },
+ {
+  "name": "photo",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "photo"
+  ],
+  "gt": [
+   "Promoção da semana",
+   "Até 30% de desconto",
+   "Válido até 30/11 ou enquanto durarem os estoques",
+   "Aproveite agora"
+  ],
+  "dark": false
+ },
+ {
+  "name": "normal",
+  "class": "good",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "normal"
+  ],
+  "gt": [
+   "Tela normal",
+   "Todos os elementos têm acessibilidade",
+   "Continuar",
+   "Rodapé de exemplo"
+  ],
+  "dark": false
+ },
+ {
+  "name": "canvas_dark",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "canvas",
+   "--ez",
+   "dark",
+   "true"
+  ],
+  "gt": [
+   "Configurações",
+   "Olá, Ysrael! Bem-vindo de volta",
+   "Texto pequeno de apoio, versão 2.4.1 (build 318)",
+   "Entrar",
+   "Criar conta",
+   "Esqueci a senha",
+   "Total: R$ 1.234,56"
+  ],
+  "dark": true
+ },
+ {
+  "name": "surface_dark",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "surface",
+   "--ez",
+   "dark",
+   "true"
+  ],
+  "gt": [
+   "SCORE 001240",
+   "Vidas: 3",
+   "Nível 7",
+   "JOGAR",
+   "Toque para continuar"
+  ],
+  "dark": true
+ },
+ {
+  "name": "webcanvas_dark",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "webcanvas",
+   "--ez",
+   "dark",
+   "true"
+  ],
+  "gt": [
+   "Resumo do pedido",
+   "Cerveja Pilsen 350ml x12",
+   "Refrigerante Cola 2L x6",
+   "Subtotal: R$ 189,90",
+   "Finalizar pedido"
+  ],
+  "dark": true
+ },
+ {
+  "name": "hidden_dark",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "hidden",
+   "--ez",
+   "dark",
+   "true"
+  ],
+  "gt": [
+   "Meus pedidos",
+   "Pedido #48213 - Entregue",
+   "Pedido #48210 - Em transporte",
+   "Ver detalhes",
+   "Atualizado há 3 minutos"
+  ],
+  "dark": true
+ },
+ {
+  "name": "photo_dark",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "photo",
+   "--ez",
+   "dark",
+   "true"
+  ],
+  "gt": [
+   "Promoção da semana",
+   "Até 30% de desconto",
+   "Válido até 30/11 ou enquanto durarem os estoques",
+   "Aproveite agora"
+  ],
+  "dark": true
+ },
+ {
+  "name": "normal_dark",
+  "class": "good",
+  "launch": [
+   "am",
+   "start",
+   "-S",
+   "-W",
+   "-n",
+   "com.collie.fixture/.MainActivity",
+   "--es",
+   "screen",
+   "normal",
+   "--ez",
+   "dark",
+   "true"
+  ],
+  "gt": [
+   "Tela normal",
+   "Todos os elementos têm acessibilidade",
+   "Continuar",
+   "Rodapé de exemplo"
+  ],
+  "dark": true
+ },
+ {
+  "name": "settings",
+  "class": "good",
+  "launch": [
+   "am",
+   "start",
+   "-W",
+   "-a",
+   "android.settings.SETTINGS"
+  ],
+  "gt": null,
+  "dark": false
+ },
+ {
+  "name": "settings_display",
+  "class": "good",
+  "launch": [
+   "am",
+   "start",
+   "-W",
+   "-a",
+   "android.settings.DISPLAY_SETTINGS"
+  ],
+  "gt": null,
+  "dark": false
+ },
+ {
+  "name": "launcher",
+  "class": "good",
+  "launch": [
+   "input",
+   "keyevent",
+   "KEYCODE_HOME"
+  ],
+  "gt": null,
+  "dark": false
+ },
+ {
+  "name": "chrome_canvas",
+  "class": "poor",
+  "launch": [
+   "am",
+   "start",
+   "-W",
+   "-a",
+   "android.intent.action.VIEW",
+   "-d",
+   "https://excalidraw.com/",
+   "com.android.chrome"
+  ],
+  "gt": null,
+  "dark": false
+ }
+]

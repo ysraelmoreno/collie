@@ -185,7 +185,8 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
             let a = try await spawn(d, p, "A", preset: "custom", command: "exit 0")
             let b = try await spawn(d, p, "B")
             #expect(try await admin(d, p, "leash", ["a": "A", "b": "B"]).ok)
-            #expect(await waitFor(3) { await d.process(UUID(uuidString: a.id)!)?.isRunning == false })
+            let ua = try terminalUUID(a.id)
+            #expect(await waitFor(3) { await d.process(ua)?.isRunning == false })
             let a2 = try await spawn(d, p, "a")
             #expect(a2.resp.ok && a2.id == a.id)
             #expect(try await names(d, p, from: b.id) == ["a"])
@@ -257,8 +258,8 @@ func spawn(_ d: Daemon, _ p: Paths, _ name: String, preset: String = "shell", co
 /// Test helper: reads a terminal's token out of its own environment via the scrollback.
 /// `echo`: types the echo into the shell, resending every second (a fresh login shell may drop typeahead).
 func tokenOf(_ d: Daemon, _ id: String, echo: Bool = true) async throws -> String {
-    let u = UUID(uuidString: id)!
-    let pty = await d.process(u)!
+    let u = try terminalUUID(id)
+    let pty = try await liveProcess(d, u)
     for i in 0..<200 {   // 20 s: a fresh shell under full-suite load can take seconds to print
         if echo && i % 10 == 0 { try pty.write(Data("echo T=$COLLIE_TOKEN\n".utf8)) }
         try await Task.sleep(for: .milliseconds(100))
@@ -266,6 +267,24 @@ func tokenOf(_ d: Daemon, _ id: String, echo: Bool = true) async throws -> Strin
         if let r = t.range(of: #"T=[0-9a-f]{64}"#, options: .regularExpression) { return String(t[r].dropFirst(2)) }
     }
     throw ProtocolError(code: .internal, message: "no token; running=\(pty.isRunning) scrollback=\(String(reflecting: await d.scrollbackText(u)))")
+}
+
+/// Test helper: a terminal's id as a UUID; an empty/bad id (the spawn response failed) is one test failure, not a crash.
+func terminalUUID(_ id: String) throws -> UUID {
+    guard let u = UUID(uuidString: id) else {
+        throw ProtocolError(code: .internal, message: "terminal id '\(id)' is not a UUID: did the spawn fail? (check the spawn response)")
+    }
+    return u
+}
+
+/// Test helper: the terminal's PTY, or a thrown error naming the terminal and why there is none
+/// (spawn failed on this machine, or the process already exited), so a failed spawn fails one test, not the process.
+func liveProcess(_ d: Daemon, _ u: UUID) async throws -> PTYProcess {
+    guard let p = await d.process(u) else {
+        throw ProtocolError(code: .internal, message: "terminal \(u): no process in the registry (spawn failed or the process exited); "
+                            + "scrollback=\(String(reflecting: await d.scrollbackText(u)))")
+    }
+    return p
 }
 
 /// Waits for a positive condition. `seconds` is floored at 20 s: every caller waits for something that must

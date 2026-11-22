@@ -108,7 +108,7 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   emulador ganha sozinho, aparelho físico só com opt-in por `install`, porque o serviço lê toda a tela; falha cai no
   `uiautomator`). Arquivos: `Helpers/android-device/`, `Sources/CollieDevice/HelperProtocol.swift`,
   `Sources/CollieDaemonKit/Devices/DeviceHelper.swift`. Testes: `--filter DeviceHelperTests`.
-  OCR (H6, Android, Vision no `collied`): `device screen` lê o screenshot quando a árvore é pobre ou com `--ocr`
+  OCR (H6, Android; A3, iOS por `simctl io screenshot` com caixas convertidas de pixels para pontos; Vision no `collied`): `device screen` lê o screenshot quando a árvore é pobre ou com `--ocr`
   (`--no-ocr`, `--region x1,y1,x2,y2`; itens `(ocr)`, refs `o1`…; `ocr: unavailable` sem provedor); `find`/`tap --text`
   sem casamento na árvore rodam um OCR só nessa chamada e casam com os itens (toque no centro da caixa, `via: ocr` e aviso
   sem confirmação de clique; `--role` ignora o OCR); `--timing` traz `ocrMs`, `ocrLevel`, `trigger`. Arquivos:

@@ -167,8 +167,8 @@ extension PluginRegistry {
     }
     /// `--then ui` on the actions: after it, wait `settle` ms and return the device.ui tree too (one call per step).
     private static let then = [
-        ParamSpec("then", .string, help: "ui: also return the UI tree after the action ({ui:{tree,truncated,nodes,total}}, refs updated)"),
-        ParamSpec("settle", .int, help: "With --then ui: ms to wait before reading the tree (0-3000, default 400)"),
+        ParamSpec("then", .string, help: "ui: also return the UI tree after the action ({ui:{tree,truncated,nodes,total}}, refs updated); screen: the device.screen groups instead ({screen})"),
+        ParamSpec("settle", .string, help: "With --then: ms to wait before reading (0-3000, default 400), or stable: wait (up to 5 s) for two equal UI dumps in a row, {settled} says if it did"),
     ]
 
     /// An Android device or emulator through adb, or an iOS Simulator through simctl + AXe; the daemon runs these
@@ -185,6 +185,11 @@ extension PluginRegistry {
                  [ParamSpec("all", .flag, help: "Every node, as before (to debug); same refs")], timeout: 30),
             dcmd("screen", "The screen in groups: title, back, tabs (* = selected), actions, fields, content, floating buttons, and what changed since the last screen; text in {text}, items {ref,label,role,state} in {title,back,tabs,actions,fields,lists,floating,changed,more}. Tap items by --ref or --text; use device.ui when something is missing",
                  [ParamSpec("all", .flag, help: "Also return the raw device.ui --all tree in {tree} (to debug the grouping)")], timeout: 30),
+            dcmd("wait", "Wait for --text to show (or go, with --gone) and/or the screen to settle (--stable: two equal UI dumps in a row), instead of sleep + device.ui; returns {ok,waitedMs} (refs updated); on timeout a timeout error with the last screen",
+                 [ParamSpec("text", .string, help: "Text or desc to wait for (any case, containing)"),
+                  ParamSpec("gone", .flag, help: "With --text: wait for it to disappear"),
+                  ParamSpec("stable", .flag, help: "Wait for two equal UI dumps in a row"),
+                  ParamSpec("timeout", .int, help: "Seconds (1-60, default 10)")], timeout: 75),
             dcmd("tap", "Tap at x y (Android (pixels) or iOS Simulator (points)), on an element from device.ui (--ref), or on the element with a label or id (--text/--id: a fresh UI dump, no device.ui needed)",
                  [coord("x"), coord("y"), ParamSpec("ref", .string, help: "Element ref from device.ui"),
                   ParamSpec("text", .string, help: "Tap the element whose text or desc is this (any case; equal first, then containing); a non-clickable match taps its clickable ancestor"),

@@ -347,6 +347,75 @@ private struct LiteFx {
         }
     }
 
+    @Test func waitTextShownGoneAndStableReturnWaitedMs() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            for a in [["text": "login"], ["text": "Nope", "gone": "true"], ["stable": "true"], ["text": "Login", "stable": "true"]] {
+                let r = try await call(p, m, "device.wait", a)
+                guard case .number(let ms)? = field(r, "waitedMs") else { Issue.record("\(a): \(r)"); continue }
+                #expect(field(r, "ok") == .bool(true) && ms >= 0, "\(a)")
+            }
+            #expect(try await call(p, m, "device.tap", ["ref": "e1"]).ok)   // the wait's dumps updated the refs
+        }
+    }
+
+    @Test func waitTextSeesTheScreenChange() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        let ui = fx.dir.appendingPathComponent("ui.xml")
+        try Data(contentsOf: fixtures.appendingPathComponent("offers-ui.xml")).write(to: ui)
+        setenv("COLLIE_FAKE_ADB_UI", ui.path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let later = Task {
+                try await Task.sleep(for: .milliseconds(600))
+                try Data(contentsOf: fixtures.appendingPathComponent("ui-dump.xml")).write(to: ui, options: .atomic)
+            }
+            let r = try await call(p, m, "device.wait", ["text": "Login", "timeout": "10"])
+            try await later.value
+            guard case .number(let ms)? = field(r, "waitedMs") else { Issue.record("\(r)"); return }
+            #expect(ms >= 500, "\(r)")
+            #expect(try await call(p, m, "device.wait", ["text": "Combos", "gone": "true", "timeout": "2"]).ok)   // Offers left
+        }
+    }
+
+    @Test func waitTimeoutIsATimeoutErrorWithTheLastScreen() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.wait", ["text": "Nope", "timeout": "1"])
+            #expect(r.error?.code == .timeout, "\(r)")
+            #expect(r.error?.message.contains("Last screen:\nTela: Offers") == true, "\(r)")
+        }
+    }
+
+    @Test func waitRejectsBadArgsBeforeDumping() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            for a in [[:], ["gone": "true"], ["text": "x", "timeout": "61"], ["stable": "true", "timeout": "0"]] {
+                #expect(try await call(p, m, "device.wait", a).error?.code == .invalidArgs, "\(a)")
+            }
+            #expect(!fx.lines.contains { $0.contains("uiautomator dump") })
+        }
+    }
+
+    @Test func thenScreenWithSettleStableReturnsTheGroups() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("offers-ui.xml").path, 1)
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.tap", ["x": "3", "y": "4", "then": "screen", "settle": "stable"])
+            guard case .object(let screen)? = field(r, "screen"), case .string(let text)? = screen["text"] else { Issue.record("\(r)"); return }
+            #expect(text.hasPrefix("Tela: Offers") && field(r, "settled") == .bool(true) && field(r, "ui") == nil, "\(r)")
+            let ui = try await call(p, m, "device.key", ["key": "Enter", "then": "ui", "settle": "stable"])
+            #expect(field(ui, "ui") != nil && field(ui, "settled") == .bool(true), "\(ui)")
+            #expect(try await call(p, m, "device.tap", ["x": "5", "y": "6", "then": "screen", "settle": "fast"]).error?.code == .invalidArgs)
+            #expect(!fx.lines.contains("-s emulator-5554 shell input tap 5 6"))
+        }
+    }
+
     @Test func swipeKeyTextLogcat() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in

@@ -7,6 +7,8 @@
 # `emu avd name` prints the name for the serial from $COLLIE_FAKE_ADB_AVDNAMES (lines `<serial> <name>`) then OK (OK first with $COLLIE_FAKE_ADB_OK_FIRST), else exits 1;
 # `shell cmd package query-activities …` cats $COLLIE_FAKE_ADB_LAUNCHERS when set (else prints nothing).
 # `shell getprop sys.boot_completed` prints ${COLLIE_FAKE_ADB_BOOTED:-1}.
+# `shell input swipe` (a scrolled list): when the file $COLLIE_FAKE_ADB_SCROLL has lines, copies the file named on its
+# first line over $COLLIE_FAKE_ADB_UI and drops that line; none left: the tree stays (the end of the list).
 # scrcpy: `push` and `forward --remove` are only logged; `forward tcp:0 …` prints $COLLIE_FAKE_ADB_PORT; `shell CLASSPATH=…`
 # (the server) appends "scrcpy $$" to $COLLIE_FAKE_ADB_PIDS (apart from the crash watchers' bare pids) and becomes `sleep 600`.
 if [ -n "$COLLIE_FAKE_ADB_LOG" ]; then
@@ -25,6 +27,10 @@ case "$1 $2 $3" in
   "shell monkey -p") echo "Events injected: 1" ;;
   "shell cmd package") [ -n "$COLLIE_FAKE_ADB_LAUNCHERS" ] && cat "$COLLIE_FAKE_ADB_LAUNCHERS" ;;
   "emu avd name") n=$(grep "^$SERIAL " "$COLLIE_FAKE_ADB_AVDNAMES" 2>/dev/null | head -1 | cut -d' ' -f2-); [ -n "$n" ] || exit 1; [ -n "$COLLIE_FAKE_ADB_OK_FIRST" ] && echo OK; echo "$n"; [ -z "$COLLIE_FAKE_ADB_OK_FIRST" ] && echo OK; exit 0 ;;
+  "shell input swipe")
+    if [ -s "$COLLIE_FAKE_ADB_SCROLL" ]; then
+      cp "$(head -1 "$COLLIE_FAKE_ADB_SCROLL")" "$COLLIE_FAKE_ADB_UI"; sed -i '' 1d "$COLLIE_FAKE_ADB_SCROLL"
+    fi ;;
   "shell getprop sys.boot_completed") echo "${COLLIE_FAKE_ADB_BOOTED:-1}" ;;
   "shell date +%s") echo 1700000000 ;;
   "forward tcp:0 "*) echo "$COLLIE_FAKE_ADB_PORT" ;;

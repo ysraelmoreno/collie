@@ -171,6 +171,11 @@ actor DeviceService {
         }
         if command == "device.find" {
             let q = try Self.findSpec(args)
+            if let scroll = q.scroll {
+                var o = try await Self.findScrolling(q.text, role: q.role, scroll, dump: dump, swipe: { a throws(ProtocolError) in _ = try await act("device.swipe", a) })
+                if q.screen { o["screen"] = .object(try await screen(all: false)) }   // ponytail: one more dump for the groups
+                return .object(o)
+            }
             guard q.screen else { return .object(try Self.find(try await dump(), text: q.text, role: q.role)) }
             let shown = try await screen(all: false)   // one dump serves both (refs updated)
             var o = try Self.find(refs[panel.id] ?? [], text: q.text, role: q.role)
@@ -212,8 +217,16 @@ actor DeviceService {
     /// Pause between two dumps of a wait (a dump itself takes 2-3 s on Android).
     static let pollGapMs = 200
 
-    /// `device.find` args: the text (required), --role tab|button|field, --then screen (nothing else).
-    static func findSpec(_ a: [String: JSONValue]) throws(ProtocolError) -> (text: String, role: String?, screen: Bool) {
+    /// `device.find --scroll`: `up` swipes the other way (to go back up a list); `max` swipes at most.
+    struct Scroll: Equatable { let up: Bool; let max: Int }
+    /// `device.find --scroll` without --max.
+    static let defaultMaxScrolls = 8
+    /// Pause after each `find --scroll` swipe before the next dump (the `--then` default; the dump itself takes 2-3 s).
+    static let scrollSettleMs = 400
+
+    /// `device.find` args: the text (required), --role tab|button|field, --then screen (nothing else),
+    /// --scroll with --dir down|up (default down) and --max 1-30 (default 8); --dir/--max without --scroll: invalidArgs.
+    static func findSpec(_ a: [String: JSONValue]) throws(ProtocolError) -> (text: String, role: String?, screen: Bool, scroll: Scroll?) {
         guard case .string(let text)? = a["text"], !text.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "device.find needs a text") }
         var role: String?
         switch a["role"] {
@@ -221,10 +234,54 @@ actor DeviceService {
         case .string(let r)? where ["tab", "button", "field"].contains(r): role = r
         default: throw ProtocolError(code: .invalidArgs, message: "--role takes tab, button or field")
         }
+        let screen: Bool
         switch a["then"] {
-        case nil, .null?: return (text, role, false)
-        case .string("screen")?: return (text, role, true)
+        case nil, .null?: screen = false
+        case .string("screen")?: screen = true
         default: throw ProtocolError(code: .invalidArgs, message: "device.find --then only takes 'screen'")
+        }
+        let up: Bool
+        switch a["dir"] {
+        case nil, .null?, .string("down")?: up = false
+        case .string("up")?: up = true
+        default: throw ProtocolError(code: .invalidArgs, message: "--dir takes down or up")
+        }
+        let max = try int(a, "max", 1...30)
+        guard a["scroll"] == .bool(true) || a["scroll"] == .string("true") else {
+            if a["dir"] != nil && a["dir"] != .null || max != nil { throw ProtocolError(code: .invalidArgs, message: "--dir and --max need --scroll") }
+            return (text, role, screen, nil)
+        }
+        return (text, role, screen, Scroll(up: up, max: max ?? defaultMaxScrolls))
+    }
+
+    /// `device.find --scroll`: dump, look (`find`); not there: swipe from 75% to 35% of the height (`up`: back) in the
+    /// middle of the width, wait `scrollSettleMs`, dump again. Stops when found, when the tree stays the same after a
+    /// swipe (end of the list: `endReached`) or after `max` swipes. The answer and the notFound message carry
+    /// `scrolls` and `endReached`. The size is the extent of the dumped nodes (Android pixels, iOS points).
+    static func findScrolling(_ text: String, role: String?, _ s: Scroll, dump: () async throws(ProtocolError) -> [UINode],
+                       swipe: ([String: JSONValue]) async throws(ProtocolError) -> Void) async throws(ProtocolError) -> [String: JSONValue] {
+        var nodes = try await dump(), scrolls = 0
+        while true {
+            let miss: String
+            do {
+                var o = try Self.find(nodes, text: text, role: role)
+                o["scrolls"] = .number(Double(scrolls)); o["endReached"] = .bool(false)
+                return o
+            } catch where error.code == .notFound { miss = error.message }
+            func notFound(_ end: Bool) -> ProtocolError {
+                ProtocolError(code: .notFound, message: miss + " (scrolls: \(scrolls), endReached: \(end))")
+            }
+            guard scrolls < s.max, !Task.isCancelled else { throw notFound(false) }
+            // ponytail: the extent of the kept nodes (the bare root is dropped); `wm size` if a short tree swipes too little
+            let box = nodes.map(\.bounds).reduce(CGRect.null) { $0.union($1) }
+            let x = box.isNull ? 0 : Double(Int(box.midX)), h = box.isNull ? 0 : box.maxY
+            let low = Double(Int(h * 0.75)), high = Double(Int(h * 0.35))
+            try await swipe(["x1": .number(x), "y1": .number(s.up ? high : low), "x2": .number(x), "y2": .number(s.up ? low : high)])
+            scrolls += 1
+            await Self.nap(.milliseconds(Self.scrollSettleMs))
+            let next = try await dump()
+            if next == nodes { throw notFound(true) }   // the swipe moved nothing: end of the list
+            nodes = next
         }
     }
 

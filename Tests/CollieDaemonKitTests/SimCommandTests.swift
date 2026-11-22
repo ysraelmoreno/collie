@@ -217,6 +217,17 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
         }
     }
 
+    @Test func iosFindScrollSwipesInPointsAndSeesTheEnd() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let r = try await call(p, m, "device.find", ["text": "no such label", "scroll": "true"])
+            #expect(r.error?.code == .notFound && r.error?.message.contains("(scrolls: 1, endReached: true)") == true, "\(r)")   // the fake tree never moves
+            #expect(fx.axe.contains { $0.contains("swipe --start-x") }, "\(fx.axe)")
+            #expect(field(try await call(p, m, "device.find", ["text": "mapas", "scroll": "true"]), "scrolls") == .number(0))
+        }
+    }
+
     @Test func iosLogcatRetriesShorterWhenCapped() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         let big = (0..<20).map { "old line \($0)" }.joined(separator: "\n") + "\n"

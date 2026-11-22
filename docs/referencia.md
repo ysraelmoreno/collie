@@ -161,7 +161,7 @@ collie device launch com.example.app
 ```
 
 `--then ui` (ou `--then screen`) vale em `tap`, `swipe`, `text`, `key` e `launch`: um passo ver → agir numa chamada só. `--settle stable` espera (até 5 s) dois dumps iguais em vez de um tempo fixo.
-Comece por `device screen`; `device ui` é a árvore crua, para quando o agrupamento esconder algo; `screenshot` só se nenhum dos dois mostrar o elemento. `device find "X" --scroll` (rolar até achar) está na spec `2026-11-22-device-screen-find-design.md` (E3) e ainda não existe. Sem `--then` a resposta continua `{}`; outro valor que não `ui` dá `invalidArgs`.
+Comece por `device screen`; `device ui` é a árvore crua, para quando o agrupamento esconder algo; `screenshot` só se nenhum dos dois mostrar o elemento. `device find "X"` acha o elemento na tela (`{found,ref,label,role,center,clickable}`; o `ref` vale para `tap --ref`); com `--scroll [--dir down|up] [--max <n>]` (padrão 8) desliza de 75% a 35% da altura e procura de novo até achar, até a árvore não mudar mais (fim da lista) ou até `--max`, e a resposta traz `scrolls` e `endReached` (o `notFound` também). Sem `--then` a resposta continua `{}`; outro valor que não `ui` dá `invalidArgs`.
 
 Limitações: sem áudio; `device.text` só ASCII e não digita `%s` literal (é o
 `input text` do Android; acentos e `%s`, digite pelo painel); um ANR não vira evento (só crashes do buffer de crash do logcat).

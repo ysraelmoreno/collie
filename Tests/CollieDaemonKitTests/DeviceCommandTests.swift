@@ -397,6 +397,75 @@ private struct LiteFx {
         }
     }
 
+    /// A list page: a clickable list [0,0][1080,2000] (so find --scroll swipes x 540, y 1500 -> 700) holding `items`.
+    private func page(_ fx: Fx, _ name: String, _ items: [String]) throws -> String {
+        let rows = items.enumerated().map { i, t in
+            "<node index=\"\(i)\" text=\"\(t)\" resource-id=\"\" class=\"android.widget.TextView\" content-desc=\"\" clickable=\"true\" bounds=\"[0,\(i * 200)][1080,\(i * 200 + 200)]\" />"
+        }.joined(separator: "\n")
+        let xml = """
+        <?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+        <hierarchy rotation="0"><node index="0" text="" resource-id="com.x:id/list" class="androidx.recyclerview.widget.RecyclerView" content-desc="" clickable="false" scrollable="true" bounds="[0,0][1080,2000]">
+        \(rows)
+        </node></hierarchy>
+        """
+        let f = fx.dir.appendingPathComponent(name)
+        try xml.write(to: f, atomically: true, encoding: .utf8)
+        return f.path
+    }
+    /// `COLLIE_FAKE_ADB_UI` shows `first`; each swipe moves to the next of `then` (none left: the tree stays).
+    private func scrollPages(_ fx: Fx, first: String, then: [String]) throws {
+        let ui = fx.dir.appendingPathComponent("ui.xml")
+        try Data(contentsOf: URL(fileURLWithPath: first)).write(to: ui)
+        setenv("COLLIE_FAKE_ADB_UI", ui.path, 1)
+        let list = fx.dir.appendingPathComponent("scroll")
+        try then.map { $0 + "\n" }.joined().write(to: list, atomically: true, encoding: .utf8)
+        setenv("COLLIE_FAKE_ADB_SCROLL", list.path, 1)
+    }
+    private let scrollSwipe = "-s emulator-5554 shell input swipe 540 1500 540 700 300"
+
+    @Test func findScrollFindsItOnTheThirdRound() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_SCROLL") }
+        try scrollPages(fx, first: try page(fx, "p1", ["Apple", "Banana"]), then: [try page(fx, "p2", ["Cherry", "Date"]), try page(fx, "p3", ["Elder", "Target row"])])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.find", ["text": "target", "scroll": "true"])
+            guard case .string(let ref)? = field(r, "ref") else { Issue.record("\(r)"); return }
+            #expect(field(r, "label") == .string("Target row") && field(r, "scrolls") == .number(2) && field(r, "endReached") == .bool(false), "\(r)")
+            #expect(fx.lines.filter { $0 == scrollSwipe }.count == 2, "\(fx.lines)")
+            #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // the last dump set the refs
+            #expect(fx.lines.contains("-s emulator-5554 shell input tap 540 300"), "\(fx.lines)")
+        }
+    }
+
+    @Test func findScrollStopsAtTheEndOfTheList() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_SCROLL") }
+        try scrollPages(fx, first: try page(fx, "p1", ["Apple", "Banana"]), then: [try page(fx, "p2", ["Cherry", "Date"])])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.find", ["text": "Nope", "scroll": "true"])
+            #expect(r.error?.code == .notFound && r.error?.message.contains("(scrolls: 2, endReached: true)") == true, "\(r)")
+            #expect(r.error?.message.contains("similar:") == true, "\(r)")
+            #expect(fx.lines.filter { $0 == scrollSwipe }.count == 2)   // the 2nd swipe moved nothing
+        }
+    }
+
+    @Test func findScrollStopsAtMaxAndChecksArgs() async throws {
+        let fx = try Fx(); defer { fx.cleanup(); unsetenv("COLLIE_FAKE_ADB_SCROLL") }
+        try scrollPages(fx, first: try page(fx, "p1", ["Apple"]), then: [try page(fx, "p2", ["Cherry"]), try page(fx, "p3", ["Target"])])
+        try await withDevice { d, p in
+            let m = try await shepherdWithPanel(d, p)
+            let r = try await call(p, m, "device.find", ["text": "Target", "scroll": "true", "max": "1", "dir": "up"])
+            #expect(r.error?.code == .notFound && r.error?.message.contains("(scrolls: 1, endReached: false)") == true, "\(r)")
+            #expect(fx.lines.contains("-s emulator-5554 shell input swipe 540 700 540 1500 300"), "\(fx.lines)")   // up: the other way
+            for a in [["max": "0", "scroll": "true"], ["max": "31", "scroll": "true"], ["dir": "left", "scroll": "true"], ["max": "2"], ["dir": "up"]] {
+                #expect(try await call(p, m, "device.find", a.merging(["text": "Target"]) { x, _ in x }).error?.code == .invalidArgs, "\(a)")
+            }
+            let s = try await call(p, m, "device.find", ["text": "Cherry", "scroll": "true", "then": "screen"])   // on screen (p2): no swipe
+            #expect(field(s, "scrolls") == .number(0) && field(s, "screen") != nil, "\(s)")
+            #expect(fx.lines.filter { $0.contains("input swipe") }.count == 1)
+        }
+    }
+
     @Test func tapTextDumpsFreshAndTaps() async throws {
         let fx = try Fx(); defer { fx.cleanup() }
         try await withDevice { d, p in

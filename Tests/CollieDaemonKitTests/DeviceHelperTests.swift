@@ -264,7 +264,8 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         let adb = FakeAdb(services: "com.a/.X:\(HelperProtocol.service):com.b/.Y", helper: srv)
         let h = make(adb)
         await h.start(install: true)
-        #expect(await h.state == .ready, "\(await h.reason ?? "")")
+        let (up, why) = (await h.state, await h.reason)
+        #expect(up == .ready, "\(why ?? "")")
         let puts = await adb.calls.filter { $0.prefix(5) == ["shell", "settings", "put", "secure", "enabled_accessibility_services"] }.map { $0[5] }
         #expect(puts == ["'com.a/.X:com.b/.Y'", "'com.a/.X:com.b/.Y:\(HelperProtocol.service)'"], "off, then on again: \(puts)")
         #expect(await adb.services == "com.a/.X:com.b/.Y:\(HelperProtocol.service)")
@@ -277,8 +278,8 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
         let h = make(adb)
         await h.start(install: true)
-        #expect(await h.state == .fallback)
-        #expect(await h.reason?.contains("after re-enabling") == true, "\(await h.reason ?? "")")
+        let (state, reason) = (await h.state, await h.reason)
+        #expect(state == .fallback && reason?.contains("after re-enabling") == true, "\(reason ?? "")")
         #expect(await adb.calls.filter { $0 == ["shell", "settings", "delete", "secure", "enabled_accessibility_services"] }.count == 1, "one rebind")
         #expect(await adb.services == HelperProtocol.service)
     }
@@ -290,7 +291,7 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         let h = make(adb, serial: "R5CT1234", clock: clock)
         await h.start(install: false)
         #expect(await h.state == .fallback)
-        let forwards = { await adb.calls.filter { $0.first == "forward" && $0.count == 3 }.count }
+        let forwards = { await adb.calls.filter { $0.prefix(2) == ["forward", "tcp:0"] }.count }
         #expect(await forwards() == 1)
         clock.advance(.seconds(29))
         await h.recover()
@@ -298,7 +299,8 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         clock.advance(.seconds(1))
         await h.recover()   // still not there: the fallback and its reason stay, the next try 30 s later
         #expect(await forwards() == 2)
-        #expect(await h.state == .fallback && h.reason?.contains("not answering") == true)
+        let (state, reason) = (await h.state, await h.reason)
+        #expect(state == .fallback && reason?.contains("not answering") == true, "\(reason ?? "")")
         srv.installed()
         await h.recover()
         #expect(await forwards() == 2, "the failed try restarts the 30 s")

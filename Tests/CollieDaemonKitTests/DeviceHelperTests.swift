@@ -98,7 +98,7 @@ private actor FakeAdb {
     var removedForward: Bool { calls.contains { $0 == ["forward", "--remove", "tcp:\(helper.port)"] } }
 }
 
-private func make(_ serial: String = "emulator-5554", _ adb: FakeAdb, apk: URL? = URL(fileURLWithPath: "/bundle/collie-helper.apk")) -> DeviceHelper {
+private func make(_ adb: FakeAdb, serial: String = "emulator-5554", apk: URL? = URL(fileURLWithPath: "/bundle/collie-helper.apk")) -> DeviceHelper {
     DeviceHelper(serial: serial, adb: { args in await adb.run(args) }, apk: { apk }, answer: .milliseconds(300), gap: .milliseconds(10))
 }
 private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(let o) = v { o[k] } else { nil } }
@@ -109,8 +109,9 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         let adb = FakeAdb(services: "com.other/.Talk", helper: srv)
         let h = make(adb)
         await h.start(install: true)
-        #expect(await h.state == .ready, "\(String(describing: await h.reason))")
-        #expect(await h.version == HelperProtocol.version && h.port == srv.port)
+        #expect(await h.state == .ready)
+        #expect(await h.version == HelperProtocol.version)
+        #expect(await h.port == srv.port)
         #expect(await adb.services == "com.other/.Talk:\(HelperProtocol.service)")   // the other service kept
         #expect(await adb.accessibilityEnabled == "1")
         #expect(await adb.calls.contains(["install", "-r", "/bundle/collie-helper.apk"]))
@@ -132,7 +133,8 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
         let h = make(adb)
         await h.start(install: true)
-        #expect(await h.state == .ready && h.version == HelperProtocol.version)
+        #expect(await h.state == .ready)
+        #expect(await h.version == HelperProtocol.version)
         #expect(await adb.installs == 1)
         #expect(await adb.services == HelperProtocol.service)   // already listed: not duplicated
     }
@@ -143,8 +145,9 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         let h = make(adb)
         await h.start(install: true)
         #expect(await h.state == .fallback)
-        #expect(await h.reason?.contains("did not answer") == true, "\(String(describing: await h.reason))")
-        #expect(await adb.removedForward && h.port == nil)
+        #expect(await h.reason?.contains("did not answer") == true)
+        #expect(await adb.removedForward)
+        #expect(await h.port == nil)
         #expect(field(await h.status, "source") == .string("uiautomator"))
         await h.start(install: true)   // the fallback holds for the session: no second try
         #expect(await adb.installs == 1)
@@ -153,13 +156,14 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
     @Test func physicalDeviceIsNotInstalledWithoutOptIn() async throws {
         let srv = try FakeHelper(installed: false); defer { srv.stop() }
         let adb = FakeAdb(helper: srv)
-        let h = make("R5CT1234", adb)
+        let h = make(adb, serial: "R5CT1234")
         await h.start(install: false)
         #expect(await h.state == .fallback)
         #expect(await h.reason?.contains("collie device helper install --serial R5CT1234") == true)
         #expect(await adb.installs == 0)
         await h.start(install: true, again: true)   // `helper install`
-        #expect(await h.state == .ready && adb.installs == 1)
+        #expect(await h.state == .ready)
+        #expect(await adb.installs == 1)
     }
 
     @Test func noBundledApkSendsNoAdb() async throws {
@@ -167,7 +171,8 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         let adb = FakeAdb(helper: srv)
         let h = make(adb, apk: nil)
         await h.start(install: true)
-        #expect(await h.state == .fallback && h.reason == "collie-helper.apk is not bundled")
+        #expect(await h.state == .fallback)
+        #expect(await h.reason == "collie-helper.apk is not bundled")
         #expect(await adb.calls.isEmpty)
     }
 
@@ -178,7 +183,9 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         await h.start(install: true)
         #expect(await adb.calls.filter { $0.first == "forward" } == [["forward", "tcp:0", "localabstract:collie-helper"]])
         await h.close()
-        #expect(await adb.removedForward && h.state == .off && h.port == nil)
+        #expect(await adb.removedForward)
+        #expect(await h.state == .off)
+        #expect(await h.port == nil)
     }
 
     @Test func removeKeepsTheOtherServices() async throws {
@@ -189,7 +196,9 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         try await h.remove()
         #expect(await adb.services == "com.a/.X:com.b/.Y")
         #expect(await adb.calls.contains(["uninstall", HelperProtocol.package]))
-        #expect(await adb.removedForward && h.state == .off && h.reason == "removed")
+        #expect(await adb.removedForward)
+        #expect(await h.state == .off)
+        #expect(await h.reason == "removed")
     }
 
     @Test func removeOfTheOnlyServiceDeletesTheSetting() async throws {

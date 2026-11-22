@@ -69,7 +69,7 @@ private func launch(_ root: URL) throws -> Process {
         let pids = root.appendingPathComponent("pids")
         var procs: [Process] = []
         defer {
-            for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+            for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL); reap(p) }
             for l in ((try? String(contentsOf: pids, encoding: .utf8)) ?? "").split(separator: "\n") { if let n = pid_t(l) { kill(n, SIGKILL) } }
             try? FileManager.default.removeItem(at: root)
         }
@@ -95,7 +95,7 @@ private func launch(_ root: URL) throws -> Process {
         var admin = try await start()
         let a = try await spawn(admin, "A"); _ = try await spawn(admin, "B")
         #expect(try await connect(admin).ok)
-        kill(procs[0].processIdentifier, SIGKILL); procs[0].waitUntilExit()
+        kill(procs[0].processIdentifier, SIGKILL); reap(procs[0])
 
         #expect(FileManager.default.fileExists(atPath: sock.path))
         let env = ["COLLIE_SOCKET": sock.path, "COLLIE_TERMINAL_ID": a.id, "COLLIE_TOKEN": a.token]
@@ -118,7 +118,7 @@ private func launch(_ root: URL) throws -> Process {
         let pidFile = root.appendingPathComponent("child.pid")
         var procs: [Process] = []
         defer {
-            for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+            for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL); reap(p) }
             if let n = (try? String(contentsOf: pidFile, encoding: .utf8)).flatMap({ pid_t($0.trimmingCharacters(in: .whitespacesAndNewlines)) }) { kill(-n, SIGKILL); kill(n, SIGKILL) }
             try? FileManager.default.removeItem(at: root)
         }
@@ -139,7 +139,7 @@ private func launch(_ root: URL) throws -> Process {
         try #require(await waitFor(5) { FileManager.default.fileExists(atPath: pidFile.path) })
         try await Task.sleep(for: .milliseconds(300))
         let pid = pid_t(try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
-        kill(procs[0].processIdentifier, SIGKILL); procs[0].waitUntilExit()
+        kill(procs[0].processIdentifier, SIGKILL); reap(procs[0])
         #expect(kill(pid, 0) == 0)
 
         admin = try await start()
@@ -160,7 +160,7 @@ private func launch(_ root: URL) throws -> Process {
         var procs: [Process] = []
         var child: pid_t = 0
         defer {
-            for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+            for p in procs where p.isRunning { kill(p.processIdentifier, SIGKILL); reap(p) }
             if child > 0 { kill(child, SIGKILL) }
             try? FileManager.default.removeItem(at: root)
         }
@@ -184,7 +184,7 @@ private func launch(_ root: URL) throws -> Process {
         child = pid_t(try String(contentsOf: childFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))!
         let pf = try #require(try FileManager.default.contentsOfDirectory(at: pidDir, includingPropertiesForKeys: nil).first)
         let leader = pid_t(try String(contentsOf: pf, encoding: .utf8))!
-        kill(procs[0].processIdentifier, SIGKILL); procs[0].waitUntilExit()
+        kill(procs[0].processIdentifier, SIGKILL); reap(procs[0])
         try FileManager.default.removeItem(at: flag)   // the leader (not the daemon) now exits; the child ignores HUP
         try #require(await waitFor(5) { kill(leader, 0) == -1 && errno == ESRCH })
         #expect(kill(child, 0) == 0)
@@ -197,7 +197,7 @@ private func launch(_ root: URL) throws -> Process {
     @Test func spawnKillCyclesKeepDaemonFdsFlat() async throws {
         let root = tmpRoot(); defer { try? FileManager.default.removeItem(at: root) }
         let proc = try launch(root)
-        defer { if proc.isRunning { kill(proc.processIdentifier, SIGTERM); proc.waitUntilExit() } }
+        defer { if proc.isRunning { kill(proc.processIdentifier, SIGTERM); reap(proc) } }
         let sock = root.appendingPathComponent("run/collied.sock"), tf = root.appendingPathComponent("admin.token")
         try #require(await waitFor(5) { FileManager.default.fileExists(atPath: sock.path) && FileManager.default.fileExists(atPath: tf.path) })
         let admin = try String(contentsOf: tf, encoding: .utf8)
@@ -233,7 +233,7 @@ private func launch(_ root: URL) throws -> Process {
                          "COLLIE_USER_ENV": "off"]
         p.currentDirectoryURL = cwd
         try p.run()
-        defer { if p.isRunning { kill(p.processIdentifier, SIGTERM); p.waitUntilExit() } }
+        defer { if p.isRunning { kill(p.processIdentifier, SIGTERM); reap(p) } }
         let sock = root.appendingPathComponent("run/collied.sock"), tf = root.appendingPathComponent("admin.token")
         try #require(await waitFor(5) { FileManager.default.fileExists(atPath: sock.path) && FileManager.default.fileExists(atPath: tf.path) })
         let admin = try String(contentsOf: tf, encoding: .utf8)
@@ -272,7 +272,7 @@ private func launch(_ root: URL) throws -> Process {
         let err = Pipe(); p.standardError = err
         try p.run()
         let done = await waitFor(5) { !p.isRunning }
-        if !done { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+        if !done { kill(p.processIdentifier, SIGKILL); reap(p) }
         #expect(done && p.terminationStatus != 0)
         #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).contains("orqd"))
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("admin.token").path))
@@ -289,7 +289,7 @@ private func launch(_ root: URL) throws -> Process {
             try p.run()
             defer { if p.isRunning { kill(p.processIdentifier, SIGKILL) } }
             #expect(await waitFor(5) { FileManager.default.fileExists(atPath: root.appendingPathComponent("run/collied.sock").path) })
-            kill(p.processIdentifier, SIGTERM); p.waitUntilExit()
+            kill(p.processIdentifier, SIGTERM); reap(p)
             #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).contains(want), "\(extra)")
         }
     }
@@ -304,7 +304,7 @@ private func launch(_ root: URL) throws -> Process {
         let err = Pipe(); p.standardError = err
         try p.run()
         let done = await waitFor(5) { !p.isRunning }
-        if !done { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+        if !done { kill(p.processIdentifier, SIGKILL); reap(p) }
         #expect(done && p.terminationStatus == 1)
         #expect(String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).contains("collie"))
     }

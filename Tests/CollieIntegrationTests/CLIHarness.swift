@@ -17,6 +17,11 @@ func waitFor(_ seconds: Double, _ cond: () -> Bool) async -> Bool {
     return cond()
 }
 
+/// Waits for `p` to exit with waitpid (returns at once if it was already reaped). Not `Process.waitUntilExit()`
+/// in an async test: it waits on the run loop of the thread that called `run()`, the test resumes on another pool
+/// thread after an `await`, and the wait never returns (ColliedProcessTests hung there in a CI run and locally).
+func reap(_ p: Process) { var s: Int32 = 0; while waitpid(p.processIdentifier, &s, 0) < 0 && errno == EINTR {} }
+
 private final class Box: @unchecked Sendable { var d = Data() }
 struct Run { var status: Int32; var out: String; var err: String }
 
@@ -60,7 +65,7 @@ func withRig(_ body: (Rig) async throws -> Void) async throws {
     let proc = Process(); proc.executableURL = colliedURL; proc.arguments = ["--root", root.path, "--no-terminal-sandbox"]
     proc.environment = ProcessInfo.processInfo.environment.merging(["COLLIE_USER_ENV": "off"]) { $1 }
     try proc.run()
-    defer { if proc.isRunning { kill(proc.processIdentifier, SIGTERM); proc.waitUntilExit() } }
+    defer { if proc.isRunning { kill(proc.processIdentifier, SIGTERM); reap(proc) } }
     let sock = root.appendingPathComponent("run/collied.sock"), tf = root.appendingPathComponent("admin.token")
     #expect(await waitFor(5) { FileManager.default.fileExists(atPath: sock.path) && FileManager.default.fileExists(atPath: tf.path) })
     let admin = try String(contentsOf: tf, encoding: .utf8)

@@ -84,6 +84,12 @@ run; [ "$rc" = 1 ] || fail "trailing \$ must fail"; grep -q 'no trailing' "$T/er
 printf '^A\\.S9/x\\(\\)  # gone\n' > "$T/skip"
 run; [ "$rc" = 1 ] || fail "stale pattern must fail"; grep -q "matches no test" "$T/err" || fail "says stale"
 
+# a @Test outside any suite (id "A.f()", no "/") runs: filtered by its escaped id, not "^A\.f()/" (matches nothing)
+printf '' > "$T/skip"; printf 'A.S1/a()\nA.S1/b()\nA.S1/c()\nA.f()\n' > "$T/list"; ok; pass 4 > "$T/out-A.S1"
+SHARDS=1 run; [ "$rc" = 0 ] || fail "a free test function must run: $(cat "$T/err")"
+grep -qF -- '--filter ^A\.f\(\)' "$T/args" || fail "free function filtered by its escaped id: $(cat "$T/args")"
+! grep -qF -- 'A\.f\(\)/' "$T/args" || fail "no trailing / on a free function: $(cat "$T/args")"
+
 # an empty list (the build or discovery broke) fails
 printf '' > "$T/skip"; : > "$T/list"
 run; [ "$rc" = 1 ] || fail "no tests must fail"

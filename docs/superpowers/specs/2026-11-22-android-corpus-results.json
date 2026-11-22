@@ -1,0 +1,562 @@
+{
+  "screens": [
+    {
+      "name": "canvas",
+      "class": "poor",
+      "dark": false,
+      "gt": [
+        "Configurações",
+        "Olá, Ysrael! Bem-vindo de volta",
+        "Texto pequeno de apoio, versão 2.4.1 (build 318)",
+        "Entrar",
+        "Criar conta",
+        "Esqueci a senha",
+        "Total: R$ 1.234,56"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 0,
+      "coverage": 0.0,
+      "treeMs": null,
+      "ocrMs": 123.5,
+      "recall": [
+        7,
+        7
+      ],
+      "missed": [],
+      "position": [
+        1,
+        1
+      ],
+      "ocrItems": 9,
+      "trigger": "labels",
+      "daemonOcrMs": 263
+    },
+    {
+      "name": "surface",
+      "class": "poor",
+      "dark": false,
+      "gt": [
+        "SCORE 001240",
+        "Vidas: 3",
+        "Nível 7",
+        "JOGAR",
+        "Toque para continuar"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 0,
+      "coverage": 0.0,
+      "treeMs": null,
+      "ocrMs": 143.0,
+      "recall": [
+        5,
+        5
+      ],
+      "missed": [],
+      "position": [
+        1,
+        1
+      ],
+      "ocrItems": 7,
+      "trigger": "labels",
+      "daemonOcrMs": 532
+    },
+    {
+      "name": "webcanvas",
+      "class": "poor",
+      "dark": false,
+      "gt": [
+        "Resumo do pedido",
+        "Cerveja Pilsen 350ml x12",
+        "Refrigerante Cola 2L x6",
+        "Subtotal: R$ 189,90",
+        "Finalizar pedido"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 0,
+      "coverage": 0.0,
+      "treeMs": null,
+      "ocrMs": 111.0,
+      "recall": [
+        5,
+        5
+      ],
+      "missed": [],
+      "position": [
+        1,
+        1
+      ],
+      "ocrItems": 7,
+      "trigger": "labels",
+      "daemonOcrMs": 237
+    },
+    {
+      "name": "hidden",
+      "class": "poor",
+      "dark": false,
+      "gt": [
+        "Meus pedidos",
+        "Pedido #48213 - Entregue",
+        "Pedido #48210 - Em transporte",
+        "Ver detalhes",
+        "Atualizado há 3 minutos"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 5,
+      "coverage": 0.3638,
+      "treeMs": null,
+      "ocrMs": 111.0,
+      "recall": [
+        5,
+        5
+      ],
+      "missed": [],
+      "position": [
+        5,
+        6
+      ],
+      "ocrItems": 7,
+      "trigger": null,
+      "daemonOcrMs": null
+    },
+    {
+      "name": "photo",
+      "class": "poor",
+      "dark": false,
+      "gt": [
+        "Promoção da semana",
+        "Até 30% de desconto",
+        "Válido até 30/11 ou enquanto durarem os estoques",
+        "Aproveite agora"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 0,
+      "coverage": 0.0,
+      "treeMs": null,
+      "ocrMs": 153.0,
+      "recall": [
+        4,
+        4
+      ],
+      "missed": [],
+      "position": [
+        1,
+        1
+      ],
+      "ocrItems": 6,
+      "trigger": "labels",
+      "daemonOcrMs": 384
+    },
+    {
+      "name": "normal",
+      "class": "good",
+      "dark": false,
+      "gt": [
+        "Tela normal",
+        "Todos os elementos têm acessibilidade",
+        "Continuar",
+        "Rodapé de exemplo"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 4,
+      "coverage": 0.333,
+      "treeMs": null,
+      "ocrMs": 96.0,
+      "recall": [
+        4,
+        4
+      ],
+      "missed": [],
+      "position": [
+        4,
+        6
+      ],
+      "ocrItems": 7,
+      "trigger": null,
+      "daemonOcrMs": null
+    },
+    {
+      "name": "canvas_dark",
+      "class": "poor",
+      "dark": true,
+      "gt": [
+        "Configurações",
+        "Olá, Ysrael! Bem-vindo de volta",
+        "Texto pequeno de apoio, versão 2.4.1 (build 318)",
+        "Entrar",
+        "Criar conta",
+        "Esqueci a senha",
+        "Total: R$ 1.234,56"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 0,
+      "coverage": 0.0,
+      "treeMs": null,
+      "ocrMs": 133.0,
+      "recall": [
+        7,
+        7
+      ],
+      "missed": [],
+      "position": [
+        1,
+        1
+      ],
+      "ocrItems": 9,
+      "trigger": "labels",
+      "daemonOcrMs": 247
+    },
+    {
+      "name": "surface_dark",
+      "class": "poor",
+      "dark": true,
+      "gt": [
+        "SCORE 001240",
+        "Vidas: 3",
+        "Nível 7",
+        "JOGAR",
+        "Toque para continuar"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 0,
+      "coverage": 0.0,
+      "treeMs": null,
+      "ocrMs": 115.0,
+      "recall": [
+        5,
+        5
+      ],
+      "missed": [],
+      "position": [
+        1,
+        1
+      ],
+      "ocrItems": 7,
+      "trigger": "labels",
+      "daemonOcrMs": 361
+    },
+    {
+      "name": "webcanvas_dark",
+      "class": "poor",
+      "dark": true,
+      "gt": [
+        "Resumo do pedido",
+        "Cerveja Pilsen 350ml x12",
+        "Refrigerante Cola 2L x6",
+        "Subtotal: R$ 189,90",
+        "Finalizar pedido"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 0,
+      "coverage": 0.0,
+      "treeMs": null,
+      "ocrMs": 116.5,
+      "recall": [
+        5,
+        5
+      ],
+      "missed": [],
+      "position": [
+        1,
+        1
+      ],
+      "ocrItems": 7,
+      "trigger": "labels",
+      "daemonOcrMs": 256
+    },
+    {
+      "name": "hidden_dark",
+      "class": "poor",
+      "dark": true,
+      "gt": [
+        "Meus pedidos",
+        "Pedido #48213 - Entregue",
+        "Pedido #48210 - Em transporte",
+        "Ver detalhes",
+        "Atualizado há 3 minutos"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 5,
+      "coverage": 0.3638,
+      "treeMs": null,
+      "ocrMs": 104.5,
+      "recall": [
+        5,
+        5
+      ],
+      "missed": [],
+      "position": [
+        5,
+        6
+      ],
+      "ocrItems": 7,
+      "trigger": null,
+      "daemonOcrMs": null
+    },
+    {
+      "name": "photo_dark",
+      "class": "poor",
+      "dark": true,
+      "gt": [
+        "Promoção da semana",
+        "Até 30% de desconto",
+        "Válido até 30/11 ou enquanto durarem os estoques",
+        "Aproveite agora"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 0,
+      "coverage": 0.0,
+      "treeMs": null,
+      "ocrMs": 123.5,
+      "recall": [
+        4,
+        4
+      ],
+      "missed": [],
+      "position": [
+        1,
+        1
+      ],
+      "ocrItems": 6,
+      "trigger": "labels",
+      "daemonOcrMs": 420
+    },
+    {
+      "name": "normal_dark",
+      "class": "good",
+      "dark": true,
+      "gt": [
+        "Tela normal",
+        "Todos os elementos têm acessibilidade",
+        "Continuar",
+        "Rodapé de exemplo"
+      ],
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 4,
+      "coverage": 0.333,
+      "treeMs": null,
+      "ocrMs": 141.0,
+      "recall": [
+        4,
+        4
+      ],
+      "missed": [],
+      "position": [
+        4,
+        6
+      ],
+      "ocrItems": 7,
+      "trigger": null,
+      "daemonOcrMs": null
+    },
+    {
+      "name": "settings",
+      "class": "good",
+      "dark": false,
+      "gt": null,
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 13,
+      "coverage": 0.8572,
+      "treeMs": null,
+      "ocrMs": 159.5,
+      "recall": [
+        14,
+        14
+      ],
+      "missed": [],
+      "position": [
+        14,
+        14
+      ],
+      "ocrItems": 15,
+      "trigger": null,
+      "daemonOcrMs": null
+    },
+    {
+      "name": "settings_display",
+      "class": "good",
+      "dark": false,
+      "gt": null,
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 14,
+      "coverage": 0.7508,
+      "treeMs": null,
+      "ocrMs": 153.0,
+      "recall": [
+        15,
+        16
+      ],
+      "missed": [
+        "Navigate up"
+      ],
+      "position": [
+        11,
+        15
+      ],
+      "ocrItems": 16,
+      "trigger": null,
+      "daemonOcrMs": null
+    },
+    {
+      "name": "launcher",
+      "class": "good",
+      "dark": false,
+      "gt": null,
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 13,
+      "coverage": 0.9574,
+      "treeMs": null,
+      "ocrMs": 83.5,
+      "recall": [
+        4,
+        15
+      ],
+      "missed": [
+        "At a glance",
+        "Home",
+        "Phone",
+        "Messages",
+        "Chrome",
+        "BR - Bees Browse",
+        "Google",
+        "Google search",
+        "Google app",
+        "Voice search",
+        "Camera search"
+      ],
+      "position": [
+        1,
+        4
+      ],
+      "ocrItems": 6,
+      "trigger": null,
+      "daemonOcrMs": null
+    },
+    {
+      "name": "chrome_canvas",
+      "class": "poor",
+      "dark": false,
+      "gt": null,
+      "stable": true,
+      "nodesSource": "helper",
+      "width": 720,
+      "height": 1280,
+      "labeled": 5,
+      "coverage": 0.3693,
+      "treeMs": null,
+      "ocrMs": 152.0,
+      "recall": [
+        5,
+        5
+      ],
+      "missed": [],
+      "position": [
+        5,
+        8
+      ],
+      "ocrItems": 9,
+      "trigger": null,
+      "daemonOcrMs": null
+    }
+  ],
+  "summary": {
+    "screens": 16,
+    "stable": 16,
+    "unstable": [],
+    "labeled": {
+      "good": {
+        "n": 5,
+        "min": 4,
+        "median": 13,
+        "max": 14
+      },
+      "poor": {
+        "n": 11,
+        "min": 0,
+        "median": 0,
+        "max": 5
+      }
+    },
+    "coverage": {
+      "good": {
+        "n": 5,
+        "min": 0.333,
+        "median": 0.7508,
+        "max": 0.9574
+      },
+      "poor": {
+        "n": 11,
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.3693
+      }
+    },
+    "poorCaught": 8,
+    "poorTotal": 11,
+    "falseFires": [],
+    "goodTotal": 5,
+    "minLabeled": {
+      "limit": 9,
+      "errors": 2,
+      "separates": false
+    },
+    "coverageMin": {
+      "limit": 0.56005,
+      "errors": 2,
+      "separates": false
+    },
+    "recall": {
+      "hit": 98,
+      "total": 110
+    },
+    "position": {
+      "right": 57,
+      "checked": 73
+    },
+    "ocrMsMedian": 123.5
+  }
+}

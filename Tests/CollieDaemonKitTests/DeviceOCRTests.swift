@@ -64,7 +64,7 @@ import CollieProtocol
         let ocr = FakeOCR([OCRItem(text: "Recorte", confidence: 0.9, box: CGRect(x: 10, y: 10, width: 50, height: 20))])
         let fx = try OCRSvc(tree: goodTree, png: textPNG, ocr: ocr)   // --region forces the OCR on a good tree
         let s = obj(try await fx.run("device.screen", ["region": .string("100,200,300,400"), "timing": .bool(true)]))
-        #expect(obj(s["timingMs"])["trigger"] == .string("explicit"), "\(s)")
+        #expect(obj(s["timingMs"])["trigger"] == .string("flag"), "\(s)")
         #expect(await ocr.sizes == [CGSize(width: 200, height: 200)])
         guard case .array(let lists)? = s["lists"], let item = lists.map(obj).first(where: { $0["source"] == .string("ocr") }),
               case .string(let ref)? = item["ref"] else { Issue.record("\(s)"); await fx.cleanup(); return }
@@ -243,7 +243,7 @@ extension DeviceOCRTests {
         let ocr = FakeOCR([OCRItem(text: "Recorte", confidence: 0.9, box: CGRect(x: 30, y: 30, width: 150, height: 60))])
         let fx = try IOSOCRSvc(tree: iosGoodTree, ocr: ocr)
         let s = obj(try await fx.run("device.screen", ["region": .string("100,810,300,840"), "timing": .bool(true)]))
-        #expect(obj(s["timingMs"])["trigger"] == .string("explicit"), "\(s)")
+        #expect(obj(s["timingMs"])["trigger"] == .string("flag"), "\(s)")
         #expect(await ocr.sizes == [CGSize(width: 600, height: 90)])
         guard case .array(let lists)? = s["lists"], let item = lists.map(obj).first(where: { $0["source"] == .string("ocr") }),
               case .string(let ref)? = item["ref"] else { Issue.record("\(s)"); await fx.cleanup(); return }

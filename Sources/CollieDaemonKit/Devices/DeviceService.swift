@@ -247,7 +247,7 @@ actor DeviceService {
         /// the OCR items join the refs. nil: `--no-ocr`, the tree already has OCR items, or nothing read.
         func ocrFallback(_ nodes: [UINode], _ mode: OCRMode) async -> (nodes: [UINode], read: OCRRead)? {
             guard !mode.off, !nodes.contains(where: \.ocr) else { return nil }
-            let read = await ocrRead(panel: panel, serial: serial, tree: nodes, trigger: "find", region: mode.region)
+            let read = await ocrRead(panel: panel, serial: serial, tree: nodes, trigger: OCRTrigger.find.rawValue, region: mode.region)
             guard let found = read.nodes, !found.isEmpty else { return nil }
             if !closed.contains(panel.id) { refs[panel.id] = nodes + found }
             return (nodes + found, read)

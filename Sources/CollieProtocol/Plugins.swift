@@ -180,7 +180,7 @@ extension PluginRegistry {
         ParamSpec("no-ocr", .flag, help: "No OCR fallback when the tree has no match"),
         ParamSpec("region", .string, help: "x1,y1,x2,y2 (Android pixels, iOS points): the OCR fallback reads only this rectangle"),
         ParamSpec("timing", .flag, help: "With the OCR fallback: also return {timingMs: ocrMs, ocrLevel, trigger: find}")]
-    private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group, and with the OCR ocrMs, ocrLevel, trigger: labels|coverage|opaque|explicit)")
+    private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group, and with the OCR ocrMs, ocrLevel, trigger: labels|coverage|opaque|flag)")
 
     /// An Android device or emulator through adb, or an iOS Simulator through simctl + AXe; the daemon runs these
     /// commands (no app round trip).

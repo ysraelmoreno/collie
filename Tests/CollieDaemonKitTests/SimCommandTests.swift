@@ -146,7 +146,7 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
             let r = try await call(p, m, "device.screen", ["ocr": "true", "timing": "true"])
             guard case .string(let text)? = field(r, "text"), case .object(let t)? = field(r, "timingMs") else { Issue.record("\(r)"); return }
             #expect(r.ok && text.hasSuffix("\nocr: unavailable") && field(r, "ocr") == .string("unavailable") && !text.contains("unsupported"))
-            #expect(t["trigger"] == .string("explicit") && t["ocrMs"] != nil && t["ocr"] == nil, "\(t)")
+            #expect(t["trigger"] == .string("flag") && t["ocrMs"] != nil && t["ocr"] == nil, "\(t)")
             let off = try await call(p, m, "device.screen", ["no-ocr": "true"])
             #expect(off.ok && field(off, "ocr") == nil)
         }

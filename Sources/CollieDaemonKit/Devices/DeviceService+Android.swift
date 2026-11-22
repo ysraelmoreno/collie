@@ -332,14 +332,14 @@ extension DeviceService {
     }
 }
 
-/// `device screen --ocr|--no-ocr|--region x1,y1,x2,y2`: O2 rule 5 (explicit) over the tree's rules 1-3.
+/// `device screen --ocr|--no-ocr|--region x1,y1,x2,y2`: O2 rule 5 (flag) over the tree's rules 1-3.
 struct OCRMode: Sendable {
     var forced = false, off = false, region: CGRect?
     static let auto = OCRMode()
-    /// The rule that fires (`--timing`'s `trigger`: labels|coverage|opaque, explicit for --ocr/--region), nil: no OCR.
+    /// The rule that fires (`--timing`'s `trigger`: labels|coverage|opaque, flag for --ocr/--region), nil: no OCR.
     func trigger(_ nodes: [UINode]) -> String? {
         if off { return nil }
-        return forced ? "explicit" : OCR.trigger(nodes)?.rawValue
+        return (forced ? .flag : OCR.trigger(nodes))?.rawValue
     }
 }
 

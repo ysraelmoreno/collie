@@ -14,6 +14,19 @@ stderr. Para distribuir, use uma chave privada fora do repositório:
    `COLLIE_HELPER_KEY_ALIAS`, padrão `collie-helper`; senha de `COLLIE_HELPER_STOREPASS` ou do Keychain). `--release` recusa a
    chave debug. A senha nunca vai por argumento nem para o log.
 
+### Pino do certificado
+
+`Resources/collie-helper.cert.sha256` guarda o SHA-256 do certificado que assina o APK commitado (uma linha, hex minúsculo,
+sem dois pontos). `scripts/release.sh` roda `scripts/verify-device-helper.sh` antes de empacotar e para se o APK não bater
+com o pino (1: assinado com outra chave ou com a chave debug) ou se faltar apksigner ou o pino (2). O pino commitado é o da
+chave DEBUG: placeholder até o dono assinar com a chave privada. Rotina depois de assinar:
+
+1. `COLLIE_HELPER_KEYSTORE=~/.collie/collie-helper.p12 scripts/build-device-helper.sh --release`
+2. `scripts/verify-device-helper.sh --print > Resources/collie-helper.cert.sha256` (imprime o SHA-256 do certificado do APK)
+3. `scripts/verify-device-helper.sh` deve dizer `ok`; commite o APK e o pino juntos.
+
+Teste sem SDK (apksigner falso): `scripts/test-verify-device-helper.sh`.
+
 Atenção: trocar a chave quebra o `install -r` em aparelhos que já têm o helper assinado com a debug
 (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`); é preciso desinstalar antes. A K1b trata isso no daemon.
 Teste sem SDK: `scripts/test-build-device-helper.sh`.

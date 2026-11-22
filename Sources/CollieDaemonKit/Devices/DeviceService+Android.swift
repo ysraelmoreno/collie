@@ -383,9 +383,12 @@ extension DeviceService {
         let start = ContinuousClock.now
         func done(_ n: [UINode]?) -> OCRRead { OCRRead(nodes: n, took: ContinuousClock.now - start, trigger: trigger) }
         guard let ocr else { return done(nil) }
-        let shot = panel.state["platform"] == .string("ios") ? await simShot(serial, points: simPoints[panel.id])
-            : (try? await screencap(serial)).map { ($0, CGFloat(1)) }
-        guard var (png, scale) = shot else { return done(nil) }
+        let shot: (png: Data, scale: CGFloat)?
+        if panel.state["platform"] == .string("ios") { shot = await simShot(serial, points: simPoints[panel.id]) }
+        else { shot = (try? await screencap(serial)).map { ($0, 1) } }
+        guard let shot else { return done(nil) }
+        var png = shot.png
+        let scale = shot.scale
         if OCRImage.uniform(png) { return done([]) }   // black (FLAG_SECURE) or flat: nothing to read
         var origin = CGPoint.zero
         if let region {

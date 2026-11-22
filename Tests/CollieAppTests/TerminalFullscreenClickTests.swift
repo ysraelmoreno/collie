@@ -12,8 +12,23 @@ import CollieCore
 /// and fullscreen (scale 1) were never scaled. The re-add on mouseUp is harmless: the button fires inside `super.mouseUp`.
 @MainActor @Suite(.serialized) struct TerminalFullscreenClickTests {
     static let size = CGSize(width: 640, height: 400)   // canvas pt
-    /// The ⤢ in canvas pt: right padding 10, the "…" menu, spacing 8, then the button (found by scanning at zoom 1).
-    static let button = CGPoint(x: size.width - 46, y: TerminalNodeView.titleHeight / 2)
+    /// The ⤢ in canvas pt, from its accessibility frame at zoom 1 (node bounds = canvas pt there). Not a constant: the
+    /// title bar's SwiftUI layout differs by macOS (`size.width - 46`, scanned on 15, missed on the macOS 26 runner).
+    static var button: CGPoint {
+        if let p = located { return p }
+        let r = makeRig(zoom: 1, inFront: false); defer { r.close() }
+        let p = frame(labeled: "Tela cheia", in: r.node).map { r.node.convert(r.window.convertFromScreen($0), from: nil) }
+        located = p.map { CGPoint(x: $0.midX, y: $0.midY) }
+        return located ?? .zero
+    }
+    private static var located: CGPoint?
+    private static func frame(labeled label: String, in e: Any, depth: Int = 0) -> CGRect? {
+        guard depth < 40, let el = e as? NSAccessibilityProtocol else { return nil }
+        if el.accessibilityLabel() == label { return el.accessibilityFrame() }
+        for c in (e as? NSView)?.subviews ?? [] { if let f = frame(labeled: label, in: c, depth: depth + 1) { return f } }
+        for c in el.accessibilityChildren() ?? [] { if let f = frame(labeled: label, in: c, depth: depth + 1) { return f } }
+        return nil
+    }
 
     @MainActor final class Parent: NSView {
         var adds = 0
@@ -44,8 +59,13 @@ import CollieCore
         func close() { node.unmount(); other.unmount(); window.close() }
     }
 
-    /// `node` at the zoom, and another node placed away from the click; `inFront` puts that one on top.
     private func rig(zoom: CGFloat, inFront: Bool) -> Rig {
+        #expect(Self.button != .zero, "⤢ not found in the title bar's accessibility tree")
+        return Self.makeRig(zoom: zoom, inFront: inFront)
+    }
+
+    /// `node` at the zoom, and another node placed away from the click; `inFront` puts that one on top.
+    private static func makeRig(zoom: CGFloat, inFront: Bool) -> Rig {
         let canvas = CanvasState(); canvas.zoom = zoom
         let client = DaemonClient(paths: Paths(root: FileManager.default.temporaryDirectory.appendingPathComponent("collie-fsc-\(UUID())")))
         func make() -> TerminalNodeView {

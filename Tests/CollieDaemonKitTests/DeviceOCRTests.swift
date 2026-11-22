@@ -239,16 +239,16 @@ extension DeviceOCRTests {
     }
 
     @Test func iosRegionIsPointsAndTheCropIsPixels() async throws {
-        // region (100,200)-(300,400) pt → crop (300,600) 600×600 px; box (30,30,150,60) in it → (110,210,50,20) pt
+        // region (100,810)-(300,840) pt, below the buttons → crop (300,2430) 600×90 px; box (30,30,150,60) in it → (110,820,50,20) pt
         let ocr = FakeOCR([OCRItem(text: "Recorte", confidence: 0.9, box: CGRect(x: 30, y: 30, width: 150, height: 60))])
         let fx = try IOSOCRSvc(tree: iosGoodTree, ocr: ocr)
-        let s = obj(try await fx.run("device.screen", ["region": .string("100,200,300,400"), "timing": .bool(true)]))
+        let s = obj(try await fx.run("device.screen", ["region": .string("100,810,300,840"), "timing": .bool(true)]))
         #expect(obj(s["timingMs"])["trigger"] == .string("explicit"), "\(s)")
-        #expect(await ocr.sizes == [CGSize(width: 600, height: 600)])
+        #expect(await ocr.sizes == [CGSize(width: 600, height: 90)])
         guard case .array(let lists)? = s["lists"], let item = lists.map(obj).first(where: { $0["source"] == .string("ocr") }),
               case .string(let ref)? = item["ref"] else { Issue.record("\(s)"); await fx.cleanup(); return }
         _ = try await fx.run("device.tap", ["ref": .string(ref)])
-        #expect(fx.axe.contains("tap -x 135 -y 220 --udid \(fx.udid)"), "\(fx.axe)")
+        #expect(fx.axe.contains("tap -x 135 -y 830 --udid \(fx.udid)"), "\(fx.axe)")
         await fx.cleanup()
     }
 

@@ -34,6 +34,14 @@ public func humanizeId(_ id: String) -> String {
     return s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
 }
 
+/// A label that is only a symbol's name (SF Symbol or icon resource: "chevron", "chevron.right", "apple.id",
+/// "xmark.circle.fill"): ASCII lowercase letters, digits and dots, starting with a letter; no space, accent or
+/// capital. "Wi-Fi", "2.4.1" and "Versão 2.4.1" are not. `ScreenModel` drops it from image nodes only.
+public func symbolNameNoise(_ label: String) -> Bool {
+    guard let f = label.first, f.isASCII, f.isLowercase else { return false }
+    return label.allSatisfy { $0 == "." || ($0.isASCII && ($0.isLowercase || $0.isNumber)) }
+}
+
 /// `tap/find --text "+"`: the words a symbol stands for in an unlabeled button's id or desc ("+" → add, plus, fab...);
 /// nil when `symbol` isn't one. `UITree.target` tries them only when no text/desc or humanized id is equal.
 public func symbolAliases(_ symbol: String) -> [String]? {

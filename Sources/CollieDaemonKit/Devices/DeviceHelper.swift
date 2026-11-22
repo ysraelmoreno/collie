@@ -10,7 +10,7 @@ import CollieProtocol
 /// `dump` that has a root and nodes before it is `ready`. Any failure leaves it in `fallback` with the reason: the
 /// `device` commands keep using uiautomator and never fail because of the helper.
 /// H7/P1: dumps that keep coming back without nodes climb `ladder` (re-bind, force-stop, reinstall, each probed at once);
-/// a helper in `fallback` is retried at most every `retryEvery` on a device call (`recover`, the same bring-up and ladder),
+/// a helper in `fallback` is retried on a device call along `retrySchedule` (`recover`, the same bring-up and ladder),
 /// and a ready one whose dump comes back empty goes to `fallback`, so `status` always says what the commands read the
 /// screen with.
 actor DeviceHelper {
@@ -27,8 +27,9 @@ actor DeviceHelper {
     /// Tries of `hello` after an install, and of `dump` until it has a root and nodes (the first one after an enable
     /// can come back empty).
     static let tries = 10
-    /// The least time between two tries of a helper in `fallback` (`recover`).
-    static let retryEvery = Duration.seconds(30)
+    /// A1: the wait before each try of a helper in `fallback` (`recover`), counted from the fall or the last failed try:
+    /// 2 s, 5 s, 15 s, then 30 s for good (the last value repeats); the count restarts when it is `ready` again.
+    static let retrySchedule: [Duration] = [.seconds(2), .seconds(5), .seconds(15), .seconds(30)]
 
     private(set) var state = State.off
     private(set) var reason: String?
@@ -38,6 +39,8 @@ actor DeviceHelper {
     /// The last bring-up's `install`, which `recover` reuses; when a `fallback` may be retried.
     private var install = false
     private var retryAt: ContinuousClock.Instant?
+    /// Falls since the last `ready` (or a fresh `start`): the index in `retrySchedule`.
+    private var misses = 0
     private let now: @Sendable () -> ContinuousClock.Instant
 
     init(serial: String, adb: @escaping Adb, apk: @escaping @Sendable () -> URL?,
@@ -59,11 +62,12 @@ actor DeviceHelper {
     func start(install: Bool, again: Bool = false) async {
         if let r = run { await r.value }
         guard state == .off || (again && state == .fallback) else { return }
+        misses = 0
         await up(install: install)
     }
 
-    /// A device call with the helper in `fallback`: reopens it (hello, a dump with nodes, as `start`) once `retryEvery`
-    /// passed since it fell back or last failed; success is `ready` again, a failure keeps `fallback` with the new reason.
+    /// A device call with the helper in `fallback`: reopens it (hello, a dump with nodes, as `start`) once the
+    /// `retrySchedule` wait passed since it fell back or last failed; success is `ready` again, a failure keeps `fallback` with the new reason.
     /// A bring-up already running is not waited for (the call goes on with uiautomator).
     func recover() async {
         guard run == nil, state == .fallback, let at = retryAt, now() >= at else { return }
@@ -78,7 +82,8 @@ actor DeviceHelper {
     }
 
     private func fallBack(_ why: String) async {
-        state = .fallback; reason = why; retryAt = now() + Self.retryEvery
+        state = .fallback; reason = why
+        retryAt = now() + Self.retrySchedule[min(misses, Self.retrySchedule.count - 1)]; misses += 1
         await unforward()
     }
 
@@ -114,7 +119,7 @@ actor DeviceHelper {
                 guard error.code != .timeout else { throw error }
                 try await ladder(install: install, dump)
             }
-            state = .ready; version = hello?.version
+            state = .ready; version = hello?.version; misses = 0
         } catch {
             await fallBack(error.message)
         }

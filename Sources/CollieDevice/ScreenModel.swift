@@ -37,7 +37,12 @@ public enum ScreenModel {
             for j in (i + 1)..<nodes.count { if nodes[j].depth <= nodes[i].depth { break }; out.append(j) }
             return out
         }
-        func own(_ n: UINode) -> String { (n.text.isEmpty ? n.desc : n.text).trimmingCharacters(in: .whitespaces) }
+        /// The node's label; "" for an image named like a symbol ("chevron", "apple.id"): not text for people.
+        /// `device ui` and `--all` keep the raw tree, label included.
+        func own(_ n: UINode) -> String {
+            let l = (n.text.isEmpty ? n.desc : n.text).trimmingCharacters(in: .whitespaces)
+            return isImage(n) && symbolNameNoise(l) ? "" : l
+        }
         /// The node's label, else its first labelled non-clickable descendant's (that descendant is then used).
         func label(_ i: Int, consume: Bool) -> String {
             if !own(nodes[i]).isEmpty { return own(nodes[i]) }
@@ -189,6 +194,15 @@ public enum ScreenModel {
         if w.contains("tab") { return "tab" }
         if n.scrollable { return "list" }
         return n.clickable ? "button" : nil
+    }
+
+    /// iOS `Image`; Android `ImageView`/`ImageButton` without text (its label is the content description).
+    static func isImage(_ n: UINode) -> Bool {
+        switch short(n.cls) {
+        case "Image": true
+        case "ImageView", "ImageButton": n.text.isEmpty
+        default: false
+        }
     }
 
     /// "configuration_fab" → "configuration fab"

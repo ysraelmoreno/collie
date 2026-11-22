@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import os
 import CollieCore
 import CollieProtocol
 
@@ -26,7 +27,7 @@ extension CommandRouter {
         }
         // reserved before the first await: a concurrent work.run (actor reentrancy) finds it taken
         guard !loopPaddocks.contains(pid) else {
-            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it, collie work stop ends it")
+            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it; collie work stop, from the terminal that started it, ends it")
         }
         loopPaddocks.insert(pid)
         var started = false
@@ -46,9 +47,10 @@ extension CommandRouter {
         guard unchecked.isEmpty else {
             throw invalid("every open task needs a --check; these have none: " + unchecked.map { "\"\($0.title)\" [\($0.id)]" }.joined(separator: ", "))
         }
-        let others = try await work.list(includeClosed: false).filter { $0.paddockId == paddock.id }
+        // M7.2 (A2): a closed work's loop may still run (M6.4: it ends at its next wake, after its lanes): it holds the paddock too
+        let others = try await work.list(includeClosed: true).filter { $0.paddockId == paddock.id }
         if workLoops[w.id] != nil || others.contains(where: { $0.loop?.state == .running }) {
-            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it, collie work stop ends it")
+            throw invalid("a loop is already running in paddock '\(paddock.name)'; collie work status shows it; collie work stop, from the terminal that started it, ends it")
         }
         for o in ws.terminals where o.paddockId == paddock.id && o.id != t.id && !o.isShepherd && Self.loopSharesWorktree(o, URL(fileURLWithPath: paddock.path)) {
             if await targetBusy(o.id) {
@@ -65,10 +67,21 @@ extension CommandRouter {
         if let p = str(r, "preset"), Preset(rawValue: p) == nil { throw invalid("preset must be shell|claude|codex|cursor|custom") }
         if let m = str(r, "model") { try ClaudeModel.validate(m) }
         // absent: no gate; given: a command (an empty one is a mistake, never "no gate")
-        let gate = str(r, "gate")
-        if let gate, gate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let gateFlag = str(r, "gate")
+        if let gateFlag, gateFlag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw invalid("--gate is empty: give the command that runs after every task's check, or leave --gate out")
         }
+        // M10.2: the same for the pre-check (absent: none, the loop as before)
+        let precheckFlag = str(r, "precheck")
+        if let precheckFlag, precheckFlag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw invalid("--precheck is empty: give the command that runs at the end of each turn, before the check, or leave --precheck out")
+        }
+        // M13.2: a flag left out takes the paddock's collie-work.json; no file or an invalid one: today's defaults (none),
+        // and an invalid one a one-line warning in the reply, never a refusal. M13.3: the file as committed at HEAD now
+        // (the loop's base), never the tree's: an agent's edit, committed or not, never picks the gate
+        let (fileConfig, fileWarning) = await Self.loopFileDefaults(dir, needed: gateFlag == nil || precheckFlag == nil)
+        let gate = gateFlag ?? fileConfig?.gate, precheck = precheckFlag ?? fileConfig?.precheck
+        let from = (gate: gateFlag == nil && gate != nil, precheck: precheckFlag == nil && precheck != nil)
         // M3.5: absent is 1 (the loop as always); more runs tasks in lanes, which exist only sandboxed and are named by
         // the task's id
         let parallel = try num(r, "parallel", max: Double(TaskScheduler.maxParallel)).map { Int($0) }
@@ -76,13 +89,17 @@ extension CommandRouter {
             guard config.sandboxHome != nil else { throw invalid("--parallel needs the terminal sandbox: a lane's agent, check and git run only sandboxed") }
             for t in open { try LaneWorktree.validate(task: t.id) }
         }
+        let notify = try Self.loopNotify(str(r, "notify"))
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
-                                 preset: str(r, "preset"), model: str(r, "model"), command: str(r, "command"),
+                                 preset: str(r, "preset"),
+                                 model: Self.loopModel(given: str(r, "model"), preference: CollieSettings.load(config.paths.root).loopModel,
+                                                       preset: str(r, "preset"), command: str(r, "command"), shepherd: t),
+                                 command: str(r, "command"),
                                  max: max, used: 0, budget: Int(try num(r, "budget", max: Self.loopBudgetMax) ?? Self.loopBudgetDefault),
-                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel)
+                                 spent: 0, tasks: open.map(\.id), gate: gate, startedAt: Date(), parallel: parallel, notify: notify, precheck: precheck)
         // the owner approves the tasks, their checks, the gate and the limits on a card; until then nothing runs
-        guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name) else {
+        guard let text = Self.loopCardText(w, open, loop, paddock: paddock.name, fromFile: from) else {
             throw invalid("the owner's approval card would not fit (\(Self.loopCardMax) characters) all \(open.count) tasks, their checks and the gate; "
                           + "shorten the checks (a script in the repo: --check 'scripts/check-x.sh') or split the work into smaller loops")
         }
@@ -94,9 +111,9 @@ extension CommandRouter {
                 throw ProtocolError(code: .unavailable, message: "the loop did not start")
             }
             started = true   // the reservation now belongs to the loop
-            let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop)
+            let notice = WorkStatusText.loopTrusted(paddock: paddock.name, open, loop, gateFromFile: from.gate)
             Task { [weak self] in try? await self?.asks.inject(to: starter, prompt: notice, afterQuiet: true) }
-            return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")])
+            return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("running")], fileWarning)
         }
         let card = AppCard(kind: .confirm, paddock: pid, paddockName: paddock.name, app: "work-loop", name: "Laço autônomo",
                            base: nil, call: text, command: "run", by: t.id)
@@ -112,7 +129,64 @@ extension CommandRouter {
             }
             await self.startLoop(id, loop, paddock: paddock, starter: starter, dir: dir)
         }
-        return .object(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")])
+        return Self.runReply(["id": .string(w.id.uuidString.lowercased()), "tasks": .number(Double(open.count)), "state": .string("awaiting approval")], fileWarning)
+    }
+
+    /// M13.2: the paddock's `collie-work.json` for `work run`'s defaults, read only when a flag is left out. Never fails:
+    /// an absent file is nil with no warning, a refused or invalid one nil with its one-line warning. M13.3: read from
+    /// the commit at HEAD (`git show HEAD:collie-work.json`, by its sha), never from the working tree.
+    static func loopFileDefaults(_ dir: URL, needed: Bool) async -> (ProjectWorkConfig?, String?) {
+        guard needed else { return (nil, nil) }
+        let base = (try? await GitRunner.run(["rev-parse", "--verify", "-q", "HEAD^{commit}"], in: dir, timeout: .seconds(30)))?
+            .stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // review A2: the loop reads the commit, so an edit or a new file the owner has not committed is not what runs
+        let dirty = (try? await GitRunner.run(["--literal-pathspecs", "status", "--porcelain", "--untracked-files=all", "--", ProjectWorkConfig.fileName],
+                                              in: dir, timeout: .seconds(30)))?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let uncommitted = dirty.isEmpty ? nil : "aviso: \(ProjectWorkConfig.fileName) tem mudanças não commitadas; o laço usa a versão do commit (HEAD), sem elas"
+        switch await WorkConfigFile.config(base: base, dir: dir) {
+        case .success(let c): return (c, uncommitted)
+        case .failure(let e):
+            return (nil, "aviso: \(ProjectWorkConfig.fileName) ignorado, o laço usa os padrões (sem portão nem pré-check vindos do arquivo): "
+                    + e.message.replacingOccurrences(of: "\n", with: " "))
+        }
+    }
+
+    private static func runReply(_ o: [String: JSONValue], _ warning: String?) -> JSONValue {
+        var o = o
+        if let warning { o["warning"] = .string(warning) }
+        return .object(o)
+    }
+
+    /// M5.6: `--model` given always wins; absent, the daemon's `loopModel`, but only for agents that run Claude (summon
+    /// refuses `--model` for any other: a preference must never fail every attempt of a codex or shell loop); else nil,
+    /// the Shepherd's model as before. The agent is the summon's: `--preset`, else the Shepherd's (with its command).
+    static func loopModel(given: String?, preference: String?, preset: String?, command: String?, shepherd t: TerminalRecord) -> String? {
+        if let given { return given }
+        guard let preference, let p = preset.map({ Preset(rawValue: $0) }) ?? t.preset else { return nil }
+        let probe = TerminalRecord(id: UUID(), name: "loop", preset: p, command: command ?? (preset == nil ? t.command : nil), cwd: "/", isShepherd: false)
+        return p == .claude || AgentLaunch.isClaude(probe) ? preference : nil
+    }
+
+    /// `admin.loop-model` (app only): nil reads; "" clears; else a model id (`CollieSettings.isLoopModel`), saved.
+    func setLoopModel(_ v: String?) throws -> JSONValue {
+        var s = CollieSettings.load(config.paths.root)
+        if let v {
+            let m = v.trimmingCharacters(in: .whitespaces)
+            guard m.isEmpty || CollieSettings.isLoopModel(m) else {
+                throw ProtocolError(code: .invalidArgs, message: "model must be a model id (letters, digits, . _ : -, up to 64), or empty for the Shepherd's")
+            }
+            s.loopModel = m.isEmpty ? nil : m
+            do { try s.save(config.paths.root) } catch { throw ProtocolError(code: .internal, message: "preferences.json: \(error)") }
+        }
+        return .object(["model": s.loopModel.map(JSONValue.string) ?? .null])
+    }
+
+    /// M5.1: `--notify` absent is `end` for a new loop (a loop already running keeps what its state says: nil, `task`);
+    /// anything but task|end is refused (M3c.4).
+    static func loopNotify(_ v: String?) throws(ProtocolError) -> WorkLoopState.Notify {
+        guard let v else { return .end }
+        guard let n = WorkLoopState.Notify(rawValue: v) else { throw ProtocolError(code: .invalidArgs, message: "--notify must be task|end") }
+        return n
     }
 
     /// The card was answered or expired: forget it. True when `work.stop` had withdrawn it first.
@@ -177,14 +251,19 @@ extension CommandRouter {
     /// then every task, its check, its evidence glob, its `scope` and its `needs` (those it has), each in «…», which none
     /// may hold (agent text: a title must not pass for another entry). nil: it does not fit the card,
     /// and nothing the owner would not see is ever approved.
-    static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String) -> String? {
+    /// `fromFile`: the gate / pre-check came from `collie-work.json` (M13.2), not from the flag: the card says so.
+    static func loopCardText(_ w: Work, _ tasks: [WorkTask], _ l: WorkLoopState, paddock: String,
+                             fromFile: (gate: Bool, precheck: Bool) = (false, false)) -> String? {
+        let file = " (\(ProjectWorkConfig.fileName))"
         func quoted(_ x: String) -> String {
             "«" + x.replacingOccurrences(of: "«", with: "‹").replacingOccurrences(of: "»", with: "›") + "»"
         }
         var s = "rodar sem supervisão \(quoted(w.title)) no cercado \(quoted(paddock)): até \(l.max ?? 0) tentativas no total "
             + "(\(l.tries) por tarefa), turno de até \(l.timeout) s, orçamento de \(l.budget ?? 0) s. "
             + (l.parallel.flatMap { $0 > 1 ? "até \($0) tarefas ao mesmo tempo, cada uma na sua faixa (--parallel \($0)). " : nil } ?? "")
-            + (l.gate.map { "portão depois de cada check: \(quoted($0)). " } ?? "")
+            + (l.gate.map { "portão\(fromFile.gate ? file : "") depois de cada check: \(quoted($0)). " } ?? "")
+            + (l.precheck.map { "pré-check\(fromFile.precheck ? file : "") no fim de cada turno: \(quoted($0)). " } ?? "")
+            + (l.notify == .end ? "avisos: só no fim (--notify end). " : "")
             + "\(tasks.count) \(tasks.count == 1 ? "tarefa" : "tarefas"), cada uma com o seu check:"
         // M3.6: each glob and each id in its own «…» (a glob with a comma never passes for two)
         func list(_ label: String, _ xs: [String]?) -> String {
@@ -198,17 +277,25 @@ extension CommandRouter {
     }
 
     /// Ends the loop after the current attempt's verdict (the engine records `requested` when it does stop); a loop still waiting for the owner's card: withdraws the card.
+    /// M9.2 (B5): a closed work of `t`'s whose loop still runs (M6.4: it ends at its next wake) is reached too.
     func workStop(_ t: TerminalRecord) async throws -> JSONValue {
-        if let w = try await work.active(terminal: t.id), let card = loopCards.removeValue(forKey: w.id) {
+        let active = try await work.active(terminal: t.id)
+        if let w = active, let card = loopCards.removeValue(forKey: w.id) {
             appWaiters.removeValue(forKey: card)?.resume(returning: false)   // the approval task frees the paddock and tells the starter
             await dropAppCard(card)
             return .object(["state": .string("cancelled")])
         }
-        guard let w = try await work.active(terminal: t.id), let l = workLoops[w.id], !l.stopping else {
+        var id = active.flatMap { workLoops[$0.id] == nil ? nil : $0.id }
+        if id == nil {
+            for k in Array(workLoops.keys) {
+                if try await work.get(k)?.terminalId == t.id { id = k; break }
+            }
+        }
+        guard let id, let l = workLoops[id], !l.stopping else {
             throw ProtocolError(code: .invalidArgs, message: "no loop is running on '\(t.name)'s work")
         }
-        workLoops[w.id]?.stopping = true
-        await l.engine.stop(work: w.id)
+        workLoops[id]?.stopping = true
+        await l.engine.stop(work: id)
         return .object(["state": .string("stopped")])
     }
 
@@ -221,6 +308,7 @@ extension CommandRouter {
         }
         SandboxLaunch.remove(id, root: config.paths.root)
         guard let w = try? await work.get(id) else { return }
+        await writeHandoff(w, paddock: paddock)   // M10.1: before the notice, so the starter can read it at once
         try? await asks.inject(to: starter, prompt: WorkStatusText.loopEnded(w), afterQuiet: true)
     }
 
@@ -235,10 +323,10 @@ extension CommandRouter {
         guard (w.loop?.parallel ?? 1) > 1 || w.loop?.lanes?.isEmpty == false,
               let p = ws.paddocks.first(where: { $0.id == w.paddockId }), !p.isFolder else { return }
         let host = laneSweepHost(p, work: w.id, starter: w.terminalId)
-        let s = await LaneWorktree.sweep(await LaneWorktree.lanes(of: w.id, repoRoot: URL(fileURLWithPath: p.repoRoot), host: host), host: host)
+        let id = w.id
+        let s = await LaneWorktree.sweep(await LaneWorktree.lanes(of: id, repoRoot: URL(fileURLWithPath: p.repoRoot), host: host), host: host) { $0 == id }
         for lane in s.removed { await host.laneGone(lane) }
-        guard !s.spared.isEmpty else { return }
-        let note = Self.sparedNote(s.spared)
+        guard let note = Self.sparedNote(s) else { return }
         try? await work.update(w.id) { x in if x.notes.last?.text != note { x.notes.append(WorkNote(at: Date(), text: note)) } }
     }
 
@@ -251,8 +339,8 @@ extension CommandRouter {
         var seen: Set<String> = []
         for p in ws.paddocks where !p.isFolder && seen.insert(p.repoRoot).inserted {
             let host = laneSweepHost(p, work: UUID(), starter: UUID())
-            let s = await LaneWorktree.sweep(await LaneWorktree.orphans(repoRoot: URL(fileURLWithPath: p.repoRoot), knownWork: known, host: host), host: host)
-            if !s.spared.isEmpty { FileHandle.standardError.write(Data("collied: \(Self.sparedNote(s.spared))\n".utf8)) }
+            let s = await LaneWorktree.sweep(await LaneWorktree.orphans(repoRoot: URL(fileURLWithPath: p.repoRoot), knownWork: known, host: host), host: host) { !known.contains($0) }
+            if let note = Self.sparedNote(s) { FileHandle.standardError.write(Data("collied: \(note)\n".utf8)) }
         }
     }
 
@@ -261,9 +349,22 @@ extension CommandRouter {
                        dir: URL(fileURLWithPath: p.path), sandbox: config.sandboxHome.map { (home: $0, shell: config.shell) })
     }
 
-    static func sparedNote(_ lanes: [Lane]) -> String {
-        "[loop] faixa não removida (sem a marca deste daemon: de outro daemon ou do dono): " + lanes.map(\.branch).joined(separator: ", ")
+    /// M3c.3: the lanes already noted by this daemon (repository and branch). A spared lane stays until someone removes
+    /// it; one note per daemon says so, not one at every end of its work's loop.
+    private static let notedLanes = OSAllocatedUnfairLock(initialState: Set<String>())
+
+    /// The note for what `s` left behind that this daemon has not noted yet; nil when there is none.
+    static func sparedNote(_ s: LaneWorktree.Swept) -> String? {
+        func fresh(_ ls: [Lane]) -> String {
+            ls.filter { l in notedLanes.withLock { $0.insert(l.repoRoot.path + " " + l.branch).inserted } }.map(\.branch).joined(separator: ", ")
+        }
+        let spared = fresh(s.spared), refused = fresh(s.refused)
+        let parts = [spared.isEmpty ? nil : "faixa não removida (sem a marca deste daemon: de outro daemon ou do dono): " + spared,
+                     refused.isEmpty ? nil : "faixa marcada não removida (a pasta não é a da faixa: movida ou trocada por symlink): " + refused]
+            .compactMap { $0 }
+        return parts.isEmpty ? nil : "[loop] " + parts.joined(separator: "; ")
     }
+
 
     /// At start: a loop a previous daemon left `running` is `stopped` (its task back to open, its attempt's job gone):
     /// `collie work run` again continues from the next open task. M3.6: its lanes go first (no orphan lane is left
@@ -310,7 +411,7 @@ extension CommandRouter {
         }
         let why = WorkLoopState.Stop(.daemonRestart)
         x.loop?.state = .stopped; x.loop?.endedAt = now; x.loop?.task = nil; x.loop?.stopReason = why; x.loop?.lanes = nil
-        x.loop?.record(LoopEvent(at: now, kind: .stopped, detail: why.label))
+        x.record(LoopEvent(at: now, kind: .stopped, detail: why.label))
         x.notes.append(WorkNote(at: now, text: why.note))
     }
 
@@ -370,6 +471,63 @@ extension CommandRouter {
             if await targetBusy(t.id) { return t.name }
         }
         return nil
+    }
+
+    /// M3c.2: who is in a turn in `dir`, the starter included, unless all the starter has open in the daemon is its
+    /// `work.wait`/`work.status` of `work` (the recommended flow: the Shepherd blocked in `collie work wait`). Any other
+    /// request of the starter's (an `ask`, another command) counts it, as do the paddock's other terminals.
+    /// M3d.1: a wait counts only while its client lives (`work.wait` is cancelled when its client closes the socket; a
+    /// pid gone is not a wait) and no tool call of the terminal came after it began (a wait in the background).
+    /// ponytail: an edit beside a background wait is seen through Claude's PostToolUse only (no hook, no stamp); the
+    /// integrator's diff of the tracked files still keeps such an edit.
+    func loopAnyoneWorking(paddock: UUID, starter: UUID, work: UUID, dir: URL) async -> String? {
+        await loopOthersWorking(paddock: paddock, starter: loopStarterOnlyWaits(starter, work: work) ? starter : nil, dir: dir)
+    }
+
+    /// M3d.1: the starter's open requests are all live waits on `work` (and there is one).
+    func loopStarterOnlyWaits(_ starter: UUID, work: UUID) -> Bool {
+        let live = Self.liveWaits(ownWaits[starter]?.values.map { $0 } ?? [], on: work, lastToolCall: lastToolCall[starter])
+        return Self.loopStarterWaits(open: openRequests[starter] ?? 0, waitsOnWork: live)
+    }
+
+    /// M3c.2: every request the starter has open is a wait on the loop's work (and there is one).
+    static func loopStarterWaits(open: Int, waitsOnWork: Int) -> Bool { waitsOnWork > 0 && open == waitsOnWork }
+
+    /// One `work.wait`/`work.status` of a terminal on its own work: `pid` its client, `seq` when it began.
+    struct OwnWait: Sendable { let work: UUID, pid: pid_t, seq: Int }
+
+    /// M3d.1: the waits on `work` that still stand for a terminal only waiting: the client alive, no tool call since.
+    static func liveWaits(_ waits: [OwnWait], on work: UUID, lastToolCall: Int?, alive: (pid_t) -> Bool = clientAlive) -> Int {
+        waits.filter { $0.work == work && (lastToolCall ?? -1) < $0.seq && alive($0.pid) }.count
+    }
+    /// ponytail: a pid reused by another process reads as alive; the socket's EOF (the handler cancelled) covers a closed client.
+    static func clientAlive(_ pid: pid_t) -> Bool { pid > 0 && (kill(pid, 0) == 0 || errno == EPERM) }
+
+    /// The waits counted by work (what M3c.2 kept): diagnostics and tests.
+    var ownWorkWaits: [UUID: [UUID: Int]] {
+        ownWaits.mapValues { Dictionary($0.values.map { ($0.work, 1) }, uniquingKeysWith: +) }
+    }
+
+    func requestBegan(_ t: UUID) { openRequests[t, default: 0] += 1 }
+    func requestEnded(_ t: UUID) {
+        openRequests[t, default: 1] -= 1
+        if openRequests[t] ?? 0 <= 0 { openRequests[t] = nil }
+    }
+    /// A wait began: its token, for `ownWaitEnded`.
+    func ownWaitBegan(_ t: UUID, on work: UUID, pid: pid_t) -> UUID {
+        let token = UUID()
+        activitySeq += 1
+        ownWaits[t, default: [:]][token] = OwnWait(work: work, pid: pid, seq: activitySeq)
+        return token
+    }
+    func ownWaitEnded(_ t: UUID, _ token: UUID) {
+        ownWaits[t]?[token] = nil
+        if ownWaits[t]?.isEmpty == true { ownWaits[t] = nil }
+    }
+    /// Claude's PostToolUse of `t`: a turn of its own, beside any wait it began before.
+    func toolCalled(_ t: UUID) {
+        activitySeq += 1
+        lastToolCall[t] = activitySeq   // ponytail: one Int per terminal ever seen, not dropped with the terminal
     }
 
     /// The paddock's terminals, but the starter, that can edit the tree `dir` (the paddock's worktree, or one lane).
@@ -532,8 +690,13 @@ struct RouterLoopHost: LoopHost {
     func resubmitted(_ terminal: UUID) async -> Bool { await router.asks.submitRetried(terminal) }
 
     func working(_ terminal: UUID) async -> Bool { await router.targetBusy(terminal) }
+    func usageLimit(_ terminal: UUID) async -> String? {
+        guard let s = await router.asks.screen(terminal, quiet: .seconds(10)) else { return nil }
+        return UsageLimit.detect(s.lines, quiet: s.quiet)
+    }
+    func tokens(_ terminal: UUID) async -> TokenCount? { await router.attemptTokens(terminal) }
     func othersWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: starter, dir: dir) }
-    func anyoneWorking() async -> String? { await router.loopOthersWorking(paddock: paddock, starter: nil, dir: dir) }
+    func anyoneWorking() async -> String? { await router.loopAnyoneWorking(paddock: paddock, starter: starter, work: work, dir: dir) }
     func starterAlive() async -> Bool { await router.loopTerminalExists(starter) }
     func namesTaken() async -> Set<String> { await router.loopNamesTaken() }
     func dismiss(_ terminal: UUID) async { await router.loopDismiss(terminal) }

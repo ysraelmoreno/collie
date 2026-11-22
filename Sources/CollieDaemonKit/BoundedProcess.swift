@@ -64,21 +64,23 @@ enum BoundedProcess {
                     cap: Int = 1 << 20, salvage: (@Sendable (Data) -> Bool)? = nil,
                     stdin: Data? = nil) async throws(ProtocolError) -> ProcessResult {
         guard killOnCancel else { return try await spawn(executable, args, dir, env, timeout, cap, salvage, stdin, leader: nil) }
-        // the leader's pid while it runs (0: not yet, or reaped) and whether the cancel came
-        let leader = OSAllocatedUnfairLock(initialState: (pid: pid_t(0), cancelled: false))
+        // the group's id (the leader's pid, 0: not spawned yet, or done) and whether the cancel came.
+        // M3c.3 (finding 5 of the 3b review): kept after the leader is reaped, until the drains end: a grandchild still
+        // holding the pipes keeps the group (and so its id) alive, and the cancel must reach it.
+        let leader = OSAllocatedUnfairLock(initialState: (pgid: pid_t(0), cancelled: false))
         do {
             return try await withTaskCancellationHandler {
                 try await spawn(executable, args, dir, env, timeout, cap, salvage, stdin, leader: leader)
             } onCancel: {
-                let pid = leader.withLock { $0.cancelled = true; return $0.pid }
-                if pid > 0 { kill(-pid, SIGKILL) }
+                let pgid = leader.withLock { $0.cancelled = true; return $0.pgid }
+                if pgid > 0 { kill(-pgid, SIGKILL) }
             }
         } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
     }
 
     private static func spawn(_ executable: URL, _ args: [String], _ dir: URL, _ env: [String: String], _ timeout: Duration,
                               _ cap: Int, _ salvage: (@Sendable (Data) -> Bool)?, _ stdin: Data?,
-                              leader: OSAllocatedUnfairLock<(pid: pid_t, cancelled: Bool)>?) async throws(ProtocolError) -> ProcessResult {
+                              leader: OSAllocatedUnfairLock<(pgid: pid_t, cancelled: Bool)>?) async throws(ProtocolError) -> ProcessResult {
         let secs = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
         return try await UnixSocketClient.offPool {
             var o: [Int32] = [0, 0], e: [Int32] = [0, 0]
@@ -106,7 +108,7 @@ enum BoundedProcess {
             if rc == 0 {
                 track(child)
                 // a cancel that came before the spawn kills it now
-                if leader?.withLock({ $0.pid = child; return $0.cancelled }) == true { kill(-child, SIGKILL) }
+                if leader?.withLock({ $0.pgid = child; return $0.cancelled }) == true { kill(-child, SIGKILL) }
             }
             close(o[1]); close(e[1])
             if i[0] >= 0 { close(i[0]) }
@@ -137,7 +139,6 @@ enum BoundedProcess {
             let exited = DispatchSemaphore(value: 0), st = Status()
             Thread {
                 var s: Int32 = 0; while waitpid(child, &s, 0) < 0 && errno == EINTR {}
-                leader?.withLock { $0.pid = 0 }   // reaped: a late cancel must not signal a reused pid
                 untrack(child)   // reaped: the pid may be reused
                 st.value = s; exited.signal()
             }.start()
@@ -156,6 +157,10 @@ enum BoundedProcess {
                 if !reaped { exited.wait() }
                 if !drainsDone { drainsDone = group.wait(timeout: .now() + 2) == .success }
             }
+            // the drains are done (or given up on): no member of the group is left to signal, and its id may be reused.
+            // ponytail: a cancel between the last member's exit and this line signals a group id nobody may have taken
+            // yet; a reused pid becomes a group id only by a `setpgid` of its own, in that window
+            leader?.withLock { $0.pgid = 0 }
             // ponytail: a holder that escaped the group (setsid) is out of reach; its drain thread and read fd are leaked
             // rather than closed (closing an fd under a blocked read risks fd reuse).
             if drainsDone { close(o[0]); close(e[0]) }

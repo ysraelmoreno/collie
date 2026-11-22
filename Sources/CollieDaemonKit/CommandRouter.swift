@@ -32,6 +32,11 @@ actor CommandRouter {
     /// Recent plugin events per panel (ring of `panelEventCap`) and the last sequence number handed out.
     var panelEvents: [UUID: [PanelEvent]] = [:]
     var eventSeq = 0
+    /// M3c.2: the requests each terminal has open in the daemon (by the id it sent: a forged id only adds), and, by work,
+    /// its `work.wait`/`work.status` on its own active work (counted after the caller is checked).
+    /// M3d.1: each wait keeps its client's pid and when it began (`activitySeq`), against the terminal's last tool call.
+    var openRequests: [UUID: Int] = [:], ownWaits: [UUID: [UUID: OwnWait]] = [:]
+    var activitySeq = 0, lastToolCall: [UUID: Int] = [:]
     nonisolated let host = PluginHost()
     nonisolated let memory: MemoryService
     nonisolated let devices: DeviceService
@@ -105,6 +110,8 @@ actor CommandRouter {
     var lastTurn: [UUID: String] = [:]
     /// Turns each terminal ended (`turn.completed`, not continued): `wait` sees one end. ponytail: never pruned (tiny).
     var turnEnds: [UUID: Int] = [:]
+    /// M5.5: when each terminal's Stop last gave the large-context advice. ponytail: never pruned (tiny).
+    var contextAdvisedAt: [UUID: ContextAdvice.Advised] = [:]
     /// Files each Claude terminal wrote this turn, for the plug-ins' `stop` event (`pluginHook`; dropped with the terminal).
     var pluginTurn = PluginTurn()
     /// Turn notices waiting for each Shepherd to be idle, typed as one block (`noticeTurnEnded`).
@@ -246,7 +253,7 @@ actor CommandRouter {
         self.plugins = PluginStore(root: config.paths.root)
         let workDir = config.paths.root.appendingPathComponent("work")
         let remoteEvents = RemoteEventBus(); self.remoteEvents = remoteEvents
-        self.work = WorkStore(dir: workDir) { id in
+        self.work = WorkStore(dir: workDir, namer: { w in await me.router?.archiveNames(w) ?? (nil, nil) }) { id in
             Task { await me.router?.workChanged(id) }
             remoteEvents.publish(.object(["t": .string("work"), "id": .string(id.uuidString.lowercased())]))   // re-read with work.get
         }
@@ -379,6 +386,8 @@ actor CommandRouter {
         // R4: the daemon's git for an open terminal's request runs under its profile (a forged id only narrows)
         let caller = req.terminalId.flatMap(UUID.init(uuidString:)).flatMap { id in ws.terminals.first { $0.id == id } }
         let profile = caller.flatMap { startedOpen($0) && sandboxed($0) ? SandboxLaunch.profileFile($0.id, root: config.paths.root) : nil }
+        if let id = caller?.id { requestBegan(id) }
+        defer { if let id = caller?.id { requestEnded(id) } }
         return await GitRunner.$sandbox.withValue(profile) { await route(req, peer: peer) }
     }
 
@@ -467,7 +476,7 @@ actor CommandRouter {
                 guard await registry.process(t.id)?.isRunning == true else {   // also covers records reloaded after restart
                     throw ProtocolError(code: .notRunning, message: "Terminal '\(t.name)' is not running")
                 }
-                let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", max: 86_400) ?? 1800)
+                let prompt = try need(req, "prompt"), raw = flag(req, "raw"), timeout = Duration.seconds(try num(req, "timeout", min: asks.limits.minTimeoutSeconds, max: 86_400) ?? 1800)
                 if let e = ClaudeModel.slashRefusal(prompt, target: t) { throw e }   // DX backlog 20: no turn, no reply
                 if flag(req, "no-wait") { return Response(id: req.id, ok: true, result: await askNoWait(from: tid, to: t, prompt: prompt, raw: raw, timeout: timeout)) }
                 let busy = await targetBusy(t.id)
@@ -490,7 +499,7 @@ actor CommandRouter {
                 return Response(id: req.id, ok: true, result: .object(model.merging(["output": .string(s.text), "truncated": .bool(s.truncated)]) { $1 }))
             case "wait":
                 let t = try ConnectionGraph.resolve(name: try need(req, "target"), from: tid, in: ws)
-                return Response(id: req.id, ok: true, result: try await waitTurn(t, from: tid, timeout: .seconds(try num(req, "timeout", max: 86_400) ?? 1800)))
+                return Response(id: req.id, ok: true, result: try await waitTurn(t, from: tid, timeout: .seconds(try num(req, "timeout", min: asks.limits.minTimeoutSeconds, max: 86_400) ?? 1800)))
             case "turn.completed":
                 if let tr = str(req, "transcript") { conversationTurnEnded(tid, transcript: tr) }   // restarts the idle capture
                 // `continued`: Claude goes on because a Stop hook blocked; the turn the ask waits for has not ended
@@ -517,8 +526,13 @@ actor CommandRouter {
                 for await _ in done {}
                 let ask = await stopAsk(tid)
                 if let hold { if ask == nil { await asks.releaseCapture(tid, hold) } else { await asks.captureBlocked(tid, hold) } }
+                // M5.5: never in the same Stop as the memory ask; shown to the user (systemMessage), it costs the agent no turn
+                if ask == nil, let advice = await contextAdvice(tid, transcript: str(req, "transcript"), memoryAsked: false) {
+                    return Response(id: req.id, ok: true, result: .object(["advice": .string(advice)]))
+                }
                 return Response(id: req.id, ok: true, result: .object(ask.map { ["ask": .string($0)] } ?? [:]))
             case "work.hook":
+                if str(req, "hook") == "tool" { toolCalled(tid) }   // M3d.1: a turn beyond any wait the terminal has open
                 if str(req, "hook") == "notification", let m = HookPayload.claudePermissionMessage(stdinJSON: Data((str(req, "payload") ?? "").utf8)) {
                     await asks.hookPermission(tid, message: String(m.prefix(500)))
                 }
@@ -652,7 +666,7 @@ actor CommandRouter {
         return v
     }
     /// Number or numeric string in 1...max; nil when absent. The bound keeps Duration/Int conversions from trapping.
-    func num(_ r: Request, _ k: String, max: Double) throws(ProtocolError) -> Double? {
+    func num(_ r: Request, _ k: String, min: Double = 1, max: Double) throws(ProtocolError) -> Double? {
         let v: Double?
         switch r.args[k] {
         case nil, .null?: return nil
@@ -660,8 +674,9 @@ actor CommandRouter {
         case .string(let s)?: v = Double(s)
         default: v = nil
         }
-        guard let v, v >= 1, v <= max else {
-            throw ProtocolError(code: .invalidArgs, message: "'\(k)' must be a number between 1 and \(Int(max))")
+        guard let v, v >= min, v <= max else {
+            let low = min == min.rounded() ? String(Int(min)) : String(min)
+            throw ProtocolError(code: .invalidArgs, message: "'\(k)' must be a number between \(low) and \(Int(max))")
         }
         return v
     }
@@ -831,6 +846,7 @@ actor CommandRouter {
         case "admin.sandbox": return try await setSandboxMode(str(r, "mode"))
         case "admin.fonts": return try setGoogleFonts(str(r, "download"))
         case "admin.paddock.trust-loops": return try await trustLoops(r)
+        case "admin.loop-model": return try setLoopModel(str(r, "model"))
         case let c where c == "admin.remote" || c.hasPrefix("admin.remote."): return try await remoteCommand(r)
         case "admin.data.export", "admin.data.import":
             let key = r.command == "admin.data.export" ? "out" : "from"

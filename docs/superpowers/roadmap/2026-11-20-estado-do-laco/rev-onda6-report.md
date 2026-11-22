@@ -1,0 +1,69 @@
+# Revisão da Onda 6 (M6.1 a M6.5), `800c9c3..a658bdd`
+
+**Bloqueia a instalação? Não.** M6.3 cumpre o que promete: nada é apagado na hora, todos os git do integrador que recebem nomes usam `--literal-pathspecs` e os nomes perigosos são recusados. Três pontos devem ser corrigidos antes do push: (A1) a página de histórico vira um artifact global, que qualquer terminal de qualquer cercado lista e lê; (A2) um laço novo pode começar no mesmo cercado enquanto o laço de um trabalho fechado ainda roda, e apaga a quarentena dele; (A3) o teste novo do feed usa `sleep` e relógio de parede, o que a regra da onda proíbe.
+
+Método: li tudo **pelo commit** (`git show a658bdd:…`, `git diff 800c9c3..a658bdd`). Rodei `scripts/ci/lint.sh` (ok) e `scripts/ci/check-architecture.sh` (ok). Não rodei build nem testes.
+
+---
+
+## Achados (do mais grave ao menos)
+
+### A1. O detalhe do histórico vira um artifact global, que outro cercado lista e lê (corrigir antes do push)
+`Sources/CollieDaemonKit/ArtifactCommands.swift:220`: `artifacts.addAgent(page:…, paddockId: nil, …)`, sem `inFolder`.
+- **O que está errado.** O `work.history` de um terminal só devolve os trabalhos fechados do cercado dele (`WorkCommands.swift:396`). A página que o app gera agora vira um artifact com `paddockId: nil`. E o `artifact.list` (`ArtifactCommands.swift:19-25`) devolve **todos** os artifacts a qualquer chamador, inclusive o `path` da `source.html` (linha 487). Com isso, título, notas, tarefas e motivo de parada de um trabalho do cercado X ficam legíveis por um agente do cercado Y, contornando o isolamento do `work.history`. As páginas também aparecem soltas na lista de Prévias/Artifacts do dono (fora de qualquer pasta) e no `artifact.list` remoto (`RemoteSurface.swift:22`; ali é o próprio dono, então isso só polui a lista).
+- **Cenário.** O dono clica em HISTÓRICO num trabalho do cercado `cliente-a`. Um agente do cercado `pessoal` roda `collie artifact list`, acha `history-…` e lê `…/source.html`.
+- **Como confirmei.** Leitura de `artifactCommand` (o `list` não filtra por cercado nem por chamador), de `artifactRows` (o `path` vai na linha) e de `addPage` (no ramo de histórico, `paddockId: nil`).
+- **Correção sugerida.** Gravar com `paddockId` = cercado do trabalho e `inFolder` fixo (por exemplo `Histórico`). Esconder `origin` `history-*` do `artifact.list` e do `artifact.get` quando o chamador não é o admin, ou não é do cercado do trabalho. Alternativa mais simples: limitar `artifact.list`/`get` a chamadores não admin só para artifacts com `origin` `history-`.
+- **Relacionado (nit).** Cada clique com o painel fechado cria mais uma versão (`r<N>/source.html`, até 8 MiB cada), sem limite. Sugestão: o ramo de histórico substitui a versão em vez de acumular.
+
+### A2. Um laço novo pode começar no cercado enquanto o laço de um trabalho fechado ainda roda, e apaga a quarentena dele (pré-existente, agravado agora; corrigir antes do push)
+`Sources/CollieDaemonKit/WorkLoopCommands.swift:50-51`: `work.list(includeClosed: false)` e depois `others.contains { $0.loop?.state == .running }`.
+- **O que está errado.** O M6.4 trata como estado válido um "trabalho fechado com laço rodando": o `work.done` não recusa, e o laço só para no próximo despertar (`WorkLoop.swift:171`, `workGone`), depois de esperar as tentativas em voo das raias (`WorkLoopLanes.swift`: `for t in alive.values { await t.value }`, integração e sweep final). Só que a trava "um laço por cercado" ignora trabalhos fechados. Um `work start` + `work run --parallel N` de outro trabalho no mesmo cercado passa a trava enquanto o laço antigo ainda integra. O novo `runLanes` chama `integrator.clearQuarantine()` (`WorkLoopLanes.swift:48`), que faz `removeItem` em `<gitdir>/collie-gate-leftovers` (`LaneIntegrator.swift:251`). Isso apaga arquivos que o laço antigo acabou de pôr lá, possivelmente do dono e criados durante o portão. Os dois integradores também fazem merge/reset na mesma worktree.
+- **Cenário.** Laço A com `--parallel 2` e uma tentativa longa em voo. O Pastor roda `work done` em A, depois `work start B` e `work run` em B, e o dono aprova. B começa e esvazia a quarentena. O sweep final de A move mais arquivos e anota um caminho que B pode esvaziar de novo.
+- **Como confirmei.** Leitura da trava em `WorkLoopCommands.swift:50`, do guard em `WorkLoop.swift:171` e de `runLanes`/`clearQuarantine`. A trava não mudou nesta onda; o que o M6.3 trouxe é a consequência de apagar.
+- **Correção sugerida.** Na trava, usar `work.list(includeClosed: true)` (ou `workLoops` do cercado, não só `workLoops[w.id]`) e considerar qualquer `loop.state == .running` do cercado.
+
+### A3. `WorkFeedFollowTests` usa `sleep` e relógio de parede (corrigir antes do push, regra da onda)
+`Tests/CollieClientTests/WorkFeedFollowTests.swift:28` (`while hold { Task.sleep(5 ms) }`), `:53` (`settle`: 300 × 10 ms), `:128`, `:134`, `:149` (`Task.sleep(50 ms)` antes de asserts negativos).
+- **O que está errado.** O `onda6.md` diz "nenhum `sleep` nem relógio de parede em teste". Os asserts negativos ("nenhuma releitura", "uma releitura em voo", `statusCalls == 3`) depois de 50 ms passam falsamente numa máquina lenta: uma leitura atrasada chega depois do assert. A coalescência fica provada só pela metade.
+- **Como confirmei.** grep no arquivo pelo commit. (O `settle` com `sleep` de `LoopSectionTests` é antigo; este arquivo é novo.)
+- **Correção sugerida.** No daemon falso, trocar o `hold` por continuations e esperar "N chamadas" com `untilCalls(n)` (como o `untilWaiting` do integrador). Para o negativo, esperar `inFlight == 0` por continuation e só então contar.
+
+### A4. O histórico não recarrega quando termina o laço de um trabalho fechado com o laço rodando (nit)
+`Sources/CollieClient/WorkFeed.swift:91`.
+- O trabalho sai de `active`/`running` já no fechamento (filtro `closedAt == nil`), e o histórico recarrega nesse momento. O `work.history` então mostra a linha **reconstruída** (`WorkStore.history`, sem resumo, sem `stopReason`). Quando o laço termina e o resumo é gravado (`closes`), o feed não percebe, porque o trabalho já não estava em `running`. A linha velha fica até a próxima releitura por outro motivo.
+- Correção: guardar também os ids fechados com laço rodando, ou recarregar o histórico em todo evento de um trabalho que não está em `active`.
+
+### A5. `discard` do laço serial passa nomes ao `git reset` sem `--literal-pathspecs` (nit, pré-existente, fora do integrador)
+`Sources/CollieDaemonKit/Work/WorkLoop.swift:795`: `["reset", "-q", "--"] + keep`.
+- Fora do `LaneIntegrator`, então o "prove com grep" do M6.3 não cobre esta linha, mas é o mesmo defeito de glob. Hoje o erro vai na direção segura: o glob tira mais arquivos do stage, e esses escapam do `reset --hard` seguinte, então nada se perde. Ainda assim o patch da tentativa sai sem eles. Adicionar `--literal-pathspecs` por coerência. `WorkLoop.swift:756` (`diff --name-only` sem `-z`) também lê errado um nome com newline. Pré-existente.
+
+### A6. Quarentena: TOCTOU num diretório intermediário (nit)
+`Sources/CollieDaemonKit/Work/LaneIntegrator.swift:205-216`.
+- Entre o `hash-object` e o `moveItem`, se alguém troca um diretório pai do arquivo (`a/` em `a/b.txt`) por um symlink, o `rename` move um arquivo de **fora** da árvore para a quarentena, e o próximo laço o apaga. O caso exige alguém agindo de propósito na worktree no meio do sweep, e o `ponytail:` da linha 192 já admite a corrida. Correção barata: conferir `src.resolvingSymlinksInPath().path.hasPrefix(dir real + "/")` antes do move.
+
+### A7. `hub.emit(.work)` em toda escrita, e `work.status all:true` a cada rajada (nit, desempenho)
+`Sources/CollieDaemonKit/WorkChatCommands.swift:271` e `WorkFeed.swift:87`.
+- Cada evento do diário de um laço vira um `.work` e, no app, um `work.status` de **todos** os trabalhos com os diários. A coalescência limita a uma leitura em voo, mas durante um laço o app relê continuamente. Aceitável. Se pesar, filtrar por `paddock` no daemon.
+
+---
+
+## Áreas examinadas sem achado
+
+- **M6.3, literal.** grep pelo commit em `LaneIntegrator.swift`. Todo git que recebe ou lista nomes usa `--literal-pathspecs`: `status` (107), `hash-object` (257), `diff --name-only -z` (264, 271), `ls-files -z --others` (278). Os git sem nomes (`merge`, `merge --abort`, `reset --hard <sha>`, `merge-base`, `rev-parse`) não precisam. Não há `add`/`rm`/`mv`/`clean` no integrador. As listagens agora são lidas por `raw`, sem `trim`, e um nome com espaço ou newline nas pontas sobrevive.
+- **M6.3, nomes.** `touchable` (226) recusa vazio, `/` inicial, `\`, componentes `..`, `.`, vazio (`a//b`) e `.git` em qualquer caixa. O destino é `box/<nome validado>` dentro de uma caixa nova (`newQuarantine`, menor `n` livre), então não há escape nem sobrescrita: um `moveItem` sobre destino existente falha, e o arquivo vira `spared`.
+- **M6.3, move.** `FileManager.moveItem` faz `rename`. Um symlink deixado pelo portão é movido como link, nunca o alvo. O tamanho vem de `attributesOfItem` (do link, sem seguir). Entre sistemas de arquivos, o move vira cópia e remoção (gitdir de worktree ligada fica em `.git/worktrees/<n>`, em geral o mesmo volume). Limites de 200 arquivos e 5 MB por laço (`quarantined`, zerado em `clearQuarantine`); acima deles o arquivo fica na árvore e é citado. Caixa vazia é removida.
+- **M6.3, limpeza.** `clearQuarantine` apaga só `<absolute-git-dir>/collie-gate-leftovers`. Um symlink nesse nome é removido como link (`removeItem` não segue). Se o `rev-parse` falha, nada acontece.
+- **M6.3, nada é mais apagado do que antes.** Antes, `git clean -f` apagava na hora. Agora o arquivo é movido e só é apagado no começo do próximo laço paralelo, e a nota (`movedNote`) diz onde ficou e quando a quarentena é esvaziada. O laço serial não usa o integrador e não esvazia a quarentena.
+- **M6.1.** A fonte é derivada só do UUID (`HistoryPage.source`). O daemon só aceita `history-<uuid>` vindo do admin (`caller == nil`) e normaliza para minúsculas; um terminal com `--source history-…` cai em `ClaudeImport.links`. Título `<script>` ou `../`: vai por `ClaudeImport.clean` só como título do registro; na página ele passa por `esc`; o nome no disco é `<id>/r<N>/source.html`, sem nada do título. A página tem CSP `default-src 'none'; style-src 'unsafe-inline'`. A falha mostra texto fixo (`HistoryOpener.failure`). Não há código de gravação em `~/Library/Caches`. O painel é reaproveitado por fonte. `ArtifactStore.continued(byId: nil)` faz da mesma fonte a próxima versão.
+- **M6.2, vazamento.** `ui.events` é `adminOnly` (`CommandRouter.swift:313`). `RemoteEvents` descarta `.work`. Nenhum terminal nem telefone recebe ids de trabalho ou de cercado de outro. A geração é invalidada no `follow`, e uma resposta velha é descartada (`gen == generation`). Coalescência: `again`/`busy`, sem perder o último evento (`again = true` antes do guard). Sem `sleep` no código de produção. `pick`: rodando, depois o mais novo com laço, depois o primeiro. Uma falha do daemon deixa o estado vazio.
+- **M6.4.** `closing` é capturado **antes** do `enforce` (`WorkStore.swift:187-193`). `enforce` não corta enquanto o laço roda, e `Work.record` usa um anel de `2 × timelineMax` (1000) quando o trabalho está fechado, então `work.json` tem limite. `closes()` dispara uma única vez (antes rodando, depois parado). Reabrir e fechar de novo gera o arquivo `-2`. O arquivo é imutável (`link`, sem sobrescrever).
+- **M6.5.** `LoopNotices.flush` só passa da janela; `send` esvazia `pending` (nada duplicado). `flushNotices` roda no início de cada tentativa e numa tarefa feita sem linha. O aviso final não passa pela janela. `notices` vale por laço (`WorkLoop` novo por `work run`), e as raias compartilham a do pai, cujo `laneHost` injeta no mesmo `starter`. A orientação passou a `bg: work wait --timeout 540` (62 caracteres), o teste confere o teto de 1500, e não sobra nenhum `--timeout 3600` fora de testes e docs (grep). `TokenCount.model` passa por `CollieSettings.isLoopModel`. Sobre o `chmod 0700` em pasta pré-existente: se o dono trocou `work-archive` por um symlink, o `chmod` segue o link e muda o modo do alvo. É uma pasta do próprio daemon em Application Support, então classifico como nit/aceitável. O prune remove `.<…>.tmp` com mais de 1 h só dentro de `dir` (via `contentsOfDirectory` + `unlink`, que não segue links). A mensagem do `OpenPanelSheet` é texto fixo, e o `directoryURL` é a worktree do cercado.
+- **Testes.** `git diff 800c9c3..a658bdd -- Tests/`: nada removido sem substituto. `GateLeftoversTests` troca "removido" por "movido + conteúdo na quarentena" (mais forte). `WorkArchiveTests` deixou de atribuir `events(150)` de uma vez e passou a gravar em lotes de 10 (corrige o teste que escondia o defeito). `LoopSectionTests` trocou a espera por `work.wait` por "não chama `work.wait`". `LoopModelDefaultTests` acompanha o texto novo. Lacuna: o ramo do daemon `artifact.add` com `history-` (`caller == nil`, `addPage` inline) não tem teste do lado do daemon; `HistoryDetailOpenTests` usa um daemon falso que reimplementa `continued`.
+
+## Melhorias de fluxo ou de desenho (não são achados)
+
+1. O cartão de `work run` (ou a primeira nota do laço) podia dizer "a quarentena do laço anterior (N arquivos) será esvaziada", ou esvaziar só quarentenas com mais de X dias. Hoje o arquivo do dono criado durante o portão some sem aviso no próximo laço.
+2. A trava "um laço por cercado" podia ficar em `workLoops` por cercado (memória do daemon), em vez de no estado gravado de trabalhos abertos.
+3. O histórico podia usar uma rota `artifact:`-like específica (por exemplo `history:<uuid>`, servida pelo daemon a partir do resumo) em vez de criar artifacts. Isso some com A1 e com o acúmulo de versões.
+4. `WorkFeedFollowTests` e `LoopSectionTests` podiam compartilhar um daemon falso com continuations (`untilCalls`) e eliminar todos os `settle` com `sleep`.

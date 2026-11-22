@@ -10,20 +10,6 @@ private func git(_ dir: URL, _ args: String...) async throws -> String {
     return r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-/// Counts arrivals; `wait(for:)` returns once `n` came. No clock: the order of the lanes comes from continuations.
-private actor Arrivals {
-    private var count = 0, waiters: [(n: Int, c: CheckedContinuation<Void, Never>)] = []
-    func hit() {
-        count += 1
-        for w in waiters where w.n <= count { w.c.resume() }
-        waiters.removeAll { $0.n <= count }
-    }
-    func wait(for n: Int) async {
-        if count >= n { return }
-        await withCheckedContinuation { waiters.append((n, $0)) }
-    }
-}
-
 /// A wait that only a cancelled task leaves: an agent that works until the loop stops it.
 private actor Forever {
     private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
@@ -367,6 +353,21 @@ private func shape(_ w: Work, _ rig: LoopRig) async -> [String] {
         let left = try await r.lanesLeft()
         #expect(left.isEmpty, "\(left)")
         #expect(w.notes.last?.text == WorkLoopState.Stop(.requested).note)
+    }
+
+    /// M3c.1: a lane that never comes no longer hangs the suite: the run's task cancelled (what `.timeLimit` does)
+    /// ends the run, and the waiting agent with it.
+    @Test func aLaneThatNeverComesEndsWhenTheRunIsCancelled() async throws {
+        let r = try await ParRig([ptask("a", "test -f a.txt", scope: ["a.txt"])]); defer { r.cleanup() }
+        let both = Arrivals(), inTurn = Arrivals()
+        await r.core.set("w-task-a-t1") { d in await inTurn.hit(); await both.wait(for: 2); try await commit("a.txt", "a\n", in: d) }
+        let run = Task { await r.run() }
+        await inTurn.wait(for: 1)
+        run.cancel()
+        let end = await run.value
+        #expect(end != .finished)
+        let left = try await r.lanesLeft()
+        #expect(left.isEmpty, "\(left)")
     }
 
     @Test func aLaneThatFailsDoesNotBringTheOtherDown() async throws {

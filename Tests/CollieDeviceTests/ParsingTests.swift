@@ -91,3 +91,25 @@ private let xml = """
     let out = "INFO    | Storing crashdata in: /tmp/x\nPixel_7_API_34\n\nTablet_API_33\nPixel_7_API_34\n"
     #expect(AdbParsing.avds(out) == ["Pixel_7_API_34", "Tablet_API_33"])
 }
+
+@Test func uiTreeCompactDropsIdOnlyNodesAndKeepsRefs() {
+    let s = """
+    <hierarchy>
+    <node text="" resource-id="app:id/root" class="android.widget.FrameLayout" content-desc="" clickable="false" bounds="[0,0][1080,2400]">
+    <node text="Deals" resource-id="" class="android.widget.TextView" content-desc="" clickable="false" bounds="[0,0][100,100]" />
+    <node text="" resource-id="app:id/frame" class="android.view.ViewGroup" content-desc="" clickable="false" bounds="[0,0][10,10]" />
+    <node text="" resource-id="app:id/configuration_fab" class="android.widget.Button" content-desc="" clickable="true" bounds="[600,100][664,172]" />
+    <node text="" resource-id="" class="android.widget.ImageView" content-desc="Close" clickable="false" bounds="[0,0][20,20]" />
+    </node></hierarchy>
+    """
+    let (nodes, trunc) = UITree.parse(Data(s.utf8))
+    let compact = UITree.compact(nodes)
+    #expect(compact.map(\.ref) == ["e2", "e4", "e5"])   // e1 and e3 only have an id
+    #expect(UITree.lines(compact).contains("[e4] Button id=configuration_fab (632,136) clickable"))
+    // same refs with and without --all: every compact node is the same node in the full tree
+    for n in compact { #expect(nodes.first(where: { $0.ref == n.ref }) == n) }
+    guard case .object(let c) = UITree.result(nodes, truncated: trunc, all: false),
+          case .object(let a) = UITree.result(nodes, truncated: trunc, all: true) else { Issue.record("not an object"); return }
+    #expect(c["nodes"] == .number(3) && c["total"] == .number(5) && a["nodes"] == .number(5) && a["total"] == .number(5))
+    #expect(c["tree"] == .string(UITree.lines(compact)) && a["tree"] == .string(UITree.lines(nodes)))
+}

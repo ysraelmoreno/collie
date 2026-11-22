@@ -15,9 +15,15 @@ extension CommandRouter {
             guard let u = UUID(uuidString: try need(r, "id")) else { throw invalid("'id' must be an artifact id") }
             return u
         }
+        /// `id()`, checked as `artifact.list` shows it to the caller (another paddock's history detail: not found).
+        func seen() async throws -> UUID {
+            let u = try id()
+            if Self.hidden(try await artifacts.get(u), from: caller) { throw ProtocolError(code: .notFound, message: "no artifact \(u.uuidString.lowercased())") }
+            return u
+        }
         switch r.command {
         case "artifact.list":
-            let all = try await artifacts.list().sorted { $0.at > $1.at }, files = try await design.list()
+            let all = try await artifacts.list().filter { !Self.hidden($0, from: caller) }.sorted { $0.at > $1.at }, files = try await design.list()
             let status = await artifactStatus(all, files: Set(files.map(\.id)), deadline: design.deadline(r.command))
             return .array(try await artifactRows(all, files: files).map { a, row in
                 var row = row
@@ -25,11 +31,13 @@ extension CommandRouter {
                 return .object(row)
             })
         case "artifact.get":
-            let a = try await artifacts.get(try id())
+            let a = try await artifacts.get(try await seen())
             return .object(try await artifactRows([a], files: try await design.list())[0].1)
         case "artifact.add":
             var origin: String?
-            if let v = str(r, "source"), !v.isEmpty {
+            if let v = str(r, "source"), !v.isEmpty, caller == nil, v.hasPrefix("history-"), let u = UUID(uuidString: String(v.dropFirst(8))) {
+                origin = "history-" + u.uuidString.lowercased()   // the app's HISTÓRICO detail: one artifact per work
+            } else if let v = str(r, "source"), !v.isEmpty {
                 let l = try ClaudeImport.links([v])
                 guard l.count == 1 else { throw invalid("--source: um link só") }
                 origin = l[0]
@@ -82,7 +90,7 @@ extension CommandRouter {
             }
             return try await newPage(kind, r, caller: caller)
         case "artifact.import":
-            return try await importArtifact(try id(), width: try DeviceService.int(r.args, "width", 320...3840) ?? 1440, by: Self.origin(caller))
+            return try await importArtifact(try await seen(), width: try DeviceService.int(r.args, "width", 320...3840) ?? 1440, by: Self.origin(caller))
         case "artifact.reexport":
             let a = try await artifacts.get(try id())
             guard a.kind == .export, let fid = a.fileId else { throw invalid("an agent's page has no design to export: imported in plan 2D") }
@@ -93,7 +101,7 @@ extension CommandRouter {
             let snap = try await design.systemSnapshot(fileId: fid, node: a.node, page: a.page, deadline: deadline)
             return try await exportHTML(f, node: a.node, snapshot: snap, by: Self.origin(nil), deadline: deadline)
         case "artifact.export":
-            return try await exportDeck(try id(), format: try need(r, "format"), out: str(r, "out").flatMap { $0.isEmpty ? nil : $0 },
+            return try await exportDeck(try await seen(), format: try need(r, "format"), out: str(r, "out").flatMap { $0.isEmpty ? nil : $0 },
                                         caller: caller, cwd: r.cwd)
         case "artifact.libs":
             let dir = config.weblibsDir
@@ -126,10 +134,14 @@ extension CommandRouter {
             await artifactsChanged()
             return .object(["folder": folder.map { .string($0) } ?? .null, "moved": .number(Double(ids.count))])
         case "artifact.folders":
+            // M9.2 (B6): a history detail the caller cannot see is neither in `items` nor counted
+            let gone = try await artifacts.list().filter { Self.hidden($0, from: caller) }, ids = Set(gone.map(\.id))
             return .array(try await artifacts.folders().map { f in
-                .object(["path": .string(f.path), "count": .number(Double(f.count)), "total": .number(Double(f.total)),
+                let items = f.items.filter { !ids.contains($0) }
+                let total = f.total - gone.filter { ArtifactFolder.isUnder($0.inFolder, f.path) }.count
+                return .object(["path": .string(f.path), "count": .number(Double(f.count - (f.items.count - items.count))), "total": .number(Double(total)),
                          "color": f.color.map { .string($0) } ?? .null, "pinned": .bool(f.pinned), "presentation": .bool(f.presentation),
-                         "items": .array(f.items.map { .string($0.uuidString.lowercased()) })])
+                         "items": .array(items.map { .string($0.uuidString.lowercased()) })])
             })
         case "artifact.folder.create", "artifact.folder.rename", "artifact.folder.remove", "artifact.folder.set":
             guard let path = try ArtifactFolder.normalize(try need(r, "path")) else { throw invalid("Missing argument 'path'") }
@@ -162,6 +174,17 @@ extension CommandRouter {
         default:
             throw ProtocolError(code: .internal, message: "'\(r.command)' not implemented yet")
         }
+    }
+
+    /// M7.1: the folder the app's history details are kept in.
+    static let historyFolder = "Histórico"
+
+    /// A history detail (`origin` history-*) is the app's and its work's paddock's only (rev-onda6 A1): a terminal of
+    /// another paddock neither lists nor reads it (nor sees its id in `artifact.folders`). M9.2 (B6): one with no
+    /// paddock (written before M7.1) is the app's only. Every other artifact: seen by all, as before.
+    static func hidden(_ a: Artifact, from caller: TerminalRecord?) -> Bool {
+        guard let caller, a.origin?.hasPrefix("history-") == true else { return false }
+        return a.paddockId == nil || a.paddockId != caller.paddockId
     }
 
     /// `artifact.changed` to every Artifacts panel (a move or a folder change).
@@ -210,6 +233,19 @@ extension CommandRouter {
     /// link; the same link again is that artifact's next version (its folder kept unless `--folder`).
     private func addPage(_ r: Request, caller: TerminalRecord?, origin: String?, nonce: String?) async throws -> JSONValue {
         @Sendable func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
+        // the app's history detail (`origin` history-<uuid> only for the admin): the page inline, no file anywhere
+        // ponytail: no design-file import nor Artifacts-panel event, a history page is only read in a Prévia
+        if let origin, origin.hasPrefix("history-") {
+            guard let html = str(r, "html"), !html.isEmpty, html.utf8.count <= 8 << 20 else { throw invalid("histórico: falta a página (html) ou passa de 8 MiB") }
+            let t = ClaudeImport.clean(str(r, "title") ?? "")
+            // M7.1: kept in the work's paddock (as `work.history` scopes it), in the fixed folder, one version per work
+            let wid = String(origin.dropFirst(8))
+            guard let w = try await work.history({ $0.id == wid }).first else { throw ProtocolError(code: .notFound, message: "no closed work \(wid)") }
+            let a = try await artifacts.replaceAgentPage(page: Data(html.utf8), title: t.isEmpty ? "Histórico" : t,
+                                                         paddockId: w.paddockId.flatMap(UUID.init(uuidString:)), by: Self.origin(caller),
+                                                         inFolder: Self.historyFolder, origin: origin)
+            return .object(["id": .string(a.id.uuidString.lowercased()), "version": .number(Double(a.version))])
+        }
         let base = URL(fileURLWithPath: r.cwd ?? caller?.cwd ?? "/", isDirectory: true)
         let src = URL(fileURLWithPath: try need(r, "path"), relativeTo: base).standardizedFileURL
         let known = try await artifacts.continued(origin: origin, byId: caller?.id)

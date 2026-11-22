@@ -141,6 +141,10 @@ public final class UnixSocketServer: @unchecked Sendable {
             guard !done else { return }
             var chunk = [UInt8](repeating: 0, count: 65536)
             let n = read(fd, &chunk, chunk.count)
+            if let h = handler {   // M3d.1: a request still served: only its client's hangup matters, bytes are dropped
+                if n == 0 || n < 0 && Darwin.errno != EAGAIN && Darwin.errno != EINTR { h.cancel(); halt() }
+                return
+            }
             if n < 0 { if Darwin.errno == EAGAIN || Darwin.errno == EINTR { return }; return finish() }
             if n == 0 { return finish() }                      // EOF (request mode: before newline)
             let hasNL = chunk[0..<n].contains(10)
@@ -157,18 +161,31 @@ public final class UnixSocketServer: @unchecked Sendable {
 
         let tooLarge = Response(id: "", ok: false, error: ProtocolError(code: .invalidArgs, message: "request too large"))
 
+        /// M3d.1: the requests cancelled when their client hangs up (the socket stays read while they run): only waits,
+        /// whose cancel undoes nothing. A hook or command whose client gave up still finishes its writes.
+        static let cancelsOnHangup: Set<String> = ["work.wait"]
+        /// The handler of a `cancelsOnHangup` request while it runs (server.queue).
+        private var handler: Task<Void, Never>?
+
         func process(_ line: Data) {
-            halt()
             guard let req = try? JSONDecoder().decode(Request.self, from: line) else {
+                halt()
                 return reply(Response(id: "", ok: false, error: ProtocolError(code: .invalidArgs, message: "invalid request")))
             }
             let peer = peer
             if req.command.hasPrefix("ui."), let sh = server.streamHandler {
+                halt()
                 Task.detached { [self] in if let r = await sh(req, peer, self) { reply(r) } }   // nil: handler called open
                 return
             }
             let h = server.handler
-            Task.detached { [self] in reply(await h(req, peer)) }
+            guard Self.cancelsOnHangup.contains(req.command) else {
+                halt()
+                Task.detached { [self] in reply(await h(req, peer)) }
+                return
+            }
+            timer?.cancel(); timer = nil   // as `halt`, but the read source stays armed to see the hangup
+            handler = Task.detached { [self] in reply(await h(req, peer)) }
         }
         var suspended = false
         func halt() { src?.suspend(); suspended = true; timer?.cancel(); timer = nil }   // stop reading, drop deadline
@@ -315,6 +332,7 @@ public final class UnixSocketServer: @unchecked Sendable {
             guard !done else { return }
             done = true
             timer?.cancel(); timer = nil
+            handler = nil
             let cb: (@Sendable () -> Void)? = lock.withLock {
                 closed = true; out = Data(); outOff = 0
                 defer { onClose = nil }; return onClose

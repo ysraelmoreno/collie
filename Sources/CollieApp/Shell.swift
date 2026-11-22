@@ -28,6 +28,16 @@ import CollieTheme
     /// The cards of "O que o Collie faz" the user has seen (the info icon's dot) and the modal that shows them.
     var tour = FeatureTourSeen()
     var openTour: () -> Void = {}
+    /// Brings the Work panel forward (opens it where it was not).
+    var openWork: () -> Void = {}
+    /// "Abrir no canvas" of a closed work (its id): returns once the Prévia opened or failed (M9.1: the modal waits).
+    var onOpenHistory: @MainActor (String) async -> Void = { _ in }
+    /// The short warning the Laços modal shows when the Prévia could not be opened (nil: it opened).
+    var historyNotice: () -> String? = { nil }
+    /// M8.2: "Ver tudo" (or the card) of LAÇOS: the Laços modal (`LoopsSheet`, M8.3) on that tab.
+    var onOpenLoops: (LoopsTab) -> Void = { _ in }
+    /// M8.3: a closed work's `WorkArchive` (`work.history --id`), for the modal's detail.
+    var fetchHistory: (String) async throws -> WorkArchive = { _ in throw CancellationError() }
 }
 
 /// The window frame around `content` (docks + canvas). Compacta adds nothing here (its bar floats over the canvas,

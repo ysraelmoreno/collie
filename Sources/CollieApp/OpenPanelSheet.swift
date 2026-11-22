@@ -5,6 +5,41 @@ import CollieCore
 import ColliePlugins
 import CollieProtocol
 import CollieTheme
+import UniformTypeIdentifiers
+
+/// What the dialog still needs for a plug-in that opens on a target (Prévia: an artifact or an HTML file). Pure.
+struct OpenPanelTarget: Equatable {
+    var plugin: String
+    var artifactId: String?
+    var filePath: String?
+
+    var needsTarget: Bool { plugin == "preview" }
+    private var hasTarget: Bool { !(artifactId ?? "").isEmpty || !(filePath ?? "").isEmpty }
+    var canOpen: Bool { !needsTarget || hasTarget }
+    var missingHint: String? { canOpen ? nil : "Escolha um artifact ou um arquivo HTML." }
+    /// The `panel.open` arguments the target adds: an artifact wins over a file when both are set.
+    var args: [String: JSONValue] {
+        guard needsTarget else { return [:] }
+        if let a = artifactId, !a.isEmpty { return ["artifact": .string(a)] }
+        if let f = filePath, !f.isEmpty { return ["file": .string(f)] }
+        return [:]
+    }
+
+    /// A failure as text for the user: never the raw protocol error.
+    static func failureText(_ e: ProtocolError) -> String {
+        if e.message.hasPrefix("Prévia:") { return "Escolha um artifact ou um arquivo HTML para abrir a Prévia." }
+        // M6.5 (A9): `PreviewFile.resolve`'s refusal, in a fixed text (the daemon's message carries paths)
+        if e.message.hasPrefix("a página precisa ficar dentro do projeto") { return "A página precisa ficar dentro do projeto." }
+        switch e.code {
+        case .notFound: return "Não encontrei o artifact ou o arquivo escolhido."
+        case .unauthorized: return "O Collie não tem acesso a esse arquivo. Use um arquivo do projeto ou aprove o acesso."
+        case .timeout: return "O painel demorou demais para abrir. Tente de novo."
+        case .daemonUnavailable, .unavailable: return "O serviço do Collie não está disponível. Tente de novo em instantes."
+        case .invalidArgs: return "Não foi possível abrir o painel com essas opções."
+        default: return "Não foi possível abrir o painel. Tente de novo."
+        }
+    }
+}
 
 /// Plug-in, name, placement, initial URL (browser) and storage scope (default: isolated), the device (device plug-in),
 /// or the design file (design plug-in: `design.files`, or a new one through `design.new`).
@@ -27,6 +62,10 @@ struct OpenPanelSheet: View {
     @State private var files: [String] = []
     @State private var file = ""
     @State private var newFile = ""
+    @State private var artifacts: [(id: String, title: String)] = []
+    @State private var artifactId = ""
+    @State private var artifactSearch = ""
+    @State private var pickedFile = ""
 
     /// `initial`: the plug-in selected on open (the tour's Dispositivo and Design buttons); unknown or nil: the first.
     init(client: DaemonClient, canvas: CanvasState, at: CGPoint? = nil, initial: String? = nil) {
@@ -37,6 +76,11 @@ struct OpenPanelSheet: View {
     }
 
     private var spec: PluginSpec? { PluginRegistry.spec(plugin) }
+    private var target: OpenPanelTarget { OpenPanelTarget(plugin: plugin, artifactId: artifactId, filePath: pickedFile) }
+    private var shownArtifacts: [(id: String, title: String)] {
+        let q = artifactSearch.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? artifacts : artifacts.filter { $0.title.localizedCaseInsensitiveContains(q) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -73,6 +117,18 @@ struct OpenPanelSheet: View {
                     TextField("Novo arquivo…", text: $newFile).collieField()
                     Button("Criar", action: createFile).disabled(busy || newFile.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+            } else if plugin == "preview" {
+                TextField("Pesquisar artifact…", text: $artifactSearch).collieField()
+                Picker("Artifact", selection: $artifactId) {
+                    Text(artifacts.isEmpty ? "Nenhum artifact" : "—").tag("")
+                    ForEach(shownArtifacts, id: \.id) { Text($0.title).tag($0.id) }
+                }
+                HStack {
+                    Button("Escolher arquivo HTML…", action: pickFile)
+                    Text(pickedFile.isEmpty ? "ou escolha um arquivo" : (pickedFile as NSString).lastPathComponent)
+                        .foregroundStyle(Color.collieMuted).font(.collieUI(12)).lineLimit(1).truncationMode(.middle)
+                }
+                if let hint = target.missingHint { Text(hint).foregroundStyle(Color.collieMuted).font(.collieUI(12)) }
             } else {
                 if plugin == "browser" { TextField("URL inicial", text: $url).collieField(mono: true) }
                 Picker("Armazenamento", selection: $storage) {
@@ -86,7 +142,7 @@ struct OpenPanelSheet: View {
                 Spacer()
                 Button("Cancelar") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Abrir", action: open).keyboardShortcut(.defaultAction).buttonStyle(CollieButtonStyle(.primary))
-                    .disabled(spec == nil || busy || (plugin == "device" && serial.isEmpty) || (plugin == "design" && file.isEmpty))
+                    .disabled(spec == nil || busy || (plugin == "device" && serial.isEmpty) || (plugin == "design" && file.isEmpty) || !target.canOpen)
             }
         }
         .buttonStyle(CollieButtonStyle(.secondary))
@@ -94,6 +150,7 @@ struct OpenPanelSheet: View {
         .task(id: plugin) {
             if plugin == "device" { await loadDevices() }
             if plugin == "design" { await loadFiles() }
+            if plugin == "preview" { await loadArtifacts() }
         }
     }
 
@@ -121,6 +178,29 @@ struct OpenPanelSheet: View {
             if !devices.contains(where: { $0.serial == serial }) { serial = devices.first?.serial ?? "" }
             error = nil
         } catch { self.error = error.message }
+    }
+
+    /// `artifact.list`: the artifacts, by title (nothing opens without a target, so a failure shows as text).
+    private func loadArtifacts() async {
+        do {
+            guard case .array(let a) = try await client.adminCall("artifact.list", [:]) else { return }
+            artifacts = a.compactMap {
+                guard case .object(let o) = $0, case .string(let id)? = o["id"] else { return nil }
+                if case .string(let t)? = o["title"], !t.isEmpty { return (id, t) }
+                return (id, id)
+            }
+            if !artifacts.contains(where: { $0.id == artifactId }) { artifactId = "" }
+            error = nil
+        } catch { self.error = OpenPanelTarget.failureText(error) }
+    }
+
+    /// An HTML file from the system panel. The daemon decides whether it may be read (the existing access rule).
+    private func pickFile() {
+        let p = NSOpenPanel()
+        p.allowedContentTypes = [.html]; p.allowsMultipleSelection = false; p.canChooseDirectories = false
+        // M6.5 (A9): it opens in the paddock's worktree, where the page has to be
+        if let path = client.paddocks.first(where: { $0.id == client.currentPaddock })?.path { p.directoryURL = URL(fileURLWithPath: path) }
+        if p.runModal() == .OK, let u = p.url { pickedFile = u.path; artifactId = "" }
     }
 
     /// `design.files`: the design files on the local engine (the first call can take a moment: it starts the engine).
@@ -159,10 +239,14 @@ struct OpenPanelSheet: View {
                 let p = onCanvas ? .canvas : at == nil ? placement : (spec?.defaultPlacement ?? placement)
                 let id = try await client.openPanel(plugin: plugin, name: n, placement: p, url: plugin == "browser" ? u : nil,
                                                     storage: storage, serial: plugin == "device" ? serial : nil,
-                                                    file: plugin == "design" ? file : nil)
+                                                    file: plugin == "design" ? file : target.args["file"].flatMap { if case .string(let f) = $0 { f } else { nil } },
+                                                    artifact: target.args["artifact"].flatMap { if case .string(let a) = $0 { a } else { nil } })
                 if onCanvas, let at { canvas.setFrame(CGRect(origin: at, size: plugin == "device" ? CGSize(width: 360, height: 720) : plugin == "design" || plugin == "diagram" ? CGSize(width: 1100, height: 720) : CanvasState.defaultTerminalSize), for: id) }
                 dismiss()
-            } catch { self.error = "\(error)"; busy = false }
+            } catch {
+                self.error = (error as? ProtocolError).map(OpenPanelTarget.failureText) ?? "Não foi possível abrir o painel. Tente de novo."
+                busy = false
+            }
         }
     }
 }

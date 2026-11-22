@@ -12,6 +12,16 @@ enum CollieOrientation {
     /// M2.4, on the Loop line: a notice typed into the terminal is a hint that may never arrive; the state is read.
     /// The short form is for a text at the cap (a Cursor Shepherd has under 60 characters to spare).
     static let loopWait = "Wait for a loop: collie work wait, not a terminal notice.", loopWaitShort = "Wait: collie work wait."
+    /// M3c.4: before `loopWait` where it fits (a form that would lose its place to it keeps today's line).
+    /// M5.1: `end` is the default now: the line says per-task notices are off and the state is read with a long wait.
+    /// M5.6: a notice is never answered with text (each reply is a turn) and one long wait beats several short ones.
+    /// M6.5 (A6): an agent's shell tool kills a foreground command at 2 to 10 min, so the wait is 540 s and in the
+    /// background ("bg"); the MCP `work_wait` and the long form are in /collie:loop.
+    /// ponytail: 62 characters, the room a codex Shepherd has before the wait sentence
+    /// M4 (2026-11-21 device loop spec): read the tree, act and re-read in one call; the PNG only as a last resort.
+    static let deviceLoop = "collie device ui (the tree; don't parse the PNG), then tap --text|--ref … --then ui; screenshot only if the tree lacks it."
+    static let deviceShort = "collie device ui; tap --text … --then ui."
+    static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.
     private static func quote(_ x: String) -> String {
@@ -42,7 +52,7 @@ enum CollieOrientation {
         // the whole sentence with the name, then without it, then the short sentence, and only then the line as it was.
         // The short sentence is shorter than the name, so no text loses a form it had before.
         let loopCommands = agent == "claude" || agent == "cursor" ? [true, false] : [false]
-        let loopLines = loopCommands.map { ($0, loopWait) } + [(false, loopWaitShort), (false, "")]
+        let loopLines = loopCommands.flatMap { [($0, loopNotify + " " + loopWait), ($0, loopWait)] } + [(false, loopWaitShort), (false, "")]
         // the candidates line (PRD B3 req. 4, a Shepherd's) may cost the names their room, never the cap: every form is
         // tried with it first, then all of them again without it
         for cands in candidates > 0 && isShepherd ? [candidates, 0] : [0] {
@@ -93,7 +103,8 @@ enum CollieOrientation {
         // them (the 1500 cap leaves the shorter forms no room: the libs hint drops first)
         lines.append(k >= 3 ? "- Artifacts: collie artifact … keeps pages (--folder A/B); artifact new deck|dashboard|doc|prototype opens a Prévia. No CDN: offline JS libs via artifact libs." + (claude ? " Slides: artifact export <id> --format pptx|pdf. claude.ai links: artifact import-claude." : "")
             : "- Artifacts: collie artifact … (new <kind>: Prévia; --folder).")
-        if !v.isEmpty { lines.append("- Device \(names(v)): collie device … (screenshot, tap, logs).") }
+        // M4 (device loop spec): teach the tree loop, not the PNG; compact forms keep only the commands (today's length)
+        if !v.isEmpty { lines.append("- Device \(names(v)): " + (compact ? deviceShort : deviceLoop)) }
         if isShepherd {
             let hints = ["design": "design --file <name>", "diagram": "diagram --file <path.drawio>", "browser": "browser --url <url>", "device": "device [--serial <id|avd:<name>>]"]
             // built-ins only: external plug-ins are user-installed text, kept out of the agent's context (one fixed line below)
@@ -154,7 +165,7 @@ enum CollieOrientation {
             : "- Sandboxed: reads open (not secrets), writes in project only; blocked write = user card; don't work around it: collie access request <path> --write --reason \"…\". collie open <url|app>.")
         // DX backlog 11: another live terminal in this folder: its edits land mid-build and its WIP in a `git add`
         if !sharedFolder.isEmpty {
-            let own = String(terminal.prefix(maxName).map { $0.isLetter || $0.isNumber ? $0 : "-" })
+            let own = AgentNaming.buildDir(terminal, max: maxName)   // M11.3: an attempt's is stable across its loop's attempts
             lines.append(tight ? "- Shared folder: own build dir; git diff <file> before add; verify in git worktree add --detach <tmp> HEAD."
                 : "- Shared folder (\(names(sharedFolder))): build in .build/\(own) (--scratch-path); git add only your hunks (git diff <file>); verify: git worktree add --detach <tmp> HEAD, swift test --filter …, git worktree remove <tmp>.")
         }

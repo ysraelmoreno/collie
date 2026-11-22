@@ -154,7 +154,14 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
             #expect(path.hasPrefix(p.root.appendingPathComponent("screens").path) && FileManager.default.fileExists(atPath: path))
             let ui = try await call(p, m, "device.ui")
             guard case .string(let tree)? = field(ui, "tree") else { Issue.record("\(ui)"); return }
-            #expect(tree.contains("[e1]") && field(ui, "truncated") == .bool(false))
+            // compact: the root (e1, only an id) is left out; --all lists it, and tap --ref e1 still works
+            #expect(!tree.contains("[e1]") && tree.contains("Button \"Mapas\"") && field(ui, "truncated") == .bool(false))
+            guard case .number(let shown)? = field(ui, "nodes"), case .number(let total)? = field(ui, "total") else { Issue.record("\(ui)"); return }
+            #expect(shown < total)
+            let all = try await UnixSocketClient.send(Request(id: "m", terminalId: m.id, token: m.token, command: "device.ui",
+                                                              args: ["all": .bool(true)]), to: p.socket, timeoutSeconds: 60)
+            guard case .string(let full)? = field(all, "tree") else { Issue.record("\(all)"); return }
+            #expect(full.contains("[e1]") && field(all, "nodes") == .number(total))
             #expect(try await call(p, m, "device.tap", ["ref": "e1"]).ok)
             let n = AXeTree.parse(try Data(contentsOf: fixtures.appendingPathComponent("ios/describe-ui.json"))).nodes[0]
             let g = try await call(p, m, "device.logcat", ["grep": "boom"])
@@ -167,6 +174,32 @@ extension DeviceCommandTests { @Suite struct SimCommandTests {
             #expect(a.contains("tap -x \(n.center.x) -y \(n.center.y) --udid \(booted)"))
             #expect(fx.xcrun.contains { $0.hasPrefix("simctl io \(booted) screenshot \(p.root.path)/screens/") })
             #expect(fx.xcrun.contains("simctl spawn \(booted) log show --last 5m --style compact"))
+        }
+    }
+
+    @Test func iosThenUiReturnsTreeAndUpdatesRefs() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            #expect(try await call(p, m, "device.tap", ["x": "10", "y": "20"]).result == .object([:]))
+            let r = try await call(p, m, "device.tap", ["x": "10", "y": "20", "then": "ui", "settle": "0"])
+            guard case .object(let ui)? = field(r, "ui"), case .string(let tree)? = ui["tree"] else { Issue.record("\(r)"); return }
+            #expect(tree.contains("Button \"Mapas\"") && ui["nodes"] != nil && ui["total"] != nil)
+            #expect(fx.axe.contains("describe-ui --udid \(booted)"))
+            #expect(try await call(p, m, "device.tap", ["ref": "e1"]).ok)
+            #expect(try await call(p, m, "device.tap", ["x": "1", "y": "1", "then": "nope"]).error?.code == .invalidArgs)
+        }
+    }
+
+    @Test func iosTapTextDumpsFreshAndTaps() async throws {
+        let fx = try Fx(); defer { fx.cleanup() }
+        try await withSim { d, p in
+            let m = try await shepherdWithSim(d, p)
+            let nodes = AXeTree.parse(try Data(contentsOf: fixtures.appendingPathComponent("ios/describe-ui.json"))).nodes
+            let n = try UITree.target(nodes, text: "mapas", id: nil, nth: 1)
+            #expect(try await call(p, m, "device.tap", ["text": "mapas", "nth": "1"]).ok)   // no device.ui before
+            #expect(fx.axe.contains("describe-ui --udid \(booted)") && fx.axe.contains("tap -x \(n.center.x) -y \(n.center.y) --udid \(booted)"), "\(fx.axe)")
+            #expect(try await call(p, m, "device.tap", ["text": "no such label"]).error?.code == .notFound)
         }
     }
 

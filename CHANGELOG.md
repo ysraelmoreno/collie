@@ -6,6 +6,27 @@ Names in quotes are labels of the app, which is in Portuguese.
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-11-21
+
+### Added
+- **Per-project loop config (`collie-work.json`):** a versioned file at the project root can declare the loop's `gate` and `precheck` (defaults for `work run`; the flag always wins), named `areas` (`collie work task add --area ask,quadro` builds the check as `area && area && smoke`), a `smoke` command and a `full` gate. `collie work config` shows what it resolves to and runs nothing. The loop reads the committed version (HEAD), never the working tree, and fails an attempt that edits the file; commands that would change what the `&&` chain means (`;`, `||`, `#`, `&`) are refused, and `work run` warns when the file has uncommitted changes. Projects without the file behave exactly as before.
+- **Shepherd context lifecycle:** the large-context advice now reads the real context size in tokens (150k and 250k levels, numbers only, never conversation text), and at the end of a loop the daemon writes a short handoff for the next turn (`collie work handoff`).
+- **Turn safety for loops:** the attempt prompt carries two fixed rules (run build and tests in the foreground; `swift build` does not compile tests), and `collie work run --precheck <cmd>` runs a fast check in the agent's own session before the full check, so a compile error costs a nudge instead of an attempt.
+- **Quadro example app** (`Examples/apps/quadro`): a local kanban board (Python 3.9, standard library only) with a `collie.json` contract, so `collie app adopt quadro` gives agents commands to create, move, comment on, archive and restore cards while the owner watches the board in a panel. Data stays in `$QUADRO_DIR` (default `~/.collie/quadro`), with a readable `BOARD.md` mirror. Cards have a type (impl, bug, refactor, spike, test, docs, chore) and a priority (high, medium, low), with filters in the UI and in `list-cards`; a board from the first version migrates to `schema` 2 on first open, keeping a `board.json.v1.bak` copy.
+- **Tokens in the immutable summary:** each task keeps its attempts' token counts (counts and model name only); `collie work usage` also reads closed works of the caller's paddock, and the loops modal shows the totals.
+
+### Changed
+- **Faster checks:** `AskTests` went from about 173 s to 30 s (every ask time limit is one injectable value, production defaults unchanged); an attempt's agent reuses one build folder per loop instead of compiling cold on each attempt (`scripts/dev/prune-builds.sh` lists, and with `--apply` removes, the old ones); `scripts/laco-check.sh` validates every filter against real suites, runs a task's declared area plus a fixed smoke set, and runs the whole list only with `--full`.
+- **CI:** the build caches `.build`, each test shard has a timeout and prints the last test it started, and a shard that hangs fails instead of being cancelled an hour later.
+- Near-duplicate memories of the same kind and scope (same subject, three or more shared title terms, or close vectors) no longer enter one injection block together; only the best of each group is injected. Nothing in the memory store changes.
+
+### Fixed
+- An app panel opened right after `collie app attach` (the service still starting) stayed blank: it now shows "Iniciando <app>…", loads the page by itself when the service comes up, and says "não está respondendo em <address>" if the service reports running but never answers.
+- The full-screen button (and the other controls of a terminal's title bar) did nothing on the canvas at any zoom other than 100%.
+- Parallel loop lanes no longer raise sandbox access cards (granting one restarted the lane's agent mid-attempt); the denials stay, they are just not asked about.
+
+## [0.1.8] — 2026-11-21
+
 ### Added
 - **"O que o Collie faz":** an info icon (above the usage summary in "Trilho", beside it in "Compacta") opens a carousel of 17 cards, one per feature, with how to call it and a button that takes you there. It never opens by itself; a dot on the icon shows while there are cards you have not seen.
 - **Agent hooks for plug-ins:** an external plug-in can declare `hooks` (`edit`, `stop`) and a `helper`; the daemon hands it the files an agent wrote and returns its answer to the agent, as guidance or as a block. The helper runs once per event in its own sandbox (reads the project, writes only its data folder, no network), with a 3 s deadline, and any failure is silent. Claude terminals only. Installing shows what the plug-in may do. API: `docs/plugins/api-v1.md`.
@@ -21,14 +42,24 @@ Names in quotes are labels of the app, which is in Portuguese.
 - **Reopening a task:** `collie work task reopen <task> [--keep-tries]` puts a deferred or abandoned task back in the queue, in the same position.
 - **Parallel tasks:** `collie work run --parallel <n>` (default 1, at most 4) runs each task in a lane (a temporary worktree of the loop) and integrates them one at a time, running the gate again after each merge; `collie work task add --scope --needs` declares what each task touches and what it depends on (without `--scope` a task runs alone). Status, `work wait`, the journal and the card show the lanes. A lane writes only its own branch; `--budget` counts the lanes alive; the sweeper removes only lanes its own daemon made. `scripts/dev/lane-coldbuild.sh` measures a lane's cold build cost.
 - **Agents of the loop have names of their work:** `<work>-<task>-t<attempt>` instead of `loop-<random>`.
+- **Loops in the side panel ("Trilho"):** a "LAÇOS" section under "Lotes" shows the running loop as a card (work title, progress bar, done/total, current attempt and phase) and exists only while a loop runs; "Ver tudo" opens a modal with the loop's tasks (state, attempt, agent) and the last 20 closed works of the paddock, whose detail (tasks, attempts, full timeline) opens inside the modal and can still be opened as a page in the canvas. Without a running loop, "Ver tudo" stays while the paddock has history.
+- **Immutable summary of a closed work:** when a work closes the daemon writes a summary that never changes (full timeline, up to 500 events), and `collie work history [--limit N] [--id <work>]` reads it for the caller's paddock.
+- **Token accounting for loops:** `collie work usage` and `collie work status` show, per attempt, the tokens the agent spent (counts only, never content).
+- **The loop stops when the model's usage limit is hit** instead of waiting an hour for the agent: a clear note and no attempt is spent.
+- **Default model for a loop's agents:** a preference in Preferences › "Laços" (`--model` still wins), so agents do not inherit a model that has hit its limit.
+- **`collie work run --notify task|end`:** with `end` (now the default for new loops) the Shepherd is told only when a task is deferred, a loop stops or ends; the state is read with `collie work wait`.
+- **Large-context advice:** the Shepherd's Stop hook says once, in one line, when its session has grown large and each turn re-reads it all.
+- **"Abrir painel" with the Prévia plug-in** now has a picker for an artifact or an HTML file.
 
 ### Changed
 - **Device panel:** the screen sits inside a frame drawn for the kind of device (phone, foldable, tablet, modern iPhone, iPhone with a home button, iPad), picked automatically; the buttons are icon pills and the link state ("ao vivo", "conectando", "offline") moved to the footer with a colored dot. Small panels and physical devices show no frame.
+- The Stop hook asks for memories at most every 20 minutes, never while a loop of the work is running, and only for work that is not the loop's own commits.
 - The loop resubmits the Enter of a prompt that was typed but not submitted, and nudges an agent that ends its turn early with no commit, instead of burning the attempt.
 - After a daemon crash, the loop resumes the commit the attempt had already made instead of restarting the task; stopping the daemon no longer spends the attempt in progress.
 - This changelog is written in English.
 
 ### Fixed
+- Loop gate leftovers are moved to a quarantine inside `.git` instead of being deleted, with literal paths; an orphaned `collie work wait` no longer hides a Shepherd that is editing; a work closed while its loop runs keeps the whole timeline in its summary.
 - Loop: a task no longer stays "in progress" because of an out-of-phase event; a malformed new field in the work record no longer breaks reading the work; the journal writes half as often per attempt.
 - **Deterministic CI:** the test step (`scripts/ci/run-tests.sh`) no longer trusts the exit code of `swift test`, which was green with 237 failures when the test process exited midway; it runs the suite in 3 serial parts and passes only with the final count of each. Tests the hosted runner does not run are listed in `scripts/ci/ci-skip.txt`, with the reason. Fixed outdated tests (Cursor's `--plugin-dir`, the page title on import) and a fatal error of the fake daemon in `MCPTests`.
 

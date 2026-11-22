@@ -87,7 +87,8 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
         try "x\n".write(to: repo.appendingPathComponent("g.txt"), atomically: true, encoding: .utf8)
         _ = try await GitRunner.run(["add", "."], in: repo)
         _ = try await GitRunner.run(["commit", "-m", "feat: exportar deck para PowerPoint"], in: repo)
-        let usual = (0..<8).map { klass("Emulador \($0) trava o scrcpy", hits: 3) }
+        // M10.4: distinct titles (eight near-identical ones would collapse into one)
+        let usual = ["alfa", "beta", "gama", "delta", "épsilon", "zeta", "teta", "iota"].map { klass("Emulador \($0)", hits: 3) }
         let deck = klass("Exportar deck PowerPoint perde fontes", hits: 1)
         try await withDaemon { d, p in
             let store = await d.router.memory.repo(for: repo.path)
@@ -226,7 +227,8 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
     /// Task 4 (spec 2026-11-17 cursor memory §2): no git signal, but the active work's title and open tasks lead.
     @Test func checklistLeadsWithTheWorkAndItsOpenTasks() async throws {
         let repo = try await makeRepo()
-        let usual = (0..<8).map { klass("Emulador \($0) trava o scrcpy", hits: 3) }
+        // M10.4: distinct titles (eight near-identical ones would collapse into one)
+        let usual = ["alfa", "beta", "gama", "delta", "épsilon", "zeta", "teta", "iota"].map { klass("Emulador \($0)", hits: 3) }
         let deck = klass("Exportar deck PowerPoint perde fontes", hits: 1), login = klass("Login do iPhone expira o token", hits: 1)
         try await withDaemon { d, p in
             let store = await d.router.memory.repo(for: repo.path)
@@ -244,7 +246,8 @@ private func put(_ s: RepoMemory, _ recs: [MemoryRecord]) async throws { try awa
     /// Task 4: a lot member's checklist leads with the lot's goal.
     @Test func checklistLeadsWithTheLotGoal() async throws {
         let repo = try await makeRepo()
-        let usual = (0..<8).map { klass("Emulador \($0) trava o scrcpy", hits: 3) }
+        // M10.4: distinct titles (eight near-identical ones would collapse into one)
+        let usual = ["alfa", "beta", "gama", "delta", "épsilon", "zeta", "teta", "iota"].map { klass("Emulador \($0)", hits: 3) }
         let deck = klass("Exportar deck PowerPoint perde fontes", hits: 1)
         try await withDaemon { d, p in
             let store = await d.router.memory.repo(for: repo.path)

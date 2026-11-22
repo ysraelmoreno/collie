@@ -535,6 +535,22 @@ final class FakeHome {
         let text = f.map { SandboxProfile.render($0.input()) } ?? ""
         #expect(text.hasPrefix("(version 1)\n(allow default)") && text.contains("collie-term:\(f?.id.uuidString ?? "")"))
     }
+    /// A lane's agent runs unattended: its profile raises no access card (no `collie-term:` message anywhere) yet keeps
+    /// the same denials; a paddock terminal's profile still asks.
+    @Test func aLaneProfileNeverRaisesACard() throws {
+        let f = try FakeHome(git: true, socket: false)
+        let lane = f.repo.appendingPathComponent(".collie/paddocks/lane-a")
+        try FakeHome.git(["worktree", "add", "-q", "-b", LaneWorktree.branchPrefix + "a", lane.path], in: f.repo)
+        var i = f.input(project: lane)
+        i.paddockWorktrees = []; i.lanePaddock = f.paddock
+        let text = SandboxProfile.render(i)
+        #expect(!text.contains("collie-term:"), "a lane denial asks the owner")
+        let p = ProfileRules(text)
+        #expect(!p.writes(f.home.appendingPathComponent(".claude/session-env/x")), "the denial itself must stay")
+        #expect(p.writes(lane.appendingPathComponent("new.txt")))
+        #expect(SandboxProfile.render(f.input(paddockTerminal: true)).contains("collie-term:"), "a paddock terminal stops asking")
+    }
+
     /// Text-only (runs where sandbox-exec can't nest): Cursor's plugin dir is a readable subpath, the other files too.
     @Test func ownFilesAreSubpaths() throws {
         let f = try FakeHome(git: false), text = SandboxProfile.render(f.input())

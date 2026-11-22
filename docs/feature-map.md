@@ -148,6 +148,25 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   `próximo limite: turno vence em N min`), `collie work wait [--since N] [--timeout S]` (espera o trabalho mudar, sem
   terminal; devolve a versão), `collie work list`, `collie work task reopen <tarefa> [--keep-tries]` (uma tarefa adiada
   ou abandonada volta à fila, na mesma posição, com `spec` e `check`); o painel, à mão.
+- **Tokens por tentativa:** `collie work status` mostra `tokens: <índice relativo> · N msgs` do trabalho (só contagens
+  do transcript de cada agente do laço); `collie work usage [--limit N]` lista os trabalhos do cercado com o total e por tarefa.
+- **Resumo imutável (T6.1):** ao fechar (`work done`, ou o fim do laço de um trabalho já fechado) o daemon grava uma vez
+  `<raiz>/work/work-archive/<id>.json` (`-2`, `-3`… a cada novo fechamento; diário até 500 eventos; ≤ 1 MB; os 200 mais
+  novos ficam). `collie work history [--limit N] [--id <trabalho>]` (MCP `work_history`) lista só os do seu cercado.
+- **Passagem de turno (M10.1):** ao fim de cada laço o daemon grava `<raiz>/handoff/<id do cercado>.md` (um por cercado,
+  sobrescrito, 0600, ≤ 4 KB: trabalho, tarefas, shas curtos, decisões e armadilhas novas só por título e id, próxima onda
+  se o roadmap tiver o arquivo). `collie work handoff` (MCP `work_handoff`) imprime. O aviso de contexto do Pastor
+  (`ContextAdvice`) mede o contexto da última chamada (rabo de 256 KB do transcript, só números): 150 mil avisa, 250 mil
+  avisa forte, um por nível a cada 2 h, e cita esse comando. `collie memory stats` traz `cost.pastorContext` (atual e
+  máximo por sessão).
+- **Check por projeto (M13.1):** `collie-work.json` na raiz do projeto (convenção em `onda13.md`; `ProjectWorkConfig`
+  em CollieCore, leitor estrito: ≤ 16 KB, `version` 1, comandos ≤ 1000 caracteres sem controle, até 50 áreas
+  `a-z0-9-`). `collie work config [--terminal]` (só CLI) mostra de onde veio, avisos, `gate`/`precheck`/`smoke`/`full`
+  e o check de cada área; arquivo por symlink, não regular ou grande é recusado. Só leitura: nunca executa nada.
+  M13.2: `collie work task add … --area a,b` grava na tarefa o check montado (`<área> && <área> && <smoke>`; não
+  com `--check`; sem arquivo, área inexistente ou arquivo inválido = erro). `collie work run` sem `--gate`/`--precheck`
+  usa os do arquivo do cercado (a flag vence; arquivo inválido = padrões de hoje e um `warning` no retorno); cartão e
+  aviso "Laço iniciado" dizem "portão (collie-work.json)".
 
 ### Plug-ins externos e apps (`WebPluginPanel`)
 
@@ -157,6 +176,11 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
 - **Arquivos:** `Sources/ColliePlugins/WebPluginPanel.swift`, `Sources/ColliePlugins/PluginPanelView.swift`,
   `Sources/ColliePlugins/WebLockdown.swift`, `Sources/CollieCore/PluginManifest.swift`.
 - **Como verificar:** `collie plugin --help`, `collie app list`; instalar é à mão (Preferências → "Plug-ins").
+
+### Quadro (app de exemplo adotado: kanban local)
+
+- **Para que serve:** kanban local (`Examples/apps/quadro`, Python 3.9 sem dependências) que o Collie adota com `collie app adopt quadro … --event-diff events`; o dono vê o quadro no painel e os agentes criam, movem, comentam e arquivam cartões por `collie quadro <comando>`; cada cartão tem tipo (`impl`, `bug`, `refactor`, `spike`, `test`, `docs`, `chore`; padrão `impl`) e prioridade (`high`, `medium`, `low`; padrão `medium`), que `create-card`/`update-card` aceitam e `list-cards` filtra (quadros de `schema` 1 migram para 2 com cópia `board.json.v1.bak`) (contrato em `collie.json`; dados em `$QUADRO_DIR`, padrão `$HOME/.collie/quadro`, com espelho `BOARD.md`).
+- **Como verificar:** `scripts/check-onda11.sh q11-4`, `scripts/check-onda12.sh q12-2`.
 
 ### Vizinho e Cercas (plug-in de exemplo com ganchos `edit` e `stop`)
 

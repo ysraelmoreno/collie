@@ -39,17 +39,20 @@ enum TranscriptChunk {
     }
 
     /// Each complete line after `offset` (from 0 when the file is shorter: it was rewritten), in order; the byte after the
-    /// last one (a partial last line is the next read's). nil: cannot be opened as a regular file (no symlink).
-    static func lines(_ url: URL, from offset: UInt64, _ each: (Data) -> Void) -> UInt64? {
+    /// last one (a partial last line is the next read's). nil: cannot be opened as a regular file (no symlink), or more
+    /// than `maxBytes` would be read (M5.4: checked before and while reading).
+    static func lines(_ url: URL, from offset: UInt64, maxBytes: UInt64 = .max, _ each: (Data) -> Void) -> UInt64? {
         let fd = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard fd >= 0 else { return nil }
         let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         var st = stat()
         guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { return nil }
         let start = UInt64(st.st_size) < offset ? 0 : offset
-        guard (try? h.seek(toOffset: start)) != nil else { return nil }
-        var end = start, buf = Data()
+        guard UInt64(st.st_size) - start <= maxBytes, (try? h.seek(toOffset: start)) != nil else { return nil }
+        var end = start, buf = Data(), read: UInt64 = 0
         while let data = try? h.read(upToCount: block), !data.isEmpty {
+            read += UInt64(data.count)
+            guard read <= maxBytes else { return nil }   // it grew while being read
             buf.append(data)
             guard let nl = buf.lastIndex(of: 10) else { continue }
             for raw in buf[buf.startIndex...nl].split(separator: 10) { each(Data(raw)) }

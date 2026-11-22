@@ -10,6 +10,7 @@
 # So: the tests listed by `swift test list`, minus scripts/ci/ci-skip.txt, are split by top-level suite into SHARDS
 # processes run side by side, each serial (`--no-parallel`). A shard passes only if swift test exits 0, prints no
 # failure or Fatal error, and its last line says "Test run with N tests … passed" with N the count it was given.
+# Each shard also has CI_SHARD_TIMEOUT seconds (default 900): past it, it fails naming the last suite/test started.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 SWIFT="${SWIFT:-swift}"             # the test replaces it
@@ -46,42 +47,80 @@ cut -d/ -f1 "$OUT/run.txt" | sort | uniq -c | sort -k1,1nr -k2 | awk -v n="$SHAR
       c[best] += $1; print $2 > (out "/suites-" best ".txt") }
     END { for (i = 0; i < n; i++) print c[i] + 0 > (out "/count-" i ".txt") }'
 
+# Every process the shards leave behind with no parent (a hung swiftpm-testing-helper, an adb server) is killed at the
+# end; those already running before this script are left alone.
+orphans() { ps -A -o pid=,ppid=,comm= | awk '$2 == 1 && $3 ~ /(^|\/)(swiftpm-testing[^\/]*|adb)$/ { print $1 }'; }
+before=" $(orphans | tr '\n' ' ') "
+
+# A shard has CI_SHARD_TIMEOUT seconds. The watchdog is plain bash (macOS has no `timeout`, and gtimeout is not on every
+# runner): the shard runs in its own process group (set -m), polled until it writes its exit code; past the limit the
+# whole group gets TERM, then KILL. The group is killed at the end of every shard, so a stuck child does not hold the job.
+TO="${CI_SHARD_TIMEOUT:-900}"
+killgroup() { kill -"$1" -- "-$2" 2>/dev/null || true; }
 pids=()
 for ((i = 0; i < SHARDS; i++)); do
     [ -s "$OUT/suites-$i.txt" ] || continue
     args=()
-    while IFS= read -r s; do args+=(--filter "^${s//./\\.}/"); done < "$OUT/suites-$i.txt"
+    # a suite filters as "^Mod\.Suite/"; a @Test outside any suite is its own group ("Mod.f()", no "/"), filtered by
+    # its whole id with the regex characters escaped: "^Mod\.f()/" would match nothing and drop it from every shard
+    while IFS= read -r s; do
+        e=$(sed 's/[][\.*^$()+?{}|]/\\&/g' <<< "$s")
+        [[ "$s" == *"("* ]] && args+=(--filter "^$e") || args+=(--filter "^$e/")
+    done < "$OUT/suites-$i.txt"
     for p in ${patterns[@]+"${patterns[@]}"}; do args+=(--skip "$p"); done
+    rm -f "$OUT/exit-$i" "$OUT/exit-$i.tmp"
     # --ignore-lock: the shards only read the built .build (--skip-build); without it they would wait for each other
-    ( start=$SECONDS; set +e
-      "$SWIFT" test --skip-build --ignore-lock --disable-sandbox --no-parallel "${args[@]}" > "$OUT/shard-$i.log" 2>&1
-      echo "$? $((SECONDS - start))" > "$OUT/rc-$i.txt" ) &
+    # ponytail: --no-parallel stays until the hang (P2/P3 of aval-suite-report.md) is found; then try parallel shards
+    ( start=$SECONDS; set +e; set -m
+      # the event stream (one JSON line per event) survives a KILL; the console log is block-buffered to the file and
+      # lost its last 4 KB in run 44969188276, so on a timeout the test named comes from the stream
+      ( "$SWIFT" test --skip-build --ignore-lock --disable-sandbox --no-parallel "${args[@]}" \
+            --event-stream-output-path "$OUT/shard-$i.jsonl" --event-stream-version 0 > "$OUT/shard-$i.log" 2>&1
+        echo $? > "$OUT/exit-$i.tmp"; mv "$OUT/exit-$i.tmp" "$OUT/exit-$i" ) &
+      g=$!
+      while [ ! -e "$OUT/exit-$i" ] && [ $((SECONDS - start)) -lt "$TO" ]; do sleep 0.2; done
+      if [ -e "$OUT/exit-$i" ]; then rc=$(cat "$OUT/exit-$i"); timedout=0
+      else rc=124; timedout=1; killgroup TERM "$g"; sleep 1; fi
+      killgroup KILL "$g"
+      wait "$g" 2>/dev/null
+      echo "$rc $((SECONDS - start)) $timedout" > "$OUT/rc-$i.txt" ) 2>/dev/null &
     pids+=($!)
 done
 wait ${pids[@]+"${pids[@]}"}
+for p in $(orphans); do [[ "$before" == *" $p "* ]] || kill -KILL "$p" 2>/dev/null || true; done
 
 bad=0
 for ((i = 0; i < SHARDS; i++)); do
     [ -s "$OUT/suites-$i.txt" ] || continue
-    log="$OUT/shard-$i.log"; want=$(cat "$OUT/count-$i.txt"); read -r rc secs < "$OUT/rc-$i.txt"
+    log="$OUT/shard-$i.log"; want=$(cat "$OUT/count-$i.txt"); read -r rc secs timedout < "$OUT/rc-$i.txt"
+    touch "$log"
     last=$(grep -E '^(✔|✘) Test run with [0-9]+ tests? ' "$log" | tail -1 || true)
     got=$(sed -E 's/^(✔|✘) Test run with ([0-9]+) .*/\2/' <<< "$last")
     why=()
-    [ "$rc" = 0 ] || why+=("exit $rc")
-    [ -n "$last" ] || why+=("no 'Test run with N tests' line: the test process ended early")
+    if [ "$timedout" = 1 ]; then
+        started=$(grep '"kind":"testStarted"' "$OUT/shard-$i.jsonl" 2>/dev/null | tail -1 \
+            | sed -nE 's/.*"testID":"([^"]*)".*/\1/p' | sed 's#\\/#/#g' || true)
+        [ -z "$started" ] || started="$started (event stream)"
+        [ -n "$started" ] || started=$(grep -E '◇ (Suite|Test) .* started|Test (Case|Suite) .* started' "$log" | grep -v '◇ Test run started' | tail -1 || true)
+        [ -n "$started" ] || started=$(grep -E 'started' "$log" | tail -1 || true)
+        why+=("timeout after ${TO}s (CI_SHARD_TIMEOUT); last started: ${started:-nothing}")
+    else
+        [ "$rc" = 0 ] || why+=("exit $rc")
+        [ -n "$last" ] || why+=("no 'Test run with N tests' line: the test process ended early")
+    fi
     [ -z "$last" ] || [ "$got" = "$want" ] || why+=("ran $got tests, expected $want")
     [ -z "$last" ] || [[ "$last" == *" passed after "* ]] || why+=("$last")
     grep -q '^✘ ' "$log" && why+=("$(grep -c '^✘ Test .* recorded an issue' "$log" || true) recorded issues")
     grep -q 'Fatal error' "$log" && why+=("Fatal error")
     if [ ${#why[@]} = 0 ]; then
-        echo "run-tests: shard $i ok: $want tests, ${secs}s"
+        echo "run-tests: shard $i ok: $want testes, ${secs}s"
     else
         bad=1
-        echo "::group::shard $i FAILED (${secs}s): $(IFS=';'; echo "${why[*]}")"
+        echo "::group::shard $i FALHOU: $want testes, ${secs}s: $(IFS=';'; echo "${why[*]}")"
         grep -E '^✘ |Fatal error' "$log" | head -200 || true
-        echo "--- last lines of $log"; tail -20 "$log"
+        echo "--- last 40 lines of $log"; tail -40 "$log"
         echo "::endgroup::"
-        echo "run-tests: shard $i FAILED: $(IFS=';'; echo "${why[*]}")" >&2
+        echo "run-tests: shard $i FALHOU: $want testes, ${secs}s: $(IFS=';'; echo "${why[*]}")" >&2
     fi
 done
 [ "$bad" = 0 ] || { echo "run-tests: full logs in $OUT" >&2; exit 1; }

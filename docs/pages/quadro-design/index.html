@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quadro: design do board</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+/* Tokens = the Collie app palette (Sources/CollieTheme/Palette.swift): the board lives inside the app's panel. */
+:root {
+  --bg: #0E1326; --surface: #161C36; --sunken: #0B1020; --raised: #1B2340; --border: #262E52; --border-soft: #1E2647;
+  --text: #E8ECF8; --text-2: #B6BEDB; --muted: #8C95B8;
+  --accent: #6EE7B7; --on-accent: #0E1326; --secondary: #93A4FF; --attention: #FFB86B; --danger: #FF8A8A;
+  --t-impl: #6EE7B7; --t-bug: #FF8A8A; --t-refactor: #93A4FF; --t-spike: #FFB86B; --t-test: #7FD6E8; --t-docs: #B6BEDB; --t-chore: #8C95B8;
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
+  --ui: "Space Grotesk", system-ui, sans-serif; --mono: "DM Mono", ui-monospace, monospace;
+}
+[data-theme="light"] {
+  --bg: #F3F4F1; --surface: #FFFFFF; --sunken: #F7F7F5; --raised: #E3E7F7; --border: #D9DBD5; --border-soft: #E4E5E0;
+  --text: #15171C; --text-2: #2E323B; --muted: #5C6270;
+  --accent: #2448C9; --on-accent: #FFFFFF; --secondary: #6B3FC4; --attention: #A14A06; --danger: #B42318;
+  --t-impl: #2448C9; --t-bug: #B42318; --t-refactor: #6B3FC4; --t-spike: #A14A06; --t-test: #0B6E83; --t-docs: #2E323B; --t-chore: #5C6270;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--ui); }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* design notes strip (not part of the product UI) */
+.notes { display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 8px 20px; background: var(--sunken); border-bottom: 1px solid var(--border-soft); color: var(--muted); font: 12px var(--mono); }
+.notes button { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px 10px; cursor: pointer; }
+
+/* top bar */
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: .2px; }
+.mark { width: 22px; height: 22px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; color: var(--on-accent); font: 700 12px var(--mono); }
+.live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: 12px var(--mono); }
+.live i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.spacer { flex: 1; }
+.search { background: var(--sunken); border: 1px solid var(--border); border-radius: var(--r-md); padding: 7px 12px; width: 220px; }
+.btn { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-md); padding: 7px 12px; cursor: pointer; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
+
+/* type filter */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 20px 0; align-items: center; }
+.filters .label { color: var(--muted); font: 12px var(--mono); margin-right: 4px; }
+.tf { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px 5px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-size: 13px; }
+.tf[aria-pressed="true"] { background: color-mix(in srgb, var(--c) 16%, var(--surface)); border-color: var(--c); }
+.tf .n { color: var(--muted); font: 12px var(--mono); }
+
+/* type glyph + chip */
+.glyph { width: 16px; height: 16px; flex: none; color: var(--c); }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 6px; border-radius: 999px; font: 600 11px var(--mono); letter-spacing: .3px; text-transform: uppercase; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); border: 1px solid color-mix(in srgb, var(--c) 40%, transparent); }
+.chip.dashed { border-style: dashed; }
+.impl { --c: var(--t-impl); } .bug { --c: var(--t-bug); } .refactor { --c: var(--t-refactor); } .spike { --c: var(--t-spike); }
+.test { --c: var(--t-test); } .docs { --c: var(--t-docs); } .chore { --c: var(--t-chore); }
+
+
+/* priority: three bars (alta 3, media 2, baixa 1), never color alone */
+.prio { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; margin-right: 8px; }
+.prio i { width: 3px; border-radius: 1px; background: var(--border); }
+.prio i:nth-child(1) { height: 5px; } .prio i:nth-child(2) { height: 8px; } .prio i:nth-child(3) { height: 12px; }
+.prio.high i { background: var(--danger); }
+.prio.medium i:nth-child(-n+2) { background: var(--attention); }
+.prio.low i:nth-child(1) { background: var(--muted); }
+.pf { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; font-size: 13px; }
+.pf[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.sep { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }
+
+/* board */
+.board { display: grid; grid-template-columns: repeat(4, minmax(250px, 1fr)); gap: 14px; padding: 16px 20px 28px; overflow-x: auto; align-items: start; }
+.col { background: var(--sunken); border: 1px solid var(--border-soft); border-radius: var(--r-lg); padding: 10px; }
+.col h2 { display: flex; align-items: center; gap: 8px; margin: 2px 4px 10px; font-size: 13px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: var(--text-2); }
+.col h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.col.doing h2 .dot { background: var(--accent); } .col.review h2 .dot { background: var(--secondary); } .col.done h2 .dot { background: var(--t-docs); }
+.col h2 .count { margin-left: auto; font: 12px var(--mono); color: var(--muted); background: var(--surface); border: 1px solid var(--border-soft); border-radius: 999px; padding: 0 8px; }
+.add { width: 100%; background: transparent; border: 1px dashed var(--border); border-radius: var(--r-md); padding: 8px 10px; color: var(--muted); margin-bottom: 8px; text-align: left; cursor: text; }
+.cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.card { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 10px 8px 14px; cursor: grab; transition: transform .12s, border-color .12s; }
+.card::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--c); }
+.card:hover { border-color: color-mix(in srgb, var(--c) 55%, var(--border)); transform: translateY(-1px); }
+.card.dragging { opacity: .55; transform: rotate(1.2deg); }
+.card .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.card .id { color: var(--muted); font: 11px var(--mono); }
+.card .title { font-weight: 600; overflow-wrap: anywhere; }
+.card .labels { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.label { font: 11px var(--mono); color: var(--text-2); background: var(--raised); border-radius: var(--r-sm); padding: 1px 6px; }
+.card .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; color: var(--muted); font: 12px var(--mono); }
+.who { display: inline-flex; align-items: center; gap: 6px; }
+.av { width: 20px; height: 20px; border-radius: 50%; background: var(--raised); border: 1px solid var(--border); display: grid; place-items: center; font: 600 10px var(--mono); color: var(--text-2); }
+.av.agent { background: color-mix(in srgb, var(--accent) 18%, var(--surface)); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.moves { display: flex; gap: 4px; opacity: 0; } .card:hover .moves, .card:focus-within .moves { opacity: 1; }
+.moves button { background: var(--raised); border: 1px solid var(--border); border-radius: var(--r-sm); width: 24px; height: 22px; cursor: pointer; }
+.card.done { opacity: .72; } .card.done .title { text-decoration: line-through; text-decoration-color: var(--muted); }
+.drop { height: 36px; border: 2px dashed var(--accent); border-radius: var(--r-md); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* side panel */
+.shell { display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+main { min-width: 0; }
+.panel { border-left: 1px solid var(--border); background: var(--surface); padding: 16px 18px; min-height: 100%; }
+.panel h3 { margin: 0 0 4px; font-size: 17px; }
+.panel .meta { color: var(--muted); font: 12px var(--mono); margin-bottom: 14px; }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 6px 0 14px; }
+.seg button { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 4px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--sunken); cursor: pointer; font-size: 12px; }
+.seg button[aria-checked="true"] { border-color: var(--c); background: color-mix(in srgb, var(--c) 16%, var(--surface)); color: var(--c); font-weight: 600; }
+.field-l { display: block; font: 11px var(--mono); letter-spacing: .4px; text-transform: uppercase; color: var(--muted); margin: 12px 0 4px; }
+.field { width: 100%; background: var(--sunken); border: 1px solid var(--border); border-radius: var(--r-md); padding: 8px 10px; }
+.comment { background: var(--sunken); border: 1px solid var(--border-soft); border-radius: var(--r-md); padding: 8px 10px; margin-top: 8px; }
+.comment .by { display: flex; gap: 6px; align-items: center; color: var(--muted); font: 11px var(--mono); margin-bottom: 3px; }
+.legend { padding: 0 20px 28px; display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.legend h2 { grid-column: 1 / -1; margin: 6px 0 0; font-size: 12px; font: 12px var(--mono); letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+.lg { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--r-md); padding: 10px 12px; }
+.lg p { margin: 6px 0 0; color: var(--text-2); font-size: 13px; }
+@media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .panel { border-left: 0; border-top: 1px solid var(--border); } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="g-impl" viewBox="0 0 16 16"><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></symbol>
+    <symbol id="g-bug" viewBox="0 0 16 16"><ellipse cx="8" cy="9.5" rx="3.6" ry="4.4" fill="currentColor"/><path d="M5.5 6l-2-2M10.5 6l2-2M4.4 9.5H2M11.6 9.5H14M5.4 12.6l-2 1.8M10.6 12.6l2 1.8M6.5 4.6a1.6 1.6 0 013 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none"/></symbol>
+    <symbol id="g-refactor" viewBox="0 0 16 16"><path d="M3 6.5A5 5 0 0112.4 5M13 9.5A5 5 0 013.6 11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M12.8 2.4v3h-3M3.2 13.6v-3h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+    <symbol id="g-spike" viewBox="0 0 16 16"><path d="M9 1.8L3.6 9h3.6l-.8 5.2L12.4 7H8.8z" fill="currentColor"/></symbol>
+    <symbol id="g-test" viewBox="0 0 16 16"><path d="M6 2h4M7 2v4.2L3.4 12.4A1.4 1.4 0 004.6 14.5h6.8a1.4 1.4 0 001.2-2.1L9 6.2V2" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/></symbol>
+    <symbol id="g-docs" viewBox="0 0 16 16"><path d="M4 2h5.5L12.5 5v9H4z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none"/><path d="M6 8h4.5M6 10.6h4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="g-chore" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="notes">
+  <span>Protótipo de design · tipo + prioridade · tokens do app (Palette.swift) · Space Grotesk + DM Mono · 7 tipos: glifo + rótulo + cor (nunca só cor)</span>
+  <button id="theme" type="button">Tema: escuro</button>
+</div>
+
+<div class="shell">
+<main>
+  <header class="top">
+    <div class="brand"><span class="mark" aria-hidden="true">Q</span> Quadro</div>
+    <span class="live"><i></i> ao vivo · rev 42</span>
+    <span class="spacer"></span>
+    <label class="sr" for="q">Buscar cartões</label>
+    <input id="q" class="search" type="search" placeholder="Buscar cartões…">
+    <button class="btn" type="button">Arquivados</button>
+    <button class="btn primary" type="button">+ Novo cartão</button>
+  </header>
+
+  <div class="filters" role="group" aria-label="Filtrar por tipo">
+    <span class="label">TIPO</span>
+    <button class="tf impl" type="button" aria-pressed="true"><svg class="glyph"><use href="#g-impl"/></svg>Impl <span class="n">5</span></button>
+    <button class="tf bug" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-bug"/></svg>Bug <span class="n">3</span></button>
+    <button class="tf refactor" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-refactor"/></svg>Refactor <span class="n">2</span></button>
+    <button class="tf spike" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-spike"/></svg>Spike <span class="n">1</span></button>
+    <button class="tf test" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-test"/></svg>Test <span class="n">2</span></button>
+    <button class="tf docs" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-docs"/></svg>Docs <span class="n">1</span></button>
+    <button class="tf chore" type="button" aria-pressed="false"><svg class="glyph"><use href="#g-chore"/></svg>Chore <span class="n">1</span></button>
+    <span class="sep"></span><span class="label">PRIORIDADE</span>
+    <button class="pf" type="button" aria-pressed="false"><span class="prio high" aria-hidden="true"><i></i><i></i><i></i></span>Alta</button>
+    <button class="pf" type="button" aria-pressed="false"><span class="prio medium" aria-hidden="true"><i></i><i></i><i></i></span>Média</button>
+    <button class="pf" type="button" aria-pressed="false"><span class="prio low" aria-hidden="true"><i></i><i></i><i></i></span>Baixa</button>
+  </div>
+
+  <div class="board">
+    <section class="col todo" aria-labelledby="h-todo">
+      <h2 id="h-todo"><span class="dot"></span>A fazer <span class="count">4</span></h2>
+      <button class="add" type="button">+ Novo cartão (Enter) · tipo: Impl ▾</button>
+      <ol class="cards">
+        <li class="card bug"><div class="head"><span class="chip bug"><svg class="glyph"><use href="#g-bug"/></svg>Bug</span><span class="id">6ef4d3fb</span></div>
+          <div class="title">Painel do app fica branco na primeira abertura</div>
+          <div class="labels"><span class="label">painel</span><span class="label">daemon</span></div>
+          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span class="prio high" role="img" aria-label="Prioridade alta" title="Prioridade alta"><i></i><i></i><i></i></span><span>💬 2</span></div></li>
+        <li class="card impl"><div class="head"><span class="chip impl"><svg class="glyph"><use href="#g-impl"/></svg>Impl</span><span class="id">0f4e5edc</span></div>
+          <div class="title">Push da main e release v0.1.9</div>
+          <div class="labels"><span class="label">release</span></div>
+          <div class="foot"><span class="who"><span class="av">YM</span>Ysrael</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span class="moves"><button type="button" aria-label="Mover para a coluna seguinte">→</button></span></div></li>
+        <li class="card spike"><div class="head"><span class="chip spike"><svg class="glyph"><use href="#g-spike"/></svg>Spike</span><span class="id">2d789296</span></div>
+          <div class="title">Convenção genérica de check por projeto</div>
+          <div class="labels"><span class="label">laço</span></div>
+          <div class="foot"><span class="who"><span class="av">·</span>sem responsável</span><span class="prio low" role="img" aria-label="Prioridade baixa" title="Prioridade baixa"><i></i><i></i><i></i></span><span>💬 0</span></div></li>
+        <li class="card chore"><div class="head"><span class="chip chore dashed"><svg class="glyph"><use href="#g-chore"/></svg>Chore</span><span class="id">91ab33c0</span></div>
+          <div class="title">Limpar pastas .build antigas (prune-builds)</div>
+          <div class="foot"><span class="who"><span class="av agent">Q</span>agente</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span>💬 0</span></div></li>
+      </ol>
+    </section>
+
+    <section class="col doing" aria-labelledby="h-doing">
+      <h2 id="h-doing"><span class="dot"></span>Em andamento <span class="count">3</span></h2>
+      <ol class="cards">
+        <li class="card refactor"><div class="head"><span class="chip refactor"><svg class="glyph"><use href="#g-refactor"/></svg>Refactor</span><span class="id">a1b2c3d4</span></div>
+          <div class="title">Dividir WorkLoop em fases menores</div>
+          <div class="labels"><span class="label">motor</span><span class="label">laço</span></div>
+          <div class="foot"><span class="who"><span class="av agent">L2</span>faixa-2</span><span class="prio high" role="img" aria-label="Prioridade alta" title="Prioridade alta"><i></i><i></i><i></i></span><span>💬 5</span></div></li>
+        <li class="drop" aria-hidden="true"></li>
+        <li class="card impl"><div class="head"><span class="chip impl"><svg class="glyph"><use href="#g-impl"/></svg>Impl</span><span class="id">b7c8d9e0</span></div>
+          <div class="title">Tipos de tarefa no Quadro</div>
+          <div class="labels"><span class="label">quadro</span><span class="label">ui</span></div>
+          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span>💬 1</span></div></li>
+        <li class="card test"><div class="head"><span class="chip test"><svg class="glyph"><use href="#g-test"/></svg>Test</span><span class="id">c0d1e2f3</span></div>
+          <div class="title">Cobrir o desligamento do SSE sob carga</div>
+          <div class="foot"><span class="who"><span class="av">YM</span>Ysrael</span><span class="prio low" role="img" aria-label="Prioridade baixa" title="Prioridade baixa"><i></i><i></i><i></i></span><span>💬 0</span></div></li>
+      </ol>
+    </section>
+
+    <section class="col review" aria-labelledby="h-review">
+      <h2 id="h-review"><span class="dot"></span>Em revisão <span class="count">1</span></h2>
+      <ol class="cards">
+        <li class="card docs"><div class="head"><span class="chip docs"><svg class="glyph"><use href="#g-docs"/></svg>Docs</span><span class="id">d4e5f6a7</span></div>
+          <div class="title">README do Quadro: como adotar e fazer backup</div>
+          <div class="foot"><span class="who"><span class="av agent">RV</span>rev-onda11</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span>💬 3</span></div></li>
+      </ol>
+    </section>
+
+    <section class="col done" aria-labelledby="h-done">
+      <h2 id="h-done"><span class="dot"></span>Feito <span class="count">2</span></h2>
+      <ol class="cards">
+        <li class="card impl done"><div class="head"><span class="chip impl"><svg class="glyph"><use href="#g-impl"/></svg>Impl</span><span class="id">747b925d</span></div>
+          <div class="title">Quadro adotado e funcionando</div>
+          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span class="prio low" role="img" aria-label="Prioridade baixa" title="Prioridade baixa"><i></i><i></i><i></i></span><span>💬 1</span></div></li>
+        <li class="card bug done"><div class="head"><span class="chip bug"><svg class="glyph"><use href="#g-bug"/></svg>Bug</span><span class="id">f8a9b0c1</span></div>
+          <div class="title">Faixa pedia acesso e reiniciava o agente</div>
+          <div class="foot"><span class="who"><span class="av agent">CM</span>Collie Main</span><span class="prio medium" role="img" aria-label="Prioridade média" title="Prioridade média"><i></i><i></i><i></i></span><span>💬 4</span></div></li>
+      </ol>
+    </section>
+  </div>
+
+  <section class="legend" aria-label="Tipos de tarefa">
+    <h2>Tipos de tarefa</h2>
+    <div class="lg impl"><span class="chip impl"><svg class="glyph"><use href="#g-impl"/></svg>Impl</span><p>Funcionalidade nova ou mudança de comportamento.</p></div>
+    <div class="lg bug"><span class="chip bug"><svg class="glyph"><use href="#g-bug"/></svg>Bug</span><p>Algo que deveria funcionar e não funciona.</p></div>
+    <div class="lg refactor"><span class="chip refactor"><svg class="glyph"><use href="#g-refactor"/></svg>Refactor</span><p>Reorganiza o código sem mudar o comportamento.</p></div>
+    <div class="lg spike"><span class="chip spike"><svg class="glyph"><use href="#g-spike"/></svg>Spike</span><p>Investigação com prazo: o resultado é uma resposta, não código.</p></div>
+    <div class="lg test"><span class="chip test"><svg class="glyph"><use href="#g-test"/></svg>Test</span><p>Cobertura de teste ou correção de teste instável.</p></div>
+    <div class="lg docs"><span class="chip docs"><svg class="glyph"><use href="#g-docs"/></svg>Docs</span><p>Documentação, changelog, README.</p></div>
+    <div class="lg chore"><span class="chip chore dashed"><svg class="glyph"><use href="#g-chore"/></svg>Chore</span><p>Manutenção: limpeza, CI, dependências.</p></div>
+  </section>
+</main>
+
+<aside class="panel" aria-label="Detalhe do cartão">
+  <h3>Tipos de tarefa no Quadro</h3>
+  <div class="meta">Em andamento · criado por Collie Main · b7c8d9e0</div>
+  <span class="field-l" id="tl">Tipo</span>
+  <div class="seg" role="radiogroup" aria-labelledby="tl">
+    <button class="impl" type="button" role="radio" aria-checked="true"><svg class="glyph"><use href="#g-impl"/></svg>Impl</button>
+    <button class="bug" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-bug"/></svg>Bug</button>
+    <button class="refactor" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-refactor"/></svg>Refactor</button>
+    <button class="spike" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-spike"/></svg>Spike</button>
+    <button class="test" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-test"/></svg>Test</button>
+    <button class="docs" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-docs"/></svg>Docs</button>
+    <button class="chore" type="button" role="radio" aria-checked="false"><svg class="glyph"><use href="#g-chore"/></svg>Chore</button>
+  </div>
+  <span class="field-l" id="pl">Prioridade</span>
+  <div class="seg" role="radiogroup" aria-labelledby="pl" style="grid-template-columns:repeat(3,1fr)">
+    <button type="button" role="radio" aria-checked="false"><span class="prio high" aria-hidden="true"><i></i><i></i><i></i></span>Alta</button>
+    <button type="button" role="radio" aria-checked="true" style="--c:var(--accent)"><span class="prio medium" aria-hidden="true"><i></i><i></i><i></i></span>Média</button>
+    <button type="button" role="radio" aria-checked="false"><span class="prio low" aria-hidden="true"><i></i><i></i><i></i></span>Baixa</button>
+  </div>
+  <label class="field-l" for="d-title">Título</label>
+  <input id="d-title" class="field" value="Tipos de tarefa no Quadro">
+  <label class="field-l" for="d-body">Descrição</label>
+  <input id="d-body" class="field" value="Campo type nos cartões, filtro e glifos.">
+  <label class="field-l" for="d-labels">Rótulos</label>
+  <input id="d-labels" class="field" value="quadro, ui">
+  <label class="field-l" for="d-as">Responsável</label>
+  <input id="d-as" class="field" value="Collie Main">
+  <span class="field-l">Comentários</span>
+  <div class="comment"><div class="by"><span class="av agent">CM</span>Collie Main · 22:45</div>Contrato novo: campo <code>type</code> opcional.</div>
+  <div class="comment"><div class="by"><span class="av">YM</span>Ysrael · 22:51</div>Pode seguir.</div>
+  <div style="display:flex;gap:8px;margin-top:14px"><button class="btn primary" type="button">Salvar</button><button class="btn" type="button">Arquivar</button></div>
+</aside>
+</div>
+
+<script>
+// design notes only: theme toggle and a pressed filter chip; the real board is built with textContent
+document.getElementById('theme').addEventListener('click', function (e) {
+  var light = document.documentElement.getAttribute('data-theme') !== 'light';
+  document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
+  e.target.textContent = 'Tema: ' + (light ? 'claro' : 'escuro');
+});
+Array.prototype.forEach.call(document.querySelectorAll('.tf'), function (b) {
+  b.addEventListener('click', function () { b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); });
+});
+</script>
+</body>
+</html>

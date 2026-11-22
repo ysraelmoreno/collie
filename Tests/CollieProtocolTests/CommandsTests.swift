@@ -106,6 +106,24 @@ import Foundation
         #expect(try ArgvParser.parse(["events", "--since", "4"]).args == ["since": .number(4)])
     }
 
+    @Test func deviceActionsTakeThenAndSettle() throws {
+        let t = try ArgvParser.parse(["device", "tap", "1", "2", "--then", "ui", "--settle", "100"])
+        #expect(t.command == "device.tap" && t.args == ["x": .string("1"), "y": .string("2"), "then": .string("ui"), "settle": .number(100)])
+        #expect(try ArgvParser.parse(["device", "text", "hi", "there", "--then", "ui"]).args == ["text": .string("hi there"), "then": .string("ui")])
+        for c in ["tap", "swipe", "text", "key", "launch"] {
+            let names = Commands.spec("device.\(c)")?.params.map(\.name) ?? []
+            #expect(names.contains("then") && names.contains("settle"), "\(c)")
+        }
+        #expect(Commands.spec("device.ui")?.params.contains { $0.name == "then" } == false)
+    }
+
+    @Test func deviceTapTakesTextIdAndNth() throws {
+        let t = try ArgvParser.parse(["device", "tap", "--text", "Open Deals", "--nth", "2"])
+        #expect(t.command == "device.tap" && t.args == ["text": .string("Open Deals"), "nth": .number(2)])
+        let names = Commands.spec("device.tap")?.params.map(\.name) ?? []
+        #expect(["text", "id", "nth", "ref", "then"].allSatisfy(names.contains), "\(names)")
+    }
+
     @Test func rejectsBadDottedSubcommands() {
         for argv in [["panel"], ["panel", "bogus"], ["browser", "bogus"], ["browser"], ["panel", "close"]] {
             let e = #expect(throws: ProtocolError.self) { try ArgvParser.parse(argv) }
@@ -144,7 +162,7 @@ import Foundation
         }.filter(builtInTool)
         #expect(names == ["list", "ask", "wait", "model", "ask_result", "reply", "check", "paddock_list", "paddock_status", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                          "memory_save", "memory_search", "memory_doc-search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede", "memory_enforce", "memory_flag", "memory_task",
-                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_task_reopen", "work_note", "work_status", "work_wait", "work_summary", "work_list", "work_get",
+                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_task_reopen", "work_note", "work_status", "work_wait", "work_summary", "work_list", "work_get", "work_usage", "work_history", "work_handoff",
                          "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach", "app_event", "app_context", "app_snapshot", "app_new", "app_adopt", "app_logs",
                          "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
                          "network_attach", "network_detach", "network_status", "network_list", "network_get", "network_curl", "network_clear", "network_rule-add", "network_rule-list", "network_rule-remove", "network_rule-enable", "network_rule-disable", "network_rule-clear",
@@ -173,7 +191,7 @@ import Foundation
         #expect(names(true) == ["list", "ask", "wait", "model", "ask_result", "reply", "check", "summon", "dismiss", "leash", "leash_request", "unleash", "notify",
                                 "paddock_create", "paddock_list", "paddock_status", "paddock_land", "paddock_delete", "panel_open", "panel_close", "panel_move", "panel_list", "events",
                                 "memory_save", "memory_search", "memory_doc-search", "memory_list", "memory_get", "memory_context", "memory_checklist", "memory_promote", "memory_stats", "memory_supersede", "memory_enforce", "memory_flag", "memory_task",
-                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_task_reopen", "work_note", "work_status", "work_wait", "work_summary", "work_list", "work_get", "work_run", "work_stop", "work_rerail",
+                         "work_start", "work_done", "work_reopen", "work_task_add", "work_task_done", "work_task_defer", "work_task_drop", "work_task_reopen", "work_note", "work_status", "work_wait", "work_summary", "work_list", "work_get", "work_usage", "work_history", "work_handoff", "work_run", "work_stop", "work_rerail",
                          "herd_list", "herd_get", "herd_save", "herd_apply", "lot_create", "lot_join", "lot_leave", "lot_list", "lot_get", "lot_post", "lot_board", "comment_reply", "comment_list", "access_request", "access_list", "font_add", "font_list", "app_list", "app_attach", "app_event", "app_context", "app_snapshot", "app_new", "app_adopt", "app_logs",
                          "browser_navigate", "browser_snapshot", "browser_click", "browser_hover", "browser_fill", "browser_type", "browser_key", "browser_scroll", "browser_eval", "browser_text", "browser_wait", "browser_screenshot", "browser_console", "browser_resize", "browser_emulate", "browser_reload", "browser_storage", "browser_init-script", "device_list", "device_screenshot", "device_ui", "device_tap", "device_swipe", "device_text", "device_key", "device_logcat", "device_install", "device_launch",
                          "network_attach", "network_detach", "network_status", "network_list", "network_get", "network_curl", "network_clear", "network_rule-add", "network_rule-list", "network_rule-remove", "network_rule-enable", "network_rule-disable", "network_rule-clear",

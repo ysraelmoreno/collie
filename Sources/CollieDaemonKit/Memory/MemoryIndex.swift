@@ -182,6 +182,19 @@ final class MemoryIndex {
         }
     }
 
+    /// The stored vectors of `ids` (M10.4: near-duplicates at injection); a `-` row (nothing embedded) is left out.
+    func vectors(_ ids: [UUID]) -> [UUID: (lang: String, vector: [Float])] {
+        guard !ids.isEmpty else { return [:] }
+        var out: [UUID: (lang: String, vector: [Float])] = [:]
+        try? query("SELECT id, lang, v FROM vecs WHERE lang != '-' AND id IN (\(ids.map { _ in "?" }.joined(separator: ", ")))",
+                   ids.map { key($0) as Any? }) { row in
+            guard let id = UUID(uuidString: text(row, 0)), let p = sqlite3_column_blob(row, 2) else { return }
+            let n = Int(sqlite3_column_bytes(row, 2)) / MemoryLayout<Float>.size
+            out[id] = (text(row, 1), Array(UnsafeBufferPointer(start: p.assumingMemoryBound(to: Float.self), count: n)))
+        }
+        return out
+    }
+
     /// What a record's vector embeds: title + the first 500 characters of the body.
     static func vectorText(_ r: MemoryRecord) -> String { r.title + "\n" + r.body.prefix(500) }
 

@@ -23,11 +23,37 @@ actor WorkStore {
     var changeWaiterCount: Int { changeWaiters.values.reduce(0) { $0 + $1.count } }
     /// Called with each work id added, changed or removed, once the change is on disk.
     let onChange: (@Sendable (UUID) -> Void)?
+    /// T6.1: the names a work's archive keeps (its paddock's, its terminal's; nil: unknown).
+    typealias Namer = @Sendable (Work) async -> (paddock: String?, terminal: String?)
+    let namer: Namer?
 
-    init(dir: URL, onChange: (@Sendable (UUID) -> Void)? = nil) { self.dir = dir; self.onChange = onChange }
+    init(dir: URL, namer: Namer? = nil, onChange: (@Sendable (UUID) -> Void)? = nil) { self.dir = dir; self.namer = namer; self.onChange = onChange }
 
     private var file: URL { dir.appendingPathComponent("work.json") }
     private var archive: URL { dir.appendingPathComponent("work-archive.jsonl") }
+    /// T6.1: the closed works' summaries (`WorkArchiveFiles`).
+    var summaries: URL { dir.appendingPathComponent("work-archive") }
+
+    /// T6.1: a write that closes `after`: it was open, or its loop was running (a work closed under a running loop is
+    /// summarized when the loop ends, with the whole journal). A work closed with its loop running is not yet.
+    static func closes(_ before: Work, _ after: Work) -> Bool {
+        after.closedAt != nil && after.loop?.state != .running && (before.closedAt == nil || before.loop?.state == .running)
+    }
+
+    /// T6.1, `work.history`: the newest summary of each work `include` keeps, newest close first; a closed work with
+    /// none (closed before summaries existed) is rebuilt from what the store kept of it (`reconstructed`).
+    func history(_ include: @escaping @Sendable (WorkArchive) -> Bool) async throws -> [WorkArchive] {
+        let d = summaries
+        let stored = try await onIO { WorkArchiveFiles.latest(in: d) }
+        var out = stored.values.filter { include($0.archive) }
+        for w in try await load() where w.closedAt != nil && stored[w.id.uuidString.lowercased()] == nil {
+            var a = WorkArchive.make(w, paddock: nil, terminal: nil, loopSummary: WorkStatusText.statsLine(w) ?? "", reconstructed: true)
+            guard include(a) else { continue }
+            if let n = await namer?(w) { a.paddock = n.paddock ?? ""; a.terminal = n.terminal ?? "" }
+            out.append((a, w.closedAt ?? .distantPast))
+        }
+        return out.sorted { ($0.archive.closedAt ?? .distantPast, $0.written) > ($1.archive.closedAt ?? .distantPast, $1.written) }.map(\.archive)
+    }
 
     func active(terminal: UUID) async throws -> Work? { try await load().first { $0.terminalId == terminal && $0.closedAt == nil } }
     func list(includeClosed: Bool) async throws -> [Work] { try await load().filter { includeClosed || $0.closedAt == nil } }
@@ -126,7 +152,7 @@ actor WorkStore {
         }
     }
 
-    /// Closed works deleted and the archive emptied (admin only: the one way anything is deleted).
+    /// Closed works deleted, the archive emptied and the summaries removed (admin only: the one way anything is deleted).
     func clearHistory() async throws { try await mutate(emptyArchive: true) { $0.removeAll { $0.closedAt != nil } } }
 
     private static func missing(_ id: UUID) -> ProtocolError { ProtocolError(code: .notFound, message: "no work \(id.uuidString.lowercased())") }
@@ -157,20 +183,30 @@ actor WorkStore {
         var list = try await load()
         let before = list
         try change(&list)
+        let was = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // T6.1: before `enforce` cuts a closed work's journal to 20
+        var closing: [(work: Work, paddock: String?, terminal: String?)] = []
+        for w in list where was[w.id].map({ Self.closes($0, w) }) ?? false {
+            let n = await namer?(w)
+            closing.append((w, n?.paddock, n?.terminal))
+        }
         var lines: [[String: Any]] = []
         Self.enforce(&list, &lines)
-        let was = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         // a work this write changes (or adds) is one version further; one it leaves as it was keeps its version
         let changed = list.indices.filter { was[list[$0].id] != list[$0] }
         for i in changed { list[i].version = (was[list[i].id]?.version ?? 0) + 1 }
         let gone = Set(was.keys).subtracting(list.map(\.id))
-        let data = try Self.encode(list), f = file, a = archive
+        let data = try Self.encode(list), f = file, a = archive, sums = summaries, toSum = closing
         let out = try lines.map { try Self.line($0) }
         try await onIO {
             // archive first: append-only, so a failure after it only duplicates a line on retry
             if !out.isEmpty { try Self.append(out, to: a) }
             try DesignService.writePrivate(data, to: f)
-            if emptyArchive { try Self.truncate(a) }
+            if emptyArchive { try Self.truncate(a); try? FileManager.default.removeItem(at: sums) }
+            // T6.1: once the close is on disk; a summary that cannot be written never fails it
+            for c in toSum {
+                WorkArchiveFiles.write(c.work, paddock: c.paddock, terminal: c.terminal, loopSummary: WorkStatusText.statsLine(c.work) ?? "", dir: sums)
+            }
         }
         all = list; writes += 1
         let ids = changed.map { list[$0].id } + gone
@@ -212,8 +248,9 @@ actor WorkStore {
             list[i].tasks = w.tasks.enumerated().filter { !t.contains($0.offset) }.map(\.element)
             list[i].jobs = w.jobs.enumerated().filter { !j.contains($0.offset) }.map(\.element)
             list[i].notes = Array(w.notes.dropFirst(n))
-            // not archived: the journal only records, and a closed work's status shows 20 lines at most
-            if w.closedAt != nil, let ev = w.loop?.events, ev.count > maxClosedEvents { list[i].loop?.events = Array(ev.suffix(maxClosedEvents)) }
+            // not archived: the journal only records, and a closed work's status shows 20 lines at most. M6.4: not
+            // while its loop runs: the summary written when the loop ends (`closes`) takes the whole journal
+            if w.closedAt != nil, w.loop?.state != .running, let ev = w.loop?.events, ev.count > maxClosedEvents { list[i].loop?.events = Array(ev.suffix(maxClosedEvents)) }
         }
         // closed works: the newest 200 stay (ties by position)
         let closed = list.enumerated().filter { $0.element.closedAt != nil }

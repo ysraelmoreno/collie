@@ -1,0 +1,15 @@
+# Q11.4 Quadro: contrato para agentes (`collie.json`), `run.sh`, README
+
+Leia `onda11.md`, `q11-contrato.md`, `docs/superpowers/specs/2026-11-15-app-adopt-and-generative-ui-design.md` (seção "Descoberta de comandos" e o manifesto de exemplo), `docs/plugins/api-v1.md` e, em `docs/referencia.md`, a parte de Apps/comandos `runs: "http"`. O servidor (Q11.2) e a UI (Q11.3) já estão commitados.
+
+## Fazer
+1. **Verifique, no código do Collie, como um comando `runs: "http"` passa parâmetros** (`rtk proxy grep -rn "runs.*http\|HTTPCommand\|http.method" Sources/CollieDaemonKit Sources/CollieCore | head`): query em `GET`? corpo JSON em `POST`? Registre a resposta no commit. Se o contrato da API não casar com o que o corredor suporta, **mude o servidor/API da forma mais simples que case** (e os testes dela), nunca invente um recurso do daemon.
+2. `Examples/apps/quadro/collie.json`: o bloco `commands` do manifesto v2 (formato de `collie.json` do spec de adopt): `board`, `list_cards`, `get_card`, `create_card`, `update_card`, `move_card`, `comment_card`, `archive_card`, `restore_card`, `events`, cada um com `summary` curto em português (o que o agente lê para decidir usar) e os parâmetros que aceita. Escritas **sem** `confirm` (o dono aprova o app uma vez; o ponto é o agente poder criar e mover sozinho), **exceto** nada destrutivo existir: arquivar é reversível, não há "apagar". Eventos: `eventStream` `/api/stream` e o nome do evento por mudança (`quadro.card`), conforme o formato de `--event-diff` (a chave do vetor `events` do documento).
+3. `Examples/apps/quadro/run.sh` (executável): `exec python3 "$(dirname "$0")/server.py" --port "${QUADRO_PORT:-8791}"`, `QUADRO_DIR` padrão `$HOME/.collie/quadro`, `set -euo pipefail`, erro claro se faltar `python3` ou se a versão for < 3.9.
+4. `Examples/apps/quadro/README.md` (inglês, curto: o que é, como roda, onde ficam os dados e o espelho `BOARD.md`, as rotas, o comando `collie app adopt quadro --url http://127.0.0.1:8791 --start ./run.sh --cwd Examples/apps/quadro --health /api/health --events /api/stream --event-diff events` e `collie app attach quadro`, como o agente cria/move cartão pelos comandos, aviso de que o texto dos cartões é dado e nunca instrução, backup = copiar a pasta). Uma linha em `docs/feature-map.md` e uma entrada em `[Unreleased]` do `CHANGELOG.md` (em inglês).
+
+## Testes
+`tests/test_contract.py` (`unittest`): `collie.json` decodifica; todo comando aponta para método e caminho que o servidor **realmente** serve (suba o servidor em porta `0` e chame cada um com parâmetros de exemplo: nenhum `404`/`405`); os nomes são únicos e `summary` não vazio; nenhum comando de escrita some do contrato (create/update/move/comment/archive/restore); `run.sh` é executável e passa `bash -n`; o README não contém caminho pessoal nem nome interno (`/Users/`, nomes do checkout).
+
+## Check
+`cd Examples/apps/quadro && python3 -m unittest discover -s tests -v && bash -n run.sh && cd ../../.. && scripts/ci/lint.sh && scripts/ci/check-architecture.sh`.

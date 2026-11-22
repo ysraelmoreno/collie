@@ -125,7 +125,7 @@ extension DeviceService {
             let (nodes, truncated) = UITree.parse(xml.stdoutData)
             try alive()
             refs[panel.id] = nodes
-            return .object(["tree": .string(UITree.lines(nodes)), "truncated": .bool(truncated)])
+            return UITree.result(nodes, truncated: truncated, all: args["all"] == .bool(true))
         case "device.tap":
             if let ref = args["ref"].flatMap({ if case .string(let s) = $0 { s } else { nil } }) {
                 guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {

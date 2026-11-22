@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quadro</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Quadro</h1>
+    <div class="tools">
+      <label class="field">
+        <span class="sr-only">Buscar cartões</span>
+        <input id="search" type="search" placeholder="Buscar" aria-label="Buscar cartões" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="sr-only">Filtrar por rótulo</span>
+        <select id="label-filter" aria-label="Filtrar por rótulo">
+          <option value="">Todos os rótulos</option>
+        </select>
+      </label>
+      <button id="toggle-archived" type="button" aria-pressed="false" aria-label="Mostrar arquivados">Arquivados</button>
+      <span id="status" class="status" role="status" aria-live="polite">conectando…</span>
+    </div>
+  </header>
+
+  <div id="filters" class="filters">
+    <div id="type-filter" class="filter-group" role="group" aria-label="Filtrar por tipo">
+      <span class="filter-name" aria-hidden="true">Tipo</span>
+    </div>
+    <div id="priority-filter" class="filter-group" role="group" aria-label="Filtrar por prioridade">
+      <span class="filter-name" aria-hidden="true">Prioridade</span>
+    </div>
+  </div>
+
+  <p id="error" class="error" role="alert" hidden></p>
+  <p id="archived-banner" class="banner" hidden>Mostrando cartões arquivados.</p>
+
+  <main id="board" class="board" aria-label="Colunas do quadro"></main>
+
+  <aside id="panel" class="panel" aria-labelledby="panel-heading" hidden>
+    <div class="panel-head">
+      <h2 id="panel-heading">Cartão</h2>
+      <button id="panel-close" type="button" aria-label="Fechar painel">✕</button>
+    </div>
+    <p id="panel-meta" class="meta"></p>
+    <span id="panel-type-label" class="field-l">Tipo</span>
+    <div id="panel-type" class="seg" role="radiogroup" aria-labelledby="panel-type-label"></div>
+    <span id="panel-priority-label" class="field-l">Prioridade</span>
+    <div id="panel-priority" class="seg prio-seg" role="radiogroup" aria-labelledby="panel-priority-label"></div>
+    <label class="stack">Título
+      <input id="panel-title" type="text" maxlength="200" aria-label="Título do cartão">
+    </label>
+    <label class="stack">Descrição
+      <textarea id="panel-body" rows="6" maxlength="8000" aria-label="Corpo do cartão"></textarea>
+    </label>
+    <label class="stack">Rótulos (separados por vírgula)
+      <input id="panel-labels" type="text" aria-label="Rótulos do cartão">
+    </label>
+    <label class="stack">Responsável
+      <input id="panel-assignee" type="text" maxlength="64" aria-label="Responsável pelo cartão">
+    </label>
+    <div class="row">
+      <button id="panel-save" type="button" aria-label="Salvar cartão">Salvar</button>
+      <button id="panel-archive" type="button" aria-label="Arquivar cartão">Arquivar</button>
+    </div>
+    <h3>Comentários</h3>
+    <ul id="panel-comments" class="comments"></ul>
+    <label class="stack">Novo comentário
+      <textarea id="panel-comment" rows="3" maxlength="2000" aria-label="Novo comentário"></textarea>
+    </label>
+    <button id="panel-comment-add" type="button" aria-label="Adicionar comentário">Comentar</button>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>

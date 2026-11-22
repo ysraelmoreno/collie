@@ -143,8 +143,11 @@ Comandos (um terminal precisa de uma guia até o painel do canvas; painel na doc
 ```sh
 collie device list                     # aparelhos {serial,state,model,product,panels}
 collie device screenshot               # PNG; devolve {path,width,height}
-collie device ui                       # árvore de UI com refs (e1, e2, …)
+collie device ui                       # nós com rótulo ou clicáveis, com refs; {tree,truncated,nodes,total}
+collie device ui --all                 # árvore inteira (depurar); mesmos refs
 collie device tap 540 1200             # ou: collie device tap --ref e3
+collie device tap --ref e3 --then ui   # tap, espera 400 ms (--settle 0-3000) e devolve {ui:{tree,…}}; refs atualizados
+collie device tap --text "Open Deals" --then ui   # acha pelo rótulo (ou --id <resource-id>) num dump novo; vários: lista, escolha com --nth N
 collie device swipe 540 1800 540 600
 collie device text "ola mundo"
 collie device key Back                 # Enter, Home, ... ou um keycode
@@ -152,6 +155,8 @@ collie device logcat --lines 100 --grep MyApp
 collie device install app.apk
 collie device launch com.example.app
 ```
+
+`--then ui` vale em `tap`, `swipe`, `text`, `key` e `launch`: um passo ver → agir numa chamada só. Sem `--then` a resposta continua `{}`; outro valor que não `ui` dá `invalidArgs`.
 
 Limitações: sem áudio; `device.text` só ASCII e não digita `%s` literal (é o
 `input text` do Android; acentos e `%s`, digite pelo painel); um ANR não vira evento (só crashes do buffer de crash do logcat).
@@ -824,7 +829,7 @@ dono aprovou a lista de tarefas e os checks.
   e uma nota do trabalho avisa). O painel Trabalho lista os arquivos da tarefa feita com a ação "Abrir". Vale o que está
   na worktree depois do veredito: o commit julgado, arquivos não rastreados que o agente deixou e arquivos ignorados; um
   arquivo não rastreado criado pelo check ou pelo portão já foi removido.
-- `collie work run --max <n> [--gate "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …]`: só um
+- `collie work run --max <n> [--gate "<comando>"] [--precheck "<comando>"] [--tries 3] [--timeout 3600] [--budget 14400] [--parallel 1] [--preset …] [--model …] [--command …]`: só um
   Pastor com sandbox (ou o app, no trabalho de um Pastor), com o trabalho num cercado. Recusa quando falta check em alguma
   tarefa aberta, quando já há um laço no cercado, quando outro agente do cercado está trabalhando ou quando há arquivo
   rastreado modificado. Volta na hora com `awaiting approval`: um cartão no app mostra ao dono o cercado, os limites e cada
@@ -832,6 +837,10 @@ dono aprovou a lista de tarefas e os checks.
   Ao fim, o Pastor recebe `[collie] Laço de "…" terminou: … · estado: collie work status`: o aviso digitado no terminal é
   só uma dica e pode não chegar; quem espera um laço usa `collie work wait` e lê o `collie work status`. As tarefas do laço são as abertas na hora do `run`: uma
   tarefa nova espera o próximo.
+- Pré-check (`--precheck`): um comando rápido (ex.: `swift build --build-tests`) que roda no fim de cada turno com commit,
+  antes do check e com o agente ainda aberto (até 180 s, ou o resto do orçamento). Se falhar, o mesmo agente recebe uma vez por
+  tentativa as últimas 40 linhas da saída (até 3 KB) e o laço espera o turno de novo; se falhar outra vez, segue para o check.
+  O diário registra `precheckFailed`/`precheckPassed`. Sem `--precheck`, nada muda.
 - Portão (`--gate`): um comando comum a todas as tarefas (build, lint, arquitetura), para o check de cada uma medir só a
   tarefa. Roda depois de cada check que passou, nas mesmas condições (worktree, sandbox, timeout, orçamento); o veredito
   só passa com os dois em exit 0 (`gate failed (exit n)`, `gate timed out`), e o cartão o mostra uma vez, depois dos limites.
@@ -870,11 +879,13 @@ dono aprovou a lista de tarefas e os checks.
   de novo na árvore integrada**; só então a tarefa fica feita. Conflito ou portão quebrado depois do merge: o merge é
   desfeito, o que a tentativa fez vira patch, e a tarefa refaz a tentativa numa faixa nova, a partir do HEAD novo (gasta
   uma tentativa; na última, é adiada). Antes de desfazer, o integrador mede de novo: se alguém (o Shepherd que iniciou
-  o laço também) está num turno na worktree do cercado, ou se ela não está como o merge a deixou (arquivo rastreado
-  editado, arquivo novo não rastreado, do dono ou do próprio portão, que o integrador não distingue), **nada é
-  resetado nem apagado**: o laço para (`dirtyTree` ou `othersWorking`), a nota lista o que ficou e, se o portão
-  quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a tarefa volta a aberta sem gastar
-  tentativa. `--max`, `--budget` e `--tries` são do laço inteiro. O orçamento é a **soma do
+  o laço também, salvo quando tudo o que ele tem aberto no daemon é o `collie work wait`/`work status` deste trabalho)
+  está num turno na worktree do cercado, ou se um arquivo rastreado não está como o merge o deixou (do dono ou do
+  próprio portão, que o integrador não distingue), **nada é resetado**: o laço para (`dirtyTree` ou `othersWorking`), a
+  nota lista o que ficou e, se o portão quebrou, o merge fica no branch com o `git reset --hard` para desfazê-lo à mão; a
+  tarefa volta a aberta sem gastar tentativa. Arquivo novo **não rastreado** (relatório, cobertura) nunca é apagado nem
+  impede o desfazer: fica na worktree e a nota o cita. Depois de um portão que passou, o laço só para se um arquivo
+  rastreado mudou. `--max`, `--budget` e `--tries` são do laço inteiro. O orçamento é a **soma do
   tempo das faixas**, não o relógio de parede: quatro faixas rodando 25 s gastam 100 s. O tempo de cada faixa vai do
   início dela até ela sair, e **o tempo na fila do integrador conta** (a espera pela vez, o merge e o portão). As
   faixas em curso já contam enquanto rodam: o que uma fase (turno, check, portão) pode levar é o que ninguém usou
@@ -991,6 +1002,24 @@ Cada seção mostra até 40 itens ("… e mais N" no resto) e o resumo todo cabe
 - Chat do painel Trabalho: a frase exata `resumo` (também `resume` e `o que foi feito`, com as mesmas palavras de enchimento
   das perguntas de status; qualquer outra coisa vai ao agente). Sem trabalho selecionado: "Escolha um trabalho para ver o
   resumo.". Não gasta tokens.
+
+**Tokens por tentativa (M5.4)**
+Ao dispensar o agente de cada tentativa do laço, o daemon lê o transcript dele (só o caminho que o hook do próprio
+terminal deu, vetado como na captura de conversa: `.jsonl` regular sob `<config>/projects`, sem symlink nem FIFO; até
+64 MB lidos em streaming) e soma só as contagens do `usage` das respostas do assistente, uma vez por id: entrada, saída,
+escrita e leitura de cache, nº de respostas e o modelo. Nenhum texto é guardado. Ficam no evento `agentDismissed` do
+diário e, somadas, em `tokens` da tarefa; o `work status` e o resumo mostram `tokens: 1,2 M (índice relativo) · 14 msgs`.
+O índice é **relativo** (entrada 1, escrita de cache 1,25, saída 5, leitura de cache 0,1; constantes em `TokenCount`),
+nunca custo em dinheiro. Sem transcript, recusado, sumido ou grande demais: sem número, sem erro, o laço segue.
+- CLI: `collie work usage [--limit N] [--terminal <nome>]`: os N (padrão 10) trabalhos mais novos do cercado, abertos ou
+  fechados, com o índice total e por tarefa.
+- CLI: `collie work history [--limit N] [--id <trabalho>]` (MCP `work_history`): os N (padrão 20, no máximo 50)
+  trabalhos fechados do **seu** cercado, do mais novo ao mais velho (`id, title, openedAt, closedAt, stopReason, done,
+  total, deferred, durationSeconds`); `--id`: o resumo inteiro daquele. O resumo é gravado uma vez quando o trabalho
+  fecha (o fim do laço, se ele fechou com o laço rodando), em `work/work-archive/<id>.json` (`-2`… se reaberto e
+  fechado de novo), e nunca muda; o diário vai até 500 eventos (os mais velhos saem, com um evento `truncated`), o
+  arquivo até 1 MB, e ficam os 200 mais novos. Trabalho fechado antes disso aparece montado do registro
+  (`reconstructed: true`). O app pede o cercado com `--paddock`.
 - Painel: botão **Resumo** e a seção Resumo do trabalho selecionado. Com a reescrita do modelo local, o link **Ver dados**
   alterna para o resumo do registro (e **Ver resumo** volta). Sem reescrita, o painel mostra o registro e a linha cinza
   "Resumo sem reescrita: ‹motivo›".

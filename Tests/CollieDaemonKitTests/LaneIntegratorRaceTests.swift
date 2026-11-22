@@ -140,16 +140,19 @@ private func runLoop(gate: String, starterBusy: String? = nil, disturb: @escapin
         #expect(isLeftDirty(last.outcome), "\(last.outcome)")
     }
 
-    /// (a), a new untracked file alone is enough.
-    @Test func aNewUntrackedFileAloneKeepsTheTree() async throws {
+    /// M3c.2 (was: a new untracked file alone kept the tree): it never stops the reset, and it is never removed.
+    @Test func aNewUntrackedFileAloneDoesNotStopTheReset() async throws {
         let rig = try await Rig()
         let a = try await rig.lane("a", "a.txt", "a\n")
         let repo = rig.repo
         await rig.host.setProbe { _ in write("notes\n", "notas.md", in: repo) }
         let r = try await rig.go(a, gate: "false")
-        #expect(isLeftDirty(r.outcome), "\(r.outcome)")
-        #expect(r.kept == ["notas.md"])
+        #expect(isRetry(r.outcome), "\(r.outcome)")
+        #expect(r.kept.isEmpty && r.left == ["notas.md"])
+        #expect(try await rig.head() == rig.base)
         #expect(read("notas.md", in: rig.repo) == "notes\n")
+        let destructive = await rig.destructive()
+        #expect(!destructive.contains { $0.contains("clean") }, "\(destructive)")
     }
 
     /// (b): the starter is in a turn in the paddock's worktree when the gate ends: its edits may be on their way.

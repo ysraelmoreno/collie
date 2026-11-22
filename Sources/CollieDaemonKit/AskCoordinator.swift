@@ -245,6 +245,39 @@ final class ApprovalTracker: @unchecked Sendable {
     }
 }
 
+/// The ask's time limits, in one place so tests inject short ones (M11.1). `production` holds the daemon's numbers;
+/// the code path is the same either way, only the durations come from outside.
+public struct AskLimits: Sendable, Equatable {
+    /// Idle fallback: a turn with no hook ends once its output was quiet this long.
+    public var idleQuiet: Duration
+    /// Cap of a timed-out turn that still holds its target's slot (lost hook, hung agent).
+    public var heldMax: Duration
+    /// How long a Claude capture block holds the queue when the continued Stop never comes.
+    public var captureHold: Duration
+    /// Injection readiness: a fresh terminal is ready once it printed and then stayed quiet this long...
+    public var readyQuiet: Duration
+    /// ...or this long after attach, whatever it shows.
+    public var readyMax: Duration
+    /// A Claude prompt written and no UserPromptSubmit after this: not submitted, if the agent is quiet too.
+    public var submitConfirm: Duration
+    /// The shortest turn timeout an `ask`/`wait` request may ask for, in seconds.
+    public var minTimeoutSeconds: Double
+    /// An `afterQuiet` write (a reply typed into its asker, the user's ask) waits for its target to print nothing
+    /// this long (production: the hub's `working` window, what the badge reads).
+    public var replyQuiet: Duration = StreamHub.workingWindow
+
+    public static let production = AskLimits(idleQuiet: .seconds(2), heldMax: .seconds(600), captureHold: .seconds(120),
+                                             readyQuiet: .milliseconds(300), readyMax: .seconds(10), submitConfirm: .seconds(8),
+                                             minTimeoutSeconds: 1)
+
+    public init(idleQuiet: Duration, heldMax: Duration, captureHold: Duration, readyQuiet: Duration, readyMax: Duration,
+                submitConfirm: Duration, minTimeoutSeconds: Double) {
+        self.idleQuiet = idleQuiet; self.heldMax = heldMax; self.captureHold = captureHold
+        self.readyQuiet = readyQuiet; self.readyMax = readyMax; self.submitConfirm = submitConfirm
+        self.minTimeoutSeconds = minTimeoutSeconds
+    }
+}
+
 /// Owns everything about inter-agent asks: per-target FIFO, deadlock graph, hook/idle completion, timeouts.
 public actor AskCoordinator {
     private struct Target {
@@ -321,12 +354,8 @@ public actor AskCoordinator {
     }
 
     /// Injection readiness: a fresh terminal (login shell, agent TUI) can drop typeahead while it initialises.
-    /// Ready once it printed something and then stayed quiet `readyQuiet`, or `readyMax` after attach.
-    static let readyQuiet: Duration = .milliseconds(300)
-    static let readyMax: Duration = .seconds(10)
+    /// Ready once it printed something and then stayed quiet `limits.readyQuiet`, or `limits.readyMax` after attach.
     static let readyPoll: Duration = .milliseconds(50)
-    /// A Claude prompt written and no UserPromptSubmit after this: not submitted, if the agent is quiet too.
-    static let submitConfirm: Duration = .seconds(8)
     /// A Claude still printing at `submitConfirm` may be mid-turn (it queues the prompt): given up on, unreported, here.
     static let submitConfirmMax: Duration = .seconds(30)
     /// Longer than this, an `ask` to a fresh agent is a task, not the answer to its dialog (`ask B y`).
@@ -350,11 +379,20 @@ public actor AskCoordinator {
     private(set) var windowDeferrals = 0
     private let captureHoldMax: Duration
     private let submitConfirm: Duration
+    /// Every time limit of this coordinator (M11.1): the daemon passes `AskLimits.production`, tests short ones.
+    nonisolated let limits: AskLimits
+    public init(limits: AskLimits) {
+        self.limits = limits
+        idleQuiet = limits.idleQuiet; heldMax = limits.heldMax; captureHoldMax = limits.captureHold
+        submitConfirm = limits.submitConfirm
+        (approvalEvents, approvalSink) = AsyncStream.makeStream(of: ApprovalEvent.self, bufferingPolicy: .bufferingNewest(100))
+    }
     public init(idleQuietSeconds: Double, heldMaxSeconds: Double = 600, captureHoldSeconds: Double = 120,
                 submitConfirmSeconds: Double? = nil) {
-        idleQuiet = .seconds(idleQuietSeconds); heldMax = .seconds(heldMaxSeconds); captureHoldMax = .seconds(captureHoldSeconds)
-        submitConfirm = submitConfirmSeconds.map { .seconds($0) } ?? Self.submitConfirm
-        (approvalEvents, approvalSink) = AsyncStream.makeStream(of: ApprovalEvent.self, bufferingPolicy: .bufferingNewest(100))
+        var l = AskLimits.production
+        l.idleQuiet = .seconds(idleQuietSeconds); l.heldMax = .seconds(heldMaxSeconds); l.captureHold = .seconds(captureHoldSeconds)
+        if let submitConfirmSeconds { l.submitConfirm = .seconds(submitConfirmSeconds) }
+        self.init(limits: l)
     }
 
     /// Registers a spawned terminal. Wires output (paste-mode tracking) and exit (fails its asks).
@@ -455,7 +493,7 @@ public actor AskCoordinator {
 
     /// Types `prompt` into `to` through the same readiness gate and FIFO as `ask`; returns once written,
     /// not when the turn ends. The turn still holds the queue, up to `hold`.
-    /// `afterQuiet`: typed only once `to` is idle (printed nothing for `StreamHub.workingWindow`, not waiting on an ask).
+    /// `afterQuiet`: typed only once `to` is idle (printed nothing for `limits.replyQuiet`, not waiting on an ask).
     public func inject(to: UUID, prompt: String, hold: Duration = .seconds(1800), afterQuiet: Bool = false) async throws(ProtocolError) {
         guard let t = targets[to], t.process.isRunning else {
             throw ProtocolError(code: .notRunning, message: "Terminal '\(targets[to]?.name ?? to.uuidString)' is not running")
@@ -638,9 +676,9 @@ public actor AskCoordinator {
     private func pollReady(_ terminal: UUID, _ process: ObjectIdentifier) -> Bool {
         guard let t = targets[terminal], ObjectIdentifier(t.process) == process, t.process.isRunning else { return false }
         let now = ContinuousClock.now
-        let quiet = t.process.lastOutputAt.map { now - $0 >= Self.readyQuiet } ?? false
+        let quiet = t.process.lastOutputAt.map { now - $0 >= limits.readyQuiet } ?? false
         // Claude quiet before enabling paste is still opening (a pause in its boot)
-        guard quiet && (!t.claudeTUI || t.paste.enabled) || now - t.attachedAt >= Self.readyMax else { return true }
+        guard quiet && (!t.claudeTUI || t.paste.enabled) || now - t.attachedAt >= limits.readyMax else { return true }
         targets[terminal]?.ready = true
         pump(terminal)
         return false
@@ -756,7 +794,7 @@ public actor AskCoordinator {
         // output after an input not scanned yet may hold a prompt `pending` doesn't show: wait for the scan
         let unscanned = w.guardsApproval && t.approval.inWindow
         if unscanned { windowDeferrals += 1 }
-        if unscanned || held || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < StreamHub.workingWindow }) == true {
+        if unscanned || held || w.afterQuiet && t.process.lastOutputAt.map({ ContinuousClock.now - $0 < limits.replyQuiet }) == true {
             // ponytail: 100 ms polling of lastOutputAt (what the hub's `working` badge reads); bounded by the waiter's timeout
             guard !t.quietPoll else { return }
             targets[to]?.quietPoll = true
@@ -929,6 +967,13 @@ public actor AskCoordinator {
 
     /// M2.0: a prompt written to `terminal` had its Enter sent again (the loop's journal).
     func submitRetried(_ terminal: UUID) -> Bool { targets[terminal]?.submitRetried ?? false }
+
+    /// M5.3: `terminal`'s last non-empty lines on screen, and whether it printed nothing for `quiet` (nil: unknown).
+    func screen(_ terminal: UUID, quiet: Duration) -> (lines: [String], quiet: Bool)? {
+        guard let t = targets[terminal] else { return nil }
+        let still = t.process.lastOutputAt.map { ContinuousClock.now - $0 >= quiet } ?? false
+        return (ApprovalTracker.lines(t.scrollback, 20), still)
+    }
 
     /// Hook: this Claude's SessionStart reached the daemon.
     func sessionHooked(_ terminal: UUID) { targets[terminal]?.sessionHooked = true }

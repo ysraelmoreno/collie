@@ -106,9 +106,12 @@ enum SandboxProfile {
             }
         }
         var out = ["(version 1)", "(allow default)"]
+        // A lane's agent runs unattended: a denial there never raises a card (a click would only restart the agent
+        // mid-attempt). The path stays denied; it is just not asked about.
+        let asks = i.lanePaddock == nil
         func rule(_ verb: String, _ op: String, tagged: Bool = false, _ filters: [String]) {
             guard !filters.isEmpty else { return }
-            out.append("(\(verb) \(op)\(tagged ? " " + tag : "")\n  " + filters.joined(separator: "\n  ") + ")")
+            out.append("(\(verb) \(op)\(tagged && asks ? " " + tag : "")\n  " + filters.joined(separator: "\n  ") + ")")
         }
         func under(_ p: String, _ root: String) -> Bool { URL(fileURLWithPath: p).pathComponents.starts(with: URL(fileURLWithPath: root).pathComponents) }
         // the updater's sibling next to the app (`.Collie-update-XXXXXX`, spec 2026-11-17 §2): a verified bundle waits
@@ -159,7 +162,7 @@ enum SandboxProfile {
                                          rx("^" + re(home + "/.ssh/") + "[^/]+\\.pub$")])
 
             out.append(";; writes: temp and devices; the home (and the git dirs) closed again; then the project and caches")
-            out.append("(deny file-write* \(tag))")
+            out.append("(deny file-write*\(asks ? " " + tag : ""))")
             rule("allow", "file-write*", [sub("/private/tmp"), sub(real(i.userTemp))]
                  + EssentialPaths.userCacheWrites.map { entry(real(i.userCache), $0) }
                  + ["/dev/null", "/dev/zero", "/dev/dtracehelper", "/dev/tty", "/dev/ptmx"].map(lit) + [rx("^/dev/ttys[0-9]+$"), rx("^/dev/fd/")])
@@ -255,6 +258,12 @@ enum SandboxProfile {
             } else {
                 rule("deny", "file-write*", tagged: true, [lit(project + "/.git")])   // no planting a pointer in a non-git project
             }
+            // M3c.3 (finding 4 of the 3b review): a lane never renames nor deletes its own folder or its git dir in
+            // `<common>/worktrees` (what is in them stays writable). Moving the git dir out, rewriting `gitdir` and the
+            // mark where the regex above does not reach and moving it back, or swapping the lane's folder for a symlink
+            // to another lane, would get past the rules above. Git needs neither inside the lane. Untagged, as the
+            // lane's other denies.
+            if i.lanePaddock != nil { rule("deny", "file-write*", [lit(project)] + [worktree].compactMap { $0.map(lit) }) }
         }
         out.append(";; Collie: closed (data, tokens, grants, workspace.json); this terminal's files readable; only the socket")
         rule("deny", "file-read* file-write*", tagged: true, [sub(collie)])
@@ -277,7 +286,7 @@ enum SandboxProfile {
             rule("deny", "process-exec", tagged: true, [lit("/bin/launchctl"), lit("/usr/bin/open")])
         }
         out.append("(allow process-exec (literal \"/bin/ps\") (with no-sandbox))   ; setuid: a sandboxed exec of it fails otherwise")
-        out.append("(deny signal \(tag))")
+        out.append("(deny signal\(asks ? " " + tag : ""))")
         out.append("(allow signal (target same-sandbox))")
         return out.joined(separator: "\n") + "\n"
     }

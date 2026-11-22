@@ -61,7 +61,12 @@ pids=()
 for ((i = 0; i < SHARDS; i++)); do
     [ -s "$OUT/suites-$i.txt" ] || continue
     args=()
-    while IFS= read -r s; do args+=(--filter "^${s//./\\.}/"); done < "$OUT/suites-$i.txt"
+    # a suite filters as "^Mod\.Suite/"; a @Test outside any suite is its own group ("Mod.f()", no "/"), filtered by
+    # its whole id with the regex characters escaped: "^Mod\.f()/" would match nothing and drop it from every shard
+    while IFS= read -r s; do
+        e=$(sed 's/[][\.*^$()+?{}|]/\\&/g' <<< "$s")
+        [[ "$s" == *"("* ]] && args+=(--filter "^$e") || args+=(--filter "^$e/")
+    done < "$OUT/suites-$i.txt"
     for p in ${patterns[@]+"${patterns[@]}"}; do args+=(--skip "$p"); done
     rm -f "$OUT/exit-$i" "$OUT/exit-$i.tmp"
     # --ignore-lock: the shards only read the built .build (--skip-build); without it they would wait for each other

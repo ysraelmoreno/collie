@@ -140,6 +140,6 @@ private let xml = """
     #expect(try UITree.target(nodes, text: "Configuration", id: nil, nth: nil).id == "configuration_fab")   // contains
     #expect(throws: ProtocolError.self) { try UITree.target(nodes, text: "toolbar", id: nil, nth: nil) }   // not clickable: no id match
     do { _ = try UITree.target(nodes, text: "+", id: nil, nth: 1); Issue.record("found") } catch {
-        #expect(error.code == .notFound && error.message.contains("unlabeled: \(fab.ref) id=configuration_fab"), "\(error.message)")
+        #expect(error.code == .notFound && error.message.contains("; unlabeled: ") && error.message.contains("\(fab.ref) id=configuration_fab"), "\(error.message)")
     }
 }

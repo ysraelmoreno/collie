@@ -145,6 +145,10 @@ collie device list                     # aparelhos {serial,state,model,product,p
 collie device screenshot               # PNG; devolve {path,width,height}
 collie device ui                       # nós com rótulo ou clicáveis, com refs; {tree,truncated,nodes,total}
 collie device ui --all                 # árvore inteira (depurar); mesmos refs
+collie device screen                   # a tela em grupos (título, abas com * na selecionada, ações, campos, conteúdo, flutuantes, o que mudou): {text} e itens {ref,label,role,state}
+collie device screen --all             # também a árvore crua de ui --all em {tree} (depurar o agrupamento)
+collie device wait --text "Combos"     # espera o texto aparecer (--gone: sumir; --stable: dois dumps iguais); --timeout 1-60 s (10); {ok,waitedMs}
+collie device ui --timing              # também em screen: {timingMs} por etapa (adb, parse, agrupamento)
 collie device tap 540 1200             # ou: collie device tap --ref e3
 collie device tap --ref e3 --then ui   # tap, espera 400 ms (--settle 0-3000) e devolve {ui:{tree,…}}; refs atualizados
 collie device tap --text "Open Deals" --then ui   # acha pelo rótulo (ou --id <resource-id>) num dump novo; vários: lista, escolha com --nth N
@@ -156,7 +160,8 @@ collie device install app.apk
 collie device launch com.example.app
 ```
 
-`--then ui` vale em `tap`, `swipe`, `text`, `key` e `launch`: um passo ver → agir numa chamada só. Sem `--then` a resposta continua `{}`; outro valor que não `ui` dá `invalidArgs`.
+`--then ui` (ou `--then screen`) vale em `tap`, `swipe`, `text`, `key` e `launch`: um passo ver → agir numa chamada só. `--settle stable` espera (até 5 s) dois dumps iguais em vez de um tempo fixo.
+Comece por `device screen`; `device ui` é a árvore crua, para quando o agrupamento esconder algo; `screenshot` só se nenhum dos dois mostrar o elemento. `device find "X" --scroll` (rolar até achar) está na spec `2026-11-22-device-screen-find-design.md` (E3) e ainda não existe. Sem `--then` a resposta continua `{}`; outro valor que não `ui` dá `invalidArgs`.
 
 Limitações: sem áudio; `device.text` só ASCII e não digita `%s` literal (é o
 `input text` do Android; acentos e `%s`, digite pelo painel); um ANR não vira evento (só crashes do buffer de crash do logcat).

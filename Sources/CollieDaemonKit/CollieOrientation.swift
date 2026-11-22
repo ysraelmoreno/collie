@@ -19,8 +19,10 @@ enum CollieOrientation {
     /// background ("bg"); the MCP `work_wait` and the long form are in /collie:loop.
     /// ponytail: 62 characters, the room a codex Shepherd has before the wait sentence
     /// M4 (2026-11-21 device loop spec): read the tree, act and re-read in one call; the PNG only as a last resort.
-    static let deviceLoop = "collie device ui (the tree; don't parse the PNG), then tap --text|--ref … --then ui; screenshot only if the tree lacks it."
-    static let deviceShort = "collie device ui; tap --text … --then ui."
+    /// S5 (2026-11-22 device screen spec): `device screen` to see, `--then screen`, `wait` instead of sleep. ponytail: no
+    /// `find` until E3 lands (teaching a missing command only earns errors); add `find "X" --scroll` here then.
+    static let deviceLoop = "collie device screen (grouped; ui = raw tree), then tap --text|--ref … --then screen; wait --text X, not sleep; screenshot only if screen and ui lack it."
+    static let deviceShort = "collie device screen; tap --text … --then screen."
     static let loopNotify = "Notices off by default; no reply; bg: work wait --timeout 540."
 
     /// Names are unvalidated: control/newline chars become spaces and `"` is dropped, so a name can't inject lines.

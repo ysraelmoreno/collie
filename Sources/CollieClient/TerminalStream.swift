@@ -37,6 +37,10 @@ public final class TerminalStream: Sendable {
 
     /// Test hook: drops the connection as if the daemon went away (the stream reattaches).
     func _simulateDrop() { core.drop() }
+    /// Test hook: resizes wait for `_fireResizeDebounce()` instead of the 100 ms timer (no wall clock in tests).
+    func _holdResizeDebounce() { core.holdResizes() }
+    /// Test hook: fires the debounce now, as the 100 ms timer would (only the last size goes out).
+    func _fireResizeDebounce() { core.fireResize(gen: nil) }
 }
 
 private final class Core: Sendable {
@@ -47,6 +51,7 @@ private final class Core: Sendable {
         var waiter: CheckedContinuation<StreamFrame?, Never>?
         var pending = Data(), dropped = 0
         var lastSize: (cols: UInt16, rows: UInt16)?, resizeGen = 0
+        var resizeDebounce: Double? = 0.1                    // nil: held until fireResize (test hook)
     }
     private let terminal: UUID, socket: URL, token: @Sendable () -> String?
     private let state = Mutex(State())
@@ -148,10 +153,24 @@ private final class Core: Sendable {
     }
 
     func resize(_ cols: UInt16, _ rows: UInt16) {
-        let gen = state.withLock { $0.lastSize = (cols, rows); $0.resizeGen += 1; return $0.resizeGen }
-        writeQueue.asyncAfter(deadline: .now() + 0.1) { [self] in
-            guard let c = state.withLock({ $0.resizeGen == gen && !$0.closed ? $0.client : nil }) else { return }
-            try? c.sendBlocking(.resize(cols: cols, rows: rows), timeoutSeconds: 5)   // lost: re-sent on reattach
+        let (gen, delay) = state.withLock { s in
+            s.lastSize = (cols, rows); s.resizeGen += 1; return (s.resizeGen, s.resizeDebounce)
+        }
+        guard let delay else { return }
+        writeQueue.asyncAfter(deadline: .now() + delay) { [self] in fireResize(gen: gen) }
+    }
+
+    func holdResizes() { state.withLock { $0.resizeDebounce = nil } }
+
+    /// Sends the last size if `gen` is still the latest resize (nil: whatever is latest).
+    func fireResize(gen: Int?) {
+        writeQueue.async { [self] in
+            let ready: (StreamClient, (cols: UInt16, rows: UInt16))? = state.withLock { s in
+                guard gen == nil || s.resizeGen == gen, !s.closed, let c = s.client, let size = s.lastSize else { return nil }
+                return (c, size)
+            }
+            guard let (c, size) = ready else { return }
+            try? c.sendBlocking(.resize(cols: size.cols, rows: size.rows), timeoutSeconds: 5)   // lost: re-sent on reattach
         }
     }
 

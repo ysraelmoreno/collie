@@ -57,6 +57,8 @@ private final class FakeHelper: @unchecked Sendable {
 
     private func subscribed(_ c: Int32) {
         let (at, drop) = lock.withLock { (pushes, self.drop) }
+        var one: Int32 = 1   // the daemon closes once quiet: a later event must fail the write, not kill the test run
+        setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
         let ack = Array(#"{"ok":true,"id":1}\#n"#.utf8)
         _ = write(c, ack, ack.count)
         let start = Date()

@@ -12,22 +12,24 @@ import CollieCore
 /// and fullscreen (scale 1) were never scaled. The re-add on mouseUp is harmless: the button fires inside `super.mouseUp`.
 @MainActor @Suite(.serialized) struct TerminalFullscreenClickTests {
     static let size = CGSize(width: 640, height: 400)   // canvas pt
-    /// The ⤢ in canvas pt, from its accessibility frame at zoom 1 (node bounds = canvas pt there). Not a constant: the
-    /// title bar's SwiftUI layout differs by macOS (`size.width - 46`, scanned on 15, missed on the macOS 26 runner).
+    /// The ⤢ in canvas pt, found by clicking along the title bar of a zoom-1 rig (node bounds = canvas pt there) from the
+    /// "…" menu's left edge leftwards until fullscreen toggles. Not a constant: SwiftUI lays the bar out differently by
+    /// macOS (`size.width - 46`, scanned on 15, missed on the macOS 26 runner even at zoom 1). SwiftUI's accessibility
+    /// tree is empty with no AX client, so it can't be read from there. Never clicks the menu (that pops a modal menu).
     static var button: CGPoint {
         if let p = located { return p }
         let r = makeRig(zoom: 1, inFront: false); defer { r.close() }
-        let p = frame(labeled: "Tela cheia", in: r.node).map { r.node.convert(r.window.convertFromScreen($0), from: nil) }
-        located = p.map { CGPoint(x: $0.midX, y: $0.midY) }
+        let menu = popUp(in: r.node).map { r.node.convert($0.bounds, from: $0).minX } ?? size.width - 30
+        let y = TerminalNodeView.titleHeight / 2
+        for x in stride(from: menu - 1, to: size.width / 2, by: -2) {
+            r.click(CGPoint(x: x, y: y))
+            if r.canvas.fullscreen != nil { located = CGPoint(x: x, y: y); break }
+        }
         return located ?? .zero
     }
     private static var located: CGPoint?
-    private static func frame(labeled label: String, in e: Any, depth: Int = 0) -> CGRect? {
-        guard depth < 40, let el = e as? NSAccessibilityProtocol else { return nil }
-        if el.accessibilityLabel() == label { return el.accessibilityFrame() }
-        for c in (e as? NSView)?.subviews ?? [] { if let f = frame(labeled: label, in: c, depth: depth + 1) { return f } }
-        for c in el.accessibilityChildren() ?? [] { if let f = frame(labeled: label, in: c, depth: depth + 1) { return f } }
-        return nil
+    private static func popUp(in v: NSView) -> NSPopUpButton? {
+        v as? NSPopUpButton ?? v.subviews.lazy.compactMap { popUp(in: $0) }.first
     }
 
     @MainActor final class Parent: NSView {
@@ -60,7 +62,7 @@ import CollieCore
     }
 
     private func rig(zoom: CGFloat, inFront: Bool) -> Rig {
-        #expect(Self.button != .zero, "⤢ not found in the title bar's accessibility tree")
+        #expect(Self.button != .zero, "⤢ not found in the title bar")
         return Self.makeRig(zoom: zoom, inFront: inFront)
     }
 

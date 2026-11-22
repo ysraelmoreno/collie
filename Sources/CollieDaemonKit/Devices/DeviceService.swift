@@ -172,7 +172,7 @@ actor DeviceService {
         if command == "device.find" {
             let q = try Self.findSpec(args)
             if let scroll = q.scroll {
-                var o = try await Self.findScrolling(q.text, role: q.role, scroll, dump: dump, swipe: { a throws(ProtocolError) in _ = try await act("device.swipe", a) })
+                var o = try await findScrolling(q.text, role: q.role, scroll, dump: dump, swipe: { a throws(ProtocolError) in _ = try await act("device.swipe", a) })
                 if q.screen { o["screen"] = .object(try await screen(all: false)) }   // ponytail: one more dump for the groups
                 return .object(o)
             }
@@ -258,7 +258,7 @@ actor DeviceService {
     /// middle of the width, wait `scrollSettleMs`, dump again. Stops when found, when the tree stays the same after a
     /// swipe (end of the list: `endReached`) or after `max` swipes. The answer and the notFound message carry
     /// `scrolls` and `endReached`. The size is the extent of the dumped nodes (Android pixels, iOS points).
-    static func findScrolling(_ text: String, role: String?, _ s: Scroll, dump: () async throws(ProtocolError) -> [UINode],
+    func findScrolling(_ text: String, role: String?, _ s: Scroll, dump: () async throws(ProtocolError) -> [UINode],
                        swipe: ([String: JSONValue]) async throws(ProtocolError) -> Void) async throws(ProtocolError) -> [String: JSONValue] {
         var nodes = try await dump(), scrolls = 0
         while true {

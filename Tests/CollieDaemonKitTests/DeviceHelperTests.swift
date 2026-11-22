@@ -682,15 +682,21 @@ extension DeviceHelperTests {
         await fx.cleanup()
     }
 
-    @Test func eventRestartsTheQuietCount() async throws {
-        let srv = try FakeHelper(installed: true); defer { srv.stop() }
-        srv.set(pushes: [200, 400])
-        let fx = try Svc(srv)
-        _ = await fx.ready()
-        let r = obj(try await fx.run("device.wait", ["stable": .bool(true), "quiet": .number(300)]))
-        guard case .number(let ms)? = r["waitedMs"] else { Issue.record("\(r)"); await fx.cleanup(); return }
-        #expect(ms >= 700 && ms < 3000, "the last event at 400 ms + 300 quiet: \(r)")
-        await fx.cleanup()
+    /// C2: the count fed instants (no socket, no real time): events at 200 and 400 ms with 300 quiet hold it until 700.
+    @Test func eventRestartsTheQuietCount() {
+        let t0 = ContinuousClock.now, at = { (ms: Int) in t0 + .milliseconds(ms) }
+        var c = Silence(ack: t0, quiet: .milliseconds(300), total: .milliseconds(3000))
+        c.event(at: at(200))
+        #expect(c.verdict(at: at(450)) == nil, "200 + 300 not reached")
+        c.event(at: at(400))
+        #expect(c.verdict(at: at(500)) == nil && c.verdict(at: at(699)) == nil, "the event at 400 restarted the count")
+        #expect(c.left(at: at(500)) == .milliseconds(200))
+        #expect(c.verdict(at: at(700)) == true)
+        c.event(at: at(300))   // a late-stamped event does not move the count back
+        #expect(c.verdict(at: at(700)) == true)
+        var busy = Silence(ack: t0, quiet: .milliseconds(300), total: .milliseconds(800))
+        for ms in stride(from: 100, through: 800, by: 100) { busy.event(at: at(ms)) }
+        #expect(busy.verdict(at: at(800)) == false, "events until the total fail it")
     }
 
     @Test func eventsUntilTheTimeoutFailTheWait() async throws {

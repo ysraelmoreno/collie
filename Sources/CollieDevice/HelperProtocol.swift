@@ -6,7 +6,8 @@ import CollieProtocol
 /// Pure: requests encoded, answers and events decoded, and the `enabled_accessibility_services` list edited.
 public enum HelperProtocol {
     /// The helper this build expects (`HelperService.VERSION`); an older one is reinstalled.
-    public static let version = 1
+    /// v2: a new instance takes over the socket from an old one still holding it (Helpers/android-device/README.md).
+    public static let version = 2
     /// The abstract socket the helper listens on (`adb forward tcp:N localabstract:<socket>`).
     public static let socket = "collie-helper"
     public static let package = "com.collie.helper"

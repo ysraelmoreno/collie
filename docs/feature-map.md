@@ -108,6 +108,11 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   emulador ganha sozinho, aparelho físico só com opt-in por `install`, porque o serviço lê toda a tela; falha cai no
   `uiautomator`). Arquivos: `Helpers/android-device/`, `Sources/CollieDevice/HelperProtocol.swift`,
   `Sources/CollieDaemonKit/Devices/DeviceHelper.swift`. Testes: `--filter DeviceHelperTests`.
+  OCR (H6, Android, Vision no `collied`): `device screen` lê o screenshot quando a árvore é pobre ou com `--ocr`
+  (`--no-ocr`, `--region x1,y1,x2,y2`; itens `(ocr)`, refs `o1`…; `ocr: unavailable` sem provedor); `find`/`tap --text`
+  sem casamento na árvore rodam um OCR só nessa chamada e casam com os itens (toque no centro da caixa, `via: ocr` e aviso
+  sem confirmação de clique; `--role` ignora o OCR); `--timing` traz `ocrMs`, `ocrLevel`, `trigger`. Arquivos:
+  `Sources/CollieDevice/OCR.swift`, `Sources/CollieDaemonKit/Devices/VisionOCR.swift`. Testes: `--filter OCRTests`.
 - **Como verificar:** `collie device list`; o painel, à mão ("Abrir painel" → "Dispositivo" → "Aparelho"): a
   moldura certa para Pixel, Pixel Fold, Pixel Tablet, iPhone 16 Pro, iPhone SE e iPad, nos dois temas; encolher o
   painel até a moldura sumir. Testes: `swift test --disable-sandbox --filter DeviceBezelTests`.

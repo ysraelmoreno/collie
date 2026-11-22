@@ -147,6 +147,9 @@ collie device ui                       # nós com rótulo ou clicáveis, com ref
 collie device ui --all                 # árvore inteira (depurar); mesmos refs
 collie device screen                   # a tela em grupos (título, abas com * na selecionada, ações, campos, conteúdo, flutuantes, o que mudou): {text} e itens {ref,label,role,state}
 collie device screen --all             # também a árvore crua de ui --all em {tree} (depurar o agrupamento)
+collie device screen --ocr             # Android: também lê o texto do screenshot (OCR); roda sozinho com árvore pobre; --no-ocr desliga; --region x1,y1,x2,y2 lê só o retângulo
+collie device find "Iniciar"           # sem casamento na árvore (Android): um OCR só nessa chamada (--region limita); acha → {via: ocr, warning}; --role ignora o OCR
+collie device tap --text "Iniciar"     # idem: o toque vai no centro da caixa do texto, sem confirmação de clique (confira com --then screen)
 collie device wait --text "Combos"     # espera o texto aparecer (--gone: sumir; --stable: dois dumps iguais); --timeout 1-60 s (10); {ok,waitedMs}
 collie device ui --timing              # também em screen: {timingMs} por etapa (adb, parse, agrupamento) e source: helper|uiautomator
 collie device helper status            # helper de acessibilidade: {state: ready|starting|fallback|off, source, version, reason}

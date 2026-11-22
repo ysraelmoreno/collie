@@ -92,6 +92,7 @@ do {
     let helperApk = ProcessInfo.processInfo.environment["COLLIE_HELPER_APK"].map { URL(fileURLWithPath: $0) }
         ?? resources.appendingPathComponent("collie-helper.apk")
     config.helperApk = FileManager.default.fileExists(atPath: helperApk.path) ? helperApk : nil
+    config.ocr = VisionOCR()   // resident: warmed on its first read
     config.figcraftDir = figcraft
     config.figcraftBundleDir = resources.appendingPathComponent("figcraft")
     config.figcraftVendorDir = figcraftVendor

@@ -115,11 +115,8 @@ extension DeviceService {
             return try? HelperProtocol.decode(line, as: T.self)
         }
         func acked(_ r: HelperProtocol.Request) async -> Bool { await helped(r, as: HelperProtocol.Reply.self) != nil }
-        /// A helper dump with an active window.
-        func helperDump() async -> HelperProtocol.Dump? {
-            guard let d = await helped(.dump, as: HelperProtocol.Dump.self), d.root else { return nil }
-            return d
-        }
+        /// A helper dump with an active window and nodes (an empty one sends the helper to fallback: H7).
+        func helperDump() async -> HelperProtocol.Dump? { await helper?.dump() }
         /// `click` at `path` (the helper climbs to a clickable ancestor, else touches the node's center): true done,
         /// false `node gone` (the screen changed since the dump), nil not through the helper.
         func click(_ path: [Int]) async -> Bool? {
@@ -332,5 +329,65 @@ extension DeviceService {
         }
         let r = try await mgr.run(["delete", "avd", "-n", LiteAvd.name], env: env, timeout: .seconds(60))
         guard r.status == 0 else { throw ProtocolError(code: .internal, message: "avdmanager delete failed: \(r.stderr.prefix(500))") }
+    }
+}
+
+/// `device screen --ocr|--no-ocr|--region x1,y1,x2,y2`: O2 rule 5 (explicit) over the tree's rules 1-3.
+struct OCRMode: Sendable {
+    var forced = false, off = false, region: CGRect?
+    static let auto = OCRMode()
+    /// The rule that fires (`--timing`'s `trigger`: labels|coverage|opaque, explicit for --ocr/--region), nil: no OCR.
+    func trigger(_ nodes: [UINode]) -> String? {
+        if off { return nil }
+        return forced ? "explicit" : OCR.trigger(nodes)?.rawValue
+    }
+}
+
+/// One OCR pass: the merged nodes (empty on a black/uniform screen or an empty read), nil when the OCR is unavailable
+/// (no provider, no screenshot, provider error); its time and the rule that fired.
+struct OCRRead: Sendable {
+    let nodes: [UINode]?, took: Duration, trigger: String
+}
+
+extension DeviceService {
+    /// Parses the OCR flags; `--region` implies `--ocr` (it asks to read that rectangle) and clashes with `--no-ocr`.
+    static func ocrMode(_ a: [String: JSONValue]) throws(ProtocolError) -> OCRMode {
+        func flag(_ k: String) -> Bool { a[k] == .bool(true) || a[k] == .string("true") }
+        var m = OCRMode(forced: flag("ocr"), off: flag("no-ocr"))
+        switch a["region"] {
+        case nil, .null?: break
+        case .string(let s)?:
+            let v = s.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            guard v.count == 4, v[0] >= 0, v[1] >= 0, v[2] > v[0], v[3] > v[1] else {
+                throw ProtocolError(code: .invalidArgs, message: "--region takes x1,y1,x2,y2 (pixels, x2 > x1, y2 > y1)")
+            }
+            m.region = CGRect(x: v[0], y: v[1], width: v[2] - v[0], height: v[3] - v[1]); m.forced = true
+        default: throw ProtocolError(code: .invalidArgs, message: "--region takes x1,y1,x2,y2")
+        }
+        if m.off && m.forced { throw ProtocolError(code: .invalidArgs, message: "--no-ocr cannot go with --ocr or --region") }
+        return m
+    }
+
+    /// The screen's PNG, in memory (never written).
+    func screencap(_ serial: String) async throws(ProtocolError) -> Data {
+        let r = try await tool().run(["exec-out", "screencap", "-p"], serial: serial, timeout: .seconds(30))
+        guard !r.truncated, AdbParsing.pngSize(r.stdoutData) != nil else { throw ProtocolError(code: .internal, message: "screencap did not return a PNG") }
+        return r.stdoutData
+    }
+
+    /// O1/O3/O5: screenshot, black check, `--region` crop, OCR (accurate), merge with `tree`. Never throws: the screen
+    /// falls back to the tree. ponytail: always `accurate` (the fallback's default); a `--ocr fast` when someone needs it.
+    func ocrRead(serial: String, tree: [UINode], trigger: String, region: CGRect?) async -> OCRRead {
+        let start = ContinuousClock.now
+        func done(_ n: [UINode]?) -> OCRRead { OCRRead(nodes: n, took: ContinuousClock.now - start, trigger: trigger) }
+        guard let ocr, var png = try? await screencap(serial) else { return done(nil) }
+        if OCRImage.uniform(png) { return done([]) }   // black (FLAG_SECURE) or flat: nothing to read
+        var origin = CGPoint.zero
+        if let region {
+            guard let cut = OCRImage.crop(png, to: region) else { return done([]) }
+            png = cut.png; origin = cut.rect.origin
+        }
+        guard let items = try? await ocr.recognize(png: png, level: .accurate, languages: ocrLanguages) else { return done(nil) }
+        return done(OCR.nodes(items.map { var i = $0; i.box = i.box.offsetBy(dx: origin.x, dy: origin.y); return i }, tree: tree))
     }
 }

@@ -9,6 +9,9 @@ import CollieProtocol
 /// `adb forward tcp:<free> localabstract:collie-helper`, checks `hello`'s version (older: reinstalled) and confirms with a
 /// `dump` that has a root and nodes before it is `ready`. Any failure leaves it in `fallback` with the reason: the
 /// `device` commands keep using uiautomator and never fail because of the helper.
+/// H7: dumps that keep coming back without nodes re-bind the service once (off and on in the list); a helper in
+/// `fallback` is retried at most every `retryEvery` on a device call (`recover`), and a ready one whose dump comes back
+/// empty goes to `fallback`, so `status` always says what the commands read the screen with.
 actor DeviceHelper {
     /// `adb -s <serial> args` → stdout (non-zero exit throws).
     typealias Adb = @Sendable ([String]) async throws(ProtocolError) -> String
@@ -23,16 +26,23 @@ actor DeviceHelper {
     /// Tries of `hello` after an install, and of `dump` until it has a root and nodes (the first one after an enable
     /// can come back empty).
     static let tries = 10
+    /// The least time between two tries of a helper in `fallback` (`recover`).
+    static let retryEvery = Duration.seconds(30)
 
     private(set) var state = State.off
     private(set) var reason: String?
     private(set) var version: Int?
     private(set) var port: UInt16?
     private var run: Task<Void, Never>?
+    /// The last bring-up's `install`, which `recover` reuses; when a `fallback` may be retried.
+    private var install = false
+    private var retryAt: ContinuousClock.Instant?
+    private let now: @Sendable () -> ContinuousClock.Instant
 
     init(serial: String, adb: @escaping Adb, apk: @escaping @Sendable () -> URL?,
-         answer: Duration = .seconds(3), gap: Duration = .milliseconds(300)) {
-        self.serial = serial; self.adb = adb; self.apk = apk; self.answer = answer; self.gap = gap
+         answer: Duration = .seconds(3), gap: Duration = .milliseconds(300),
+         now: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
+        self.serial = serial; self.adb = adb; self.apk = apk; self.answer = answer; self.gap = gap; self.now = now
     }
 
     /// `collie device helper status`: `source` is what the device commands read the screen with.
@@ -48,14 +58,32 @@ actor DeviceHelper {
     func start(install: Bool, again: Bool = false) async {
         if let r = run { await r.value }
         guard state == .off || (again && state == .fallback) else { return }
+        await up(install: install)
+    }
+
+    /// A device call with the helper in `fallback`: reopens it (hello, a dump with nodes, as `start`) once `retryEvery`
+    /// passed since it fell back or last failed; success is `ready` again, a failure keeps `fallback` with the new reason.
+    /// A bring-up already running is not waited for (the call goes on with uiautomator).
+    func recover() async {
+        guard run == nil, state == .fallback, let at = retryAt, now() >= at else { return }
+        await up(install: install)
+    }
+
+    private func up(install: Bool) async {
         let t = Task { await self.bringUp(install: install) }
         run = t
         await t.value
         run = nil
     }
 
+    private func fallBack(_ why: String) async {
+        state = .fallback; reason = why; retryAt = now() + Self.retryEvery
+        await unforward()
+    }
+
     private func bringUp(install: Bool) async {
-        state = .starting; reason = nil; version = nil
+        self.install = install
+        state = .starting; reason = nil; version = nil; retryAt = nil
         do throws(ProtocolError) {
             // ponytail: checked first so a daemon without the APK (tests, dev runs) sends no adb at all; a helper
             // already on the device is then not used either
@@ -75,14 +103,21 @@ actor DeviceHelper {
                 }
                 hello = h
             }
-            _ = try await retry("dump") { () async throws(ProtocolError) -> HelperProtocol.Dump? in
+            let dump = { () async throws(ProtocolError) -> HelperProtocol.Dump? in
                 let d = try HelperProtocol.decode(try await Self.request(p, .dump, timeout: self.answer), as: HelperProtocol.Dump.self)
                 return d.root && !d.nodes.isEmpty ? d : nil
             }
+            do throws(ProtocolError) {
+                _ = try await retry("dump", dump)
+            } catch {
+                // the service bound but blind (the list edited by someone else): off and on once, then the same tries
+                guard error.code != .timeout else { throw error }
+                try await rebind()
+                _ = try await retry("dump after re-enabling the service", dump)
+            }
             state = .ready; version = hello?.version
         } catch {
-            state = .fallback; reason = error.message
-            await unforward()
+            await fallBack(error.message)
         }
     }
 
@@ -117,10 +152,20 @@ actor DeviceHelper {
             return try await Self.request(p, r, timeout: answer)
         } catch {
             guard state == .ready else { return nil }
-            state = .fallback; reason = "helper stopped answering (\(error.message)); using uiautomator"
-            await unforward()
+            await fallBack("helper stopped answering (\(error.message)); using uiautomator")
             return nil
         }
+    }
+
+    /// `dump` of a `device` command: nil when not `ready`, and a dump without a window or nodes sends the helper to
+    /// `fallback` (the command reads uiautomator, the status says so, `recover` retries it).
+    func dump() async -> HelperProtocol.Dump? {
+        guard let line = await send(.dump) else { return nil }
+        guard let d = try? HelperProtocol.decode(line, as: HelperProtocol.Dump.self), d.root, !d.nodes.isEmpty else {
+            if state == .ready { await fallBack("helper dump came back without nodes; using uiautomator") }
+            return nil
+        }
+        return d
     }
 
     /// H4, `wait --stable` and `--settle stable`: `subscribe` on a connection of its own, then true once no event came for
@@ -132,8 +177,7 @@ actor DeviceHelper {
             return try await Self.silence(p, quietMs: quietMs, timeoutMs: timeoutMs, answer: answer)
         } catch {
             guard state == .ready else { return nil }
-            state = .fallback; reason = "helper stopped answering (\(error.message)); using uiautomator"
-            await unforward()
+            await fallBack("helper stopped answering (\(error.message)); using uiautomator")
             return nil
         }
     }
@@ -168,6 +212,18 @@ actor DeviceHelper {
             _ = try await adb(["shell", "settings", "put", "secure", "enabled_accessibility_services", try Self.quoted(next)])
         }
         _ = try await adb(["shell", "settings", "put", "secure", "accessibility_enabled", "1"])
+    }
+
+    /// Takes the helper out of `enabled_accessibility_services` (others kept; the setting deleted when it was the only
+    /// one) and puts it back with `enable`, so Android binds the service anew.
+    private func rebind() async throws(ProtocolError) {
+        let cur = try await adb(["shell", "settings", "get", "secure", "enabled_accessibility_services"])
+        let off = HelperProtocol.removing(cur)
+        if off != cur.trimmingCharacters(in: .whitespacesAndNewlines) {
+            _ = try await adb(off.isEmpty ? ["shell", "settings", "delete", "secure", "enabled_accessibility_services"]
+                                          : ["shell", "settings", "put", "secure", "enabled_accessibility_services", try Self.quoted(off)])
+        }
+        try await enable()
     }
 
     private func hello(_ p: UInt16) async throws(ProtocolError) -> HelperProtocol.Hello {

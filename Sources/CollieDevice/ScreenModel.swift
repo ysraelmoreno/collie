@@ -4,8 +4,10 @@ import CollieProtocol
 
 /// One element of a `Screen` group: `ref` taps it (`device tap --ref`), `state` is any of selected, checked,
 /// disabled, focused, scrollable, password. `position` is set on floating items only ("topo direito").
+/// `ocr`: read from the screenshot (`OCR.nodes`), always a content text.
 public struct ScreenItem: Equatable, Sendable {
     public var ref: String, label: String, role: String, state: [String], id: String, position: String?
+    public var ocr = false
 }
 
 /// `device screen`: the UI tree grouped the way a person reads it (title, back, tabs, actions, fields, content,
@@ -49,7 +51,7 @@ public enum ScreenModel {
                          n.checked ? "checked" : nil, n.enabled ? nil : "disabled", n.focused ? "focused" : nil,
                          n.scrollable ? "scrollable" : nil, n.password ? "password" : nil].compactMap { $0 }
             used.insert(i)
-            return ScreenItem(ref: n.ref, label: text ?? label(i, consume: true), role: role, state: state, id: n.id, position: nil)
+            return ScreenItem(ref: n.ref, label: text ?? label(i, consume: true), role: role, state: state, id: n.id, position: nil, ocr: n.ocr)
         }
         let top = { (i: Int) in nodes[i].bounds.midY < h * 0.15 }
         let inToolbar = { (i: Int) in ancestors(i).contains { roles[$0] == "toolbar" } }
@@ -62,8 +64,9 @@ public enum ScreenModel {
             s.back = item(b, "button")
         }
         // title: the toolbar's first text, else the first plain text near the top
+        // OCR items only ever land in content
         let titleNode = nodes.indices.first { i in !used.contains(i) && !nodes[i].clickable && !own(nodes[i]).isEmpty && inToolbar(i) }
-            ?? nodes.indices.first { i in !used.contains(i) && !nodes[i].clickable && !own(nodes[i]).isEmpty && top(i) && !inList(i) }
+            ?? nodes.indices.first { i in !used.contains(i) && !nodes[i].ocr && !nodes[i].clickable && !own(nodes[i]).isEmpty && top(i) && !inList(i) }
         if let t = titleNode { s.title = own(nodes[t]); used.insert(t) }
         // fields
         for i in nodes.indices where roles[i] == "field" && !used.contains(i) {
@@ -121,7 +124,7 @@ public enum ScreenModel {
         lines.append(row("Ações", s.actions))
         lines.append(row("Campos", s.fields))
         if !s.content.isEmpty {
-            let items = s.content.map { $0.role == "text" ? "\"\($0.label)\"" : b($0) } + (s.more > 0 ? ["+\(s.more) itens: use device ui"] : [])
+            let items = s.content.map { $0.role == "text" ? "\"\($0.label)\"" + ($0.ocr ? " (ocr)" : "") : b($0) } + (s.more > 0 ? ["+\(s.more) itens: use device ui"] : [])
             lines.append("Conteúdo\(s.scrolls ? " (rolável)" : ""): " + items.joined(separator: ", "))
         }
         if !s.floating.isEmpty {
@@ -133,13 +136,15 @@ public enum ScreenModel {
         return lines.compactMap { $0 }.joined(separator: "\n")
     }
 
-    /// `{text,title,back,tabs[],actions[],fields[],lists[],floating[],changed[],more}`; items `{ref,label,role,state[],id?,position?}`.
+    /// `{text,title,back,tabs[],actions[],fields[],lists[],floating[],changed[],more}`; items `{ref,label,role,state[],id?,position?,source?}`
+    /// (`source: "ocr"` on OCR items).
     public static func json(_ s: Screen) -> [String: JSONValue] {
         func j(_ i: ScreenItem) -> JSONValue {
             var o: [String: JSONValue] = ["ref": .string(i.ref), "label": .string(i.label), "role": .string(i.role),
                                           "state": .array(i.state.map { .string($0) })]
             if !i.id.isEmpty { o["id"] = .string(i.id) }
             if let p = i.position { o["position"] = .string(p) }
+            if i.ocr { o["source"] = .string("ocr") }
             return .object(o)
         }
         return ["text": .string(text(s)), "title": s.title.map { .string($0) } ?? .null, "back": s.back.map(j) ?? .null,

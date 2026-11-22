@@ -115,11 +115,8 @@ extension DeviceService {
             return try? HelperProtocol.decode(line, as: T.self)
         }
         func acked(_ r: HelperProtocol.Request) async -> Bool { await helped(r, as: HelperProtocol.Reply.self) != nil }
-        /// A helper dump with an active window.
-        func helperDump() async -> HelperProtocol.Dump? {
-            guard let d = await helped(.dump, as: HelperProtocol.Dump.self), d.root else { return nil }
-            return d
-        }
+        /// A helper dump with an active window and nodes (an empty one sends the helper to fallback: H7).
+        func helperDump() async -> HelperProtocol.Dump? { await helper?.dump() }
         /// `click` at `path` (the helper climbs to a clickable ancestor, else touches the node's center): true done,
         /// false `node gone` (the screen changed since the dump), nil not through the helper.
         func click(_ path: [Int]) async -> Bool? {

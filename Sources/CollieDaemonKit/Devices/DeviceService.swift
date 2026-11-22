@@ -156,7 +156,10 @@ actor DeviceService {
         guard let panel, case .string(let serial)? = panel.state["serial"] else {
             throw ProtocolError(code: .invalidArgs, message: "'\(command)' needs a device panel")
         }
-        if panel.state["platform"] != .string("ios") { kickHelper(panel: panel.id, serial: serial) }
+        if panel.state["platform"] != .string("ios") {
+            kickHelper(panel: panel.id, serial: serial)
+            await helpers[serial]?.recover()   // H7: a fallback is retried at most every 30 s
+        }
         func act(_ c: String, _ a: [String: JSONValue]) async throws(ProtocolError) -> JSONValue {
             if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
             return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)

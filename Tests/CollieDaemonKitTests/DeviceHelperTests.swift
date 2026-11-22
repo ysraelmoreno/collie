@@ -55,6 +55,8 @@ private final class FakeHelper: @unchecked Sendable {
         lock.withLock { dumpNodes = nodes?.replacingOccurrences(of: "\n", with: ""); gone = goneClicks }   // one answer, one line
     }
 
+    func set(emptyDumps: Int) { lock.withLock { state.emptyDumps = emptyDumps } }
+
     func set(pushes: [Int], drop: Bool = false) { lock.withLock { self.pushes = pushes; self.drop = drop } }
 
     private func subscribed(_ c: Int32) {
@@ -142,8 +144,18 @@ private actor FakeAdb {
     var removedForward: Bool { calls.contains { $0 == ["forward", "--remove", "tcp:\(helper.port)"] } }
 }
 
-private func make(_ adb: FakeAdb, serial: String = "emulator-5554", apk: URL? = URL(fileURLWithPath: "/bundle/collie-helper.apk")) -> DeviceHelper {
-    DeviceHelper(serial: serial, adb: { args in await adb.run(args) }, apk: { apk }, answer: .milliseconds(300), gap: .milliseconds(10))
+/// A clock the test moves by hand (`recover`'s 30 s without sleeping).
+private final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var t = ContinuousClock.now
+    var now: ContinuousClock.Instant { lock.withLock { t } }
+    func advance(_ d: Duration) { lock.withLock { t += d } }
+}
+
+private func make(_ adb: FakeAdb, serial: String = "emulator-5554", apk: URL? = URL(fileURLWithPath: "/bundle/collie-helper.apk"),
+                  clock: TestClock = TestClock()) -> DeviceHelper {
+    DeviceHelper(serial: serial, adb: { args in await adb.run(args) }, apk: { apk }, answer: .milliseconds(300), gap: .milliseconds(10),
+                 now: { clock.now })
 }
 private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(let o) = v { o[k] } else { nil } }
 
@@ -172,8 +184,10 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         #expect(await adb.installs == 0)
     }
 
+    @Test func versionIsTwo() { #expect(HelperProtocol.version == 2) }
+
     @Test func oldVersionIsReinstalled() async throws {
-        let srv = try FakeHelper(installed: true, version: 0); defer { srv.stop() }
+        let srv = try FakeHelper(installed: true, version: 1); defer { srv.stop() }   // v1: the one that kept the socket
         let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
         let h = make(adb)
         await h.start(install: true)
@@ -243,6 +257,57 @@ private func field(_ v: JSONValue, _ k: String) -> JSONValue? { if case .object(
         #expect(await adb.removedForward)
         #expect(await h.state == .off)
         #expect(await h.reason == "removed")
+    }
+
+    @Test func emptyDumpsRebindTheServiceOnceKeepingTheOthers() async throws {
+        let srv = try FakeHelper(installed: true, emptyDumps: DeviceHelper.tries + 2); defer { srv.stop() }
+        let adb = FakeAdb(services: "com.a/.X:\(HelperProtocol.service):com.b/.Y", helper: srv)
+        let h = make(adb)
+        await h.start(install: true)
+        #expect(await h.state == .ready, "\(await h.reason ?? "")")
+        let puts = await adb.calls.filter { $0.prefix(5) == ["shell", "settings", "put", "secure", "enabled_accessibility_services"] }.map { $0[5] }
+        #expect(puts == ["'com.a/.X:com.b/.Y'", "'com.a/.X:com.b/.Y:\(HelperProtocol.service)'"], "off, then on again: \(puts)")
+        #expect(await adb.services == "com.a/.X:com.b/.Y:\(HelperProtocol.service)")
+        #expect(await adb.accessibilityEnabled == "1")
+        #expect(await adb.installs == 0)
+    }
+
+    @Test func dumpsStillEmptyAfterTheRebindFallBack() async throws {
+        let srv = try FakeHelper(installed: true, emptyDumps: 1000); defer { srv.stop() }
+        let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
+        let h = make(adb)
+        await h.start(install: true)
+        #expect(await h.state == .fallback)
+        #expect(await h.reason?.contains("after re-enabling") == true, "\(await h.reason ?? "")")
+        #expect(await adb.calls.filter { $0 == ["shell", "settings", "delete", "secure", "enabled_accessibility_services"] }.count == 1, "one rebind")
+        #expect(await adb.services == HelperProtocol.service)
+    }
+
+    @Test func fallbackIsRetriedAfterThirtySeconds() async throws {
+        let srv = try FakeHelper(installed: false); defer { srv.stop() }
+        let adb = FakeAdb(services: HelperProtocol.service, helper: srv)
+        let clock = TestClock()
+        let h = make(adb, serial: "R5CT1234", clock: clock)
+        await h.start(install: false)
+        #expect(await h.state == .fallback)
+        let forwards = { await adb.calls.filter { $0.first == "forward" && $0.count == 3 }.count }
+        #expect(await forwards() == 1)
+        clock.advance(.seconds(29))
+        await h.recover()
+        #expect(await forwards() == 1, "not before 30 s")
+        clock.advance(.seconds(1))
+        await h.recover()   // still not there: the fallback and its reason stay, the next try 30 s later
+        #expect(await forwards() == 2)
+        #expect(await h.state == .fallback && h.reason?.contains("not answering") == true)
+        srv.installed()
+        await h.recover()
+        #expect(await forwards() == 2, "the failed try restarts the 30 s")
+        clock.advance(.seconds(30))
+        await h.recover()
+        #expect(await h.state == .ready)
+        let s = await h.status
+        #expect(field(s, "source") == .string("helper") && field(s, "reason") == .null)
+        #expect(await adb.installs == 0)
     }
 
     @Test func removeOfTheOnlyServiceDeletesTheSetting() async throws {
@@ -353,6 +418,19 @@ extension DeviceHelperTests {
         #expect(ops.contains { $0.contains(#""op":"text""#) && $0.contains(#""value":"hi""#) })
         #expect(ops.contains { $0.contains(#""action":"back""#) } && ops.contains { $0.contains(#""action":"recents""#) })
         #expect(fx.adb.filter { $0.contains("input") } == ["-s emulator-5554 shell input keyevent 66"], "\(fx.adb)")   // enter: a keyevent
+        await fx.cleanup()
+    }
+
+    @Test func emptyDumpOfAReadyHelperShowsInTheStatus() async throws {
+        let srv = try FakeHelper(installed: true); defer { srv.stop() }
+        let fx = try Svc(srv)
+        let h = await fx.ready()
+        srv.set(emptyDumps: 1)
+        let ui = obj(try await fx.run("device.ui", ["timing": .bool(true)]))
+        #expect(obj(ui["timingMs"])["source"] == .string("uiautomator"))
+        let s = try await fx.svc.helperCommand("status", serial: "emulator-5554")
+        #expect(field(s, "state") == .string("fallback") && field(s, "source") == .string("uiautomator"), "\(s)")
+        #expect(await h.reason?.contains("without nodes") == true)
         await fx.cleanup()
     }
 

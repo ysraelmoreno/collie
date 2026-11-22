@@ -57,11 +57,16 @@ extension DeviceService {
             }
             return .object(out)
         case "device.ui":
+            let start = ContinuousClock.now
             let tree = try await describe()
+            let axeMs = Self.ms(ContinuousClock.now - start)   // AXe runs and parses in one step here
             guard tree.screen != nil else { throw ProtocolError(code: .internal, message: "axe describe-ui returned no UI tree") }
             try alive(panel)
             refs[panel.id] = tree.nodes
-            return UITree.result(tree.nodes, truncated: tree.truncated, all: args["all"] == .bool(true))
+            let r = UITree.result(tree.nodes, truncated: tree.truncated, all: args["all"] == .bool(true))
+            guard Self.timing(args), case .object(var o) = r else { return r }
+            o["timingMs"] = .object(["axe": axeMs])
+            return .object(o)
         case "device.tap":
             if let ref = args["ref"].flatMap({ if case .string(let s) = $0 { s } else { nil } }) {
                 guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {

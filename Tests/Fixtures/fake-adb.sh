@@ -1,11 +1,14 @@
 #!/bin/sh
 # Fake adb for tests. Logs each invocation (args joined by tab) to $COLLIE_FAKE_ADB_LOG.
 # `devices -l` prints the file $COLLIE_FAKE_ADB_DEVICES; screencap cats $COLLIE_FAKE_ADB_PNG; `cat /sdcard/collie-ui.xml`
-# cats $COLLIE_FAKE_ADB_UI; screencap first sleeps $COLLIE_FAKE_ADB_SLEEP seconds when set; `logcat -d` cats $COLLIE_FAKE_ADB_LOGCAT; install prints Success; monkey prints Events injected.
+# cats $COLLIE_FAKE_ADB_UI (so does `exec-out uiautomator dump /dev/tty` when $COLLIE_FAKE_ADB_TTY is set, else it prints nothing); screencap first sleeps $COLLIE_FAKE_ADB_SLEEP seconds when set; `logcat -d` cats $COLLIE_FAKE_ADB_LOGCAT; install prints Success; monkey prints Events injected.
 # `shell date +%s` prints 1700000000; `logcat -b crash` appends $$ to $COLLIE_FAKE_ADB_PIDS, prints $COLLIE_FAKE_ADB_CRASH
 # (when set) and sleeps 600 s (the watcher must kill the group).
 # `emu avd name` prints the name for the serial from $COLLIE_FAKE_ADB_AVDNAMES (lines `<serial> <name>`) then OK (OK first with $COLLIE_FAKE_ADB_OK_FIRST), else exits 1;
+# `shell cmd package query-activities …` cats $COLLIE_FAKE_ADB_LAUNCHERS when set (else prints nothing).
 # `shell getprop sys.boot_completed` prints ${COLLIE_FAKE_ADB_BOOTED:-1}.
+# `shell input swipe` (a scrolled list): when the file $COLLIE_FAKE_ADB_SCROLL has lines, copies the file named on its
+# first line over $COLLIE_FAKE_ADB_UI and drops that line; none left: the tree stays (the end of the list).
 # scrcpy: `push` and `forward --remove` are only logged; `forward tcp:0 …` prints $COLLIE_FAKE_ADB_PORT; `shell CLASSPATH=…`
 # (the server) appends "scrcpy $$" to $COLLIE_FAKE_ADB_PIDS (apart from the crash watchers' bare pids) and becomes `sleep 600`.
 if [ -n "$COLLIE_FAKE_ADB_LOG" ]; then
@@ -18,10 +21,16 @@ case "$1 $2 $3" in
   "devices -l "*) cat "$COLLIE_FAKE_ADB_DEVICES" ;;
   "exec-out screencap -p") [ -n "$COLLIE_FAKE_ADB_SLEEP" ] && sleep "$COLLIE_FAKE_ADB_SLEEP"; cat "$COLLIE_FAKE_ADB_PNG" ;;
   "exec-out cat /sdcard/collie-ui.xml") cat "$COLLIE_FAKE_ADB_UI" ;;
+  "exec-out uiautomator dump") [ -n "$COLLIE_FAKE_ADB_TTY" ] && cat "$COLLIE_FAKE_ADB_UI" && echo "UI hierchary dumped to: /dev/tty" ;;
   "logcat -d -t") cat "$COLLIE_FAKE_ADB_LOGCAT" ;;
   "install -r "*) echo Success ;;
   "shell monkey -p") echo "Events injected: 1" ;;
+  "shell cmd package") [ -n "$COLLIE_FAKE_ADB_LAUNCHERS" ] && cat "$COLLIE_FAKE_ADB_LAUNCHERS" ;;
   "emu avd name") n=$(grep "^$SERIAL " "$COLLIE_FAKE_ADB_AVDNAMES" 2>/dev/null | head -1 | cut -d' ' -f2-); [ -n "$n" ] || exit 1; [ -n "$COLLIE_FAKE_ADB_OK_FIRST" ] && echo OK; echo "$n"; [ -z "$COLLIE_FAKE_ADB_OK_FIRST" ] && echo OK; exit 0 ;;
+  "shell input swipe")
+    if [ -s "$COLLIE_FAKE_ADB_SCROLL" ]; then
+      cp "$(head -1 "$COLLIE_FAKE_ADB_SCROLL")" "$COLLIE_FAKE_ADB_UI"; sed -i '' 1d "$COLLIE_FAKE_ADB_SCROLL"
+    fi ;;
   "shell getprop sys.boot_completed") echo "${COLLIE_FAKE_ADB_BOOTED:-1}" ;;
   "shell date +%s") echo 1700000000 ;;
   "forward tcp:0 "*) echo "$COLLIE_FAKE_ADB_PORT" ;;

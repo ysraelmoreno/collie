@@ -175,6 +175,8 @@ enum CLI {
         case ("model", .object(let o)): return str(o["model"]) + "\n" + (o["note"].map { "note: \(str($0))\n" } ?? "")
         case (_, .object(let o)) where o["output"] != nil:
             let s = str(o["output"]); return s.hasSuffix("\n") ? s : s + "\n"
+        case ("device.screen", .object(let o)):
+            return str(o["text"]) + "\n" + (o["tree"].map { "\n" + str($0) + "\n" } ?? "")
         case ("admin.spawn", .object(let o)): return str(o["id"]) + "\n"
         case ("plugin.install", .object(let o)):
             var s = "Instalado \(str(o["name"])) \(str(o["version"]))\n"

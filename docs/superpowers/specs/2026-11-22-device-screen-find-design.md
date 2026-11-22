@@ -85,6 +85,8 @@ Heurísticas erradas são esperadas em apps reais. Por isso `screen` nunca escon
 Medido hoje: `device ui` 2,2 a 3,3 s, e `find --scroll` multiplica isso por volta.
 - Passo 1 (barato): `uiautomator dump /dev/tty` via `adb exec-out`, em vez de gravar em `/sdcard` e fazer `cat`
   (corta uma chamada de adb). Medir antes e depois; se não passar de ~10%, não vale manter.
+  Medido em 2026-11-22 (emulator-5554, 7 rodadas, muito ruído): `/dev/tty` ~2,7 s, arquivo + `cat` ~3,0 s (mediana),
+  ganho de ~5 a 10%: o tempo é do próprio `uiautomator`. Ficou com o fallback para o arquivo; manter ou não é do dono.
 - Passo 2 (só se o passo 1 não bastar): sessão persistente. Android: auxiliar residente (a avaliar: `uiautomator2`,
   serviço de acessibilidade próprio); iOS: conferir se o AXe tem modo persistente ou em lote (não verificado).
   Avaliar custo de dependência e de instalação antes de decidir; não fazer sem aprovação do dono.

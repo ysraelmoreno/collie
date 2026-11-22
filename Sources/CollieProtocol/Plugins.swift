@@ -167,9 +167,12 @@ extension PluginRegistry {
     }
     /// `--then ui` on the actions: after it, wait `settle` ms and return the device.ui tree too (one call per step).
     private static let then = [
-        ParamSpec("then", .string, help: "ui: also return the UI tree after the action ({ui:{tree,truncated,nodes,total}}, refs updated)"),
-        ParamSpec("settle", .int, help: "With --then ui: ms to wait before reading the tree (0-3000, default 400)"),
+        ParamSpec("then", .string, help: "ui: also return the UI tree after the action ({ui:{tree,truncated,nodes,total}}, refs updated); screen: the device.screen groups instead ({screen})"),
+        ParamSpec("settle", .string, help: "With --then: ms to wait before reading (0-3000, default 400), or stable: wait (up to 5 s) for two equal UI dumps in a row, {settled} says if it did"),
     ]
+
+    /// `--timing` on device.ui|screen: ms per step, to measure without timing from outside.
+    private static let timing = ParamSpec("timing", .flag, help: "Also return {timingMs}: ms per step (Android adb, parse, dump: tty|file; iOS axe; screen adds group)")
 
     /// An Android device or emulator through adb, or an iOS Simulator through simctl + AXe; the daemon runs these
     /// commands (no app round trip).
@@ -182,7 +185,21 @@ extension PluginRegistry {
             dcmd("lite.remove", "Delete the collie-lite Android emulator (admin only; removes it from ~/.android/avd); returns {}", timeout: 90, panelFree: true, exposedToMCP: false),
             dcmd("screenshot", "Screenshot to a PNG file, for you to look at, not to parse (use device.ui to find elements); returns {path,width,height}, plus on iOS {scale,pointWidth,pointHeight}: iOS taps and swipes use points (see pointWidth/pointHeight), not the PNG's pixels", [out], timeout: 30),
             dcmd("ui", "UI tree with element refs: only labelled or clickable nodes (refs keep the full tree's numbering, so gaps); returns {tree,truncated,nodes,total}. Read this tree to find elements and tap --ref them, not the screenshot PNG",
-                 [ParamSpec("all", .flag, help: "Every node, as before (to debug); same refs")], timeout: 30),
+                 [ParamSpec("all", .flag, help: "Every node, as before (to debug); same refs"), timing], timeout: 30),
+            dcmd("screen", "The screen in groups: title, back, tabs (* = selected), actions, fields, content, floating buttons, and what changed since the last screen; text in {text}, items {ref,label,role,state} in {title,back,tabs,actions,fields,lists,floating,changed,more}. Tap items by --ref or --text; use device.ui when something is missing",
+                 [ParamSpec("all", .flag, help: "Also return the raw device.ui --all tree in {tree} (to debug the grouping)"), timing], timeout: 30),
+            dcmd("wait", "Wait for --text to show (or go, with --gone) and/or the screen to settle (--stable: two equal UI dumps in a row), instead of sleep + device.ui; returns {ok,waitedMs} (refs updated); on timeout a timeout error with the last screen",
+                 [ParamSpec("text", .string, help: "Text or desc to wait for (any case, containing)"),
+                  ParamSpec("gone", .flag, help: "With --text: wait for it to disappear"),
+                  ParamSpec("stable", .flag, help: "Wait for two equal UI dumps in a row"),
+                  ParamSpec("timeout", .int, help: "Seconds (1-60, default 10)")], timeout: 75),
+            dcmd("find", "Find the element with this text or desc on the current screen (one fresh UI dump; the tap --text match: any case, equal first, then containing; several: the first); returns {found,ref,label,role,center,clickable} (refs updated: tap --ref works next), or notFound with up to 5 similar labels. --scroll: swipe and dump again until found, the list end (the tree no longer changes) or --max swipes; adds {scrolls,endReached} (notFound says both)",
+                 [ParamSpec("text", .rest, positional: true, required: true, help: "Text or desc to find"),
+                  ParamSpec("role", .string, help: "Only an element of this device.screen role: tab, button or field"),
+                  ParamSpec("then", .string, help: "screen: also return the device.screen groups ({screen}), from the same dump"),
+                  ParamSpec("scroll", .flag, help: "Not on screen: swipe 75% to 35% of the height and look again"),
+                  ParamSpec("dir", .string, help: "With --scroll: down (default) or up"),
+                  ParamSpec("max", .int, help: "With --scroll: at most this many swipes (1-30, default 8)")], timeout: 150),
             dcmd("tap", "Tap at x y (Android (pixels) or iOS Simulator (points)), on an element from device.ui (--ref), or on the element with a label or id (--text/--id: a fresh UI dump, no device.ui needed)",
                  [coord("x"), coord("y"), ParamSpec("ref", .string, help: "Element ref from device.ui"),
                   ParamSpec("text", .string, help: "Tap the element whose text or desc is this (any case; equal first, then containing); a non-clickable match taps its clickable ancestor"),

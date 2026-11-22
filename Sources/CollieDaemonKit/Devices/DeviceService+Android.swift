@@ -120,12 +120,25 @@ extension DeviceService {
             } catch { throw ProtocolError(code: .internal, message: "cannot write screenshot: \(error.localizedDescription)") }
             return .object(["path": .string(file.path), "width": .number(Double(size.width)), "height": .number(Double(size.height))])
         case "device.ui":
-            _ = try await adb(["shell", "uiautomator", "dump", "/sdcard/collie-ui.xml"])
-            let xml = try await adb(["exec-out", "cat", "/sdcard/collie-ui.xml"])
-            let (nodes, truncated) = UITree.parse(xml.stdoutData)
+            let clock = ContinuousClock(), start = clock.now
+            // one adb call: the XML comes straight on stdout; a device whose uiautomator cannot write /dev/tty prints
+            // no hierarchy there, so fall back to the file dump (two calls)
+            // ponytail: such a device pays the failed tty try on every dump; remember it per serial if one shows up
+            var xml = AdbParsing.ttyDump(try await adb(["exec-out", "uiautomator", "dump", "/dev/tty"]).stdoutData)
+            let via = xml == nil ? "file" : "tty"
+            if xml == nil {
+                _ = try await adb(["shell", "uiautomator", "dump", "/sdcard/collie-ui.xml"])
+                xml = try await adb(["exec-out", "cat", "/sdcard/collie-ui.xml"]).stdoutData
+            }
+            let dumped = clock.now
+            let (nodes, truncated) = UITree.parse(xml ?? Data())
+            let parsed = clock.now
             try alive()
             refs[panel.id] = nodes
-            return UITree.result(nodes, truncated: truncated, all: args["all"] == .bool(true))
+            let r = UITree.result(nodes, truncated: truncated, all: args["all"] == .bool(true))
+            guard Self.timing(args), case .object(var o) = r else { return r }
+            o["timingMs"] = .object(["adb": Self.ms(dumped - start), "parse": Self.ms(parsed - dumped), "dump": .string(via)])
+            return .object(o)
         case "device.tap":
             if let ref = args["ref"].flatMap({ if case .string(let s) = $0 { s } else { nil } }) {
                 guard let n = refs[panel.id]?.first(where: { $0.ref == ref }) else {
@@ -177,11 +190,27 @@ extension DeviceService {
                 return s
             }
             guard let pkg = try word("package") else { throw ProtocolError(code: .invalidArgs, message: "Missing argument 'package'") }
-            let out = try await adb(try word("activity").map { ["shell", "am", "start", "-n", "\(pkg)/\($0)"] }
+            // No --activity: an app may have several LAUNCHER activities (e.g. leakcanary's), and monkey then opens none (exit 251).
+            // So list them and start the first; monkey only when the list is unavailable or empty.
+            var activity = try word("activity")
+            if activity == nil, let list = try? await adb(["shell", "cmd", "package", "query-activities", "--brief",
+                                                            "-a", "android.intent.action.MAIN", "-c", "android.intent.category.LAUNCHER", pkg]).stdout {
+                let comp = ident.union(CharacterSet(charactersIn: "/"))
+                activity = list.split(whereSeparator: \.isWhitespace).lazy
+                    .filter { $0.hasPrefix("\(pkg)/") && $0.unicodeScalars.allSatisfy(comp.contains) }
+                    .map { String($0.dropFirst(pkg.count + 1)) }.first { !$0.isEmpty }
+            }
+            let out: String
+            do {
+                out = try await adb(activity.map { ["shell", "am", "start", "-n", "\(pkg)/\($0)"] }
                                     ?? ["shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"]).stdout
-            guard !out.contains("Error") else { throw ProtocolError(code: .internal, message: "launch failed: \(out.prefix(500))") }
+            } catch { out = "Error" }
+            guard !out.contains("Error"), !out.contains("monkey aborted") else {
+                throw ProtocolError(code: .internal, message: activity.map { "could not start \(pkg)/\($0); check the activity name with --activity" }
+                                    ?? "could not launch \(pkg): no launcher activity found; is it installed? Pass --activity to pick one")
+            }
             await emit(panel.id, "device.app_launched", .object(["serial": .string(serial), "package": .string(pkg)]))
-            return .object([:])
+            return .object(activity.map { ["activity": .string($0)] } ?? [:])
         default:
             throw ProtocolError(code: .invalidArgs, message: "Unknown command '\(command)'")
         }

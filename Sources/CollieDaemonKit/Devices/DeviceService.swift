@@ -26,6 +26,8 @@ actor DeviceService {
     var boots: [String: Task<String, Error>] = [:]
     let emit: @Sendable (UUID, String, JSONValue) async -> Void
     var refs: [UUID: [UINode]] = [:]
+    /// The last `device.screen` per panel, for its `changed`.
+    var lastScreen: [UUID: Screen] = [:]
     /// Panels closed so far: a command that was awaiting adb when its panel closed must not write anything afterwards.
     /// ponytail: grows by one UUID per closed device panel for the daemon's life; fine at this scale.
     var closed: Set<UUID> = []
@@ -147,20 +149,186 @@ actor DeviceService {
             if panel.state["platform"] == .string("ios") { return try await runIOS(c, panel: panel, udid: serial, args: a, cwd: cwd) }
             return try await runAndroid(c, panel: panel, serial: serial, args: a, cwd: cwd)
         }
-        let settle = try Self.then(args)   // checked before the action: a bad --then must not tap
+        func dump() async throws(ProtocolError) -> [UINode] {
+            _ = try await act("device.ui", [:])   // the device.ui path: refs updated
+            return refs[panel.id] ?? []
+        }
+        func screen(all: Bool, timing: Bool = false) async throws(ProtocolError) -> [String: JSONValue] {
+            let ui = try await act("device.ui", ["all": .bool(all), "timing": .bool(timing)])
+            let start = ContinuousClock.now
+            var screen = ScreenModel.build(refs[panel.id] ?? [])
+            screen.changed = ScreenModel.changes(from: lastScreen[panel.id], to: screen)
+            if !closed.contains(panel.id) { lastScreen[panel.id] = screen }
+            var o = ScreenModel.json(screen)
+            guard case .object(let u) = ui else { return o }
+            if all { o["tree"] = u["tree"] }
+            if timing, case .object(var t)? = u["timingMs"] {
+                t["group"] = Self.ms(ContinuousClock.now - start)
+                o["timingMs"] = .object(t)
+            }
+            return o
+        }
+        if command == "device.screen" { return .object(try await screen(all: args["all"] == .bool(true), timing: Self.timing(args))) }
+        if command == "device.wait" {
+            let w = try Self.waitSpec(args)
+            let r = try await poll(w, dump: dump)
+            guard r.ok else {
+                throw ProtocolError(code: .timeout, message: "device.wait: \(w.what) not reached in \(w.timeoutMs / 1000) s. Last screen:\n"
+                                    + ScreenModel.text(ScreenModel.build(r.last)))
+            }
+            return .object(["ok": .bool(true), "waitedMs": .number(Double(r.waitedMs))])
+        }
+        if command == "device.find" {
+            let q = try Self.findSpec(args)
+            if let scroll = q.scroll {
+                var o = try await findScrolling(q.text, role: q.role, scroll, dump: dump, swipe: { a throws(ProtocolError) in _ = try await act("device.swipe", a) })
+                if q.screen { o["screen"] = .object(try await screen(all: false)) }   // ponytail: one more dump for the groups
+                return .object(o)
+            }
+            guard q.screen else { return .object(try Self.find(try await dump(), text: q.text, role: q.role)) }
+            let shown = try await screen(all: false)   // one dump serves both (refs updated)
+            var o = try Self.find(refs[panel.id] ?? [], text: q.text, role: q.role)
+            o["screen"] = .object(shown)
+            return .object(o)
+        }
+        let then = try Self.then(args)   // checked before the action: a bad --then must not tap
         var args = args
         if command == "device.tap", let pick = try Self.tapPick(args) {
             _ = try await act("device.ui", [:])   // always a fresh dump: cached refs may be stale
             args["ref"] = .string(try UITree.target(refs[panel.id] ?? [], text: pick.text, id: pick.id, nth: pick.nth).ref)
         }
         let r = try await act(command, args)
-        guard let settle, Self.thenCommands.contains(command) else { return r }
-        // ponytail: fixed settle, may catch an animation midway; the agent can run device.ui again
-        await Self.nap(.milliseconds(settle))
-        let ui = try await act("device.ui", [:])   // the same path as device.ui: refs updated
-        guard case .object(var o) = r else { return r }
-        o["ui"] = ui
+        guard let then, Self.thenCommands.contains(command), case .object(var o) = r else { return r }
+        if let ms = then.settleMs {
+            // ponytail: fixed settle, may catch an animation midway; --settle stable waits for it
+            await Self.nap(.milliseconds(ms))
+        } else {
+            // the action already ran: a screen that never settles returns its last tree anyway, with settled false
+            o["settled"] = .bool(try await poll(Wait(text: nil, gone: false, stable: true, timeoutMs: Self.stableSettleMs), dump: dump).ok)
+        }
+        if then.screen { o["screen"] = .object(try await screen(all: false)) } else { o["ui"] = try await act("device.ui", [:]) }
         return .object(o)
+    }
+
+    /// What `device.wait` waits for: `text` to show (or go, `gone`), and/or two equal dumps in a row (`stable`).
+    struct Wait {
+        let text: String?; let gone: Bool; let stable: Bool; let timeoutMs: Int
+        var what: String { [text.map { "text '\($0)' " + (gone ? "gone" : "shown") }, stable ? "stable screen" : nil].compactMap { $0 }.joined(separator: " + ") }
+        /// `text` (any case, in a node's text or desc, containing) shows or, with `gone`, is absent.
+        func textMet(_ nodes: [UINode]) -> Bool {
+            guard let t = text?.lowercased() else { return true }
+            return nodes.contains { $0.text.lowercased().contains(t) || $0.desc.lowercased().contains(t) } != gone
+        }
+    }
+
+    /// `--settle stable` after an action: at most this long for two equal dumps.
+    static let stableSettleMs = 5000
+    /// Pause between two dumps of a wait (a dump itself takes 2-3 s on Android).
+    static let pollGapMs = 200
+
+    /// `device.find --scroll`: `up` swipes the other way (to go back up a list); `max` swipes at most.
+    struct Scroll: Equatable { let up: Bool; let max: Int }
+    /// `device.find --scroll` without --max.
+    static let defaultMaxScrolls = 8
+    /// Pause after each `find --scroll` swipe before the next dump (the `--then` default; the dump itself takes 2-3 s).
+    static let scrollSettleMs = 400
+
+    /// `device.find` args: the text (required), --role tab|button|field, --then screen (nothing else),
+    /// --scroll with --dir down|up (default down) and --max 1-30 (default 8); --dir/--max without --scroll: invalidArgs.
+    static func findSpec(_ a: [String: JSONValue]) throws(ProtocolError) -> (text: String, role: String?, screen: Bool, scroll: Scroll?) {
+        guard case .string(let text)? = a["text"], !text.isEmpty else { throw ProtocolError(code: .invalidArgs, message: "device.find needs a text") }
+        var role: String?
+        switch a["role"] {
+        case nil, .null?: role = nil
+        case .string(let r)? where ["tab", "button", "field"].contains(r): role = r
+        default: throw ProtocolError(code: .invalidArgs, message: "--role takes tab, button or field")
+        }
+        let screen: Bool
+        switch a["then"] {
+        case nil, .null?: screen = false
+        case .string("screen")?: screen = true
+        default: throw ProtocolError(code: .invalidArgs, message: "device.find --then only takes 'screen'")
+        }
+        let up: Bool
+        switch a["dir"] {
+        case nil, .null?, .string("down")?: up = false
+        case .string("up")?: up = true
+        default: throw ProtocolError(code: .invalidArgs, message: "--dir takes down or up")
+        }
+        let max = try int(a, "max", 1...30)
+        guard a["scroll"] == .bool(true) || a["scroll"] == .string("true") else {
+            if a["dir"] != nil && a["dir"] != .null || max != nil { throw ProtocolError(code: .invalidArgs, message: "--dir and --max need --scroll") }
+            return (text, role, screen, nil)
+        }
+        return (text, role, screen, Scroll(up: up, max: max ?? defaultMaxScrolls))
+    }
+
+    /// `device.find --scroll`: dump, look (`find`); not there: swipe from 75% to 35% of the height (`up`: back) in the
+    /// middle of the width, wait `scrollSettleMs`, dump again. Stops when found, when the tree stays the same after a
+    /// swipe (end of the list: `endReached`) or after `max` swipes. The answer and the notFound message carry
+    /// `scrolls` and `endReached`. The size is the extent of the dumped nodes (Android pixels, iOS points).
+    func findScrolling(_ text: String, role: String?, _ s: Scroll, dump: () async throws(ProtocolError) -> [UINode],
+                       swipe: ([String: JSONValue]) async throws(ProtocolError) -> Void) async throws(ProtocolError) -> [String: JSONValue] {
+        var nodes = try await dump(), scrolls = 0
+        while true {
+            let miss: String
+            do {
+                var o = try Self.find(nodes, text: text, role: role)
+                o["scrolls"] = .number(Double(scrolls)); o["endReached"] = .bool(false)
+                return o
+            } catch where error.code == .notFound { miss = error.message }
+            func notFound(_ end: Bool) -> ProtocolError {
+                ProtocolError(code: .notFound, message: miss + " (scrolls: \(scrolls), endReached: \(end))")
+            }
+            guard scrolls < s.max, !Task.isCancelled else { throw notFound(false) }
+            // ponytail: the extent of the kept nodes (the bare root is dropped); `wm size` if a short tree swipes too little
+            let box = nodes.map(\.bounds).reduce(CGRect.null) { $0.union($1) }
+            let x = box.isNull ? 0 : Double(Int(box.midX)), h = box.isNull ? 0 : box.maxY
+            let low = Double(Int(h * 0.75)), high = Double(Int(h * 0.35))
+            try await swipe(["x1": .number(x), "y1": .number(s.up ? high : low), "x2": .number(x), "y2": .number(s.up ? low : high)])
+            scrolls += 1
+            await Self.nap(.milliseconds(Self.scrollSettleMs))
+            let next = try await dump()
+            if next == nodes { throw notFound(true) }   // the swipe moved nothing: end of the list
+            nodes = next
+        }
+    }
+
+    /// `device.find`: the `tap --text` match (UITree.target) on one dump, its role and label from the ScreenModel
+    /// groups. Several matches: the first in tree order. None (or none with `role`): notFound with similar labels.
+    static func find(_ nodes: [UINode], text: String, role: String?) throws(ProtocolError) -> [String: JSONValue] {
+        let s = ScreenModel.build(nodes, cap: .max)
+        let groups = [s.back].compactMap { $0 } + s.tabs + s.actions + s.fields + s.content + s.floating
+        let items = Dictionary(groups.map { ($0.ref, $0) }, uniquingKeysWith: { a, _ in a })
+        let n = try UITree.target(nodes, text: text, id: nil, nth: 1, keep: { role == nil || items[$0.ref]?.role == role })
+        let it = items[n.ref]
+        return ["found": .bool(true), "ref": .string(n.ref), "label": .string(it?.label ?? (n.text.isEmpty ? n.desc : n.text)),
+                "role": .string(it?.role ?? "text"), "clickable": .bool(n.clickable),
+                "center": .object(["x": .number(Double(n.center.x)), "y": .number(Double(n.center.y))])]
+    }
+
+    /// `device.wait` args: --text and/or --stable (--gone needs --text), --timeout seconds (1-60, default 10).
+    static func waitSpec(_ a: [String: JSONValue]) throws(ProtocolError) -> Wait {
+        let text: String? = if case .string(let s)? = a["text"], !s.isEmpty { s } else { nil }
+        func flag(_ k: String) -> Bool { a[k] == .bool(true) || a[k] == .string("true") }
+        let gone = flag("gone"), stable = flag("stable")
+        guard text != nil || stable else { throw ProtocolError(code: .invalidArgs, message: "device.wait needs --text or --stable") }
+        guard !gone || text != nil else { throw ProtocolError(code: .invalidArgs, message: "--gone needs --text") }
+        return Wait(text: text, gone: gone, stable: stable, timeoutMs: (try int(a, "timeout", 1...60) ?? 10) * 1000)
+    }
+
+    /// Dumps until `w` holds or its timeout passes (checked after each dump: one dump may overrun it).
+    func poll(_ w: Wait, dump: () async throws(ProtocolError) -> [UINode]) async throws(ProtocolError) -> (ok: Bool, waitedMs: Int, last: [UINode]) {
+        let start = ContinuousClock.now
+        var prev: [UINode]?
+        while true {
+            let nodes = try await dump()
+            let waited = Int((ContinuousClock.now - start) / .milliseconds(1))
+            if w.textMet(nodes), !w.stable || prev == nodes { return (true, waited, nodes) }
+            if waited >= w.timeoutMs || Task.isCancelled { return (false, waited, nodes) }
+            prev = nodes
+            await Self.nap(.milliseconds(Self.pollGapMs))
+        }
     }
 
     /// `device.tap --text/--id` (with `--nth`): what to look for; nil when tapping by x y or --ref. Exactly one of
@@ -177,19 +345,29 @@ actor DeviceService {
         return (text, id, try int(a, "nth", 1...10_000))
     }
 
+    /// A duration in whole ms, for `--timing`'s `timingMs`.
+    static func ms(_ d: Duration) -> JSONValue { .number((d / .milliseconds(1)).rounded()) }
+    /// `--timing` set (a flag arrives as true or "true").
+    static func timing(_ a: [String: JSONValue]) -> Bool { a["timing"] == .bool(true) || a["timing"] == .string("true") }
+
     /// A plain timed wait (cancellation ends it early), for the waits that are about time, not an event.
     static func nap(_ d: Duration) async { try? await Task.sleep(for: d) }
 
-    /// The actions that take `--then ui` (and `--settle`).
+    /// The actions that take `--then ui|screen` (and `--settle`).
     static let thenCommands: Set<String> = ["device.tap", "device.swipe", "device.text", "device.key", "device.launch"]
 
-    /// `--then ui`: the settle wait in ms (default 400, at most 3000); no `--then`: nil. Any value but `ui`: invalidArgs.
-    static func then(_ a: [String: JSONValue]) throws(ProtocolError) -> Int? {
+    /// `--then ui|screen` with `--settle <ms>` (0-3000, default 400; `settleMs`) or `--settle stable` (nil `settleMs`);
+    /// no `--then`: nil. Any other value: invalidArgs.
+    static func then(_ a: [String: JSONValue]) throws(ProtocolError) -> (screen: Bool, settleMs: Int?)? {
+        let screen: Bool
         switch a["then"] {
         case nil, .null?: return nil
-        case .string("ui")?: return try int(a, "settle", 0...3000) ?? 400
-        default: throw ProtocolError(code: .invalidArgs, message: "--then only takes 'ui'")
+        case .string("ui")?: screen = false
+        case .string("screen")?: screen = true
+        default: throw ProtocolError(code: .invalidArgs, message: "--then only takes 'ui' or 'screen'")
         }
+        if a["settle"] == .string("stable") { return (screen, nil) }
+        return (screen, try int(a, "settle", 0...3000) ?? 400)
     }
 
     /// Checked after every await that precedes a write: a panel closed meanwhile gets nothing written for it.
@@ -271,6 +449,7 @@ actor DeviceService {
     func panelClosed(_ id: UUID) async {
         closed.insert(id)
         refs[id] = nil
+        lastScreen[id] = nil
         idle.removeValue(forKey: id)?.cancel()
         sessions.removeValue(forKey: id)?.end("ended", "Panel closed")
         let prefix = id.uuidString + "-"

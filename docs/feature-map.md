@@ -101,6 +101,8 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   redondo do iPhone com Início também é clicável.
 - **Arquivos:** `Sources/ColliePlugins/DevicePanel.swift`, `Sources/ColliePlugins/DeviceBezel.swift` (geometria e
   desenho da moldura), `Sources/CollieDevice/` (`DeviceFrame.swift`).
+- **Comandos do agente:** `collie device screen` (a tela em grupos), `device ui` (a árvore), `device wait --text|--stable`,
+  `tap --text|--ref … --then screen`, `--timing` em `ui`/`screen`, `device find <texto> [--role tab|button|field] [--then screen] [--scroll [--dir down|up] [--max <n>]]` (E3a, E3b: rola até achar, `scrolls` e `endReached`).
 - **Como verificar:** `collie device list`; o painel, à mão ("Abrir painel" → "Dispositivo" → "Aparelho"): a
   moldura certa para Pixel, Pixel Fold, Pixel Tablet, iPhone 16 Pro, iPhone SE e iPad, nos dois temas; encolher o
   painel até a moldura sumir. Testes: `swift test --disable-sandbox --filter DeviceBezelTests`.

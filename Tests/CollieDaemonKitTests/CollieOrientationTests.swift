@@ -354,12 +354,12 @@ import CollieProtocol
         #expect(codex.split(separator: "\n").contains(Substring(plain + " " + CollieOrientation.loopNotify + wait)) && !codex.contains("/collie:loop"), "\(codex)")
     }
 
-    /// M4 (device loop spec): the Device line teaches `device ui` + `tap … --then ui`, and fits the 1500 cap in the
+    /// M4/S5 (device specs): the Device line teaches `device screen` + `tap … --then screen` + `wait`, and fits the 1500 cap in the
     /// normal form (one panel) and the short form (worst case: many long names, Shepherd, Cursor).
     @Test func deviceLineTeachesTreeLoopWithinCap() {
         let one = CollieOrientation.text(terminal: "Ana", isShepherd: false, paddock: nil, peers: [], panels: [("Pixel", "device")])
         #expect(one.count <= 1500 && one.contains("- Device \"Pixel\": " + CollieOrientation.deviceLoop), "\(one.count)\n\(one)")
-        #expect(one.contains("device ui") && one.contains("--then ui") && !one.contains("(screenshot, tap, logs)"))
+        #expect(one.contains("device screen") && one.contains("--then screen") && one.contains("wait --text") && !one.contains("(screenshot, tap, logs)"))
         let ps = (1...20).map { (name: "device-" + String(repeating: "x", count: 60) + "\($0)", pluginId: "device") }
         for agent in ["claude", "cursor"] {
             let tight = CollieOrientation.text(terminal: "Ana", isShepherd: true, paddock: "P", peers: (1...20).map { "peer\($0)" }, panels: ps, agent: agent)

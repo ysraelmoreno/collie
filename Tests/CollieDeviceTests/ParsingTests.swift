@@ -43,6 +43,15 @@ private let xml = """
     #expect(d[1].serial == "R58M" && d[1].state == "unauthorized" && d[1].model == nil)
 }
 
+@Test func ttyDumpKeepsTheXmlAndDropsTheTrailer() {
+    let out = Data((xml + "UI hierchary dumped to: /dev/tty\n").utf8)
+    #expect(AdbParsing.ttyDump(out).map { String(decoding: $0, as: UTF8.self) } == xml)
+    #expect(UITree.parse(AdbParsing.ttyDump(out)!).nodes.count == 1)
+    #expect(AdbParsing.ttyDump(Data("ERROR: could not get idle state.\n".utf8)) == nil)   // falls back to the file dump
+    #expect(AdbParsing.ttyDump(Data(xml.prefix(200).utf8)) == nil)   // cut short
+    #expect(AdbParsing.ttyDump(Data()) == nil)
+}
+
 @Test func pngSizeReadsIHDR() {
     var d = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52])
     d += Data([0, 0, 4, 0x38, 0, 0, 9, 0x60])

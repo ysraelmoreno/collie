@@ -136,4 +136,28 @@ struct ScreenModelTests {
         #expect(s.actions.map(\.id) == ["share_button", "close"])
         #expect(s.content.isEmpty)
     }
+
+    /// I2 (iOS 26, Ajustes > Geral, 2026-11-22): each row is Button "Sobre" + Button "chevron" on the same row; the
+    /// chevron is decoration. A lone symbol button (FAB) stays; real text with a dot stays.
+    @Test func iosGeneralRowChevronButtonsAreDecoration() {
+        func n(_ cls: String, _ text: String, x: Int = 0, _ y: Int, w: Int = 390, _ h: Int, _ depth: Int, click: Bool = false, scroll: Bool = false) -> UINode {
+            UINode(ref: "", cls: cls, text: text, desc: "", id: "", bounds: CGRect(x: x, y: y, width: w, height: h),
+                   clickable: click, depth: depth, scrollable: scroll)
+        }
+        var nodes = [n("Application", "", 0, 844, 0), n("StaticText", "Geral", 60, 30, 1), n("Table", "", 150, 600, 1, scroll: true)]
+        for (k, label) in ["Sobre", "Atualização de Software", "Wi-Fi"].enumerated() {
+            let y = 200 + k * 50
+            nodes += [n("Button", label, y, 44, 2, click: true), n("Button", "chevron", x: 360, y + 12, w: 20, 20, 2, click: true)]
+        }
+        nodes += [n("StaticText", "Versão 2.4.1", 400, 20, 2),
+                  n("Button", "plus", x: 320, 760, w: 56, 56, 1, click: true)]   // FAB: no labelled neighbour on its row
+        for i in nodes.indices { nodes[i].ref = "e\(i + 1)" }
+        let tree = UITree.linkParents(nodes)
+        let s = ScreenModel.build(tree, size: CGSize(width: 390, height: 844))
+        let text = ScreenModel.text(s)
+        #expect(!text.contains("chevron"), "\(text)")
+        #expect(s.content.map(\.label) == ["Sobre", "Atualização de Software", "Wi-Fi", "Versão 2.4.1"], "\(text)")
+        #expect((s.actions + s.floating).map(\.label).contains("plus"), "\(text)")
+        #expect(tree.filter { $0.text == "chevron" }.count == 3)   // raw tree (device ui, --all) keeps them
+    }
 }

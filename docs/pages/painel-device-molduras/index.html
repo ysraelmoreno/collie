@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Molduras de device</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+  --color-warn-text: #FFB86B;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+  --color-warn-text: #A14A06;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+  --color-warn-text: #FFB86B;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+    --color-warn-text: #FFB86B;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--color-bg); color: var(--color-fg); font-family: "Space Grotesk", system-ui, sans-serif; font-size: 14px; min-height: 100vh;
+  background-image: radial-gradient(color-mix(in srgb, var(--color-muted) 18%, transparent) 1px, transparent 1px); background-size: 22px 22px; }
+.mono { font-family: "DM Mono", ui-monospace, Menlo, monospace; }
+.wrap { max-width: 1320px; margin: 0 auto; padding: 0 16px; }
+header.top { padding-top: 28px; display: flex; flex-wrap: wrap; gap: 16px; align-items: end; justify-content: space-between; }
+header.top h1 { font-size: 24px; margin: 0; } header.top p { margin: 4px 0 0; color: var(--color-text-secondary); max-width: 620px; }
+.ctrls { display: flex; gap: 8px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px; }
+.seg button { border: 0; background: none; color: var(--color-text-secondary); font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+.seg button.on { background: var(--color-surface-2); color: var(--color-fg); }
+h2.plat { font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-text-secondary); margin: 36px 0 14px; display: flex; align-items: center; gap: 8px; }
+h2.plat::after { content: ""; flex: 1; height: 1px; background: var(--color-border); }
+.row { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+.opt h3 { font-size: 14px; margin: 0 0 2px; } .opt p { color: var(--color-text-secondary); font-size: 12px; margin: 0 0 10px; max-width: 320px; min-height: 34px; }
+.opt .who { font-size: 11px; color: var(--color-muted); }
+
+/* panel chrome (unchanged) */
+.panel { width: var(--pw, 320px); max-width: calc(100vw - 32px); height: var(--phh, 600px); background: var(--color-surface); border: 1px solid var(--color-border);
+  border-radius: 18px; overflow: hidden; box-shadow: 0 20px 40px rgba(0,0,0,.28); display: flex; flex-direction: column; }
+.ph { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--color-border); font-size: 13px; }
+.ph b { font-weight: 600; } .ph .mono { color: var(--color-text-secondary); font-size: 11.5px; } .ph .sp { flex: 1; } .ph i { color: var(--color-text-secondary); }
+.lucide { width: 15px; height: 15px; stroke-width: 1.8; }
+
+/* stage: the frame fits the box, keeping its aspect */
+.stage { flex: 1; min-height: 0; container-type: size; display: grid; place-items: center; padding: 14px;
+  background: radial-gradient(120% 80% at 50% 0%, var(--color-surface-2), var(--color-bg)); }
+.dev { --ar: .462; width: min(100cqw - 28px, (100cqh - 28px) * var(--ar)); aspect-ratio: var(--ar); position: relative; display: flex;
+  background: #0b0c0f; padding: var(--bz); border-radius: var(--r); box-shadow: 0 0 0 1px #2a2d35, inset 0 0 0 1px #000, 0 18px 30px rgba(0,0,0,.45); }
+.dev .scr { flex: 1; border-radius: calc(var(--r) - var(--bz)); }
+.side { position: absolute; width: 3px; background: #2a2d35; border-radius: 2px; }
+.side.r { right: -3px; } .side.l { left: -3px; }
+.land .side { width: auto; height: 3px; } .land .side.r { right: auto; top: -3px; } .land .side.l { left: auto; bottom: -3px; }
+
+/* fake screen */
+.scr { position: relative; background: #FBF9FD; color: #1c1b1f; font-family: Roboto, system-ui, sans-serif; overflow: hidden; container-type: inline-size; }
+.scr .in-c { max-width: 300px; margin: 0 auto; }
+.scr .sb { display: flex; justify-content: space-between; font-size: 9.5px; padding: 7px 16px 0; font-weight: 600; position: relative; z-index: 1; }
+.scr .t { text-align: center; font-weight: 700; font-size: 15px; margin: 16px 0 2px; line-height: 1.2; } .scr .s { text-align: center; color: #666; font-size: 10.5px; }
+.scr .in { margin: 12px 12px 8px; border: 1px solid #999; border-radius: 4px; padding: 7px; font-size: 10.5px; color: #555; }
+.scr .chips { display: flex; gap: 5px; margin: 0 12px; } .scr .chips span { white-space: nowrap; font-size: 9.5px; border: 1px solid #888; border-radius: 6px; padding: 3px 6px; }
+.scr .chips span:first-child { background: var(--k); color: #fff; border-color: var(--k); }
+.scr .card { margin: 10px 12px; background: #f0edf4; border-radius: 10px; padding: 9px; font-size: 11px; box-shadow: 0 2px 4px rgba(0,0,0,.1); }
+.scr .btns { position: absolute; left: 12px; right: 12px; bottom: 14px; display: grid; gap: 5px; max-width: 300px; margin: 0 auto; }
+.scr .btns span { border-radius: 8px; color: #fff; text-align: center; font-size: 10.5px; font-weight: 600; padding: 8px; }
+.scr { --k: #6f5ea8; } .ios .scr { --k: #0a84ff; background: #f2f2f7; }
+.ios .scr .btns span { border-radius: 12px; }
+.land .scr .btns { grid-template-columns: repeat(3, 1fr); max-width: none; }
+.land .scr .card { display: none; }
+
+/* cutouts and bezel parts */
+.hole { position: absolute; z-index: 2; top: 7px; left: 50%; width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%; background: #050506; box-shadow: 0 0 0 1.5px #1a1b20; }
+.land .hole { top: 50%; left: 7px; margin: -4.5px 0 0; }
+.island { position: absolute; z-index: 2; top: 7px; left: 50%; width: 31%; height: 19px; transform: translateX(-50%); border-radius: 999px; background: #050506; }
+.land .island { top: 50%; left: 7px; width: 19px; height: 31%; transform: translateY(-50%); }
+.hinge { position: absolute; inset: 0 auto 0 50%; width: 10px; margin-left: -5px; z-index: 2; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(0,0,0,.07) 45%, rgba(255,255,255,.25) 55%, transparent); }
+.land .hinge { inset: 50% 0 auto 0; width: auto; height: 10px; margin: -5px 0 0; background: linear-gradient(180deg, transparent, rgba(0,0,0,.07) 45%, rgba(255,255,255,.25) 55%, transparent); }
+.bcam { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: #1c1f27; box-shadow: inset 0 0 0 1.5px #2c3040; top: calc(var(--bz) / 2 - 3px); left: 50%; margin-left: -3px; }
+/* classic iPhone: forehead + chin with a clickable home button */
+.classic { padding: 15% 6% !important; }
+.classic .scr { border-radius: 2px; }
+.classic .spk { position: absolute; top: 7.5%; left: 50%; width: 22%; height: 4px; transform: translate(-50%, -50%); border-radius: 4px; background: #23262e; }
+.classic .fcam { position: absolute; top: 7.5%; left: 29%; width: 6px; height: 6px; transform: translateY(-50%); border-radius: 50%; background: #1c1f27; box-shadow: inset 0 0 0 1.5px #2c3040; }
+.classic .homeb { position: absolute; bottom: 7.5%; left: 50%; width: 15%; aspect-ratio: 1; transform: translate(-50%, 50%); border-radius: 50%; border: 1.5px solid #2f333d; background: none; cursor: pointer; }
+.classic .homeb:hover { border-color: var(--color-accent); } .classic .homeb:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.land.classic { padding: 6% 15% !important; }
+.land.classic .spk { top: 50%; left: 7.5%; width: 4px; height: 22%; } .land.classic .fcam { top: 29%; left: 7.5%; transform: translate(-50%, -50%); }
+.land.classic .homeb { bottom: auto; top: 50%; left: auto; right: 7.5%; transform: translate(50%, -50%); }
+/* no frame */
+.bare { background: none; padding: 0; box-shadow: 0 0 0 1px var(--color-border), 0 10px 24px rgba(0,0,0,.3); }
+.bare .scr { border-radius: 10px; }
+
+/* overlay states */
+.overlay { position: absolute; inset: 0; z-index: 3; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  background: color-mix(in srgb, var(--color-bg) 82%, transparent); backdrop-filter: blur(6px); color: var(--color-fg); font-family: "Space Grotesk", sans-serif; font-size: 12.5px; text-align: center; padding: 12px; }
+[data-state="connecting"] .overlay, [data-state="off"] .overlay { display: flex; }
+.overlay .retry { display: none; } [data-state="off"] .overlay .retry { display: inline-flex; } [data-state="off"] .spin { display: none; }
+.spin { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--color-border); border-top-color: var(--color-accent); animation: r .9s linear infinite; }
+@keyframes r { to { transform: rotate(360deg); } }
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 0; background: var(--color-accent); color: var(--color-on-accent); font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+
+/* nav pills + footer (option C) */
+.nav { display: flex; justify-content: center; gap: 18px; padding: 6px 0 4px; background: var(--color-bg); }
+.ico { display: grid; place-items: center; width: 44px; height: 32px; border-radius: 999px; border: 0; background: none; color: var(--color-fg); cursor: pointer; }
+.ico:hover { background: var(--color-surface-2); } .ico:active { transform: scale(.94); }
+.ico:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; } .ico .lucide { width: 18px; height: 18px; }
+[data-state="off"] .ico { opacity: .4; pointer-events: none; }
+.foot { display: flex; justify-content: space-between; align-items: center; padding: 6px 14px 8px; font-size: 11px; color: var(--color-text-secondary); background: var(--color-bg); }
+.foot .st { display: flex; align-items: center; gap: 7px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 22%, transparent); }
+[data-state="connecting"] .dot { background: var(--color-warn-text); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warn-text) 22%, transparent); animation: p 1.2s ease-in-out infinite; }
+[data-state="off"] .dot { background: var(--color-muted); box-shadow: none; }
+@keyframes p { 50% { opacity: .35; } }
+
+.notes { padding: 28px 16px 48px; color: var(--color-text-secondary); font-size: 12.5px; max-width: 900px; }
+.notes li { margin: 4px 0; } .notes code { font-family: "DM Mono", monospace; font-size: 11.5px; color: var(--color-fg); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div><h1>Molduras de device</h1><p>Direção C com uma moldura por tipo de aparelho. A moldura vem do tipo do emulador/simulador; aparelho físico ou desconhecido cai em “Sem moldura”. Estado ao vivo foi para o rodapé (não briga com furo/ilha).</p></div>
+  <div class="ctrls">
+    <div class="seg" id="ori"><button class="on" data-v="nat">Natural</button><button data-v="rot">Girado</button></div>
+    <div class="seg" id="state"><button class="on" data-v="live">Transmitindo</button><button data-v="connecting">Conectando</button><button data-v="off">Desconectado</button></div>
+    <div class="seg" id="theme"><button class="on" data-v="dark">Escuro</button><button data-v="light">Claro</button></div>
+  </div>
+</header>
+<div id="out"></div>
+<ul class="notes">
+  <li><b>Escolha automática</b>: Android pelo perfil do AVD (<code>hw.device.name</code> no <code>config.ini</code>: telefone, tablet, dobrável); iOS pelo tipo do simulador do <code>simctl</code> (iPhone com Início, iPhone moderno, iPad). Físico/desconhecido → sem moldura. <i>A confirmar: hoje o Collie não lê esse campo.</i></li>
+  <li><b>Painel pequeno</b>: abaixo de ~220 pt de largura útil a moldura some sozinha e o vídeo ocupa tudo. Opção “Moldura: automática / nenhuma” no menu ⋯.</li>
+  <li><b>Paisagem</b>: a moldura gira junto com o vídeo (o painel já segue a rotação pelo tamanho do quadro).</li>
+  <li><b>Toque</b>: só a tela recebe toque; o bezel não. Exceção: o botão Início físico do iPhone clássico é clicável (mesma ação da pílula).</li>
+  <li>Molduras genéricas desenhadas em CSS/vetor, sem marca nem imagens de fabricante.</li>
+</ul>
+</div>
+<script src="collie-lib://lib/lucide@0.469.0/lucide.min.js"></script>
+<script>
+const S = { ori: 'nat', state: 'live' };
+const F = {
+  android: [
+    { k: 'phone', n: 'Telefone', p: 'Bordas finas, furo da câmera no centro, botões à direita.', who: 'Pixel, Medium Phone, maioria dos AVDs', ar: .462, bz: 6, r: 32, cut: 'hole', side: [['r', 18, 9], ['r', 31, 15]], serial: 'emulator-5554' },
+    { k: 'fold', n: 'Dobrável', p: 'Tela interna aberta, quase quadrada, com a dobra marcada de leve.', who: 'Pixel Fold, Fold-in', ar: .88, bz: 7, r: 24, cut: 'hinge', side: [['r', 14, 12]], serial: 'emulator-5556', pw: 440 },
+    { k: 'tablet', n: 'Tablet', p: 'Bezel uniforme mais grosso, câmera na borda; nasce em paisagem.', who: 'Pixel Tablet, Medium Tablet', ar: .625, bz: 12, r: 22, cut: 'bcam', land: true, serial: 'emulator-5558', pw: 600, phh: 480 },
+    { k: 'bare', n: 'Sem moldura', p: 'Aparelho físico pelo USB/Wi-Fi ou perfil desconhecido.', who: 'adb físico', ar: .462, bz: 0, r: 10, cut: '', serial: 'R5CT1234ABC' },
+  ],
+  ios: [
+    { k: 'island', n: 'iPhone moderno', p: 'Cantos bem redondos, ilha no topo, botões dos dois lados.', who: 'iPhone 14 Pro em diante', ar: .462, bz: 7, r: 40, cut: 'island', side: [['l', 16, 5], ['l', 24, 9], ['l', 35, 9], ['r', 26, 13]], serial: 'iPhone 16 Pro' },
+    { k: 'classic', n: 'iPhone com Início', p: 'Testa e queixo, alto-falante e botão Início redondo clicável.', who: 'iPhone SE', ar: .49, bz: 10, r: 34, cut: 'classic', side: [['l', 18, 6], ['l', 27, 9], ['r', 22, 9]], serial: 'iPhone SE (3rd gen)' },
+    { k: 'ipad', n: 'iPad', p: 'Bezel uniforme, cantos arredondados, câmera na borda longa.', who: 'iPad, iPad Air, iPad Pro', ar: .7, bz: 14, r: 26, cut: 'bcam', land: true, serial: 'iPad Air 13-inch', pw: 600, phh: 480 },
+    { k: 'bare', n: 'Sem moldura', p: 'Simulador de tipo desconhecido (ex.: Apple TV, Vision) ou painel pequeno.', who: 'fallback', ar: .462, bz: 0, r: 10, cut: '', serial: 'Simulador' },
+  ],
+};
+const screen = (land) => `<div class="scr"><div class="sb"><span>12:45</span><span>▂▄▆ ◔</span></div>
+  <div class="in-c"><div class="t">BEES Browse${land ? ' ' : '<br>'}Configuration</div><div class="s">Feature Flags &amp; Settings</div>
+  <div class="in">⌕&nbsp; Search feature flags</div><div class="chips"><span>All (114)</span><span>ON (70)</span><span>OFF (44)</span></div>
+  <div class="card"><b>OptimizelyMock Settings</b><br><small style="color:#777">Tap to expand</small></div></div>
+  <div class="btns"><span style="background:#6c6779">View Browse Strings</span><span style="background:#86606a">Open Composebook</span><span style="background:var(--k)">Continue to App</span></div>
+  CUT<div class="overlay"><div class="spin"></div><span>${S.state === 'off' ? 'Aparelho desconectado' : 'Conectando…'}</span><button class="btn retry" data-retry><i data-lucide="refresh-cw"></i>Reconectar</button></div></div>`;
+const acts = plat => plat === 'ios' ? [['circle', 'Início'], ['lock', 'Bloquear']] : [['chevron-left', 'Voltar'], ['circle', 'Início'], ['square', 'Recentes']];
+function device(plat, f) {
+  const land = !!f.land !== (S.ori === 'rot');   // tablets are born landscape; "Girado" flips everything
+  const ar = land ? 1 / f.ar : f.ar;
+  const inScreen = { hole: '<span class="hole"></span>', island: '<span class="island"></span>', hinge: '<span class="hinge"></span>' }[f.cut] || '';
+  const onBezel = f.cut === 'bcam' ? '<span class="bcam"></span>'
+    : f.cut === 'classic' ? '<span class="spk"></span><span class="fcam"></span><button class="homeb" title="Início" aria-label="Início"></button>' : '';
+  const sides = (f.side || []).map(([s, at, len]) => land
+    ? `<span class="side ${s}" style="left:${at}%;width:${len}%"></span>` : `<span class="side ${s}" style="top:${at}%;height:${len}%"></span>`).join('');
+  const cls = ['dev', f.k === 'bare' ? 'bare' : '', f.cut === 'classic' ? 'classic' : '', land ? 'land' : ''].join(' ');
+  return `<div class="${cls}" style="--ar:${ar};--bz:${f.bz}px;--r:${f.r}px">${sides}${onBezel}${screen(land).replace('CUT', inScreen)}</div>`;
+}
+function panel(plat, f) {
+  const land = !!f.land !== (S.ori === 'rot');
+  const pw = land ? 600 : (f.k === 'fold' ? 440 : 320), phh = land ? 460 : 600;
+  const tr = plat === 'ios' ? 'simctl' : 'adb', lab = { live: 'ao vivo', connecting: 'conectando', off: 'offline' }[S.state];
+  return `<section class="opt ${plat}"><h3>${f.n}</h3><p>${f.p}<br><span class="who">${f.who}</span></p>
+    <div class="panel" data-state="${S.state}" style="--pw:${pw}px;--phh:${phh}px">
+      <div class="ph"><i data-lucide="${f.land ? 'tablet' : 'smartphone'}"></i><b>device-2</b><span class="mono">${f.serial}</span><span class="sp"></span><i data-lucide="maximize-2"></i><i data-lucide="more-horizontal"></i></div>
+      <div class="stage">${device(plat, f)}</div>
+      <div class="nav">${acts(plat).map(([i, t]) => `<button class="ico" title="${t}" aria-label="${t}"><i data-lucide="${i}"></i></button>`).join('')}</div>
+      <div class="foot mono"><span class="st"><span class="dot"></span>${lab}</span><span>${tr}</span></div>
+    </div></section>`;
+}
+function render() {
+  document.getElementById('out').innerHTML = ['android', 'ios'].map(p =>
+    `<h2 class="plat">${p === 'ios' ? 'iOS · Simulador' : 'Android · Emulador'}</h2><div class="row">${F[p].map(f => panel(p, f)).join('')}</div>`).join('');
+  document.querySelectorAll('[data-retry]').forEach(b => b.onclick = () => set('state', 'connecting'));
+  if (window.lucide) lucide.createIcons({ icons: lucide.icons });
+}
+function set(k, v) {
+  if (k === 'theme') document.documentElement.dataset.theme = v; else S[k] = v;
+  document.querySelectorAll(`#${k} button`).forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  render();
+}
+for (const k of ['ori', 'state', 'theme']) document.querySelectorAll(`#${k} button`).forEach(b => b.onclick = () => set(k, b.dataset.v));
+document.documentElement.dataset.theme = 'dark';
+render();
+</script>
+</body>
+</html>

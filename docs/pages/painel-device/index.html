@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel de device</title>
+<link rel="stylesheet" href="collie-lib://fonts/css?family=Space%20Grotesk&family=DM%20Mono">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+  --color-warn-text: #FFB86B;
+}
+[data-theme="light"] {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --text: #16181D;
+  --muted: #5B616E;
+  --accent: #2F6F4F;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #2D69FD;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #4A5BD6;
+  --color-muted: #646B86;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #ECE9E2;
+  --color-border: #DCD8CF;
+  --color-memory: #E3E8FF;
+  --color-memory-2: #D3DBFF;
+  --color-success: #0F7A55;
+  --color-warn: #A14A06;
+  --color-bg: #F4F2ED;
+  --color-fg: #15171C;
+  --color-text-secondary: #5A5D66;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #FFFFFF;
+  --color-accent-text: #4A5BD6;
+  --color-warn-text: #A14A06;
+}
+[data-theme="dark"] {
+  --bg: #111317;
+  --surface: #1B1E24;
+  --text: #ECEDEF;
+  --muted: #9AA1AD;
+  --accent: #7BD3A2;
+  --space-s: 8px;
+  --space-m: 16px;
+  --space-l: 32px;
+  --space-xl: 64px;
+  --radius-card: 12px;
+  --type-body: 16px;
+  --type-h3: 20px;
+  --type-h2: 28px;
+  --type-h1: 48px;
+  --color-accent: #6E9BFF;
+  --color-ink: #15171C;
+  --color-paper: #F4F2ED;
+  --color-accent-soft: #93A4FF;
+  --color-muted: #8C95B8;
+  --color-surface: #1F232B;
+  --color-surface-2: #262A33;
+  --color-border: #2E323B;
+  --color-memory: #1E2647;
+  --color-memory-2: #262E52;
+  --color-success: #6EE7B7;
+  --color-warn: #A14A06;
+  --color-bg: #15171C;
+  --color-fg: #F4F2ED;
+  --color-text-secondary: #8C95B8;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-icon: 38px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-96: 96px;
+  --color-on-accent: #15171C;
+  --color-accent-text: #6E9BFF;
+  --color-warn-text: #FFB86B;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #111317;
+    --surface: #1B1E24;
+    --text: #ECEDEF;
+    --muted: #9AA1AD;
+    --accent: #7BD3A2;
+    --space-s: 8px;
+    --space-m: 16px;
+    --space-l: 32px;
+    --space-xl: 64px;
+    --radius-card: 12px;
+    --type-body: 16px;
+    --type-h3: 20px;
+    --type-h2: 28px;
+    --type-h1: 48px;
+    --color-accent: #6E9BFF;
+    --color-ink: #15171C;
+    --color-paper: #F4F2ED;
+    --color-accent-soft: #93A4FF;
+    --color-muted: #8C95B8;
+    --color-surface: #1F232B;
+    --color-surface-2: #262A33;
+    --color-border: #2E323B;
+    --color-memory: #1E2647;
+    --color-memory-2: #262E52;
+    --color-success: #6EE7B7;
+    --color-warn: #A14A06;
+    --color-bg: #15171C;
+    --color-fg: #F4F2ED;
+    --color-text-secondary: #8C95B8;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-icon: 38px;
+    --space-4: 4px;
+    --space-8: 8px;
+    --space-12: 12px;
+    --space-16: 16px;
+    --space-24: 24px;
+    --space-32: 32px;
+    --space-48: 48px;
+    --space-64: 64px;
+    --space-96: 96px;
+    --color-on-accent: #15171C;
+    --color-accent-text: #6E9BFF;
+    --color-warn-text: #FFB86B;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--color-bg); color: var(--color-fg); font-family: "Space Grotesk", system-ui, sans-serif; font-size: 14px;
+  background-image: radial-gradient(color-mix(in srgb, var(--color-muted) 18%, transparent) 1px, transparent 1px); background-size: 22px 22px; min-height: 100vh; }
+.mono { font-family: "DM Mono", ui-monospace, Menlo, monospace; }
+header.top { max-width: 1240px; margin: 0 auto; padding: 28px 16px 8px; display: flex; flex-wrap: wrap; gap: 16px; align-items: end; justify-content: space-between; }
+header.top h1 { font-size: 24px; margin: 0; } header.top p { margin: 4px 0 0; color: var(--color-text-secondary); max-width: 560px; }
+.ctrls { display: flex; gap: 8px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 999px; padding: 3px; }
+.seg button { border: 0; background: none; color: var(--color-text-secondary); font: inherit; font-size: 12px; padding: 5px 12px; border-radius: 999px; cursor: pointer; }
+.seg button.on { background: var(--color-surface-2); color: var(--color-fg); }
+.grid { max-width: 1240px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 28px; }
+.opt h2 { font-size: 15px; margin: 0 0 2px; } .opt .why { color: var(--color-text-secondary); font-size: 12.5px; margin: 0 0 12px; min-height: 36px; }
+
+/* panel chrome (shared, unchanged) */
+.panel { width: 320px; margin: 0 auto; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 18px; overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0,0,0,.28); display: flex; flex-direction: column; height: 620px; }
+.ph { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--color-border); font-size: 13px; }
+.ph b { font-weight: 600; } .ph .mono { color: var(--color-text-secondary); font-size: 11.5px; } .ph .sp { flex: 1; }
+.ph i { color: var(--color-text-secondary); }
+.lucide { width: 15px; height: 15px; stroke-width: 1.8; }
+
+/* fake device screen */
+.scr { position: relative; background: #FBF9FD; color: #1c1b1f; font-family: Roboto, system-ui, sans-serif; overflow: hidden; }
+.scr .sb { display: flex; justify-content: space-between; font-size: 10px; padding: 6px 14px 0; font-weight: 600; }
+.scr .t { text-align: center; font-weight: 700; font-size: 17px; margin: 18px 0 2px; } .scr .s { text-align: center; color: #666; font-size: 11px; }
+.scr .in { margin: 14px 14px 8px; border: 1px solid #999; border-radius: 4px; padding: 8px; font-size: 11px; color: #555; }
+.scr .chips { display: flex; gap: 6px; margin: 0 14px; } .scr .chips span { font-size: 10px; border: 1px solid #888; border-radius: 6px; padding: 3px 7px; }
+.scr .chips span:first-child { background: #6f5ea8; color: #fff; border-color: #6f5ea8; }
+.scr .card { margin: 12px 14px; background: #f0edf4; border-radius: 10px; padding: 10px; font-size: 12px; box-shadow: 0 2px 4px rgba(0,0,0,.1); }
+.scr .btns { position: absolute; left: 14px; right: 14px; bottom: 12px; display: grid; gap: 6px; }
+.scr .btns span { border-radius: 8px; color: #fff; text-align: center; font-size: 11px; font-weight: 600; padding: 9px; }
+.scr.ios { background: #f2f2f7; } .scr.ios .chips span:first-child { background: #0a84ff; border-color: #0a84ff; }
+.overlay { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  background: color-mix(in srgb, var(--color-bg) 82%, transparent); backdrop-filter: blur(6px); color: var(--color-fg); font-family: "Space Grotesk", sans-serif; font-size: 13px; text-align: center; padding: 16px; }
+[data-state="connecting"] .overlay, [data-state="off"] .overlay { display: flex; }
+.overlay .retry { display: none; } [data-state="off"] .overlay .retry { display: inline-flex; } [data-state="off"] .spin { display: none; }
+.spin { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--color-border); border-top-color: var(--color-accent); animation: r 0.9s linear infinite; }
+@keyframes r { to { transform: rotate(360deg); } }
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--color-border); background: var(--color-surface-2); color: var(--color-fg); font: inherit; font-size: 12px; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+.btn.primary { background: var(--color-accent); color: var(--color-on-accent); border-color: transparent; }
+
+/* status dot */
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success) 22%, transparent); flex: none; }
+[data-state="connecting"] .dot { background: var(--color-warn-text); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warn-text) 22%, transparent); animation: p 1.2s ease-in-out infinite; }
+[data-state="off"] .dot { background: var(--color-muted); box-shadow: none; }
+@keyframes p { 50% { opacity: .35; } }
+.ico { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; border: 0; background: none; color: var(--color-fg); cursor: pointer; }
+.ico:hover { background: var(--color-surface-2); } .ico:active { transform: scale(.94); }
+.ico:focus-visible, .btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.ico .lucide { width: 18px; height: 18px; }
+[data-state="off"] .ico { opacity: .4; pointer-events: none; }
+
+/* A: Dock flutuante */
+.a .stage { flex: 1; padding: 10px 10px 0; background: var(--color-bg); display: flex; }
+.a .scr { flex: 1; border-radius: 14px; box-shadow: 0 0 0 1px var(--color-border); }
+.a .dock { margin: 10px auto 10px; display: flex; align-items: center; gap: 2px; background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 14px; padding: 3px; }
+.a .dock .sep { width: 1px; height: 20px; background: var(--color-border); margin: 0 4px; }
+.a .meta { display: flex; align-items: center; gap: 6px; padding: 0 10px 0 6px; font-size: 11px; color: var(--color-text-secondary); }
+.a .bottom { background: var(--color-bg); }
+
+/* B: Trilho lateral */
+.b .body { flex: 1; display: flex; background: var(--color-bg); min-height: 0; }
+.b .scr { flex: 1; margin: 10px 0 10px 10px; border-radius: 14px; box-shadow: 0 0 0 1px var(--color-border); }
+.b .rail { width: 52px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 0; }
+.b .rail .grow { flex: 1; }
+.b .live { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--color-text-secondary); writing-mode: vertical-rl; transform: rotate(180deg); display: flex; align-items: center; gap: 6px; }
+.b .foot { display: flex; justify-content: space-between; padding: 7px 14px; font-size: 11px; color: var(--color-text-secondary); border-top: 1px solid var(--color-border); }
+
+/* C: Moldura */
+.c .stage { flex: 1; background: radial-gradient(120% 80% at 50% 0%, var(--color-surface-2), var(--color-bg)); display: flex; justify-content: center; padding: 14px 0 8px; min-height: 0; position: relative; }
+.c .bezel { width: 236px; background: #0b0c0f; border-radius: 30px; padding: 7px; box-shadow: 0 0 0 1px #2a2d35, 0 18px 30px rgba(0,0,0,.45); display: flex; }
+.c .scr { flex: 1; border-radius: 24px; }
+.c .chip { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 6px; background: rgba(12,13,16,.85);
+  color: #e8e8ea; font-size: 10.5px; padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(6px); }
+.c .nav { display: flex; justify-content: center; gap: 22px; padding: 6px 0 4px; background: var(--color-bg); }
+.c .nav .ico { width: 44px; height: 32px; border-radius: 999px; }
+.c .foot { display: flex; justify-content: space-between; padding: 6px 14px 8px; font-size: 11px; color: var(--color-text-secondary); background: var(--color-bg); }
+
+.notes { max-width: 1240px; margin: 0 auto; padding: 4px 16px 40px; color: var(--color-text-secondary); font-size: 12.5px; }
+.notes li { margin: 3px 0; }
+@media (max-width: 380px) { .panel { width: 100%; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div><h1>Painel de device</h1><p>Três direções. Cabeçalho do painel fica igual; muda área do vídeo e rodapé. Só ações que existem hoje (Voltar, Início, Recentes / iOS: Início, Bloquear).</p></div>
+  <div class="ctrls">
+    <div class="seg" id="plat"><button class="on" data-v="android">Android</button><button data-v="ios">iOS</button></div>
+    <div class="seg" id="state"><button class="on" data-v="live">Transmitindo</button><button data-v="connecting">Conectando</button><button data-v="off">Desconectado</button></div>
+    <div class="seg" id="theme"><button class="on" data-v="dark">Escuro</button><button data-v="light">Claro</button></div>
+  </div>
+</header>
+<main class="grid" id="grid"></main>
+<ul class="notes">
+  <li><b>A · Dock flutuante</b>: vídeo com borda arredondada sobre fundo afundado; ícones + estado num dock só. Rodapé cai de 86 → ~58 pt, vídeo ganha altura.</li>
+  <li><b>B · Trilho lateral</b>: botões numa coluna à direita; vídeo usa altura toda. Bom para painel alto e estreito; rouba ~52 pt de largura.</li>
+  <li><b>C · Moldura</b>: aparelho dentro de bezel com chip de estado; navegação em pílulas. Mais vistoso, menos área útil de vídeo.</li>
+  <li>Todas: rodapé com altura fixa (mapa de toque não depende de fonte), ícones com rótulo em tooltip/acessibilidade, estado ao vivo por ponto colorido.</li>
+</ul>
+<script src="collie-lib://lib/lucide@0.469.0/lucide.min.js"></script>
+<script>
+const S = { plat: 'android', state: 'live' };
+const screen = () => {
+  const ios = S.plat === 'ios';
+  return `<div class="scr ${ios ? 'ios' : ''}">
+    <div class="sb"><span>12:45</span><span>▂▄▆ ◔</span></div>
+    <div class="t">BEES Browse<br>Configuration</div><div class="s">Feature Flags &amp; Settings</div>
+    <div class="in">⌕&nbsp; Search feature flags</div>
+    <div class="chips"><span>All (114)</span><span>ON (70)</span><span>OFF (44)</span></div>
+    <div class="card"><b>OptimizelyMock Settings</b><br><small style="color:#777">Tap to expand</small></div>
+    <div class="btns"><span style="background:#6c6779">View Browse Strings</span><span style="background:#86606a">Open Composebook</span><span style="background:${ios ? '#0a84ff' : '#6f5ea8'}">Continue to App</span></div>
+    <div class="overlay"><div class="spin"></div><span class="msg"></span><button class="btn primary retry"><i data-lucide="refresh-cw"></i>Reconectar</button></div>
+  </div>`;
+};
+const acts = () => S.plat === 'ios'
+  ? [['circle', 'Início'], ['lock', 'Bloquear']]
+  : [['chevron-left', 'Voltar'], ['circle', 'Início'], ['square', 'Recentes']];
+const btns = () => acts().map(([i, t]) => `<button class="ico" title="${t}" aria-label="${t}"><i data-lucide="${i}"></i></button>`).join('');
+const serial = () => S.plat === 'ios' ? 'iPhone 16 Pro' : 'emulator-5554', tr = () => S.plat === 'ios' ? 'simctl' : 'adb';
+const label = () => ({ live: 'ao vivo', connecting: 'conectando', off: 'offline' })[S.state];
+const chrome = body => `<div class="panel" data-state="${S.state}">
+  <div class="ph"><i data-lucide="smartphone"></i><b>device-2</b><span class="mono">${serial()}</span><span class="sp"></span><i data-lucide="maximize-2"></i><i data-lucide="more-horizontal"></i></div>${body}</div>`;
+const opts = [
+  ['a', 'A · Dock flutuante', 'Vídeo em cartão arredondado; ações e estado num dock compacto. Mais moderno com menos mudança.',
+    () => `<div class="stage">${screen()}</div><div class="bottom"><div class="dock">${btns()}<span class="sep"></span><span class="meta"><span class="dot"></span><span class="mono">${tr()} · ${label()}</span></span></div></div>`],
+  ['b', 'B · Trilho lateral', 'Botões numa coluna à direita, vídeo com a altura toda do painel.',
+    () => `<div class="body">${screen()}<div class="rail">${btns()}<span class="grow"></span><span class="live"><span class="dot"></span>${label()}</span></div></div>
+           <div class="foot mono"><span>${serial()}</span><span>${tr()}</span></div>`],
+  ['c', 'C · Moldura de aparelho', 'Bezel escuro e chip de estado sobre a tela, navegação em pílulas.',
+    () => `<div class="stage"><span class="chip"><span class="dot"></span><span class="mono">${label()}</span></span><div class="bezel">${screen()}</div></div>
+           <div class="nav">${btns()}</div><div class="foot mono"><span>${serial()}</span><span>${tr()}</span></div>`],
+];
+function render() {
+  document.getElementById('grid').innerHTML = opts.map(([k, n, w, f]) => `<section class="opt ${k}"><h2>${n}</h2><p class="why">${w}</p>${chrome(f())}</section>`).join('');
+  document.querySelectorAll('.msg').forEach(m => m.textContent = S.state === 'off' ? 'Aparelho desconectado' : 'Conectando…');
+  document.querySelectorAll('.retry').forEach(b => b.onclick = () => set('state', 'connecting'));
+  if (window.lucide) lucide.createIcons({ icons: lucide.icons });
+}
+function set(k, v) {
+  if (k === 'theme') document.documentElement.dataset.theme = v; else S[k] = v;
+  document.querySelectorAll(`#${k} button`).forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  render();
+}
+for (const k of ['plat', 'state', 'theme']) document.querySelectorAll(`#${k} button`).forEach(b => b.onclick = () => set(k, b.dataset.v));
+document.documentElement.dataset.theme = 'dark';
+render();
+</script>
+</body>
+</html>

@@ -314,7 +314,8 @@ private struct LiteFx {
             #expect(try await call(p, m, "device.tap", ["ref": ref]).ok)   // screen refs are device.ui refs
             #expect(fx.lines.contains("-s emulator-5554 shell input tap 632 136"))
             setenv("COLLIE_FAKE_ADB_UI", fixtures.appendingPathComponent("ui-dump.xml").path, 1)
-            let next = try await call(p, m, "device.screen", ["all": "true"])
+            let next = try await UnixSocketClient.send(Request(id: "m", terminalId: m.id, token: m.token, command: "device.screen",
+                                                               args: ["all": .bool(true)]), to: p.socket, timeoutSeconds: 60)   // a flag, as the CLI sends it
             guard case .array(let changed)? = field(next, "changed") else { Issue.record("\(next)"); return }
             #expect(changed.first == .string("título Offers → -"), "\(changed)")
             guard case .string(let tree)? = field(next, "tree") else { Issue.record("\(next)"); return }

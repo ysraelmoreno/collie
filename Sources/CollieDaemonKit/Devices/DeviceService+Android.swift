@@ -349,7 +349,7 @@ struct OCRMode: Sendable {
 /// One OCR pass: the merged nodes (empty on a black/uniform screen or an empty read), nil when the OCR is unavailable
 /// (no provider, no screenshot, provider error); its time and the rule that fired.
 struct OCRRead: Sendable {
-    var nodes: [UINode]?, took: Duration, trigger: String
+    let nodes: [UINode]?, took: Duration, trigger: String
 }
 
 extension DeviceService {

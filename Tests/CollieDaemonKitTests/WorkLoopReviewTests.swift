@@ -544,8 +544,9 @@ import CollieProtocol
         }))
         await r.host.setReviewAnswer("w-task-a-t1-testes-rev", Self.reject.replacingOccurrences(of: #""line":1"#, with: #""line":110000"#))
         #expect(await r.run() == .finished)
-        let f = try await r.get().tasks[0].lastFailure ?? "-"
-        #expect(f.contains("Tests/a1.swift") && !f.contains("não existe"), "\(f)")
+        // A1 (reviewAdvisory): the copy of so big a file fails, so the reviewer is mute: a note, never a veto
+        let w = try await r.get()
+        #expect(w.tasks[0].state == .done && Self.said(w, "Tests/a1.swift") && !Self.said(w, "não existe"), "\(w.notes.map(\.text))")
     }
 
     /// F2 Y2b: an ignored file the reviewer leaves in the worktree (`CLAUDE.local.md`) is a touch, and does not survive.

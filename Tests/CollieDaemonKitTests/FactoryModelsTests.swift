@@ -104,7 +104,9 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
                                            "python": ["conftest.py", "pyproject.toml"]]
         let header = gate.split(separator: "\n").prefix { $0.hasPrefix("#") }.joined(separator: "\n")
         for f in governs[stack]! { #expect(header.contains(f), "\(stack)/scripts/gate.sh: o comentário do topo não cita \(f)") }
-        #expect(!gate.contains("npm test") && !(s.scripts["scripts/check-feature.sh"] ?? "").contains("npm test"), "\(stack): runner pelo npm test")
+        // the runner is called directly: no code line goes through `npm test` (comments may name it)
+        let code = { (t: String) in t.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }.joined(separator: "\n") }
+        #expect(!code(gate).contains("npm test") && !code(s.scripts["scripts/check-feature.sh"] ?? "").contains("npm test"), "\(stack): runner pelo npm test")
     }
 
     /// F3: the rule of scripts/gate.sh, run: a config that forces success fails the gate (also in a folder whose name has a

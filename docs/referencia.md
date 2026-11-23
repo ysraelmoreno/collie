@@ -889,7 +889,7 @@ dono aprovou a lista de tarefas e os checks.
   (`docs/fabrica/personas`), não uma aprovação. O revisor **veta** com achado `blocker` ou `major` confirmado (arquivo e
   linha); nada que ele diga (aprovar, ficar mudo, responder inválido) libera uma tarefa que o check e o portão não
   liberariam. Sem parecer (revisor mudo ou inválido) equivale a sem `--review`; a linha do relatório diz
-  `parecer: sem veto (...)` ou `sem parecer: ...`. Roda também com o agente julgado em modo open (sem exigir strict); o revisor nasce sempre em strict. O parecer nunca aprova, mas em open o agente julgado grava a casa inteira e pode plantar instruções ou hooks que o revisor carrega: o parecer não isola, só avisa. **Limite conhecido:** a config global
+  `parecer: sem veto (...)` ou `sem parecer: ...`. Roda também com o agente julgado em modo open (sem exigir strict); o revisor nasce sempre em strict (quando o Collie isola terminais). O parecer nunca aprova, mas em open o agente julgado grava a casa inteira e pode plantar instruções ou hooks que o revisor carrega: o parecer não isola, só avisa. **Limite conhecido:** a config global
   `~/.claude.json` é compartilhada e gravável por todo agente strict, e um órfão do agente julgado pode mexer no
   contexto do revisor; por isso o parecer **não é prova de independência**. Relatórios das revisões independentes:
   `docs/superpowers/roadmap/2026-11-22-fabrica/` (`rev-f2*.md`).

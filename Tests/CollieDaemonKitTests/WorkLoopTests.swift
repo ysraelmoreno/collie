@@ -94,6 +94,8 @@ actor LoopFakeHost: LoopHost {
     func setReviewAnswer(_ persona: String, _ text: String?) { reviewAnswers[persona] = .some(text) }
     /// F2 X1: each reviewer's folder (by name) and what was in it when it was born.
     var reviewerCwds: [String: URL] = [:], reviewerSaw: [String: [String]] = [:]
+    /// F2 W2: path → text of each reviewer's `reviewSnapshot` as it read it.
+    var snapshotFiles: [String: [String: String]] = [:]
     /// F2 X1: `reviewerActs[<reviewer's name> or <persona>]` runs in the worktree during its ask (a reviewer that
     /// touches the tree); `reviewerAsked` hits once per reviewer asked.
     var reviewerActs: [String: @Sendable (URL) async throws -> Void] = [:]
@@ -118,6 +120,17 @@ actor LoopFakeHost: LoopHost {
         await reviewerAsked.hit()
         if let act = reviewerActs[name] ?? reviewerActs[persona] {
             do { try await act(dir) } catch { throw ProtocolError(code: .notRunning, message: "reviewer act: \(error)") }
+        }
+        // F2 W2: what the reviewer's copy of the judged commit holds when it reads it (after its act)
+        if let cwd = reviewerCwds[name] {
+            let snap = cwd.appendingPathComponent(WorkLoop.reviewSnapshotDir).path
+            var files: [String: String] = [:]
+            if let walk = FileManager.default.enumerator(atPath: snap) {
+                while let rel = walk.nextObject() as? String {
+                    files[rel] = (try? String(contentsOfFile: snap + "/" + rel, encoding: .utf8)) ?? "<dir>"
+                }
+            }
+            snapshotFiles[name] = files
         }
         if reviewTimeouts.contains(name) || reviewTimeouts.contains(persona) { throw ProtocolError(code: .timeout, message: "ask timed out") }
         // F2 X2: the screen echoes the whole prompt, then the answer after the marker; `<NONCE>` in an answer is the prompt's

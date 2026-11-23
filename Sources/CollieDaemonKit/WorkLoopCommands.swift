@@ -632,10 +632,14 @@ extension CommandRouter {
 
     /// F2 Z3b: `loopDismiss`, then what is left of the terminal's process group killed. Its PTY's process leads its own
     /// session (`setsid`), so its pid is the group's id, read before the dismiss forgets it.
+    /// F2 W2: and every descendant (each Bash of Claude Code is a group of its own), swept before the dismiss and again
+    /// after (`WorkLoop.reap`). The pid is read only while its process runs: a reaped pid may be reused.
     func loopDismissReaping(_ id: UUID) async {
-        let pgid = await registry.process(id)?.pid
+        let p = await registry.process(id)
+        let running = p?.isRunning == true, leader = running ? p?.pid : nil
+        let known = leader.map { WorkLoop.descendants(of: [$0]) } ?? []
         await loopDismiss(id)
-        if let pgid { WorkLoop.reapGroup(pgid) }
+        WorkLoop.reap(leader: leader, running: running, known: known)
     }
 
     /// The loop's sandbox: the paddock's profile, as an app service gets (strict whatever the workspace's mode: never

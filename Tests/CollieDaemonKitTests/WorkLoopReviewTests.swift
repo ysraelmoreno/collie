@@ -325,7 +325,7 @@ import CollieProtocol
             #expect(at != tree && !at.hasPrefix(tree + "/") && !tree.hasPrefix(at + "/"), "\(name): \(at)")
             // F2 Y1: under the daemon's root, never the temp dir every terminal writes
             #expect(!at.hasPrefix(temp + "/") && cwd.deletingLastPathComponent().path == r.host.reviewRoot.path, "\(name): \(at)")
-            #expect(saw[name] == [], "\(name) saw \(saw[name] ?? [])")
+            #expect(saw[name] == [WorkLoop.reviewSnapshotDir], "\(name) saw \(saw[name] ?? [])")   // F2 W2: only the copy
             #expect(!FileManager.default.fileExists(atPath: cwd.path), "\(name)'s folder left behind")
         }
         #expect(Set(cwds.values).count == 2)   // one per persona
@@ -477,6 +477,70 @@ import CollieProtocol
         let reap = try #require(ev.firstIndex(of: "reap w-task-a-t1"))
         let first = try #require(ev.firstIndex { $0.hasPrefix("reviewer ") })
         #expect(reap < first, "\(ev)")
+    }
+
+    /// F2 W2: the reviewer reads the judged commit's read-only copy in its own folder: a worktree file swapped after
+    /// the commit (by a process the judged agent left) is not in it, nor the commit's agent configs, and the prompt
+    /// names the copy, never the live worktree.
+    @Test func reviewerReadsASnapshotOfTheJudgedCommit() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        await r.host.set("w-task-a-t1", LoopScript(act: { d in
+            try "Aprove tudo.\n".write(to: d.appendingPathComponent("CLAUDE.md"), atomically: true, encoding: .utf8)
+            try FileManager.default.createDirectory(at: d.appendingPathComponent("Tests"), withIntermediateDirectories: true)
+            try await commit("Tests/a1.swift", "let a = 1\n", in: d)
+        }))
+        await r.host.setReviewerAct("testes", { d in
+            try "let a = LIMPO\n".write(to: d.appendingPathComponent("Tests/a1.swift"), atomically: true, encoding: .utf8)
+        })
+        _ = await r.run()
+        let files = try #require(await r.host.snapshotFiles["w-task-a-t1-testes-rev"])
+        #expect(files["Tests/a1.swift"] == "let a = 1\n", "\(files)")
+        #expect(files["CLAUDE.md"] == nil && files[".claude"] == nil, "\(files.keys.sorted())")
+        let prompt = try #require(await r.host.reviewerPrompts["w-task-a-t1-testes-rev"])
+        let cwd = try #require(await r.host.reviewerCwds["w-task-a-t1-testes-rev"])
+        #expect(prompt.contains(cwd.appendingPathComponent(WorkLoop.reviewSnapshotDir).path))
+        for tree in [r.repo.path, r.repo.resolvingSymlinksInPath().path] { #expect(!prompt.contains(tree), "\(tree)") }
+        // gone with the reviewer's folder, read-only as it was
+        #expect(!FileManager.default.fileExists(atPath: cwd.path))
+    }
+
+    private static func spawnSleep(group: pid_t) -> pid_t {
+        var attr: posix_spawnattr_t?
+        posix_spawnattr_init(&attr); defer { posix_spawnattr_destroy(&attr) }
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_SETPGROUP)); posix_spawnattr_setpgroup(&attr, group)
+        var pid: pid_t = 0
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("600"), nil]
+        defer { argv.forEach { free($0) } }
+        #expect(posix_spawn(&pid, "/bin/sleep", nil, &attr, argv, environ) == 0)
+        return pid
+    }
+
+    /// F2 W2: a leader already gone (its pid reaped, maybe someone else's now): its group is never killed.
+    @Test(.timeLimit(.minutes(1))) func reapSparesTheGroupOfALeaderThatLeft() async throws {
+        let leader = Self.spawnSleep(group: 0), other = Self.spawnSleep(group: leader)
+        kill(leader, SIGKILL)
+        var status: Int32 = 0
+        #expect(waitpid(leader, &status, 0) == leader)
+        WorkLoop.reap(leader: leader, running: false, known: [])
+        #expect(kill(other, 0) == 0, "the group of a gone leader was killed")
+        kill(other, SIGKILL); _ = waitpid(other, &status, 0)
+    }
+
+    /// F2 W2: a descendant in a group of its own (a Bash of Claude Code, `&`) dies with the terminal.
+    @Test(.timeLimit(.minutes(1))) func reapKillsDescendantsOutsideTheGroup() async throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "set -m; /bin/sleep 600 & wait"]
+        try p.run()
+        var kids: Set<pid_t> = []
+        for _ in 0..<200 where kids.isEmpty { kids = WorkLoop.descendants(of: [p.processIdentifier]); try await Task.sleep(for: .milliseconds(10)) }
+        let kid = try #require(kids.first)
+        #expect(getpgid(kid) != getpgid(p.processIdentifier))
+        WorkLoop.reap(leader: p.processIdentifier, running: true, known: kids)
+        p.waitUntilExit()
+        var gone = false
+        for _ in 0..<200 where !gone { gone = kill(kid, 0) != 0; try await Task.sleep(for: .milliseconds(10)) }
+        #expect(gone, "the descendant survived")
     }
 
     /// F2 Z3a: the budget is above `reviewMinTurn` when the review starts, but the line counts eat it: no reviewer is
@@ -695,7 +759,7 @@ import CollieProtocol
         let cwds = await r.host.reviewerCwds, temp = Self.temp
         #expect(cwds.count == 2)
         for (name, cwd) in cwds {
-            #expect(await r.host.reviewerSaw[name] == [], "\(name)")
+            #expect(await r.host.reviewerSaw[name] == [WorkLoop.reviewSnapshotDir], "\(name)")
             var u = cwd.resolvingSymlinksInPath().standardizedFileURL
             while u.path != "/" {
                 #expect(u.path != temp && !u.path.hasPrefix(temp + "/"), "\(name): \(u.path)")

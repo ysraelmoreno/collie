@@ -81,6 +81,76 @@ extension WorkLoop {
         if pgid > 1 { kill(-pgid, SIGKILL) }
     }
 
+    /// F2 W2: every descendant of `roots` (not `roots` themselves), by `proc_listchildpids`: Claude Code runs each Bash
+    /// in a group of its own, so a background process (`nohup`, `&`) of the judged agent is outside the PTY's group.
+    static func descendants(of roots: Set<pid_t>) -> Set<pid_t> {
+        var seen = Set<pid_t>(), todo = Array(roots)
+        while let p = todo.popLast() {
+            var buf = [pid_t](repeating: 0, count: 4096)
+            let n = Int(proc_listchildpids(p, &buf, Int32(buf.count * MemoryLayout<pid_t>.size)))
+            for c in buf.prefix(Swift.max(n, 0)) where c > 1 && !roots.contains(c) && seen.insert(c).inserted { todo.append(c) }
+        }
+        return seen
+    }
+
+    /// F2 W2: what `dismissReaping` kills once the terminal is dismissed. `leader`: the PTY's pid, read BEFORE the
+    /// dismiss and only while its process ran (`running`): a pid already reaped may be someone else's now, so no group
+    /// is killed for it. `known`: its descendants read before the dismiss (`descendants`), reparented to launchd since.
+    /// Those and their own descendants are stopped until no new one shows up (none forks while the sweep runs), then
+    /// killed, then the leader's group.
+    /// The limit: a descendant that left before the first sweep and reparented to launchd is not reached.
+    // ponytail: pid reuse between the sweep and the kill is not guarded (milliseconds); a pidfd-like handle when macOS has one
+    static func reap(leader: pid_t?, running: Bool, known: Set<pid_t>) {
+        var all = known
+        while true {
+            for p in all { kill(p, SIGSTOP) }
+            let more = descendants(of: all).subtracting(all)
+            if more.isEmpty { break }
+            all.formUnion(more)
+        }
+        for p in all { kill(p, SIGKILL) }
+        if running, let leader { reapGroup(leader) }
+    }
+
+    /// F2 W2: the folder, inside the reviewer's own (`reviewScratch`), where the judged commit is exported.
+    static let reviewSnapshotDir = "reviewSnapshot"
+
+    /// F2 W2: the judged commit (`git archive`, never the live worktree, where a process the judged agent left may
+    /// swap a file between the commit and the review) exported to `<scratch>/reviewSnapshot`, read-only. Its agent
+    /// configs (`agentConfigs`, `CLAUDE.local.md`, at any depth) and its symlinks (one may point into the worktree)
+    /// are left out: the diff shows them. nil (that reviewer is mute, fail closed): the export failed.
+    /// Removed with the reviewer's folder (`dropScratch`).
+    // ponytail: one archive per reviewer and attempt; a big repo makes it slow, share one export across reviewers then
+    func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL) async -> URL? {
+        let snap = scratch.appendingPathComponent(Self.reviewSnapshotDir, isDirectory: true)
+        let tar = scratch.appendingPathComponent("reviewSnapshot.tar")
+        defer { try? FileManager.default.removeItem(at: tar) }
+        guard mkdir(snap.path, 0o700) == 0,
+              let a = try? await host.git(["archive", "--format=tar", "-o", tar.path, judged], in: dir), a.status == 0 else { return nil }
+        let x = Process()
+        x.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        x.arguments = ["-x", "-f", tar.path, "-C", snap.path]
+        x.standardOutput = FileHandle.nullDevice; x.standardError = FileHandle.nullDevice
+        guard (try? x.run()) != nil else { return nil }
+        x.waitUntilExit()
+        guard x.terminationStatus == 0 else { return nil }
+        let names = Set(agentConfigs + ["CLAUDE.local.md"]), fm = FileManager.default
+        var dirs: [String] = []
+        guard let walk = fm.enumerator(atPath: snap.path) else { return nil }
+        while let rel = walk.nextObject() as? String {
+            let p = snap.path + "/" + rel
+            var st = stat()
+            guard lstat(p, &st) == 0 else { continue }
+            if st.st_mode & S_IFMT == S_IFLNK || names.contains((rel as NSString).lastPathComponent) {
+                if st.st_mode & S_IFMT == S_IFDIR { walk.skipDescendants() }
+                guard (try? fm.removeItem(atPath: p)) != nil else { return nil }
+            } else if st.st_mode & S_IFMT == S_IFDIR { dirs.append(p) } else { chmod(p, 0o444) }
+        }
+        // the folders last, deepest first: read-only, none can take a new file
+        for d in dirs.reversed() + [snap.path] { chmod(d, 0o555) }
+        return snap
+    }
+
     /// F2 Z2: an agent's config a reviewer would load from beyond its folder: in `reviewRoot` or any ancestor up to `/`,
     /// in the home, or the home's own `~/.claude/CLAUDE.md` and `~/.claude/settings.json`. The first one that exists and
     /// the loop's agent may write (`strictWritable`); nil: none. One found: every reviewer is mute (fail closed).
@@ -140,6 +210,15 @@ extension WorkLoop {
 
     /// A reviewer's folder goes, and its parent with it once no other reviewer's folder is in it (`rmdir` of an empty dir).
     static func dropScratch(_ scratch: URL) {
+        // F2 W2: the snapshot's read-only folders let nothing in them go: writable again first
+        let snap = scratch.appendingPathComponent(reviewSnapshotDir).path
+        chmod(snap, 0o700)
+        if let walk = FileManager.default.enumerator(atPath: snap) {
+            while let rel = walk.nextObject() as? String {
+                var st = stat()
+                if lstat(snap + "/" + rel, &st) == 0, st.st_mode & S_IFMT == S_IFDIR { chmod(snap + "/" + rel, 0o700) }
+            }
+        }
         try? FileManager.default.removeItem(at: scratch)
         rmdir(scratch.deletingLastPathComponent().path)
     }
@@ -232,14 +311,19 @@ extension WorkLoop {
         let opened = await host.strictWrites()
         let planted = Self.plantedConfig(above: host.reviewRoot, home: opened.home, opened: opened.paths)
         let scratch = personas.map { planted == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: $0.name), in: host.reviewRoot) : nil }
+        // F2 W2: each reviewer reads the judged commit's copy in its own folder, never the live worktree
+        var snapshots: [URL?] = []
+        for s in scratch { snapshots.append(s == nil ? nil : await reviewSnapshot(judged, dir, into: s!)) }
         let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
             for (i, p) in personas.enumerated() {
                 let model = loop.reviewerModel ?? p.model ?? loop.model
                 let as_ = { var l = loop; l.model = model; return l }()
                 // F2 X2: a nonce per reviewer and attempt, made here after the agent's turn: no text of the diff can carry it
                 let nonce = ReviewPrompt.newNonce()
-                let prompt = ReviewPrompt.build(persona: p, spec: specShown, diff: diff, evidence: evidence, check: check, nonce: nonce)
-                let name = Self.reviewerName(agent, persona: p.name), cwd = scratch[i]
+                let snapshot = snapshots[i]
+                let prompt = ReviewPrompt.build(persona: p, spec: specShown, diff: diff, evidence: evidence, check: check, nonce: nonce,
+                                                snapshot: snapshot?.path)
+                let name = Self.reviewerName(agent, persona: p.name), cwd = snapshot == nil ? nil : scratch[i]
                 g.addTask {
                     var id: UUID?
                     var verdict = Self.mute(p.name)

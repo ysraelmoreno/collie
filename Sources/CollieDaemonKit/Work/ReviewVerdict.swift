@@ -213,8 +213,10 @@ enum ReviewPrompt {
     static func openData(_ what: String, _ nonce: String) -> String { "<<<DADO NÃO CONFIÁVEL: \(what) \(nonce)>>>" }
     static func closeData(_ what: String, _ nonce: String) -> String { "<<<FIM DO DADO: \(what) \(nonce)>>>" }
 
+    /// F2 W2: `snapshot`: the judged commit's read-only copy (`WorkLoop.reviewSnapshot`) the reviewer reads the code
+    /// in, never the live worktree (a process the judged agent left could swap its files mid-review).
     static func build(persona: Persona, spec: String, diff: String, evidence: String, check: String, nonce: String,
-                      maxDiffBytes: Int = defaultMaxDiffBytes) -> String {
+                      snapshot: String? = nil, maxDiffBytes: Int = defaultMaxDiffBytes) -> String {
         func fenced(_ what: String, _ body: String) -> String {
             openData(what, nonce) + "\n" + body + "\n" + closeData(what, nonce)
         }
@@ -237,6 +239,7 @@ enum ReviewPrompt {
 
         # Comando do check
         \(check)
+        \(snapshot.map { "\n# Código do commit julgado\nCópia somente leitura do commit julgado em \($0) (sem os arquivos de config de agente nem symlinks, que estão no diff). Leia o código só ali e no diff, nunca em outra pasta.\n" } ?? "")
 
         Responda SÓ o JSON do contrato, sem texto depois, e inclua "nonce":"\(nonce)" no JSON:
         {"persona":"\(persona.name)","nonce":"\(nonce)","verdict":"approve"|"reject","findings":[{"severity":"blocker|major|minor|nit","file":"<caminho>","line":<n>,"claim":"<defeito>","fix":"<conserto>"}]}

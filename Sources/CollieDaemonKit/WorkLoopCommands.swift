@@ -91,8 +91,6 @@ extension CommandRouter {
         }
         let notify = try Self.loopNotify(str(r, "notify"))
         let review = try await Self.loopReview(review: flag(r, "review"), personas: str(r, "personas"), reviewerModel: str(r, "reviewer-model"), dir: dir)
-        // F2 Z2: fail closed, the loop's agent and its reviewers start strict or there is no review (none without it)
-        if review.on, let why = Self.reviewNeedsStrict(sandboxed: config.sandboxHome != nil, mode: sandboxMode) { throw invalid(why) }
         let loop = WorkLoopState(state: .running, tries: Int(try num(r, "tries", max: Self.loopTriesMax) ?? 3),
                                  timeout: Int(try num(r, "timeout", max: Self.loopTimeoutMax) ?? 3600),
                                  preset: str(r, "preset"),
@@ -217,13 +215,8 @@ extension CommandRouter {
     }
     static let personasDir = "docs/fabrica/personas/"
 
-    /// F2 Z2: why `--review` is refused, nil when it runs: the loop's agent (off a lane it takes the workspace's mode) and
-    /// its reviewers start strict only in a sandboxed daemon in strict mode. Open mode, or no terminal sandbox at all,
-    /// lets the judged agent write the CLAUDE.md files the reviewer loads (~/CLAUDE.md, ~/.claude/CLAUDE.md…).
-    static func reviewNeedsStrict(sandboxed: Bool, mode: SandboxMode) -> String? {
-        sandboxed && mode == .strict ? nil
-            : "--review exige agentes em modo strict: o modo open deixa o agente julgado escrever instruções que o revisor carrega"
-    }
+    // F2 A3: no strict-mode requirement. The review is an opinion that never approves (`reviewAdvisory`): a judged
+    // agent that sways its reviewer at most silences it, which equals no `--review`; the check and the gate decide.
 
     /// F2 Z2: what a strict loop agent writes under the home besides caches (`WorkLoop.strictWritable`): its write
     /// grants (any terminal's: fail closed) and each paddock's folder with its lanes (the paddock's parent).
@@ -678,16 +671,14 @@ extension CommandRouter {
 
     /// With a terminal sandbox in force, an attempt's agent must run in one too (a free one is dismissed, the attempt fails).
     /// A lane's agent (M3.3) also when no terminal is sandboxed (then never): sandboxed, strict, the lane its project.
-    /// F2 Z2 (`strict`: a loop with `--review`, its agent or a reviewer): it must have started strict, never in a
-    /// daemon with no terminal sandbox (`reviewNeedsStrict`, again at each summon: the mode may change mid-loop).
-    func loopAgentSandboxed(_ id: UUID, lane: URL? = nil, strict: Bool = false) -> Bool {
+    func loopAgentSandboxed(_ id: UUID, lane: URL? = nil) -> Bool {
         let t = ws.terminals.first { $0.id == id }
         if let lane {
             guard let t, sandboxed(t), t.startMode == .strict, lanePaddock(of: t) != nil else { return false }
             return t.projectRoot == SignedAppCheck.realPath(lane)
         }
-        guard config.sandboxHome != nil else { return !strict }
-        return t.map { sandboxed($0) && (!strict || $0.startMode == .strict) } ?? false
+        guard config.sandboxHome != nil else { return true }
+        return t.map { sandboxed($0) } ?? false
     }
 
     /// The spec, read again at the attempt: a regular file (no symlink, one link) still inside the starter's project.
@@ -758,7 +749,7 @@ struct RouterLoopHost: LoopHost {
 
     func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
         let id = try await router.loopSummon(summonRequest(name, loop), as: starter, lane: lane?.path)
-        guard await router.loopAgentSandboxed(id, lane: lane?.path, strict: loop.review == true) else {
+        guard await router.loopAgentSandboxed(id, lane: lane?.path) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
         }
@@ -778,7 +769,7 @@ struct RouterLoopHost: LoopHost {
     // F2 X4: a daemon that falls mid-review leaves the reviewer terminals; the start sweep removes them (`loopAgents`)
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
         let id = try await router.loopSummon(summonRequest(name, loop), as: starter, scratch: cwd)
-        guard await router.loopAgentSandboxed(id, strict: true) else {
+        guard await router.loopAgentSandboxed(id) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
         }

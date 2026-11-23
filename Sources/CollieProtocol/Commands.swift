@@ -421,7 +421,7 @@ public enum Commands {
                              ParamSpec("preset", .string, help: "The attempts' agent preset (default: yours, as summon)"),
                              ParamSpec("model", .string, help: "Claude model for the attempts' agents"),
                              ParamSpec("command", .string, help: "Command line for the attempts' agents (custom preset)"),
-                             ParamSpec("review", .flag, help: "Opinion (parecer) by personas (docs/fabrica/personas) on each attempt, opt-in: it vetoes with a blocker or major finding; it never approves alone (the check and the gate decide); no opinion (mute or invalid reviewer) equals no --review; requires agents in strict"),
+                             ParamSpec("review", .flag, help: "Opinion (parecer) by personas (docs/fabrica/personas) on each attempt, opt-in: it vetoes with a blocker or major finding; it never approves alone (the check and the gate decide); no opinion (mute or invalid reviewer) equals no --review; runs in open or strict mode"),
                              ParamSpec("personas", .string, help: "With --review: auto (default, the router picks) or persona names, comma-separated"),
                              ParamSpec("reviewer-model", .string, help: "With --review: the model of every persona (default: each persona's, else the loop's)"),
                              ParamSpec("terminal", .string, help: "Terminal leashed to you (Shepherd)")],

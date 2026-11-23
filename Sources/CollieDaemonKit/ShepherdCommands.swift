@@ -84,7 +84,9 @@ extension CommandRouter {
 
     /// `lane` (M3.3, the loop's own; no request carries it): the new terminal stands in `me`'s paddock with the lane as
     /// its folder and its project, so its sandbox is the lane's (strict, closed to the paddock's worktree and the other lanes).
-    func summon(_ r: Request, by me: TerminalRecord, lane: URL? = nil) async throws -> JSONValue {
+    /// `scratch` (F2 X1, the loop's own; no request carries it): a reviewer, born in that empty folder the daemon made,
+    /// as its folder and its project: never the worktree, so nothing the judged agent committed loads there.
+    func summon(_ r: Request, by me: TerminalRecord, lane: URL? = nil, scratch: URL? = nil) async throws -> JSONValue {
         let name = try need(r, "name")
         try refuseFree(r)
         try refuseFreeSummoner(me)
@@ -130,9 +132,16 @@ extension CommandRouter {
                 throw ProtocolError(code: .unavailable, message: "lane \(cwd) is not its own project root")
             }
         }
+        if let scratch {
+            // the daemon made the folder itself: no card, as for a lane
+            guard lane == nil, str(r, "paddock") == nil, str(r, "cwd") == nil else {
+                throw ProtocolError(code: .unavailable, message: "a reviewer runs only in its own scratch folder")
+            }
+            cwd = SignedAppCheck.realPath(scratch)
+        }
         // DX backlog 15, strict mode: outside the project only into a folder the user released to this Shepherd; else a card
         var anywhere = startedOpen(me)
-        if lane == nil, !anywhere, !ProjectRoot.contains(cwd, root: allowed) {
+        if lane == nil, scratch == nil, !anywhere, !ProjectRoot.contains(cwd, root: allowed) {
             let released = SandboxGrantStore.applicable(sandboxGrants, terminal: me.id, project: me.projectRoot, lot: ws.lot(of: me.id)?.id)
                 .contains { $0.access == .write && ProjectRoot.contains(cwd, root: URL(fileURLWithPath: $0.path)) }
             guard released else {
@@ -144,7 +153,7 @@ extension CommandRouter {
             }
             anywhere = true
         }
-        let root = lane != nil ? URL(fileURLWithPath: cwd)
+        let root = lane != nil || scratch != nil ? URL(fileURLWithPath: cwd)
             : try childProject(cwd: cwd, paddock: ws.paddocks.first { $0.id == paddockId }, allowed: allowed, open: anywhere)
         var rec = TerminalRecord(id: UUID(), name: name, preset: preset, command: command,
                                  cwd: cwd, isShepherd: false, paddockId: paddockId, projectRoot: root.path)

@@ -57,7 +57,9 @@ protocol LoopHost: Sendable {
     /// F2 R4: a reviewer's terminal: `summon` as the starter's (never leashed to the agent that worked; `loop.model` is
     /// the persona's), and marked so that `othersWorking`/`anyoneWorking` never count it (the loop's own reviewer is
     /// no one working in the paddock). Dismissed with `dismiss`.
-    func summonReviewer(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID
+    /// F2 X1: `cwd` is its folder and its project: an empty one the loop made (`reviewScratch`), never the worktree nor
+    /// a checkout of it, so no CLAUDE.md, AGENTS.md, settings or hooks the judged agent committed ever load there.
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID
     /// F2 R4: `ask`, returning the text the terminal answered.
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String
 }
@@ -77,7 +79,7 @@ extension LoopHost {
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await git(args, in: dir) }
     func namesTaken() async -> Set<String> { [] }
     /// A host with no reviewers: the review fails closed (every persona 'sem resposta').
-    func summonReviewer(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
         throw ProtocolError(code: .unavailable, message: "this host runs no reviewers")
     }
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
@@ -518,8 +520,17 @@ actor WorkLoop {
         case .runReview:
             // F2 R4: the personas judge `judged` against `before`, every reviewer gone before this returns
             let evidence = await reviewEvidence(before: before, judged: state.judged, check: r.checkOutput, gate: r.loop.gate == nil ? nil : r.output, dir)
-            let ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
+            let tree = await reviewTree(dir)
+            var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
                                    evidence: evidence, turn: Swift.min(r.loop.timeout, await left(id, r.loop, since: r.started)), dir)
+            // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
+            let after = await reviewTree(dir)
+            if tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true {
+                _ = await settle(state.judged, on: r.on, loose: r.loose, reset: true, dir)
+                ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])
+                ran.line = "revisão: recusada (\(Self.reviewerTouched))"
+                ran.note = String(ran.note.prefix(Self.noteChars - 64)) + "\n" + Self.reviewerTouched
+            }
             let at = host.now(), line = ran.line, approved = ran.outcome.approved, note = ran.note
             await record(id, &r) { x in
                 if let i = x.tasks.firstIndex(where: { $0.id == task.id }) {
@@ -883,6 +894,14 @@ actor WorkLoop {
         _ = try? await host.git(["checkout", "-q", "-f", branch == "HEAD" ? before : branch], in: dir)
         _ = try? await host.git(["reset", "-q", "--hard", before], in: dir)
         return wrote
+    }
+
+    static let reviewerTouched = "o revisor mexeu na árvore"
+
+    /// F2 X1: HEAD and the porcelain status with its branch line, before and after the review (nil: git could not say).
+    func reviewTree(_ dir: URL) async -> String? {
+        guard let head = await out(["rev-parse", "HEAD"], dir), let st = await out(["status", "--porcelain", "-b"], dir) else { return nil }
+        return head + "\n" + st
     }
 
     func out(_ args: [String], _ dir: URL) async -> String? {

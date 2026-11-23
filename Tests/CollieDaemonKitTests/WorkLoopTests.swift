@@ -80,9 +80,18 @@ actor LoopFakeHost: LoopHost {
     var reviewerPrompts: [String: String] = [:], reviewerModels: [String: String] = [:]
     var reviewAnswers: [String: String?] = [:], othersSawReviewer = false
     func setReviewAnswer(_ persona: String, _ text: String?) { reviewAnswers[persona] = .some(text) }
-    func summonReviewer(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
+    /// F2 X1: each reviewer's folder (by name) and what was in it when it was born.
+    var reviewerCwds: [String: URL] = [:], reviewerSaw: [String: [String]] = [:]
+    /// F2 X1: `reviewerActs[<reviewer's name> or <persona>]` runs in the worktree during its ask (a reviewer that
+    /// touches the tree); `reviewerAsked` hits once per reviewer asked.
+    var reviewerActs: [String: @Sendable (URL) async throws -> Void] = [:]
+    nonisolated let reviewerAsked = Arrivals()
+    func setReviewerAct(_ who: String, _ act: @escaping @Sendable (URL) async throws -> Void) { reviewerActs[who] = act }
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
         let id = UUID(); names[id] = name; reviewers.append(name); reviewerIds.append(id); liveReviewers.append(id)
         reviewerModels[name] = loop.model ?? "-"
+        reviewerCwds[name] = cwd
+        reviewerSaw[name] = (try? FileManager.default.contentsOfDirectory(atPath: cwd.path)) ?? ["<no folder>"]
         return id
     }
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
@@ -90,6 +99,10 @@ actor LoopFakeHost: LoopHost {
         reviewerPrompts[name] = prompt
         // the persona is the prompt's own first line: "Você é o revisor '<persona>'."
         let persona = prompt.split(separator: "'").dropFirst().first.map(String.init) ?? "?"
+        await reviewerAsked.hit()
+        if let act = reviewerActs[name] ?? reviewerActs[persona] {
+            do { try await act(dir) } catch { throw ProtocolError(code: .notRunning, message: "reviewer act: \(error)") }
+        }
         guard let answer = reviewAnswers[name] ?? reviewAnswers[persona] else { return #"{"persona":"\#(persona)","verdict":"approve","findings":[]}"# }
         guard let answer else { throw ProtocolError(code: .notRunning, message: "reviewer gone") }
         return answer

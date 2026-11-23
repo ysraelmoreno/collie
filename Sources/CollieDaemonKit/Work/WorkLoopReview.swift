@@ -27,6 +27,17 @@ extension WorkLoop {
         return String(agent.prefix(Swift.max(0, AgentNaming.max - tail.count))).trimmingCharacters(in: CharacterSet(charactersIn: "-")) + tail
     }
 
+    /// F2 X1: a reviewer's own folder, empty (no agent config of anyone's), made by the daemon under its temp dir, outside
+    /// every worktree and paddock: one per attempt and persona (the name carries both), removed once its reviewer is
+    /// dismissed. nil: it could not be made (that reviewer is mute, a refusal).
+    /// ponytail: a daemon that falls mid-review leaves it in the temp dir, which the system clears.
+    static func reviewScratch(_ name: String) -> URL? {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("collie-review")
+            .appendingPathComponent(name + "-" + UUID().uuidString.prefix(8).lowercased())
+        do { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700]) } catch { return nil }
+        return d
+    }
+
     /// No answer (summon refused, terminal gone, past the turn's time, empty text): a refusal, fail closed.
     static func mute(_ persona: String) -> PersonaVerdict {
         PersonaVerdict(persona: persona, approved: false, findings: [], invalid: "revisor \(persona) sem resposta")
@@ -77,18 +88,20 @@ extension WorkLoop {
         }
         let spec = await specText(task.spec, at: before, dir)
         let host = host, check = task.check ?? ""
+        let scratch = personas.map { Self.reviewScratch(Self.reviewerName(agent, persona: $0.name)) }
         let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
             for (i, p) in personas.enumerated() {
                 let model = loop.reviewerModel ?? p.model ?? loop.model
                 let as_ = { var l = loop; l.model = model; return l }()
                 let prompt = ReviewPrompt.build(persona: p, spec: spec.isEmpty ? task.title : spec, diff: diff, evidence: evidence, check: check)
-                let name = Self.reviewerName(agent, persona: p.name)
+                let name = Self.reviewerName(agent, persona: p.name), cwd = scratch[i]
                 g.addTask {
                     var id: UUID?
                     var verdict = Self.mute(p.name)
                     do {
+                        guard let cwd else { throw ProtocolError(code: .internal, message: "no scratch folder") }   // fail closed: mute
                         let t = try await AgentNaming.summon(name, taskId: task.id, taken: await host.namesTaken()) { (x: String) async throws(ProtocolError) -> UUID in
-                            try await host.summonReviewer(name: x, for: work, loop: as_)
+                            try await host.summonReviewer(name: x, for: work, loop: as_, cwd: cwd)
                         }
                         id = t
                         let text = try await host.askText(t, prompt: prompt, timeout: .seconds(turn))
@@ -103,6 +116,8 @@ extension WorkLoop {
         }
         // every reviewer goes, whatever it answered, before the machine moves on
         for case let (_, _, id?) in runs { await host.dismiss(id) }
+        // nothing above throws: the folders go whatever happened, a cancelled loop included
+        for case let s? in scratch { try? FileManager.default.removeItem(at: s) }
         let verdicts = runs.map { PersonaVerdict(persona: $0.1.persona, approved: $0.1.approved, findings: $0.1.findings, invalid: $0.1.invalid) }
         let outcome = ReviewVerdict.aggregate(verdicts)
         let found = runs.reduce(0) { $0 + $1.1.findings.count }

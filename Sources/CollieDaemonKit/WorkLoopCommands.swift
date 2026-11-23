@@ -479,14 +479,15 @@ extension CommandRouter {
     // MARK: what RouterLoopHost needs from the router
 
     /// `lane` (M3.3): the agent is born in the work's paddock (no `--paddock`) with the lane as its folder and project.
-    func loopSummon(_ r: Request, as starter: UUID, lane: URL? = nil) async throws(ProtocolError) -> UUID {
+    /// `scratch` (F2 X1): a reviewer, born in that empty folder the loop made, as its folder and project.
+    func loopSummon(_ r: Request, as starter: UUID, lane: URL? = nil, scratch: URL? = nil) async throws(ProtocolError) -> UUID {
         let v: JSONValue
         do {
-            if let lane {
+            if lane != nil || scratch != nil {
                 guard let me = ws.terminals.first(where: { $0.id == starter }), me.isShepherd else {
-                    throw ProtocolError(code: .notShepherd, message: "a lane's agent is summoned as the loop's Shepherd")
+                    throw ProtocolError(code: .notShepherd, message: "a loop's agent is summoned as the loop's Shepherd")
                 }
-                v = try await summon(r, by: me, lane: lane)
+                v = try await summon(r, by: me, lane: lane, scratch: scratch)
             } else { v = try await shepherd(r, from: starter) }
         } catch {
             throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)")
@@ -707,14 +708,17 @@ struct RouterLoopHost: LoopHost {
                                             "DEVELOPER_DIR", "SDKROOT", "JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "GOPATH", "GOROOT",
                                             "CARGO_HOME", "RUSTUP_HOME", "NVM_DIR", "PYENV_ROOT", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
 
-    func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        // no --paddock: the starter stands in the work's paddock (work.start took it from there)
+    /// The summon the loop sends as its starter. No --paddock: the starter stands in the work's paddock (work.start took it from there).
+    func summonRequest(_ name: String, _ loop: WorkLoopState) -> Request {
         var args: [String: JSONValue] = ["name": .string(name)]
         if let p = loop.preset { args["preset"] = .string(p) }
         if let m = loop.model { args["model"] = .string(m) }
         if let c = loop.command { args["command"] = .string(c) }
-        let id = try await router.loopSummon(Request(id: "loop", terminalId: starter.uuidString, command: "summon", args: args), as: starter,
-                                             lane: lane?.path)
+        return Request(id: "loop", terminalId: starter.uuidString, command: "summon", args: args)
+    }
+
+    func summon(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
+        let id = try await router.loopSummon(summonRequest(name, loop), as: starter, lane: lane?.path)
         guard await router.loopAgentSandboxed(id, lane: lane?.path) else {
             await router.loopDismiss(id)
             throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
@@ -726,9 +730,17 @@ struct RouterLoopHost: LoopHost {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).source
     }
     /// F2 R4: marked right after its summon, before it is asked anything (a terminal not yet in a turn is no one working).
+    /// F2 X1: born in `cwd` (the loop's empty `reviewScratch`), never in the worktree or a lane: its project, so its
+    /// sandbox profile writes there and not in the worktree nor the repository's git dir (`cwd` is no repo). The limit:
+    /// the strict profile still writes the temp dirs and the write grants of the reviewer's lot; a worktree under one
+    /// of those stays writable, and the tree's recheck after the review (`reviewTree`) is what catches that.
     // ponytail: a daemon that falls mid-review leaves the reviewer terminals; the start sweep does not know them
-    func summonReviewer(name: String, for work: Work, loop: WorkLoopState) async throws(ProtocolError) -> UUID {
-        let id = try await summon(name: name, for: work, loop: loop)
+    func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {
+        let id = try await router.loopSummon(summonRequest(name, loop), as: starter, scratch: cwd)
+        guard await router.loopAgentSandboxed(id) else {
+            await router.loopDismiss(id)
+            throw ProtocolError(code: .unauthorized, message: "'\(name)' started without a sandbox")
+        }
         await router.loopReviewerBorn(id)
         return id
     }

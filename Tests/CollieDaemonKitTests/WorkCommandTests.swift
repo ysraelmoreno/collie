@@ -608,4 +608,4 @@ extension WorkCommandTests {
     }
 }
 
-private extension CommandRouter { func f4AddPaddock(_ p: Paddock) { ws.paddocks.append(p) } func f4AddTerminal(_ t: TerminalRecord) { ws.terminals.append(t) } }
+private extension CommandRouter { func f4AddPaddock(_ p: Paddock) { ws.paddocks.append(p) }; func f4AddTerminal(_ t: TerminalRecord) { ws.terminals.append(t) } }

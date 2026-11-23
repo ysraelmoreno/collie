@@ -134,7 +134,7 @@ extension WorkLoop {
         guard (try? x.run()) != nil else { return nil }
         x.waitUntilExit()
         guard x.terminationStatus == 0 else { return nil }
-        let names = Set(agentConfigs + ["CLAUDE.local.md"]), fm = FileManager.default
+        let names = Set(Self.agentConfigs + ["CLAUDE.local.md"]), fm = FileManager.default
         var dirs: [String] = []
         guard let walk = fm.enumerator(atPath: snap.path) else { return nil }
         while let rel = walk.nextObject() as? String {

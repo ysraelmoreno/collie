@@ -1,0 +1,9 @@
+f246f49f docs(work): A2, --review help, reviewer text and docs say parecer
+ff2344bb test(work): A1, a mute reviewer of a huge file is a note, not a veto
+146c7fa9 feat(work): A1, reviewAdvisory: only a confirmed veto fails the attempt
+900937a4 docs(fabrica): specs do modo parecer do --review (A1, A2)
+67c5d256 fix(work): U2, reviewNoReplace: no replace objects, copy from blobs
+bada3bab test(work): U1, a changed env says reviewGlobalConfigRiskyNote
+2c1f6635 fix(work): U1, reviewLoopConfigBase: one ~/.claude.json base for the whole loop
+a388dbf0 docs(fabrica): specs e check do sexto laço de correção da F2 (U1, U2)
+85ccd35e docs(fabrica): revisão independente da F2, sexta rodada (base do hash e git repla

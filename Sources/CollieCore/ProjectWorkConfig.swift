@@ -11,6 +11,8 @@ public struct ProjectWorkConfig: Sendable, Equatable {
     public var gate: String?, precheck: String?, smoke: String?, full: String?
     /// Area name (`a-z0-9-`, 1...40) → its command.
     public var areas: [String: String]
+    /// U1: the `factory` key, read strictly by `FactoryProfile`; nil when the file has none.
+    public var factory: FactoryProfile?
 
     public init(gate: String? = nil, precheck: String? = nil, smoke: String? = nil, full: String? = nil, areas: [String: String] = [:]) {
         self.gate = gate; self.precheck = precheck; self.smoke = smoke; self.full = full; self.areas = areas
@@ -30,6 +32,8 @@ public struct ProjectWorkConfig: Sendable, Equatable {
         case tooManyAreas(Int)
         case unknownArea(String, available: [String])
         case noAreas
+        /// U1: the `factory` key is there and wrong.
+        case invalidFactory(FactoryProfile.ProfileError)
 
         /// One line, in words. Names and keys come from the file: the renderer cleans them.
         public var message: String {
@@ -48,6 +52,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
             case .unknownArea(let n, let all):
                 "área '\(n)' não existe em collie-work.json; " + (all.isEmpty ? "o arquivo não define nenhuma área" : "existem: \(all.joined(separator: ", "))")
             case .noAreas: "nenhuma área pedida"
+            case .invalidFactory(let e): e.message
             }
         }
     }
@@ -85,9 +90,15 @@ public struct ProjectWorkConfig: Sendable, Equatable {
                     c.areas[name] = cmd
                 }
             }
+            if let f = o["factory"] {
+                switch FactoryProfile.parse(f) {
+                case .success(let p): c.factory = p
+                case .failure(let e): throw ConfigError.invalidFactory(e)
+                }
+            }
         } catch let e as ConfigError { return .failure(e) }
         catch { return .failure(.notJSON) }
-        let known = Set(commandKeys + ["version", "areas"])
+        let known = Set(commandKeys + ["version", "areas", "factory"])
         warnings = o.keys.filter { !known.contains($0) }.sorted().map { "chave desconhecida ignorada: \($0)" }
         return .success((c, warnings))
     }
@@ -124,7 +135,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
             && n.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" }
     }
 
-    private static func command(_ v: Any, key: String) throws(ConfigError) -> String {
+    static func command(_ v: Any, key: String) throws(ConfigError) -> String {
         guard let s = v as? String else { throw .wrongType(key: key, expected: "texto") }
         guard s.count <= maxCommand else { throw .commandTooLong(key: key, length: s.count) }
         // control (newline, tab, NUL, DEL, C1) and format characters (bidi overrides, zero-width): what runs is what shows

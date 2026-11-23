@@ -7,7 +7,7 @@ fx=scripts/fixtures/factory-detect
 fail=0
 tree() { (cd "$1" && find . -print | LC_ALL=C sort && find . -type f -exec shasum {} \; | LC_ALL=C sort); }
 # field <json> <python expression over d>
-field() { printf '%s' "$1" | python3 -I -c "import json,sys; d=json.load(sys.stdin); print($2)"; }
+field() { printf '%s' "$1" | python3 -I -c "import json,sys; d=json.load(sys.stdin); print(($2))"; }
 
 check() {   # check <dir> <expected stack> <expected testRunner or None>
   local dir=$1 want=$2 runner=$3 before after out

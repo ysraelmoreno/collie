@@ -9,7 +9,7 @@
 | Arquivo | Vai para | Para quê |
 |---|---|---|
 | `profile.json` | `collie-work.json` (mesclado) | gate, precheck, smoke, áreas e o perfil `factory` (U1) |
-| `scripts/gate.sh` | `scripts/gate.sh` | o `gate` (`bash scripts/gate.sh # package.json jest.config.js vitest.config.ts`): roda o runner direto e falha se um arquivo de config que o governa força sucesso (`passWithNoTests`, `testFailureExitCode`, `--co`/`--collect-only`, `ExitCode.OK`, `_exit(0)`, `exitstatus = 0`, fora de comentário) ou é link simbólico; o runner (`npx --no-install vitest run` ou `npx --no-install jest`) é gravado pela init, nunca escolhido pelo `package.json` em tempo de execução. O juiz protege por substring todo arquivo que o texto do gate cita: este script e as configs da raiz depois do `#` |
+| `scripts/gate.sh` | `scripts/gate.sh` | o `gate` (`bash scripts/gate.sh # package.json jest.config.js vitest.config.ts`): roda o runner direto e falha se um arquivo de config que o governa força sucesso (`passWithNoTests`, `testFailureExitCode`, `--co`/`--collect-only`, `ExitCode.OK`, `_exit(0)`, `exitstatus = 0`, fora de comentário) ou se há link simbólico (de config ou de pasta) fora de .git, node_modules, .venv e .build; o runner (`npx --no-install vitest run` ou `npx --no-install jest`) é gravado pela init, nunca escolhido pelo `package.json` em tempo de execução. O juiz protege por substring todo arquivo que o texto do gate cita: este script e as configs da raiz depois do `#` |
 | `scripts/check-feature.sh` | `scripts/check-feature.sh` | check de UMA tarefa: roda só os testes dela e falha se nenhum rodou; nunca só compila |
 | `ci.yml` | `.github/workflows/ci.yml` | esqueleto de CI que roda o mesmo gate (só quando o projeto não tem CI) |
 

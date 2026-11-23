@@ -48,7 +48,8 @@ Mostre `stack`, `stacks`, `testRunner`, `linter`, `formatter`, `ci`, `existing` 
 Para cada item, só se o destino **não existe**; se existe, diff + pergunta:
 - `collie-work.json`: do `profile.json` do modelo com as respostas da entrevista. Já existe: mescle só a chave `factory` e as chaves que faltam; nunca troque o `gate` do dono sem ele dizer.
 - `scripts/gate.sh`, executável: o `gate` é `bash scripts/gate.sh # <configs>`, o texto do `gate` do modelo. Ele roda o runner
-  direto e falha se um arquivo de config listado no comentário do topo força sucesso. O juiz protege por substring todo arquivo
+  direto e falha se um arquivo de config listado no comentário do topo força sucesso ou se o projeto tem link simbólico
+  fora de .git, node_modules, .venv e .build (um link versionado tira o alvo da vista do juiz; troque-o por cópia). O juiz protege por substring todo arquivo
   que o texto do gate cita: o `gate.sh` e as configs depois do `#`. Deixe depois do `#` só as configs da raiz que existem no
   projeto (o doutor avisa de uma citada que não existe); se o projeto ganhar outra depois, acrescente-a ao texto.
   Limite que fica: o gate não enxerga binários em pastas ignoradas como node_modules/.bin ou .venv.

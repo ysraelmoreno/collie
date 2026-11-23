@@ -11,15 +11,19 @@ cd "$(dirname "$0")/.."
 for f in pytest.py pytest; do
   if [ -e "$f" ] || [ -L "$f" ]; then echo "gate: $f na raiz troca o pytest de verdade; tire-o" >&2; exit 1; fi
 done
-# forced <find -name tests>: a symlinked config (its target is out of the judge's sight) or a config line that makes the
-# runner pass with no test or with failures. find hands the paths to grep itself (-exec +), so a path with a space or a glob
-# character is never split by the shell. Comment lines (# or //) are not settings.
-# ponytail: plain grep, not a parser; a config that forces success some other way (addopts = -p plugin) is the reviewer's to catch.
+# forced <find -name tests>: any symlink outside the pruned folders (a linked config or a linked folder, e.g.
+# tests2 -> node_modules/x, has its target out of the judge's sight) or a config line that makes the runner pass with no test
+# or with failures. find hands the paths to awk itself (-exec +), so a path with a space, a glob character or a ':' is never
+# split by the shell, and awk tests the line's text alone (never the "path:line:" prefix), so a folder named `a:1:#x/`
+# cannot pass a forced line off as a comment. Comment lines (# or //) are not settings. A find/awk error fails the gate.
+# ponytail: plain regex, not a parser; a config that forces success some other way (addopts = -p plugin) is the reviewer's to catch.
 re='passWithNoTests"?[[:space:]]*[:=][[:space:]]*true|testFailureExitCode|--co([^[:alnum:]_-]|$)|--collect-only|ExitCode\.OK|_exit\(0\)|exitstatus[[:space:]]*=[[:space:]]*0'
 forced() {
   local skip=( \( -name .git -o -name node_modules -o -name .venv -o -name .build \) -prune -o ) hit
-  hit=$( { find . "${skip[@]}" -type l \( "$@" \) -print | sed 's/$/: link simbólico/'
-           find . "${skip[@]}" -type f \( "$@" \) -exec grep -EnH "$re" {} + | grep -Ev '^[^:]*:[0-9]+:[[:space:]]*(#|//)'; } 2>/dev/null ) || true
+  hit=$( find . "${skip[@]}" -type l -print | sed 's/$/: link simbólico/' &&
+         find . "${skip[@]}" -type f \( "$@" \) -exec env RE="$re" awk \
+           '$0 ~ ENVIRON["RE"] && $0 !~ /^[[:space:]]*(#|\/\/)/ { print FILENAME ":" FNR ": " $0 }' {} + ) \
+    || { echo "gate: não deu para ler as configs do runner" >&2; exit 1; }
   [ -z "$hit" ] || { printf '%s\n' "$hit" >&2; echo "gate: a config do runner força sucesso; tire a opção acima" >&2; exit 1; }
 }
 forced -name conftest.py -o -name pyproject.toml -o -name pytest.ini -o -name setup.cfg -o -name tox.ini

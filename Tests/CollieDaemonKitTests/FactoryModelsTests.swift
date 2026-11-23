@@ -160,6 +160,15 @@ private func snapshot(_ stack: String) throws -> FactoryDoctor.Snapshot {
         for (stack, name) in [("node", "jest.config.js"), ("python", "pytest.ini")] {
             let r = try runGate(stack, ["cfg/real": "x\n"], links: [name: "cfg/real"])
             #expect(r.status != 0 && r.out.contains("link simbólico") && !r.out.contains("stub "), "\(stack): \(r.out)")
+            // a linked folder (its config sits in an ignored, pruned folder) fails as well
+            let dir = try runGate(stack, ["node_modules/x/\(name)": "x\n"], links: ["tests2": "node_modules/x"])
+            #expect(dir.status != 0 && dir.out.contains("tests2: link simbólico") && !dir.out.contains("stub "), "\(stack): \(dir.out)")
+        }
+        // a folder named like grep's "path:line:#" prefix cannot pass a forced line off as a comment
+        for (stack, rel, body) in [("python", "a:1:#x/conftest.py", "session.exitstatus = 0\n"),
+                                   ("node", "a:1:#x/jest.config.js", "module.exports = { passWithNoTests: true }\n")] {
+            let r = try runGate(stack, [rel: body])
+            #expect(r.status != 0 && r.out.contains("força sucesso") && !r.out.contains("stub "), "\(stack): \(r.out)")
         }
         for files in [["pytest.py": "import sys; sys.exit(0)\n"], ["pytest/__main__.py": "\n"]] {
             let r = try runGate("python", files)

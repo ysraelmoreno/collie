@@ -1,0 +1,5 @@
+fc4d066 fix(work): Z3b, agent configs checked by metadata, auto-memory off, judged agent's group reaped
+0a8c7a8 fix(work): Z3a, a turn eaten by the line counts is reviewBudgetOut; clean drops only agent configs
+0d8a725 fix(work): Z2, --review only with strict agents; reviewer checks every ancestor (reviewNeedsStrict)
+0f93646 docs(memory): Z1, correct the note on a reviewer's own memory reads
+9652e78 fix(memory): Z1, a reviewer's hooks are bare (reviewerHooksBare)

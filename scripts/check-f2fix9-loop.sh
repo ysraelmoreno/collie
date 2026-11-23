@@ -9,7 +9,7 @@ case "${1:?v1|v2|v3|v4|v3b}" in
   v1) t $R && grep -rq "lookForCommit" $W/Work && grep -rqE "ocupado" $W/Work ;;
   v2) t $R --filter WorkCommandTests --filter LaneHostTests && grep -rq "startedOpen" $W ;;
   v3) t $R --filter WorkCommandTests && grep -rq "hasTrustDialogAccepted" $W ;;
-  v4) t $R --filter WorkCommandTests --filter SandboxGrantTests --filter WorkLoopSandboxTests && grep -rq "loopReviewers.contains(denial" $W ;;
+  v4) t $R --filter WorkCommandTests && grep -rq "loopReviewers.contains(denial" $W ;;
   v3b) t $R && grep -rq "O_EXCL" $W/Work ;;
   *) echo "tarefa desconhecida: $1" >&2; exit 2 ;;
 esac

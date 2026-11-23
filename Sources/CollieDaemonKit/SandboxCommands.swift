@@ -158,6 +158,9 @@ extension CommandRouter {
     func raise(_ denial: SandboxDenial) async {
         guard sandboxKnown.contains(denial.terminal) else { return }
         if ws.terminals.first(where: { $0.id == denial.terminal }).map(startedOpen) == true { accessCards.hush(denial); return }   // open mode: Collie's internals, counted only
+        // F2 V4: a loop's reviewer (born strict, A5) has no one watching and reads only its copy of the commit: its denial stays a
+        // denial, never a card (a card's approval restarts the terminal in the middle of the review), as a lane's
+        if loopReviewers.contains(denial.terminal) { accessCards.hush(denial); return }
         let home = sandboxHomeDir, collie = config.paths.root, app = SandboxInput.appBundle(of: config.collieExecutable)
         let closed = ws.terminals.first { $0.id == denial.terminal }.map { closedPaddocks(sandboxProject($0)) } ?? []
         let c = accessCards.add(denial) { d in   // a card to show: what can't be released, and why

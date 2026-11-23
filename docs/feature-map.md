@@ -186,6 +186,13 @@ Títulos de `Sources/CollieProtocol/Plugins.swift` (o que aparece em "Abrir pain
   `FactoryDoctor` em CollieCore; leitor `FactoryDoctorReader` em `FactoryCommands.swift` com as regras de
   `WorkConfigFile` (sem link simbólico, arquivo regular, limite). Sai 1 se alguma camada < `--min` (padrão 1); `--json`
   imprime o `Report`. Só leitura: nunca executa nada.
+- **Catraca da fábrica (U5):** `collie factory ratchet <check|update|raise> <nome> [--reason] [--terminal]` (só CLI):
+  roda o `measure` de `factory.static.ratchets` uma vez (bash no projeto, `RouterLoopHost.runCheck` sem sandbox, 600 s),
+  lê a saída como linhas `<chave> <n>` e compara com o arquivo `baseline`. `check` sai 0 só se igual (melhorou também sai
+  1, como `scripts/ci/lint.sh`: rode `update` e commite); `update` só abaixa; `raise` sobe com razão registrada como
+  `# <data>: <chave> <antes> -> <depois>: <razão>` no arquivo. Núcleo puro `Ratchet` em CollieCore (também modo lista,
+  `compareList`, para o `ci-skip`); `FactoryRatchet` em `FactoryCommands.swift`: baseline confinado ao projeto (sem `..`,
+  sem link simbólico) e gravado atomicamente (temporário + `rename`). `lint.sh`/`ci-skip.txt` ainda não migrados.
 - **Parecer (`collie work run --review`):** parecer por personas, não aprovação: veta com achado blocker ou major;
   não aprova sozinho; sem parecer (revisor mudo ou inválido) equivale a sem `--review`; exige agentes em strict. Limite
   conhecido: `~/.claude.json` compartilhado e órfãos do agente julgado, então o parecer não é prova de independência.

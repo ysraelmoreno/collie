@@ -104,6 +104,10 @@ enum CLI {
                 print(json ? jsonString(o["report"] ?? .null) + "\n" : render(cmd.command, result, json: false), terminator: "")
                 return o["passed"] == .bool(false) ? 1 : 0
             }
+            if cmd.command.hasPrefix("factory.ratchet."), case .object(let o) = result {   // U5: worse (or improved, on check) exits 1
+                print(render(cmd.command, result, json: json), terminator: "")
+                return o["passed"] == .bool(false) ? 1 : 0
+            }
             print(render(cmd.command, result, json: json), terminator: "")
             if case .object(let o) = result, case .bool(true)? = o["truncated"] { err("output truncated") }
             // the agent exists, its first prompt didn't get there: not a success, and a retried summon would say "already exists"

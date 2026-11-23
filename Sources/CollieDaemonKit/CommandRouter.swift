@@ -415,7 +415,7 @@ actor CommandRouter {
                 try await adminOnly(req, peer: peer)
                 return Response(id: req.id, ok: true, result: try await chatCommand(req))
             }
-            if (req.command.hasPrefix("work.") && req.command != "work.hook") || req.command == "factory.doctor" {   // admin or terminal; reach rules in workCommand
+            if (req.command.hasPrefix("work.") && req.command != "work.hook") || req.command == "factory.doctor" || req.command.hasPrefix("factory.ratchet.") {   // admin or terminal; reach rules in workCommand
                 return Response(id: req.id, ok: true, result: try await workCommand(req, peer: peer))
             }
             if req.command.hasPrefix("lot.") {   // admin or terminal; reach rules in lotCommand

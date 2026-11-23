@@ -778,9 +778,11 @@ struct RouterLoopHost: LoopHost {
     }
     func strictWrites() async -> (home: URL, paths: [String]) { await router.loopStrictWrites() }
     /// F2 A5: by the judged agent's own start mode, not the workspace's now: a lane's agent is strict in an open workspace,
-    /// and the mode may change between its summon and its review. No such terminal: false (the check stays).
+    /// and the mode may change between its summon and its review. F2 A6: the attempt's agent is already dismissed when its
+    /// review runs, so no such terminal is the usual case: the workspace's mode now decides then (it is what A4 measured).
     func agentsOpen(_ agent: String) async -> Bool {
-        await router.ws.terminals.first { $0.name == agent }.map { $0.sandbox != .sandboxed || $0.startMode == .open } ?? false
+        if let t = await router.ws.terminals.first(where: { $0.name == agent }) { return t.sandbox != .sandboxed || t.startMode == .open }
+        return await router.sandboxMode == .open
     }
     func askText(_ terminal: UUID, prompt: String, timeout: Duration) async throws(ProtocolError) -> String {
         try await router.asks.ask(from: starter, to: terminal, prompt: prompt, raw: false, timeout: timeout).output

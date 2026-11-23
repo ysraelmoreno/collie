@@ -100,7 +100,7 @@ public enum Ratchet {
 /// root itself with `O_NOFOLLOW` too): a link anywhere on the way is refused. One rule for both sides: the daemon reads
 /// the baseline through it, the CLI writes through it.
 public enum ConfinedDir {
-    public struct Failure: Error, Sendable, Equatable { public var message: String }
+    public struct Failure: Error, Sendable, Equatable { public var message: String; public init(message: String) { self.message = message } }
 
     /// The project root as a fd (a link as the root is refused). The caller closes it.
     public static func openRoot(_ path: String) throws(Failure) -> Int32 {
@@ -148,7 +148,7 @@ public enum ConfinedDir {
 /// `fsync`, `renameat`, `fsync` of the folder; a link or a non-regular file as destination is refused. No temporary is
 /// left behind on failure.
 public enum BaselineWriter {
-    public struct Failure: Error, Sendable, Equatable { public var message: String }
+    public struct Failure: Error, Sendable, Equatable { public var message: String; public init(message: String) { self.message = message } }
     /// nit 5 (round 4): extra defense; the daemon reads at most 1 MiB of baseline.
     public static let maxBytes = 2 << 20
 

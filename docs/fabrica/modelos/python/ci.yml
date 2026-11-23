@@ -1,4 +1,5 @@
 # Skeleton: copy to .github/workflows/ci.yml when the project has no CI. It runs the same gate as collie-work.json.
+# The run line below is the gate's text of collie-work.json, whole: what follows # is a YAML comment, so it runs scripts/gate.sh.
 name: ci
 on: [push, pull_request]
 permissions: { contents: read }
@@ -12,5 +13,5 @@ jobs:
       - run: python3 -m pip install pytest
       - run: |
           if [ -f requirements.txt ]; then python3 -m pip install -r requirements.txt; fi
-          if [ -f pyproject.toml ]; then python3 -m pip install -e .; fi
-      - run: bash scripts/gate.sh
+          if [ -f pyproject.toml ]; then python3 -m pip install -e ".[dev]" 2>/dev/null || python3 -m pip install -e .; fi
+      - run: bash scripts/gate.sh # pytest.ini pyproject.toml setup.cfg conftest.py tox.ini

@@ -18,7 +18,7 @@ def text(name):
 # the root is escaped: a folder named "proj [a]*?" is that folder, not a glob
 def files(pattern): return sorted(os.path.relpath(x, root) for x in glob.glob(os.path.join(glob.escape(root), pattern)) if os.path.isfile(x))
 
-stacks, tools = [], {}
+stacks, tools, warnings = [], {}, []
 def found(stack, test=None, lint=None, fmt=None, **extra):
     stacks.append(stack)
     tools[stack] = {"testRunner": test, "linter": lint, "formatter": fmt, **extra}
@@ -37,12 +37,16 @@ if has("package.json"):
     for k in ("dependencies", "devDependencies"):
         if isinstance(pkg.get(k), dict): deps.update(pkg[k])
     scripts = pkg.get("scripts") if isinstance(pkg.get("scripts"), dict) else {}
-    # the manager is the lock file's; none: unknown (the init asks, npm is the fallback)
-    pm = "pnpm" if has("pnpm-lock.yaml") else "yarn" if has("yarn.lock") else "npm" if has("package-lock.json") or has("npm-shrinkwrap.json") else None
-    # npm init's default "test" (echo "Error: no test specified" && exit 1) is no test at all
+    # the manager is the lock file's; none: unknown (the init asks, npm is the fallback); locks of two managers: ambiguous
+    locks = {"pnpm": ["pnpm-lock.yaml"], "yarn": ["yarn.lock"], "npm": ["package-lock.json", "npm-shrinkwrap.json"], "bun": ["bun.lockb", "bun.lock"]}
+    pms = [m for m, names in locks.items() if any(has(n) for n in names)]
+    pm = pms[0] if len(pms) == 1 else "ambiguous" if pms else None
+    if pm == "ambiguous":
+        warnings.append("node: arquivos de lock de " + " e ".join(pms) + ": o dono escolhe o gerenciador e apaga o outro lock")
+    # npm init's default "test" (echo "Error: no test specified" && exit 1) is no test at all: only when it is the whole script
     st = scripts.get("test")
-    real = isinstance(st, str) and "no test specified" not in st
-    test = "npx vitest run" if "vitest" in deps else "npx jest" if "jest" in deps else f"{pm or 'npm'} test" if real else None
+    real = isinstance(st, str) and re.fullmatch(r'\s*echo\s+"Error: no test specified"\s*&&\s*exit\s+1\s*', st) is None
+    test = "npx vitest run" if "vitest" in deps else "npx jest" if "jest" in deps else f"{pm if pm not in (None, 'ambiguous') else 'npm'} test" if real else None
     found("node", test, "eslint" if "eslint" in deps else None, "prettier" if "prettier" in deps else None,
           typecheck="tsc --noEmit" if "typescript" in deps else None, packageManager=pm)
 
@@ -79,6 +83,7 @@ out = {
     "formatter": main["formatter"],
     "tools": tools,
     "ci": sorted(ci),
+    "warnings": warnings,
     "existing": {
         "collieWork": has("collie-work.json"),
         "checkScripts": files("scripts/check-*.sh"),

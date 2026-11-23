@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "gate": "bash scripts/gate.sh",
+  "gate": "bash scripts/gate.sh # pytest.ini pyproject.toml setup.cfg conftest.py tox.ini",
   "precheck": "python3 -m compileall -q .",
   "smoke": "python3 -m pytest -q -x --co",
   "areas": {

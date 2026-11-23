@@ -6,4 +6,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ $# -gt 0 ] || { echo "uso: scripts/check-feature.sh <padrão de arquivo de teste>" >&2; exit 2; }
-if grep -q '"vitest"' package.json; then exec npx vitest run "$@"; else exec npx jest "$@"; fi
+# the same runner scripts/gate.sh calls, fixed by /collie:factory init (`npx --no-install jest "$@"` for jest)
+exec npx --no-install vitest run "$@"

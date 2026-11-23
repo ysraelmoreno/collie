@@ -20,7 +20,7 @@ check() {   # check <dir> <expected stack> <expected testRunner or None>
   got=$(field "$out" "d['stack']"); gotr=$(field "$out" "d['testRunner']")
   [ "$got" = "$want" ] || { echo "FAIL $dir: stack '$got', esperava '$want'"; fail=1; }
   [ "$gotr" = "$runner" ] || { echo "FAIL $dir: testRunner '$gotr', esperava '$runner'"; fail=1; }
-  [ "$(field "$out" "sorted(d) == sorted(['stack','stacks','testRunner','linter','formatter','tools','ci','existing'])")" = True ] \
+  [ "$(field "$out" "sorted(d) == sorted(['stack','stacks','testRunner','linter','formatter','tools','ci','existing','warnings'])")" = True ] \
     || { echo "FAIL $dir: chaves do JSON"; fail=1; }
   echo "ok $dir -> $got"
 }
@@ -86,6 +86,23 @@ rm "$tmp/init/yarn.lock"; touch "$tmp/init/pnpm-lock.yaml"
 [ "$(pm)" = pnpm ] || { echo "FAIL pnpm-lock.yaml: $(pm)"; fail=1; }
 rm "$tmp/init/pnpm-lock.yaml"; touch "$tmp/init/package-lock.json"
 [ "$(pm)" = npm ] || { echo "FAIL package-lock.json: $(pm)"; fail=1; }
+
+[ "$(field "$(scripts/factory-detect.sh "$tmp/init")" "d['warnings']")" = "[]" ] || { echo "FAIL um lock só: aviso"; fail=1; }
+
+# F5b (N8): bun's lock is bun; two managers' locks are ambiguous with a warning (and the test is never "ambiguous test")
+rm "$tmp/init/package-lock.json"; touch "$tmp/init/bun.lockb"
+[ "$(pm)" = bun ] || { echo "FAIL bun.lockb: $(pm)"; fail=1; }
+rm "$tmp/init/bun.lockb"; touch "$tmp/init/yarn.lock" "$tmp/init/package-lock.json"
+[ "$(pm)" = ambiguous ] || { echo "FAIL yarn.lock + package-lock.json: $(pm)"; fail=1; }
+a=$(scripts/factory-detect.sh "$tmp/init")
+[ "$(field "$a" "d['testRunner'], len(d['warnings']), 'yarn' in d['warnings'][0] and 'npm' in d['warnings'][0]")" = "('npm test', 1, True)" ] \
+  || { echo "FAIL ambiguous: $a"; fail=1; }
+rm "$tmp/init/yarn.lock" "$tmp/init/package-lock.json"
+# F5b (N8): "no test specified" is npm init's default only when it is the whole test script, not a substring of a real one
+echo '{"name": "x", "scripts": {"test": "jest || echo \"no test specified\""}}' > "$tmp/init/package.json"
+[ "$(field "$(scripts/factory-detect.sh "$tmp/init")" "d['testRunner']")" = "npm test" ] || { echo "FAIL no test specified como substring"; fail=1; }
+echo '{"name": "x", "scripts": {"test": "  echo \"Error: no test specified\"  &&  exit 1 "}}' > "$tmp/init/package.json"
+check "$tmp/init" node None
 
 scripts/factory-detect.sh "$tmp/nao-existe" >/dev/null 2>&1 && { echo "FAIL: diretório ausente devia falhar"; fail=1; }
 [ $fail = 0 ] && echo "test-factory-detect: tudo ok"

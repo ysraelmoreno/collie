@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "gate": "bash scripts/gate.sh",
+  "gate": "bash scripts/gate.sh # Package.swift",
   "precheck": "swift build --build-tests",
   "smoke": "swift build",
   "areas": {

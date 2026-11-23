@@ -29,7 +29,7 @@ Fontes (no repositório do Collie, `COLLIE` abaixo é a raiz dele):
 COLLIE/scripts/factory-detect.sh .
 ```
 
-Mostre `stack`, `stacks`, `testRunner`, `linter`, `formatter`, `ci` e `existing` em poucas linhas e pergunte: "está certo?".
+Mostre `stack`, `stacks`, `testRunner`, `linter`, `formatter`, `ci`, `existing` e `warnings` em poucas linhas e pergunte: "está certo?".
 - `unknown` ou stack sem modelo (`kotlin`, `flutter`, `rust`, `go`): siga com o modelo mais próximo como referência de forma e
   troque os comandos pelos que o dono confirmar (`tools.<stack>` do detector já sugere `testRunner`/`linter`).
 - Várias stacks (monorepo): pergunte qual é a principal; as outras viram `areas`.
@@ -47,13 +47,22 @@ Mostre `stack`, `stacks`, `testRunner`, `linter`, `formatter`, `ci` e `existing`
 
 Para cada item, só se o destino **não existe**; se existe, diff + pergunta:
 - `collie-work.json`: do `profile.json` do modelo com as respostas da entrevista. Já existe: mescle só a chave `factory` e as chaves que faltam; nunca troque o `gate` do dono sem ele dizer.
-- `scripts/gate.sh`, executável: o `gate` é `bash scripts/gate.sh`. Ele roda o runner direto e falha se um arquivo de config
-  listado no comentário do topo força sucesso; o juiz protege o `gate.sh` (o texto do gate o cita), não esses arquivos.
-  Node: o runner é o `tools.node.testRunner` do detector (vitest ou jest).
+- `scripts/gate.sh`, executável: o `gate` é `bash scripts/gate.sh # <configs>`, o texto do `gate` do modelo. Ele roda o runner
+  direto e falha se um arquivo de config listado no comentário do topo força sucesso. O juiz protege por substring todo arquivo
+  que o texto do gate cita: o `gate.sh` e as configs depois do `#`. Deixe depois do `#` só as configs da raiz que existem no
+  projeto (o doutor avisa de uma citada que não existe); se o projeto ganhar outra depois, acrescente-a ao texto.
+  Limite que fica: o gate não enxerga binários em pastas ignoradas como node_modules/.bin ou .venv.
+  Node: o runner é fixo, gravado por você em `gate.sh` e `check-feature.sh` a partir do `tools.node.testRunner` do detector:
+  `exec npx --no-install vitest run` (vitest) ou `exec npx --no-install jest` (jest), nunca escolhido por grep no `package.json`
+  em tempo de execução e sem fallback. **Recuse runner que passe por script do `package.json`** (`npm test`, `yarn test`,
+  `pnpm run test:x`): o agente edita esse script. Se o detector só achou `<gerenciador> test`, pergunte ao dono qual binário o
+  script chama e grave esse binário com `npx --no-install`; sem binário de teste direto, não há gate.
+  Python: o gate roda `python3 -P -m pytest` (Python 3.11+); com Python mais velho, combine com o dono.
 - `scripts/check-feature.sh` (e um `scripts/check-<tipo>.sh` por tipo de tarefa que o dono citar), executável.
 - `docs/fabrica/personas/*.md`: copie as personas padrão; os nomes vão em `factory.review.personas`. O dono pode editar.
-- `.github/workflows/ci.yml`: só quando `ci` veio vazio no detector; o CI roda o mesmo comando do `gate`. Node: o modelo instala
-  com o gerenciador do arquivo de lock (`tools.node.packageManager`).
+- `.github/workflows/ci.yml`: só quando `ci` veio vazio no detector; a linha `run:` do CI é o texto inteiro do `gate` (em YAML o
+  `#` é comentário). Node: o modelo instala com o gerenciador do arquivo de lock (`tools.node.packageManager`); `ambiguous`
+  (locks de dois gerenciadores, com aviso em `warnings`): o dono escolhe um e apaga o outro lock antes de seguir.
 - `docs/fabrica/iscas/`: só se o dono pedir isca (`factory-bait`); copie `COLLIE/docs/fabrica/iscas/` para o mesmo caminho.
 
 Valide o arquivo antes de seguir: `collie factory doctor` recusa um `collie-work.json` inválido com o caminho do erro; conserte até passar.

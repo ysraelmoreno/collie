@@ -33,7 +33,7 @@ public struct ProjectWorkConfig: Sendable, Equatable {
         case unknownArea(String, available: [String])
         case noAreas
         /// U1: the `factory` key is there and wrong.
-        case invalidFactory(FactoryProfile.ProfileError)
+        indirect case invalidFactory(FactoryProfile.ProfileError)
 
         /// One line, in words. Names and keys come from the file: the renderer cleans them.
         public var message: String {

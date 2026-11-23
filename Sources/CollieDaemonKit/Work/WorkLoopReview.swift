@@ -91,10 +91,11 @@ extension WorkLoop {
                             note: LotBoards.scrub("[loop] revisão de \"\(task.title)\", tentativa \(n): \(why)"))
         }
         // F2 X5: the lines of each changed file as judged (deleted ones have none to point at): a finding's line is checked there
-        var lineCounts: [String: Int] = [:]
+        var counted: [String: Int] = [:]
         for p in paths {
-            if let r = try? await host.git(["show", "\(judged):\(p)"], in: dir), r.status == 0 { lineCounts[p] = ReviewVerdict.lineCount(r.stdout) }
+            if let r = try? await host.git(["show", "\(judged):\(p)"], in: dir), r.status == 0 { counted[p] = ReviewVerdict.lineCount(r.stdout) }
         }
+        let lineCounts = counted
         let spec = await specText(task.spec, at: before, dir)
         let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""

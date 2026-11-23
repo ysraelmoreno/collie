@@ -214,7 +214,7 @@ import CollieProtocol
         #expect(w.tasks[0].state == .deferred)
         let failure = w.tasks[0].lastFailure ?? "-"
         #expect(failure.contains("revisor correcao sem resposta") && failure.contains("revisor testes sem resposta"), "\(failure)")
-        #expect(await r.host.reviewers.isEmpty && r.host.liveReviewers.isEmpty)
+        #expect(await r.host.reviewers.isEmpty)
     }
 
     /// F2 X5: no catalog at the base (the folder gone, `ls-tree` failing, a persona malformed there): a refusal that

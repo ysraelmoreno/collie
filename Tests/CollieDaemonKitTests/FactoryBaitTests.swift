@@ -144,7 +144,7 @@ private let sample = BaitResults(runs: [
         try put(outside, "r.json", sample.render())
         try FileManager.default.createSymbolicLink(at: file, withDestinationURL: outside.appendingPathComponent("r.json"))
         guard case .failure(let l) = FactoryDoctorReader.snapshot(root: proj) else { Issue.record("link accepted"); return }
-        #expect(l.message.contains("link simbólico"))
+        #expect(l.code == .invalidArgs && (l.message.contains("link simbólico") || l.message.contains("fora do projeto")), "\(l.message)")
     }
 
     // MARK: the command

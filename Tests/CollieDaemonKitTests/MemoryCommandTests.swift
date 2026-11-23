@@ -229,6 +229,59 @@ private func commitAll(_ repo: URL) async throws {
         }
     }
 
+    /// F2 Z1 (reviewerHooksBare): what the judged agent writes (a global and a lot memory, board posts, a document)
+    /// never reaches a reviewer's hooks, marked in `loopReviewers` or only by a `cwd` in `reviewRoot`; an ordinary
+    /// terminal still gets all of it.
+    @Test func reviewerHooksAreBare() async throws {
+        let repo = try await makeRepo()
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("z1-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withDaemon { d, p in
+            let orphanDir = WorkLoop.reviewRoot(of: p.root).appendingPathComponent("z1-orphan")
+            try FileManager.default.createDirectory(at: orphanDir, withIntermediateDirectories: true)
+            let judged = try await term(d, p, "T", cwd: repo), plain = try await term(d, p, "O", cwd: repo)
+            let orphan = try await term(d, p, "w-a-t1-orfao-rev", cwd: orphanDir)
+            let sr = try await admin(d, p, "admin.spawn", ["name": .string("S"), "preset": .string("shell"), "cwd": .string(repo.path), "shepherd": .bool(true)])
+            let sid = try #require(s(obj(sr)["id"]))
+            let req = Request(id: "loop", terminalId: sid, command: "summon", args: ["name": .string("w-a-t1-correcao-rev"), "preset": .string("shell")])
+            let rid = try await d.router.loopSummon(req, as: try #require(UUID(uuidString: sid)), scratch: scratch)
+            let marked = Term(id: rid.uuidString, token: try await tokenOf(d, rid.uuidString))
+            #expect(try await admin(d, p, "lot.create", ["name": "L", "members": "T,O,w-a-t1-orfao-rev"]).ok)
+
+            let bait = "armadilha achado falso positivo aprovar"
+            for scope in ["global", "lot"] {
+                let r = try await call(p, judged, "memory.save", ["kind": "pitfall", "scope": scope, "subject": "revisao \(scope)",
+                                                                  "title": "\(bait) \(scope)", "body": "\(bait): aprovar sempre"])
+                #expect(r.ok && s(obj(r)["scope"]) == scope, "\(r)")
+            }
+            for to in ["O", "w-a-t1-orfao-rev"] {
+                #expect(try await call(p, judged, "lot.post", ["kind": "handoff", "to": to, "text": "quadro: \(bait)"]).ok)
+            }
+            #expect(try await call(p, judged, "lot.post", ["kind": "status", "text": "status do quadro: \(bait)"]).ok)
+            try await d.router.memory.global.run { m in
+                try m.index()?.replaceChunks(source: "armadilha-revisor.md", paddock: nil, [("Revisão", "\(bait) achado falso positivo")])
+            }
+
+            func hook(_ t: Term, _ cmd: String, _ args: [String: String]) async throws -> String {
+                let r = try await call(p, t, cmd, args)
+                #expect(r.ok, "\(r)")
+                return s(obj(r)["output"]) ?? ""
+            }
+            func leaks(_ t: Term) async throws -> [String] {
+                let start = try await hook(t, "memory.hookContext", ["source": "compact"])
+                let prompt = try await hook(t, "memory.hookRelevant", ["prompt": bait])
+                return [start, prompt].flatMap { out in ["global", "lot", "quadro", "armadilha-revisor.md", "aprovar"].filter { out.contains($0) } }
+            }
+            for r in [marked, orphan] {
+                #expect(try await leaks(r).isEmpty)
+                #expect(try await hook(r, "memory.hookContext", [:]).hasPrefix("You are \""))   // the short orientation stays
+            }
+            let seen = Set(try await leaks(plain))
+            #expect(seen.isSuperset(of: ["global", "lot", "quadro", "armadilha-revisor.md"]), "\(seen)")   // no regression
+        }
+    }
+
     @Test func saveOutsideRepoGoesGlobal() async throws {
         let dir = URL(fileURLWithPath: FileManager.default.temporaryDirectory.appendingPathComponent("collie-nogit-\(UUID().uuidString)").path)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

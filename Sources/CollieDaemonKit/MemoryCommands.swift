@@ -203,6 +203,12 @@ extension CommandRouter {
         case "memory.hookContext", "memory.hookRelevant":
             guard let me = caller else { throw ProtocolError(code: .unauthorized, message: "'\(r.command)' is for terminals only") }
             if let tr = str(r, "transcript") { await memory.noteSession(me.id, transcript: tr) }   // the session its events name
+            // F2 Z1 (reviewerHooksBare): a loop reviewer gets only who it is and what it may not do: no memory, pitfall,
+            // rule, board post, document, comment nor checklist, all of them text another agent (the one judged) can write
+            if reviewerHooksBare(me) {
+                if r.command == "memory.hookContext" { await asks.sessionHooked(me.id) } else { await asks.promptSubmitted(me.id) }
+                return .object(["output": .string(r.command == "memory.hookContext" ? CollieOrientation.reviewer(me.name) : "")])
+            }
             let text: String
             if r.command == "memory.hookContext" {
                 await asks.sessionHooked(me.id)
@@ -779,10 +785,20 @@ extension CommandRouter {
         return out.utf8.count <= max ? out : String(decoding: Array(keep.utf8.prefix(max)), as: UTF8.self)
     }
 
+    /// F2 Z1: a loop reviewer, by either mark the router has: its id in `loopReviewers` (set in its summon) or a `cwd`
+    /// inside `reviewRoot` (a reviewer a fallen daemon left, no longer marked). Either is enough: a terminal wrongly
+    /// taken for one only loses its memory block. ponytail: the name tail (`AgentNaming.isReviewer`) is not required.
+    func reviewerHooksBare(_ t: TerminalRecord) -> Bool {
+        if loopReviewers.contains(t.id) { return true }
+        let root = SignedAppCheck.realPath(WorkLoop.reviewRoot(of: config.paths.root))
+        return SignedAppCheck.realPath(URL(fileURLWithPath: t.cwd)).hasPrefix(root + "/")
+    }
+
     /// One 2048-byte budget: retractions, the rules pushed to the caller (`pull`: also the user's rules changed since its
     /// session started), board posts addressed to it (newest first), the user's comments on its pages, then memories
     /// relevant to `query` and document chunks; scrubbed. `pull`: `memory.task` (relevance leaves the pending uses alone).
     fileprivate func promptBlock(_ me: TerminalRecord, paddock: String?, lot myLot: Lot?, query: String, pull: Bool) async -> String {
+        if reviewerHooksBare(me) { return "" }   // F2 Z1: `memory.task` too (the hook of an agent with no prompt hook)
         var left = 2048, parts: [String] = []
         func add(_ s: String) { if !s.isEmpty { parts.append(s); left -= s.utf8.count + 2 } }
         let ret = await memory.retractions(for: me.id, paddock: paddock, lot: myLot?.id, limit: left)

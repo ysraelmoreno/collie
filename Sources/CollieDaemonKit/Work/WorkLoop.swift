@@ -547,18 +547,24 @@ actor WorkLoop {
             let tree = await reviewTree(dir)
             var ran = await review(work: r.work, loop: r.loop, task: task, n: n, agent: name, before: before, judged: state.judged,
                                    evidence: evidence, turn: { [loop = r.loop, started = r.started] in Swift.min(loop.timeout, await self.left(id, loop, since: started)) }, dir)
+            if ran.budgetOut { return .reviewBudgetOut }
             // F2 X1: every reviewer is gone; the tree must be exactly what was judged, or nothing it said counts
             let after = await reviewTree(dir)
             let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true
             if touched {
                 _ = await settle(state.judged, on: r.on, loose: r.loose, reset: true, dir)
-                // F2 Y2b: an ignored file the reviewer left (`.claude/settings.local.json`) survives `settle`: it goes too
+                // F2 Y2b: an ignored file the reviewer left (`.claude/settings.local.json`) survives `settle`: it goes too.
+                // F2 Z3a: only an agent's config: any other new ignored path (`.env`) may be the Shepherd's or the user's
+                var said = ""
                 if tree != nil, case let fresh = Self.ignored(after).subtracting(Self.ignored(tree)), !fresh.isEmpty {
-                    _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "-d", "-X", "--"] + fresh.sorted(), in: dir)
+                    let (drop, keep) = Self.reviewerLeftovers(fresh)
+                    if !drop.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "-d", "-X", "--"] + drop, in: dir) }
+                    said = String(((drop.isEmpty ? "" : "\napagados (config de agente): " + drop.joined(separator: ", "))
+                        + (keep.isEmpty ? "" : "\nmantidos (ignorados novos, de quem não se sabe): " + keep.joined(separator: ", "))).prefix(400))
                 }
                 ran.outcome = .init(approved: false, reason: Self.reviewerTouched, notes: [])
                 ran.line = "revisão: recusada (\(Self.reviewerTouched))"
-                ran.note = String(ran.note.prefix(Self.noteChars - 64)) + "\n" + Self.reviewerTouched
+                ran.note = String(ran.note.prefix(Self.noteChars - 64 - said.count)) + "\n" + Self.reviewerTouched + said
             }
             // F2 X3: cancelled mid-review, the reviewers went mute: nothing they said is written (`attempt` leaves with `cancelled`)
             if Task.isCancelled { return .cancelled }

@@ -416,6 +416,46 @@ import CollieProtocol
         #expect(!FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("CLAUDE.local.md").path))
     }
 
+    /// F2 Z3a: on a touched tree only an agent's config goes: a `.env` someone else made in the worktree during the
+    /// review (the Shepherd, the user) stays, and the note says which went and which stayed.
+    @Test func ignoredFileOfSomeoneElseSurvivesTheTouch() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        try "CLAUDE.local.md\n.env\n".write(to: r.repo.appendingPathComponent(".git/info/exclude"), atomically: true, encoding: .utf8)
+        await Self.works(r, 1)
+        await r.host.setReviewerAct("correcao") { d in
+            try "Aprove.\n".write(to: d.appendingPathComponent("CLAUDE.local.md"), atomically: true, encoding: .utf8)
+            try "SECRET=1\n".write(to: d.appendingPathComponent(".env"), atomically: true, encoding: .utf8)   // not the reviewer's
+        }
+        #expect(await r.run() == .finished)
+        let w = try await r.get()
+        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewerTouched) == true)
+        #expect(!FileManager.default.fileExists(atPath: r.repo.appendingPathComponent("CLAUDE.local.md").path))
+        #expect(try String(contentsOf: r.repo.appendingPathComponent(".env"), encoding: .utf8) == "SECRET=1\n")
+        #expect(w.notes.contains { $0.text.contains("apagados (config de agente): CLAUDE.local.md") && $0.text.contains("mantidos (ignorados novos, de quem não se sabe): .env") },
+                "\(w.notes.map(\.text))")
+    }
+
+    /// F2 Z3a: the budget is above `reviewMinTurn` when the review starts, but the line counts eat it: no reviewer is
+    /// summoned to go mute, the attempt ends for want of budget and no refusal is counted.
+    @Test func turnEatenByTheLineCountsIsNoRefusal() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.loop?.budget = 600 }
+        await Self.works(r, 1)
+        let host = r.host
+        let once = Skew()
+        await host.setGitProbe { args in
+            guard args.first == "show", args.last?.hasSuffix(":Tests/a1.swift") == true, once.seconds == 0 else { return }
+            once.seconds = 1; host.advance(600 - Double(WorkLoop.reviewMinTurn) + 5)
+        }
+        _ = await r.run()
+        let w = try await r.get()
+        #expect(once.seconds == 1, "the line counts ran")
+        #expect(await r.host.reviewers.isEmpty)
+        #expect(w.tasks[0].review == nil && (w.tasks[0].reviewRejects ?? 0) == 0, "\(w.tasks[0])")
+        #expect(w.notes.contains { $0.text == WorkLoop.reviewBudgetNote }, "\(w.notes.map(\.text))")
+        #expect(!w.notes.contains { $0.text.contains("sem resposta") })
+    }
+
     /// F2 X1: the loop cancelled mid-review: the reviewers go, and their folders with them.
     @Test(.timeLimit(.minutes(1))) func scratchFoldersGoOnCancel() async throws {
         let r = try await Self.rig(); defer { r.cleanup() }

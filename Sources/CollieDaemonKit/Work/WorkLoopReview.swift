@@ -13,6 +13,8 @@ extension WorkLoop {
         var outcome: ReviewOutcome
         var line: String
         var note: String
+        /// F2 Z3a: the turn left after the line counts and the spec is under `reviewMinTurn`: no reviewer was summoned
+        var budgetOut = false
     }
 
     /// One persona's answer, with the model it ran on (for the note and the evidence file).
@@ -34,6 +36,14 @@ extension WorkLoop {
 
     /// What an agent loads from its folder's ancestors: none may be in a reviewer's parent.
     static let agentConfigs = ["CLAUDE.md", "AGENTS.md", ".claude", ".cursor"]
+
+    /// F2 Z3a: of the ignored paths new since the review began, the agent configs a reviewer may have left (a path with
+    /// one of these names as a component); the rest may be the Shepherd's or the user's (`.env`, a local db) and stays.
+    static func reviewerLeftovers(_ fresh: Set<String>) -> (drop: [String], keep: [String]) {
+        let names = Set(agentConfigs + ["CLAUDE.local.md"])
+        let drop = fresh.filter { $0.split(separator: "/").contains { names.contains(String($0)) } }
+        return (drop.sorted(), fresh.subtracting(drop).sorted())
+    }
 
     /// F2 Z2: an agent's config a reviewer would load from beyond its folder: in `reviewRoot` or any ancestor up to `/`,
     /// in the home, or the home's own `~/.claude/CLAUDE.md` and `~/.claude/settings.json`. The first one that exists and
@@ -176,6 +186,10 @@ extension WorkLoop {
         let lineCounts = await reviewLineCounts(paths, judged: judged, dir)
         let spec = await specText(task.spec, at: before, dir)
         let turn = await turn()
+        // F2 Z3a: the counts and the spec ate the budget: mute reviewers would be a refusal that is not one (X3)
+        if turn < Swift.min(Self.reviewMinTurn, loop.timeout) {
+            return Reviewed(outcome: .init(approved: false, reason: Self.reviewBudgetNote, notes: []), line: "", note: "", budgetOut: true)
+        }
         let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said

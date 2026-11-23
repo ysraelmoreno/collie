@@ -19,7 +19,7 @@ import CollieProtocol
         try FileManager.default.createDirectory(at: p, withIntermediateDirectories: true)
         try persona("correcao", model: "sonnet", paths: #"["**"]"#).write(to: p.appendingPathComponent("correcao.md"), atomically: true, encoding: .utf8)
         try persona("testes", model: "haiku", paths: #"["Tests/**"]"#).write(to: p.appendingPathComponent("testes.md"), atomically: true, encoding: .utf8)
-        try commit("spec.md", "SPEC ORIGINAL\n", in: r.repo)
+        try await commit("spec.md", "SPEC ORIGINAL\n", in: r.repo)
         let spec = r.repo.appendingPathComponent("spec.md").path
         try await r.store.update(r.work) {
             $0.tasks[0].spec = spec

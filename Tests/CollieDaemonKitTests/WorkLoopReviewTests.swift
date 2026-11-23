@@ -1187,9 +1187,9 @@ extension WorkLoopReviewTests {
         let paddock = Paddock(id: UUID(), name: "p", repoRoot: f.repo.path, path: f.paddock.path, branch: "collie/p", baseBranch: "main")
         await d.router.v1Add(paddock)
         let work = UUID(), log = V1GitLog()
-        let recorded: LaneGit = { (args, dir, profile) async throws(ProtocolError) in
+        let recorded: LaneGit = { (args, dir, profile, stdin) async throws(ProtocolError) in
             await log.add(args, profile)
-            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile)
+            return try await RouterLoopHost.loopGit(args, in: dir, profile: profile, stdin: stdin)
         }
         let host = RouterLoopHost(router: d.router, starter: UUID(), root: f.collie, work: work, paddock: paddock.id, dir: f.paddock,
                                   sandbox: (f.home, "/bin/zsh"), laneRunner: recorded)
@@ -1205,7 +1205,7 @@ extension WorkLoopReviewTests {
         #expect(!rules.writes(copy) && !rules.reads(copy), "the loop's profile opens \(copy.path)")
         let snap: URL
         switch await loop.reviewSnapshot(try await head(), f.paddock, into: scratch) {
-        case .success(let u): snap = u
+        case .success(let u): snap = u.url
         case .failure(let e): Issue.record("snapshot failed: \(e.why)"); return
         }
         let tracked = try await GitRunner.run(["ls-files"], in: f.paddock).stdout.split(separator: "\n").map(String.init)
@@ -1229,8 +1229,77 @@ extension WorkLoopReviewTests {
         let s2 = try #require(WorkLoop.reviewScratch("v1b", in: host.reviewRoot)); defer { WorkLoop.dropScratch(s2) }
         switch await loop.reviewSnapshot(try await head(), f.paddock, into: s2) {
         case .success(let u):
-            #expect((try? String(contentsOf: u.appendingPathComponent("hidden.txt"), encoding: .utf8)) == "segredo\n")
+            #expect((try? String(contentsOf: u.url.appendingPathComponent("hidden.txt"), encoding: .utf8)) == "segredo\n")
         case .failure(let e): Issue.record("snapshot failed: \(e.why)")
         }
+    }
+}
+
+/// T1 f2fix8 (reviewOneCopy): one copy of the commit per attempt, by a fixed number of gits, cloned per reviewer, and the
+/// reviewers' turn read after it.
+extension WorkLoopReviewTests {
+    /// The gits a copy of HEAD costs on a repo with `n` more files committed.
+    private static func copyGits(files n: Int) async throws -> (gits: Int, files: [String]) {
+        let r = try await LoopRig([WorkTask(id: "a", title: "Task a", check: "true")]); defer { r.cleanup() }
+        let d = r.repo.appendingPathComponent("many")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        for i in 0..<n { try "f\(i)\n".write(to: d.appendingPathComponent("f\(i).txt"), atomically: true, encoding: .utf8) }
+        if n > 0 { try await commit("many/f0.txt", "f0\n", in: r.repo); _ = try await GitRunner.run(["add", "-A"], in: r.repo)
+            _ = try await GitRunner.run(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "many"], in: r.repo) }
+        let head = try await GitRunner.run(["rev-parse", "HEAD"], in: r.repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scratch = try #require(WorkLoop.reviewScratch("t1", in: r.host.reviewRoot)); defer { WorkLoop.dropScratch(scratch) }
+        let before = await r.host.gits.count
+        switch await r.loop.reviewSnapshot(head, r.repo, into: scratch) {
+        case .success(let s):
+            let files = (FileManager.default.enumerator(atPath: s.url.path)?.allObjects as? [String]) ?? []
+            return (await r.host.gits.count - before, files)
+        case .failure(let f): Issue.record("copy failed: \(f.why)"); return (-1, [])
+        }
+    }
+
+    /// N files cost the same number of gits as none: never one per blob.
+    @Test func reviewOneCopyCostsConstantGits() async throws {
+        let few = try await Self.copyGits(files: 0), many = try await Self.copyGits(files: 60)
+        #expect(few.gits > 0 && few.gits == many.gits, "\(few.gits) vs \(many.gits)")
+        #expect(many.files.contains("many/f59.txt"))
+    }
+
+    /// Two reviewers' clones of the one copy are independent: writing in one changes nothing in the other.
+    @Test func reviewOneCopyClonesAreIndependent() async throws {
+        let r = try await LoopRig([WorkTask(id: "a", title: "Task a", check: "true")]); defer { r.cleanup() }
+        try await commit("a.txt", "original\n", in: r.repo)
+        let head = try await GitRunner.run(["rev-parse", "HEAD"], in: r.repo).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let (master, copy) = await r.loop.reviewOneCopy(head, r.repo, agent: "w", deadline: 30)
+        let m = try #require(master); defer { WorkLoop.dropScratch(m) }
+        guard case .success(let c) = copy else { Issue.record("copy failed: \(copy)"); return }
+        let s1 = try #require(WorkLoop.reviewScratch("t1a", in: r.host.reviewRoot)), s2 = try #require(WorkLoop.reviewScratch("t1b", in: r.host.reviewRoot))
+        defer { WorkLoop.dropScratch(s1); WorkLoop.dropScratch(s2) }
+        let a = try WorkLoop.reviewClone(c.url, into: s1).get(), b = try WorkLoop.reviewClone(c.url, into: s2).get()
+        let fa = a.appendingPathComponent("a.txt"), fb = b.appendingPathComponent("a.txt")
+        #expect(!FileManager.default.isWritableFile(atPath: fb.path), "the clone is read-only as the copy")
+        chmod(a.path, 0o700); chmod(fa.path, 0o600)
+        try "mudado\n".write(to: fa, atomically: false, encoding: .utf8)
+        #expect(try String(contentsOf: fb, encoding: .utf8) == "original\n")
+        #expect(try String(contentsOf: c.url.appendingPathComponent("a.txt"), encoding: .utf8) == "original\n")
+    }
+
+    /// The turn that runs out while the copy is made is no refusal: no reviewer, the attempt ends for want of budget.
+    @Test func turnEatenByTheCopyIsBudgetOut() async throws {
+        let r = try await Self.rig(); defer { r.cleanup() }
+        try await r.store.update(r.work) { $0.loop?.budget = 600 }
+        await Self.works(r, 1)
+        let host = r.host, once = Skew()
+        await host.setGitProbe { args in
+            guard args == ["cat-file", "--batch"], once.seconds == 0 else { return }
+            once.seconds = 1; host.advance(600 - Double(WorkLoop.reviewMinTurn) + 5)
+        }
+        _ = await r.run()
+        let w = try await r.get()
+        #expect(once.seconds == 1, "the copy ran")
+        #expect(await r.host.reviewers.isEmpty)
+        #expect(w.tasks[0].review == nil && (w.tasks[0].reviewRejects ?? 0) == 0, "\(w.tasks[0])")
+        #expect(w.notes.contains { $0.text == WorkLoop.reviewBudgetNote }, "\(w.notes.map(\.text))")
+        let left = (try? FileManager.default.contentsOfDirectory(atPath: host.reviewRoot.path)) ?? []
+        #expect(left.isEmpty, "\(left)")
     }
 }

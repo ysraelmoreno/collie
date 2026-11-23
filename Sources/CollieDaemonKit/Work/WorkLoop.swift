@@ -33,6 +33,8 @@ protocol LoopHost: Sendable {
     /// the loop's profile, which cannot write a sibling `lane-*` worktree nor `<common>/worktrees/lane-*`. Only on
     /// paths the daemon builds and validates itself. What runs inside a lane (agent, check, gate) stays in `git`.
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult
+    /// T1 f2fix8 (reviewOneCopy): `laneGit` with `stdin` fed to git (`cat-file --batch`'s oids).
+    func laneGit(_ args: [String], stdin: Data, in dir: URL) async throws(ProtocolError) -> ProcessResult
     /// M3b.5: this daemon's id (its install id), written in every lane it makes: a sweep removes only lanes with it.
     func laneOwner() async -> String
     /// `command` via `/bin/bash -c` in `dir`, under the loop's own sandbox profile; throws (never runs unsandboxed) when
@@ -88,6 +90,9 @@ extension LoopHost {
     func laneGone(_ lane: Lane) async {}
     /// A host with one git (the tests' fakes, which have no profile).
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult { try await git(args, in: dir) }
+    func laneGit(_ args: [String], stdin: Data, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        try await GitRunner.run(args, in: dir, cap: 64 << 20, stdin: stdin)
+    }
     func namesTaken() async -> Set<String> { [] }
     /// A host with no reviewers: the review fails closed (every persona 'sem resposta').
     func summonReviewer(name: String, for work: Work, loop: WorkLoopState, cwd: URL) async throws(ProtocolError) -> UUID {

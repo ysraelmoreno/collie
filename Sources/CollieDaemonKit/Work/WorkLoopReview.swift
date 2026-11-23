@@ -135,21 +135,32 @@ extension WorkLoop {
     /// F2 V1: why a reviewer's copy could not be made (that reviewer is mute, with this reason).
     struct SnapshotFailure: Error { let why: String }
 
+    /// T1 f2fix8 (reviewOneCopy): the copy made, and the paths left out of it for size (said in the review's note).
+    struct Snapshot: Sendable { var url: URL; var skipped: [String] }
+
+    /// T1 f2fix8 (reviewOneCopy): a blob above `reviewOneCopyMaxBlob`, or one that would take the copy past
+    /// `reviewOneCopyMaxTotal`, is left out (named in the note): under `loopGit`'s 64 MiB cap, headers included.
+    static let reviewOneCopyMaxBlob = 4 << 20
+    static let reviewOneCopyMaxTotal = 48 << 20
+    /// T1 f2fix8: the copy has `reviewOneCopyDeadline(turn)` seconds to be made: a fifth of the reviewers' turn, at least 30.
+    static func reviewOneCopyDeadline(_ turn: Int) -> Int { Swift.max(30, turn / 5) }
+    static let reviewOneCopyLate = "sem parecer: cópia não ficou pronta a tempo"
+
     /// F2 W2: the judged commit (never the live worktree, where a process the judged agent left may swap a file between
     /// the commit and the review) copied to `<scratch>/reviewSnapshot`, read-only. Its agent configs (`agentConfigs`,
-    /// `CLAUDE.local.md`, at any depth) are left out: the diff shows them. A failure: that reviewer is mute (fail closed),
-    /// the reason said. Removed with the reviewer's folder (`dropScratch`).
+    /// `CLAUDE.local.md`, at any depth) are left out: the diff shows them. A failure: the reviewers are mute (fail closed),
+    /// the reason said.
     /// F2 V1 (reviewSnapshotOutside): through the daemon's own git (`laneGit`), outside the loop's profile, which denies
     /// Collie's root, where the reviewer's folder is. Fixed arguments, the commit resolved to its hash first.
-    /// F2 U2 (reviewNoReplace): built from the commit's blobs (`ls-tree -r -z`, then `cat-file blob` by oid), never
-    /// `git archive`: the commit's `.gitattributes` (working-tree-encoding, eol, export-subst, export-ignore, an LFS
-    /// filter run outside any sandbox) cannot change nor hide what the reviewer reads, and no replacement object
-    /// (`GitRunner`) stands in for the commit. Every path checked (no absolute, empty, `.`, `..` nor `.git` component);
-    /// written with O_EXCL|O_NOFOLLOW in folders made here; a symlink (120000) becomes a text file holding its target;
-    /// a submodule (160000) is left out.
-    // ponytail: one `cat-file` per blob and reviewer; a big repo makes it slow, `cat-file --batch` with a stdin then
-    func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL) async -> Result<URL, SnapshotFailure> {
-        func fail(_ why: String) -> Result<URL, SnapshotFailure> { .failure(SnapshotFailure(why: "cópia do commit: " + why)) }
+    /// F2 U2 (reviewNoReplace): built from the commit's blobs, never `git archive`: the commit's `.gitattributes`
+    /// (working-tree-encoding, eol, export-subst, export-ignore, an LFS filter run outside any sandbox) cannot change
+    /// nor hide what the reviewer reads, and no replacement object (`GitRunner`) stands in for the commit. Every path
+    /// checked (no absolute, empty, `.`, `..` nor `.git` component); written with O_EXCL|O_NOFOLLOW in folders made
+    /// here; a symlink (120000) becomes a text file holding its target; a submodule (160000) a file holding its oid.
+    /// T1 f2fix8 (reviewOneCopy): three gits whatever the tree's size: `rev-parse`, `ls-tree -r -z -l` (sizes first:
+    /// the caps are applied before any blob is read) and one `cat-file --batch` fed every oid on its stdin.
+    func reviewSnapshot(_ judged: String, _ dir: URL, into scratch: URL) async -> Result<Snapshot, SnapshotFailure> {
+        func fail(_ why: String) -> Result<Snapshot, SnapshotFailure> { .failure(SnapshotFailure(why: "cópia do commit: " + why)) }
         let snap = scratch.appendingPathComponent(Self.reviewSnapshotDir, isDirectory: true)
         guard let r = try? await host.laneGit(["rev-parse", "--verify", "--end-of-options", judged + "^{commit}"], in: dir), r.status == 0 else {
             return fail("o commit não resolveu")
@@ -160,42 +171,99 @@ extension WorkLoop {
         var dirs: [String] = [snap.path]
         // folders read-only on any way out: a failure leaves nothing writable (`dropScratch` reopens them)
         defer { for d in dirs.reversed() { chmod(d, 0o555) } }
-        guard let ls = try? await host.laneGit(["ls-tree", "-r", "-z", "--full-tree", hash], in: dir), ls.status == 0, !ls.truncated else {
+        guard let ls = try? await host.laneGit(["ls-tree", "-r", "-z", "-l", "--full-tree", hash], in: dir), ls.status == 0, !ls.truncated else {
             return fail("git ls-tree falhou")
         }
         let names = Set(Self.agentConfigs + ["CLAUDE.local.md"])
-        var made: Set<String> = []
+        // `inline`: a submodule's content, never read from git
+        var items: [(comps: [Substring], path: String, oid: String, size: Int, inline: Data?)] = [], skipped: [String] = [], total = 0
         for entry in ls.stdout.split(separator: "\0") {
             guard let tab = entry.firstIndex(of: "\t") else { return fail("ls-tree ilegível") }
             let meta = entry[..<tab].split(separator: " "), path = String(entry[entry.index(after: tab)...])
-            guard meta.count == 3 else { return fail("ls-tree ilegível") }
+            guard meta.count == 4 else { return fail("ls-tree ilegível") }
             let mode = meta[0], oid = String(meta[2])
-            if mode == "160000" { continue }
-            guard ["100644", "100755", "120000"].contains(mode) else { return fail("modo \(mode) em \(path)") }
+            guard ["100644", "100755", "120000", "160000"].contains(mode) else { return fail("modo \(mode) em \(path)") }
             let comps = path.split(separator: "/", omittingEmptySubsequences: false)
             guard !path.hasPrefix("/"), comps.allSatisfy({ !["", ".", "..", ".git"].contains($0) }) else {
                 return fail("caminho recusado: \(path)")
             }
             if comps.contains(where: { names.contains(String($0)) }) { continue }
             guard [40, 64].contains(oid.count), oid.allSatisfy(\.isHexDigit) else { return fail("oid inválido em \(path)") }
-            guard let blob = try? await host.laneGit(["cat-file", "blob", oid], in: dir), blob.status == 0, !blob.truncated else {
-                return fail("blob ilegível: \(path)")
+            if mode == "160000" { items.append((comps, path, oid, 0, Data((oid + "\n").utf8))); continue }
+            guard let size = Int(meta[3]), size >= 0 else { return fail("tamanho ilegível em \(path)") }
+            if size > Self.reviewOneCopyMaxBlob || total + size > Self.reviewOneCopyMaxTotal { skipped.append(path); continue }
+            total += size
+            items.append((comps, path, oid, size, nil))
+        }
+        // one process for every blob: "<oid> blob <size>\n<bytes>\n" each, in the order asked
+        let wanted = items.filter { $0.inline == nil }
+        var blobs: [Data] = []
+        if !wanted.isEmpty {
+            let input = Data(wanted.map { $0.oid + "\n" }.joined().utf8)
+            guard let b = try? await host.laneGit(["cat-file", "--batch"], stdin: input, in: dir), b.status == 0, !b.truncated else {
+                return fail("git cat-file --batch falhou")
             }
+            let out = b.stdoutData
+            var at = out.startIndex
+            for w in wanted {
+                guard let nl = out[at...].firstIndex(of: 0x0A) else { return fail("blob ilegível: \(w.path)") }
+                let head = String(decoding: out[at..<nl], as: UTF8.self).split(separator: " ")
+                let body = nl + 1, end = body + w.size
+                guard head.count == 3, head[0] == w.oid, head[1] == "blob", Int(head[2]) == w.size,
+                      end < out.endIndex, out[end] == 0x0A else { return fail("blob ilegível: \(w.path)") }
+                blobs.append(out[body..<end])
+                at = end + 1
+            }
+        }
+        var made: Set<String> = [], next = 0
+        for item in items {
+            if Task.isCancelled { return fail("cancelada") }
+            let data: Data
+            if let inline = item.inline { data = inline } else { data = blobs[next]; next += 1 }
             var p = snap.path
-            for c in comps.dropLast() {
+            for c in item.comps.dropLast() {
                 p += "/" + c
                 if made.contains(p) { continue }
-                guard mkdir(p, 0o700) == 0 else { return fail("pasta não criada: \(path)") }
+                guard mkdir(p, 0o700) == 0 else { return fail("pasta não criada: \(item.path)") }
                 made.insert(p); dirs.append(p)
             }
-            p += "/" + comps.last!
+            p += "/" + item.comps.last!
             let fd = open(p, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
-            guard fd >= 0 else { return fail("arquivo não criado: \(path)") }
+            guard fd >= 0 else { return fail("arquivo não criado: \(item.path)") }
             let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-            guard (try? h.write(contentsOf: blob.stdoutData)) != nil, (try? h.close()) != nil else { return fail("arquivo não escrito: \(path)") }
+            guard (try? h.write(contentsOf: data)) != nil, (try? h.close()) != nil else { return fail("arquivo não escrito: \(item.path)") }
             chmod(p, 0o444)
         }
-        return .success(snap)
+        return .success(Snapshot(url: snap, skipped: skipped))
+    }
+
+    /// T1 f2fix8 (reviewOneCopy): the attempt's ONE copy of the judged commit (`reviewSnapshot`), in a folder of its own
+    /// under `reviewRoot`, made within `deadline` seconds (its gits killed past it: `killOnCancel`). The caller clones it
+    /// into each reviewer's folder (`reviewClone`) and drops `master` (always, whatever the result).
+    func reviewOneCopy(_ judged: String, _ dir: URL, agent: String, deadline: Int) async -> (master: URL?, Result<Snapshot, SnapshotFailure>) {
+        guard let master = Self.reviewScratch(Self.reviewerName(agent, persona: "copia"), in: host.reviewRoot) else {
+            return (nil, .failure(SnapshotFailure(why: "cópia do commit: pasta não criada")))
+        }
+        let built = await withTaskGroup(of: Result<Snapshot, SnapshotFailure>?.self) { g in
+            g.addTask { await BoundedProcess.$killOnCancel.withValue(true) { await self.reviewSnapshot(judged, dir, into: master) } }
+            g.addTask { try? await Task.sleep(for: .seconds(deadline)); return nil }
+            let first = await g.next() ?? nil
+            g.cancelAll()
+            return first
+        }
+        return (master, built ?? .failure(SnapshotFailure(why: Self.reviewOneCopyLate)))
+    }
+
+    /// T1 f2fix8 (reviewOneCopy): the copy cloned into `<scratch>/reviewSnapshot` (`clonefile`: APFS shares the blocks
+    /// until one side writes, so a reviewer that writes changes no other's copy), read-only as the master.
+    // ponytail: off APFS a plain recursive `copyfile`, slower on a big tree; no other filesystem runs the daemon today
+    static func reviewClone(_ master: URL, into scratch: URL) -> Result<URL, SnapshotFailure> {
+        let dst = scratch.appendingPathComponent(reviewSnapshotDir, isDirectory: true)
+        if clonefile(master.path, dst.path, UInt32(CLONE_NOFOLLOW)) == 0
+            || copyfile(master.path, dst.path, nil, copyfile_flags_t(COPYFILE_ALL | COPYFILE_RECURSIVE | COPYFILE_NOFOLLOW)) == 0 {
+            return .success(dst)
+        }
+        return .failure(SnapshotFailure(why: "cópia do commit: clone não feito"))
     }
 
     /// F2 Z2: an agent's config a reviewer would load from beyond its folder: in `reviewRoot` or any ancestor up to `/`,
@@ -397,7 +465,7 @@ extension WorkLoop {
 
     /// The review of one attempt: pick the personas, run one reviewer per persona (at once), read each answer, dismiss
     /// them all. `turn`: seconds each reviewer has, asked once the line counts are read (F2 Y2b: what they took is not
-    /// the reviewers').
+    /// the reviewers') and again once the commit's copy is made (T1 f2fix8: nor is the copy's).
     func review(work: Work, loop: WorkLoopState, task: WorkTask, n: Int, agent: String, before: String, judged: String,
                 evidence: String, configSilenced: String? = nil, turn: () async -> Int, _ dir: URL) async -> Reviewed {
         let personas: [Persona]
@@ -419,11 +487,10 @@ extension WorkLoop {
         // F2 X5: a finding's line is checked in the file as judged
         let lineCounts = await reviewLineCounts(paths, judged: judged, dir)
         let spec = await specText(task.spec, at: before, dir)
-        let turn = await turn()
+        let budgetOut = Reviewed(outcome: .init(approved: false, reason: Self.reviewBudgetNote, notes: []), line: "", note: "", budgetOut: true)
+        let before_ = await turn()
         // F2 Z3a: the counts and the spec ate the budget: mute reviewers would be a refusal that is not one (X3)
-        if turn < Swift.min(Self.reviewMinTurn, loop.timeout) {
-            return Reviewed(outcome: .init(approved: false, reason: Self.reviewBudgetNote, notes: []), line: "", note: "", budgetOut: true)
-        }
+        if before_ < Swift.min(Self.reviewMinTurn, loop.timeout) { return budgetOut }
         let specShown = spec.isEmpty ? "(\(Self.noSpec); só o título da tarefa) " + task.title : spec
         let host = host, check = task.check ?? ""
         // F2 Z2: an agent's config the judged agent may write where a reviewer loads it: every reviewer mute, the path said
@@ -432,14 +499,26 @@ extension WorkLoop {
         // F2 V2/U1: `~/.claude.json` changed since the loop began, or holds an `env` its base did not: every reviewer mute
         let silenced = configSilenced ?? planted.map { "\($0) existe e o agente do laço pode gravá-lo" }
         let scratch = personas.map { p in silenced == nil ? Self.reviewScratch(Self.reviewerName(agent, persona: p.name), in: host.reviewRoot) : nil }
-        // F2 W2: each reviewer reads the judged commit's copy in its own folder, never the live worktree
-        var snapshots: [URL?] = [], snapshotWhy: [String?] = []
-        for s in scratch {
-            guard let s else { snapshots.append(nil); snapshotWhy.append(nil); continue }
-            switch await reviewSnapshot(judged, dir, into: s) {
-            case .success(let u): snapshots.append(u); snapshotWhy.append(nil)
-            case .failure(let f): snapshots.append(nil); snapshotWhy.append(f.why)
+        // F2 W2: each reviewer reads the judged commit's copy in its own folder, never the live worktree.
+        // T1 f2fix8 (reviewOneCopy): one copy per attempt, cloned into each folder; the turn is read once it is made.
+        var snapshots: [URL?] = scratch.map { _ in nil }, snapshotWhy: [String?] = scratch.map { _ in nil }, skipped: [String] = []
+        if scratch.contains(where: { $0 != nil }) {
+            let (master, copy) = await reviewOneCopy(judged, dir, agent: agent, deadline: Self.reviewOneCopyDeadline(before_))
+            for (i, s) in scratch.enumerated() {
+                guard let s else { continue }
+                switch copy.flatMap({ Self.reviewClone($0.url, into: s) }) {
+                case .success(let u): snapshots[i] = u
+                case .failure(let f): snapshotWhy[i] = f.why
+                }
             }
+            if case .success(let c) = copy { skipped = c.skipped }
+            if let master { Self.dropScratch(master) }
+        }
+        let turn = await turn()
+        // T1 f2fix8: the copy ate the budget: no reviewer, no refusal counted
+        if turn < Swift.min(Self.reviewMinTurn, loop.timeout) {
+            for case let s? in scratch { Self.dropScratch(s) }
+            return budgetOut
         }
         let runs = await withTaskGroup(of: (Int, PersonaRun, UUID?).self) { g in
             for (i, p) in personas.enumerated() {
@@ -488,8 +567,10 @@ extension WorkLoop {
                 + (r.1.invalid.map { ", \($0)" } ?? "") + (r.1.findings.isEmpty ? "" : ": " + r.1.findings.map { "[\($0.severity.rawValue)] \($0.text)" }.joined(separator: "; "))
         }
         writeReviewFile(work.id, task: task.id, n: n, runs.map(\.1))
+        let left = skipped.isEmpty ? "" : "\ncópia sem \(skipped.count) arquivo(s) acima do limite de tamanho: " + skipped.prefix(10).joined(separator: ", ")
+            + (skipped.count > 10 ? ", …" : "")
         let note = LotBoards.scrub("[loop] parecer de \"\(task.title)\", tentativa \(n): " + line + (spec.isEmpty ? " (\(Self.noSpec))" : "")
-            + "\n" + each.joined(separator: "\n"))
+            + "\n" + each.joined(separator: "\n") + left)
         return Reviewed(outcome: outcome, line: line, note: String(note.prefix(Self.noteChars)))
     }
 

@@ -712,7 +712,7 @@ struct LoopRevertGit: RevertGit {
 }
 
 /// M3b.1: git for the lanes' birth and removal: (args, dir, sandbox profile or nil).
-typealias LaneGit = @Sendable (_ args: [String], _ dir: URL, _ profile: URL?) async throws(ProtocolError) -> ProcessResult
+typealias LaneGit = @Sendable (_ args: [String], _ dir: URL, _ profile: URL?, _ stdin: Data?) async throws(ProtocolError) -> ProcessResult
 
 struct RouterLoopHost: LoopHost {
     let router: CommandRouter, starter: UUID, root: URL, work: UUID, paddock: UUID, dir: URL
@@ -825,7 +825,10 @@ struct RouterLoopHost: LoopHost {
     /// M3b.1: the daemon's own git, as `PaddockManager` runs for a paddock's worktree: no profile (the loop's cannot
     /// write a lane), with `loopGit`'s care (hooks, fsmonitor and the repo's own filters off: `worktree add` checks out).
     func laneGit(_ args: [String], in dir: URL) async throws(ProtocolError) -> ProcessResult {
-        try await laneRunner(args, dir, nil)
+        try await laneRunner(args, dir, nil, nil)
+    }
+    func laneGit(_ args: [String], stdin: Data, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        try await laneRunner(args, dir, nil, stdin)
     }
     /// M3b.5: the install id (`remote/install-id` of this daemon's root): a dev daemon and the installed one differ.
     func laneOwner() async -> String { (try? await router.remoteInstallId()) ?? "" }
@@ -833,7 +836,7 @@ struct RouterLoopHost: LoopHost {
     /// Git for the loop, in an agent-writable repo: under `profile`, hooks and fsmonitor off (GitRunner), and the filter
     /// drivers the repo's own config defines (local/worktree scope: what an agent can plant), external diffs and textconv off.
     /// The user's global drivers (git-lfs) stay.
-    static func loopGit(_ args: [String], in dir: URL, profile: URL?) async throws(ProtocolError) -> ProcessResult {
+    static func loopGit(_ args: [String], in dir: URL, profile: URL?, stdin: Data? = nil) async throws(ProtocolError) -> ProcessResult {
         do {
             return try await GitRunner.$sandbox.withValue(profile) {
                 var off = [("diff.external", "")]
@@ -852,7 +855,7 @@ struct RouterLoopHost: LoopHost {
                 if a.first == "diff" { a.insert(contentsOf: ["--no-ext-diff", "--no-textconv"], at: 1) }
                 // by env, not `-c`: a driver name may hold `=`
                 // 64 MiB: the reviewer's copy reads each blob whole (`cat-file blob`)
-                return try await GitRunner.run(a, in: dir, timeout: .seconds(120), config: off, cap: 64 << 20)
+                return try await GitRunner.run(a, in: dir, timeout: .seconds(120), config: off, cap: 64 << 20, stdin: stdin)
             }
         } catch { throw (error as? ProtocolError) ?? ProtocolError(code: .internal, message: "\(error)") }
     }

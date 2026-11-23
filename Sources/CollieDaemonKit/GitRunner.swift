@@ -13,7 +13,7 @@ enum GitRunner {
     /// hold `=`, which `-c key=value` would split).
     static func run(_ args: [String], in dir: URL, timeout: Duration = .seconds(120),
                     executable: URL = URL(fileURLWithPath: "/usr/bin/git"), config: [(String, String)] = [],
-                    cap: Int = 1 << 20) async throws(ProtocolError) -> GitResult {
+                    cap: Int = 1 << 20, stdin: Data? = nil) async throws(ProtocolError) -> GitResult {
         var env = ProcessInfo.processInfo.environment
         if !config.isEmpty {   // replaces any inherited GIT_CONFIG_* list
             for k in env.keys where k.hasPrefix("GIT_CONFIG_KEY_") || k.hasPrefix("GIT_CONFIG_VALUE_") { env[k] = nil }
@@ -35,9 +35,9 @@ enum GitRunner {
                "-c", "core.commitGraph=false"] + args : args
         if let sandbox {
             return try await BoundedProcess.run(executable: URL(fileURLWithPath: "/usr/bin/sandbox-exec"),
-                                                args: ["-f", sandbox.path, executable.path] + args, in: dir, env: env, timeout: timeout, cap: cap)
+                                                args: ["-f", sandbox.path, executable.path] + args, in: dir, env: env, timeout: timeout, cap: cap, stdin: stdin)
         }
-        return try await BoundedProcess.run(executable: executable, args: args, in: dir, env: env, timeout: timeout, cap: cap)
+        return try await BoundedProcess.run(executable: executable, args: args, in: dir, env: env, timeout: timeout, cap: cap, stdin: stdin)
     }
 }
 

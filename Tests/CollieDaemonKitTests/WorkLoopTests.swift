@@ -248,6 +248,13 @@ actor LoopFakeHost: LoopHost {
         if let f = fault, args.starts(with: f.prefix) { fault = nil; return ProcessResult(status: 128, stdout: "", stderr: f.stderr, truncated: false) }
         return r
     }
+    /// T1 f2fix8: `cat-file --batch` with its stdin, counted in `gits` like any other.
+    func laneGit(_ args: [String], stdin: Data, in dir: URL) async throws(ProtocolError) -> ProcessResult {
+        gits.append(args)
+        let r = try await GitRunner.run(args, in: dir, cap: 64 << 20, stdin: stdin)
+        await gitProbe?(args)
+        return r
+    }
     func check(_ command: String, in dir: URL, timeout: Duration) async throws(ProtocolError) -> ProcessResult {
         checks += 1; events.append("check"); commands.append(command)
         await probe?(command)

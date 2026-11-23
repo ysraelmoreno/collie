@@ -455,6 +455,32 @@ import CollieProtocol
         #expect(try String(contentsOf: claude.appendingPathComponent("settings.json"), encoding: .utf8) == "{}\n")
     }
 
+    /// F2 W3: another terminal reaching the worktree (`othersWorking`, asked again after the review) writes
+    /// `.claude/settings.local.json` during the review: no touch, the attempt passes, and the file is moved to the
+    /// patchDir (said in the note), never deleted.
+    @Test func configOfAnotherTerminalDuringTheReviewIsMovedNotATouch() async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        try ".claude/\n".write(to: r.repo.appendingPathComponent(".git/info/exclude"), atomically: true, encoding: .utf8)
+        let claude = r.repo.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: claude, withIntermediateDirectories: true)
+        try "{}\n".write(to: claude.appendingPathComponent("settings.json"), atomically: true, encoding: .utf8)
+        await Self.works(r, 1)
+        let host = r.host
+        await r.host.setReviewerAct("correcao") { d in   // and it approves; the write is the other terminal's
+            await host.setBusy("Pastor")
+            try #"{"permissions":{}}"#.write(to: d.appendingPathComponent(".claude/settings.local.json"), atomically: true, encoding: .utf8)
+        }
+        _ = await r.run()
+        let w = try await r.get()
+        #expect(w.tasks[0].lastFailure?.contains(WorkLoop.reviewerTouched) != true, "\(w.tasks[0].lastFailure ?? "-")")
+        #expect(w.tasks[0].state == .done, "\(w.tasks[0].state) \(w.notes.map(\.text))")
+        #expect(!FileManager.default.fileExists(atPath: claude.appendingPathComponent("settings.local.json").path))
+        let moved = r.host.patchDir(r.work).appendingPathComponent("a-1-config/.claude/settings.local.json")
+        #expect(try String(contentsOf: moved, encoding: .utf8) == #"{"permissions":{}}"#)
+        #expect(w.notes.contains { $0.text.contains("'Pastor'") && $0.text.contains(".claude/settings.local.json") }, "\(w.notes.map(\.text))")
+        #expect(try String(contentsOf: claude.appendingPathComponent("settings.json"), encoding: .utf8) == "{}\n")
+    }
+
     /// F2 Z3b: a process the judged agent left alive in its process group is killed after its dismiss, before the
     /// first reviewer is summoned.
     @Test(.timeLimit(.minutes(1))) func leftoverProcessOfTheJudgedAgentIsKilledBeforeTheReviewers() async throws {

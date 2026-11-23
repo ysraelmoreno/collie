@@ -561,12 +561,26 @@ actor WorkLoop {
             let after = await reviewTree(dir)
             // F2 Z3b: and the agent configs by their metadata (a file inside an ignored folder the status shows as one line)
             let configsAfter = Self.reviewHashAgentConfig(dir, status: tree)
-            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true || configsAfter != configs
+            // F2 W3: another terminal reaching this worktree (the Shepherd's Claude Code, the user) may have written that
+            // config itself during the review: then the change is no touch, and what is new is moved, never deleted
+            let configChanged = configsAfter != configs
+            let reviewConfigOthers = configChanged ? await host.othersWorking() : nil
+            let touched = tree == nil || after != tree || after?.hasPrefix(state.judged + "\n") != true || (configChanged && reviewConfigOthers == nil)
+            let made = configsAfter.keys.filter { configs[$0] == nil }.sorted()
+            var movedSaid = ""
+            if let who = reviewConfigOthers, case let tops = made.filter({ p in !made.contains { p.hasPrefix($0 + "/") } }), !tops.isEmpty {
+                let folder = host.patchDir(r.work).appendingPathComponent("\(task.id)-\(n)-config")
+                let moved = tops.filter { p in
+                    let to = folder.appendingPathComponent(p)
+                    try? FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    return (try? FileManager.default.moveItem(atPath: dir.path + "/" + p, toPath: to.path)) != nil
+                }
+                movedSaid = String(("\nconfig nova com '\(who)' na worktree, movida para \(folder.path): " + moved.joined(separator: ", ")).prefix(400))
+            }
             if touched {
                 _ = await settle(state.judged, on: r.on, loose: r.loose, reset: true, dir)
                 // F2 Z3b: a config made inside such a folder goes too (an edited one cannot be put back: the touch says it)
-                let made = configsAfter.keys.filter { configs[$0] == nil }.sorted()
-                for p in made { try? FileManager.default.removeItem(atPath: dir.path + "/" + p) }
+                if reviewConfigOthers == nil { for p in made { try? FileManager.default.removeItem(atPath: dir.path + "/" + p) } }
                 // F2 Y2b: an ignored file the reviewer left (`.claude/settings.local.json`) survives `settle`: it goes too.
                 // F2 Z3a: only an agent's config: any other new ignored path (`.env`) may be the Shepherd's or the user's
                 var said = ""
@@ -580,6 +594,7 @@ actor WorkLoop {
                 ran.line = "revisão: recusada (\(Self.reviewerTouched))"
                 ran.note = String(ran.note.prefix(Self.noteChars - 64 - said.count)) + "\n" + Self.reviewerTouched + said
             }
+            if !movedSaid.isEmpty { ran.note = String(ran.note.prefix(Self.noteChars - movedSaid.count)) + movedSaid }
             // F2 X3: cancelled mid-review, the reviewers went mute: nothing they said is written (`attempt` leaves with `cancelled`)
             if Task.isCancelled { return .cancelled }
             let at = host.now(), line = ran.line, approved = ran.outcome.approved, note = ran.note

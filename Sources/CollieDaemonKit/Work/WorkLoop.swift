@@ -581,20 +581,26 @@ actor WorkLoop {
             var movedSaid = ""
             if let who = reviewConfigOthers, case let tops = made.filter({ p in !made.contains { p.hasPrefix($0 + "/") } }), !tops.isEmpty {
                 let folder = host.patchDir(id).appendingPathComponent("\(task.id)-\(n)-config")
+                let linked = tops.filter { Self.reviewPathLinked(dir, $0) }   // F2 V3: never through a swapped parent
                 let moved = tops.filter { p in
+                    guard !linked.contains(p) else { return false }
                     let to = folder.appendingPathComponent(p)
                     try? FileManager.default.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
                     return (try? FileManager.default.moveItem(atPath: dir.path + "/" + p, toPath: to.path)) != nil
                 }
-                movedSaid = String(("\nconfig nova com '\(who)' na worktree, movida para \(folder.path): " + moved.joined(separator: ", ")).prefix(400))
+                movedSaid = String(("\nconfig nova com '\(who)' na worktree, movida para \(folder.path): " + moved.joined(separator: ", ")
+                    + (linked.isEmpty ? "" : "\n\(Self.reviewPathLinkedNote): " + linked.joined(separator: ", "))).prefix(400))
             }
             if touched {
                 _ = await settle(state.judged, on: r.on, loose: r.loose, reset: true, dir)
                 // F2 Z3b: a config made inside such a folder goes too (an edited one cannot be put back: the touch says it)
-                if reviewConfigOthers == nil { for p in made { try? FileManager.default.removeItem(atPath: dir.path + "/" + p) } }
+                // F2 V3: a parent swapped for a symlink: nothing removed through it, the note says which
+                let linked = reviewConfigOthers == nil ? made.filter { Self.reviewPathLinked(dir, $0) } : []
+                if reviewConfigOthers == nil { for p in made where !linked.contains(p) { try? FileManager.default.removeItem(atPath: dir.path + "/" + p) } }
                 // F2 Y2b: an ignored file the reviewer left (`.claude/settings.local.json`) survives `settle`: it goes too.
                 // F2 Z3a: only an agent's config: any other new ignored path (`.env`) may be the Shepherd's or the user's
-                var said = globalTouched ? "\n" + Self.reviewGlobalConfigTouched : ""
+                var said = (globalTouched ? "\n" + Self.reviewGlobalConfigTouched : "")
+                    + (linked.isEmpty ? "" : String("\n\(Self.reviewPathLinkedNote): \(linked.joined(separator: ", "))".prefix(400)))
                 if tree != nil, case let fresh = Self.ignored(after).subtracting(Self.ignored(tree)), !fresh.isEmpty {
                     let (drop, keep) = Self.reviewerLeftovers(fresh)
                     if !drop.isEmpty { _ = try? await host.git(["--literal-pathspecs", "clean", "-q", "-f", "-d", "-X", "--"] + drop, in: dir) }

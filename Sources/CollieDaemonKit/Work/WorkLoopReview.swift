@@ -38,6 +38,22 @@ extension WorkLoop {
     /// What an agent loads from its folder's ancestors: none may be in a reviewer's parent.
     static let agentConfigs = ["CLAUDE.md", "AGENTS.md", ".claude", ".cursor"]
 
+    /// F2 V3 (reviewPathLinked): `rel` under `dir` has a parent component (below `dir`) that is a symlink, or one that
+    /// lstat cannot see. The daemon runs outside the sandbox: a `.claude` the judged agent or an orphan swapped for a link
+    /// to `~/.ssh` would make a move or delete by path reach `~/.ssh/config`. The last component is never followed by
+    /// `moveItem`/`removeItem` (a link is moved or removed as a link), so only the parents are checked.
+    /// ponytail: lstat then act by path, a window as wide as one syscall; openat/unlinkat with O_NOFOLLOW if a review shows it raced
+    static func reviewPathLinked(_ dir: URL, _ rel: String) -> Bool {
+        var path = dir.path, st = stat()
+        for c in rel.split(separator: "/").dropLast() {
+            if c == ".." { return true }
+            path += "/" + c
+            if lstat(path, &st) != 0 || (st.st_mode & S_IFMT) == S_IFLNK { return true }
+        }
+        return false
+    }
+    static let reviewPathLinkedNote = "recusado, symlink no caminho (nada movido nem apagado)"
+
     /// F2 Z3a: of the ignored paths new since the review began, the agent configs a reviewer may have left (a path with
     /// one of these names as a component); the rest may be the Shepherd's or the user's (`.env`, a local db) and stays.
     static func reviewerLeftovers(_ fresh: Set<String>) -> (drop: [String], keep: [String]) {

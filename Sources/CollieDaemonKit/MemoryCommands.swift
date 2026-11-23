@@ -14,6 +14,7 @@ extension CommandRouter {
 
     func memoryCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin
+        if let me = caller, Self.reviewMemoryReads.contains(r.command), reviewerHooksBare(me) { throw Self.reviewMemoryDenied(r.command) }
         if let me = caller { memory.events.noteAgent(me.id, Self.agentName(me)) }   // the events of this terminal say who it runs
         func invalid(_ m: String) -> ProtocolError { ProtocolError(code: .invalidArgs, message: m) }
         let paddockName = caller?.paddockId.flatMap { id in ws.paddocks.first { $0.id == id }?.name }
@@ -788,8 +789,15 @@ extension CommandRouter {
     /// F2 Z1: a loop reviewer, by either mark the router has: its id in `loopReviewers` (set in its summon) or a `cwd`
     /// inside `reviewRoot` (a reviewer a fallen daemon left, no longer marked). Either is enough: a terminal wrongly
     /// taken for one only loses its memory block. ponytail: the name tail (`AgentNaming.isReviewer`) is not required.
-    /// ponytail: hooks only. A reviewer that runs `collie memory search|context|checklist` itself still reads them (its
-    /// sandbox keeps the daemon's socket open); refuse those reads to a reviewer if a review shows one doing it.
+    /// Hooks here; the reads it would run itself (`collie memory search`, `lot.*`) are `reviewMemoryDenied` (F2 V3).
+    /// F2 V3 (reviewMemoryDenied): the reads a reviewer would run itself (`collie memory search`: it has `COLLIE_TOKEN`
+    /// and the CLI); with `lot.*` (in `lotCommand`) they are refused to it, the judged agent's words never reach its judge.
+    static let reviewMemoryReads: Set<String> = ["memory.search", "memory.list", "memory.get", "memory.checklist",
+                                                 "memory.context", "memory.doc-search"]
+    static func reviewMemoryDenied(_ command: String) -> ProtocolError {
+        ProtocolError(code: .unauthorized, message: "'\(command)' is refused to a loop reviewer: it judges the tree, not the memories of who it judges")
+    }
+
     func reviewerHooksBare(_ t: TerminalRecord) -> Bool {
         if loopReviewers.contains(t.id) { return true }
         let root = SignedAppCheck.realPath(WorkLoop.reviewRoot(of: config.paths.root))

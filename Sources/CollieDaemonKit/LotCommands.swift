@@ -9,6 +9,7 @@ import CollieProtocol
 extension CommandRouter {
     func lotCommand(_ r: Request, peer: pid_t) async throws -> JSONValue {
         let caller = try await principal(r, peer: peer)   // nil = admin (the user / app)
+        if let me = caller, reviewerHooksBare(me) { throw Self.reviewMemoryDenied(r.command) }   // F2 V3: no board, no lot, to a reviewer
         func refuse(_ m: String) -> ProtocolError { ProtocolError(code: .notShepherd, message: m) }
         /// The target of create/join/leave: anyone for the admin; a Shepherd itself or a terminal it reaches.
         func target(_ name: String) throws(ProtocolError) -> TerminalRecord {

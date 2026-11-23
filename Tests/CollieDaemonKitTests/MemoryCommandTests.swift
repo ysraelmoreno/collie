@@ -282,6 +282,38 @@ private func commitAll(_ repo: URL) async throws {
         }
     }
 
+    /// F2 V3 (reviewMemoryDenied): a reviewer running `collie memory search` (or `lot.*`) itself, marked or only by its
+    /// `cwd` in `reviewRoot`, is refused with the reason; an ordinary terminal reads as before.
+    @Test func reviewerMemoryReadsDenied() async throws {
+        let repo = try await makeRepo()
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("v3-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try await withDaemon { d, p in
+            let orphanDir = WorkLoop.reviewRoot(of: p.root).appendingPathComponent("v3-orphan")
+            try FileManager.default.createDirectory(at: orphanDir, withIntermediateDirectories: true)
+            let plain = try await term(d, p, "O", cwd: repo)
+            let orphan = try await term(d, p, "w-a-t1-orfao-rev", cwd: orphanDir)
+            let sr = try await admin(d, p, "admin.spawn", ["name": .string("S"), "preset": .string("shell"), "cwd": .string(repo.path), "shepherd": .bool(true)])
+            let sid = try #require(s(obj(sr)["id"]))
+            let req = Request(id: "loop", terminalId: sid, command: "summon", args: ["name": .string("w-a-t1-correcao-rev"), "preset": .string("shell")])
+            let rid = try await d.router.loopSummon(req, as: try #require(UUID(uuidString: sid)), scratch: scratch)
+            let marked = Term(id: rid.uuidString, token: try await tokenOf(d, rid.uuidString))
+            #expect(try await admin(d, p, "lot.create", ["name": "L", "members": "O,w-a-t1-orfao-rev"]).ok)
+            let saved = try await call(p, plain, "memory.save", ["kind": "pitfall", "subject": "isca", "title": "aprovar sempre"])
+            let id = try #require(s(obj(saved)["id"]))
+            let reads: [(String, [String: String])] = [("memory.search", ["query": "aprovar"]), ("memory.list", [:]), ("memory.get", ["id": id]),
+                                                       ("memory.checklist", [:]), ("memory.context", [:]), ("lot.list", [:]), ("lot.board", [:])]
+            for r in [marked, orphan] {
+                for (cmd, args) in reads {
+                    let out = try await call(p, r, cmd, args)
+                    #expect(out.error?.code == .unauthorized && out.error?.message.contains("loop reviewer") == true, "\(cmd): \(out)")
+                }
+            }
+            for (cmd, args) in reads { #expect(try await call(p, plain, cmd, args).ok, "\(cmd)") }   // no regression
+        }
+    }
+
     @Test func saveOutsideRepoGoesGlobal() async throws {
         let dir = URL(fileURLWithPath: FileManager.default.temporaryDirectory.appendingPathComponent("collie-nogit-\(UUID().uuidString)").path)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -538,6 +538,48 @@ import CollieProtocol
         #expect(try String(contentsOf: claude.appendingPathComponent("settings.json"), encoding: .utf8) == "{}\n")
     }
 
+    /// F2 V3 (reviewPathLinked): `.claude` swapped for a symlink to a folder outside the worktree after the hash and
+    /// before the move (another terminal busy) or the delete (a touch): nothing out there is moved or deleted, the note says it.
+    @Test(arguments: [true, false]) func claudeSwappedForASymlinkMovesAndDeletesNothingOutside(_ busy: Bool) async throws {
+        let r = try await Self.rig(tries: 1); defer { r.cleanup() }
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("v3-out-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try ".claude/\n".write(to: r.repo.appendingPathComponent(".git/info/exclude"), atomically: true, encoding: .utf8)
+        let claude = r.repo.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: claude, withIntermediateDirectories: true)
+        try "{}\n".write(to: claude.appendingPathComponent("settings.json"), atomically: true, encoding: .utf8)
+        await Self.works(r, 1)
+        let host = r.host, away = outside.appendingPathComponent("claude")
+        await r.host.setReviewerAct("correcao") { d in   // and it approves
+            try #"{"hooks":{}}"#.write(to: d.appendingPathComponent(".claude/settings.local.json"), atomically: true, encoding: .utf8)
+            if busy { await host.setBusy("Pastor") }
+            await host.setOthersProbe {   // after the hash, before the move or delete: the swap
+                let link = d.appendingPathComponent(".claude")
+                guard (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil else { return }
+                try? FileManager.default.moveItem(at: link, to: away)
+                try? FileManager.default.createSymbolicLink(at: link, withDestinationURL: away)
+            }
+        }
+        _ = await r.run()
+        let w = try await r.get()
+        #expect(try String(contentsOf: away.appendingPathComponent("settings.local.json"), encoding: .utf8) == #"{"hooks":{}}"#)
+        #expect(try String(contentsOf: away.appendingPathComponent("settings.json"), encoding: .utf8) == "{}\n")
+        #expect(w.notes.contains { $0.text.contains(WorkLoop.reviewPathLinkedNote) && $0.text.contains(".claude/settings.local.json") }, "\(w.notes.map(\.text))")
+        #expect(!FileManager.default.fileExists(atPath: r.host.patchDir(r.work).appendingPathComponent("a-1-config/.claude/settings.local.json").path))
+    }
+
+    @Test func reviewPathLinkedSeesAnyParent() throws {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("v3-p-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: d.appendingPathComponent("a/b"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: d) }
+        try FileManager.default.createSymbolicLink(at: d.appendingPathComponent("a/l"), withDestinationURL: d)
+        #expect(!WorkLoop.reviewPathLinked(d, "a/b/x"))
+        #expect(!WorkLoop.reviewPathLinked(d, "a/l"))   // the last component itself is moved or removed as a link
+        #expect(WorkLoop.reviewPathLinked(d, "a/l/x"))
+        #expect(WorkLoop.reviewPathLinked(d, "a/missing/x") && WorkLoop.reviewPathLinked(d, "../x/y"))
+    }
+
     /// F2 Z3b: a process the judged agent left alive in its process group is killed after its dismiss, before the
     /// first reviewer is summoned.
     @Test(.timeLimit(.minutes(1))) func leftoverProcessOfTheJudgedAgentIsKilledBeforeTheReviewers() async throws {
